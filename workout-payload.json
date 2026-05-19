@@ -1,0 +1,9 @@
+{
+  "session_id": "session-123",
+  "date": "2026-05-19",
+  "log_rows": [
+    ["session-123", "2026-05-19", "Bench Press", "3", "8", "225"],
+    ["session-123", "2026-05-19", "Squat", "4", "6", "315"]
+  ],
+  "effort_row": ["session-123", "2026-05-19", "Total Effort", "8.5"]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "atlas-workout-updater",
+  "version": "1.0.0",
+  "description": "Simple Atlas Workout Updater that appends workout data to Google Sheets.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "express": "^4.18.3",
+    "googleapis": "^121.0.0"
+  }
+}
