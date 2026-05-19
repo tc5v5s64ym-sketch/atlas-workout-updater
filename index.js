@@ -225,7 +225,7 @@ function buildExerciseCatalogMap(rows) {
         entryMap.set(key, {
           canonical_exercise: canonicalName,
           muscle_group: muscleGroup,
-          lift_code: liftCode
+          lift_code: liftCode || ''
         });
       }
     };
@@ -245,12 +245,13 @@ function enrichLogRow(rowObj, catalogMap) {
   const key = String(rowObj.exercise || '').trim().toLowerCase();
   const catalogMatch = catalogMap.get(key);
   const enriched = { ...rowObj };
-
   if (catalogMatch) {
     enriched.canonical_exercise = catalogMatch.canonical_exercise;
     enriched.muscle_group = catalogMatch.muscle_group;
-    enriched.lift_code = catalogMatch.lift_code;
-    return { enriched, warning: null };
+    enriched.lift_code = catalogMatch.lift_code || '';
+    const warnings = [];
+    if (!catalogMatch.lift_code) warnings.push(`No lift code for exercise '${rowObj.exercise}'.`);
+    return { enriched, warnings: warnings.length ? warnings : null };
   }
 
   enriched.canonical_exercise = '';
@@ -258,7 +259,7 @@ function enrichLogRow(rowObj, catalogMap) {
   enriched.lift_code = '';
   return {
     enriched,
-    warning: `No catalog match for exercise '${rowObj.exercise}'.` 
+    warnings: [`Unknown exercise: ${rowObj.exercise}`]
   };
 }
 
@@ -426,14 +427,31 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) 
   }
   const warnings = [];
 
+  const pending_exercises = [];
   const formattedRows = logRows.map(row => {
     const rowObj = normalizeLogRow(row, topLevelSessionId, topLevelDate);
-    const { enriched, warning } = enrichLogRow(rowObj, catalogMap);
-    if (warning) warnings.push(warning);
+    const result = enrichLogRow(rowObj, catalogMap);
+    const enriched = result.enriched;
+    const rowWarnings = result.warnings || null;
+    if (rowWarnings) {
+      for (const w of rowWarnings) {
+        warnings.push(w);
+      }
+      // If unknown exercise, add to pending_exercises
+      for (const w of rowWarnings) {
+        if (w && String(w).startsWith('Unknown exercise:')) {
+          pending_exercises.push({
+            exercise: rowObj.exercise,
+            suggested_canonical_name: rowObj.exercise,
+            reason: 'No Exercise_Catalog match'
+          });
+        }
+      }
+    }
     return logRowObjectToArray(enriched);
   });
 
-  return { formattedRows, warnings };
+  return { formattedRows, warnings, pending_exercises };
 }
 
 app.get('/health', (req, res) => {
@@ -640,6 +658,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
       formattedLogRows = enrichResult.formattedRows;
       enrichWarnings = enrichResult.warnings || [];
+      const pendingExercises = enrichResult.pending_exercises || [];
     } catch (error) {
       await fs.promises.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
@@ -712,6 +731,11 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       responseBody.data.log_rows_preview = formattedLogRows;
       responseBody.data.rows_to_write = rowsToWrite;
       responseBody.data.rows_skipped = skippedDuplicates.map(s => s.row);
+    }
+
+    // include pending_exercises when present
+    if (typeof pendingExercises !== 'undefined' && pendingExercises.length > 0) {
+      responseBody.pending_exercises = pendingExercises;
     }
 
     return res.status(200).json(responseBody);

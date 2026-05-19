@@ -254,6 +254,10 @@ Behavior:
 - Generates `session_id` in the format `YYYYMMDD-AM-01` or `YYYYMMDD-PM-01` when omitted.
 - Validates and normalizes parsed effort metrics before writing (same rules as documented above). If validation fails, nothing is written and the endpoint returns `400` with an error.
 - Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
+ - Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
+  - Canonical exercise names, muscle group, and lift codes are populated from the `Exercise_Catalog`.
+  - Example: `Back Squat` -> `SQ01`; `Lat Pulldown` -> `LPD01` (these values come from your `Exercise_Catalog` sheet).
+  - If an exercise is not found, the row will have blank `Canonical_Exercise`, `Muscle_Group`, and `Lift_Code`, and the response will include the entry in `pending_exercises` for manual review.
 - Applies duplicate `session_id` protection before writing; if duplicate, returns `409` and writes nothing.
 - Appends enriched log rows to the `Log` sheet and the normalized effort row to the `Effort` sheet.
 - If `test_mode=true`, performs parsing, validation, and enrichment only and does not write to Google Sheets; the response includes the rows that would have been written.
@@ -277,6 +281,21 @@ Response (200 on success):
   },
   "warnings": ["totalCalories is less than activeCalories"]
 }
+
+Pending exercises
+- When `/api/complete-workout` encounters an exercise not present in `Exercise_Catalog`, the response will include `pending_exercises`, an array of objects:
+
+```json
+[
+  {
+    "exercise": "Some New Lift",
+    "suggested_canonical_name": "Some New Lift",
+    "reason": "No Exercise_Catalog match"
+  }
+]
+```
+
+These are only returned in the response for manual review — they are not written to Google Sheets automatically.
 ```
 
 This endpoint does not change the behavior of `/api/log-workout` or `/api/parse-workout-image` — it simply combines parsing, enrichment, validation, and append steps into one flow.
