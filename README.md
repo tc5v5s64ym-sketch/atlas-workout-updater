@@ -91,9 +91,10 @@ npm start
 
 ### New endpoints
 
-- `GET /api/history/recent` — Returns recent sessions, sets, and effort rows. Requires `x-atlas-api-key` header. Query params: `limit` (default 5), `exercise` (optional filter).
-- `GET /api/exercises/:liftCode` — Returns detail for a lift code (names seen, total sets, best weight/reps, recent sets). Requires `x-atlas-api-key`.
-- `GET /api/pending-exercises` — Returns pending exercises collected from recent `/api/complete-workout` calls (in-memory). Requires `x-atlas-api-key`.
+- `GET /api/history/recent` — Returns recent sessions, sets, and effort rows. Requires `x-atlas-api-key` header. Query params: `limit` (default 5), `exercise` (optional filter), `exclude_test=true` (optional to filter out rows where notes contain "test").
+- `GET /api/exercises/:liftCode` — Returns detail for a lift code (names seen, total sets, best weight/reps, best weight set, best volume set, estimated 1RM, and recent working sets). Requires `x-atlas-api-key`.
+- `GET /api/pending-exercises` — Read-only placeholder. Returns an empty pending exercise list and a message that persistence is not implemented. Requires `x-atlas-api-key`.
+- `GET /api/session/:sessionId` — Returns all `Log_Cleaned` rows and the matching Effort row for a given session. Requires `x-atlas-api-key`.
 
 All new endpoints are read-only and will not change Google Sheets.
 

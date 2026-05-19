@@ -505,13 +505,20 @@ app.get('/api/history/recent', async (req, res) => {
   const exerciseFilter = req.query.exercise ? String(req.query.exercise).toLowerCase() : null;
 
   try {
-    const recentLog = await getRecentRows(logSheetName, Math.max(50, limit * 10));
-    const recentEffort = await getRecentRows(effortSheetName, limit);
+    const recentLog = await getRecentRows(logSheetName, Math.max(100, limit * 20));
+    const recentEffort = await getRecentRows(effortSheetName, Math.max(limit, 20));
 
     let filteredLog = recentLog;
     if (exerciseFilter) {
       filteredLog = recentLog.filter(r => String(r[2] || '').toLowerCase() === exerciseFilter);
     }
+
+    if (req.query.exclude_test === 'true') {
+      filteredLog = filteredLog.filter(r => !/test/i.test(String(r[10] || '')));
+    }
+    const filteredEffort = req.query.exclude_test === 'true'
+      ? recentEffort.filter(r => !/test/i.test(String(r[8] || '')))
+      : recentEffort;
 
     const recent_sets = filteredLog.slice(-limit).map(row => ({
       date_clean: row[0],
@@ -527,9 +534,14 @@ app.get('/api/history/recent', async (req, res) => {
       notes: row[10]
     }));
 
-    const recent_sessions = [...new Set(recent_sets.map(s => s.session_id))].slice(0, limit);
-
-    const recent_effort = recentEffort.slice(0, limit).map(row => ({
+    const sessionsById = {};
+    for (const row of recent_sets) {
+      if (!sessionsById[row.session_id]) {
+        sessionsById[row.session_id] = { session_id: row.session_id, date: row.date_clean };
+      }
+    }
+    const recent_sessions = Object.values(sessionsById).slice(-limit);
+    const recent_effort = filteredEffort.slice(0, limit).map(row => ({
       date: row[0],
       session_id: row[1],
       duration: row[2],
@@ -563,16 +575,8 @@ app.get('/api/exercises/:liftCode', async (req, res) => {
 
     const exerciseNames = [...new Set(matching.map(r => r[2]))];
     const totalSets = matching.length;
-    const bestWeight = matching.reduce((max, r) => {
-      const w = Number(r[7]);
-      return Number.isFinite(w) ? Math.max(max, w) : max;
-    }, 0);
-    const bestReps = matching.reduce((max, r) => {
-      const rep = Number(r[8]);
-      return Number.isFinite(rep) ? Math.max(max, rep) : max;
-    }, 0);
-
-    const recent_sets = matching.slice(-10).map(r => ({
+    const workingSets = matching.filter(r => Number(r[7]) > 0);
+    const rowToSet = r => ({
       date_clean: r[0],
       session_id: r[1],
       exercise: r[2],
@@ -584,9 +588,41 @@ app.get('/api/exercises/:liftCode', async (req, res) => {
       reps: r[8],
       rir: r[9],
       notes: r[10]
-    }));
+    });
 
-    return res.json({ status: 'ok', data: { liftCode: liftCode.toUpperCase(), exerciseNames, totalSets, bestWeight, bestReps, recent_sets } });
+    const bestWeightRow = workingSets.reduce((best, r) => {
+      const w = Number(r[7]);
+      if (!Number.isFinite(w)) return best;
+      if (!best || w > Number(best[7])) return r;
+      return best;
+    }, null);
+    const bestVolumeRow = workingSets.reduce((best, r) => {
+      const w = Number(r[7]);
+      const reps = Number(r[8]);
+      if (!Number.isFinite(w) || !Number.isFinite(reps)) return best;
+      const volume = w * reps;
+      const bestVolume = best ? Number(best[7]) * Number(best[8]) : -1;
+      if (!best || volume > bestVolume) return r;
+      return best;
+    }, null);
+    const estimated1RM = workingSets.reduce((max, r) => {
+      const w = Number(r[7]);
+      const reps = Number(r[8]);
+      if (!Number.isFinite(w) || !Number.isFinite(reps)) return max;
+      return Math.max(max, w * (1 + reps / 30));
+    }, 0);
+
+    const recentWorkingSets = matching.filter(r => Number(r[7]) > 0).slice(-10).map(rowToSet);
+
+    return res.json({ status: 'ok', data: {
+      liftCode: liftCode.toUpperCase(),
+      exerciseNames,
+      totalSets,
+      bestWeightSet: bestWeightRow ? rowToSet(bestWeightRow) : null,
+      bestVolumeSet: bestVolumeRow ? rowToSet(bestVolumeRow) : null,
+      estimated1RM,
+      recentWorkingSets
+    } });
   } catch (error) {
     return res.status(500).json({ error: `Failed to fetch exercise detail: ${error.message}` });
   }
@@ -599,11 +635,58 @@ app.get('/api/pending-exercises', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (!pendingExercisesMemory || pendingExercisesMemory.length === 0) {
-    return res.json({ status: 'ok', pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+  return res.json({ status: 'ok', pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+});
+
+// GET /api/session/:sessionId
+app.get('/api/session/:sessionId', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  return res.json({ status: 'ok', pending_exercises: pendingExercisesMemory });
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId is required in path' });
+  }
+
+  try {
+    const recentLog = await getRecentRows(logSheetName, 1000);
+    const recentEffort = await getRecentRows(effortSheetName, 1000);
+
+    const sessionLogRows = recentLog
+      .filter(row => String(row[1] || '').trim().toLowerCase() === sessionId.toLowerCase())
+      .map(row => ({
+        date_clean: row[0],
+        session_id: row[1],
+        exercise: row[2],
+        canonical_exercise: row[3],
+        muscle_group: row[4],
+        lift_code: row[5],
+        set_number: row[6],
+        weight: row[7],
+        reps: row[8],
+        rir: row[9],
+        notes: row[10]
+      }));
+
+    const effortRow = recentEffort.find(row => String(row[1] || '').trim().toLowerCase() === sessionId.toLowerCase());
+    const effort = effortRow ? {
+      date: effortRow[0],
+      session_id: effortRow[1],
+      duration: effortRow[2],
+      active_calories: effortRow[3],
+      total_calories: effortRow[4],
+      average_hr: effortRow[5],
+      peak_hr: effortRow[6],
+      location: effortRow[7],
+      notes: effortRow[8]
+    } : null;
+
+    return res.json({ status: 'ok', data: { session_id: sessionId, log_rows: sessionLogRows, effort } });
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to fetch session data: ${error.message}` });
+  }
 });
 
 
