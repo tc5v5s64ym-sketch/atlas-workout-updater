@@ -104,6 +104,15 @@ async function getRecentRows(tabName, maxRows = 100) {
   return dataRows.slice(-maxRows).map(r => r.map(cell => (cell === undefined ? '' : cell)));
 }
 
+async function getSpreadsheetTabs() {
+  const sheets = await getSheetsClient();
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties.title'
+  });
+  return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
+}
+
 async function getEffortSessionIds() {
   const values = await getColumnValues(effortSheetName, 'B');
   return values
@@ -138,6 +147,7 @@ module.exports = {
   getEffortSessionIds,
   getLogCompositeKeys,
   getRecentRows,
+  getSpreadsheetTabs,
   logSheetName,
   effortSheetName
 };

@@ -12,6 +12,7 @@ const {
   getEffortSessionIds,
   getLogCompositeKeys,
   getRecentRows,
+  getSpreadsheetTabs,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -29,6 +30,7 @@ if (!atlasApiKey) {
 const uploadDir = '/tmp/uploads';
 fs.mkdirSync(uploadDir, { recursive: true });
 
+const imageMimeTypes = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
@@ -39,16 +41,65 @@ const upload = multer({
   }),
   limits: {
     fileSize: 10 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    if (!imageMimeTypes.has(file.mimetype)) {
+      return cb(new Error('Only image/png, image/jpeg, image/jpg, and image/webp files are accepted.'));
+    }
+    return cb(null, true);
   }
 });
 
 const app = express();
 app.use(express.json());
+
+function requestLogger(req, res, next) {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      duration_ms: duration
+    };
+    console.log(JSON.stringify(logEntry));
+  });
+  next();
+}
+
+app.use(requestLogger);
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
+
+const routeDefinitions = [
+  { path: '/', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
+  { path: '/health', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
+  { path: '/routes', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
+  { path: '/version', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
+  { path: '/api/history/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/exercises/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/recommend/next/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/summary/weekly', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/prs/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/pending-exercises', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/session/:sessionId', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/catalog/exercises', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/catalog/search', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/health/sheets', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/health/openai', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/debug/config', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/schema/log', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/schema/effort', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/schema/complete-workout', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/parse-workout-image', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/complete-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/log-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
+];
 
 const logCleanedColumns = [
   'date_clean',
@@ -284,6 +335,72 @@ function normalizeExerciseKey(value) {
     .replace(/\s+/g, ' ');
 }
 
+function standardError(res, message, details = undefined, statusCode = 400) {
+  const payload = { status: 'error', message };
+  if (details !== undefined) {
+    payload.details = details;
+  }
+  return res.status(statusCode).json(payload);
+}
+
+function standardSuccess(res, message, data = undefined, statusCode = 200) {
+  const payload = { status: 'ok', message };
+  if (data !== undefined) {
+    payload.data = data;
+  }
+  return res.status(statusCode).json(payload);
+}
+
+function requireApiKey(req, res) {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    standardError(res, 'Unauthorized', null, 401);
+    return false;
+  }
+  return true;
+}
+
+function buildExerciseCatalogEntries(rows) {
+  if (!rows.length) return [];
+
+  const header = rows[0].map(cell => String(cell || '').trim().toLowerCase());
+  const canonicalNameIndex = header.findIndex(value => ['canonical_name', 'canonical name', 'canonicalname'].includes(value));
+  const muscleGroupIndex = header.findIndex(value => ['muscle_group', 'muscle group', 'musclegroup'].includes(value));
+  const liftCodeIndex = header.findIndex(value => ['lift code', 'lift_code', 'liftcode'].includes(value));
+  const variantsIndex = header.findIndex(value => ['original_variants', 'original variants', 'originalvariant', 'original variant'].includes(value));
+
+  if (canonicalNameIndex === -1) {
+    throw new Error('Exercise_Catalog header must include Canonical_Name.');
+  }
+
+  const entries = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+
+    const canonicalName = String(row[canonicalNameIndex] || '').trim();
+    if (!canonicalName) continue;
+
+    const muscleGroup = String(row[muscleGroupIndex] || '').trim();
+    const liftCode = String(row[liftCodeIndex] || '').trim();
+    const variants = variantsIndex !== -1
+      ? String(row[variantsIndex] || '')
+          .split(/[,;|]/)
+          .map(v => String(v).trim())
+          .filter(Boolean)
+      : [];
+
+    entries.push({
+      canonical_name: canonicalName,
+      muscle_group: muscleGroup,
+      lift_code: liftCode,
+      variants
+    });
+  }
+
+  return entries;
+}
+
 function toDateOnly(value) {
   if (!value) return new Date().toISOString().slice(0, 10);
   return String(value);
@@ -465,18 +582,19 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) 
   return { formattedRows, warnings, pending_exercises };
 }
 
+app.get('/', (req, res) => {
+  return standardSuccess(res, 'Atlas backend is running', {
+    service: 'atlas-workout-updater',
+    message: 'Atlas backend is running'
+  });
+});
+
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'atlas-workout-updater' });
+  return standardSuccess(res, 'Health check passed', { service: 'atlas-workout-updater' });
 });
 
 app.get('/routes', (req, res) => {
-  const routes = [];
-  app._router.stack.forEach(mw => {
-    if (!mw.route) return;
-    const methods = Object.keys(mw.route.methods).map(m => m.toUpperCase());
-    routes.push({ path: mw.route.path, methods });
-  });
-  res.json({ status: 'ok', routes });
+  return standardSuccess(res, 'Available routes', { routes: routeDefinitions });
 });
 
 app.get('/version', (req, res) => {
@@ -487,18 +605,10 @@ app.get('/version', (req, res) => {
     // ignore
   }
 
-  const routes = [];
-  app._router.stack.forEach(mw => {
-    if (!mw.route) return;
-    const methods = Object.keys(mw.route.methods).map(m => m.toUpperCase());
-    routes.push({ path: mw.route.path, methods });
-  });
-
-  res.json({
-    status: 'ok',
+  return standardSuccess(res, 'Service version', {
     version: gitVersion,
     deployed_at: deploymentTimestamp,
-    endpoints: routes
+    endpoints: routeDefinitions
   });
 });
 
@@ -638,24 +748,117 @@ app.get('/api/exercises/:liftCode', async (req, res) => {
 
 // GET /api/pending-exercises
 app.get('/api/pending-exercises', (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!requireApiKey(req, res)) return;
+  return standardSuccess(res, 'Pending exercises endpoint', { pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+});
+
+// GET /api/catalog/exercises
+app.get('/api/catalog/exercises', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  try {
+    const rows = await getExerciseCatalog();
+    const exercises = buildExerciseCatalogEntries(rows);
+    return standardSuccess(res, 'Exercise catalog entries', { exercises });
+  } catch (error) {
+    return standardError(res, 'Failed to read Exercise_Catalog', error.message, 500);
+  }
+});
+
+// GET /api/catalog/search
+app.get('/api/catalog/search', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const query = String(req.query.q || '').trim();
+  if (!query) {
+    return standardError(res, 'Query param q is required', null, 400);
   }
 
-  return res.json({ status: 'ok', pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+  try {
+    const rows = await getExerciseCatalog();
+    const exercises = buildExerciseCatalogEntries(rows);
+    const lowerQuery = query.toLowerCase();
+    const results = exercises.filter(entry => {
+      return entry.canonical_name.toLowerCase().includes(lowerQuery)
+        || entry.lift_code.toLowerCase().includes(lowerQuery)
+        || entry.variants.some(v => v.toLowerCase().includes(lowerQuery));
+    });
+    return standardSuccess(res, 'Catalog search results', { query, results });
+  } catch (error) {
+    return standardError(res, 'Failed to search Exercise_Catalog', error.message, 500);
+  }
+});
+
+// GET /api/health/sheets
+app.get('/api/health/sheets', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  try {
+    const tabs = await getSpreadsheetTabs();
+    const requiredTabs = ['Log_Cleaned', 'Effort', 'Exercise_Catalog'];
+    const status = requiredTabs.reduce((acc, tab) => {
+      acc[tab] = { exists: tabs.includes(tab) };
+      return acc;
+    }, {});
+    return standardSuccess(res, 'Google Sheets health check', { tabs: status, availableTabs: tabs });
+  } catch (error) {
+    return standardError(res, 'Failed to verify Google Sheets tabs', error.message, 500);
+  }
+});
+
+// GET /api/health/openai
+app.get('/api/health/openai', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  return standardSuccess(res, 'OpenAI health check', { configured: Boolean(process.env.OPENAI_API_KEY) });
+});
+
+// GET /api/debug/config
+app.get('/api/debug/config', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  return standardSuccess(res, 'Safe debug configuration', {
+    serviceName: 'atlas-workout-updater',
+    environment: process.env.NODE_ENV || 'development',
+    sheetTabs: {
+      logSheetName,
+      effortSheetName
+    },
+    apiKeyAuthEnabled: Boolean(process.env.ATLAS_API_KEY),
+    openAiKeyConfigured: Boolean(process.env.OPENAI_API_KEY)
+  });
+});
+
+// GET /api/schema/log
+app.get('/api/schema/log', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  return standardSuccess(res, 'Log_Cleaned schema', {
+    schema: ['Date_Clean', 'Session ID', 'Exercise', 'Canonical_Exercise', 'Muscle_Group', 'Lift Code', 'Set #', 'Weight', 'Reps', 'RIR', 'Notes']
+  });
+});
+
+// GET /api/schema/effort
+app.get('/api/schema/effort', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  return standardSuccess(res, 'Effort schema', {
+    schema: ['Date', 'Session ID', 'Duration', 'Active Calories', 'Total Calories', 'Average HR', 'Peak HR', 'Location', 'Notes']
+  });
+});
+
+// GET /api/schema/complete-workout
+app.get('/api/schema/complete-workout', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  return standardSuccess(res, 'Complete-workout multipart schema', {
+    required: ['image', 'log_rows_json'],
+    optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write']
+  });
 });
 
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireApiKey(req, res)) return;
 
   const liftCode = String(req.params.liftCode || '').trim().toLowerCase();
   if (!liftCode) {
-    return res.status(400).json({ error: 'liftCode is required in path' });
+    return standardError(res, 'liftCode is required in path', null, 400);
   }
 
   try {
@@ -666,7 +869,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
       .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || '')) || Number(a[6]) - Number(b[6]));
 
     if (!workingSets.length) {
-      return res.status(404).json({ status: 'ok', message: `No working sets found for liftCode ${liftCode}` });
+      return standardError(res, `No working sets found for liftCode ${liftCode}`, null, 404);
     }
 
     const recentWorkingSets = workingSets.slice(-10).map(r => ({
@@ -712,18 +915,15 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
       }
     }
 
-    return res.json({
-      status: 'ok',
-      data: {
-        liftCode: liftCode.toUpperCase(),
-        recentWorkingSets,
-        lastSessionPerformance,
-        recommendation,
-        reasoning
-      }
+    return standardSuccess(res, 'Recommendation generated', {
+      liftCode: liftCode.toUpperCase(),
+      recentWorkingSets,
+      lastSessionPerformance,
+      recommendation,
+      reasoning
     });
   } catch (error) {
-    return res.status(500).json({ error: `Failed to compute recommendation: ${error.message}` });
+    return standardError(res, 'Failed to compute recommendation', error.message, 500);
   }
 });
 
@@ -801,19 +1001,16 @@ app.get('/api/summary/weekly', async (req, res) => {
       highlights.push(`Top muscle group: ${topMuscleGroup[0]} with ${Math.round(topMuscleGroup[1])} volume.`);
     }
 
-    return res.json({
-      status: 'ok',
-      data: {
-        sessions: Array.from(sessions.values()),
-        totalSets,
-        totalVolume,
-        muscleGroupBreakdown,
-        effortSummary,
-        highlights
-      }
+    return standardSuccess(res, 'Weekly summary', {
+      sessions: Array.from(sessions.values()),
+      totalSets,
+      totalVolume,
+      muscleGroupBreakdown,
+      effortSummary,
+      highlights
     });
   } catch (error) {
-    return res.status(500).json({ error: `Failed to build weekly summary: ${error.message}` });
+    return standardError(res, 'Failed to build weekly summary', error.message, 500);
   }
 });
 
@@ -857,18 +1054,15 @@ app.get('/api/prs/recent', async (req, res) => {
       liftCodeMap.set(code, existing);
     });
 
-    return res.json({ status: 'ok', data: Array.from(liftCodeMap.values()) });
+    return standardSuccess(res, 'Recent PRs', { prs: Array.from(liftCodeMap.values()) });
   } catch (error) {
-    return res.status(500).json({ error: `Failed to fetch recent PRs: ${error.message}` });
+    return standardError(res, 'Failed to fetch recent PRs', error.message, 500);
   }
 });
 
 // GET /api/session/:sessionId
 app.get('/api/session/:sessionId', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!requireApiKey(req, res)) return;
 
   const sessionId = String(req.params.sessionId || '').trim();
   if (!sessionId) {
@@ -910,7 +1104,7 @@ app.get('/api/session/:sessionId', async (req, res) => {
 
     return res.json({ status: 'ok', data: { session_id: sessionId, log_rows: sessionLogRows, effort } });
   } catch (error) {
-    return res.status(500).json({ error: `Failed to fetch session data: ${error.message}` });
+    return standardError(res, 'Failed to fetch session data', error.message, 500);
   }
 });
 
@@ -994,7 +1188,7 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
 
     return res.status(200).json(responseBody);
   } catch (error) {
-    return res.status(500).json({ error: `Failed to parse workout image: ${error.message}` });
+    return standardError(res, 'Failed to parse workout image', error.message, 500);
   } finally {
     await fs.promises.unlink(req.file.path).catch(() => {});
   }
@@ -1170,7 +1364,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     return res.status(200).json(responseBody);
   } catch (error) {
-    return res.status(500).json({ error: `Failed to complete workout ingestion: ${error.message}` });
+    return standardError(res, 'Failed to complete workout ingestion', error.message, 500);
   } finally {
     await fs.promises.unlink(req.file.path).catch(() => {});
   }
@@ -1186,12 +1380,10 @@ app.post('/api/log-workout', async (req, res) => {
   const payload = req.body;
 
   if (!payload || typeof payload !== 'object') {
-    return res.status(400).json({ error: 'Invalid JSON payload. A JSON object is required.' });
+    return standardError(res, 'Invalid JSON payload. A JSON object is required.', null, 400);
   }
 
   const { session_id, date, log_rows, effort_row } = payload;
-
-  console.log('Received payload:', { session_id, date, log_rows, effort_row });
 
   if (!session_id) {
     return res.status(400).json({ error: 'session_id is required.' });
@@ -1271,8 +1463,34 @@ app.post('/api/log-workout', async (req, res) => {
     return res.status(200).json(responseBody);
   } catch (error) {
     console.error('❌ Failed to append workout data:', error);
-    return res.status(500).json({ error: 'Failed to append workout data.' });
+    return standardError(res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
   }
+});
+
+app.use((req, res) => {
+  return standardError(res, 'Route not found', { path: req.originalUrl }, 404);
+});
+
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  if (err && err.code === 'LIMIT_FILE_SIZE') {
+    return standardError(res, 'File too large. Max size is 10MB.', null, 413);
+  }
+
+  if (err && err.message && /^Only image\/(png|jpeg|jpg|webp)/.test(err.message)) {
+    return standardError(res, err.message, null, 400);
+  }
+
+  console.error('Unhandled error:', err);
+  return standardError(
+    res,
+    process.env.NODE_ENV === 'production' ? 'Internal server error' : 'Unhandled error',
+    process.env.NODE_ENV === 'production' ? undefined : err.message || err,
+    500
+  );
 });
 
 const port = process.env.PORT || 3000;
