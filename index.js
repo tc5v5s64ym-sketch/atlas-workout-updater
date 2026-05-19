@@ -301,6 +301,84 @@ function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
   return { effortRow, sessionId, dateValue };
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function normalizeDurationString(value) {
+  if (value === null || value === undefined) {
+    throw new Error('duration is required');
+  }
+
+  const s = String(value).trim();
+  if (!s) throw new Error('duration is required');
+
+  const parts = s.split(':').map(p => p.trim()).filter(Boolean);
+  if (parts.length === 2) {
+    // mm:ss -> 00:MM:SS
+    const [mm, ss] = parts;
+    if (!/^\d+$/.test(mm) || !/^\d+$/.test(ss)) throw new Error(`Invalid duration format: ${value}`);
+    const m = Number(mm);
+    const sec = Number(ss);
+    if (sec < 0 || sec > 59 || m < 0) throw new Error(`Invalid duration values: ${value}`);
+    return `${pad2(0)}:${pad2(m)}:${pad2(sec)}`;
+  }
+
+  if (parts.length === 3) {
+    // h:mm:ss or hh:mm:ss
+    const [h, mm, ss] = parts;
+    if (!/^\d+$/.test(h) || !/^\d+$/.test(mm) || !/^\d+$/.test(ss)) throw new Error(`Invalid duration format: ${value}`);
+    const hr = Number(h);
+    const m = Number(mm);
+    const sec = Number(ss);
+    if (m < 0 || m > 59 || sec < 0 || sec > 59 || hr < 0) throw new Error(`Invalid duration values: ${value}`);
+    return `${pad2(hr)}:${pad2(m)}:${pad2(sec)}`;
+  }
+
+  throw new Error(`Invalid duration format: ${value}`);
+}
+
+function validateNumberField(name, rawValue, min, max) {
+  if (rawValue === null || rawValue === undefined || rawValue === '') {
+    throw new Error(`${name} is required`);
+  }
+  const num = Number(rawValue);
+  if (!Number.isFinite(num) || Number.isNaN(num)) {
+    throw new Error(`${name} must be a number`);
+  }
+  if (num < min || num > max) {
+    throw new Error(`${name} must be between ${min} and ${max}`);
+  }
+  return num;
+}
+
+function normalizeAndValidateParsedMetrics(parsedMetrics) {
+  if (!parsedMetrics || typeof parsedMetrics !== 'object') {
+    throw new Error('parsed_metrics is required');
+  }
+
+  const normalized = {};
+  // duration (required) -> normalize to HH:MM:SS
+  normalized.duration = normalizeDurationString(parsedMetrics.duration);
+
+  // numeric validations (required)
+  normalized.activeCalories = validateNumberField('activeCalories', parsedMetrics.activeCalories, 1, 3000);
+  normalized.totalCalories = validateNumberField('totalCalories', parsedMetrics.totalCalories, 1, 4000);
+  normalized.averageHR = validateNumberField('averageHR', parsedMetrics.averageHR, 40, 220);
+  normalized.peakHR = validateNumberField('peakHR', parsedMetrics.peakHR, 40, 230);
+  normalized.workoutType = parsedMetrics.workoutType ?? null;
+
+  const warnings = [];
+  if (normalized.totalCalories < normalized.activeCalories) {
+    warnings.push('totalCalories is less than activeCalories');
+  }
+  if (normalized.peakHR < normalized.averageHR) {
+    warnings.push('peakHR is less than averageHR');
+  }
+
+  return { normalized, warnings };
+}
+
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) {
   const catalogRows = await getExerciseCatalog();
   const catalogMap = buildExerciseCatalogMap(catalogRows);
@@ -338,11 +416,36 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
   try {
     const formFields = req.body || {};
     const visionResult = await parseWorkoutScreenshot(req.file.path);
-    const { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(visionResult.parsed_metrics, formFields);
+
+    // Prepare parsed object for the response; attempt to normalize duration for display.
+    const parsedForResponse = { ...visionResult.parsed_metrics };
+    try {
+      parsedForResponse.duration = normalizeDurationString(visionResult.parsed_metrics.duration);
+    } catch (err) {
+      // leave original duration if normalization fails; validation will catch issues when auto_write is enabled
+      parsedForResponse.duration = visionResult.parsed_metrics.duration;
+    }
+
+    // Build an effort row to include in the response (may be overwritten if auto_write triggers a validated write)
+    let { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(parsedForResponse, formFields);
 
     let sheetWrite = 'skipped';
+    let validationWarnings = [];
 
     if (isAutoWriteEnabled(formFields.auto_write)) {
+      // Validate and normalize parsed metrics before attempting any write.
+      let normalizedMetrics;
+      try {
+        const result = normalizeAndValidateParsedMetrics(visionResult.parsed_metrics);
+        normalizedMetrics = result.normalized;
+        validationWarnings = result.warnings || [];
+      } catch (error) {
+        return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
+      }
+
+      // Rebuild effort row from normalized metrics so what's written is normalized
+      ({ effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(normalizedMetrics, formFields));
+
       try {
         const existingEffortSessionIds = await getEffortSessionIds();
         const duplicate = existingEffortSessionIds
@@ -360,7 +463,7 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
 
     const responseBody = {
       status: visionResult.status,
-      parsed: visionResult.parsed_metrics,
+      parsed: parsedForResponse,
       filename: req.file.filename,
       size: req.file.size,
       session_id: sessionId,
@@ -368,6 +471,10 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
       effort_row: effortRow,
       sheet_write: sheetWrite
     };
+
+    if (validationWarnings.length > 0) {
+      responseBody.warnings = validationWarnings;
+    }
 
     return res.status(200).json(responseBody);
   } catch (error) {

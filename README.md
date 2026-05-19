@@ -107,6 +107,15 @@ Optional form-data fields:
 - `notes`
 - `auto_write` (`true` to append generated `effort_row` to the Effort sheet)
 
+Validation and normalization (applies when `auto_write=true`):
+- `duration` is required and will be normalized to `HH:MM:SS` (examples: `52:28` -> `00:52:28`, `0:52:28` -> `00:52:28`, `1:05:00` -> `01:05:00`).
+- `activeCalories` must be a number between `1` and `3000`.
+- `totalCalories` must be a number between `1` and `4000`.
+- `averageHR` must be a number between `40` and `220`.
+- `peakHR` must be a number between `40` and `230`.
+
+If validation fails when `auto_write=true`, the endpoint returns `400` with a clear error message and nothing is written to Google Sheets. If validation passes but values are inconsistent, the response may include `warnings` (for example, when `totalCalories < activeCalories` or `peakHR < averageHR`) but the row is still written.
+
 If `session_id` is omitted, the server generates one from the current date/time.
 
 Example upload request:
