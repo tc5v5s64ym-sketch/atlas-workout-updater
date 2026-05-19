@@ -94,11 +94,32 @@ async function getEffortSessionIds() {
     .filter(value => value && value.toLowerCase() !== 'session id');
 }
 
+async function getLogCompositeKeys() {
+  // Fetch session_id (B), exercise (C), set_number (G) columns and combine to composite keys
+  const sessionIds = await getColumnValues(logSheetName, 'B');
+  const exercises = await getColumnValues(logSheetName, 'C');
+  const setNumbers = await getColumnValues(logSheetName, 'G');
+
+  const keys = [];
+  const maxLen = Math.max(sessionIds.length, exercises.length, setNumbers.length);
+  for (let i = 0; i < maxLen; i += 1) {
+    const sid = String(sessionIds[i] || '').trim();
+    const ex = String(exercises[i] || '').trim();
+    const setn = String(setNumbers[i] || '').trim();
+    if (!sid || !ex || !setn) continue;
+    // Skip header rows that might contain column titles
+    if (/session id/i.test(sid) || /exercise/i.test(ex) || /set_number/i.test(setn)) continue;
+    keys.push(`${sid.toLowerCase()}||${ex.toLowerCase()}||${setn.toLowerCase()}`);
+  }
+  return keys;
+}
+
 module.exports = {
   appendRows,
   validateConfig,
   getExerciseCatalog,
   getEffortSessionIds,
+  getLogCompositeKeys,
   logSheetName,
   effortSheetName
 };

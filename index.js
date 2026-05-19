@@ -10,6 +10,7 @@ const {
   validateConfig,
   getExerciseCatalog,
   getEffortSessionIds,
+  getLogCompositeKeys,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -42,6 +43,9 @@ const upload = multer({
 
 const app = express();
 app.use(express.json());
+const { execSync } = require('child_process');
+
+const deploymentTimestamp = new Date().toISOString();
 
 const logCleanedColumns = [
   'date_clean',
@@ -249,12 +253,12 @@ function enrichLogRow(rowObj, catalogMap) {
     return { enriched, warning: null };
   }
 
-  enriched.canonical_exercise = rowObj.exercise;
+  enriched.canonical_exercise = '';
   enriched.muscle_group = '';
   enriched.lift_code = '';
   return {
     enriched,
-    warning: `No catalog match for exercise '${rowObj.exercise}'. Using exercise name as Canonical_Exercise.`
+    warning: `No catalog match for exercise '${rowObj.exercise}'.` 
   };
 }
 
@@ -304,6 +308,9 @@ function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
   const dateValue = toDateOnly(formFields.date);
   const sessionId = formFields.session_id || generateSessionId(dateValue);
 
+  // If notes not provided, use workoutType when available
+  const notes = (formFields.notes && String(formFields.notes).trim()) ? String(formFields.notes) : (parsedMetrics?.workoutType ? String(parsedMetrics.workoutType) : '');
+
   const effortRow = [
     dateValue,
     sessionId,
@@ -313,7 +320,7 @@ function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
     parsedMetrics?.averageHR ?? '',
     parsedMetrics?.peakHR ?? '',
     formFields.location || '',
-    formFields.notes || ''
+    notes
   ];
 
   return { effortRow, sessionId, dateValue };
@@ -398,8 +405,14 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
 }
 
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) {
-  const catalogRows = await getExerciseCatalog();
-  const catalogMap = buildExerciseCatalogMap(catalogRows);
+  let catalogMap;
+  // allow passing in a prebuilt catalogMap via optional 4th param
+  if (arguments.length >= 4 && arguments[3] && arguments[3] instanceof Map) {
+    catalogMap = arguments[3];
+  } else {
+    const catalogRows = await getExerciseCatalog();
+    catalogMap = buildExerciseCatalogMap(catalogRows);
+  }
   const warnings = [];
 
   const formattedRows = logRows.map(row => {
@@ -414,6 +427,39 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) 
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'atlas-workout-updater' });
+});
+
+app.get('/routes', (req, res) => {
+  const routes = [];
+  app._router.stack.forEach(mw => {
+    if (!mw.route) return;
+    const methods = Object.keys(mw.route.methods).map(m => m.toUpperCase());
+    routes.push({ path: mw.route.path, methods });
+  });
+  res.json({ status: 'ok', routes });
+});
+
+app.get('/version', (req, res) => {
+  let gitVersion = 'unknown';
+  try {
+    gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim();
+  } catch (err) {
+    // ignore
+  }
+
+  const routes = [];
+  app._router.stack.forEach(mw => {
+    if (!mw.route) return;
+    const methods = Object.keys(mw.route.methods).map(m => m.toUpperCase());
+    routes.push({ path: mw.route.path, methods });
+  });
+
+  res.json({
+    status: 'ok',
+    version: gitVersion,
+    deployed_at: deploymentTimestamp,
+    endpoints: routes
+  });
 });
 
 
@@ -577,7 +623,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     let formattedLogRows;
     let enrichWarnings = [];
     try {
-      const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue);
+      // fetch catalog once and pass the map to the enricher to ensure consistent lookup
+      const catalogRows = await getExerciseCatalog();
+      const catalogMap = buildExerciseCatalogMap(catalogRows);
+      const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
       formattedLogRows = enrichResult.formattedRows;
       enrichWarnings = enrichResult.warnings || [];
     } catch (error) {
@@ -593,12 +642,34 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       notes: formFields.notes
     });
 
-    // 7) Append log rows and effort row unless test mode is enabled
-    let logAppendCount = formattedLogRows.length;
+    // 7) Duplicate protection for Log_Cleaned rows (session_id + exercise + set_number)
+    const existingLogKeys = await getLogCompositeKeys();
+    const intendedKeys = formattedLogRows.map(row => {
+      // formatted row order follows logCleanedColumns
+      const sid = String(row[1] || '').trim().toLowerCase();
+      const ex = String(row[2] || '').trim().toLowerCase();
+      const setn = String(row[6] || '').trim().toLowerCase();
+      return `${sid}||${ex}||${setn}`;
+    });
+
+    const rowsToWrite = [];
+    const skippedDuplicates = [];
+    for (let i = 0; i < formattedLogRows.length; i += 1) {
+      const key = intendedKeys[i];
+      if (existingLogKeys.includes(key)) {
+        skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
+      } else {
+        rowsToWrite.push(formattedLogRows[i]);
+      }
+    }
+
+    let logAppendCount = rowsToWrite.length;
     let effortWritten = false;
     if (!testMode) {
       try {
-        await appendRows(logSheetName, formattedLogRows);
+        if (rowsToWrite.length > 0) {
+          await appendRows(logSheetName, rowsToWrite);
+        }
         await appendRows(effortSheetName, [effortRow]);
         effortWritten = true;
       } catch (error) {
@@ -607,22 +678,29 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
-    const combinedWarnings = [...new Set([...(metricWarnings || []), ...(enrichWarnings || [])])];
+    const duplicateWarnings = skippedDuplicates.length > 0 ? [`${skippedDuplicates.length} log row(s) skipped due to duplicate session_id+exercise+set_number`] : [];
+    const combinedWarnings = [...new Set([...(metricWarnings || []), ...(enrichWarnings || []), ...duplicateWarnings])];
 
     const responseBody = {
-      status: visionResult.status,
-      session_id: sessionId,
-      date: dateValue,
-      log_rows_written: logAppendCount,
-      effort_written: effortWritten,
-      parsed_effort: normalizedMetrics,
-      warnings: combinedWarnings
+      status: 'ok',
+      message: 'complete-workout processed',
+      data: {
+        session_id: sessionId,
+        date: dateValue,
+        log_rows_written: logAppendCount,
+        effort_written: effortWritten,
+        parsed_effort: normalizedMetrics
+      }
     };
+
+    if (combinedWarnings.length > 0) responseBody.warnings = combinedWarnings;
 
     if (testMode) {
       responseBody.test_mode = true;
-      responseBody.effort_row = effortRow;
-      responseBody.log_rows_preview = formattedLogRows;
+      responseBody.data.effort_row = effortRow;
+      responseBody.data.log_rows_preview = formattedLogRows;
+      responseBody.data.rows_to_write = rowsToWrite;
+      responseBody.data.rows_skipped = skippedDuplicates.map(s => s.row);
     }
 
     return res.status(200).json(responseBody);
