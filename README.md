@@ -114,6 +114,9 @@ Validation and normalization (applies when `auto_write=true`):
 - `averageHR` must be a number between `40` and `220`.
 - `peakHR` must be a number between `40` and `230`.
 
+- `averageHR` must be a number between `40` and `220`.
+- `peakHR` is optional; if present must be a number between `40` and `230`.
+
 If validation fails when `auto_write=true`, the endpoint returns `400` with a clear error message and nothing is written to Google Sheets. If validation passes but values are inconsistent, the response may include `warnings` (for example, when `totalCalories < activeCalories` or `peakHR < averageHR`) but the row is still written.
 
 If `session_id` is omitted, the server generates one from the current date/time.

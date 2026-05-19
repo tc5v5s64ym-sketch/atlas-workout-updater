@@ -390,7 +390,14 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
   normalized.activeCalories = validateNumberField('activeCalories', parsedMetrics.activeCalories, 1, 3000);
   normalized.totalCalories = validateNumberField('totalCalories', parsedMetrics.totalCalories, 1, 4000);
   normalized.averageHR = validateNumberField('averageHR', parsedMetrics.averageHR, 40, 220);
-  normalized.peakHR = validateNumberField('peakHR', parsedMetrics.peakHR, 40, 230);
+  // peakHR is optional: allow missing but warn; if present, validate range
+  if (parsedMetrics.peakHR === null || parsedMetrics.peakHR === undefined || parsedMetrics.peakHR === '') {
+    normalized.peakHR = '';
+    // indicate missing peakHR as a warning (caller will surface warnings)
+    // we'll push a specific warning below after building warnings array
+  } else {
+    normalized.peakHR = validateNumberField('peakHR', parsedMetrics.peakHR, 40, 230);
+  }
   normalized.workoutType = parsedMetrics.workoutType ?? null;
 
   const warnings = [];
@@ -399,6 +406,10 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
   }
   if (normalized.peakHR < normalized.averageHR) {
     warnings.push('peakHR is less than averageHR');
+  }
+
+  if (parsedMetrics.peakHR === null || parsedMetrics.peakHR === undefined || parsedMetrics.peakHR === '') {
+    warnings.push('peakHR missing from parsed screenshot');
   }
 
   return { normalized, warnings };
