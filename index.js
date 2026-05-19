@@ -222,7 +222,7 @@ function buildExerciseCatalogMap(rows) {
     const liftCode = String(row[liftCodeIndex] || '').trim();
 
     const addMatch = name => {
-      const key = String(name || '').trim().toLowerCase();
+      const key = normalizeExerciseKey(name);
       if (!key) return;
       if (!entryMap.has(key)) {
         entryMap.set(key, {
@@ -245,7 +245,7 @@ function buildExerciseCatalogMap(rows) {
 }
 
 function enrichLogRow(rowObj, catalogMap) {
-  const key = String(rowObj.exercise || '').trim().toLowerCase();
+  const key = normalizeExerciseKey(rowObj.exercise);
   const catalogMatch = catalogMap.get(key);
   const enriched = { ...rowObj };
   if (catalogMatch) {
@@ -275,6 +275,14 @@ function logRowObjectToArray(rowObj) {
   });
 }
 
+function normalizeExerciseKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201C\u201D]/g, '')
+    .replace(/[()\[\]{}:;,.\/\\+*?^$|]/g, '')
+    .replace(/\s+/g, ' ');
+}
 
 function toDateOnly(value) {
   if (!value) return new Date().toISOString().slice(0, 10);
@@ -534,13 +542,13 @@ app.get('/api/history/recent', async (req, res) => {
       notes: row[10]
     }));
 
-    const sessionsById = {};
-    for (const row of recent_sets) {
-      if (!sessionsById[row.session_id]) {
-        sessionsById[row.session_id] = { session_id: row.session_id, date: row.date_clean };
+    const sessionMap = new Map();
+    for (const row of [...recent_sets].reverse()) {
+      if (!sessionMap.has(row.session_id)) {
+        sessionMap.set(row.session_id, { session_id: row.session_id, date: row.date_clean });
       }
     }
-    const recent_sessions = Object.values(sessionsById).slice(-limit);
+    const recent_sessions = Array.from(sessionMap.values()).reverse().slice(-limit);
     const recent_effort = filteredEffort.slice(0, limit).map(row => ({
       date: row[0],
       session_id: row[1],
@@ -636,6 +644,223 @@ app.get('/api/pending-exercises', (req, res) => {
   }
 
   return res.json({ status: 'ok', pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+});
+
+// GET /api/recommend/next/:liftCode
+app.get('/api/recommend/next/:liftCode', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const liftCode = String(req.params.liftCode || '').trim().toLowerCase();
+  if (!liftCode) {
+    return res.status(400).json({ error: 'liftCode is required in path' });
+  }
+
+  try {
+    const allLog = await getRecentRows(logSheetName, 1000);
+    const workingSets = allLog
+      .filter(row => String(row[5] || '').toLowerCase() === liftCode)
+      .filter(row => Number(row[7]) > 0)
+      .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || '')) || Number(a[6]) - Number(b[6]));
+
+    if (!workingSets.length) {
+      return res.status(404).json({ status: 'ok', message: `No working sets found for liftCode ${liftCode}` });
+    }
+
+    const recentWorkingSets = workingSets.slice(-10).map(r => ({
+      date_clean: r[0],
+      session_id: r[1],
+      exercise: r[2],
+      canonical_exercise: r[3],
+      muscle_group: r[4],
+      lift_code: r[5],
+      set_number: r[6],
+      weight: r[7],
+      reps: r[8],
+      rir: r[9],
+      notes: r[10]
+    }));
+
+    const lastSet = recentWorkingSets[recentWorkingSets.length - 1];
+    const lastWeight = Number(lastSet.weight);
+    const lastReps = Number(lastSet.reps);
+    const lastRir = Number(lastSet.rir);
+    const lastSessionPerformance = {
+      date_clean: lastSet.date_clean,
+      session_id: lastSet.session_id,
+      weight: lastWeight,
+      reps: lastReps,
+      rir: lastRir,
+      exercise: lastSet.exercise
+    };
+
+    let recommendation = 'Repeat the last working set and focus on consistent form.';
+    let reasoning = 'No significant change detected from the last set.';
+
+    if (lastWeight > 0 && Number.isFinite(lastReps) && Number.isFinite(lastRir)) {
+      if (lastReps >= 8 && lastRir >= 2) {
+        recommendation = `Increase weight slightly from ${lastWeight} to ${lastWeight + 2.5} and aim for ${lastReps} reps.`;
+        reasoning = 'Last top set hit target reps with sufficient RIR, so a small progression is reasonable.';
+      } else if (lastReps < 8 || lastRir <= 0) {
+        recommendation = `Keep the same weight or reduce by a small step and focus on reaching the target reps.`;
+        reasoning = 'Reps dropped or RIR was low, so maintain or reduce weight to rebuild confidence and volume.';
+      } else {
+        recommendation = `Repeat the current weight and try to add a rep or two next session.`;
+        reasoning = 'Current performance is solid, so prioritize an extra rep before increasing weight.';
+      }
+    }
+
+    return res.json({
+      status: 'ok',
+      data: {
+        liftCode: liftCode.toUpperCase(),
+        recentWorkingSets,
+        lastSessionPerformance,
+        recommendation,
+        reasoning
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to compute recommendation: ${error.message}` });
+  }
+});
+
+// GET /api/summary/weekly
+app.get('/api/summary/weekly', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const recentLog = await getRecentRows(logSheetName, 1000);
+    const recentEffort = await getRecentRows(effortSheetName, 1000);
+    const today = new Date();
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 6);
+    const isoSevenDaysAgo = sevenDaysAgo.toISOString().slice(0, 10);
+
+    const sessions = new Map();
+    let totalSets = 0;
+    let totalVolume = 0;
+    const muscleGroupBreakdown = {};
+
+    const logRows = recentLog
+      .filter(row => {
+        const date = String(row[0] || '');
+        return date >= isoSevenDaysAgo;
+      })
+      .filter(row => Number(row[7]) > 0);
+
+    logRows.forEach(row => {
+      totalSets += 1;
+      const weight = Number(row[7]);
+      const reps = Number(row[8]);
+      const volume = Number.isFinite(weight) && Number.isFinite(reps) ? weight * reps : 0;
+      totalVolume += volume;
+      const muscleGroup = String(row[4] || 'Unknown');
+      muscleGroupBreakdown[muscleGroup] = (muscleGroupBreakdown[muscleGroup] || 0) + volume;
+
+      const sessionId = String(row[1] || '').trim();
+      if (!sessions.has(sessionId)) {
+        sessions.set(sessionId, { session_id: sessionId, date: row[0], sets: 0, volume: 0 });
+      }
+      const session = sessions.get(sessionId);
+      session.sets += 1;
+      session.volume += volume;
+    });
+
+    const effortSummary = recentEffort
+      .filter(row => {
+        const date = String(row[0] || '');
+        return date >= isoSevenDaysAgo;
+      })
+      .map(row => ({
+        date: row[0],
+        session_id: row[1],
+        duration: row[2],
+        active_calories: row[3],
+        total_calories: row[4],
+        average_hr: row[5],
+        peak_hr: row[6],
+        location: row[7],
+        notes: row[8]
+      }));
+
+    const highlights = [];
+    if (totalSets > 0) {
+      highlights.push(`Completed ${totalSets} working sets across ${sessions.size} sessions.`);
+    }
+    if (totalVolume > 0) {
+      highlights.push(`Accumulated ${Math.round(totalVolume)} total volume this week.`);
+    }
+    const topMuscleGroup = Object.entries(muscleGroupBreakdown).sort((a, b) => b[1] - a[1])[0];
+    if (topMuscleGroup) {
+      highlights.push(`Top muscle group: ${topMuscleGroup[0]} with ${Math.round(topMuscleGroup[1])} volume.`);
+    }
+
+    return res.json({
+      status: 'ok',
+      data: {
+        sessions: Array.from(sessions.values()),
+        totalSets,
+        totalVolume,
+        muscleGroupBreakdown,
+        effortSummary,
+        highlights
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to build weekly summary: ${error.message}` });
+  }
+});
+
+// GET /api/prs/recent
+app.get('/api/prs/recent', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const allLog = await getRecentRows(logSheetName, 1000);
+    const workingSets = allLog.filter(row => Number(row[7]) > 0);
+    const liftCodeMap = new Map();
+
+    workingSets.forEach(row => {
+      const code = String(row[5] || '').trim().toUpperCase();
+      if (!code) return;
+      const weight = Number(row[7]);
+      const reps = Number(row[8]);
+      const current1RM = Number.isFinite(weight) && Number.isFinite(reps) ? weight * (1 + reps / 30) : 0;
+      const existing = liftCodeMap.get(code) || {
+        liftCode: code,
+        exercise: row[2],
+        bestWeight: 0,
+        bestRepsAtBestWeight: 0,
+        bestEstimated1RM: 0
+      };
+
+      if (weight > existing.bestWeight) {
+        existing.bestWeight = weight;
+        existing.bestRepsAtBestWeight = reps;
+      } else if (weight === existing.bestWeight && reps > existing.bestRepsAtBestWeight) {
+        existing.bestRepsAtBestWeight = reps;
+      }
+
+      if (current1RM > existing.bestEstimated1RM) {
+        existing.bestEstimated1RM = current1RM;
+      }
+
+      liftCodeMap.set(code, existing);
+    });
+
+    return res.json({ status: 'ok', data: Array.from(liftCodeMap.values()) });
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to fetch recent PRs: ${error.message}` });
+  }
 });
 
 // GET /api/session/:sessionId
