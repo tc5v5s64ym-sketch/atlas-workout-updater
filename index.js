@@ -273,12 +273,30 @@ function toDateOnly(value) {
   return String(value);
 }
 
+function formatDateForSessionId(dateValue) {
+  const cleanDate = toDateOnly(dateValue).replace(/[^0-9]/g, '');
+  if (!/^\d{8}$/.test(cleanDate)) {
+    throw new Error(`Invalid date for session_id generation: ${dateValue}`);
+  }
+  return cleanDate;
+}
+
+function formatAmPmSuffix(dateTime = new Date()) {
+  const hour = dateTime.getHours();
+  return hour < 12 ? 'AM' : 'PM';
+}
+
 function generateSessionId(dateValue) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  return `session-${toDateOnly(dateValue)}-${stamp}`;
+  const formattedDate = formatDateForSessionId(dateValue);
+  const suffix = formatAmPmSuffix();
+  return `${formattedDate}-${suffix}-01`;
 }
 
 function isAutoWriteEnabled(value) {
+  return String(value || '').toLowerCase() === 'true';
+}
+
+function isTestModeEnabled(value) {
   return String(value || '').toLowerCase() === 'true';
 }
 
@@ -500,6 +518,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   }
 
   const formFields = req.body || {};
+  const testMode = isTestModeEnabled(formFields.test_mode);
 
   // log_rows_json is required
   if (!formFields.log_rows_json) {
@@ -574,20 +593,18 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       notes: formFields.notes
     });
 
-    // 7) Append log rows and effort row
-    let logAppendCount = 0;
+    // 7) Append log rows and effort row unless test mode is enabled
+    let logAppendCount = formattedLogRows.length;
     let effortWritten = false;
-    try {
-      const logResponse = await appendRows(logSheetName, formattedLogRows);
-      // can't reliably get rows count from Sheets API here; use formattedLogRows.length
-      logAppendCount = formattedLogRows.length;
-
-      await appendRows(effortSheetName, [effortRow]);
-      effortWritten = true;
-    } catch (error) {
-      // If append fails, report 500. Note: some partial writes may have happened.
-      await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(500).json({ error: 'Failed to append workout data.' });
+    if (!testMode) {
+      try {
+        await appendRows(logSheetName, formattedLogRows);
+        await appendRows(effortSheetName, [effortRow]);
+        effortWritten = true;
+      } catch (error) {
+        await fs.promises.unlink(req.file.path).catch(() => {});
+        return res.status(500).json({ error: 'Failed to append workout data.' });
+      }
     }
 
     const combinedWarnings = [...new Set([...(metricWarnings || []), ...(enrichWarnings || [])])];
@@ -601,6 +618,12 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       parsed_effort: normalizedMetrics,
       warnings: combinedWarnings
     };
+
+    if (testMode) {
+      responseBody.test_mode = true;
+      responseBody.effort_row = effortRow;
+      responseBody.log_rows_preview = formattedLogRows;
+    }
 
     return res.status(200).json(responseBody);
   } catch (error) {

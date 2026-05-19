@@ -133,7 +133,7 @@ Current response:
   "status": "image received",
   "filename": "<saved-temp-filename>",
   "size": 12345,
-  "session_id": "session-2026-05-19-2026-05-19T17-45-10-123Z",
+  "session_id": "20260519-PM-01",
   "date": "2026-05-19",
   "parsed": {
     "duration": "00:54:00",
@@ -230,6 +230,7 @@ Accepts `multipart/form-data` with fields:
 - `date`: optional (defaults to today if omitted)
 - `location`: optional
 - `notes`: optional
+- `test_mode`: optional (`true` to validate and preview without writing to Sheets)
 - `log_rows_json`: required — JSON array of simplified log rows with this shape:
 
 ```json
@@ -247,17 +248,19 @@ Accepts `multipart/form-data` with fields:
 
 Behavior:
 - Uses the same Vision parser (`/services/vision.js`) to extract effort metrics from the screenshot.
+- Generates `session_id` in the format `YYYYMMDD-AM-01` or `YYYYMMDD-PM-01` when omitted.
 - Validates and normalizes parsed effort metrics before writing (same rules as documented above). If validation fails, nothing is written and the endpoint returns `400` with an error.
 - Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
 - Applies duplicate `session_id` protection before writing; if duplicate, returns `409` and writes nothing.
 - Appends enriched log rows to the `Log` sheet and the normalized effort row to the `Effort` sheet.
+- If `test_mode=true`, performs parsing, validation, and enrichment only and does not write to Google Sheets; the response includes the rows that would have been written.
 
 Response (200 on success):
 
 ```json
 {
   "status": "image received",
-  "session_id": "session-2026-05-19-...",
+  "session_id": "20260519-PM-01",
   "date": "2026-05-19",
   "log_rows_written": 4,
   "effort_written": true,
