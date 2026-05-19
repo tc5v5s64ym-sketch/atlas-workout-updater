@@ -11,6 +11,7 @@ const {
   getExerciseCatalog,
   getEffortSessionIds,
   getLogCompositeKeys,
+  getRecentRows,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -46,6 +47,8 @@ app.use(express.json());
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
+// In-memory pending exercises collected from complete-workout responses
+const pendingExercisesMemory = [];
 
 const logCleanedColumns = [
   'date_clean',
@@ -491,6 +494,118 @@ app.get('/version', (req, res) => {
   });
 });
 
+// GET /api/history/recent
+app.get('/api/history/recent', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const limit = Number(req.query.limit) || 5;
+  const exerciseFilter = req.query.exercise ? String(req.query.exercise).toLowerCase() : null;
+
+  try {
+    const recentLog = await getRecentRows(logSheetName, Math.max(50, limit * 10));
+    const recentEffort = await getRecentRows(effortSheetName, limit);
+
+    let filteredLog = recentLog;
+    if (exerciseFilter) {
+      filteredLog = recentLog.filter(r => String(r[2] || '').toLowerCase() === exerciseFilter);
+    }
+
+    const recent_sets = filteredLog.slice(-limit).map(row => ({
+      date_clean: row[0],
+      session_id: row[1],
+      exercise: row[2],
+      canonical_exercise: row[3],
+      muscle_group: row[4],
+      lift_code: row[5],
+      set_number: row[6],
+      weight: row[7],
+      reps: row[8],
+      rir: row[9],
+      notes: row[10]
+    }));
+
+    const recent_sessions = [...new Set(recent_sets.map(s => s.session_id))].slice(0, limit);
+
+    const recent_effort = recentEffort.slice(0, limit).map(row => ({
+      date: row[0],
+      session_id: row[1],
+      duration: row[2],
+      active_calories: row[3],
+      total_calories: row[4],
+      average_hr: row[5],
+      peak_hr: row[6],
+      location: row[7],
+      notes: row[8]
+    }));
+
+    return res.json({ status: 'ok', data: { recent_sessions, recent_sets, recent_effort } });
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to fetch history: ${error.message}` });
+  }
+});
+
+// GET /api/exercises/:liftCode
+app.get('/api/exercises/:liftCode', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const liftCode = String(req.params.liftCode || '').trim().toLowerCase();
+  if (!liftCode) return res.status(400).json({ error: 'liftCode is required in path' });
+
+  try {
+    const allLog = await getRecentRows(logSheetName, 1000);
+    const matching = allLog.filter(row => String(row[5] || '').toLowerCase() === liftCode);
+
+    const exerciseNames = [...new Set(matching.map(r => r[2]))];
+    const totalSets = matching.length;
+    const bestWeight = matching.reduce((max, r) => {
+      const w = Number(r[7]);
+      return Number.isFinite(w) ? Math.max(max, w) : max;
+    }, 0);
+    const bestReps = matching.reduce((max, r) => {
+      const rep = Number(r[8]);
+      return Number.isFinite(rep) ? Math.max(max, rep) : max;
+    }, 0);
+
+    const recent_sets = matching.slice(-10).map(r => ({
+      date_clean: r[0],
+      session_id: r[1],
+      exercise: r[2],
+      canonical_exercise: r[3],
+      muscle_group: r[4],
+      lift_code: r[5],
+      set_number: r[6],
+      weight: r[7],
+      reps: r[8],
+      rir: r[9],
+      notes: r[10]
+    }));
+
+    return res.json({ status: 'ok', data: { liftCode: liftCode.toUpperCase(), exerciseNames, totalSets, bestWeight, bestReps, recent_sets } });
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to fetch exercise detail: ${error.message}` });
+  }
+});
+
+// GET /api/pending-exercises
+app.get('/api/pending-exercises', (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!pendingExercisesMemory || pendingExercisesMemory.length === 0) {
+    return res.json({ status: 'ok', pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+  }
+
+  return res.json({ status: 'ok', pending_exercises: pendingExercisesMemory });
+});
+
 
 app.post('/api/parse-workout-image', upload.single('image'), async (req, res) => {
   const incomingApiKey = req.header('x-atlas-api-key');
@@ -659,6 +774,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       formattedLogRows = enrichResult.formattedRows;
       enrichWarnings = enrichResult.warnings || [];
       const pendingExercises = enrichResult.pending_exercises || [];
+      // store pending exercises in memory (dedupe by exercise)
+      for (const pe of pendingExercises) {
+        const key = String(pe.exercise || '').trim().toLowerCase();
+        if (!key) continue;
+        const exists = pendingExercisesMemory.some(e => String(e.exercise || '').trim().toLowerCase() === key);
+        if (!exists) pendingExercisesMemory.push(pe);
+      }
     } catch (error) {
       await fs.promises.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });

@@ -87,6 +87,23 @@ async function getExerciseCatalog() {
   return response.data.values || [];
 }
 
+async function getRecentRows(tabName, maxRows = 100) {
+  const sheets = await getSheetsClient();
+  const range = `${tabName}!A:Z`;
+  console.log(`[sheets.js] Fetching recent rows from ${tabName} range ${range}`);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length <= 1) return [];
+  // exclude header row
+  const dataRows = rows.slice(1);
+  return dataRows.slice(-maxRows).map(r => r.map(cell => (cell === undefined ? '' : cell)));
+}
+
 async function getEffortSessionIds() {
   const values = await getColumnValues(effortSheetName, 'B');
   return values
@@ -120,6 +137,7 @@ module.exports = {
   getExerciseCatalog,
   getEffortSessionIds,
   getLogCompositeKeys,
+  getRecentRows,
   logSheetName,
   effortSheetName
 };

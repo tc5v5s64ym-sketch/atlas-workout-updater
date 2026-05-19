@@ -89,6 +89,14 @@ npm start
 
 ## API
 
+### New endpoints
+
+- `GET /api/history/recent` — Returns recent sessions, sets, and effort rows. Requires `x-atlas-api-key` header. Query params: `limit` (default 5), `exercise` (optional filter).
+- `GET /api/exercises/:liftCode` — Returns detail for a lift code (names seen, total sets, best weight/reps, recent sets). Requires `x-atlas-api-key`.
+- `GET /api/pending-exercises` — Returns pending exercises collected from recent `/api/complete-workout` calls (in-memory). Requires `x-atlas-api-key`.
+
+All new endpoints are read-only and will not change Google Sheets.
+
 
 ### POST /api/parse-workout-image
 
