@@ -4,12 +4,13 @@ A small Node.js Express app that accepts finalized workout data and appends it t
 
 ## Features
 
+- `GET /health`
 - `POST /api/log-workout`
 - Accepts JSON payload with:
-  - `session_id`
-  - `date`
-  - `log_rows`
-  - `effort_row`
+  - `session_id` (required)
+  - `date` (required)
+  - `log_rows` (required, non-empty array)
+  - `effort_row` (required, non-empty array)
 - Appends `log_rows` to the `Log` sheet tab
 - Appends `effort_row` to the `Effort` sheet tab
 - Uses Google Sheets API with a service account
@@ -74,6 +75,17 @@ Response:
 - `200` if data was appended successfully
 - `400` if payload validation fails
 - `500` if the Sheets API operation fails
+
+### GET /health
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "service": "atlas-workout-updater"
+}
+```
 
 ## Test payload
 
