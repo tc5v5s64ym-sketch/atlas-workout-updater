@@ -2,6 +2,9 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const {
   appendRows,
   validateConfig,
@@ -10,8 +13,32 @@ const {
   logSheetName,
   effortSheetName
 } = require('./sheets');
+const { parseWorkoutScreenshot } = require('./services/vision');
 
 validateConfig();
+
+const atlasApiKey = process.env.ATLAS_API_KEY;
+
+if (!atlasApiKey) {
+  throw new Error('Missing ATLAS_API_KEY in environment.');
+}
+
+
+const uploadDir = '/tmp/uploads';
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+      const safeOriginal = path.basename(file.originalname || 'upload.bin').replace(/[^a-zA-Z0-9._-]/g, '_');
+      cb(null, `${Date.now()}-${safeOriginal}`);
+    }
+  }),
+  limits: {
+    fileSize: 10 * 1024 * 1024
+  }
+});
 
 const app = express();
 app.use(express.json());
@@ -240,6 +267,40 @@ function logRowObjectToArray(rowObj) {
   });
 }
 
+
+function toDateOnly(value) {
+  if (!value) return new Date().toISOString().slice(0, 10);
+  return String(value);
+}
+
+function generateSessionId(dateValue) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `session-${toDateOnly(dateValue)}-${stamp}`;
+}
+
+function isAutoWriteEnabled(value) {
+  return String(value || '').toLowerCase() === 'true';
+}
+
+function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
+  const dateValue = toDateOnly(formFields.date);
+  const sessionId = formFields.session_id || generateSessionId(dateValue);
+
+  const effortRow = [
+    dateValue,
+    sessionId,
+    parsedMetrics?.duration ?? '',
+    parsedMetrics?.activeCalories ?? '',
+    parsedMetrics?.totalCalories ?? '',
+    parsedMetrics?.averageHR ?? '',
+    parsedMetrics?.peakHR ?? '',
+    formFields.location || '',
+    formFields.notes || ''
+  ];
+
+  return { effortRow, sessionId, dateValue };
+}
+
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) {
   const catalogRows = await getExerciseCatalog();
   const catalogMap = buildExerciseCatalogMap(catalogRows);
@@ -259,7 +320,70 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'atlas-workout-updater' });
 });
 
+
+app.post('/api/parse-workout-image', upload.single('image'), async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    if (req.file?.path) {
+      fs.promises.unlink(req.file.path).catch(() => {});
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'image file is required in multipart/form-data under field name image' });
+  }
+
+  try {
+    const formFields = req.body || {};
+    const visionResult = await parseWorkoutScreenshot(req.file.path);
+    const { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(visionResult.parsed_metrics, formFields);
+
+    let sheetWrite = 'skipped';
+
+    if (isAutoWriteEnabled(formFields.auto_write)) {
+      try {
+        const existingEffortSessionIds = await getEffortSessionIds();
+        const duplicate = existingEffortSessionIds
+          .map(id => String(id).toLowerCase())
+          .includes(String(sessionId).toLowerCase());
+
+        if (!duplicate) {
+          await appendRows(effortSheetName, [effortRow]);
+          sheetWrite = 'success';
+        }
+      } catch (error) {
+        sheetWrite = 'failed';
+      }
+    }
+
+    const responseBody = {
+      status: visionResult.status,
+      parsed: visionResult.parsed_metrics,
+      filename: req.file.filename,
+      size: req.file.size,
+      session_id: sessionId,
+      date: dateValue,
+      effort_row: effortRow,
+      sheet_write: sheetWrite
+    };
+
+    return res.status(200).json(responseBody);
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to parse workout image: ${error.message}` });
+  } finally {
+    await fs.promises.unlink(req.file.path).catch(() => {});
+  }
+});
+
 app.post('/api/log-workout', async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   const payload = req.body;
 
   if (!payload || typeof payload !== 'object') {
