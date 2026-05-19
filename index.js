@@ -484,6 +484,132 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
   }
 });
 
+
+app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
+  const incomingApiKey = req.header('x-atlas-api-key');
+
+  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
+    if (req.file?.path) {
+      fs.promises.unlink(req.file.path).catch(() => {});
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'image file is required in multipart/form-data under field name image' });
+  }
+
+  const formFields = req.body || {};
+
+  // log_rows_json is required
+  if (!formFields.log_rows_json) {
+    await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'log_rows_json is required in multipart/form-data' });
+  }
+
+  let parsedLogRows;
+  try {
+    parsedLogRows = JSON.parse(formFields.log_rows_json);
+  } catch (err) {
+    await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: `log_rows_json is not valid JSON: ${err.message}` });
+  }
+
+  if (!Array.isArray(parsedLogRows) || parsedLogRows.length === 0) {
+    await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'log_rows_json must be a non-empty JSON array' });
+  }
+
+  try {
+    // 1) Parse image to get effort metrics
+    const visionResult = await parseWorkoutScreenshot(req.file.path);
+
+    // 2) Validate parsed effort metrics (required before any writes)
+    let normalizedMetrics;
+    let metricWarnings = [];
+    try {
+      const result = normalizeAndValidateParsedMetrics(visionResult.parsed_metrics);
+      normalizedMetrics = result.normalized;
+      metricWarnings = result.warnings || [];
+    } catch (error) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
+    }
+
+    // 3) Determine session/date
+    const dateValue = toDateOnly(formFields.date);
+    const sessionId = formFields.session_id || generateSessionId(dateValue);
+
+    // 4) Check duplicate session protection
+    let existingEffortSessionIds;
+    try {
+      existingEffortSessionIds = await getEffortSessionIds();
+    } catch (error) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      return res.status(500).json({ error: 'Failed to validate duplicate session.' });
+    }
+
+    if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase())) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      return res.status(409).json({ error: 'Duplicate session.' });
+    }
+
+    // 5) Enrich and format log rows using existing catalog logic
+    let formattedLogRows;
+    let enrichWarnings = [];
+    try {
+      const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue);
+      formattedLogRows = enrichResult.formattedRows;
+      enrichWarnings = enrichResult.warnings || [];
+    } catch (error) {
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
+    }
+
+    // 6) Build effort_row from normalized metrics
+    const { effortRow } = buildEffortRowFromParsedMetrics(normalizedMetrics, {
+      date: dateValue,
+      session_id: sessionId,
+      location: formFields.location,
+      notes: formFields.notes
+    });
+
+    // 7) Append log rows and effort row
+    let logAppendCount = 0;
+    let effortWritten = false;
+    try {
+      const logResponse = await appendRows(logSheetName, formattedLogRows);
+      // can't reliably get rows count from Sheets API here; use formattedLogRows.length
+      logAppendCount = formattedLogRows.length;
+
+      await appendRows(effortSheetName, [effortRow]);
+      effortWritten = true;
+    } catch (error) {
+      // If append fails, report 500. Note: some partial writes may have happened.
+      await fs.promises.unlink(req.file.path).catch(() => {});
+      return res.status(500).json({ error: 'Failed to append workout data.' });
+    }
+
+    const combinedWarnings = [...new Set([...(metricWarnings || []), ...(enrichWarnings || [])])];
+
+    const responseBody = {
+      status: visionResult.status,
+      session_id: sessionId,
+      date: dateValue,
+      log_rows_written: logAppendCount,
+      effort_written: effortWritten,
+      parsed_effort: normalizedMetrics,
+      warnings: combinedWarnings
+    };
+
+    return res.status(200).json(responseBody);
+  } catch (error) {
+    return res.status(500).json({ error: `Failed to complete workout ingestion: ${error.message}` });
+  } finally {
+    await fs.promises.unlink(req.file.path).catch(() => {});
+  }
+});
+
 app.post('/api/log-workout', async (req, res) => {
   const incomingApiKey = req.header('x-atlas-api-key');
 

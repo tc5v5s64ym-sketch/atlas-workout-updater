@@ -214,6 +214,67 @@ curl -X POST https://<your-service-url>/api/log-workout \
   -d @workout-payload.json
 ```
 
+### POST /api/complete-workout
+
+Full ingestion endpoint that accepts an Apple Watch screenshot plus simplified log rows and appends both the `Log` and `Effort` tabs.
+
+Required header:
+
+```http
+x-atlas-api-key: <ATLAS_API_KEY>
+```
+
+Accepts `multipart/form-data` with fields:
+- `image`: Apple Watch screenshot file (required)
+- `session_id`: optional (server generates one if omitted)
+- `date`: optional (defaults to today if omitted)
+- `location`: optional
+- `notes`: optional
+- `log_rows_json`: required — JSON array of simplified log rows with this shape:
+
+```json
+[
+  {
+    "exercise": "Back Squat",
+    "set_number": 1,
+    "weight": 225,
+    "reps": 5,
+    "rir": 2,
+    "notes": ""
+  }
+]
+```
+
+Behavior:
+- Uses the same Vision parser (`/services/vision.js`) to extract effort metrics from the screenshot.
+- Validates and normalizes parsed effort metrics before writing (same rules as documented above). If validation fails, nothing is written and the endpoint returns `400` with an error.
+- Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
+- Applies duplicate `session_id` protection before writing; if duplicate, returns `409` and writes nothing.
+- Appends enriched log rows to the `Log` sheet and the normalized effort row to the `Effort` sheet.
+
+Response (200 on success):
+
+```json
+{
+  "status": "image received",
+  "session_id": "session-2026-05-19-...",
+  "date": "2026-05-19",
+  "log_rows_written": 4,
+  "effort_written": true,
+  "parsed_effort": {
+    "duration": "00:52:28",
+    "activeCalories": 400,
+    "totalCalories": 520,
+    "averageHR": 130,
+    "peakHR": 150,
+    "workoutType": "Mixed Cardio"
+  },
+  "warnings": ["totalCalories is less than activeCalories"]
+}
+```
+
+This endpoint does not change the behavior of `/api/log-workout` or `/api/parse-workout-image` — it simply combines parsing, enrichment, validation, and append steps into one flow.
+
 Response:
 
 - `200` if data was appended successfully
