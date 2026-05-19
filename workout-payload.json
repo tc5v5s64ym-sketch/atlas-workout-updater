@@ -1,9 +1,47 @@
 {
-  "session_id": "session-123",
+  "session_id": "session-2026-05-19-01",
   "date": "2026-05-19",
   "log_rows": [
-    ["session-123", "2026-05-19", "Bench Press", "3", "8", "225"],
-    ["session-123", "2026-05-19", "Squat", "4", "6", "315"]
+    {
+      "date_clean": "2026-05-19",
+      "session_id": "session-2026-05-19-01",
+      "exercise": "Incline Dumbbell Press",
+      "set_number": 1,
+      "weight": 70,
+      "reps": 8,
+      "rir": 2,
+      "notes": "Paused last rep"
+    },
+    {
+      "date_clean": "2026-05-19",
+      "session_id": "session-2026-05-19-01",
+      "exercise": "Barbell Back Squat",
+      "set_number": 5,
+      "weight": 315,
+      "reps": 5,
+      "rir": 1,
+      "notes": "Good depth"
+    },
+    {
+      "date_clean": "2026-05-19",
+      "session_id": "session-2026-05-19-01",
+      "exercise": "Weighted Pull-Up",
+      "set_number": 3,
+      "weight": 45,
+      "reps": 6,
+      "rir": 2,
+      "notes": "Controlled descent"
+    }
   ],
-  "effort_row": ["session-123", "2026-05-19", "Total Effort", "8.5"]
+  "effort_row": {
+    "date": "2026-05-19",
+    "session_id": "session-2026-05-19-01",
+    "duration": "01:05:00",
+    "active_calories": 520,
+    "total_calories": 620,
+    "average_hr": 135,
+    "peak_hr": 162,
+    "location": "Gym",
+    "notes": "Steady pace, focused on form"
+  }
 }

@@ -60,9 +60,45 @@ async function appendRows(tabName, rows) {
   return response;
 }
 
+async function getColumnValues(tabName, column) {
+  const sheets = await getSheetsClient();
+  const range = `${tabName}!${column}:${column}`;
+  console.log(`[sheets.js] Fetching column ${column} from ${tabName}`);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range,
+    majorDimension: 'COLUMNS'
+  });
+
+  return response.data.values?.[0] || [];
+}
+
+async function getExerciseCatalog() {
+  const sheets = await getSheetsClient();
+  const range = `Exercise_Catalog!A:Z`;
+  console.log(`[sheets.js] Fetching Exercise_Catalog from range ${range}`);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range
+  });
+
+  return response.data.values || [];
+}
+
+async function getEffortSessionIds() {
+  const values = await getColumnValues(effortSheetName, 'B');
+  return values
+    .map(value => String(value).trim())
+    .filter(value => value && value.toLowerCase() !== 'session id');
+}
+
 module.exports = {
   appendRows,
   validateConfig,
+  getExerciseCatalog,
+  getEffortSessionIds,
   logSheetName,
   effortSheetName
 };

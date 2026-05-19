@@ -9,10 +9,12 @@ A small Node.js Express app that accepts finalized workout data and appends it t
 - Accepts JSON payload with:
   - `session_id` (required)
   - `date` (required)
-  - `log_rows` (required, non-empty array)
-  - `effort_row` (required, non-empty array)
+  - `log_rows` (required, non-empty array with 11 values per row or objects matching Log_Cleaned fields; missing canonical fields are auto-filled from `Exercise_Catalog`)
+  - `effort_row` (required, 9 values or object with Effort schema)
 - Appends `log_rows` to the `Log` sheet tab
 - Appends `effort_row` to the `Effort` sheet tab
+- Rejects duplicate Session IDs already present in the Effort sheet
+- Enriches incoming exercise names from the `Exercise_Catalog` tab
 - Uses Google Sheets API with a service account
 - Stores credentials in environment variables
 
@@ -64,9 +66,28 @@ Request body:
   "session_id": "session-123",
   "date": "2026-05-19",
   "log_rows": [
-    ["session-123", "2026-05-19", "Exercise", "Sets", "Reps", "Weight"]
+    {
+      "date_clean": "2026-05-19",
+      "session_id": "session-123",
+      "exercise": "Bench Press",
+      "set_number": 3,
+      "weight": 225,
+      "reps": 8,
+      "rir": 2,
+      "notes": "Good control"
+    }
   ],
-  "effort_row": ["session-123", "2026-05-19", "Total Effort", "8.5"]
+  "effort_row": {
+    "date": "2026-05-19",
+    "session_id": "session-123",
+    "duration": "00:54:00",
+    "active_calories": 485,
+    "total_calories": 580,
+    "average_hr": 132,
+    "peak_hr": 158,
+    "location": "Gym",
+    "notes": "Focused on form and tempo"
+  }
 }
 ```
 
@@ -74,7 +95,10 @@ Response:
 
 - `200` if data was appended successfully
 - `400` if payload validation fails
+- `409` if the session already exists in the Effort sheet
 - `500` if the Sheets API operation fails
+
+Successful responses may include a `warnings` array if an exercise name could not be matched in `Exercise_Catalog`.
 
 ### GET /health
 
