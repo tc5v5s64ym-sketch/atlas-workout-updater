@@ -618,8 +618,7 @@ function registerRoute(method, path, handler, meta = {}) {
 }
 
 app.get('/routes', (req, res) => {
-  const routes = routeRegistry.length ? routeRegistry : routeDefinitions;
-  return standardSuccess(req, res, 'Available routes', { routes });
+  return standardSuccess(req, res, 'Available routes', { routes: routeDefinitions });
 });
 
 app.get('/version', (req, res) => {
@@ -1143,7 +1142,6 @@ app.get('/api/bodyweight/history', async (req, res) => {
 });
 
 app.post('/api/admin/preview-test-rows', async (req, res) => {
-  if (!requireAdminKey(req, res)) return;
 
   try {
     const logRows = await getSheetRows(logSheetName);
@@ -1508,20 +1506,14 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+
   if (res.headersSent) {
     return next(err);
   }
 
-  if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return standardError(req, res, 'File too large. Max size is 10MB.', null, 413);
-  }
-
-  if (err && err.message && /^Only image\/(png|jpeg|jpg|webp)/.test(err.message)) {
-    return standardError(req, res, err.message, null, 400);
-  }
-
-  console.error('Unhandled error:', err);
   return standardError(
+    req,
     res,
     process.env.NODE_ENV === 'production' ? 'Internal server error' : 'Unhandled error',
     process.env.NODE_ENV === 'production' ? undefined : err.message || err,
