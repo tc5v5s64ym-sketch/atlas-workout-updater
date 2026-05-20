@@ -12,10 +12,22 @@ const {
   getEffortSessionIds,
   getLogCompositeKeys,
   getRecentRows,
+  getSheetRows,
   getSpreadsheetTabs,
   logSheetName,
   effortSheetName
 } = require('./sheets');
+const {
+  buildSessionSummary,
+  computeExerciseProgress,
+  computeMuscleGroupVolume,
+  searchSessions,
+  detectRecentPrs,
+  recommendNextSet,
+  buildBodyweightHistory,
+  previewTestRows
+} = require('./services/analytics');
+const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { parseWorkoutScreenshot } = require('./services/vision');
 
 validateConfig();
@@ -98,7 +110,16 @@ const routeDefinitions = [
   { path: '/api/schema/complete-workout', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/parse-workout-image', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/complete-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/log-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
+  { path: '/api/log-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/session/:sessionId/summary', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/exercises/:liftCode/progress', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/volume/muscle-groups', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/search/sessions', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/prs/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/recommend/next/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/bodyweight', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/bodyweight/history', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/admin/preview-test-rows', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false }
 ];
 
 const logCleanedColumns = [
@@ -358,6 +379,10 @@ function requireApiKey(req, res) {
     return false;
   }
   return true;
+}
+
+function requireAdminKey(req, res) {
+  return requireApiKey(req, res);
 }
 
 function buildExerciseCatalogEntries(rows) {
@@ -746,10 +771,64 @@ app.get('/api/exercises/:liftCode', async (req, res) => {
   }
 });
 
+app.get('/api/exercises/:liftCode/progress', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const liftCode = String(req.params.liftCode || '').trim();
+  if (!liftCode) {
+    return standardError(res, 'liftCode is required in path', null, 400);
+  }
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const progress = computeExerciseProgress(allLog, liftCode);
+    return standardSuccess(res, 'Exercise progress', progress);
+  } catch (error) {
+    return standardError(res, 'Failed to fetch exercise progress', error.message, 500);
+  }
+});
+
 // GET /api/pending-exercises
 app.get('/api/pending-exercises', (req, res) => {
   if (!requireApiKey(req, res)) return;
   return standardSuccess(res, 'Pending exercises endpoint', { pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+});
+
+app.get('/api/volume/muscle-groups', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const days = parseInt(req.query.days || '14', 10);
+  if (Number.isNaN(days) || days <= 0) {
+    return standardError(res, 'days must be a positive integer', null, 400);
+  }
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const groups = computeMuscleGroupVolume(allLog, days);
+    return standardSuccess(res, 'Muscle group volume summary', { days, groups });
+  } catch (error) {
+    return standardError(res, 'Failed to fetch muscle group volume', error.message, 500);
+  }
+});
+
+app.get('/api/search/sessions', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const filters = {
+    exercise: req.query.exercise,
+    liftCode: req.query.liftCode,
+    dateFrom: req.query.dateFrom,
+    dateTo: req.query.dateTo,
+    muscleGroup: req.query.muscleGroup
+  };
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const result = searchSessions(allLog, filters);
+    return standardSuccess(res, 'Session search results', result);
+  } catch (error) {
+    return standardError(res, 'Failed to search sessions', error.message, 500);
+  }
 });
 
 // GET /api/catalog/exercises
@@ -856,72 +935,15 @@ app.get('/api/schema/complete-workout', (req, res) => {
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
   if (!requireApiKey(req, res)) return;
 
-  const liftCode = String(req.params.liftCode || '').trim().toLowerCase();
+  const liftCode = String(req.params.liftCode || '').trim();
   if (!liftCode) {
     return standardError(res, 'liftCode is required in path', null, 400);
   }
 
   try {
-    const allLog = await getRecentRows(logSheetName, 1000);
-    const workingSets = allLog
-      .filter(row => String(row[5] || '').toLowerCase() === liftCode)
-      .filter(row => Number(row[7]) > 0)
-      .sort((a, b) => String(a[0] || '').localeCompare(String(b[0] || '')) || Number(a[6]) - Number(b[6]));
-
-    if (!workingSets.length) {
-      return standardError(res, `No working sets found for liftCode ${liftCode}`, null, 404);
-    }
-
-    const recentWorkingSets = workingSets.slice(-10).map(r => ({
-      date_clean: r[0],
-      session_id: r[1],
-      exercise: r[2],
-      canonical_exercise: r[3],
-      muscle_group: r[4],
-      lift_code: r[5],
-      set_number: r[6],
-      weight: r[7],
-      reps: r[8],
-      rir: r[9],
-      notes: r[10]
-    }));
-
-    const lastSet = recentWorkingSets[recentWorkingSets.length - 1];
-    const lastWeight = Number(lastSet.weight);
-    const lastReps = Number(lastSet.reps);
-    const lastRir = Number(lastSet.rir);
-    const lastSessionPerformance = {
-      date_clean: lastSet.date_clean,
-      session_id: lastSet.session_id,
-      weight: lastWeight,
-      reps: lastReps,
-      rir: lastRir,
-      exercise: lastSet.exercise
-    };
-
-    let recommendation = 'Repeat the last working set and focus on consistent form.';
-    let reasoning = 'No significant change detected from the last set.';
-
-    if (lastWeight > 0 && Number.isFinite(lastReps) && Number.isFinite(lastRir)) {
-      if (lastReps >= 8 && lastRir >= 2) {
-        recommendation = `Increase weight slightly from ${lastWeight} to ${lastWeight + 2.5} and aim for ${lastReps} reps.`;
-        reasoning = 'Last top set hit target reps with sufficient RIR, so a small progression is reasonable.';
-      } else if (lastReps < 8 || lastRir <= 0) {
-        recommendation = `Keep the same weight or reduce by a small step and focus on reaching the target reps.`;
-        reasoning = 'Reps dropped or RIR was low, so maintain or reduce weight to rebuild confidence and volume.';
-      } else {
-        recommendation = `Repeat the current weight and try to add a rep or two next session.`;
-        reasoning = 'Current performance is solid, so prioritize an extra rep before increasing weight.';
-      }
-    }
-
-    return standardSuccess(res, 'Recommendation generated', {
-      liftCode: liftCode.toUpperCase(),
-      recentWorkingSets,
-      lastSessionPerformance,
-      recommendation,
-      reasoning
-    });
+    const allLog = await getSheetRows(logSheetName);
+    const recommendation = recommendNextSet(allLog, liftCode);
+    return standardSuccess(res, 'Recommendation generated', recommendation);
   } catch (error) {
     return standardError(res, 'Failed to compute recommendation', error.message, 500);
   }
@@ -1016,47 +1038,33 @@ app.get('/api/summary/weekly', async (req, res) => {
 
 // GET /api/prs/recent
 app.get('/api/prs/recent', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!requireApiKey(req, res)) return;
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const prs = detectRecentPrs(allLog);
+    return standardSuccess(res, 'Recent PRs', { prs });
+  } catch (error) {
+    return standardError(res, 'Failed to fetch recent PRs', error.message, 500);
+  }
+});
+
+// GET /api/session/:sessionId/summary
+app.get('/api/session/:sessionId/summary', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId) {
+    return res.status(400).json({ error: 'sessionId is required in path' });
   }
 
   try {
-    const allLog = await getRecentRows(logSheetName, 1000);
-    const workingSets = allLog.filter(row => Number(row[7]) > 0);
-    const liftCodeMap = new Map();
-
-    workingSets.forEach(row => {
-      const code = String(row[5] || '').trim().toUpperCase();
-      if (!code) return;
-      const weight = Number(row[7]);
-      const reps = Number(row[8]);
-      const current1RM = Number.isFinite(weight) && Number.isFinite(reps) ? weight * (1 + reps / 30) : 0;
-      const existing = liftCodeMap.get(code) || {
-        liftCode: code,
-        exercise: row[2],
-        bestWeight: 0,
-        bestRepsAtBestWeight: 0,
-        bestEstimated1RM: 0
-      };
-
-      if (weight > existing.bestWeight) {
-        existing.bestWeight = weight;
-        existing.bestRepsAtBestWeight = reps;
-      } else if (weight === existing.bestWeight && reps > existing.bestRepsAtBestWeight) {
-        existing.bestRepsAtBestWeight = reps;
-      }
-
-      if (current1RM > existing.bestEstimated1RM) {
-        existing.bestEstimated1RM = current1RM;
-      }
-
-      liftCodeMap.set(code, existing);
-    });
-
-    return standardSuccess(res, 'Recent PRs', { prs: Array.from(liftCodeMap.values()) });
+    const allLog = await getSheetRows(logSheetName);
+    const allEffort = await getSheetRows(effortSheetName);
+    const summary = buildSessionSummary(allLog, allEffort, sessionId);
+    return standardSuccess(res, 'Session summary', summary);
   } catch (error) {
-    return standardError(res, 'Failed to fetch recent PRs', error.message, 500);
+    return standardError(res, 'Failed to build session summary', error.message, 500);
   }
 });
 
@@ -1070,8 +1078,8 @@ app.get('/api/session/:sessionId', async (req, res) => {
   }
 
   try {
-    const recentLog = await getRecentRows(logSheetName, 1000);
-    const recentEffort = await getRecentRows(effortSheetName, 1000);
+    const recentLog = await getSheetRows(logSheetName);
+    const recentEffort = await getSheetRows(effortSheetName);
 
     const sessionLogRows = recentLog
       .filter(row => String(row[1] || '').trim().toLowerCase() === sessionId.toLowerCase())
@@ -1108,6 +1116,70 @@ app.get('/api/session/:sessionId', async (req, res) => {
   }
 });
 
+app.post('/api/bodyweight', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const { date, weight, notes } = req.body || {};
+  if (!date) {
+    return standardError(res, 'date is required', null, 400);
+  }
+
+  const weightValue = parseNumber(weight);
+  if (weightValue === null) {
+    return standardError(res, 'weight is required and must be a number', null, 400);
+  }
+
+  const normalizedDate = normalizeDate(date);
+  if (!normalizedDate) {
+    return standardError(res, 'date must be a valid YYYY-MM-DD value', null, 400);
+  }
+
+  try {
+    const tabs = await getSpreadsheetTabs();
+    if (!tabs.includes('Bodyweight')) {
+      return standardError(res, 'Bodyweight tab is missing. Cannot append bodyweight entry.', null, 400);
+    }
+    const row = [normalizedDate, weightValue, notes || ''];
+    await appendRows('Bodyweight', [row]);
+    return standardSuccess(res, 'Bodyweight entry appended', { entry: { date: normalizedDate, weight: weightValue, notes: notes || '' } });
+  } catch (error) {
+    return standardError(res, 'Failed to append bodyweight entry', error.message, 500);
+  }
+});
+
+app.get('/api/bodyweight/history', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  const days = parseInt(req.query.days || '30', 10);
+  if (Number.isNaN(days) || days <= 0) {
+    return standardError(res, 'days must be a positive integer', null, 400);
+  }
+
+  try {
+    const tabs = await getSpreadsheetTabs();
+    if (!tabs.includes('Bodyweight')) {
+      return standardError(res, 'Bodyweight tab is missing. Cannot read history.', null, 400);
+    }
+    const allRows = await getSheetRows('Bodyweight');
+    const history = buildBodyweightHistory(allRows, days);
+    return standardSuccess(res, 'Bodyweight history', history);
+  } catch (error) {
+    return standardError(res, 'Failed to fetch bodyweight history', error.message, 500);
+  }
+});
+
+app.post('/api/admin/preview-test-rows', async (req, res) => {
+  if (!requireAdminKey(req, res)) return;
+
+  try {
+    const logRows = await getSheetRows(logSheetName);
+    const effortRows = await getSheetRows(effortSheetName);
+    const preview = previewTestRows(logRows, effortRows);
+    return standardSuccess(res, 'Preview test rows', preview);
+  } catch (error) {
+    return standardError(res, 'Failed to preview test rows', error.message, 500);
+  }
+});
 
 app.post('/api/parse-workout-image', upload.single('image'), async (req, res) => {
   const incomingApiKey = req.header('x-atlas-api-key');
@@ -1335,6 +1407,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     const duplicateWarnings = skippedDuplicates.length > 0 ? [`${skippedDuplicates.length} log row(s) skipped due to duplicate session_id+exercise+set_number`] : [];
     const combinedWarnings = [...new Set([...(metricWarnings || []), ...(enrichWarnings || []), ...duplicateWarnings])];
 
+    const qualityScore = calculateQualityScore({
+      totalSets: formattedLogRows.length,
+      effortDuration: normalizedMetrics.duration,
+      averageHR: normalizedMetrics.averageHR,
+      uniqueExercisesCount: new Set(formattedLogRows.map(r => String(r[2] || '').toLowerCase())).size,
+      validationWarnings: combinedWarnings
+    });
+
     const responseBody = {
       status: 'ok',
       message: 'complete-workout processed',
@@ -1343,7 +1423,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         date: dateValue,
         log_rows_written: logAppendCount,
         effort_written: effortWritten,
-        parsed_effort: normalizedMetrics
+        parsed_effort: normalizedMetrics,
+        quality_score: qualityScore
       }
     };
 

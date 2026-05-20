@@ -100,8 +100,24 @@ async function getRecentRows(tabName, maxRows = 100) {
   const rows = response.data.values || [];
   if (rows.length <= 1) return [];
   // exclude header row
-  const dataRows = rows.slice(1);
-  return dataRows.slice(-maxRows).map(r => r.map(cell => (cell === undefined ? '' : cell)));
+  const dataRows = rows.slice(1).map(row => row.map(cell => (cell === undefined ? '' : cell)));
+  return dataRows.slice(-maxRows);
+}
+
+async function getSheetRows(tabName, maxRows = Infinity) {
+  const sheets = await getSheetsClient();
+  const range = `${tabName}!A:Z`;
+  console.log(`[sheets.js] Fetching rows from ${tabName} range ${range}`);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range
+  });
+
+  const rows = response.data.values || [];
+  if (rows.length <= 1) return [];
+  const dataRows = rows.slice(1).map(row => row.map(cell => (cell === undefined ? '' : cell)));
+  return Number.isFinite(maxRows) ? dataRows.slice(0, maxRows) : dataRows;
 }
 
 async function getSpreadsheetTabs() {
@@ -147,6 +163,7 @@ module.exports = {
   getEffortSessionIds,
   getLogCompositeKeys,
   getRecentRows,
+  getSheetRows,
   getSpreadsheetTabs,
   logSheetName,
   effortSheetName

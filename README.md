@@ -89,17 +89,208 @@ npm start
 
 ## API
 
-### New endpoints
+### All Endpoints (Route Summary)
+
+| Endpoint | Method | Auth | Read-Only | Purpose |
+|----------|--------|------|-----------|---------|
+| `/api/session/:sessionId/summary` | GET | Yes | Yes | Get comprehensive session summary with quality score |
+| `/api/exercises/:liftCode/progress` | GET | Yes | Yes | Track exercise progress over time with trends |
+| `/api/volume/muscle-groups` | GET | Yes | Yes | Aggregate volume by muscle group (configurable days) |
+| `/api/search/sessions` | GET | Yes | Yes | Find sessions by exercise, lift code, date range, muscle group |
+| `/api/prs/recent` | GET | Yes | Yes | Get recent personal records by lift code |
+| `/api/recommend/next/:liftCode` | GET | Yes | Yes | Get coaching recommendation for next working set |
+| `/api/bodyweight` | POST | Yes | No | Log bodyweight entry (requires Bodyweight tab) |
+| `/api/bodyweight/history` | GET | Yes | Yes | Retrieve bodyweight history with trend analysis |
+| `/api/admin/preview-test-rows` | POST | Yes | Yes | Preview rows marked as test data (does NOT delete) |
+| `/api/history/recent` | GET | Yes | Yes | Returns recent sessions, sets, and effort rows |
+| `/api/exercises/:liftCode` | GET | Yes | Yes | Returns detail for a lift code |
+| `/api/recommend/next/:liftCode` | GET | Yes | Yes | Returns coaching guidance for the next working set |
+| `/api/summary/weekly` | GET | Yes | Yes | Returns a 7-day workout summary |
+| `/api/catalog/exercises` | GET | Yes | Yes | List all exercises from Exercise_Catalog |
+| `/api/catalog/search` | GET | Yes | Yes | Search Exercise_Catalog by name or lift code |
+| `/api/session/:sessionId` | GET | Yes | Yes | Returns all Log_Cleaned rows for a session |
+| `/api/complete-workout` | POST | Yes | No | Full workout ingestion (image + log rows) |
+| `/api/parse-workout-image` | POST | Yes | No | Parse workout screenshot only, no data write |
+| `/api/log-workout` | POST | Yes | No | Append log and effort rows directly |
+
+---
+
+### Feature Breakdown
+
+#### 1. Session Summary API
+**GET /api/session/:sessionId/summary**
+
+Returns a comprehensive summary of a single workout session including:
+- `session_id`, `date`, `exercises` list, `total_sets`, `total_volume`
+- `top_set` (highest weight × reps set with weight > 0)
+- `effort` (HR, duration, calories from Effort tab if present)
+- `quick_summary` (narrative summary of the session)
+- `quality_score` (out of 5: +1 each for ≥10 sets, ≥30 min duration, ≥100 avg HR, ≥3 exercises, no warnings)
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  https://your-api.com/api/session/20250517-AM-01/summary
+```
+
+#### 2. Exercise Progress API
+**GET /api/exercises/:liftCode/progress**
+
+Tracks a specific lift over time:
+- `sessions` (all sessions where this lift was performed)
+- `best_weight_over_time` (weight progression per session)
+- `estimated_1rm_over_time` (estimated 1RM progression)
+- `volume_over_time` (total volume per session)
+- `recent_trend` ("up", "flat", or "down" based on last two sessions)
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  https://your-api.com/api/exercises/SQ/progress
+```
+
+#### 3. Muscle Group Volume API
+**GET /api/volume/muscle-groups?days=14**
+
+Aggregates volume by muscle group for recent sessions:
+- Query param: `days` (default 14)
+- Returns: array of `{ muscle_group, volume, set_count }`
+- Ignores weight=0 rows for volume calculation but counts them as sets
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  "https://your-api.com/api/volume/muscle-groups?days=7"
+```
+
+#### 4. Session Search API
+**GET /api/search/sessions**
+
+Find sessions matching multiple criteria (all optional):
+- Query params: `exercise`, `liftCode`, `dateFrom` (YYYY-MM-DD), `dateTo`, `muscleGroup`
+- Returns: `{ session_ids, rows }` matching all provided filters
+- Does NOT write to Sheets
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  "https://your-api.com/api/search/sessions?liftCode=BP&dateFrom=2025-05-01"
+```
+
+#### 5. Recent PRs API
+**GET /api/prs/recent**
+
+For each lift code in recent history, returns:
+- `bestWeightSet` (highest weight set)
+- `bestRepSet` (highest reps set)
+- `bestEstimated1RMSet` (highest estimated 1RM)
+- All ignore weight=0 rows
+- Includes date and session_id
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  https://your-api.com/api/prs/recent
+```
+
+#### 6. Recommended Next Set API
+**GET /api/recommend/next/:liftCode**
+
+Intelligent recommendation for the next working set:
+- Returns: `{ recommendation, reasoning, last_working_sets }`
+- Logic:
+  - If RIR ≥ 2 and reps stable: recommend +5 lb (upper body) or +10 lb (lower body)
+  - If RIR ≤ 0: recommend repeat or reduce 5%
+  - Otherwise: same weight, add reps
+- Simple, explainable reasoning
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  https://your-api.com/api/recommend/next/BP
+```
+
+#### 7. Bodyweight Logging
+**POST /api/bodyweight**
+
+Append a bodyweight entry (requires Bodyweight tab to exist):
+- Request body:
+  ```json
+  {
+    "date": "2025-05-17",
+    "weight": 240.5,
+    "notes": "morning"
+  }
+  ```
+- If Bodyweight tab missing: returns 400 error (does not auto-create)
+
+Example:
+```bash
+curl -X POST -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"date":"2025-05-17","weight":240.5}' \
+  https://your-api.com/api/bodyweight
+```
+
+#### 8. Bodyweight History
+**GET /api/bodyweight/history?days=30**
+
+Retrieve bodyweight entries with trend:
+- Query param: `days` (default 30)
+- Returns: `{ entries, latest, average, trend }`
+- `trend`: "up", "down", or "flat"
+
+Example:
+```bash
+curl -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  "https://your-api.com/api/bodyweight/history?days=90"
+```
+
+#### 9. Cleanup Test Data Preview
+**POST /api/admin/preview-test-rows**
+
+Admin helper to identify test data (does NOT delete):
+- Returns rows where:
+  - Notes contain "test"
+  - Session ID contains "test"
+  - Session ID contains "session-2026"
+- Returns: `{ log_candidates, effort_candidates }`
+- ⚠️ **Preview only—no rows are deleted**
+
+Example:
+```bash
+curl -X POST -H "x-atlas-api-key: $ATLAS_API_KEY" \
+  https://your-api.com/api/admin/preview-test-rows
+```
+
+#### 10. Quality Score Calculation
+
+Used in session summaries and complete-workout responses. Simple rules:
+- +1 if total_sets ≥ 10
+- +1 if effort duration ≥ 30 minutes
+- +1 if average_hr ≥ 100
+- +1 if session has ≥ 3 unique exercises
+- +1 if no validation warnings
+- **Score out of 5**
+
+---
+
+### Existing Endpoints (Maintained)
 
 - `GET /api/history/recent` — Returns recent sessions, sets, and effort rows. Requires `x-atlas-api-key` header. Query params: `limit` (default 5), `exercise` (optional filter), `exclude_test=true` (optional to filter out rows where notes contain "test").
 - `GET /api/exercises/:liftCode` — Returns detail for a lift code (names seen, total sets, best weight/reps, best weight set, best volume set, estimated 1RM, and recent working sets). Requires `x-atlas-api-key`.
-- `GET /api/recommend/next/:liftCode` — Returns coaching guidance for the next working set on a lift. Requires `x-atlas-api-key`.
 - `GET /api/summary/weekly` — Returns a 7-day workout summary across Log and Effort rows. Requires `x-atlas-api-key`.
-- `GET /api/prs/recent` — Returns recent personal records by lift code using best weight, best reps at best weight, and estimated 1RM. Requires `x-atlas-api-key`.
 - `GET /api/pending-exercises` — Read-only placeholder. Returns an empty pending exercise list and a message that persistence is not implemented. Requires `x-atlas-api-key`.
 - `GET /api/session/:sessionId` — Returns all `Log_Cleaned` rows and the matching Effort row for a given session. Requires `x-atlas-api-key`.
 
-All new endpoints are read-only and will not change Google Sheets.
+---
+
+### Authentication & Admin Routes
+
+All `/api/*` endpoints require `x-atlas-api-key` header.
+
+Admin routes (`/api/admin/*`) use the same key. **No destructive delete endpoints are implemented.** Currently:
+- `/api/admin/preview-test-rows` — Preview-only, never modifies data
 
 
 ### POST /api/parse-workout-image
