@@ -75,7 +75,9 @@ POST /api/complete-workout
 
 # Direct log/effort append
 POST /api/log-workout
-# JSON body with session_id, date, log_rows, effort_row
+# JSON body with session_id, date, log_rows
+# Optional: effort_row
+# Optional: test_mode=true to preview without writing
 ```
 
 ## Catalog Endpoints
