@@ -1151,6 +1151,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // 5) Enrich and format log rows using existing catalog logic
     let formattedLogRows;
     let enrichWarnings = [];
+    let pendingExercises = [];
     try {
       // fetch catalog once and pass the map to the enricher to ensure consistent lookup
       const catalogRows = await getExerciseCatalog();
@@ -1158,7 +1159,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
       formattedLogRows = enrichResult.formattedRows;
       enrichWarnings = enrichResult.warnings || [];
-      const pendingExercises = enrichResult.pending_exercises || [];
+      pendingExercises = enrichResult.pending_exercises || [];
       // store pending exercises in memory (dedupe by exercise)
       for (const pe of pendingExercises) {
         const key = String(pe.exercise || '').trim().toLowerCase();
