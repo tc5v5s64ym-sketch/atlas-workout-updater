@@ -1403,7 +1403,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       responseBody.pending_exercises = pendingExercises;
     }
 
-    return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
+    return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {
     return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
   } finally {
@@ -1496,7 +1496,7 @@ app.post('/api/log-workout', async (req, res) => {
       responseBody.warnings = [...new Set(warnings)];
     }
 
-    return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
+    return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
     console.error('❌ Failed to append workout data:', error);
     return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
