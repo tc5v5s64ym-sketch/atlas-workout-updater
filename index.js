@@ -109,93 +109,18 @@ const pendingExercisesMemory = [];
 const catalogCache = createTtlCache(60 * 1000);
 const recentExerciseCache = createTtlCache(20 * 1000);
 
-const routeDefinitions = [
-  { path: '/', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
-  { path: '/health', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
-  { path: '/routes', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
-  { path: '/version', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
-  { path: '/api/history/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/exercises/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/recommend/next/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/summary/weekly', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/prs/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/pending-exercises', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/session/:sessionId', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/catalog/exercises', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/catalog/search', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/health/sheets', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/health/openai', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/debug/config', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/schema/log', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/schema/effort', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/schema/complete-workout', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/parse-workout-image', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/complete-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/log-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/session/:sessionId/summary', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/exercises/:liftCode/progress', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/volume/muscle-groups', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/search/sessions', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/prs/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/recommend/next/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/bodyweight', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/bodyweight/history', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/admin/preview-test-rows', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false }
-];
+const { routeDefinitions } = require('./config/routes');
+const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
 
-const logCleanedColumns = [
-  'date_clean',
-  'session_id',
-  'exercise',
-  'canonical_exercise',
-  'muscle_group',
-  'lift_code',
-  'set_number',
-  'weight',
-  'reps',
-  'rir',
-  'notes'
-];
 
-const logRowFieldAliases = {
-  date_clean: ['date_clean', 'dateClean', 'date'],
-  session_id: ['session_id', 'sessionId'],
-  exercise: ['exercise'],
-  canonical_exercise: ['canonical_exercise', 'canonicalExercise'],
-  muscle_group: ['muscle_group', 'muscleGroup'],
-  lift_code: ['lift_code', 'liftCode'],
-  set_number: ['set_number', 'setNumber', 'set'],
-  weight: ['weight'],
-  reps: ['reps'],
-  rir: ['rir'],
-  notes: ['notes']
-};
 
-const effortColumns = [
-  'date',
-  'session_id',
-  'duration',
-  'active_calories',
-  'total_calories',
-  'average_hr',
-  'peak_hr',
-  'location',
-  'notes'
-];
 
-const exerciseCatalogColumns = ['Canonical_Name', 'Muscle_Group', 'Lift_Code', 'Original_Variants'];
 
-const effortRowFieldAliases = {
-  date: ['date'],
-  session_id: ['session_id', 'sessionId'],
-  duration: ['duration'],
-  active_calories: ['active_calories', 'activeCalories'],
-  total_calories: ['total_calories', 'totalCalories'],
-  average_hr: ['average_hr', 'averageHR', 'avg_hr'],
-  peak_hr: ['peak_hr', 'peakHR'],
-  location: ['location'],
-  notes: ['notes']
-};
+
+
+
+
+
 
 function ensureNotes(value) {
   return value === undefined || value === null ? '' : value;
