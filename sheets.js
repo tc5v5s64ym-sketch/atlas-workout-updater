@@ -3,7 +3,7 @@ const { google } = require('googleapis');
 const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
 const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
-const logSheetName = process.env.LOG_SHEET_NAME || 'Log';
+const logSheetName = process.env.LOG_SHEET_NAME || 'Log_Cleaned';
 const effortSheetName = process.env.EFFORT_SHEET_NAME || 'Effort';
 
 function validateConfig() {

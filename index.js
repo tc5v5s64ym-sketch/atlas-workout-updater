@@ -32,12 +32,14 @@ const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require
 const { success: standardSuccess, error: standardError } = require('./response');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
+const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
+const { normalizeDurationString } = require('./services/duration');
 
 validateConfig();
 (async () => {
   try {
     const tabs = await getSpreadsheetTabs();
-    console.log(JSON.stringify({ event: 'startup_diagnostics', ok: true, tabs_present: tabs.length, required_env: ['ATLAS_API_KEY','SPREADSHEET_ID'] }));
+    console.log(JSON.stringify({ event: 'startup_diagnostics', ok: true, tabs_present: tabs.length, required_env: ['ATLAS_API_KEY','GOOGLE_SHEETS_ID','GOOGLE_SERVICE_ACCOUNT_EMAIL','GOOGLE_PRIVATE_KEY','OPENAI_API_KEY'] }));
   } catch (error) {
     console.log(JSON.stringify({ event: 'startup_diagnostics', ok: false, error: error.message }));
   }
@@ -208,75 +210,7 @@ function formatEffortRow(effortRow) {
   return normalizeEffortRow(effortRow);
 }
 
-function buildExerciseCatalogMap(rows) {
-  if (!rows.length) return new Map();
 
-  const header = rows[0].map(cell => String(cell || '').trim().toLowerCase());
-  const originalVariantsIndex = header.findIndex(value => ['original_variants', 'original variants', 'originalvariant', 'original variant'].includes(value));
-  const canonicalNameIndex = header.findIndex(value => ['canonical_name', 'canonical name', 'canonicalname'].includes(value));
-  const muscleGroupIndex = header.findIndex(value => ['muscle_group', 'muscle group', 'musclegroup'].includes(value));
-  const liftCodeIndex = header.findIndex(value => ['lift code', 'lift_code', 'liftcode'].includes(value));
-
-  if (canonicalNameIndex === -1) {
-    throw new Error('Exercise_Catalog header must include Canonical_Name.');
-  }
-
-  const entryMap = new Map();
-
-  for (let i = 1; i < rows.length; i += 1) {
-    const row = rows[i];
-    if (!row || row.length === 0) continue;
-
-    const canonicalName = String(row[canonicalNameIndex] || '').trim();
-    if (!canonicalName) continue;
-
-    const muscleGroup = String(row[muscleGroupIndex] || '').trim();
-    const liftCode = String(row[liftCodeIndex] || '').trim();
-
-    const addMatch = name => {
-      const key = normalizeExerciseKey(name);
-      if (!key) return;
-      if (!entryMap.has(key)) {
-        entryMap.set(key, {
-          canonical_exercise: canonicalName,
-          muscle_group: muscleGroup,
-          lift_code: liftCode || ''
-        });
-      }
-    };
-
-    addMatch(canonicalName);
-
-    if (originalVariantsIndex !== -1) {
-      const variants = String(row[originalVariantsIndex] || '').split(/[,;|]/).map(v => v.trim()).filter(Boolean);
-      variants.forEach(addMatch);
-    }
-  }
-
-  return entryMap;
-}
-
-function enrichLogRow(rowObj, catalogMap) {
-  const key = normalizeExerciseKey(rowObj.exercise);
-  const catalogMatch = catalogMap.get(key);
-  const enriched = { ...rowObj };
-  if (catalogMatch) {
-    enriched.canonical_exercise = catalogMatch.canonical_exercise;
-    enriched.muscle_group = catalogMatch.muscle_group;
-    enriched.lift_code = catalogMatch.lift_code || '';
-    const warnings = [];
-    if (!catalogMatch.lift_code) warnings.push(`No lift code for exercise '${rowObj.exercise}'.`);
-    return { enriched, warnings: warnings.length ? warnings : null };
-  }
-
-  enriched.canonical_exercise = '';
-  enriched.muscle_group = '';
-  enriched.lift_code = '';
-  return {
-    enriched,
-    warnings: [`Unknown exercise: ${rowObj.exercise}`]
-  };
-}
 
 function logRowObjectToArray(rowObj) {
   return logCleanedColumns.map(column => {
@@ -287,14 +221,6 @@ function logRowObjectToArray(rowObj) {
   });
 }
 
-function normalizeExerciseKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\u2018\u2019\u201C\u201D]/g, '')
-    .replace(/[()\[\]{}:;,.\/\\+*?^$|]/g, '')
-    .replace(/\s+/g, ' ');
-}
 
 
 function buildExerciseCatalogEntries(rows) {
@@ -392,42 +318,7 @@ function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
   return { effortRow, sessionId, dateValue };
 }
 
-function pad2(n) {
-  return String(n).padStart(2, '0');
-}
 
-function normalizeDurationString(value) {
-  if (value === null || value === undefined) {
-    throw new Error('duration is required');
-  }
-
-  const s = String(value).trim();
-  if (!s) throw new Error('duration is required');
-
-  const parts = s.split(':').map(p => p.trim()).filter(Boolean);
-  if (parts.length === 2) {
-    // mm:ss -> 00:MM:SS
-    const [mm, ss] = parts;
-    if (!/^\d+$/.test(mm) || !/^\d+$/.test(ss)) throw new Error(`Invalid duration format: ${value}`);
-    const m = Number(mm);
-    const sec = Number(ss);
-    if (sec < 0 || sec > 59 || m < 0) throw new Error(`Invalid duration values: ${value}`);
-    return `${pad2(0)}:${pad2(m)}:${pad2(sec)}`;
-  }
-
-  if (parts.length === 3) {
-    // h:mm:ss or hh:mm:ss
-    const [h, mm, ss] = parts;
-    if (!/^\d+$/.test(h) || !/^\d+$/.test(mm) || !/^\d+$/.test(ss)) throw new Error(`Invalid duration format: ${value}`);
-    const hr = Number(h);
-    const m = Number(mm);
-    const sec = Number(ss);
-    if (m < 0 || m > 59 || sec < 0 || sec > 59 || hr < 0) throw new Error(`Invalid duration values: ${value}`);
-    return `${pad2(hr)}:${pad2(m)}:${pad2(sec)}`;
-  }
-
-  throw new Error(`Invalid duration format: ${value}`);
-}
 
 function validateNumberField(name, rawValue, min, max) {
   if (rawValue === null || rawValue === undefined || rawValue === '') {
@@ -699,7 +590,15 @@ app.get('/api/exercises/:liftCode/progress', async (req, res) => {
 
 // GET /api/pending-exercises
 app.get('/api/pending-exercises', (req, res) => {
-  return standardSuccess(req, res, 'Pending exercises endpoint', { pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+  const deduped = [];
+  const seen = new Set();
+  for (const item of pendingExercisesMemory) {
+    const key = String(item.exercise || '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return standardSuccess(req, res, 'Pending exercises endpoint', { pending_exercises: deduped });
 });
 
 app.get('/api/volume/muscle-groups', async (req, res) => {
@@ -1071,15 +970,45 @@ app.post('/api/admin/preview-test-rows', async (req, res) => {
   }
 });
 
-app.post('/api/parse-workout-image', upload.single('image'), async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
 
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    if (req.file?.path) {
-      fs.promises.unlink(req.file.path).catch(() => {});
+app.get('/api/debug/exercise-match', async (req, res) => {
+  const input = String(req.query.q || '').trim();
+  if (!input) return standardError(req, res, 'Query param q is required', null, 400);
+
+  try {
+    const catalogRows = await getExerciseCatalog();
+    const catalogMap = buildExerciseCatalogMap(catalogRows);
+    const normalized_key = normalizeExerciseKey(input);
+    const match = catalogMap.get(normalized_key);
+    if (match) {
+      return standardSuccess(req, res, 'Exercise match debug', {
+        input,
+        normalized_key,
+        catalog_match: true,
+        canonical_exercise: match.canonical_exercise,
+        muscle_group: match.muscle_group,
+        lift_code: match.lift_code,
+        warning: match.lift_code ? null : 'Lift code is blank for this catalog match.',
+        closest_matches: []
+      });
     }
-    return standardError(req, res, 'Unauthorized', null, 401);
+
+    return standardSuccess(req, res, 'Exercise match debug', {
+      input,
+      normalized_key,
+      catalog_match: false,
+      canonical_exercise: '',
+      muscle_group: '',
+      lift_code: '',
+      warning: null,
+      closest_matches: closestExerciseMatches(input, catalogMap)
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to debug exercise match', error.message, 500);
   }
+});
+
+app.post('/api/parse-workout-image', upload.single('image'), async (req, res) => {
 
   if (!req.file) {
     return standardError(req, res, 'image file is required in multipart/form-data under field name image', null, 400);
@@ -1158,14 +1087,6 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
 
 
 app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    if (req.file?.path) {
-      fs.promises.unlink(req.file.path).catch(() => {});
-    }
-    return standardError(req, res, 'Unauthorized', null, 401);
-  }
 
   if (!req.file) {
     return standardError(req, res, 'image file is required in multipart/form-data under field name image', null, 400);
@@ -1342,11 +1263,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 });
 
 app.post('/api/log-workout', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return standardError(req, res, 'Unauthorized', null, 401);
-  }
 
   const payload = req.body;
 
