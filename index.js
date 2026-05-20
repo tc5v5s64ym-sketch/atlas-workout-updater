@@ -1272,6 +1272,7 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   const { session_id, date, log_rows, effort_row } = payload;
+  const testMode = isTestModeEnabled(payload.test_mode);
 
   if (!session_id) {
     return standardError(req, res, 'session_id is required.', null, 400);
@@ -1293,24 +1294,8 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'log_rows must be a non-empty array.', null, 400);
   }
 
-  if (effort_row === undefined) {
-    return standardError(req, res, 'effort_row is required.', null, 400);
-  }
-
-  if (!Array.isArray(effort_row) && !(effort_row && typeof effort_row === 'object')) {
-    return standardError(req, res, 'effort_row must be an array or object.', null, 400);
-  }
-
-  let existingEffortSessionIds;
-  try {
-    existingEffortSessionIds = await getEffortSessionIds();
-  } catch (error) {
-    console.error('❌ Failed to check duplicate session IDs:', error);
-    return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
-  }
-
-  if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(session_id).toLowerCase())) {
-    return standardError(req, res, 'Duplicate session.', null, 409);
+  if (effort_row !== undefined && !Array.isArray(effort_row) && !(effort_row && typeof effort_row === 'object')) {
+    return standardError(req, res, 'effort_row must be an array or object when provided.', null, 400);
   }
 
   let formattedLogRows;
@@ -1318,16 +1303,44 @@ app.post('/api/log-workout', async (req, res) => {
   try {
     const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
     formattedLogRows = logResult.formattedRows;
-    warnings = logResult.warnings;
+    warnings = logResult.warnings || [];
   } catch (error) {
     return standardError(req, res, error.message, null, 400);
   }
 
-  let formattedEffortRow;
-  try {
-    formattedEffortRow = formatEffortRow(effort_row);
-  } catch (error) {
-    return standardError(req, res, error.message, null, 400);
+  let formattedEffortRow = null;
+  if (effort_row !== undefined) {
+    try {
+      formattedEffortRow = formatEffortRow(effort_row);
+    } catch (error) {
+      return standardError(req, res, error.message, null, 400);
+    }
+  }
+
+  if (testMode) {
+    const previewBody = {
+      test_mode: true,
+      sheet_write: 'skipped',
+      effortWritten: Boolean(formattedEffortRow),
+      log_rows_preview: formattedLogRows
+    };
+    if (formattedEffortRow) previewBody.effort_row_preview = formattedEffortRow;
+    if (warnings.length > 0) previewBody.warnings = [...new Set(warnings)];
+    return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
+  }
+
+  if (formattedEffortRow) {
+    let existingEffortSessionIds;
+    try {
+      existingEffortSessionIds = await getEffortSessionIds();
+    } catch (error) {
+      console.error('❌ Failed to check duplicate session IDs:', error);
+      return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
+    }
+
+    if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(session_id).toLowerCase())) {
+      return standardError(req, res, 'Duplicate session.', null, 409);
+    }
   }
 
   try {
@@ -1335,15 +1348,23 @@ app.post('/api/log-workout', async (req, res) => {
     const logResponse = await appendRows(logSheetName, formattedLogRows);
     console.log('✅ Log rows appended successfully. Range:', logResponse.data.updates?.updatedRange);
 
-    console.log('\n📝 Appending formatted effort_row to', effortSheetName, 'tab:', [formattedEffortRow]);
-    const effortResponse = await appendRows(effortSheetName, [formattedEffortRow]);
-    console.log('✅ Effort row appended successfully. Range:', effortResponse.data.updates?.updatedRange);
+    let effortResponse = null;
+    if (formattedEffortRow) {
+      console.log('\n📝 Appending formatted effort_row to', effortSheetName, 'tab:', [formattedEffortRow]);
+      effortResponse = await appendRows(effortSheetName, [formattedEffortRow]);
+      console.log('✅ Effort row appended successfully. Range:', effortResponse.data.updates?.updatedRange);
+    }
 
     const responseBody = {
       message: 'Workout data appended successfully.',
       logAppendedRange: logResponse.data.updates?.updatedRange,
-      effortAppendedRange: effortResponse.data.updates?.updatedRange
+      effortWritten: Boolean(formattedEffortRow),
+      test_mode: false,
+      sheet_write: 'success'
     };
+    if (effortResponse) {
+      responseBody.effortAppendedRange = effortResponse.data.updates?.updatedRange;
+    }
     if (warnings.length > 0) {
       responseBody.warnings = [...new Set(warnings)];
     }

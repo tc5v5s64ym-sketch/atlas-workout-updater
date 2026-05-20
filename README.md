@@ -396,6 +396,7 @@ Request body:
       "notes": "Good control"
     }
   ],
+  "test_mode": true,
   "effort_row": {
     "date": "2026-05-19",
     "session_id": "session-123",
@@ -411,6 +412,10 @@ Request body:
 ```
 
 
+`effort_row` is optional. If omitted, the endpoint writes only `log_rows` to `Log_Cleaned` and skips Effort duplicate-session checks and Effort writes.
+
+If `test_mode` is `true` (boolean) or `"true"` (string), the endpoint still validates payload fields, enriches `log_rows`, and formats `effort_row` when provided, but **does not write** to Google Sheets. The response includes `test_mode: true`, `sheet_write: "skipped"`, `log_rows_preview`, and `effort_row_preview` (only when provided).
+
 Example authenticated request:
 
 ```bash
@@ -422,7 +427,7 @@ curl -X POST https://<your-service-url>/api/log-workout \
 
 ### POST /api/complete-workout
 
-Full ingestion endpoint that accepts an Apple Watch screenshot plus simplified log rows and appends both the `Log` and `Effort` tabs.
+Full ingestion endpoint that accepts an Apple Watch screenshot plus simplified log rows and appends both the `Log_Cleaned` and `Effort` tabs.
 
 Required header:
 
