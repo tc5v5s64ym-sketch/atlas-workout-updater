@@ -620,8 +620,7 @@ function registerRoute(method, path, handler, meta = {}) {
 }
 
 app.get('/routes', (req, res) => {
-  const routes = routeRegistry.length ? routeRegistry : routeDefinitions;
-  return standardSuccess(req, res, 'Available routes', { routes });
+  return standardSuccess(req, res, 'Available routes', { routes: routeDefinitions });
 });
 
 app.get('/version', (req, res) => {
@@ -1145,8 +1144,6 @@ app.get('/api/bodyweight/history', async (req, res) => {
 });
 
 app.post('/api/admin/preview-test-rows', async (req, res) => {
-  if (!requireAdminKey(req, res)) return;
-
   try {
     const logRows = await getSheetRows(logSheetName);
     const effortRows = await getSheetRows(effortSheetName);
@@ -1164,7 +1161,7 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
     if (req.file?.path) {
       fs.promises.unlink(req.file.path).catch(() => {});
     }
-    return res.status(401).json({ error: 'Unauthorized' });
+    return standardError(req, res, 'Unauthorized', null, 401);
   }
 
   if (!req.file) {
@@ -1234,7 +1231,7 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
       responseBody.warnings = validationWarnings;
     }
 
-    return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
+    return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
   } catch (error) {
     return standardError(req, res, 'OpenAI Vision parsing failed', { provider: 'openai-vision', error: error.message, safeWrite: true }, 500);
   } finally {
@@ -1250,7 +1247,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     if (req.file?.path) {
       fs.promises.unlink(req.file.path).catch(() => {});
     }
-    return res.status(401).json({ error: 'Unauthorized' });
+    return standardError(req, res, 'Unauthorized', null, 401);
   }
 
   if (!req.file) {
@@ -1431,7 +1428,7 @@ app.post('/api/log-workout', async (req, res) => {
   const incomingApiKey = req.header('x-atlas-api-key');
 
   if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return standardError(req, res, 'Unauthorized', null, 401);
   }
 
   const payload = req.body;
@@ -1443,31 +1440,31 @@ app.post('/api/log-workout', async (req, res) => {
   const { session_id, date, log_rows, effort_row } = payload;
 
   if (!session_id) {
-    return res.status(400).json({ error: 'session_id is required.' });
+    return standardError(req, res, 'session_id is required.', null, 400);
   }
 
   if (!date) {
-    return res.status(400).json({ error: 'date is required.' });
+    return standardError(req, res, 'date is required.', null, 400);
   }
 
   if (log_rows === undefined) {
-    return res.status(400).json({ error: 'log_rows is required.' });
+    return standardError(req, res, 'log_rows is required.', null, 400);
   }
 
   if (!Array.isArray(log_rows)) {
-    return res.status(400).json({ error: 'log_rows must be an array.' });
+    return standardError(req, res, 'log_rows must be an array.', null, 400);
   }
 
   if (log_rows.length === 0) {
-    return res.status(400).json({ error: 'log_rows must be a non-empty array.' });
+    return standardError(req, res, 'log_rows must be a non-empty array.', null, 400);
   }
 
   if (effort_row === undefined) {
-    return res.status(400).json({ error: 'effort_row is required.' });
+    return standardError(req, res, 'effort_row is required.', null, 400);
   }
 
   if (!Array.isArray(effort_row) && !(effort_row && typeof effort_row === 'object')) {
-    return res.status(400).json({ error: 'effort_row must be an array or object.' });
+    return standardError(req, res, 'effort_row must be an array or object.', null, 400);
   }
 
   let existingEffortSessionIds;
@@ -1489,14 +1486,14 @@ app.post('/api/log-workout', async (req, res) => {
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings;
   } catch (error) {
-    return res.status(400).json({ error: error.message });
+    return standardError(req, res, error.message, null, 400);
   }
 
   let formattedEffortRow;
   try {
     formattedEffortRow = formatEffortRow(effort_row);
   } catch (error) {
-    return res.status(400).json({ error: error.message });
+    return standardError(req, res, error.message, null, 400);
   }
 
   try {
@@ -1517,7 +1514,7 @@ app.post('/api/log-workout', async (req, res) => {
       responseBody.warnings = [...new Set(warnings)];
     }
 
-    return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
+    return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
     console.error('❌ Failed to append workout data:', error);
     return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
@@ -1543,6 +1540,7 @@ app.use((err, req, res, next) => {
 
   console.error('Unhandled error:', err);
   return standardError(
+    req,
     res,
     process.env.NODE_ENV === 'production' ? 'Internal server error' : 'Unhandled error',
     process.env.NODE_ENV === 'production' ? undefined : err.message || err,
