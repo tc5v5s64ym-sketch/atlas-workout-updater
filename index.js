@@ -28,9 +28,20 @@ const {
   previewTestRows
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
+const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
+const { success: standardSuccess, error: standardError } = require('./response');
+const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 
 validateConfig();
+(async () => {
+  try {
+    const tabs = await getSpreadsheetTabs();
+    console.log(JSON.stringify({ event: 'startup_diagnostics', ok: true, tabs_present: tabs.length, required_env: ['ATLAS_API_KEY','GOOGLE_SHEETS_ID','GOOGLE_SERVICE_ACCOUNT_EMAIL','GOOGLE_PRIVATE_KEY'] }));
+  } catch (error) {
+    console.log(JSON.stringify({ event: 'startup_diagnostics', ok: false, error: error.message }));
+  }
+})();
 
 const atlasApiKey = process.env.ATLAS_API_KEY;
 
@@ -64,6 +75,7 @@ const upload = multer({
 
 const app = express();
 app.use(express.json());
+app.use(createRequestContext);
 
 function requestLogger(req, res, next) {
   const start = Date.now();
@@ -74,6 +86,7 @@ function requestLogger(req, res, next) {
       method: req.method,
       path: req.originalUrl,
       status: res.statusCode,
+      requestId: req.requestId,
       duration_ms: duration
     };
     console.log(JSON.stringify(logEntry));
@@ -82,11 +95,19 @@ function requestLogger(req, res, next) {
 }
 
 app.use(requestLogger);
+app.use('/api', requireApiKeyMiddleware(atlasApiKey, { publicPaths: [] }));
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
+// TODO(persistence-layer): replace in-memory pending exercises/cache with durable storage.
+// TODO(db-migration): introduce real relational DB-backed write path with transactions.
+// TODO(websocket-live-sync): stream ingestion/status updates to clients.
+// TODO(gpt-integration-layer): separate model orchestration and prompt policy from HTTP layer.
+// TODO(mobile-client): add API compatibility/versioning strategy for mobile app consumers.
+const catalogCache = createTtlCache(60 * 1000);
+const recentExerciseCache = createTtlCache(20 * 1000);
 
 const routeDefinitions = [
   { path: '/', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
@@ -115,8 +136,6 @@ const routeDefinitions = [
   { path: '/api/exercises/:liftCode/progress', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/volume/muscle-groups', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/search/sessions', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/prs/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/recommend/next/:liftCode', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/bodyweight', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/bodyweight/history', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/admin/preview-test-rows', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false }
@@ -161,6 +180,8 @@ const effortColumns = [
   'location',
   'notes'
 ];
+
+const exerciseCatalogColumns = ['Canonical_Name', 'Muscle_Group', 'Lift_Code', 'Original_Variants'];
 
 const effortRowFieldAliases = {
   date: ['date'],
@@ -356,34 +377,6 @@ function normalizeExerciseKey(value) {
     .replace(/\s+/g, ' ');
 }
 
-function standardError(res, message, details = undefined, statusCode = 400) {
-  const payload = { status: 'error', message };
-  if (details !== undefined) {
-    payload.details = details;
-  }
-  return res.status(statusCode).json(payload);
-}
-
-function standardSuccess(res, message, data = undefined, statusCode = 200) {
-  const payload = { status: 'ok', message };
-  if (data !== undefined) {
-    payload.data = data;
-  }
-  return res.status(statusCode).json(payload);
-}
-
-function requireApiKey(req, res) {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    standardError(res, 'Unauthorized', null, 401);
-    return false;
-  }
-  return true;
-}
-
-function requireAdminKey(req, res) {
-  return requireApiKey(req, res);
-}
 
 function buildExerciseCatalogEntries(rows) {
   if (!rows.length) return [];
@@ -608,18 +601,25 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) 
 }
 
 app.get('/', (req, res) => {
-  return standardSuccess(res, 'Atlas backend is running', {
+  return standardSuccess(req, res, 'Atlas backend is running', {
     service: 'atlas-workout-updater',
     message: 'Atlas backend is running'
   });
 });
 
 app.get('/health', (req, res) => {
-  return standardSuccess(res, 'Health check passed', { service: 'atlas-workout-updater' });
+  return standardSuccess(req, res, 'Health check passed', { service: 'atlas-workout-updater' });
 });
 
+const routeRegistry = [];
+function registerRoute(method, path, handler, meta = {}) {
+  routeRegistry.push({ path, methods: [method.toUpperCase()], ...meta });
+  return app[method](path, handler);
+}
+
 app.get('/routes', (req, res) => {
-  return standardSuccess(res, 'Available routes', { routes: routeDefinitions });
+  const routes = routeRegistry.length ? routeRegistry : routeDefinitions;
+  return standardSuccess(req, res, 'Available routes', { routes });
 });
 
 app.get('/version', (req, res) => {
@@ -630,7 +630,7 @@ app.get('/version', (req, res) => {
     // ignore
   }
 
-  return standardSuccess(res, 'Service version', {
+  return standardSuccess(req, res, 'Service version', {
     version: gitVersion,
     deployed_at: deploymentTimestamp,
     endpoints: routeDefinitions
@@ -638,11 +638,7 @@ app.get('/version', (req, res) => {
 });
 
 // GET /api/history/recent
-app.get('/api/history/recent', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+registerRoute('get', '/api/history/recent', async (req, res) => {
 
   const limit = Number(req.query.limit) || 5;
   const exerciseFilter = req.query.exercise ? String(req.query.exercise).toLowerCase() : null;
@@ -698,19 +694,15 @@ app.get('/api/history/recent', async (req, res) => {
 
     return res.json({ status: 'ok', data: { recent_sessions, recent_sets, recent_effort } });
   } catch (error) {
-    return res.status(500).json({ error: `Failed to fetch history: ${error.message}` });
+    return standardError(req, res, 'Failed to fetch history', error.message, 500);
   }
 });
 
 // GET /api/exercises/:liftCode
 app.get('/api/exercises/:liftCode', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
 
   const liftCode = String(req.params.liftCode || '').trim().toLowerCase();
-  if (!liftCode) return res.status(400).json({ error: 'liftCode is required in path' });
+  if (!liftCode) return standardError(req, res, 'liftCode is required in path', null, 400);
 
   try {
     const allLog = await getRecentRows(logSheetName, 1000);
@@ -767,52 +759,48 @@ app.get('/api/exercises/:liftCode', async (req, res) => {
       recentWorkingSets
     } });
   } catch (error) {
-    return res.status(500).json({ error: `Failed to fetch exercise detail: ${error.message}` });
+    return standardError(req, res, 'Failed to fetch exercise detail', error.message, 500);
   }
 });
 
 app.get('/api/exercises/:liftCode/progress', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const liftCode = String(req.params.liftCode || '').trim();
   if (!liftCode) {
-    return standardError(res, 'liftCode is required in path', null, 400);
+    return standardError(req, res, 'liftCode is required in path', null, 400);
   }
 
   try {
     const allLog = await getSheetRows(logSheetName);
     const progress = computeExerciseProgress(allLog, liftCode);
-    return standardSuccess(res, 'Exercise progress', progress);
+    return standardSuccess(req, res, 'Exercise progress', progress);
   } catch (error) {
-    return standardError(res, 'Failed to fetch exercise progress', error.message, 500);
+    return standardError(req, res, 'Failed to fetch exercise progress', error.message, 500);
   }
 });
 
 // GET /api/pending-exercises
 app.get('/api/pending-exercises', (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  return standardSuccess(res, 'Pending exercises endpoint', { pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
+  return standardSuccess(req, res, 'Pending exercises endpoint', { pending_exercises: [], message: 'Pending exercise persistence not implemented yet.' });
 });
 
 app.get('/api/volume/muscle-groups', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const days = parseInt(req.query.days || '14', 10);
   if (Number.isNaN(days) || days <= 0) {
-    return standardError(res, 'days must be a positive integer', null, 400);
+    return standardError(req, res, 'days must be a positive integer', null, 400);
   }
 
   try {
     const allLog = await getSheetRows(logSheetName);
     const groups = computeMuscleGroupVolume(allLog, days);
-    return standardSuccess(res, 'Muscle group volume summary', { days, groups });
+    return standardSuccess(req, res, 'Muscle group volume summary', { days, groups });
   } catch (error) {
-    return standardError(res, 'Failed to fetch muscle group volume', error.message, 500);
+    return standardError(req, res, 'Failed to fetch muscle group volume', error.message, 500);
   }
 });
 
 app.get('/api/search/sessions', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const filters = {
     exercise: req.query.exercise,
@@ -825,36 +813,38 @@ app.get('/api/search/sessions', async (req, res) => {
   try {
     const allLog = await getSheetRows(logSheetName);
     const result = searchSessions(allLog, filters);
-    return standardSuccess(res, 'Session search results', result);
+    return standardSuccess(req, res, 'Session search results', result);
   } catch (error) {
-    return standardError(res, 'Failed to search sessions', error.message, 500);
+    return standardError(req, res, 'Failed to search sessions', error.message, 500);
   }
 });
 
 // GET /api/catalog/exercises
-app.get('/api/catalog/exercises', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
+registerRoute('get', '/api/catalog/exercises', async (req, res) => {
 
   try {
-    const rows = await getExerciseCatalog();
+    const cached = catalogCache.get('catalog:rows');
+    const rows = cached || await getExerciseCatalog();
+    if (!cached) catalogCache.set('catalog:rows', rows);
     const exercises = buildExerciseCatalogEntries(rows);
-    return standardSuccess(res, 'Exercise catalog entries', { exercises });
+    return standardSuccess(req, res, 'Exercise catalog entries', { exercises });
   } catch (error) {
-    return standardError(res, 'Failed to read Exercise_Catalog', error.message, 500);
+    return standardError(req, res, 'Failed to read Exercise_Catalog', error.message, 500);
   }
 });
 
 // GET /api/catalog/search
 app.get('/api/catalog/search', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const query = String(req.query.q || '').trim();
   if (!query) {
-    return standardError(res, 'Query param q is required', null, 400);
+    return standardError(req, res, 'Query param q is required', null, 400);
   }
 
   try {
-    const rows = await getExerciseCatalog();
+    const cached = catalogCache.get('catalog:rows');
+    const rows = cached || await getExerciseCatalog();
+    if (!cached) catalogCache.set('catalog:rows', rows);
     const exercises = buildExerciseCatalogEntries(rows);
     const lowerQuery = query.toLowerCase();
     const results = exercises.filter(entry => {
@@ -862,15 +852,14 @@ app.get('/api/catalog/search', async (req, res) => {
         || entry.lift_code.toLowerCase().includes(lowerQuery)
         || entry.variants.some(v => v.toLowerCase().includes(lowerQuery));
     });
-    return standardSuccess(res, 'Catalog search results', { query, results });
+    return standardSuccess(req, res, 'Catalog search results', { query, results });
   } catch (error) {
-    return standardError(res, 'Failed to search Exercise_Catalog', error.message, 500);
+    return standardError(req, res, 'Failed to search Exercise_Catalog', error.message, 500);
   }
 });
 
 // GET /api/health/sheets
 app.get('/api/health/sheets', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   try {
     const tabs = await getSpreadsheetTabs();
@@ -879,22 +868,20 @@ app.get('/api/health/sheets', async (req, res) => {
       acc[tab] = { exists: tabs.includes(tab) };
       return acc;
     }, {});
-    return standardSuccess(res, 'Google Sheets health check', { tabs: status, availableTabs: tabs });
+    return standardSuccess(req, res, 'Google Sheets health check', { tabs: status, availableTabs: tabs });
   } catch (error) {
-    return standardError(res, 'Failed to verify Google Sheets tabs', error.message, 500);
+    return standardError(req, res, 'Failed to verify Google Sheets tabs', error.message, 500);
   }
 });
 
 // GET /api/health/openai
 app.get('/api/health/openai', (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  return standardSuccess(res, 'OpenAI health check', { configured: Boolean(process.env.OPENAI_API_KEY) });
+  return standardSuccess(req, res, 'OpenAI health check', { configured: Boolean(process.env.OPENAI_API_KEY) });
 });
 
 // GET /api/debug/config
 app.get('/api/debug/config', (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  return standardSuccess(res, 'Safe debug configuration', {
+  return standardSuccess(req, res, 'Safe debug configuration', {
     serviceName: 'atlas-workout-updater',
     environment: process.env.NODE_ENV || 'development',
     sheetTabs: {
@@ -908,24 +895,21 @@ app.get('/api/debug/config', (req, res) => {
 
 // GET /api/schema/log
 app.get('/api/schema/log', (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  return standardSuccess(res, 'Log_Cleaned schema', {
+  return standardSuccess(req, res, 'Log_Cleaned schema', {
     schema: ['Date_Clean', 'Session ID', 'Exercise', 'Canonical_Exercise', 'Muscle_Group', 'Lift Code', 'Set #', 'Weight', 'Reps', 'RIR', 'Notes']
   });
 });
 
 // GET /api/schema/effort
 app.get('/api/schema/effort', (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  return standardSuccess(res, 'Effort schema', {
+  return standardSuccess(req, res, 'Effort schema', {
     schema: ['Date', 'Session ID', 'Duration', 'Active Calories', 'Total Calories', 'Average HR', 'Peak HR', 'Location', 'Notes']
   });
 });
 
 // GET /api/schema/complete-workout
 app.get('/api/schema/complete-workout', (req, res) => {
-  if (!requireApiKey(req, res)) return;
-  return standardSuccess(res, 'Complete-workout multipart schema', {
+  return standardSuccess(req, res, 'Complete-workout multipart schema', {
     required: ['image', 'log_rows_json'],
     optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write']
   });
@@ -933,28 +917,23 @@ app.get('/api/schema/complete-workout', (req, res) => {
 
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const liftCode = String(req.params.liftCode || '').trim();
   if (!liftCode) {
-    return standardError(res, 'liftCode is required in path', null, 400);
+    return standardError(req, res, 'liftCode is required in path', null, 400);
   }
 
   try {
     const allLog = await getSheetRows(logSheetName);
     const recommendation = recommendNextSet(allLog, liftCode);
-    return standardSuccess(res, 'Recommendation generated', recommendation);
+    return standardSuccess(req, res, 'Recommendation generated', recommendation);
   } catch (error) {
-    return standardError(res, 'Failed to compute recommendation', error.message, 500);
+    return standardError(req, res, 'Failed to compute recommendation', error.message, 500);
   }
 });
 
 // GET /api/summary/weekly
 app.get('/api/summary/weekly', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
 
   try {
     const recentLog = await getRecentRows(logSheetName, 1000);
@@ -1023,7 +1002,7 @@ app.get('/api/summary/weekly', async (req, res) => {
       highlights.push(`Top muscle group: ${topMuscleGroup[0]} with ${Math.round(topMuscleGroup[1])} volume.`);
     }
 
-    return standardSuccess(res, 'Weekly summary', {
+    return standardSuccess(req, res, 'Weekly summary', {
       sessions: Array.from(sessions.values()),
       totalSets,
       totalVolume,
@@ -1032,49 +1011,46 @@ app.get('/api/summary/weekly', async (req, res) => {
       highlights
     });
   } catch (error) {
-    return standardError(res, 'Failed to build weekly summary', error.message, 500);
+    return standardError(req, res, 'Failed to build weekly summary', error.message, 500);
   }
 });
 
 // GET /api/prs/recent
 app.get('/api/prs/recent', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   try {
     const allLog = await getSheetRows(logSheetName);
     const prs = detectRecentPrs(allLog);
-    return standardSuccess(res, 'Recent PRs', { prs });
+    return standardSuccess(req, res, 'Recent PRs', { prs });
   } catch (error) {
-    return standardError(res, 'Failed to fetch recent PRs', error.message, 500);
+    return standardError(req, res, 'Failed to fetch recent PRs', error.message, 500);
   }
 });
 
 // GET /api/session/:sessionId/summary
 app.get('/api/session/:sessionId/summary', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const sessionId = String(req.params.sessionId || '').trim();
   if (!sessionId) {
-    return res.status(400).json({ error: 'sessionId is required in path' });
+    return standardError(req, res, 'sessionId is required in path', null, 400);
   }
 
   try {
     const allLog = await getSheetRows(logSheetName);
     const allEffort = await getSheetRows(effortSheetName);
     const summary = buildSessionSummary(allLog, allEffort, sessionId);
-    return standardSuccess(res, 'Session summary', summary);
+    return standardSuccess(req, res, 'Session summary', summary);
   } catch (error) {
-    return standardError(res, 'Failed to build session summary', error.message, 500);
+    return standardError(req, res, 'Failed to build session summary', error.message, 500);
   }
 });
 
 // GET /api/session/:sessionId
 app.get('/api/session/:sessionId', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const sessionId = String(req.params.sessionId || '').trim();
   if (!sessionId) {
-    return res.status(400).json({ error: 'sessionId is required in path' });
+    return standardError(req, res, 'sessionId is required in path', null, 400);
   }
 
   try {
@@ -1112,59 +1088,57 @@ app.get('/api/session/:sessionId', async (req, res) => {
 
     return res.json({ status: 'ok', data: { session_id: sessionId, log_rows: sessionLogRows, effort } });
   } catch (error) {
-    return standardError(res, 'Failed to fetch session data', error.message, 500);
+    return standardError(req, res, 'Failed to fetch session data', error.message, 500);
   }
 });
 
 app.post('/api/bodyweight', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const { date, weight, notes } = req.body || {};
   if (!date) {
-    return standardError(res, 'date is required', null, 400);
+    return standardError(req, res, 'date is required', null, 400);
   }
 
   const weightValue = parseNumber(weight);
   if (weightValue === null) {
-    return standardError(res, 'weight is required and must be a number', null, 400);
+    return standardError(req, res, 'weight is required and must be a number', null, 400);
   }
 
   const normalizedDate = normalizeDate(date);
   if (!normalizedDate) {
-    return standardError(res, 'date must be a valid YYYY-MM-DD value', null, 400);
+    return standardError(req, res, 'date must be a valid YYYY-MM-DD value', null, 400);
   }
 
   try {
     const tabs = await getSpreadsheetTabs();
     if (!tabs.includes('Bodyweight')) {
-      return standardError(res, 'Bodyweight tab is missing. Cannot append bodyweight entry.', null, 400);
+      return standardError(req, res, 'Bodyweight tab is missing. Cannot append bodyweight entry.', null, 400);
     }
     const row = [normalizedDate, weightValue, notes || ''];
     await appendRows('Bodyweight', [row]);
-    return standardSuccess(res, 'Bodyweight entry appended', { entry: { date: normalizedDate, weight: weightValue, notes: notes || '' } });
+    return standardSuccess(req, res, 'Bodyweight entry appended', { entry: { date: normalizedDate, weight: weightValue, notes: notes || '' } });
   } catch (error) {
-    return standardError(res, 'Failed to append bodyweight entry', error.message, 500);
+    return standardError(req, res, 'Failed to append bodyweight entry', error.message, 500);
   }
 });
 
 app.get('/api/bodyweight/history', async (req, res) => {
-  if (!requireApiKey(req, res)) return;
 
   const days = parseInt(req.query.days || '30', 10);
   if (Number.isNaN(days) || days <= 0) {
-    return standardError(res, 'days must be a positive integer', null, 400);
+    return standardError(req, res, 'days must be a positive integer', null, 400);
   }
 
   try {
     const tabs = await getSpreadsheetTabs();
     if (!tabs.includes('Bodyweight')) {
-      return standardError(res, 'Bodyweight tab is missing. Cannot read history.', null, 400);
+      return standardError(req, res, 'Bodyweight tab is missing. Cannot read history.', null, 400);
     }
     const allRows = await getSheetRows('Bodyweight');
     const history = buildBodyweightHistory(allRows, days);
-    return standardSuccess(res, 'Bodyweight history', history);
+    return standardSuccess(req, res, 'Bodyweight history', history);
   } catch (error) {
-    return standardError(res, 'Failed to fetch bodyweight history', error.message, 500);
+    return standardError(req, res, 'Failed to fetch bodyweight history', error.message, 500);
   }
 });
 
@@ -1175,24 +1149,16 @@ app.post('/api/admin/preview-test-rows', async (req, res) => {
     const logRows = await getSheetRows(logSheetName);
     const effortRows = await getSheetRows(effortSheetName);
     const preview = previewTestRows(logRows, effortRows);
-    return standardSuccess(res, 'Preview test rows', preview);
+    return standardSuccess(req, res, 'Preview test rows', preview);
   } catch (error) {
-    return standardError(res, 'Failed to preview test rows', error.message, 500);
+    return standardError(req, res, 'Failed to preview test rows', error.message, 500);
   }
 });
 
 app.post('/api/parse-workout-image', upload.single('image'), async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    if (req.file?.path) {
-      fs.promises.unlink(req.file.path).catch(() => {});
-    }
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
 
   if (!req.file) {
-    return res.status(400).json({ error: 'image file is required in multipart/form-data under field name image' });
+    return standardError(req, res, 'image file is required in multipart/form-data under field name image', null, 400);
   }
 
   try {
@@ -1222,7 +1188,7 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
         normalizedMetrics = result.normalized;
         validationWarnings = result.warnings || [];
       } catch (error) {
-        return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
+        return standardError(req, res, 'Parsed metrics validation failed', error.message, 400);
       }
 
       // Rebuild effort row from normalized metrics so what's written is normalized
@@ -1258,9 +1224,9 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
       responseBody.warnings = validationWarnings;
     }
 
-    return res.status(200).json(responseBody);
+    return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
   } catch (error) {
-    return standardError(res, 'Failed to parse workout image', error.message, 500);
+    return standardError(req, res, 'OpenAI Vision parsing failed', { provider: 'openai-vision', error: error.message, safeWrite: true }, 500);
   } finally {
     await fs.promises.unlink(req.file.path).catch(() => {});
   }
@@ -1268,17 +1234,9 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
 
 
 app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    if (req.file?.path) {
-      fs.promises.unlink(req.file.path).catch(() => {});
-    }
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
 
   if (!req.file) {
-    return res.status(400).json({ error: 'image file is required in multipart/form-data under field name image' });
+    return standardError(req, res, 'image file is required in multipart/form-data under field name image', null, 400);
   }
 
   const formFields = req.body || {};
@@ -1287,7 +1245,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   // log_rows_json is required
   if (!formFields.log_rows_json) {
     await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: 'log_rows_json is required in multipart/form-data' });
+    return standardError(req, res, 'log_rows_json is required in multipart/form-data', null, 400);
   }
 
   let parsedLogRows;
@@ -1295,13 +1253,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     parsedLogRows = JSON.parse(formFields.log_rows_json);
   } catch (err) {
     await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: `log_rows_json is not valid JSON: ${err.message}` });
+    return standardError(req, res, 'log_rows_json is not valid JSON', err.message, 400);
   }
 
   if (!Array.isArray(parsedLogRows) || parsedLogRows.length === 0) {
     await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: 'log_rows_json must be a non-empty JSON array' });
+    return standardError(req, res, 'log_rows_json must be a non-empty JSON array', null, 400);
   }
+
+  let pendingExercises = [];
 
   try {
     // 1) Parse image to get effort metrics
@@ -1316,7 +1276,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       metricWarnings = result.warnings || [];
     } catch (error) {
       await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
+      return standardError(req, res, 'Parsed metrics validation failed', error.message, 400);
     }
 
     // 3) Determine session/date
@@ -1329,12 +1289,12 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       existingEffortSessionIds = await getEffortSessionIds();
     } catch (error) {
       await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(500).json({ error: 'Failed to validate duplicate session.' });
+      return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
     if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase())) {
       await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(409).json({ error: 'Duplicate session.' });
+      return standardError(req, res, 'Duplicate session.', null, 409);
     }
 
     // 5) Enrich and format log rows using existing catalog logic
@@ -1347,7 +1307,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
       formattedLogRows = enrichResult.formattedRows;
       enrichWarnings = enrichResult.warnings || [];
-      const pendingExercises = enrichResult.pending_exercises || [];
+      pendingExercises = enrichResult.pending_exercises || [];
       // store pending exercises in memory (dedupe by exercise)
       for (const pe of pendingExercises) {
         const key = String(pe.exercise || '').trim().toLowerCase();
@@ -1357,7 +1317,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     } catch (error) {
       await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
+      return standardError(req, res, 'Log rows validation/enrichment failed', error.message, 400);
     }
 
     // 6) Build effort_row from normalized metrics
@@ -1400,7 +1360,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         effortWritten = true;
       } catch (error) {
         await fs.promises.unlink(req.file.path).catch(() => {});
-        return res.status(500).json({ error: 'Failed to append workout data.' });
+        return standardError(req, res, 'Failed to append workout data.', null, 500);
       }
     }
 
@@ -1443,55 +1403,50 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       responseBody.pending_exercises = pendingExercises;
     }
 
-    return res.status(200).json(responseBody);
+    return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
   } catch (error) {
-    return standardError(res, 'Failed to complete workout ingestion', error.message, 500);
+    return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
   } finally {
     await fs.promises.unlink(req.file.path).catch(() => {});
   }
 });
 
 app.post('/api/log-workout', async (req, res) => {
-  const incomingApiKey = req.header('x-atlas-api-key');
-
-  if (!incomingApiKey || incomingApiKey !== atlasApiKey) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
 
   const payload = req.body;
 
   if (!payload || typeof payload !== 'object') {
-    return standardError(res, 'Invalid JSON payload. A JSON object is required.', null, 400);
+    return standardError(req, res, 'Invalid JSON payload. A JSON object is required.', null, 400);
   }
 
   const { session_id, date, log_rows, effort_row } = payload;
 
   if (!session_id) {
-    return res.status(400).json({ error: 'session_id is required.' });
+    return standardError(req, res, 'session_id is required.', null, 400);
   }
 
   if (!date) {
-    return res.status(400).json({ error: 'date is required.' });
+    return standardError(req, res, 'date is required.', null, 400);
   }
 
   if (log_rows === undefined) {
-    return res.status(400).json({ error: 'log_rows is required.' });
+    return standardError(req, res, 'log_rows is required.', null, 400);
   }
 
   if (!Array.isArray(log_rows)) {
-    return res.status(400).json({ error: 'log_rows must be an array.' });
+    return standardError(req, res, 'log_rows must be an array.', null, 400);
   }
 
   if (log_rows.length === 0) {
-    return res.status(400).json({ error: 'log_rows must be a non-empty array.' });
+    return standardError(req, res, 'log_rows must be a non-empty array.', null, 400);
   }
 
   if (effort_row === undefined) {
-    return res.status(400).json({ error: 'effort_row is required.' });
+    return standardError(req, res, 'effort_row is required.', null, 400);
   }
 
   if (!Array.isArray(effort_row) && !(effort_row && typeof effort_row === 'object')) {
-    return res.status(400).json({ error: 'effort_row must be an array or object.' });
+    return standardError(req, res, 'effort_row must be an array or object.', null, 400);
   }
 
   let existingEffortSessionIds;
@@ -1499,11 +1454,11 @@ app.post('/api/log-workout', async (req, res) => {
     existingEffortSessionIds = await getEffortSessionIds();
   } catch (error) {
     console.error('❌ Failed to check duplicate session IDs:', error);
-    return res.status(500).json({ error: 'Failed to validate duplicate session.' });
+    return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
   }
 
   if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(session_id).toLowerCase())) {
-    return res.status(409).json({ error: 'Duplicate session.' });
+    return standardError(req, res, 'Duplicate session.', null, 409);
   }
 
   let formattedLogRows;
@@ -1541,15 +1496,15 @@ app.post('/api/log-workout', async (req, res) => {
       responseBody.warnings = [...new Set(warnings)];
     }
 
-    return res.status(200).json(responseBody);
+    return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
   } catch (error) {
     console.error('❌ Failed to append workout data:', error);
-    return standardError(res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+    return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
   }
 });
 
 app.use((req, res) => {
-  return standardError(res, 'Route not found', { path: req.originalUrl }, 404);
+  return standardError(req, res, 'Route not found', { path: req.originalUrl }, 404);
 });
 
 app.use((err, req, res, next) => {
@@ -1558,11 +1513,11 @@ app.use((err, req, res, next) => {
   }
 
   if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return standardError(res, 'File too large. Max size is 10MB.', null, 413);
+    return standardError(req, res, 'File too large. Max size is 10MB.', null, 413);
   }
 
   if (err && err.message && /^Only image\/(png|jpeg|jpg|webp)/.test(err.message)) {
-    return standardError(res, err.message, null, 400);
+    return standardError(req, res, err.message, null, 400);
   }
 
   console.error('Unhandled error:', err);
