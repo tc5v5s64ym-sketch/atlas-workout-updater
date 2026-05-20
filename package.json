@@ -7,7 +7,7 @@
     "start": "node index.js",
     "dev": "node index.js",
     "lint": "node --check index.js && node --check sheets.js && node --check services/analytics.js && node --check services/validation.js && node --check services/vision.js && node --check middleware.js && node --check response.js && node --check services/cache.js",
-    "test": "npm run lint"
+    "test": "node --test --test-reporter=spec"
   },
   "engines": {
     "node": ">=18"
