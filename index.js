@@ -680,12 +680,22 @@ app.get('/api/health/sheets', async (req, res) => {
 
   try {
     const tabs = await getSpreadsheetTabs();
-    const requiredTabs = ['Log_Cleaned', 'Effort', 'Exercise_Catalog'];
+    const requiredTabs = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary'];
+    const optionalTabs = ['Dashboard'];
     const status = requiredTabs.reduce((acc, tab) => {
       acc[tab] = { exists: tabs.includes(tab) };
       return acc;
     }, {});
-    return standardSuccess(req, res, 'Google Sheets health check', { tabs: status, availableTabs: tabs });
+    const optional = optionalTabs.reduce((acc, tab) => {
+      acc[tab] = { exists: tabs.includes(tab), required: false };
+      return acc;
+    }, {});
+    return standardSuccess(req, res, 'Google Sheets health check', {
+      tabs: status,
+      optionalTabs: optional,
+      availableTabs: tabs,
+      missingRequiredTabs: requiredTabs.filter(tab => !tabs.includes(tab))
+    });
   } catch (error) {
     return standardError(req, res, 'Failed to verify Google Sheets tabs', error.message, 500);
   }
