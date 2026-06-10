@@ -58,7 +58,7 @@
       <div class="card">
         <h2>Exercise Progress</h2>
         <form id="progress-form" class="inline-form">
-          <input type="text" id="progress-lift-code" placeholder="Lift code (e.g. SQ01)" required>
+          <input type="text" id="progress-lift-code" placeholder="Lift code (e.g. SQ01)" required list="exercise-catalog">
           <button type="submit">Load</button>
         </form>
         <div id="progress-result"></div>
@@ -66,6 +66,28 @@
       <div class="card">
         <h2>Next Set Recommendation</h2>
         <div id="recommendation-result" class="muted">Load a lift code above to see a recommendation.</div>
+      </div>
+      <div class="card">
+        <h2>Catalog Lookup</h2>
+        <form id="catalog-search-form" class="inline-form">
+          <input type="text" id="catalog-search-q" placeholder="Exercise name or lift code">
+          <button type="submit">Search</button>
+        </form>
+        <div id="catalog-search-result"></div>
+      </div>
+      <div class="card">
+        <h2>Session Search</h2>
+        <form id="session-search-form">
+          <div class="form-row">
+            <label>Lift code <input type="text" id="ss-lift-code" placeholder="SQ01" list="exercise-catalog"></label>
+            <label>Exercise <input type="text" id="ss-exercise" placeholder="Back Squat"></label>
+            <label>Muscle group <input type="text" id="ss-muscle-group" placeholder="Legs"></label>
+            <label>Date from <input type="date" id="ss-date-from"></label>
+            <label>Date to <input type="date" id="ss-date-to"></label>
+            <button type="submit">Search</button>
+          </div>
+        </form>
+        <div id="session-search-result"></div>
       </div>
     </section>
 

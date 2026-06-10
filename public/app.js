@@ -412,6 +412,69 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
   }
 });
 
+/* ===== Catalog search ===== */
+
+document.getElementById('catalog-search-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = document.getElementById('catalog-search-q').value.trim();
+  const box = document.getElementById('catalog-search-result');
+  if (!q) return;
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  try {
+    const res = await api(`/api/catalog/search?q=${encodeURIComponent(q)}`);
+    const results = res.data?.results || [];
+    box.innerHTML = '';
+    if (!results.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No matching exercises.' }));
+      return;
+    }
+    box.appendChild(renderTable(
+      ['Canonical name', 'Muscle group', 'Lift code', 'Variants'],
+      results.map(r => [r.canonical_name, r.muscle_group, r.lift_code, (r.variants || []).join(', ')])
+    ));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
+  }
+});
+
+/* ===== Session search ===== */
+
+document.getElementById('session-search-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const params = new URLSearchParams();
+  const liftCode = document.getElementById('ss-lift-code').value.trim();
+  const exercise = document.getElementById('ss-exercise').value.trim();
+  const muscleGroup = document.getElementById('ss-muscle-group').value.trim();
+  const dateFrom = document.getElementById('ss-date-from').value;
+  const dateTo = document.getElementById('ss-date-to').value;
+  if (liftCode) params.set('liftCode', liftCode);
+  if (exercise) params.set('exercise', exercise);
+  if (muscleGroup) params.set('muscleGroup', muscleGroup);
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+
+  const box = document.getElementById('session-search-result');
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  try {
+    const res = await api(`/api/search/sessions?${params.toString()}`);
+    const data = res.data || {};
+    const sets = data.rows || [];
+    const sessionCount = data.session_ids?.length ?? 0;
+    box.innerHTML = '';
+    box.appendChild(el('p', { class: 'muted', text: `${sets.length} set(s) found across ${sessionCount} session(s).` }));
+    if (!sets.length) return;
+    box.appendChild(renderTable(
+      ['Date', 'Session', 'Exercise', 'Set', 'Weight', 'Reps', 'RIR', 'Notes'],
+      sets.slice(0, 100).map(s => [s.date_clean, s.session_id, s.canonical_exercise || s.exercise, s.set_number, s.weight, s.reps, s.rir, s.notes])
+    ));
+    if (sets.length > 100) {
+      box.appendChild(el('p', { class: 'muted', text: `Showing first 100 of ${sets.length} rows.` }));
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
+  }
+});
+
 /* ===== Workout logger (approve-before-save) ===== */
 
 const setsTableBody = document.querySelector('#sets-table tbody');

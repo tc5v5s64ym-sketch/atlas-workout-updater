@@ -213,6 +213,8 @@ button.approve {
 
 code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
+.small { font-size: 0.8rem; }
+
 /* ===== Progression engine ===== */
 .next-target-card {
   background: #f0f9ff;
