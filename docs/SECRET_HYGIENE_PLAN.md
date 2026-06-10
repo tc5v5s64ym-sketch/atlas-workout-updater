@@ -87,6 +87,28 @@ The owner must explicitly approve before:
    - Prepare the exact history rewrite steps.
    - Run only after owner approval.
 
+## Phase 2 — Stop Tracking Local Secret Files
+
+This PR removes `.env` from Git tracking going forward and adds ignore rules for local secret files.
+
+This does not remove secrets from Git history. This does not rotate or revoke any exposed secret. Treat any value that was ever committed as exposed until it has been rotated at the source.
+
+The owner must rotate secrets manually in:
+
+- Render.
+- GitHub Actions secrets.
+- OpenAI.
+- Google Cloud service account.
+
+After rotation:
+
+1. Run Mission Control `read-only` against the cleaned production sheet.
+2. Run Mission Control `full` only when a `test_mode=true` dry-run is appropriate.
+3. Confirm no-write proof: `test_mode:true`, `sheet_written:false`, and `no_write_confirmed:true`.
+4. Confirm the dry-run session does not appear in recent history.
+
+Only consider Git history cleanup after successful rotation and explicit owner approval. Do not rewrite history as part of routine cleanup.
+
 ## What Good Looks Like
 
 - Production still passes Mission Control.

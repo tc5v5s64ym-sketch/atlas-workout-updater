@@ -50,8 +50,10 @@ A dry-run session must not appear in recent history.
 - Never print `ATLAS_API_KEY`.
 - Never commit `.env`.
 - Never commit Google credentials.
+- Never commit service account JSON files.
+- Never commit private key files.
 - Never commit screenshots, spreadsheets, or private workout data.
-- Redact secrets in logs, docs, PRs, and summaries.
+- Redact secrets in logs, docs, PR bodies, tests, and summaries.
 - Follow [SECRET_HYGIENE_PLAN.md](SECRET_HYGIENE_PLAN.md) before rotating, removing, or rewriting any committed secret history.
 
 ## Render Environment Variables

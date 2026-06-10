@@ -1,2 +1,12 @@
 node_modules/
 .env
+.env.*
+!.env.example
+.local
+.secret
+secrets/
+service-account.json
+google-credentials.json
+credentials*.json
+*.key
+*.pem

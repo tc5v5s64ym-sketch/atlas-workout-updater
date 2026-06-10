@@ -43,6 +43,10 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 
 Read [CODEX.md](CODEX.md) before changing code. It contains the permanent Atlas safety rules, sheet contract, no-write requirements, and PR workflow.
 
+## Local Environment
+
+Use [.env.example](.env.example) as a placeholder template for local setup. Never commit `.env` or real secret values. See [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md) and [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md) before rotating or cleaning up secrets.
+
 ## Local Checks
 
 ```bash
