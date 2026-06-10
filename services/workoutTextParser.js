@@ -185,6 +185,34 @@ function parseWorkoutText(input, context = {}) {
   return parseLogSets(rawText, context);
 }
 
+function buildWorkoutTextParseDryRunResponse(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid JSON payload. A JSON object is required.');
+  }
+
+  if (String(payload.test_mode || '').toLowerCase() !== 'true') {
+    throw new Error('test_mode=true is required. parse-workout-text is dry-run only.');
+  }
+
+  if (typeof payload.text !== 'string' || payload.text.trim() === '') {
+    throw new Error('text is required.');
+  }
+
+  const context = payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
+    ? payload.context
+    : {};
+  const parsed = parseWorkoutText(payload.text, context);
+
+  return {
+    status: 'success',
+    test_mode: true,
+    parsed,
+    warnings: Array.isArray(parsed.warnings) ? parsed.warnings : [],
+    sheet_written: false,
+    no_write_confirmed: true,
+  };
+}
+
 function parseUpdateLastSet(rawText) {
   const rir = parseNumberMatch(rawText.match(/\brir\s*(?:was|to|=)?\s*(\d+(?:\.\d+)?)/i) || rawText.match(/\b(?:call it|to)\s*(\d+(?:\.\d+)?)/i));
   return {
@@ -442,6 +470,7 @@ function extractNumbers(text) {
 
 module.exports = {
   parseWorkoutText,
+  buildWorkoutTextParseDryRunResponse,
   normalizeParserText,
   canonicalizeExerciseName: findExerciseInText,
 };

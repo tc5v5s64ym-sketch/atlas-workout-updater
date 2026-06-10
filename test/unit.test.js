@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
-const { parseWorkoutText } = require('../services/workoutTextParser');
+const { parseWorkoutText, buildWorkoutTextParseDryRunResponse } = require('../services/workoutTextParser');
 const { normalizeDurationString } = require('../services/duration');
 const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
@@ -18,6 +18,7 @@ const {
   getMissingRequiredTabs,
   buildSheetContractStatus
 } = require('../config/sheetContract');
+const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
 
 const repoRoot = path.resolve(__dirname, '..');
@@ -560,6 +561,79 @@ test('workout parser keeps press aliases safe and specific', () => {
   const generic = parseWorkoutText('Press 105 8/2');
   assert.equal(generic.intent, 'needs_clarification');
   assert.match(generic.message, /Which press/);
+});
+
+test('parse-workout-text dry-run response parses Dale shorthand without writes', () => {
+  const result = buildWorkoutTextParseDryRunResponse({
+    text: 'Bench 135 10/5 185 8/3 225 5/2',
+    context: {
+      activeExercise: null,
+      activeSessionType: null,
+      todayPlan: null,
+    },
+    test_mode: true,
+  });
+
+  assert.equal(result.status, 'success');
+  assert.equal(result.test_mode, true);
+  assert.equal(result.sheet_written, false);
+  assert.equal(result.no_write_confirmed, true);
+  assert.equal(result.parsed.intent, 'log_sets');
+  assert.equal(result.parsed.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result.parsed), [[135, 10, 5], [185, 8, 3], [225, 5, 2]]);
+});
+
+test('parse-workout-text dry-run validates missing text and requires test_mode', () => {
+  assert.throws(() => buildWorkoutTextParseDryRunResponse({
+    text: '',
+    test_mode: true,
+  }), /text is required/);
+
+  assert.throws(() => buildWorkoutTextParseDryRunResponse({
+    text: 'Bench 205 5/2',
+    test_mode: false,
+  }), /test_mode=true is required/);
+
+  assert.throws(() => buildWorkoutTextParseDryRunResponse({
+    text: 'Bench 205 5/2',
+  }), /test_mode=true is required/);
+});
+
+test('parse-workout-text dry-run returns finish, planning, and ambiguity intents', () => {
+  const finish = buildWorkoutTextParseDryRunResponse({
+    text: 'log everything to spreadsheet',
+    test_mode: true,
+  });
+  assert.equal(finish.parsed.intent, 'finish_session');
+  assert.equal(finish.parsed.requires_effort_check, true);
+
+  const planning = buildWorkoutTextParseDryRunResponse({
+    text: "It's June 9 and we're back at the gym, what are we doing",
+    test_mode: true,
+  });
+  assert.equal(planning.parsed.intent, 'plan_request');
+
+  const ambiguous = buildWorkoutTextParseDryRunResponse({
+    text: 'Press 105 8/2',
+    test_mode: true,
+  });
+  assert.equal(ambiguous.parsed.intent, 'needs_clarification');
+  assert.match(ambiguous.parsed.message, /Which press/);
+  assert.deepEqual(ambiguous.warnings, ['ambiguous_exercise_alias']);
+});
+
+test('parse-workout-text route is registered as read-only and no-write capable', () => {
+  const route = routeDefinitions.find(candidate => candidate.path === '/api/parse-workout-text');
+  assert.ok(route);
+  assert.deepEqual(route.methods, ['POST']);
+  assert.equal(route.authRequired, true);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  assert.match(indexSource, /app\.post\('\/api\/parse-workout-text'/);
+  assert.match(indexSource, /buildWorkoutTextParseDryRunResponse\(req\.body\)/);
+  assert.doesNotMatch(indexSource.match(/app\.post\('\/api\/parse-workout-text'[\s\S]*?app\.post\('\/api\/parse-workout-image'/)[0], /appendRows|getSheetRows|getRecentRows|parseWorkoutScreenshot/);
 });
 
 test('recommendNextSet returns progression recommendation', () => {
