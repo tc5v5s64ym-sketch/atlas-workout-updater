@@ -130,6 +130,32 @@ function svgBarChart(entries, { width = 420, barHeight = 20, gap = 6, color = '#
   return svg;
 }
 
+/* ===== Exercise catalog datalist (typeahead) ===== */
+
+async function loadExerciseDatalist() {
+  if (!getApiKey()) return;
+  try {
+    const res = await api('/api/catalog/exercises');
+    const exercises = (res.data?.exercises || []);
+    if (!exercises.length) return;
+    let dl = document.getElementById('exercise-catalog');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'exercise-catalog';
+      document.body.appendChild(dl);
+    }
+    dl.innerHTML = '';
+    for (const ex of exercises) {
+      const opt = document.createElement('option');
+      opt.value = ex.canonical_name;
+      if (ex.lift_code) opt.label = ex.lift_code;
+      dl.appendChild(opt);
+    }
+  } catch {
+    // typeahead is optional enhancement — fail silently
+  }
+}
+
 /* ===== Tabs ===== */
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -380,7 +406,7 @@ let pendingWrite = null;
 
 function addSetRow(values = {}) {
   const row = el('tr', {}, [
-    el('td', {}, el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press' })),
+    el('td', {}, el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press', list: 'exercise-catalog' })),
     el('td', {}, el('input', { type: 'number', class: 'set-number', value: values.set_number || String(setsTableBody.children.length + 1), min: '1' })),
     el('td', {}, el('input', { type: 'number', class: 'set-weight', value: values.weight ?? '', min: '0', step: 'any' })),
     el('td', {}, el('input', { type: 'number', class: 'set-reps', value: values.reps ?? '', min: '0' })),
@@ -557,6 +583,24 @@ function renderWarnings(warnings) {
   ]);
 }
 
+function renderUnknownExerciseSuggestions(pendingExercises) {
+  if (!pendingExercises || !pendingExercises.length) return null;
+  const items = pendingExercises.map(pe => {
+    const matches = pe.closest_matches || [];
+    const hint = matches.length
+      ? `Did you mean: ${matches.map(m => `${m.canonical_exercise}${m.lift_code ? ` (${m.lift_code})` : ''}`).join(', ')}`
+      : 'No close catalog matches found — add this exercise to Exercise_Catalog.';
+    return el('li', {}, [
+      el('strong', { text: `"${pe.exercise}" — ` }),
+      document.createTextNode(hint)
+    ]);
+  });
+  return el('div', { class: 'preview-warnings' }, [
+    el('strong', { text: 'Unknown exercises — catalog suggestions:' }),
+    el('ul', {}, items)
+  ]);
+}
+
 function renderLogWorkoutPreview(result, effortRow) {
   const data = result.data || {};
   previewContent.innerHTML = '';
@@ -566,6 +610,8 @@ function renderLogWorkoutPreview(result, effortRow) {
   ]);
   previewContent.appendChild(proof);
   previewContent.appendChild(renderWarnings(data.warnings));
+  const logSuggestions = renderUnknownExerciseSuggestions(data.pending_exercises);
+  if (logSuggestions) previewContent.appendChild(logSuggestions);
   previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.log_rows_preview || []).length})` }));
   previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.log_rows_preview || []));
   if (effortRow) {
@@ -588,6 +634,8 @@ function renderCompleteWorkoutPreview(result) {
   ]);
   previewContent.appendChild(proof);
   previewContent.appendChild(renderWarnings(outer.warnings));
+  const completeSuggestions = renderUnknownExerciseSuggestions(outer.pending_exercises);
+  if (completeSuggestions) previewContent.appendChild(completeSuggestions);
 
   const dup = data.duplicate_check || {};
   if (dup.duplicate_log_rows > 0) {
@@ -654,3 +702,4 @@ addSetRow();
 setDefaultDate();
 checkConnection();
 loadDashboard();
+loadExerciseDatalist();

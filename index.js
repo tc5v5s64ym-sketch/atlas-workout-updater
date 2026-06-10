@@ -448,9 +448,11 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
       // If unknown exercise, add to pending_exercises
       for (const w of rowWarnings) {
         if (w && String(w).startsWith('Unknown exercise:')) {
+          const suggestions = closestExerciseMatches(rowObj.exercise, catalogMap, 3);
           pending_exercises.push({
             exercise: rowObj.exercise,
-            suggested_canonical_name: rowObj.exercise,
+            suggested_canonical_name: suggestions[0]?.canonical_exercise || rowObj.exercise,
+            closest_matches: suggestions,
             reason: 'No Exercise_Catalog match'
           });
         }
@@ -1417,10 +1419,12 @@ app.post('/api/log-workout', async (req, res) => {
 
   let formattedLogRows;
   let warnings = [];
+  let pendingExercisesForPreview = [];
   try {
     const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings || [];
+    pendingExercisesForPreview = logResult.pending_exercises || [];
   } catch (error) {
     return standardError(req, res, error.message, null, 400);
   }
@@ -1443,6 +1447,7 @@ app.post('/api/log-workout', async (req, res) => {
     };
     if (formattedEffortRow) previewBody.effort_row_preview = formattedEffortRow;
     if (warnings.length > 0) previewBody.warnings = [...new Set(warnings)];
+    if (pendingExercisesForPreview.length > 0) previewBody.pending_exercises = pendingExercisesForPreview;
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
