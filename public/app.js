@@ -241,7 +241,13 @@ async function loadCoaching() {
     const deloads = data.deload_suggestions || [];
     if (deloads.length) {
       box.appendChild(el('h3', { text: 'Deload suggestions' }));
-      box.appendChild(el('ul', {}, deloads.map(d => el('li', { text: `${d.liftCode}: ${d.suggestion}` }))));
+      box.appendChild(el('ul', {}, deloads.map(d => {
+        const li = el('li', {}, [
+          el('a', { class: 'lift-link', href: '#', 'data-lift': d.liftCode, text: d.liftCode }),
+          document.createTextNode(`: ${d.suggestion}`)
+        ]);
+        return li;
+      })));
     } else {
       box.appendChild(el('p', { class: 'muted', text: 'No deloads needed — no lift has been stalled 4+ sessions.' }));
     }
@@ -328,10 +334,17 @@ async function loadStalls() {
       box.appendChild(el('span', { class: 'muted', text: 'No stalled lifts — keep it up.' }));
       return;
     }
-    box.appendChild(renderTable(
-      ['Lift', 'Sessions stalled', 'Last best weight', 'Since'],
-      stalls.map(s => [s.liftCode, s.sessions_stalled, s.last_best_weight, s.first_session_date])
-    ));
+    const table = el('table', {});
+    const thead = el('thead', {}, el('tr', {}, ['Lift', 'Sessions stalled', 'Last best weight', 'Since'].map(h => el('th', { text: h }))));
+    const tbody = el('tbody', {}, stalls.map(s => el('tr', {}, [
+      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.liftCode })),
+      el('td', { text: String(s.sessions_stalled) }),
+      el('td', { text: String(s.last_best_weight) }),
+      el('td', { text: String(s.first_session_date) })
+    ])));
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    box.appendChild(table);
   } catch (err) {
     box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
@@ -409,6 +422,89 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
     }
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+});
+
+/* ===== Lift-link navigation (dashboard → progress) ===== */
+
+document.addEventListener('click', e => {
+  const link = e.target.closest('.lift-link');
+  if (!link) return;
+  e.preventDefault();
+  const liftCode = link.dataset.lift;
+  if (!liftCode) return;
+  // Switch to Progress tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const progressBtn = document.querySelector('[data-tab="progress"]');
+  progressBtn.classList.add('active');
+  document.getElementById('tab-progress').classList.add('active');
+  // Pre-fill and submit the progress form
+  const liftInput = document.getElementById('progress-lift-code');
+  liftInput.value = liftCode;
+  document.getElementById('progress-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+});
+
+/* ===== Catalog search ===== */
+
+document.getElementById('catalog-search-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = document.getElementById('catalog-search-q').value.trim();
+  const box = document.getElementById('catalog-search-result');
+  if (!q) return;
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  try {
+    const res = await api(`/api/catalog/search?q=${encodeURIComponent(q)}`);
+    const results = res.data?.results || [];
+    box.innerHTML = '';
+    if (!results.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No matching exercises.' }));
+      return;
+    }
+    box.appendChild(renderTable(
+      ['Canonical name', 'Muscle group', 'Lift code', 'Variants'],
+      results.map(r => [r.canonical_name, r.muscle_group, r.lift_code, (r.variants || []).join(', ')])
+    ));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
+  }
+});
+
+/* ===== Session search ===== */
+
+document.getElementById('session-search-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const params = new URLSearchParams();
+  const liftCode = document.getElementById('ss-lift-code').value.trim();
+  const exercise = document.getElementById('ss-exercise').value.trim();
+  const muscleGroup = document.getElementById('ss-muscle-group').value.trim();
+  const dateFrom = document.getElementById('ss-date-from').value;
+  const dateTo = document.getElementById('ss-date-to').value;
+  if (liftCode) params.set('liftCode', liftCode);
+  if (exercise) params.set('exercise', exercise);
+  if (muscleGroup) params.set('muscleGroup', muscleGroup);
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+
+  const box = document.getElementById('session-search-result');
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  try {
+    const res = await api(`/api/search/sessions?${params.toString()}`);
+    const data = res.data || {};
+    const sets = data.rows || [];
+    const sessionCount = data.session_ids?.length ?? 0;
+    box.innerHTML = '';
+    box.appendChild(el('p', { class: 'muted', text: `${sets.length} set(s) found across ${sessionCount} session(s).` }));
+    if (!sets.length) return;
+    box.appendChild(renderTable(
+      ['Date', 'Session', 'Exercise', 'Set', 'Weight', 'Reps', 'RIR', 'Notes'],
+      sets.slice(0, 100).map(s => [s.date_clean, s.session_id, s.canonical_exercise || s.exercise, s.set_number, s.weight, s.reps, s.rir, s.notes])
+    ));
+    if (sets.length > 100) {
+      box.appendChild(el('p', { class: 'muted', text: `Showing first 100 of ${sets.length} rows.` }));
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
   }
 });
 
