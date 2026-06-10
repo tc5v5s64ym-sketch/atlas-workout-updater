@@ -48,7 +48,11 @@ A dry-run session must not appear in recent history.
 
 - Never expose secrets or API keys.
 - Never print `ATLAS_API_KEY`.
+- AI agents must never request, display, rotate, or revoke secret values.
+- AI agents may update docs, checklists, ignore rules, and safe placeholder examples.
+- Real rotation happens only in provider UIs or settings by the owner.
 - Never commit `.env`.
+- `.env.example` may contain placeholders only.
 - Never commit Google credentials.
 - Never commit service account JSON files.
 - Never commit private key files.
