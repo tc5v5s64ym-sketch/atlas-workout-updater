@@ -317,6 +317,12 @@ test('calculateQualityScore returns 5 for perfect session and 0 for minimal sess
 
 // ── Analytics functions ───────────────────────────────────────────────────────
 
+// For functions that cut off by "days ago from now", fixtures must be relative
+// to the test run date or they silently age out of the window.
+function daysAgoIso(days) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 const SAMPLE_LOG = [
   ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
   ['2026-05-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '8', '1', ''],
@@ -362,8 +368,15 @@ test('computeExerciseProgress returns empty for unknown lift', () => {
 });
 
 test('computeMuscleGroupVolume sums volume and sets by muscle group', () => {
-  // Use days=365 so all sample rows (dated ~May 2026) fall within the window
-  const groups = computeMuscleGroupVolume(SAMPLE_LOG, 365);
+  // Relative dates so the rows always fall inside the days window
+  const rows = [
+    [daysAgoIso(5), 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    [daysAgoIso(5), 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '8', '1', ''],
+    [daysAgoIso(3), 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '3', ''],
+    [daysAgoIso(3), 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '2', '185', '7', '2', ''],
+    [daysAgoIso(60), 'OLD', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '300', '5', '2', '']
+  ];
+  const groups = computeMuscleGroupVolume(rows, 14);
   const legs = groups.find(g => g.muscle_group === 'Legs');
   const chest = groups.find(g => g.muscle_group === 'Chest');
   assert.ok(legs, 'Legs should be present');
@@ -402,13 +415,12 @@ test('detectRecentPrs returns best weight and rep set per lift', () => {
 });
 
 test('buildBodyweightHistory computes entries, average, and trend', () => {
-  // Use days=60 so May 2026 dates (31-40 days ago from June 2026) fall within the window
   const rows = [
-    ['2026-05-01', '185', ''],
-    ['2026-05-05', '184', ''],
-    ['2026-05-10', '183', ''],
+    [daysAgoIso(20), '185', ''],
+    [daysAgoIso(10), '184', ''],
+    [daysAgoIso(2), '183', ''],
   ];
-  const history = buildBodyweightHistory(rows, 60);
+  const history = buildBodyweightHistory(rows, 30);
   assert.equal(history.entries.length, 3);
   assert.equal(history.latest.weight, 183);
   assert.ok(history.average > 0);
@@ -416,10 +428,9 @@ test('buildBodyweightHistory computes entries, average, and trend', () => {
 });
 
 test('buildBodyweightHistory respects days window and excludes old entries', () => {
-  // 2020-01-01 is always outside a 30-day window; 2026-06-01 is always inside
   const rows = [
-    ['2020-01-01', '200', ''],
-    ['2026-06-01', '183', ''],
+    [daysAgoIso(2000), '200', ''],
+    [daysAgoIso(2), '183', ''],
   ];
   const history = buildBodyweightHistory(rows, 30);
   assert.equal(history.entries.length, 1);
@@ -563,4 +574,31 @@ test('computeFatigueStatus reports no_baseline without prior history', () => {
   const fatigue = computeFatigueStatus(rows, ref);
   assert.equal(fatigue.status, 'no_baseline');
   assert.equal(fatigue.ratio, null);
+});
+
+// ── Backup script tab discovery (read-only client) ────────────────────────────
+
+const { listTabs } = require('../scripts/export-sheets-backup');
+
+test('listTabs extracts tab titles via the provided (read-only) client', async () => {
+  const fakeClient = {
+    spreadsheets: {
+      get: async ({ spreadsheetId, fields }) => {
+        assert.equal(spreadsheetId, 'sheet-123');
+        assert.equal(fields, 'sheets.properties.title');
+        return { data: { sheets: [
+          { properties: { title: 'Log_Cleaned' } },
+          { properties: { title: 'Effort' } },
+          { properties: {} }
+        ] } };
+      }
+    }
+  };
+  const tabs = await listTabs(fakeClient, 'sheet-123');
+  assert.deepEqual(tabs, ['Log_Cleaned', 'Effort', '']);
+});
+
+test('listTabs returns empty array when spreadsheet has no sheets data', async () => {
+  const fakeClient = { spreadsheets: { get: async () => ({ data: {} }) } };
+  assert.deepEqual(await listTabs(fakeClient, 'sheet-123'), []);
 });
