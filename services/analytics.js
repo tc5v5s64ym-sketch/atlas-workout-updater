@@ -291,9 +291,14 @@ function recommendNextSet(logRows, liftCode) {
       liftCode: normalizedCode,
       last_working_sets: [],
       recommendation: 'No recent working sets found for this lift code.',
-      reasoning: 'There is not enough history to make a recommendation.'
+      reasoning: 'There is not enough history to make a recommendation.',
+      next_target: null,
+      sessions_analyzed: 0
     };
   }
+
+  // Count distinct sessions for this lift
+  const sessions = [...new Set(rows.map(r => r.session_id))];
 
   const lastSets = rows.slice(-5).map(formatSet);
   const lastSet = lastSets[lastSets.length - 1];
@@ -301,19 +306,44 @@ function recommendNextSet(logRows, liftCode) {
   const muscleGroup = lastSet.muscle_group || '';
   const lowerBody = isLowerBodyGroup(muscleGroup);
   const increaseAmount = lowerBody ? 10 : 5;
+
+  // e1RM trend across all sessions for this lift
+  const sessionBests = [];
+  const seenSessions = new Set();
+  for (const row of rows) {
+    if (!seenSessions.has(row.session_id)) {
+      seenSessions.add(row.session_id);
+      const e1rm = row.weight && row.reps ? Math.round(row.weight * (1 + row.reps / 30) * 100) / 100 : null;
+      if (e1rm) sessionBests.push(e1rm);
+    }
+  }
+  const e1rmTrend = sessionBests.length >= 2 ? getSimpleTrend(sessionBests) : 'flat';
+
   let recommendation = 'Repeat the last working set and keep form tight.';
   let reasoning = 'Insufficient recent trend to make a stronger recommendation.';
+  let nextWeight = lastSet.weight;
+  let nextReps = lastSet.reps;
+  let confidence = 'low';
 
   if (lastSet.rir !== null && lastSet.rir !== undefined && Number.isFinite(lastSet.rir)) {
     if (lastSet.rir >= 2 && priorSet && lastSet.reps === priorSet.reps) {
-      recommendation = `Increase the weight from ${lastSet.weight} to ${lastSet.weight + increaseAmount} and keep reps around ${lastSet.reps}.`;
-      reasoning = `Last session had RIR ${lastSet.rir} with stable reps, so a conservative ${increaseAmount} lb progression is reasonable.`;
+      nextWeight = lastSet.weight + increaseAmount;
+      nextReps = lastSet.reps;
+      recommendation = `Increase to ${nextWeight} × ${nextReps} reps.`;
+      reasoning = `RIR ${lastSet.rir} with stable reps over two sessions — ${increaseAmount} lb progression is warranted.`;
+      confidence = 'high';
     } else if (lastSet.rir <= 0) {
-      recommendation = `Repeat the same weight or reduce by about 5% if the last set felt too heavy.`;
-      reasoning = 'RIR at or below zero indicates the set was very close to failure, so maintain or slightly reduce weight.';
+      nextWeight = lastSet.weight;
+      nextReps = lastSet.reps;
+      recommendation = `Hold at ${nextWeight} × ${nextReps} — the last set was at or near failure.`;
+      reasoning = 'RIR ≤ 0 means the last set was very close to failure. Maintain load and prioritize technique before adding weight.';
+      confidence = 'high';
     } else {
-      recommendation = `Keep ${lastSet.weight} lbs and aim to add a rep or two next session.`;
-      reasoning = 'The last set did not show strong progression margin, so build volume before increasing load.';
+      nextWeight = lastSet.weight;
+      nextReps = (lastSet.reps || 0) + 1;
+      recommendation = `Keep ${nextWeight} lbs and target ${nextReps} reps next session.`;
+      reasoning = `RIR ${lastSet.rir} suggests there is room to add a rep before bumping load.`;
+      confidence = 'medium';
     }
   }
 
@@ -321,7 +351,11 @@ function recommendNextSet(logRows, liftCode) {
     liftCode: normalizedCode,
     last_working_sets: lastSets,
     recommendation,
-    reasoning
+    reasoning,
+    next_target: { weight: nextWeight, reps: nextReps, sets: 3 },
+    e1rm_trend: e1rmTrend,
+    sessions_analyzed: sessions.length,
+    confidence
   };
 }
 

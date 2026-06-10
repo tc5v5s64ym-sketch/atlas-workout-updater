@@ -160,6 +160,66 @@ test('enrichLogRow fuzzy-matches a substring shorthand (Bench → Bench Press)',
   assert.ok(result.autoMatch && result.autoMatch.includes('Bench Press'));
 });
 
+test('enrichLogRow prefers Bench Press for Bench when other bench movements exist', () => {
+  const map = new Map([
+    ['close grip bench press', { canonical_exercise: 'Close Grip Bench Press', muscle_group: 'Chest', lift_code: 'CGBP' }],
+    ['bench press', { canonical_exercise: 'Bench Press', muscle_group: 'Chest', lift_code: 'BEN01' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Bench' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Bench Press');
+  assert.equal(result.enriched.lift_code, 'BEN01');
+});
+
+test('enrichLogRow prefers the catalog weighted dips entry for Dips shorthand', () => {
+  const map = new Map([
+    ['tricep dips', { canonical_exercise: 'Tricep Dips', muscle_group: 'Arms', lift_code: 'TDIP' }],
+    ['dips weighted', { canonical_exercise: 'Dips (Weighted)', muscle_group: 'Chest', lift_code: 'DIP01' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Dips' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Dips (Weighted)');
+  assert.equal(result.enriched.lift_code, 'DIP01');
+});
+
+test('enrichLogRow prefers weighted Dips over a less specific exact dips key', () => {
+  const map = new Map([
+    ['dips', { canonical_exercise: 'Tricep Dips', muscle_group: 'Arms', lift_code: 'TDIP' }],
+    ['dips weighted', { canonical_exercise: 'Dips (Weighted)', muscle_group: 'Chest', lift_code: 'DIP01' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Dips' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Dips (Weighted)');
+  assert.equal(result.enriched.lift_code, 'DIP01');
+});
+
+test('enrichLogRow prefers Lateral Raises for Lateral and Laterals shorthand', () => {
+  const map = new Map([
+    ['cable lateral raise', { canonical_exercise: 'Cable Lateral Raise', muscle_group: 'Shoulders', lift_code: 'CLR01' }],
+    ['lateral raises', { canonical_exercise: 'Lateral Raises', muscle_group: 'Shoulders', lift_code: 'LAT01' }]
+  ]);
+  const lateral = enrichLogRow({ exercise: 'Lateral' }, map);
+  const laterals = enrichLogRow({ exercise: 'Laterals' }, map);
+  assert.equal(lateral.enriched.canonical_exercise, 'Lateral Raises');
+  assert.equal(laterals.enriched.canonical_exercise, 'Lateral Raises');
+});
+
+test('enrichLogRow never maps Lats shorthand to Lateral Raises', () => {
+  const map = new Map([
+    ['lateral raises', { canonical_exercise: 'Lateral Raises', muscle_group: 'Shoulders', lift_code: 'LAT01' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Lats' }, map);
+  assert.equal(result.enriched.canonical_exercise, '');
+  assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
+});
+
+test('enrichLogRow resolves Lats to Lat Pulldown when present', () => {
+  const map = new Map([
+    ['lateral raises', { canonical_exercise: 'Lateral Raises', muscle_group: 'Shoulders', lift_code: 'LAT01' }],
+    ['lat pulldown', { canonical_exercise: 'Lat Pulldown', muscle_group: 'Back', lift_code: 'LPD01' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Lats' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Lat Pulldown');
+  assert.equal(result.enriched.lift_code, 'LPD01');
+});
+
 test('enrichLogRow fuzzy-matches plural to singular (Squats → Back Squat via variant)', () => {
   const map = new Map([
     ['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }],
@@ -289,7 +349,7 @@ test('recommendNextSet returns progression recommendation', () => {
     ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '3', '']
   ];
   const rec = recommendNextSet(rows, 'SQ');
-  assert.match(rec.recommendation, /Increase the weight/);
+  assert.match(rec.recommendation, /Increase to/);
 });
 
 test('recommendNextSet returns no-history message for unknown lift', () => {

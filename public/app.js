@@ -387,8 +387,26 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
     const res = await api(`/api/recommend/next/${encodeURIComponent(liftCode)}`);
     const data = res.data || {};
     recBox.innerHTML = '';
-    recBox.appendChild(el('p', { text: data.recommendation || '' }));
-    recBox.appendChild(el('p', { class: 'muted', text: data.reasoning || '' }));
+
+    if (data.next_target) {
+      const t = data.next_target;
+      const confidenceClass = data.confidence === 'high' ? 'ok' : data.confidence === 'medium' ? 'warn' : 'muted';
+      recBox.appendChild(el('div', { class: 'next-target-card' }, [
+        el('div', { class: 'next-target-weight', text: `${t.weight}` }),
+        el('div', { class: 'next-target-meta', text: `× ${t.reps} reps · ${t.sets} sets` })
+      ]));
+      recBox.appendChild(el('p', { text: data.recommendation }));
+      recBox.appendChild(el('p', { class: 'muted', text: data.reasoning }));
+      const meta = [
+        data.sessions_analyzed ? `${data.sessions_analyzed} sessions analyzed` : '',
+        data.e1rm_trend ? `e1RM trend: ${data.e1rm_trend}` : '',
+        data.confidence ? `confidence: ${data.confidence}` : ''
+      ].filter(Boolean).join('  ·  ');
+      if (meta) recBox.appendChild(el('p', { class: `muted small ${confidenceClass}`, text: meta }));
+    } else {
+      recBox.appendChild(el('p', { text: data.recommendation || '' }));
+      recBox.appendChild(el('p', { class: 'muted', text: data.reasoning || '' }));
+    }
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
@@ -720,6 +738,38 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
     approveBtn.disabled = false;
     approveBtn.textContent = 'Write to Google Sheets';
+  }
+});
+
+/* ===== Session loader (correct an existing session) ===== */
+
+document.getElementById('load-session-btn').addEventListener('click', async () => {
+  const sessionId = document.getElementById('load-session-id').value.trim();
+  const statusBox = document.getElementById('load-session-status');
+  if (!sessionId) {
+    setStatus(statusBox, 'Enter a session ID first.', 'error');
+    return;
+  }
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    const data = res.data || {};
+    document.getElementById('log-date').value = data.date || '';
+    document.getElementById('log-session-id').value = data.session_id || '';
+    setsTableBody.innerHTML = '';
+    for (const row of (data.rows || [])) {
+      addSetRow({
+        exercise: row.exercise,
+        set_number: row.set_number,
+        weight: row.weight,
+        reps: row.reps,
+        rir: row.rir,
+        notes: row.notes
+      });
+    }
+    invalidatePreview();
+    setStatus(statusBox, `Loaded ${data.set_count} sets from session ${sessionId}. Edit what needs fixing, then preview.`, 'ok');
+  } catch (err) {
+    setStatus(statusBox, `Could not load session: ${err.message}`, 'error');
   }
 });
 

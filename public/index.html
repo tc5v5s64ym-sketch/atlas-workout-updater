@@ -75,6 +75,15 @@
         <h2>Log Workout</h2>
         <p class="safety-note"><strong>Two-step write flow.</strong> Preview sends your data with <code>test_mode=true</code> — nothing is written. Only after you review the dry-run result and click <em>Write to Sheets</em> does any data leave this device.</p>
 
+        <details class="load-session-details">
+          <summary>Load existing session to correct</summary>
+          <div class="inline-form" style="margin-top:10px">
+            <input type="text" id="load-session-id" placeholder="Session ID (e.g. 20260610-PM-01)">
+            <button type="button" id="load-session-btn" class="secondary">Load</button>
+          </div>
+          <div id="load-session-status"></div>
+        </details>
+
         <form id="logger-form">
           <div class="form-row">
             <label>Date <input type="date" id="log-date" required></label>

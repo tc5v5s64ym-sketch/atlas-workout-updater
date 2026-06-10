@@ -800,6 +800,42 @@ app.get('/api/schema/complete-workout', (req, res) => {
   });
 });
 
+// GET /api/sessions/:sessionId — fetch all log rows for a session (for correction pre-fill)
+app.get('/api/sessions/:sessionId', async (req, res) => {
+
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId) return standardError(req, res, 'sessionId is required', null, 400);
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const sessionRows = allLog.filter(row => String(row[1] || '').trim() === sessionId);
+    if (!sessionRows.length) {
+      return standardError(req, res, `No rows found for session "${sessionId}"`, null, 404);
+    }
+    const rows = sessionRows.map(row => ({
+      date_clean: String(row[0] || ''),
+      session_id: String(row[1] || ''),
+      exercise: String(row[2] || ''),
+      canonical_exercise: String(row[3] || ''),
+      muscle_group: String(row[4] || ''),
+      lift_code: String(row[5] || ''),
+      set_number: String(row[6] || ''),
+      weight: String(row[7] || ''),
+      reps: String(row[8] || ''),
+      rir: String(row[9] || ''),
+      notes: String(row[10] || '')
+    }));
+    return standardSuccess(req, res, 'Session rows', {
+      session_id: sessionId,
+      date: rows[0]?.date_clean || '',
+      set_count: rows.length,
+      rows
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to fetch session', error.message, 500);
+  }
+});
+
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
 

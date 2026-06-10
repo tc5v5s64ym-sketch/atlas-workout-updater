@@ -213,6 +213,50 @@ button.approve {
 
 code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
+/* ===== Progression engine ===== */
+.next-target-card {
+  background: #f0f9ff;
+  border: 2px solid #38bdf8;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin: 12px 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.next-target-weight {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #0284c7;
+  line-height: 1;
+}
+
+.next-target-meta {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #0369a1;
+}
+
+/* ===== Session loader ===== */
+.load-session-details {
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.load-session-details summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--muted);
+  user-select: none;
+}
+
+.load-session-details summary:hover {
+  color: var(--fg);
+}
+
 @media (max-width: 640px) {
   main { padding: 10px; }
   nav { overflow-x: auto; white-space: nowrap; }
