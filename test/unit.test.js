@@ -465,3 +465,36 @@ test('detectStalls skips lifts with fewer sessions than minSessions', () => {
   ];
   assert.equal(detectStalls(rows, 3).length, 0);
 });
+
+// ── Backup export script ──────────────────────────────────────────────────────
+
+const { rowsToCsv, toCsvCell, buildBackupManifest } = require('../scripts/export-sheets-backup');
+
+test('toCsvCell escapes quotes, commas, and newlines', () => {
+  assert.equal(toCsvCell('plain'), 'plain');
+  assert.equal(toCsvCell('has,comma'), '"has,comma"');
+  assert.equal(toCsvCell('has "quote"'), '"has ""quote"""');
+  assert.equal(toCsvCell('line\nbreak'), '"line\nbreak"');
+  assert.equal(toCsvCell(null), '');
+  assert.equal(toCsvCell(undefined), '');
+  assert.equal(toCsvCell(42), '42');
+});
+
+test('rowsToCsv joins rows and cells correctly', () => {
+  const csv = rowsToCsv([
+    ['Date', 'Exercise', 'Notes'],
+    ['2026-05-10', 'Squat', 'felt good, strong']
+  ]);
+  assert.equal(csv, 'Date,Exercise,Notes\n2026-05-10,Squat,"felt good, strong"\n');
+});
+
+test('buildBackupManifest summarizes exported tabs', () => {
+  const manifest = buildBackupManifest({
+    spreadsheetId: 'sheet-123',
+    tabs: [{ name: 'Log_Cleaned', rowCount: 100 }, { name: 'Effort', rowCount: 20 }],
+    timestamp: '2026-06-10T00-00-00Z'
+  });
+  assert.equal(manifest.spreadsheet_id, 'sheet-123');
+  assert.equal(manifest.tab_count, 2);
+  assert.deepEqual(manifest.tabs[0], { name: 'Log_Cleaned', rows: 100 });
+});

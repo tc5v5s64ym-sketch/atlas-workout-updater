@@ -48,6 +48,7 @@ The static assets are public, but every data request still requires the API key.
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Product plan: [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md)
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
+- Backup and rollback: [docs/BACKUP_ROLLBACK.md](docs/BACKUP_ROLLBACK.md)
 - Secret hygiene plan: [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md)
 - Secret rotation runbook: [docs/SECRET_ROTATION_RUNBOOK.md](docs/SECRET_ROTATION_RUNBOOK.md)
 - Secret hygiene checklist: [docs/SECRET_HYGIENE_CHECKLIST.md](docs/SECRET_HYGIENE_CHECKLIST.md)
