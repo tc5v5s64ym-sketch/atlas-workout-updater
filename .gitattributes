@@ -1,0 +1,8 @@
+.env -diff
+.env.* -diff
+.env.example diff
+*.key -diff
+*.pem -diff
+service-account.json -diff
+google-credentials.json -diff
+credentials*.json -diff

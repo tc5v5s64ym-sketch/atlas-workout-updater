@@ -48,10 +48,16 @@ A dry-run session must not appear in recent history.
 
 - Never expose secrets or API keys.
 - Never print `ATLAS_API_KEY`.
+- AI agents must never request, display, rotate, or revoke secret values.
+- AI agents may update docs, checklists, ignore rules, and safe placeholder examples.
+- Real rotation happens only in provider UIs or settings by the owner.
 - Never commit `.env`.
+- `.env.example` may contain placeholders only.
 - Never commit Google credentials.
+- Never commit service account JSON files.
+- Never commit private key files.
 - Never commit screenshots, spreadsheets, or private workout data.
-- Redact secrets in logs, docs, PRs, and summaries.
+- Redact secrets in logs, docs, PR bodies, tests, and summaries.
 - Follow [SECRET_HYGIENE_PLAN.md](SECRET_HYGIENE_PLAN.md) before rotating, removing, or rewriting any committed secret history.
 
 ## Render Environment Variables
