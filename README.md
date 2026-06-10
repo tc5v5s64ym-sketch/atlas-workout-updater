@@ -10,6 +10,17 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 - Required production tabs are `Metadata`, `Log_Cleaned`, `Exercise_Catalog`, `Effort`, `Logic`, and `Session_Summary`.
 - Mission Control is the GitHub Actions smoke test used for safe production checks.
 
+## Web UI
+
+A lightweight web UI is served at `/app` (e.g. `https://atlas-workout-updater.onrender.com/app/`). It provides:
+
+- **Dashboard** — weekly summary, recent workouts, recent PRs, stalled lifts (read-only).
+- **Progress** — per-lift progress and next-set recommendation (read-only).
+- **Log Workout** — approve-before-save flow: enter sets plus manual effort or an Apple Watch screenshot, run a `test_mode=true` dry-run preview, review enrichment/warnings, then explicitly approve to write.
+- **Settings** — paste your Atlas API key; it is stored only in the browser's localStorage and sent as the `x-atlas-api-key` header on every data call.
+
+The static assets are public, but every data request still requires the API key. Nothing is ever written without a previewed dry-run and an explicit Approve click.
+
 ## Safety Rules
 
 - Never commit `.env`, API keys, Google credentials, screenshots, spreadsheets, or private workout data.

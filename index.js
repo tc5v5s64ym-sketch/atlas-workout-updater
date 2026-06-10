@@ -107,6 +107,9 @@ function requestLogger(req, res, next) {
 }
 
 app.use(requestLogger);
+// Read-only + approve-before-save web UI. Static assets are public; every
+// data call the UI makes still goes through /api and requires the API key.
+app.use('/app', express.static(path.join(__dirname, 'public')));
 app.use('/api', requireApiKeyMiddleware(atlasApiKey, { publicPaths: [] }));
 const { execSync } = require('child_process');
 

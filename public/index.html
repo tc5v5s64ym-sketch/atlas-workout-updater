@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atlas — Workout Companion</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>Atlas</h1>
+    <span class="tagline">Personal workout companion</span>
+    <span id="conn-status" class="conn-status" title="Backend connection">●</span>
+  </header>
+
+  <nav>
+    <button data-tab="dashboard" class="tab-btn active">Dashboard</button>
+    <button data-tab="progress" class="tab-btn">Progress</button>
+    <button data-tab="logger" class="tab-btn">Log Workout</button>
+    <button data-tab="settings" class="tab-btn">Settings</button>
+  </nav>
+
+  <main>
+    <!-- ============ DASHBOARD (read-only) ============ -->
+    <section id="tab-dashboard" class="tab active">
+      <div class="card">
+        <h2>Weekly Summary</h2>
+        <div id="weekly-summary" class="loading">Loading…</div>
+      </div>
+      <div class="card">
+        <h2>Recent Workouts</h2>
+        <div id="recent-history" class="loading">Loading…</div>
+      </div>
+      <div class="card">
+        <h2>Recent PRs</h2>
+        <div id="recent-prs" class="loading">Loading…</div>
+      </div>
+      <div class="card">
+        <h2>Stalled Lifts</h2>
+        <div id="stalls" class="loading">Loading…</div>
+      </div>
+    </section>
+
+    <!-- ============ PROGRESS (read-only) ============ -->
+    <section id="tab-progress" class="tab">
+      <div class="card">
+        <h2>Exercise Progress</h2>
+        <form id="progress-form" class="inline-form">
+          <input type="text" id="progress-lift-code" placeholder="Lift code (e.g. SQ01)" required>
+          <button type="submit">Load</button>
+        </form>
+        <div id="progress-result"></div>
+      </div>
+      <div class="card">
+        <h2>Next Set Recommendation</h2>
+        <div id="recommendation-result" class="muted">Load a lift code above to see a recommendation.</div>
+      </div>
+    </section>
+
+    <!-- ============ LOG WORKOUT (approve-before-save) ============ -->
+    <section id="tab-logger" class="tab">
+      <div class="card">
+        <h2>Log Workout</h2>
+        <p class="safety-note">Nothing is saved until you preview and explicitly approve. Preview runs in <code>test_mode</code> with a no-write guarantee.</p>
+
+        <form id="logger-form">
+          <div class="form-row">
+            <label>Date <input type="date" id="log-date" required></label>
+            <label>Session ID <input type="text" id="log-session-id" placeholder="auto-generated if blank"></label>
+            <label>Location <input type="text" id="log-location" placeholder="Gym"></label>
+          </div>
+
+          <h3>Sets</h3>
+          <table id="sets-table">
+            <thead>
+              <tr><th>Exercise</th><th>Set #</th><th>Weight</th><th>Reps</th><th>RIR</th><th>Notes</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <button type="button" id="add-set-btn" class="secondary">+ Add set</button>
+
+          <h3>Effort</h3>
+          <div class="form-row">
+            <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>
+            <label class="radio"><input type="radio" name="effort-mode" value="screenshot"> Apple Watch screenshot</label>
+          </div>
+
+          <div id="effort-manual" class="form-row">
+            <label>Duration <input type="text" id="effort-duration" placeholder="hh:mm:ss or minutes"></label>
+            <label>Active cal <input type="number" id="effort-active-cal" min="1" max="3000"></label>
+            <label>Total cal <input type="number" id="effort-total-cal" min="1" max="4000"></label>
+            <label>Avg HR <input type="number" id="effort-avg-hr" min="40" max="220"></label>
+            <label>Peak HR <input type="number" id="effort-peak-hr" min="40" max="230"></label>
+          </div>
+
+          <div id="effort-screenshot" class="form-row" hidden>
+            <label>Screenshot <input type="file" id="effort-image" accept="image/png,image/jpeg,image/webp"></label>
+          </div>
+
+          <div class="form-row">
+            <label class="wide">Workout notes <input type="text" id="log-notes" placeholder="optional"></label>
+          </div>
+
+          <div class="action-row">
+            <button type="submit" id="preview-btn">Preview (dry-run)</button>
+          </div>
+        </form>
+
+        <div id="preview-panel" hidden>
+          <h3>Review before saving</h3>
+          <div id="preview-content"></div>
+          <div class="action-row">
+            <button id="approve-btn" class="danger">Approve &amp; Save</button>
+            <button id="cancel-preview-btn" class="secondary">Edit / Cancel</button>
+          </div>
+        </div>
+
+        <div id="logger-status"></div>
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section id="tab-settings" class="tab">
+      <div class="card">
+        <h2>Settings</h2>
+        <p>The API key is stored only in this browser (localStorage) and sent as the <code>x-atlas-api-key</code> header.</p>
+        <form id="settings-form" class="inline-form">
+          <input type="password" id="api-key-input" placeholder="Atlas API key" autocomplete="off">
+          <button type="submit">Save key</button>
+          <button type="button" id="clear-key-btn" class="secondary">Clear</button>
+        </form>
+        <div id="settings-status"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
