@@ -18,13 +18,15 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 header {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding: 16px 24px 8px;
+  /* pad-top includes safe-area for iOS standalone mode (notch / Dynamic Island) */
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 24px 8px;
 }
 
 header h1 { margin: 0; font-size: 1.5rem; }

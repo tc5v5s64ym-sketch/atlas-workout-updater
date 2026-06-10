@@ -980,6 +980,7 @@ app.get('/api/session/:sessionId', async (req, res) => {
 app.post('/api/bodyweight', async (req, res) => {
 
   const { date, weight, notes } = req.body || {};
+  const testMode = isTestModeEnabled(req.body?.test_mode);
   if (!date) {
     return standardError(req, res, 'date is required', null, 400);
   }
@@ -999,9 +1000,17 @@ app.post('/api/bodyweight', async (req, res) => {
     if (!tabs.includes('Bodyweight')) {
       return standardError(req, res, 'Bodyweight tab is missing. Cannot append bodyweight entry.', null, 400);
     }
-    const row = [normalizedDate, weightValue, notes || ''];
-    await appendRows('Bodyweight', [row]);
-    return standardSuccess(req, res, 'Bodyweight entry appended', { entry: { date: normalizedDate, weight: weightValue, notes: notes || '' } });
+    const entry = { date: normalizedDate, weight: weightValue, notes: notes || '' };
+    if (testMode) {
+      return standardSuccess(req, res, 'Bodyweight dry-run', {
+        test_mode: true,
+        sheet_written: false,
+        no_write_confirmed: true,
+        entry_preview: entry
+      });
+    }
+    await appendRows('Bodyweight', [[normalizedDate, weightValue, notes || '']]);
+    return standardSuccess(req, res, 'Bodyweight entry appended', { entry });
   } catch (error) {
     return standardError(req, res, 'Failed to append bodyweight entry', error.message, 500);
   }

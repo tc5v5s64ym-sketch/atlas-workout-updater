@@ -165,6 +165,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'dashboard') loadDashboard();
+    if (btn.dataset.tab === 'body') loadBodyTab();
   });
 });
 
@@ -722,10 +723,168 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   }
 });
 
+/* ===== Body tab — Bodyweight ===== */
+
+let pendingBwWrite = null;
+
+function bwInvalidate() {
+  pendingBwWrite = null;
+  document.getElementById('bw-preview-panel').hidden = true;
+  document.getElementById('bw-preview-content').innerHTML = '';
+  const btn = document.getElementById('bw-approve-btn');
+  btn.disabled = true;
+  btn.textContent = 'Write to Google Sheets';
+  const note = document.getElementById('bw-gate-note');
+  if (note) note.textContent = 'Run a preview above to enable this button.';
+}
+
+document.getElementById('bw-form').addEventListener('input', bwInvalidate);
+
+document.getElementById('bw-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  bwInvalidate();
+  const bwStatus = document.getElementById('bw-status');
+  setStatus(bwStatus, '', 'ok');
+
+  const date = document.getElementById('bw-date').value;
+  const weight = document.getElementById('bw-weight').value;
+  const notes = document.getElementById('bw-notes').value.trim();
+
+  const previewBtn = document.getElementById('bw-preview-btn');
+  previewBtn.disabled = true;
+  previewBtn.textContent = 'Previewing…';
+
+  try {
+    const result = await api('/api/bodyweight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, weight: Number(weight), notes, test_mode: 'true' })
+    });
+    const data = result.data || {};
+    const content = document.getElementById('bw-preview-content');
+    content.innerHTML = '';
+    content.appendChild(el('div', { class: 'no-write-proof' }, [
+      el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
+      el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
+    ]));
+    const entry = data.entry_preview || {};
+    content.appendChild(renderTable(
+      ['Date', 'Weight', 'Notes'],
+      [[entry.date, entry.weight, entry.notes]]
+    ));
+
+    pendingBwWrite = { date, weight: Number(weight), notes };
+    document.getElementById('bw-preview-panel').hidden = false;
+    document.getElementById('bw-approve-btn').disabled = false;
+    const gateNote = document.getElementById('bw-gate-note');
+    if (gateNote) gateNote.textContent = 'Review above, then click to write.';
+  } catch (err) {
+    setStatus(bwStatus, `Preview failed: ${err.message}`, 'error');
+  } finally {
+    previewBtn.disabled = false;
+    previewBtn.textContent = 'Preview — no data saved';
+  }
+});
+
+document.getElementById('bw-cancel-btn').addEventListener('click', bwInvalidate);
+
+document.getElementById('bw-approve-btn').addEventListener('click', async () => {
+  if (!pendingBwWrite) return;
+  const approveBtn = document.getElementById('bw-approve-btn');
+  const bwStatus = document.getElementById('bw-status');
+  approveBtn.disabled = true;
+  approveBtn.textContent = 'Writing to Sheets…';
+  try {
+    await api('/api/bodyweight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pendingBwWrite)
+    });
+    bwInvalidate();
+    document.getElementById('bw-form').reset();
+    document.getElementById('bw-date').value = new Date().toISOString().slice(0, 10);
+    setStatus(bwStatus, 'Bodyweight written to Google Sheets. ✓', 'ok');
+    loadBwHistory();
+  } catch (err) {
+    setStatus(bwStatus, `Write failed: ${err.message}`, 'error');
+    approveBtn.disabled = false;
+    approveBtn.textContent = 'Write to Google Sheets';
+  }
+});
+
+async function loadBwHistory() {
+  const box = document.getElementById('bw-history');
+  if (!getApiKey()) {
+    box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    return;
+  }
+  try {
+    const res = await api('/api/bodyweight/history?days=90');
+    const data = res.data || {};
+    box.innerHTML = '';
+    const entries = data.entries || [];
+    if (!entries.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No bodyweight entries in the last 90 days.' }));
+      return;
+    }
+    const trendClass = data.trend === 'up' ? 'up' : data.trend === 'down' ? 'down' : '';
+    const trendPill = el('span', { class: `pill ${trendClass}`, text: `trend: ${data.trend}` });
+    const latest = data.latest;
+    const summary = el('p', {}, [
+      document.createTextNode(`Latest: ${latest?.weight ?? '—'}  ·  90-day avg: ${data.average ?? '—'}  `),
+      trendPill
+    ]);
+    box.appendChild(summary);
+    box.appendChild(svgLineChart(
+      entries.map(e => ({ x: e.date, y: e.weight })),
+      { color: '#16a34a', label: 'Bodyweight over time' }
+    ));
+    box.appendChild(renderTable(
+      ['Date', 'Weight', 'Notes'],
+      entries.slice().reverse().slice(0, 20).map(e => [e.date, e.weight, e.notes])
+    ));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+}
+
+async function loadPendingExercises() {
+  const box = document.getElementById('pending-exercises');
+  if (!getApiKey()) {
+    box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    return;
+  }
+  try {
+    const res = await api('/api/pending-exercises');
+    const items = res.data?.pending_exercises || [];
+    box.innerHTML = '';
+    if (!items.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'All exercises in recent sessions matched the catalog.' }));
+      return;
+    }
+    box.appendChild(renderTable(
+      ['Exercise (as typed)', 'Closest catalog match', 'Lift code'],
+      items.map(item => {
+        const best = item.closest_matches?.[0];
+        return [item.exercise, best?.canonical_exercise ?? '—', best?.lift_code ?? '—'];
+      })
+    ));
+    box.appendChild(el('p', { class: 'muted', text: `${items.length} exercise(s) need catalog entries. Add them to Exercise_Catalog with the canonical name and a variant matching what you type.` }));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+}
+
+async function loadBodyTab() {
+  await Promise.all([loadBwHistory(), loadPendingExercises()]);
+}
+
 /* ===== Init ===== */
 
 function setDefaultDate() {
-  document.getElementById('log-date').value = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById('log-date').value = today;
+  document.getElementById('bw-date').value = today;
 }
 
 addSetRow();
@@ -733,3 +892,9 @@ setDefaultDate();
 checkConnection();
 loadDashboard();
 loadExerciseDatalist();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {
+    // offline shell is an optional enhancement — the app works without it
+  });
+}
