@@ -210,17 +210,50 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    for (const id of ['todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       document.getElementById(id).innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
     return;
   }
 
+  loadTodaysPlan();
   loadCoaching();
   loadWeeklySummary();
   loadRecentHistory();
   loadRecentPrs();
   loadStalls();
+}
+
+async function loadTodaysPlan() {
+  const box = document.getElementById('todays-plan');
+  try {
+    const res = await api('/api/plan/today');
+    const recs = res.data?.recommendations || [];
+    box.innerHTML = '';
+
+    if (!recs.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No training history found — log your first workout to see a plan here.' }));
+      return;
+    }
+
+    const grid = el('div', { class: 'plan-grid' });
+    for (const r of recs) {
+      const t = r.next_target;
+      const confidenceClass = r.confidence === 'high' ? 'plan-card-high' : r.confidence === 'medium' ? 'plan-card-medium' : 'plan-card-low';
+      const card = el('div', { class: `plan-card ${confidenceClass}` }, [
+        el('div', { class: 'plan-card-lift' }, [
+          el('a', { class: 'lift-link', href: '#', 'data-lift': r.liftCode, text: r.liftCode })
+        ]),
+        el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
+        el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),
+        el('div', { class: 'plan-card-rec', text: r.recommendation })
+      ]);
+      grid.appendChild(card);
+    }
+    box.appendChild(grid);
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
 }
 
 async function loadCoaching() {

@@ -879,6 +879,38 @@ app.get('/api/exercises/last-session', async (req, res) => {
   }
 });
 
+// GET /api/plan/today
+// Returns next-set recommendations for all distinct lift codes trained in the
+// last 60 days, ordered by most recently trained first. Used by the dashboard
+// "Today's Plan" card.
+app.get('/api/plan/today', async (req, res) => {
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    // Find distinct lift codes that have been trained at all
+    const liftCodes = [...new Set(
+      allLog
+        .map(row => String(row[5] || '').trim())
+        .filter(code => code && code !== 'lift_code')
+    )];
+
+    // Build recommendations in parallel for all lift codes
+    const recommendations = liftCodes
+      .map(code => recommendNextSet(allLog, code))
+      .filter(r => r.next_target !== null)
+      .sort((a, b) => {
+        // Sort by most recent session date (last_working_sets last date)
+        const dateA = a.last_working_sets?.length ? a.last_working_sets[a.last_working_sets.length - 1].date_clean : '';
+        const dateB = b.last_working_sets?.length ? b.last_working_sets[b.last_working_sets.length - 1].date_clean : '';
+        return String(dateB).localeCompare(String(dateA));
+      })
+      .slice(0, 12); // cap at 12 lifts for dashboard
+
+    return standardSuccess(req, res, 'Today\'s training plan', { recommendations });
+  } catch (error) {
+    return standardError(req, res, 'Failed to build today\'s plan', error.message, 500);
+  }
+});
+
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
 

@@ -220,6 +220,29 @@ code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 a.lift-link { color: var(--accent); text-decoration: none; font-weight: 600; }
 a.lift-link:hover { text-decoration: underline; }
 
+/* ===== Today's Plan grid ===== */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.plan-card {
+  border-radius: 8px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--border);
+}
+
+.plan-card-high { border-left-color: var(--ok); background: #f0fdf4; }
+.plan-card-medium { border-left-color: var(--warn); background: #fffbeb; }
+.plan-card-low { border-left-color: var(--border); background: var(--card); }
+
+.plan-card-lift { font-size: 0.78rem; color: var(--muted); margin-bottom: 2px; }
+.plan-card-target { font-size: 1.25rem; font-weight: 700; color: var(--ink); line-height: 1.2; }
+.plan-card-sets { font-size: 0.82rem; color: var(--muted); }
+.plan-card-rec { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
+
 /* ===== Progression engine ===== */
 .next-target-card {
   background: #f0f9ff;
