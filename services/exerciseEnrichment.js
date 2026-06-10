@@ -22,6 +22,7 @@ function buildExerciseCatalogMap(rows) {
   }
 
   const entryMap = new Map();
+  const knownMuscleGroups = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core', 'cardio', 'full body', 'glutes']);
   for (let i = 1; i < rows.length; i += 1) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
@@ -32,6 +33,12 @@ function buildExerciseCatalogMap(rows) {
 
     const muscleGroup = String(row[muscleGroupIndex] || '').trim();
     const liftCode = String(row[liftCodeIndex] || '').trim();
+    const looksLikeOldMisalignedRow =
+      knownMuscleGroups.has(normalizeExerciseKey(exerciseName)) &&
+      /\d/.test(muscleGroup) &&
+      /^\d+$/.test(liftCode) &&
+      normalizeExerciseKey(canonicalName) !== normalizeExerciseKey(exerciseName);
+    if (looksLikeOldMisalignedRow) continue;
 
     const addMatch = name => {
       const key = normalizeExerciseKey(name);
