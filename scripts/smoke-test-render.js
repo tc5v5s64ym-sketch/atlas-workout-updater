@@ -7,6 +7,7 @@ const smokeMode = (process.env.ATLAS_SMOKE_MODE || 'full').toLowerCase();
 const expectedSheetLabel = (process.env.ATLAS_EXPECTED_SHEET_LABEL || 'unknown').toLowerCase();
 const requireNoDashboard = String(process.env.ATLAS_REQUIRE_NO_DASHBOARD || 'true').toLowerCase() === 'true';
 const allowEmptyPending = String(process.env.ATLAS_ALLOW_EMPTY_PENDING || 'true').toLowerCase() === 'true';
+const expectedVersion = (process.env.ATLAS_EXPECTED_VERSION || '').trim();
 
 const VALID_MODES = ['basic', 'contract', 'read-only', 'full', 'dry-run-only', 'post-switch'];
 const VALID_LABELS = ['current', 'cleaned', 'unknown'];
@@ -31,7 +32,10 @@ async function requestJson(path, options = {}) {
   try { json = text ? JSON.parse(text) : null; } catch (e) {
     throw new Error(`Non-JSON from ${path} (${res.status}): ${text.slice(0,400)}`);
   }
-  if (!res.ok) throw new Error(`Failed ${path} ${res.status}: ${JSON.stringify(json).slice(0,500)}`);
+  if (!res.ok) {
+    const authHint = [401, 403].includes(res.status) ? ' Check GitHub secret ATLAS_API_KEY and Render API key configuration.' : '';
+    throw new Error(`Failed ${path} ${res.status}:${authHint} ${JSON.stringify(json).slice(0,500)}`);
+  }
   return json;
 }
 
@@ -41,7 +45,7 @@ async function publicJson(path) {
   let json; try { json = text ? JSON.parse(text) : null; } catch (e) {
     throw new Error(`Non-JSON from ${path} (${res.status}): ${text.slice(0,400)}`);
   }
-  if (!res.ok) throw new Error(`Public ${path} failed ${res.status}`);
+  if (!res.ok) throw new Error(`Public ${path} failed ${res.status}. Check ATLAS_BASE_URL and Render deploy health.`);
   return json;
 }
 
@@ -79,14 +83,37 @@ function writeStepSummary(content) {
   }
 }
 
+function buildSummaryMarkdown({ smokeMode, expectedSheetLabel, results, rollbackRecommended, startTime }) {
+  const rows = results.map(result => `| ${result.passed ? 'PASS' : 'FAIL'} | ${result.name} | ${result.note || ''} |`);
+  return [
+    '## Atlas Mission Control Smoke Test',
+    '',
+    `Mode: \`${smokeMode}\``,
+    `Sheet label: \`${expectedSheetLabel}\``,
+    `Started: \`${startTime}\``,
+    `Rollback recommended: **${rollbackRecommended ? 'YES' : 'NO'}**`,
+    '',
+    '| Result | Check | Note |',
+    '| --- | --- | --- |',
+    ...rows,
+    '',
+    rollbackRecommended
+      ? 'Next step: restore the previous `GOOGLE_SHEETS_ID` in Render, redeploy, then run `read-only` against the current sheet.'
+      : 'Next step: keep using read-only/full Mission Control before any real write.'
+  ].join('\n');
+}
+
 // ===== MAIN =====
 async function main() {
-  if (!baseUrl) throw new Error('ATLAS_BASE_URL is required');
-  if (!apiKey) throw new Error('ATLAS_API_KEY is required for protected tests');
-  if (!VALID_MODES.includes(smokeMode)) throw new Error(`Invalid ATLAS_SMOKE_MODE: ${smokeMode}`);
-  if (!VALID_LABELS.includes(expectedSheetLabel)) throw new Error(`Invalid ATLAS_EXPECTED_SHEET_LABEL: ${expectedSheetLabel}`);
-
   const startTime = new Date().toISOString();
+  const results = [];
+
+  try {
+    if (!baseUrl) throw new Error('ATLAS_BASE_URL is required. Set the GitHub Actions secret to the Render production URL.');
+    if (!apiKey) throw new Error('ATLAS_API_KEY is required for protected tests. Set it as a GitHub Actions secret; never paste it into logs.');
+    if (!VALID_MODES.includes(smokeMode)) throw new Error(`Invalid ATLAS_SMOKE_MODE: ${smokeMode}`);
+    if (!VALID_LABELS.includes(expectedSheetLabel)) throw new Error(`Invalid ATLAS_EXPECTED_SHEET_LABEL: ${expectedSheetLabel}`);
+
   const githubSha = process.env.GITHUB_SHA || 'unknown';
   const actor = process.env.GITHUB_ACTOR || 'unknown';
 
@@ -99,16 +126,16 @@ async function main() {
   console.log(`Actor: ${actor}`);
   console.log(`(Secrets redacted — GitHub secrets only)`);
 
-  const results = [];
-
-  try {
     // PUBLIC
     logSection('Public endpoints');
     const health = await publicJson('/health');
     recordResult(results, 'GET /health', health.status === 'ok' || !!health.message);
 
     const version = await publicJson('/version');
-    recordResult(results, 'GET /version', true, `version=${version.data?.version || version.version || 'ok'}`);
+    const versionValue = version.data?.version || version.version || 'ok';
+    const versionOk = !expectedVersion || versionValue === expectedVersion;
+    recordResult(results, 'GET /version', versionOk, `version=${versionValue}${expectedVersion ? ` expected=${expectedVersion}` : ''}`);
+    if (!versionOk) throw new Error(`Version mismatch: expected ${expectedVersion}, got ${versionValue}`);
 
     const routes = await publicJson('/routes');
     recordResult(results, 'GET /routes', true, 'routes listed');
@@ -125,7 +152,7 @@ async function main() {
       const dashOk = !requireNoDashboard || !dashInRequired;
       const contractOk = hasAll && dashOk;
       recordResult(results, 'GET /api/health/sheets', contractOk, `required tabs OK, Dashboard optional (requireNoDashboard=${requireNoDashboard})`);
-      if (!contractOk) throw new Error('Sheet contract validation failed');
+      if (!contractOk) throw new Error(`Sheet contract validation failed. Missing required tabs: ${missing.join(', ') || 'none'}. Dashboard required failure: ${!dashOk}`);
     }
 
     // READ-ONLY + higher
@@ -250,7 +277,7 @@ async function main() {
     }
 
     console.log('\n✅ PASSED — Safe for production monitoring / cutover (test_mode only)');
-    writeStepSummary(`## Atlas Mission Control Smoke Test\n**Mode:** ${smokeMode} | **Label:** ${expectedSheetLabel}\n**Result:** ✅ PASSED (${passed}/${total})\n**Rollback needed:** ${rollbackRecommended ? 'YES' : 'NO'}`);
+    writeStepSummary(buildSummaryMarkdown({ smokeMode, expectedSheetLabel, results, rollbackRecommended, startTime }));
 
   } catch (error) {
     console.error(`\n❌ FAILED in mode ${smokeMode}: ${error.message}`);
@@ -260,7 +287,8 @@ async function main() {
     } else {
       console.log('\nDO NOT SWITCH GOOGLE_SHEETS_ID until this is resolved.');
     }
-    writeStepSummary(`## Atlas Mission Control — FAILED\n**Mode:** ${smokeMode}\n**Error:** ${error.message}\n**Rollback recommended:** ${rollbackRecommended ? 'YES — follow steps above' : 'NO — investigate before switch'}`);
+    results.push({ name: 'Failure reason', passed: false, note: error.message });
+    writeStepSummary(buildSummaryMarkdown({ smokeMode, expectedSheetLabel, results, rollbackRecommended, startTime: new Date().toISOString() }));
     process.exit(1);
   }
 }

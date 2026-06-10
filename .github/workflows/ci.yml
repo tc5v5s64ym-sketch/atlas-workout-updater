@@ -37,6 +37,11 @@ on:
         required: true
         default: true
         type: boolean
+      expected_version:
+        description: 'Optional expected /version value'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   unit-tests:
@@ -87,4 +92,5 @@ jobs:
           ATLAS_EXPECTED_SHEET_LABEL: ${{ github.event.inputs.expected_sheet_label || 'unknown' }}
           ATLAS_REQUIRE_NO_DASHBOARD: ${{ github.event.inputs.require_no_dashboard || 'true' }}
           ATLAS_ALLOW_EMPTY_PENDING: ${{ github.event.inputs.allow_empty_pending || 'true' }}
+          ATLAS_EXPECTED_VERSION: ${{ github.event.inputs.expected_version || '' }}
         run: node scripts/smoke-test-render.js
