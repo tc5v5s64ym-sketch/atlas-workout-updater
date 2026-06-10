@@ -216,14 +216,17 @@ function searchSessions(logRows, filters) {
   const to = normalizeDate(dateTo);
 
   const matchingRows = normalizedRows.filter(row => {
-    if (exercise && String(row.exercise || row.canonical_exercise).toLowerCase() !== String(exercise).trim().toLowerCase()) {
-      return false;
+    if (exercise) {
+      const q = String(exercise).trim().toLowerCase();
+      const exerciseName = String(row.canonical_exercise || row.exercise || '').toLowerCase();
+      if (!exerciseName.includes(q)) return false;
     }
     if (liftCode && row.lift_code.toLowerCase() !== String(liftCode).trim().toLowerCase()) {
       return false;
     }
-    if (muscleGroup && row.muscle_group.toLowerCase() !== String(muscleGroup).trim().toLowerCase()) {
-      return false;
+    if (muscleGroup) {
+      const q = String(muscleGroup).trim().toLowerCase();
+      if (!String(row.muscle_group || '').toLowerCase().includes(q)) return false;
     }
     if (from && row.date_clean && row.date_clean < from) {
       return false;

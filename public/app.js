@@ -241,7 +241,13 @@ async function loadCoaching() {
     const deloads = data.deload_suggestions || [];
     if (deloads.length) {
       box.appendChild(el('h3', { text: 'Deload suggestions' }));
-      box.appendChild(el('ul', {}, deloads.map(d => el('li', { text: `${d.liftCode}: ${d.suggestion}` }))));
+      box.appendChild(el('ul', {}, deloads.map(d => {
+        const li = el('li', {}, [
+          el('a', { class: 'lift-link', href: '#', 'data-lift': d.liftCode, text: d.liftCode }),
+          document.createTextNode(`: ${d.suggestion}`)
+        ]);
+        return li;
+      })));
     } else {
       box.appendChild(el('p', { class: 'muted', text: 'No deloads needed — no lift has been stalled 4+ sessions.' }));
     }
@@ -328,10 +334,17 @@ async function loadStalls() {
       box.appendChild(el('span', { class: 'muted', text: 'No stalled lifts — keep it up.' }));
       return;
     }
-    box.appendChild(renderTable(
-      ['Lift', 'Sessions stalled', 'Last best weight', 'Since'],
-      stalls.map(s => [s.liftCode, s.sessions_stalled, s.last_best_weight, s.first_session_date])
-    ));
+    const table = el('table', {});
+    const thead = el('thead', {}, el('tr', {}, ['Lift', 'Sessions stalled', 'Last best weight', 'Since'].map(h => el('th', { text: h }))));
+    const tbody = el('tbody', {}, stalls.map(s => el('tr', {}, [
+      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.liftCode })),
+      el('td', { text: String(s.sessions_stalled) }),
+      el('td', { text: String(s.last_best_weight) }),
+      el('td', { text: String(s.first_session_date) })
+    ])));
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    box.appendChild(table);
   } catch (err) {
     box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
@@ -410,6 +423,26 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
+});
+
+/* ===== Lift-link navigation (dashboard → progress) ===== */
+
+document.addEventListener('click', e => {
+  const link = e.target.closest('.lift-link');
+  if (!link) return;
+  e.preventDefault();
+  const liftCode = link.dataset.lift;
+  if (!liftCode) return;
+  // Switch to Progress tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const progressBtn = document.querySelector('[data-tab="progress"]');
+  progressBtn.classList.add('active');
+  document.getElementById('tab-progress').classList.add('active');
+  // Pre-fill and submit the progress form
+  const liftInput = document.getElementById('progress-lift-code');
+  liftInput.value = liftCode;
+  document.getElementById('progress-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 });
 
 /* ===== Catalog search ===== */

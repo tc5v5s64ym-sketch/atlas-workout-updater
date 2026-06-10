@@ -215,6 +215,9 @@ code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 
 .small { font-size: 0.8rem; }
 
+a.lift-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+a.lift-link:hover { text-decoration: underline; }
+
 /* ===== Progression engine ===== */
 .next-target-card {
   background: #f0f9ff;
