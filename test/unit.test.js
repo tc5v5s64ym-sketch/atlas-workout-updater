@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
+const { parseWorkoutText } = require('../services/workoutTextParser');
 const { normalizeDurationString } = require('../services/duration');
 const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
@@ -423,6 +424,142 @@ test('log-workout test_mode preview exposes explicit no-write proof fields', () 
   assert.match(indexSource, /sheet_write: 'skipped'/);
   assert.match(indexSource, /sheet_written: false/);
   assert.match(indexSource, /no_write_confirmed: true/);
+});
+
+function compactParsedSets(result) {
+  return result.sets.map(set => [set.weight, set.reps, set.rir]);
+}
+
+test('workout parser supports Dale bench shorthand', () => {
+  const result = parseWorkoutText('Bench 135 10/5 185 8/3 225 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result), [[135, 10, 5], [185, 8, 3], [225, 5, 2]]);
+});
+
+test('workout parser supports Dale squat shorthand with implied same weight', () => {
+  const result = parseWorkoutText('Squat 135 10/4 185 8/4 225 8/2 240 5/2 5/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Back Squat');
+  assert.deepEqual(compactParsedSets(result), [[135, 10, 4], [185, 8, 4], [225, 8, 2], [240, 5, 2], [240, 5, 1]]);
+});
+
+test('workout parser supports OHP shorthand with implied same weight', () => {
+  const result = parseWorkoutText('Ohp 95 10/4 105 10/2 10/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Overhead Press');
+  assert.deepEqual(compactParsedSets(result), [[95, 10, 4], [105, 10, 2], [105, 10, 2]]);
+});
+
+test('workout parser supports xN repeat shorthand for lats, face pulls, and leg curls', () => {
+  const lats = parseWorkoutText('Lats 170 8/2 x3');
+  assert.equal(lats.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(lats), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
+
+  const facePulls = parseWorkoutText('Face pulls 50 15/2 x3');
+  assert.equal(facePulls.canonical_name, 'Face Pull');
+  assert.deepEqual(compactParsedSets(facePulls), [[50, 15, 2], [50, 15, 2], [50, 15, 2]]);
+
+  const legCurls = parseWorkoutText('Leg curls 70 15/2 x3');
+  assert.equal(legCurls.canonical_name, 'Leg Curl');
+  assert.deepEqual(compactParsedSets(legCurls), [[70, 15, 2], [70, 15, 2], [70, 15, 2]]);
+});
+
+test('workout parser supports hammer curl shorthand', () => {
+  const result = parseWorkoutText('Hammers 40 10/1 8/2 8/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hammer Curl');
+  assert.deepEqual(compactParsedSets(result), [[40, 10, 1], [40, 8, 2], [40, 8, 1]]);
+});
+
+test('workout parser asks for clarification on bodyweight knee raises without context', () => {
+  const result = parseWorkoutText('Knee raises 20 15 15');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.partial.exercise, 'Hanging Knee Raises');
+  assert.deepEqual(result.partial.sets.map(set => set.reps), [20, 15, 15]);
+  assert.ok(result.warnings.includes('missing_weight_or_bodyweight_context'));
+});
+
+test('workout parser supports app style RIR entry', () => {
+  const result = parseWorkoutText('Bench Press 205 lb 5 reps RIR 2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result), [[205, 5, 2]]);
+});
+
+test('workout parser supports compact weightxrepsxsets notation', () => {
+  const result = parseWorkoutText('Bench 205x5x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result), [[205, 5, null], [205, 5, null], [205, 5, null]]);
+});
+
+test('workout parser supports sets-first notation', () => {
+  const result = parseWorkoutText('Bench 3x5 @205');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result), [[205, 5, null], [205, 5, null], [205, 5, null]]);
+});
+
+test('workout parser supports natural language repeated sets', () => {
+  const result = parseWorkoutText('I did bench today, 135 for 10, 185 for 8, then 205 for 5 three times.');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result), [[135, 10, null], [185, 8, null], [205, 5, null], [205, 5, null], [205, 5, null]]);
+});
+
+test('workout parser supports natural language RIR across sets', () => {
+  const result = parseWorkoutText('Squat 205 for 7, then 6 and 6, all around RIR 2.');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Back Squat');
+  assert.deepEqual(compactParsedSets(result), [[205, 7, 2], [205, 6, 2], [205, 6, 2]]);
+});
+
+test('workout parser supports dumbbell per-hand notation', () => {
+  const result = parseWorkoutText('Incline DB 65s 10,10,9');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(compactParsedSets(result), [[65, 10, null], [65, 10, null], [65, 9, null]]);
+  assert.equal(result.sets[0].weight_unit, 'lb');
+  assert.equal(result.sets[0].load_note, 'per_hand');
+});
+
+test('workout parser detects correction, delete, finish, effort, and planning intents', () => {
+  const correction = parseWorkoutText('change that to RIR 1', {
+    lastSet: { exercise: 'Bench Press', weight: 205, reps: 5, rir: 2 },
+  });
+  assert.equal(correction.intent, 'update_last_set');
+  assert.deepEqual(correction.update, { rir: 1 });
+
+  assert.equal(parseWorkoutText('delete last set').intent, 'delete_last_set');
+
+  const finish = parseWorkoutText('log everything to spreadsheet');
+  assert.equal(finish.intent, 'finish_session');
+  assert.equal(finish.requires_effort_check, true);
+
+  const effort = parseWorkoutText('Duration 53.75 Active 435 Total 551 Avg HR 121 Peak HR 165 Richmond');
+  assert.equal(effort.intent, 'effort_capture');
+  assert.deepEqual(effort.effort, {
+    duration_min: 53.75,
+    active_calories: 435,
+    total_calories: 551,
+    avg_hr: 121,
+    peak_hr: 165,
+    location: 'Richmond',
+  });
+
+  assert.equal(parseWorkoutText("It's June 9 and we're back at the gym, what are we doing").intent, 'plan_request');
+});
+
+test('workout parser keeps press aliases safe and specific', () => {
+  const incline = parseWorkoutText('Incline press 65 10/2 x3');
+  assert.equal(incline.intent, 'log_sets');
+  assert.equal(incline.canonical_name, 'Incline DB Press');
+  assert.deepEqual(compactParsedSets(incline), [[65, 10, 2], [65, 10, 2], [65, 10, 2]]);
+
+  const generic = parseWorkoutText('Press 105 8/2');
+  assert.equal(generic.intent, 'needs_clarification');
+  assert.match(generic.message, /Which press/);
 });
 
 test('recommendNextSet returns progression recommendation', () => {
