@@ -2,6 +2,14 @@
 
 These instructions are for Codex and any coding agent working in this repository.
 
+## Product North Star
+
+Codex must read [docs/ATLAS_PRODUCT_VISION.md](docs/ATLAS_PRODUCT_VISION.md) before product, UI, coaching, data-model, or architecture work.
+
+Atlas is a personal AI fitness companion, not just a backend service. The backend exists to support a finished app where workout capture is low-friction, coaching becomes more intelligent over time, and the owner can safely approve structured training data before it is saved.
+
+Approve-before-save is a product principle. The current Google Sheets, Render, GitHub Actions, ChatGPT/Codex, and Node/Express architecture is the practical v1 path, not something to defend forever.
+
 ## Atlas Summary
 
 Atlas is a personal fitness platform. This repository contains the Node/Express backend that parses, validates, enriches, and writes workout data to Google Sheets. Render deploys production from GitHub `main`. GitHub Actions Mission Control validates production safely.

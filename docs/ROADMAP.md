@@ -1,5 +1,7 @@
 # Atlas Roadmap
 
+For the finished product north star, read [ATLAS_PRODUCT_VISION.md](ATLAS_PRODUCT_VISION.md).
+
 ## Milestone 1: Stability and Safety
 
 Goal: keep production boring and recoverable.

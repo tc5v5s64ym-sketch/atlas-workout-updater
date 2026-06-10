@@ -1,5 +1,7 @@
 # Atlas Product Plan
 
+For the finished product north star, read [ATLAS_PRODUCT_VISION.md](ATLAS_PRODUCT_VISION.md).
+
 ## MVP App
 
 Goal: make Atlas usable without raw API calls.
