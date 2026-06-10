@@ -1,5 +1,7 @@
 # Atlas Product Plan
 
+For the finished app overview, see [ATLAS_APP_README.md](ATLAS_APP_README.md).
+
 ## MVP App
 
 Goal: make Atlas usable without raw API calls.

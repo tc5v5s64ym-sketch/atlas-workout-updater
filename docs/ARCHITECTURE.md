@@ -1,5 +1,7 @@
 # Atlas Architecture
 
+For the product-level finished app overview, see [ATLAS_APP_README.md](ATLAS_APP_README.md).
+
 ## Current System
 
 - User/AI interface prepares workout data.

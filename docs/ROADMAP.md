@@ -1,5 +1,7 @@
 # Atlas Roadmap
 
+For the finished app functionality overview, see [ATLAS_APP_README.md](ATLAS_APP_README.md).
+
 ## Milestone 1: Stability and Safety
 
 Goal: keep production boring and recoverable.
