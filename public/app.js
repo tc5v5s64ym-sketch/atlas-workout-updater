@@ -583,6 +583,14 @@ function renderWarnings(warnings) {
   ]);
 }
 
+function renderAutoMatches(autoMatches) {
+  if (!autoMatches || !autoMatches.length) return null;
+  return el('div', { class: 'preview-auto-match' }, [
+    el('strong', { text: 'Auto-matched — verify these are correct:' }),
+    el('ul', {}, autoMatches.map(m => el('li', { text: m })))
+  ]);
+}
+
 function renderUnknownExerciseSuggestions(pendingExercises) {
   if (!pendingExercises || !pendingExercises.length) return null;
   const items = pendingExercises.map(pe => {
@@ -609,6 +617,8 @@ function renderLogWorkoutPreview(result, effortRow) {
     el('span', { class: 'proof-fields', text: `sheet_write: ${data.sheet_write}  ·  test_mode: true` })
   ]);
   previewContent.appendChild(proof);
+  const logAutoMatches = renderAutoMatches(data.auto_matches);
+  if (logAutoMatches) previewContent.appendChild(logAutoMatches);
   previewContent.appendChild(renderWarnings(data.warnings));
   const logSuggestions = renderUnknownExerciseSuggestions(data.pending_exercises);
   if (logSuggestions) previewContent.appendChild(logSuggestions);
@@ -633,6 +643,8 @@ function renderCompleteWorkoutPreview(result) {
     el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
   ]);
   previewContent.appendChild(proof);
+  const completeAutoMatches = renderAutoMatches(outer.auto_matches);
+  if (completeAutoMatches) previewContent.appendChild(completeAutoMatches);
   previewContent.appendChild(renderWarnings(outer.warnings));
   const completeSuggestions = renderUnknownExerciseSuggestions(outer.pending_exercises);
   if (completeSuggestions) previewContent.appendChild(completeSuggestions);

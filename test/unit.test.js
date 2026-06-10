@@ -150,6 +150,37 @@ test('enrichLogRow enriches known exercise', () => {
   const map = new Map([['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }]]);
   const result = enrichLogRow({ exercise: 'Back Squat' }, map);
   assert.equal(result.enriched.lift_code, 'SQ');
+  assert.equal(result.autoMatch, undefined);
+});
+
+test('enrichLogRow fuzzy-matches a substring shorthand (Bench → Bench Press)', () => {
+  const map = new Map([['bench press', { canonical_exercise: 'Bench Press', muscle_group: 'Chest', lift_code: 'BP' }]]);
+  const result = enrichLogRow({ exercise: 'Bench' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Bench Press');
+  assert.ok(result.autoMatch && result.autoMatch.includes('Bench Press'));
+});
+
+test('enrichLogRow fuzzy-matches plural to singular (Squats → Back Squat via variant)', () => {
+  const map = new Map([
+    ['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }],
+    ['squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Squats' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Back Squat');
+});
+
+test('enrichLogRow expands OHP abbreviation to Overhead Press', () => {
+  const map = new Map([['overhead press', { canonical_exercise: 'Overhead Press', muscle_group: 'Shoulders', lift_code: 'OHP' }]]);
+  const result = enrichLogRow({ exercise: 'OHP' }, map);
+  assert.equal(result.enriched.canonical_exercise, 'Overhead Press');
+  assert.ok(result.autoMatch);
+});
+
+test('enrichLogRow returns Unknown for truly unrecognised exercise', () => {
+  const map = new Map([['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }]]);
+  const result = enrichLogRow({ exercise: 'Zorblax Machine' }, map);
+  assert.equal(result.enriched.canonical_exercise, '');
+  assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
 });
 
 test('duration normalization supports mm:ss and hh:mm:ss', () => {

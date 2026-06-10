@@ -165,6 +165,15 @@ button.approve {
   color: var(--muted);
 }
 
+.preview-auto-match {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 0.85rem;
+}
+
 .preview-warnings {
   background: #fff7ed;
   border: 1px solid #fed7aa;
