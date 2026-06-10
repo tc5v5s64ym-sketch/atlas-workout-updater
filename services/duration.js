@@ -4,8 +4,20 @@ function pad2(n) {
 
 function normalizeDurationString(value) {
   if (value === null || value === undefined) throw new Error('duration is required');
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const totalSeconds = Math.round(value * 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${pad2(hours)}:${pad2(minutes)}:${pad2(seconds)}`;
+  }
+
   const s = String(value).trim();
   if (!s) throw new Error('duration is required');
+
+  if (/^\d+(?:\.\d+)?$/.test(s)) {
+    return normalizeDurationString(Number(s));
+  }
 
   const parts = s.split(':').map(p => p.trim()).filter(Boolean);
   if (parts.length === 2) {

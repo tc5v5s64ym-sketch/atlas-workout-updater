@@ -9,7 +9,8 @@ const logCleanedColumns = [
   'weight',
   'reps',
   'rir',
-  'notes'
+  'notes',
+  'volume_calc'
 ];
 
 const logRowFieldAliases = {
@@ -23,7 +24,8 @@ const logRowFieldAliases = {
   weight: ['weight'],
   reps: ['reps'],
   rir: ['rir'],
-  notes: ['notes']
+  notes: ['notes'],
+  volume_calc: ['volume_calc', 'volumeCalc', 'volume']
 };
 
 const effortColumns = [
@@ -38,7 +40,7 @@ const effortColumns = [
   'notes'
 ];
 
-const exerciseCatalogColumns = ['Canonical_Name', 'Muscle_Group', 'Lift_Code', 'Original_Variants'];
+const exerciseCatalogColumns = ['Exercise', 'Muscle_Group', 'Lift Code', 'Canonical_Exercise'];
 
 const effortRowFieldAliases = {
   date: ['date'],

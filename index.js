@@ -113,11 +113,21 @@ const recentExerciseCache = createTtlCache(20 * 1000);
 
 const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
+const { requiredSheetTabs, optionalSheetTabs } = require('./config/sheetContract');
 
 
 
 function ensureNotes(value) {
   return value === undefined || value === null ? '' : value;
+}
+
+function calculateVolumeCalc(weight, reps) {
+  const weightValue = Number(weight);
+  const repsValue = Number(reps);
+  if (!Number.isFinite(weightValue) || !Number.isFinite(repsValue)) {
+    return '';
+  }
+  return weightValue * repsValue;
 }
 
 function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
@@ -132,8 +142,13 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
     weight: row.weight,
     reps: row.reps,
     rir: row.rir,
-    notes: ensureNotes(row.notes)
+    notes: ensureNotes(row.notes),
+    volume_calc: row.volume_calc ?? row.volumeCalc ?? row.volume
   };
+
+  if (result.volume_calc === undefined || result.volume_calc === null || result.volume_calc === '') {
+    result.volume_calc = calculateVolumeCalc(result.weight, result.reps);
+  }
 
   for (const field of ['date_clean', 'session_id', 'exercise', 'set_number', 'weight', 'reps', 'rir']) {
     if (result[field] === undefined || result[field] === null || result[field] === '') {
@@ -145,8 +160,8 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
 }
 
 function logRowArrayToObject(row) {
-  if (!Array.isArray(row) || row.length !== logCleanedColumns.length) {
-    throw new Error(`Each log row must contain ${logCleanedColumns.length} values in Log_Cleaned column order.`);
+  if (!Array.isArray(row) || (row.length !== logCleanedColumns.length && row.length !== logCleanedColumns.length - 1)) {
+    throw new Error(`Each log row must contain ${logCleanedColumns.length - 1} or ${logCleanedColumns.length} values in Log_Cleaned column order.`);
   }
 
   return {
@@ -160,7 +175,8 @@ function logRowArrayToObject(row) {
     weight: row[7],
     reps: row[8],
     rir: row[9],
-    notes: ensureNotes(row[10])
+    notes: ensureNotes(row[10]),
+    volume_calc: row[11] === undefined || row[11] === null || row[11] === '' ? calculateVolumeCalc(row[7], row[8]) : row[11]
   };
 }
 
@@ -227,13 +243,14 @@ function buildExerciseCatalogEntries(rows) {
   if (!rows.length) return [];
 
   const header = rows[0].map(cell => String(cell || '').trim().toLowerCase());
-  const canonicalNameIndex = header.findIndex(value => ['canonical_name', 'canonical name', 'canonicalname'].includes(value));
+  const exerciseIndex = header.findIndex(value => ['exercise', 'exercise_name', 'exercise name'].includes(value));
+  const canonicalNameIndex = header.findIndex(value => ['canonical_name', 'canonical name', 'canonicalname', 'canonical_exercise', 'canonical exercise', 'canonicalexercise'].includes(value));
   const muscleGroupIndex = header.findIndex(value => ['muscle_group', 'muscle group', 'musclegroup'].includes(value));
   const liftCodeIndex = header.findIndex(value => ['lift code', 'lift_code', 'liftcode'].includes(value));
   const variantsIndex = header.findIndex(value => ['original_variants', 'original variants', 'originalvariant', 'original variant'].includes(value));
 
-  if (canonicalNameIndex === -1) {
-    throw new Error('Exercise_Catalog header must include Canonical_Name.');
+  if (canonicalNameIndex === -1 && exerciseIndex === -1) {
+    throw new Error('Exercise_Catalog header must include Exercise or Canonical_Name.');
   }
 
   const entries = [];
@@ -241,7 +258,8 @@ function buildExerciseCatalogEntries(rows) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
 
-    const canonicalName = String(row[canonicalNameIndex] || '').trim();
+    const exerciseName = exerciseIndex === -1 ? '' : String(row[exerciseIndex] || '').trim();
+    const canonicalName = String(row[canonicalNameIndex] || exerciseName).trim();
     if (!canonicalName) continue;
 
     const muscleGroup = String(row[muscleGroupIndex] || '').trim();
@@ -255,6 +273,7 @@ function buildExerciseCatalogEntries(rows) {
 
     entries.push({
       canonical_name: canonicalName,
+      exercise: exerciseName || canonicalName,
       muscle_group: muscleGroup,
       lift_code: liftCode,
       variants
@@ -370,6 +389,29 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
   }
 
   return { normalized, warnings };
+}
+
+function parseJsonFormField(rawValue, fieldName) {
+  if (!rawValue) return null;
+  if (typeof rawValue === 'object') return rawValue;
+  try {
+    return JSON.parse(rawValue);
+  } catch (error) {
+    throw new Error(`${fieldName} is not valid JSON: ${error.message}`);
+  }
+}
+
+function normalizeManualEffortMetrics(formFields) {
+  const effort = parseJsonFormField(formFields.effort_json || formFields.effort, 'effort_json') || {};
+  const parsedMetrics = {
+    duration: effort.duration ?? formFields.duration,
+    activeCalories: effort.activeCalories ?? effort.active_calories ?? formFields.activeCalories ?? formFields.active_calories,
+    totalCalories: effort.totalCalories ?? effort.total_calories ?? formFields.totalCalories ?? formFields.total_calories,
+    averageHR: effort.averageHR ?? effort.average_hr ?? effort.avg_hr ?? formFields.averageHR ?? formFields.average_hr ?? formFields.avg_hr,
+    peakHR: effort.peakHR ?? effort.peak_hr ?? formFields.peakHR ?? formFields.peak_hr,
+    workoutType: effort.workoutType ?? effort.workout_type ?? formFields.workout_type
+  };
+  return normalizeAndValidateParsedMetrics(parsedMetrics);
 }
 
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) {
@@ -680,12 +722,20 @@ app.get('/api/health/sheets', async (req, res) => {
 
   try {
     const tabs = await getSpreadsheetTabs();
-    const requiredTabs = ['Log_Cleaned', 'Effort', 'Exercise_Catalog'];
-    const status = requiredTabs.reduce((acc, tab) => {
+    const status = requiredSheetTabs.reduce((acc, tab) => {
       acc[tab] = { exists: tabs.includes(tab) };
       return acc;
     }, {});
-    return standardSuccess(req, res, 'Google Sheets health check', { tabs: status, availableTabs: tabs });
+    const optional = optionalSheetTabs.reduce((acc, tab) => {
+      acc[tab] = { exists: tabs.includes(tab), required: false };
+      return acc;
+    }, {});
+    return standardSuccess(req, res, 'Google Sheets health check', {
+      tabs: status,
+      optionalTabs: optional,
+      availableTabs: tabs,
+      missingRequiredTabs: requiredSheetTabs.filter(tab => !tabs.includes(tab))
+    });
   } catch (error) {
     return standardError(req, res, 'Failed to verify Google Sheets tabs', error.message, 500);
   }
@@ -713,7 +763,7 @@ app.get('/api/debug/config', (req, res) => {
 // GET /api/schema/log
 app.get('/api/schema/log', (req, res) => {
   return standardSuccess(req, res, 'Log_Cleaned schema', {
-    schema: ['Date_Clean', 'Session ID', 'Exercise', 'Canonical_Exercise', 'Muscle_Group', 'Lift Code', 'Set #', 'Weight', 'Reps', 'RIR', 'Notes']
+    schema: ['Date_Clean', 'Session ID', 'Exercise', 'Canonical_Exercise', 'Muscle_Group', 'Lift Code', 'Set #', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume_Calc']
   });
 });
 
@@ -727,8 +777,10 @@ app.get('/api/schema/effort', (req, res) => {
 // GET /api/schema/complete-workout
 app.get('/api/schema/complete-workout', (req, res) => {
   return standardSuccess(req, res, 'Complete-workout multipart schema', {
-    required: ['image', 'log_rows_json'],
-    optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write']
+    required: ['log_rows_json'],
+    required_for_screenshot_flow: ['image'],
+    required_for_manual_dry_run: ['test_mode=true', 'effort_json or manual effort fields'],
+    optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write', 'effort_json']
   });
 });
 
@@ -1088,16 +1140,17 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
 
 app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
-  if (!req.file) {
-    return standardError(req, res, 'image file is required in multipart/form-data under field name image', null, 400);
-  }
-
   const formFields = req.body || {};
   const testMode = isTestModeEnabled(formFields.test_mode);
+  const allowManualEffortDryRun = testMode && (formFields.effort_json || formFields.effort || formFields.duration);
+
+  if (!req.file && !allowManualEffortDryRun) {
+    return standardError(req, res, 'image file is required in multipart/form-data under field name image unless test_mode=true with manual effort metrics', null, 400);
+  }
 
   // log_rows_json is required
   if (!formFields.log_rows_json) {
-    await fs.promises.unlink(req.file.path).catch(() => {});
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: 'log_rows_json is required in multipart/form-data' });
   }
 
@@ -1105,28 +1158,32 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   try {
     parsedLogRows = JSON.parse(formFields.log_rows_json);
   } catch (err) {
-    await fs.promises.unlink(req.file.path).catch(() => {});
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: `log_rows_json is not valid JSON: ${err.message}` });
   }
 
   if (!Array.isArray(parsedLogRows) || parsedLogRows.length === 0) {
-    await fs.promises.unlink(req.file.path).catch(() => {});
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: 'log_rows_json must be a non-empty JSON array' });
   }
 
   try {
     // 1) Parse image to get effort metrics
-    const visionResult = await parseWorkoutScreenshot(req.file.path);
+    const visionResult = req.file
+      ? await parseWorkoutScreenshot(req.file.path)
+      : { status: 'manual_effort', parsed_metrics: null };
 
     // 2) Validate parsed effort metrics (required before any writes)
     let normalizedMetrics;
     let metricWarnings = [];
     try {
-      const result = normalizeAndValidateParsedMetrics(visionResult.parsed_metrics);
+      const result = req.file
+        ? normalizeAndValidateParsedMetrics(visionResult.parsed_metrics)
+        : normalizeManualEffortMetrics(formFields);
       normalizedMetrics = result.normalized;
       metricWarnings = result.warnings || [];
     } catch (error) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
+      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
     }
 
@@ -1139,12 +1196,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     try {
       existingEffortSessionIds = await getEffortSessionIds();
     } catch (error) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
+      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
-    if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase())) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
+    const duplicateSession = existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
+    if (duplicateSession) {
+      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
 
@@ -1168,7 +1226,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         if (!exists) pendingExercisesMemory.push(pe);
       }
     } catch (error) {
-      await fs.promises.unlink(req.file.path).catch(() => {});
+      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
     }
 
@@ -1211,7 +1269,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         await appendRows(effortSheetName, [effortRow]);
         effortWritten = true;
       } catch (error) {
-        await fs.promises.unlink(req.file.path).catch(() => {});
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         return standardError(req, res, 'Failed to append workout data.', null, 500);
       }
     }
@@ -1233,8 +1291,16 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       data: {
         session_id: sessionId,
         date: dateValue,
-        log_rows_written: logAppendCount,
+        test_mode: testMode,
+        would_write: rowsToWrite.length > 0 || !duplicateSession,
+        sheet_written: !testMode && effortWritten,
+        log_rows_written: testMode ? 0 : logAppendCount,
         effort_written: effortWritten,
+        duplicate_check: {
+          duplicate_session: duplicateSession,
+          duplicate_log_rows: skippedDuplicates.length
+        },
+        effort_source: req.file ? 'screenshot' : 'manual',
         parsed_effort: normalizedMetrics,
         quality_score: qualityScore
       }
@@ -1244,10 +1310,17 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     if (testMode) {
       responseBody.test_mode = true;
+      responseBody.data.no_write_confirmed = true;
       responseBody.data.effort_row = effortRow;
       responseBody.data.log_rows_preview = formattedLogRows;
       responseBody.data.rows_to_write = rowsToWrite;
       responseBody.data.rows_skipped = skippedDuplicates.map(s => s.row);
+      responseBody.data.enrichment = formattedLogRows.map(row => ({
+        exercise: row[2],
+        canonical_exercise: row[3],
+        muscle_group: row[4],
+        lift_code: row[5]
+      }));
     }
 
     // include pending_exercises when present
@@ -1259,7 +1332,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   } catch (error) {
     return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
   } finally {
-    await fs.promises.unlink(req.file.path).catch(() => {});
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
   }
 });
 
