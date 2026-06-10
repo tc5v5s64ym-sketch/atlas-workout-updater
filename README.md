@@ -20,6 +20,11 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 
 ## Docs
 
+- Agent instructions: [CODEX.md](CODEX.md)
+- Atlas context: [docs/ATLAS_CONTEXT.md](docs/ATLAS_CONTEXT.md)
+- Safety rules: [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md)
+- Workflow: [docs/WORKFLOW.md](docs/WORKFLOW.md)
+- Codex session starter: [docs/CODEX_SESSION_STARTER.md](docs/CODEX_SESSION_STARTER.md)
 - Foundation audit: [docs/FOUNDATION_AUDIT.md](docs/FOUNDATION_AUDIT.md)
 - Post-cutover baseline: [docs/BASELINE_POST_CUTOVER.md](docs/BASELINE_POST_CUTOVER.md)
 - Mission Control: [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md)
@@ -32,6 +37,10 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 - Product plan: [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md)
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
 - API reference: [API_REFERENCE.md](API_REFERENCE.md)
+
+## For AI Agents
+
+Read [CODEX.md](CODEX.md) before changing code. It contains the permanent Atlas safety rules, sheet contract, no-write requirements, and PR workflow.
 
 ## Local Checks
 
