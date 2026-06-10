@@ -2,9 +2,70 @@ function normalizeExerciseKey(value) {
   return String(value || '')
     .trim()
     .toLowerCase()
-    .replace(/[\u2018\u2019\u201C\u201D]/g, '')
+    .replace(/[‘’“”]/g, '')
     .replace(/[()\[\]{}:;,.\/\\+*?^$|]/g, '')
     .replace(/\s+/g, ' ');
+}
+
+// Well-known gym abbreviations that substring matching cannot resolve on its own.
+// Maps normalized shorthand → normalized catalog key to look up.
+const SHORTHAND_EXPANSIONS = {
+  ohp: 'overhead press',
+  rdl: 'romanian deadlift',
+  sldl: 'stiff leg deadlift',
+  cgbp: 'close grip bench press',
+  hnr: 'hanging knee raises',
+  hkr: 'hanging knee raises',
+  dl: 'deadlift',
+  bp: 'bench press',
+};
+
+// Returns { entry, autoMatch } when a non-exact match is found, or null.
+// Priority: plural→singular exact → abbreviation expansion → substring containment.
+function findFuzzyMatch(normalizedKey, catalogMap) {
+  // 1. plural → singular  (squats → squat, dips → dip, curls → curl)
+  if (normalizedKey.endsWith('s') && normalizedKey.length > 3) {
+    const singular = normalizedKey.slice(0, -1);
+    const hit = catalogMap.get(singular);
+    if (hit) return { entry: hit };
+  }
+
+  // 2. known abbreviation expansion
+  const expanded = SHORTHAND_EXPANSIONS[normalizedKey];
+  if (expanded) {
+    const hit = catalogMap.get(expanded);
+    if (hit) return { entry: hit };
+  }
+
+  // 3. input (or its singular) is a substring of a catalog key
+  //    "bench" ⊂ "bench press", "lateral" ⊂ "lateral raise"
+  const searchKey = (normalizedKey.endsWith('s') && normalizedKey.length > 3)
+    ? normalizedKey.slice(0, -1)
+    : normalizedKey;
+
+  if (searchKey.length >= 3) {
+    const subMatches = [];
+    for (const [catalogKey, entry] of catalogMap.entries()) {
+      if (catalogKey.includes(searchKey)) subMatches.push({ catalogKey, entry });
+    }
+    if (subMatches.length > 1) {
+      return {
+        ambiguous: true,
+        alternatives: subMatches
+          .slice(0, 5)
+          .map(m => m.entry.canonical_exercise)
+      };
+    }
+    if (subMatches.length === 1) {
+      // prefer the shortest matching catalog key (most specific / least padded)
+      const best = subMatches[0];
+      return {
+        entry: best.entry
+      };
+    }
+  }
+
+  return null;
 }
 
 function buildExerciseCatalogMap(rows) {
@@ -61,21 +122,42 @@ function buildExerciseCatalogMap(rows) {
 
 function enrichLogRow(rowObj, catalogMap) {
   const key = normalizeExerciseKey(rowObj.exercise);
-  const catalogMatch = catalogMap.get(key);
-  const enriched = { ...rowObj };
-  if (catalogMatch) {
-    enriched.canonical_exercise = catalogMatch.canonical_exercise;
-    enriched.muscle_group = catalogMatch.muscle_group;
-    enriched.lift_code = catalogMatch.lift_code || '';
-    const warnings = [];
-    if (!catalogMatch.lift_code) warnings.push(`No lift code for exercise '${rowObj.exercise}'.`);
-    return { enriched, warnings: warnings.length ? warnings : null };
+
+  // Exact match (includes any variants already indexed in the map)
+  const exactMatch = catalogMap.get(key);
+  if (exactMatch) {
+    const enriched = { ...rowObj,
+      canonical_exercise: exactMatch.canonical_exercise,
+      muscle_group: exactMatch.muscle_group,
+      lift_code: exactMatch.lift_code || ''
+    };
+    const warnings = exactMatch.lift_code ? null : [`No lift code for exercise '${rowObj.exercise}'.`];
+    return { enriched, warnings };
   }
 
-  enriched.canonical_exercise = '';
-  enriched.muscle_group = '';
-  enriched.lift_code = '';
-  return { enriched, warnings: [`Unknown exercise: ${rowObj.exercise}`] };
+  // Fuzzy fallback: plural, abbreviation, substring
+  const fuzzy = findFuzzyMatch(key, catalogMap);
+  if (fuzzy) {
+    if (!fuzzy.entry) {
+      return {
+        enriched: { ...rowObj, canonical_exercise: '', muscle_group: '', lift_code: '' },
+        warnings: [`Ambiguous exercise match: ${rowObj.exercise} could be ${fuzzy.alternatives.join(', ')}`]
+      };
+    }
+    const enriched = { ...rowObj,
+      canonical_exercise: fuzzy.entry.canonical_exercise,
+      muscle_group: fuzzy.entry.muscle_group,
+      lift_code: fuzzy.entry.lift_code || ''
+    };
+    const autoMatch = `"${rowObj.exercise}" → "${fuzzy.entry.canonical_exercise}"`;
+    const warnings = fuzzy.entry.lift_code ? null : [`No lift code for exercise '${rowObj.exercise}'.`];
+    return { enriched, warnings, autoMatch };
+  }
+
+  return {
+    enriched: { ...rowObj, canonical_exercise: '', muscle_group: '', lift_code: '' },
+    warnings: [`Unknown exercise: ${rowObj.exercise}`]
+  };
 }
 
 function closestExerciseMatches(input, catalogMap, limit = 5) {

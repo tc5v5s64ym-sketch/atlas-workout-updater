@@ -130,6 +130,32 @@ function svgBarChart(entries, { width = 420, barHeight = 20, gap = 6, color = '#
   return svg;
 }
 
+/* ===== Exercise catalog datalist (typeahead) ===== */
+
+async function loadExerciseDatalist() {
+  if (!getApiKey()) return;
+  try {
+    const res = await api('/api/catalog/exercises');
+    const exercises = (res.data?.exercises || []);
+    if (!exercises.length) return;
+    let dl = document.getElementById('exercise-catalog');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'exercise-catalog';
+      document.body.appendChild(dl);
+    }
+    dl.innerHTML = '';
+    for (const ex of exercises) {
+      const opt = document.createElement('option');
+      opt.value = ex.canonical_name;
+      if (ex.lift_code) opt.label = ex.lift_code;
+      dl.appendChild(opt);
+    }
+  } catch {
+    // typeahead is optional enhancement — fail silently
+  }
+}
+
 /* ===== Tabs ===== */
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -380,7 +406,7 @@ let pendingWrite = null;
 
 function addSetRow(values = {}) {
   const row = el('tr', {}, [
-    el('td', {}, el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press' })),
+    el('td', {}, el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press', list: 'exercise-catalog' })),
     el('td', {}, el('input', { type: 'number', class: 'set-number', value: values.set_number || String(setsTableBody.children.length + 1), min: '1' })),
     el('td', {}, el('input', { type: 'number', class: 'set-weight', value: values.weight ?? '', min: '0', step: 'any' })),
     el('td', {}, el('input', { type: 'number', class: 'set-reps', value: values.reps ?? '', min: '0' })),
@@ -464,9 +490,26 @@ function invalidatePreview() {
   pendingWrite = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
+  const btn = document.getElementById('approve-btn');
+  btn.disabled = true;
+  btn.textContent = 'Write to Google Sheets';
+  const note = document.getElementById('preview-gate-note');
+  if (note) note.textContent = 'Run a preview above to enable this button.';
 }
 
 document.getElementById('logger-form').addEventListener('input', invalidatePreview);
+
+function hasLogWorkoutNoWriteProof(result) {
+  const data = result?.data || {};
+  return data.test_mode === true && data.sheet_write === 'skipped';
+}
+
+function hasCompleteWorkoutNoWriteProof(result) {
+  const data = result?.data?.data || {};
+  return data.test_mode === true &&
+    data.sheet_written === false &&
+    data.no_write_confirmed === true;
+}
 
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -499,6 +542,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
       const result = await submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, testMode: true });
+      if (!hasCompleteWorkoutNoWriteProof(result)) {
+        throw new Error('Preview did not prove no-write safety. Nothing can be written.');
+      }
       pendingWrite = { mode: 'screenshot', file, logRows, sessionId, date, location, notes };
       renderCompleteWorkoutPreview(result);
     } else {
@@ -513,15 +559,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!hasLogWorkoutNoWriteProof(result)) {
+        throw new Error('Preview did not prove no-write safety. Nothing can be written.');
+      }
       pendingWrite = { mode: 'manual', payload };
       renderLogWorkoutPreview(result, effortRow);
     }
     previewPanel.hidden = false;
+    document.getElementById('approve-btn').disabled = !pendingWrite;
+    const gateNote = document.getElementById('preview-gate-note');
+    if (gateNote) gateNote.textContent = 'Review the dry-run above, then click to write.';
   } catch (err) {
     setStatus(loggerStatus, `Preview failed: ${err.message}`, 'error');
   } finally {
     previewBtn.disabled = false;
-    previewBtn.textContent = 'Preview (dry-run)';
+    previewBtn.textContent = 'Preview — no data saved';
   }
 });
 
@@ -549,11 +601,45 @@ function renderWarnings(warnings) {
   ]);
 }
 
+function renderAutoMatches(autoMatches) {
+  if (!autoMatches || !autoMatches.length) return null;
+  return el('div', { class: 'preview-auto-match' }, [
+    el('strong', { text: 'Auto-matched — verify these are correct:' }),
+    el('ul', {}, autoMatches.map(m => el('li', { text: m })))
+  ]);
+}
+
+function renderUnknownExerciseSuggestions(pendingExercises) {
+  if (!pendingExercises || !pendingExercises.length) return null;
+  const items = pendingExercises.map(pe => {
+    const matches = pe.closest_matches || [];
+    const hint = matches.length
+      ? `Did you mean: ${matches.map(m => `${m.canonical_exercise}${m.lift_code ? ` (${m.lift_code})` : ''}`).join(', ')}`
+      : 'No close catalog matches found — add this exercise to Exercise_Catalog.';
+    return el('li', {}, [
+      el('strong', { text: `"${pe.exercise}" — ` }),
+      document.createTextNode(hint)
+    ]);
+  });
+  return el('div', { class: 'preview-warnings' }, [
+    el('strong', { text: 'Unknown exercises — catalog suggestions:' }),
+    el('ul', {}, items)
+  ]);
+}
+
 function renderLogWorkoutPreview(result, effortRow) {
   const data = result.data || {};
   previewContent.innerHTML = '';
-  previewContent.appendChild(el('div', { class: 'preview-ok', text: `Dry-run confirmed: nothing was written (sheet_write: ${data.sheet_write}).` }));
+  const proof = el('div', { class: 'no-write-proof' }, [
+    el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
+    el('span', { class: 'proof-fields', text: `sheet_write: ${data.sheet_write}  ·  test_mode: true` })
+  ]);
+  previewContent.appendChild(proof);
+  const logAutoMatches = renderAutoMatches(data.auto_matches);
+  if (logAutoMatches) previewContent.appendChild(logAutoMatches);
   previewContent.appendChild(renderWarnings(data.warnings));
+  const logSuggestions = renderUnknownExerciseSuggestions(data.pending_exercises);
+  if (logSuggestions) previewContent.appendChild(logSuggestions);
   previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.log_rows_preview || []).length})` }));
   previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.log_rows_preview || []));
   if (effortRow) {
@@ -570,11 +656,16 @@ function renderCompleteWorkoutPreview(result) {
   const outer = result.data || {};
   const data = outer.data || {};
   previewContent.innerHTML = '';
-  previewContent.appendChild(el('div', {
-    class: 'preview-ok',
-    text: `Dry-run confirmed: test_mode=${data.test_mode}, sheet_written=${data.sheet_written}, no_write_confirmed=${data.no_write_confirmed}.`
-  }));
+  const proof = el('div', { class: 'no-write-proof' }, [
+    el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
+    el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
+  ]);
+  previewContent.appendChild(proof);
+  const completeAutoMatches = renderAutoMatches(outer.auto_matches);
+  if (completeAutoMatches) previewContent.appendChild(completeAutoMatches);
   previewContent.appendChild(renderWarnings(outer.warnings));
+  const completeSuggestions = renderUnknownExerciseSuggestions(outer.pending_exercises);
+  if (completeSuggestions) previewContent.appendChild(completeSuggestions);
 
   const dup = data.duplicate_check || {};
   if (dup.duplicate_log_rows > 0) {
@@ -603,7 +694,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.disabled = true;
-  approveBtn.textContent = 'Saving…';
+  approveBtn.textContent = 'Writing to Sheets…';
 
   try {
     if (pendingWrite.mode === 'screenshot') {
@@ -622,13 +713,12 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     setsTableBody.innerHTML = '';
     addSetRow();
     setDefaultDate();
-    setStatus(loggerStatus, 'Workout saved. ✓', 'ok');
+    setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
     loadDashboard();
   } catch (err) {
-    setStatus(loggerStatus, `Save failed: ${err.message}`, 'error');
-  } finally {
+    setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
     approveBtn.disabled = false;
-    approveBtn.textContent = 'Approve & Save';
+    approveBtn.textContent = 'Write to Google Sheets';
   }
 });
 
@@ -642,3 +732,4 @@ addSetRow();
 setDefaultDate();
 checkConnection();
 loadDashboard();
+loadExerciseDatalist();

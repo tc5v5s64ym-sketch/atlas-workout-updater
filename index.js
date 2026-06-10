@@ -394,7 +394,9 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
   if (normalized.totalCalories < normalized.activeCalories) {
     warnings.push('totalCalories is less than activeCalories');
   }
-  if (normalized.peakHR < normalized.averageHR) {
+  if (typeof normalized.peakHR === 'number' &&
+      typeof normalized.averageHR === 'number' &&
+      normalized.peakHR < normalized.averageHR) {
     warnings.push('peakHR is less than averageHR');
   }
 
@@ -434,12 +436,13 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
     catalogMap = buildExerciseCatalogMap(catalogRows);
   }
   const warnings = [];
-
+  const auto_matches = [];
   const pending_exercises = [];
   const formattedRows = logRows.map(row => {
     const rowObj = normalizeLogRow(row, topLevelSessionId, topLevelDate);
     const result = enrichLogRow(rowObj, catalogMap);
     const enriched = result.enriched;
+    if (result.autoMatch) auto_matches.push(result.autoMatch);
     const rowWarnings = result.warnings || null;
     if (rowWarnings) {
       for (const w of rowWarnings) {
@@ -448,9 +451,11 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
       // If unknown exercise, add to pending_exercises
       for (const w of rowWarnings) {
         if (w && String(w).startsWith('Unknown exercise:')) {
+          const suggestions = closestExerciseMatches(rowObj.exercise, catalogMap, 3);
           pending_exercises.push({
             exercise: rowObj.exercise,
-            suggested_canonical_name: rowObj.exercise,
+            suggested_canonical_name: suggestions[0]?.canonical_exercise || rowObj.exercise,
+            closest_matches: suggestions,
             reason: 'No Exercise_Catalog match'
           });
         }
@@ -459,7 +464,7 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
     return logRowObjectToArray(enriched);
   });
 
-  return { formattedRows, warnings, pending_exercises };
+  return { formattedRows, warnings, pending_exercises, auto_matches };
 }
 
 app.get('/', (req, res) => {
@@ -1254,6 +1259,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     let formattedLogRows;
     let enrichWarnings = [];
     let pendingExercises = [];
+    let autoMatches = [];
     try {
       // fetch catalog once and pass the map to the enricher to ensure consistent lookup
       const catalogRows = await getExerciseCatalog();
@@ -1262,6 +1268,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       formattedLogRows = enrichResult.formattedRows;
       enrichWarnings = enrichResult.warnings || [];
       pendingExercises = enrichResult.pending_exercises || [];
+      autoMatches = enrichResult.auto_matches || [];
       // store pending exercises in memory (dedupe by exercise)
       for (const pe of pendingExercises) {
         const key = String(pe.exercise || '').trim().toLowerCase();
@@ -1367,10 +1374,9 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }));
     }
 
-    // include pending_exercises when present
-    if (typeof pendingExercises !== 'undefined' && pendingExercises.length > 0) {
-      responseBody.pending_exercises = pendingExercises;
-    }
+    // include pending_exercises and auto_matches when present
+    if (pendingExercises.length > 0) responseBody.pending_exercises = pendingExercises;
+    if (autoMatches.length > 0) responseBody.auto_matches = autoMatches;
 
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {
@@ -1417,10 +1423,14 @@ app.post('/api/log-workout', async (req, res) => {
 
   let formattedLogRows;
   let warnings = [];
+  let pendingExercisesForPreview = [];
+  let autoMatchesForPreview = [];
   try {
     const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings || [];
+    pendingExercisesForPreview = logResult.pending_exercises || [];
+    autoMatchesForPreview = logResult.auto_matches || [];
   } catch (error) {
     return standardError(req, res, error.message, null, 400);
   }
@@ -1443,6 +1453,8 @@ app.post('/api/log-workout', async (req, res) => {
     };
     if (formattedEffortRow) previewBody.effort_row_preview = formattedEffortRow;
     if (warnings.length > 0) previewBody.warnings = [...new Set(warnings)];
+    if (pendingExercisesForPreview.length > 0) previewBody.pending_exercises = pendingExercisesForPreview;
+    if (autoMatchesForPreview.length > 0) previewBody.auto_matches = autoMatchesForPreview;
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
