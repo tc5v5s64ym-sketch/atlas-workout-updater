@@ -1,6 +1,7 @@
 The app uses `INSERT_ROWS` semantics to append data at the bottom.
 - Before promoting a cleaned sheet, back up production, validate the test copy with read-only checks, run a `test_mode=true` complete-workout dry run, then switch `GOOGLE_SHEETS_ID`.
 - Never commit `.env`, API keys, Google credentials, screenshots, `.xlsx` exports, or private workout data.
+- See `docs/atlas-production-sheet-cutover-runbook.md` for the post-cutover Mission Control and rollback runbook.
 
 ## Running Atlas Smoke Tests from iPhone (Mission Control)
 
@@ -45,6 +46,7 @@ GitHub Actions is now your primary iPhone-safe control panel for validating the 
 
 **Safety notes**
 - Only `test_mode=true` dry-runs are performed — no real data is ever written by the smoke test.
+- Dry-run success requires `test_mode=true`, `sheet_written=false`, and `no_write_confirmed=true`; `would_write` alone is not treated as no-write proof.
 - ATLAS_API_KEY is used securely via GitHub secret (never exposed).
 - Dashboard tab is treated as optional.
 - Clear rollback guidance is printed on failure when `expected_sheet_label=cleaned` or mode=`post-switch`.

@@ -34,6 +34,7 @@ const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
+const { buildCompleteWorkoutResponseData } = require('./services/completeWorkoutResponse');
 
 validateConfig();
 (async () => {
@@ -113,7 +114,7 @@ const recentExerciseCache = createTtlCache(20 * 1000);
 
 const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
-const { requiredSheetTabs, optionalSheetTabs } = require('./config/sheetContract');
+const { buildSheetContractStatus } = require('./config/sheetContract');
 
 
 
@@ -722,19 +723,12 @@ app.get('/api/health/sheets', async (req, res) => {
 
   try {
     const tabs = await getSpreadsheetTabs();
-    const status = requiredSheetTabs.reduce((acc, tab) => {
-      acc[tab] = { exists: tabs.includes(tab) };
-      return acc;
-    }, {});
-    const optional = optionalSheetTabs.reduce((acc, tab) => {
-      acc[tab] = { exists: tabs.includes(tab), required: false };
-      return acc;
-    }, {});
+    const contract = buildSheetContractStatus(tabs);
     return standardSuccess(req, res, 'Google Sheets health check', {
-      tabs: status,
-      optionalTabs: optional,
+      tabs: contract.tabs,
+      optionalTabs: contract.optionalTabs,
       availableTabs: tabs,
-      missingRequiredTabs: requiredSheetTabs.filter(tab => !tabs.includes(tab))
+      missingRequiredTabs: contract.missingRequiredTabs
     });
   } catch (error) {
     return standardError(req, res, 'Failed to verify Google Sheets tabs', error.message, 500);
@@ -1201,7 +1195,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     }
 
     const duplicateSession = existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
-    if (duplicateSession) {
+    if (duplicateSession && !testMode) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
@@ -1259,7 +1253,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
-    let logAppendCount = rowsToWrite.length;
     let effortWritten = false;
     if (!testMode) {
       try {
@@ -1285,48 +1278,23 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       validationWarnings: combinedWarnings
     });
 
-    const responseBody = {
-      status: 'ok',
-      message: 'complete-workout processed',
-      data: {
-        session_id: sessionId,
-        date: dateValue,
-        test_mode: testMode,
-        would_write: rowsToWrite.length > 0 || !duplicateSession,
-        sheet_written: !testMode && effortWritten,
-        log_rows_written: testMode ? 0 : logAppendCount,
-        effort_written: effortWritten,
-        duplicate_check: {
-          duplicate_session: duplicateSession,
-          duplicate_log_rows: skippedDuplicates.length
-        },
-        effort_source: req.file ? 'screenshot' : 'manual',
-        parsed_effort: normalizedMetrics,
-        quality_score: qualityScore
-      }
-    };
+    const responseBody = buildCompleteWorkoutResponseData({
+      sessionId,
+      dateValue,
+      testMode,
+      rowsToWrite,
+      skippedDuplicates,
+      duplicateSession,
+      effortWritten,
+      normalizedMetrics,
+      qualityScore,
+      effortSource: req.file ? 'screenshot' : 'manual',
+      effortRow,
+      formattedLogRows,
+      pendingExercises
+    });
 
     if (combinedWarnings.length > 0) responseBody.warnings = combinedWarnings;
-
-    if (testMode) {
-      responseBody.test_mode = true;
-      responseBody.data.no_write_confirmed = true;
-      responseBody.data.effort_row = effortRow;
-      responseBody.data.log_rows_preview = formattedLogRows;
-      responseBody.data.rows_to_write = rowsToWrite;
-      responseBody.data.rows_skipped = skippedDuplicates.map(s => s.row);
-      responseBody.data.enrichment = formattedLogRows.map(row => ({
-        exercise: row[2],
-        canonical_exercise: row[3],
-        muscle_group: row[4],
-        lift_code: row[5]
-      }));
-    }
-
-    // include pending_exercises when present
-    if (typeof pendingExercises !== 'undefined' && pendingExercises.length > 0) {
-      responseBody.pending_exercises = pendingExercises;
-    }
 
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {

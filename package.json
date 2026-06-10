@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "lint": "node --check index.js && node --check sheets.js && node --check services/analytics.js && node --check services/validation.js && node --check services/vision.js && node --check middleware.js && node --check response.js && node --check services/cache.js && node --check services/exerciseEnrichment.js && node --check services/duration.js && node --check scripts/smoke-test-render.js",
+    "lint": "node --check index.js && node --check sheets.js && node --check services/analytics.js && node --check services/validation.js && node --check services/vision.js && node --check middleware.js && node --check response.js && node --check services/cache.js && node --check services/exerciseEnrichment.js && node --check services/duration.js && node --check services/completeWorkoutResponse.js && node --check scripts/smoke-test-render.js",
     "test": "node --test --test-reporter=spec",
     "smoke:render": "node scripts/smoke-test-render.js"
   },

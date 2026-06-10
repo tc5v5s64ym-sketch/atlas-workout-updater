@@ -11,11 +11,6 @@ const allowEmptyPending = String(process.env.ATLAS_ALLOW_EMPTY_PENDING || 'true'
 const VALID_MODES = ['basic', 'contract', 'read-only', 'full', 'dry-run-only', 'post-switch'];
 const VALID_LABELS = ['current', 'cleaned', 'unknown'];
 
-if (!baseUrl) throw new Error('ATLAS_BASE_URL is required');
-if (!apiKey) throw new Error('ATLAS_API_KEY is required for protected tests');
-if (!VALID_MODES.includes(smokeMode)) throw new Error(`Invalid ATLAS_SMOKE_MODE: ${smokeMode}`);
-if (!VALID_LABELS.includes(expectedSheetLabel)) throw new Error(`Invalid ATLAS_EXPECTED_SHEET_LABEL: ${expectedSheetLabel}`);
-
 // ===== HELPERS =====
 function logSection(title) { console.log(`\n=== ${title} ===`); }
 
@@ -58,8 +53,33 @@ function writeStepSummary(content) {
   }
 }
 
+function extractDryRunSafetyFields(dryJson) {
+  const responseBody = getData(dryJson) || dryJson;
+  const nestedData = responseBody.data || {};
+  return {
+    test_mode: responseBody.test_mode ?? nestedData.test_mode,
+    would_write: responseBody.would_write ?? nestedData.would_write,
+    sheet_written: responseBody.sheet_written ?? nestedData.sheet_written,
+    no_write_confirmed: responseBody.no_write_confirmed ?? nestedData.no_write_confirmed,
+    sheet_write: responseBody.sheet_write ?? nestedData.sheet_write
+  };
+}
+
+function assertDryRunNoWrite(dryJson) {
+  const fields = extractDryRunSafetyFields(dryJson);
+  assert.equal(fields.test_mode, true, 'Dry-run response must confirm test_mode=true');
+  assert.notEqual(fields.sheet_written, true, 'Dry-run response must not report sheet_written=true');
+  assert.equal(fields.no_write_confirmed, true, 'Dry-run response must explicitly confirm no_write_confirmed=true');
+  return fields;
+}
+
 // ===== MAIN =====
 async function main() {
+  if (!baseUrl) throw new Error('ATLAS_BASE_URL is required');
+  if (!apiKey) throw new Error('ATLAS_API_KEY is required for protected tests');
+  if (!VALID_MODES.includes(smokeMode)) throw new Error(`Invalid ATLAS_SMOKE_MODE: ${smokeMode}`);
+  if (!VALID_LABELS.includes(expectedSheetLabel)) throw new Error(`Invalid ATLAS_EXPECTED_SHEET_LABEL: ${expectedSheetLabel}`);
+
   const startTime = new Date().toISOString();
   const githubSha = process.env.GITHUB_SHA || 'unknown';
   const actor = process.env.GITHUB_ACTOR || 'unknown';
@@ -177,25 +197,14 @@ async function main() {
       let dryJson; try { dryJson = JSON.parse(dryText); } catch(e){ throw new Error('Dry-run non-JSON'); }
       if (!dryRes.ok) throw new Error(`Dry-run failed ${dryRes.status}`);
 
-      const responseBody = getData(dryJson) || dryJson;
-      const dryData = responseBody.data || {};
-      const testOk = responseBody.test_mode === true || dryData.test_mode === true;
-      const sheetWritten = responseBody.sheet_written === true || dryData.sheet_written === true;
-      const sheetWrittenFalse = responseBody.sheet_written === false || dryData.sheet_written === false;
-      const noWriteConfirmed = responseBody.no_write_confirmed === true || dryData.no_write_confirmed === true;
-      const legacySkipped = responseBody.sheet_write === 'skipped' || dryData.sheet_write === 'skipped';
-      const noWrite = !sheetWritten && (noWriteConfirmed || sheetWrittenFalse || legacySkipped);
-      const dryRunFields = {
-        test_mode: responseBody.test_mode ?? dryData.test_mode,
-        would_write: responseBody.would_write ?? dryData.would_write,
-        sheet_written: responseBody.sheet_written ?? dryData.sheet_written,
-        no_write_confirmed: responseBody.no_write_confirmed ?? dryData.no_write_confirmed,
-        sheet_write: responseBody.sheet_write ?? dryData.sheet_write
-      };
+      // Strict no-write proof: would_write alone is not safety evidence.
+      const dryRunFields = assertDryRunNoWrite(dryJson);
+      const testOk = dryRunFields.test_mode === true;
+      const noWrite = dryRunFields.sheet_written !== true && dryRunFields.no_write_confirmed === true;
       console.log(`  Dry-run safety fields: ${JSON.stringify(dryRunFields)}`);
       recordResult(results, 'POST /api/complete-workout test_mode', testOk && noWrite, `test_mode=${testOk} no_write=${noWrite}`);
 
-      if (!testOk || sheetWritten || !noWrite) throw new Error('Dry-run did not prove no-write safety');
+      if (!testOk || !noWrite) throw new Error('Dry-run did not prove no-write safety');
 
       // No-mutation
       if (dryRunSessionId) {
@@ -254,4 +263,11 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) {
+  main().catch(e => { console.error(e); process.exit(1); });
+}
+
+module.exports = {
+  extractDryRunSafetyFields,
+  assertDryRunNoWrite
+};
