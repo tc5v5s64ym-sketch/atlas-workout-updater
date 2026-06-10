@@ -37,6 +37,8 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 - Product plan: [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md)
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
 - Secret hygiene plan: [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md)
+- Secret rotation runbook: [docs/SECRET_ROTATION_RUNBOOK.md](docs/SECRET_ROTATION_RUNBOOK.md)
+- Secret hygiene checklist: [docs/SECRET_HYGIENE_CHECKLIST.md](docs/SECRET_HYGIENE_CHECKLIST.md)
 - API reference: [API_REFERENCE.md](API_REFERENCE.md)
 
 ## For AI Agents
@@ -46,6 +48,8 @@ Read [CODEX.md](CODEX.md) before changing code. It contains the permanent Atlas 
 ## Local Environment
 
 Use [.env.example](.env.example) as a placeholder template for local setup. Never commit `.env` or real secret values. See [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md) and [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md) before rotating or cleaning up secrets.
+
+Secret hygiene docs: [plan](docs/SECRET_HYGIENE_PLAN.md), [rotation runbook](docs/SECRET_ROTATION_RUNBOOK.md), [checklist](docs/SECRET_HYGIENE_CHECKLIST.md), and [safety rules](docs/SAFETY_RULES.md).
 
 ## Local Checks
 
