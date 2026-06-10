@@ -35,6 +35,8 @@
 - [ ] Decide whether Git history cleanup is needed.
 - [ ] If wanted, prepare a separate owner-approved history cleanup plan.
 - [ ] Confirm all local clones have fresh `.env` files that are not tracked.
+- [ ] Prepare backup and rollback using [BACKUP_ROLLBACK_PLAN.md](BACKUP_ROLLBACK_PLAN.md).
+- [ ] Use [FIRST_REAL_WRITE_APPROVAL.md](FIRST_REAL_WRITE_APPROVAL.md) before the first real write.
 
 ## Do-Not-Do List
 

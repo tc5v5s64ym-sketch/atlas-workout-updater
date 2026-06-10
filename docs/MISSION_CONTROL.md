@@ -34,6 +34,10 @@ Mission Control only treats a dry-run as safe when the response proves:
 
 `would_write:true` is useful, but it is not proof of no-write safety.
 
+## First Real Write Planning
+
+Run Mission Control `full` with sheet label `cleaned` before and after first real write planning. Until the owner gives explicit approval, `test_mode=true` and no-write proof remain required.
+
 ## iPhone Run Steps
 
 1. Open GitHub.

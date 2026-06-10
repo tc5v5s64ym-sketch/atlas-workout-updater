@@ -30,6 +30,8 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 - Mission Control: [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md)
 - Sheet contract: [docs/SHEET_CONTRACT.md](docs/SHEET_CONTRACT.md)
 - Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+- Backup and rollback plan: [docs/BACKUP_ROLLBACK_PLAN.md](docs/BACKUP_ROLLBACK_PLAN.md)
+- First real write approval: [docs/FIRST_REAL_WRITE_APPROVAL.md](docs/FIRST_REAL_WRITE_APPROVAL.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 - First real write plan: [docs/FIRST_REAL_WRITE.md](docs/FIRST_REAL_WRITE.md)
 - API audit: [docs/API_AUDIT.md](docs/API_AUDIT.md)

@@ -8,6 +8,8 @@ This is the source of truth for Atlas safety rules.
 - Do not run real workout ingestion without explicit owner approval.
 - Do not run non-test-mode write endpoints during routine validation.
 - A green dry-run does not authorize a real write.
+- Test mode remains the default for all validation.
+- No blind repeated writes.
 
 ## `test_mode` Contract
 
@@ -94,6 +96,7 @@ Before a first real write:
 1. `read-only` Mission Control must be green.
 2. `full` Mission Control must be green.
 3. Dry-run must prove no-write safety.
-4. The owner must approve a tiny real write.
+4. A backup sheet should exist.
+5. The owner must explicitly approve the first real production write.
 
 The first real write should use a unique session ID, clear test notes, and a verification plan.
