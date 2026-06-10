@@ -2,7 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
 const { normalizeDurationString } = require('../services/duration');
-const { recommendNextSet } = require('../services/analytics');
+const {
+  recommendNextSet, buildSessionSummary, computeExerciseProgress,
+  computeMuscleGroupVolume, searchSessions, detectRecentPrs,
+  buildBodyweightHistory, previewTestRows, detectStalls
+} = require('../services/analytics');
+const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
 const {
   requiredSheetTabs,
@@ -243,4 +248,220 @@ test('recommendNextSet returns progression recommendation', () => {
   ];
   const rec = recommendNextSet(rows, 'SQ');
   assert.match(rec.recommendation, /Increase the weight/);
+});
+
+test('recommendNextSet returns no-history message for unknown lift', () => {
+  const rec = recommendNextSet([], 'UNKNOWN');
+  assert.match(rec.recommendation, /No recent working sets/);
+});
+
+// ── Validation helpers ────────────────────────────────────────────────────────
+
+test('parseNumber handles numeric, string, and blank inputs', () => {
+  assert.equal(parseNumber(42), 42);
+  assert.equal(parseNumber('42'), 42);
+  assert.equal(parseNumber('42.5'), 42.5);
+  assert.equal(parseNumber('1,234'), 1234);
+  assert.equal(parseNumber(0), 0);
+  assert.equal(parseNumber(''), null);
+  assert.equal(parseNumber(null), null);
+  assert.equal(parseNumber(undefined), null);
+  assert.equal(parseNumber('not-a-number'), null);
+  assert.equal(parseNumber(Infinity), null);
+});
+
+test('normalizeDate handles ISO, datetime, and blank values', () => {
+  assert.equal(normalizeDate('2026-05-17'), '2026-05-17');
+  assert.equal(normalizeDate('2026-05-17 0:00:00'), '2026-05-17');
+  assert.equal(normalizeDate('2026-05-17T00:00:00.000Z'), '2026-05-17');
+  assert.equal(normalizeDate(''), '');
+  assert.equal(normalizeDate(null), '');
+  assert.equal(normalizeDate(undefined), '');
+});
+
+test('parseDurationMinutes converts hh:mm:ss, mm:ss, and numeric to minutes', () => {
+  assert.equal(parseDurationMinutes('01:00:00'), 60);
+  assert.equal(parseDurationMinutes('00:30:00'), 30);
+  assert.equal(parseDurationMinutes('00:30:30'), 30.5);
+  assert.equal(parseDurationMinutes('30'), 30);
+  assert.equal(parseDurationMinutes(45), 45);
+  assert.equal(parseDurationMinutes(''), 0);
+  assert.equal(parseDurationMinutes(null), 0);
+  assert.equal(parseDurationMinutes(undefined), 0);
+});
+
+test('getSimpleTrend detects up, down, and flat', () => {
+  assert.equal(getSimpleTrend([100, 110, 120]), 'up');
+  assert.equal(getSimpleTrend([120, 110, 100]), 'down');
+  assert.equal(getSimpleTrend([100, 100, 100]), 'flat');
+  assert.equal(getSimpleTrend([100]), 'flat');
+  assert.equal(getSimpleTrend([]), 'flat');
+});
+
+test('calculateQualityScore returns 5 for perfect session and 0 for minimal session', () => {
+  assert.equal(calculateQualityScore({
+    totalSets: 12,
+    effortDuration: '01:00:00',
+    averageHR: 130,
+    uniqueExercisesCount: 5,
+    validationWarnings: []
+  }), 5);
+  assert.equal(calculateQualityScore({
+    totalSets: 2,
+    effortDuration: '00:10:00',
+    averageHR: 80,
+    uniqueExercisesCount: 1,
+    validationWarnings: ['some warning']
+  }), 0);
+});
+
+// ── Analytics functions ───────────────────────────────────────────────────────
+
+const SAMPLE_LOG = [
+  ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+  ['2026-05-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '8', '1', ''],
+  ['2026-05-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '2', '185', '7', '2', ''],
+  ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '3', ''],
+  ['2026-05-12', 'S2', 'Deadlift', 'Deadlift', 'Posterior Chain', 'DL', '1', '315', '3', '1', ''],
+];
+
+const SAMPLE_EFFORT = [
+  ['2026-05-10', 'S1', '01:10:00', '450', '550', '135', '162', 'Gym', ''],
+  ['2026-05-12', 'S2', '00:55:00', '380', '480', '130', '155', 'Gym', ''],
+];
+
+test('buildSessionSummary returns correct totals for a known session', () => {
+  const summary = buildSessionSummary(SAMPLE_LOG, SAMPLE_EFFORT, 'S1');
+  assert.equal(summary.session_id, 'S1');
+  assert.equal(summary.total_sets, 3);
+  assert.ok(summary.exercises.includes('Bench Press'));
+  assert.ok(summary.total_volume > 0);
+  assert.ok(summary.effort !== null);
+  assert.equal(summary.effort.duration, '01:10:00');
+});
+
+test('buildSessionSummary returns empty result for unknown session', () => {
+  const summary = buildSessionSummary(SAMPLE_LOG, SAMPLE_EFFORT, 'UNKNOWN');
+  assert.equal(summary.total_sets, 0);
+  assert.equal(summary.effort, null);
+});
+
+test('computeExerciseProgress tracks weight and 1RM trends', () => {
+  const progress = computeExerciseProgress(SAMPLE_LOG, 'SQ');
+  assert.equal(progress.liftCode, 'SQ');
+  assert.equal(progress.sessions.length, 2);
+  assert.equal(progress.best_weight_over_time[0].best_weight, 225);
+  assert.equal(progress.best_weight_over_time[1].best_weight, 235);
+  assert.equal(progress.recent_trend, 'up');
+});
+
+test('computeExerciseProgress returns empty for unknown lift', () => {
+  const progress = computeExerciseProgress(SAMPLE_LOG, 'UNKNOWN');
+  assert.equal(progress.sessions.length, 0);
+  assert.equal(progress.recent_trend, 'flat');
+});
+
+test('computeMuscleGroupVolume sums volume and sets by muscle group', () => {
+  // Use days=365 so all sample rows (dated ~May 2026) fall within the window
+  const groups = computeMuscleGroupVolume(SAMPLE_LOG, 365);
+  const legs = groups.find(g => g.muscle_group === 'Legs');
+  const chest = groups.find(g => g.muscle_group === 'Chest');
+  assert.ok(legs, 'Legs should be present');
+  assert.equal(legs.volume, 225 * 5 + 235 * 5);
+  assert.ok(chest, 'Chest should be present');
+  assert.equal(chest.set_count, 2);
+});
+
+test('searchSessions filters by liftCode', () => {
+  const result = searchSessions(SAMPLE_LOG, { liftCode: 'SQ' });
+  assert.ok(result.session_ids.includes('S1'));
+  assert.ok(result.session_ids.includes('S2'));
+  assert.equal(result.rows.length, 2);
+});
+
+test('searchSessions filters by dateFrom', () => {
+  const result = searchSessions(SAMPLE_LOG, { dateFrom: '2026-05-11' });
+  assert.ok(!result.session_ids.includes('S1'));
+  assert.ok(result.session_ids.includes('S2'));
+});
+
+test('searchSessions returns all rows when no filters applied', () => {
+  const result = searchSessions(SAMPLE_LOG, {});
+  assert.ok(result.session_ids.includes('S1'));
+  assert.ok(result.session_ids.includes('S2'));
+});
+
+test('detectRecentPrs returns best weight and rep set per lift', () => {
+  const prs = detectRecentPrs(SAMPLE_LOG);
+  const sqPr = prs.find(p => p.liftCode === 'SQ');
+  assert.ok(sqPr, 'SQ PR should be present');
+  assert.equal(sqPr.bestWeightSet.weight, 235);
+  const bpPr = prs.find(p => p.liftCode === 'BP');
+  assert.ok(bpPr, 'BP PR should be present');
+  assert.equal(bpPr.bestWeightSet.weight, 185);
+});
+
+test('buildBodyweightHistory computes entries, average, and trend', () => {
+  // Use days=60 so May 2026 dates (31-40 days ago from June 2026) fall within the window
+  const rows = [
+    ['2026-05-01', '185', ''],
+    ['2026-05-05', '184', ''],
+    ['2026-05-10', '183', ''],
+  ];
+  const history = buildBodyweightHistory(rows, 60);
+  assert.equal(history.entries.length, 3);
+  assert.equal(history.latest.weight, 183);
+  assert.ok(history.average > 0);
+  assert.equal(history.trend, 'down');
+});
+
+test('buildBodyweightHistory respects days window and excludes old entries', () => {
+  // 2020-01-01 is always outside a 30-day window; 2026-06-01 is always inside
+  const rows = [
+    ['2020-01-01', '200', ''],
+    ['2026-06-01', '183', ''],
+  ];
+  const history = buildBodyweightHistory(rows, 30);
+  assert.equal(history.entries.length, 1);
+  assert.equal(history.entries[0].weight, 183);
+});
+
+test('previewTestRows identifies test session IDs and test notes', () => {
+  const testLogRows = [
+    ['2026-05-01', 'test-session', 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', ''],
+    ['2026-05-01', 'real-session', 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', 'test run'],
+    ['2026-05-01', 'normal-session', 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', ''],
+  ];
+  const preview = previewTestRows(testLogRows, []);
+  assert.equal(preview.log_candidates.length, 2);
+  assert.equal(preview.effort_candidates.length, 0);
+});
+
+test('detectStalls flags lifts with no weight progression over minSessions', () => {
+  const rows = [
+    ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
+    ['2026-04-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '2', ''],
+    ['2026-04-10', 'S3', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
+  ];
+  const stalls = detectStalls(rows, 3);
+  assert.equal(stalls.length, 1);
+  assert.equal(stalls[0].liftCode, 'BP');
+  assert.equal(stalls[0].sessions_stalled, 3);
+});
+
+test('detectStalls does not flag progresssing lifts', () => {
+  const rows = [
+    ['2026-04-01', 'S1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-04-05', 'S2', 'Squat', 'Squat', 'Legs', 'SQ', '1', '235', '5', '2', ''],
+    ['2026-04-10', 'S3', 'Squat', 'Squat', 'Legs', 'SQ', '1', '245', '5', '2', ''],
+  ];
+  assert.equal(detectStalls(rows, 3).length, 0);
+});
+
+test('detectStalls skips lifts with fewer sessions than minSessions', () => {
+  const rows = [
+    ['2026-04-01', 'S1', 'Row', 'Row', 'Back', 'ROW', '1', '135', '8', '2', ''],
+    ['2026-04-05', 'S2', 'Row', 'Row', 'Back', 'ROW', '1', '135', '8', '2', ''],
+  ];
+  assert.equal(detectStalls(rows, 3).length, 0);
 });

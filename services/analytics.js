@@ -354,6 +354,54 @@ function buildBodyweightHistory(rows, days = 30) {
   };
 }
 
+function detectStalls(logRows, minSessions = 3) {
+  const count = Math.max(2, Number.isFinite(Number(minSessions)) ? Number(minSessions) : 3);
+  const rows = logRows.map(normalizeLogRow).filter(row => row.weight && row.weight > 0 && row.reps);
+  const byLiftCode = new Map();
+
+  rows.forEach(row => {
+    const code = row.lift_code || 'UNKNOWN';
+    if (!byLiftCode.has(code)) byLiftCode.set(code, []);
+    byLiftCode.get(code).push(row);
+  });
+
+  const stalls = [];
+
+  for (const [liftCode, liftRows] of byLiftCode.entries()) {
+    const sorted = [...liftRows].sort((a, b) =>
+      (a.date_clean || '').localeCompare(b.date_clean || '') ||
+      (a.session_id || '').localeCompare(b.session_id || '')
+    );
+
+    const sessionMap = new Map();
+    sorted.forEach(row => {
+      const key = `${row.session_id}||${row.date_clean}`;
+      const current = sessionMap.get(key) || { session_id: row.session_id, date: row.date_clean, best_weight: 0 };
+      current.best_weight = Math.max(current.best_weight, row.weight || 0);
+      sessionMap.set(key, current);
+    });
+
+    const sessions = Array.from(sessionMap.values());
+    if (sessions.length < count) continue;
+
+    const lastN = sessions.slice(-count);
+    const maxWeight = Math.max(...lastN.map(s => s.best_weight));
+    const firstWeight = lastN[0].best_weight;
+
+    if (maxWeight <= firstWeight) {
+      stalls.push({
+        liftCode,
+        sessions_stalled: lastN.length,
+        last_best_weight: lastN[lastN.length - 1].best_weight,
+        first_session_date: lastN[0].date,
+        last_session_date: lastN[lastN.length - 1].date
+      });
+    }
+  }
+
+  return stalls;
+}
+
 function previewTestRows(logRows, effortRows) {
   const logCandidates = logRows
     .map(normalizeLogRow)
@@ -377,5 +425,6 @@ module.exports = {
   detectRecentPrs,
   recommendNextSet,
   buildBodyweightHistory,
-  previewTestRows
+  previewTestRows,
+  detectStalls
 };

@@ -25,7 +25,8 @@ const {
   detectRecentPrs,
   recommendNextSet,
   buildBodyweightHistory,
-  previewTestRows
+  previewTestRows,
+  detectStalls
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -76,6 +77,15 @@ const upload = multer({
 });
 
 const app = express();
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-atlas-api-key');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  return next();
+});
+
 app.use(express.json());
 app.use(createRequestContext);
 
@@ -109,7 +119,6 @@ const pendingExercisesMemory = [];
 // TODO(gpt-integration-layer): separate model orchestration and prompt policy from HTTP layer.
 // TODO(mobile-client): add API compatibility/versioning strategy for mobile app consumers.
 const catalogCache = createTtlCache(60 * 1000);
-const recentExerciseCache = createTtlCache(20 * 1000);
 
 const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
@@ -414,12 +423,8 @@ function normalizeManualEffortMetrics(formFields) {
   return normalizeAndValidateParsedMetrics(parsedMetrics);
 }
 
-async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate) {
-  let catalogMap;
-  // allow passing in a prebuilt catalogMap via optional 4th param
-  if (arguments.length >= 4 && arguments[3] && arguments[3] instanceof Map) {
-    catalogMap = arguments[3];
-  } else {
+async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, catalogMap = null) {
+  if (!catalogMap || !(catalogMap instanceof Map)) {
     const catalogRows = await getExerciseCatalog();
     catalogMap = buildExerciseCatalogMap(catalogRows);
   }
@@ -1020,6 +1025,22 @@ app.post('/api/admin/preview-test-rows', async (req, res) => {
     return standardSuccess(req, res, 'Preview test rows', preview);
   } catch (error) {
     return standardError(req, res, 'Failed to preview test rows', error.message, 500);
+  }
+});
+
+// GET /api/stalls
+app.get('/api/stalls', async (req, res) => {
+  const minSessions = parseInt(req.query.minSessions || '3', 10);
+  if (Number.isNaN(minSessions) || minSessions < 2) {
+    return standardError(req, res, 'minSessions must be an integer >= 2', null, 400);
+  }
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const stalls = detectStalls(allLog, minSessions);
+    return standardSuccess(req, res, 'Stall detection', { stalls, minSessions });
+  } catch (error) {
+    return standardError(req, res, 'Failed to detect stalls', error.message, 500);
   }
 });
 
