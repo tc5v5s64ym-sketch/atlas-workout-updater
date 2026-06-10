@@ -1,6 +1,6 @@
 # Atlas Workout Updater
 
-A small Node.js Express app that accepts finalized workout data and appends it to a Google Sheet with two tabs: `Log` and `Effort`.
+A small Node.js Express app that accepts finalized workout data and appends it to a Google Sheet with Atlas core tabs such as `Log_Cleaned`, `Exercise_Catalog`, and `Effort`.
 
 ## Features
 
@@ -10,9 +10,9 @@ A small Node.js Express app that accepts finalized workout data and appends it t
 - Accepts JSON payload with:
   - `session_id` (required)
   - `date` (required)
-  - `log_rows` (required, non-empty array with 11 values per row or objects matching Log_Cleaned fields; missing canonical fields are auto-filled from `Exercise_Catalog`)
+  - `log_rows` (required, non-empty array with 11 or 12 values per row, or objects matching Log_Cleaned fields; missing canonical fields are auto-filled from `Exercise_Catalog`)
   - `effort_row` (required, 9 values or object with Effort schema)
-- Appends `log_rows` to the `Log` sheet tab
+- Appends `log_rows` to the `Log_Cleaned` sheet tab
 - Appends `effort_row` to the `Effort` sheet tab
 - Rejects duplicate Session IDs already present in the Effort sheet
 - Enriches incoming exercise names from the `Exercise_Catalog` tab
@@ -436,12 +436,13 @@ x-atlas-api-key: <ATLAS_API_KEY>
 ```
 
 Accepts `multipart/form-data` with fields:
-- `image`: Apple Watch screenshot file (required)
+- `image`: Apple Watch screenshot file (required for screenshot flow; optional for manual `test_mode=true` dry runs)
 - `session_id`: optional (server generates one if omitted)
 - `date`: optional (defaults to today if omitted)
 - `location`: optional
 - `notes`: optional
 - `test_mode`: optional (`true` to validate and preview without writing to Sheets)
+- `effort_json`: optional manual effort metrics for no-image `test_mode=true` dry runs
 - `log_rows_json`: required — JSON array of simplified log rows with this shape:
 
 ```json
@@ -459,16 +460,16 @@ Accepts `multipart/form-data` with fields:
 
 Behavior:
 - Uses the same Vision parser (`/services/vision.js`) to extract effort metrics from the screenshot.
+- For `test_mode=true`, manual effort metrics may be supplied without a screenshot through `effort_json`; this path validates and previews only.
 - Generates `session_id` in the format `YYYYMMDD-AM-01` or `YYYYMMDD-PM-01` when omitted.
 - Validates and normalizes parsed effort metrics before writing (same rules as documented above). If validation fails, nothing is written and the endpoint returns `400` with an error.
-- Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
- - Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
+- Enriches `log_rows_json` using the `Exercise_Catalog` and formats them for the `Log_Cleaned` sheet. If enrichment/validation fails, nothing is written and the endpoint returns `400`.
   - Canonical exercise names, muscle group, and lift codes are populated from the `Exercise_Catalog`.
   - Example: `Back Squat` -> `SQ01`; `Lat Pulldown` -> `LPD01` (these values come from your `Exercise_Catalog` sheet).
   - If an exercise is not found, the row will have blank `Canonical_Exercise`, `Muscle_Group`, and `Lift_Code`, and the response will include the entry in `pending_exercises` for manual review.
 - Applies duplicate `session_id` protection before writing; if duplicate, returns `409` and writes nothing.
-- Appends enriched log rows to the `Log` sheet and the normalized effort row to the `Effort` sheet.
-- If `test_mode=true`, performs parsing, validation, and enrichment only and does not write to Google Sheets; the response includes the rows that would have been written.
+- Appends enriched log rows to the `Log_Cleaned` sheet and the normalized effort row to the `Effort` sheet.
+- If `test_mode=true`, performs parsing or manual effort validation, duplicate checks, and enrichment only and does not write to Google Sheets; the response includes `sheet_written:false`, `no_write_confirmed:true`, and the rows that would have been written.
 
 Response (200 on success):
 
@@ -542,5 +543,8 @@ Use `workout-payload.json` as a sample request payload.
 
 ## Notes
 
-- Tab names must exist in the spreadsheet as `Log` and `Effort`.
+- Core tab names must exist in the spreadsheet as `Metadata`, `Log_Cleaned`, `Exercise_Catalog`, `Effort`, `Logic`, and `Session_Summary`.
+- `Dashboard` is optional and may be deleted; backend endpoints use core data tabs, not spreadsheet dashboard formulas.
 - The app uses `INSERT_ROWS` semantics to append data at the bottom.
+- Before promoting a cleaned sheet, back up production, validate the test copy with read-only checks, run a `test_mode=true` complete-workout dry run, then switch `GOOGLE_SHEETS_ID`.
+- Never commit `.env`, API keys, Google credentials, screenshots, `.xlsx` exports, or private workout data.

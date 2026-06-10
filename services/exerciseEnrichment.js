@@ -12,12 +12,13 @@ function buildExerciseCatalogMap(rows) {
 
   const header = rows[0].map(cell => String(cell || '').trim().toLowerCase());
   const originalVariantsIndex = header.findIndex(value => ['original_variants', 'original variants', 'originalvariant', 'original variant'].includes(value));
-  const canonicalNameIndex = header.findIndex(value => ['canonical_name', 'canonical name', 'canonicalname'].includes(value));
+  const exerciseIndex = header.findIndex(value => ['exercise', 'exercise_name', 'exercise name'].includes(value));
+  const canonicalNameIndex = header.findIndex(value => ['canonical_name', 'canonical name', 'canonicalname', 'canonical_exercise', 'canonical exercise', 'canonicalexercise'].includes(value));
   const muscleGroupIndex = header.findIndex(value => ['muscle_group', 'muscle group', 'musclegroup'].includes(value));
   const liftCodeIndex = header.findIndex(value => ['lift code', 'lift_code', 'liftcode'].includes(value));
 
-  if (canonicalNameIndex === -1) {
-    throw new Error('Exercise_Catalog header must include Canonical_Name.');
+  if (canonicalNameIndex === -1 && exerciseIndex === -1) {
+    throw new Error('Exercise_Catalog header must include Exercise or Canonical_Name.');
   }
 
   const entryMap = new Map();
@@ -25,7 +26,8 @@ function buildExerciseCatalogMap(rows) {
     const row = rows[i];
     if (!row || row.length === 0) continue;
 
-    const canonicalName = String(row[canonicalNameIndex] || '').trim();
+    const exerciseName = exerciseIndex === -1 ? '' : String(row[exerciseIndex] || '').trim();
+    const canonicalName = String(row[canonicalNameIndex] || exerciseName).trim();
     if (!canonicalName) continue;
 
     const muscleGroup = String(row[muscleGroupIndex] || '').trim();
@@ -40,6 +42,7 @@ function buildExerciseCatalogMap(rows) {
     };
 
     addMatch(canonicalName);
+    addMatch(exerciseName);
     if (originalVariantsIndex !== -1) {
       const variants = String(row[originalVariantsIndex] || '').split(/[,;|]/).map(v => v.trim()).filter(Boolean);
       variants.forEach(addMatch);

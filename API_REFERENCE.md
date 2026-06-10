@@ -72,6 +72,7 @@ POST /api/parse-workout-image
 # Complete workout (image + log rows)
 POST /api/complete-workout
 # Multipart form-data: image=[file], log_rows_json=[JSON]
+# No-image dry run: test_mode=true, effort_json=[JSON], log_rows_json=[JSON]
 
 # Direct log/effort append
 POST /api/log-workout
@@ -182,13 +183,23 @@ PORT=3000 (optional, defaults to Railway env)
 
 ## Tabs Required
 
-Minimum:
+Core Atlas tabs:
+- `Metadata`
 - `Log_Cleaned` (or custom LOG_SHEET_NAME)
-- `Effort` (or custom EFFORT_SHEET_NAME)
 - `Exercise_Catalog`
+- `Effort` (or custom EFFORT_SHEET_NAME)
+- `Logic`
+- `Session_Summary`
 
 Optional:
+- `Dashboard` (display/reporting only; backend health must not require it)
 - `Bodyweight` (required if using `/api/bodyweight` endpoints)
+
+Safe sheet promotion checklist:
+- Back up the current production sheet before switching IDs.
+- Validate a copied test sheet first with read-only backend checks.
+- Run a `test_mode=true` complete-workout dry run before any real write.
+- Never commit `.env`, API keys, Google credentials, screenshots, `.xlsx` exports, or private workout data.
 
 ## Date Formats Accepted
 
