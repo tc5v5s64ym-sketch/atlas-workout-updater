@@ -37,6 +37,7 @@ const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
+const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
 
 validateConfig();
 (async () => {
@@ -1226,6 +1227,15 @@ app.get('/api/debug/exercise-match', async (req, res) => {
     });
   } catch (error) {
     return standardError(req, res, 'Failed to debug exercise match', error.message, 500);
+  }
+});
+
+app.post('/api/parse-workout-text', (req, res) => {
+  try {
+    const responseBody = buildWorkoutTextParseDryRunResponse(req.body);
+    return standardSuccess(req, res, 'parse-workout-text processed', responseBody, 200);
+  } catch (error) {
+    return standardError(req, res, error.message, null, 400);
   }
 });
 
