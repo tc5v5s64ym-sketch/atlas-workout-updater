@@ -118,6 +118,23 @@ test('Mission Control accepts only explicit no-write dry-run proof', () => {
     sheet_written: false,
     no_write_confirmed: true
   }));
+  assert.doesNotThrow(() => assertDryRunNoWrite({
+    status: 'ok',
+    data: {
+      data: {
+        test_mode: true,
+        would_write: true,
+        sheet_written: false,
+        no_write_confirmed: true
+      }
+    }
+  }));
+  assert.doesNotThrow(() => assertDryRunNoWrite({
+    status: 'ok',
+    test_mode: true,
+    would_write: true,
+    sheet_write: 'skipped'
+  }));
   assert.throws(() => assertDryRunNoWrite({
     status: 'ok',
     test_mode: true,
@@ -131,7 +148,7 @@ test('Mission Control accepts only explicit no-write dry-run proof', () => {
     would_write: true,
     sheet_written: false,
     no_write_confirmed: false
-  }), /no_write_confirmed=true/);
+  }), /explicitly prove no-write/);
   assert.throws(() => assertDryRunNoWrite({
     status: 'ok',
     test_mode: false,
@@ -139,6 +156,18 @@ test('Mission Control accepts only explicit no-write dry-run proof', () => {
     sheet_written: false,
     no_write_confirmed: true
   }), /test_mode=true/);
+  assert.throws(() => assertDryRunNoWrite({
+    status: 'ok',
+    test_mode: true,
+    would_write: true
+  }), /explicitly prove no-write/);
+  assert.throws(() => assertDryRunNoWrite({
+    status: 'ok',
+    test_mode: true,
+    would_write: true,
+    sheet_written: 'maybe',
+    no_write_confirmed: false
+  }), /explicitly prove no-write/);
 });
 
 test('recommendNextSet returns progression recommendation', () => {
