@@ -10,3 +10,4 @@ google-credentials.json
 credentials*.json
 *.key
 *.pem
+backups/
