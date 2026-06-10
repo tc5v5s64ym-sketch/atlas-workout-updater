@@ -18,13 +18,15 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--ink);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 header {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding: 16px 24px 8px;
+  /* pad-top includes safe-area for iOS standalone mode (notch / Dynamic Island) */
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 24px 8px;
 }
 
 header h1 { margin: 0; font-size: 1.5rem; }
@@ -120,6 +122,8 @@ button.approve {
 #sets-table td:first-child input { min-width: 150px; }
 #sets-table .remove-set { background: none; color: var(--danger); padding: 4px 10px; font-size: 1rem; min-width: 36px; }
 
+.last-time-hint { font-size: 0.72rem; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+
 .action-row { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
 
 .safety-note {
@@ -210,6 +214,78 @@ button.approve {
 .pill.down { background: #fee2e2; color: var(--danger); }
 
 code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
+
+.small { font-size: 0.8rem; }
+
+a.lift-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+a.lift-link:hover { text-decoration: underline; }
+
+/* ===== Today's Plan grid ===== */
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.plan-card {
+  border-radius: 8px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--border);
+}
+
+.plan-card-high { border-left-color: var(--ok); background: #f0fdf4; }
+.plan-card-medium { border-left-color: var(--warn); background: #fffbeb; }
+.plan-card-low { border-left-color: var(--border); background: var(--card); }
+
+.plan-card-lift { font-size: 0.78rem; color: var(--muted); margin-bottom: 2px; }
+.plan-card-target { font-size: 1.25rem; font-weight: 700; color: var(--ink); line-height: 1.2; }
+.plan-card-sets { font-size: 0.82rem; color: var(--muted); }
+.plan-card-rec { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
+
+/* ===== Progression engine ===== */
+.next-target-card {
+  background: #f0f9ff;
+  border: 2px solid #38bdf8;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin: 12px 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.next-target-weight {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #0284c7;
+  line-height: 1;
+}
+
+.next-target-meta {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #0369a1;
+}
+
+/* ===== Session loader ===== */
+.load-session-details {
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.load-session-details summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--muted);
+  user-select: none;
+}
+
+.load-session-details summary:hover {
+  color: var(--fg);
+}
 
 @media (max-width: 640px) {
   main { padding: 10px; }

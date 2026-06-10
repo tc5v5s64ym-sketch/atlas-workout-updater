@@ -165,6 +165,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'dashboard') loadDashboard();
+    if (btn.dataset.tab === 'body') loadBodyTab();
   });
 });
 
@@ -209,17 +210,50 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    for (const id of ['todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       document.getElementById(id).innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
     return;
   }
 
+  loadTodaysPlan();
   loadCoaching();
   loadWeeklySummary();
   loadRecentHistory();
   loadRecentPrs();
   loadStalls();
+}
+
+async function loadTodaysPlan() {
+  const box = document.getElementById('todays-plan');
+  try {
+    const res = await api('/api/plan/today');
+    const recs = res.data?.recommendations || [];
+    box.innerHTML = '';
+
+    if (!recs.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No training history found — log your first workout to see a plan here.' }));
+      return;
+    }
+
+    const grid = el('div', { class: 'plan-grid' });
+    for (const r of recs) {
+      const t = r.next_target;
+      const confidenceClass = r.confidence === 'high' ? 'plan-card-high' : r.confidence === 'medium' ? 'plan-card-medium' : 'plan-card-low';
+      const card = el('div', { class: `plan-card ${confidenceClass}` }, [
+        el('div', { class: 'plan-card-lift' }, [
+          el('a', { class: 'lift-link', href: '#', 'data-lift': r.liftCode, text: r.liftCode })
+        ]),
+        el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
+        el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),
+        el('div', { class: 'plan-card-rec', text: r.recommendation })
+      ]);
+      grid.appendChild(card);
+    }
+    box.appendChild(grid);
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
 }
 
 async function loadCoaching() {
@@ -240,7 +274,13 @@ async function loadCoaching() {
     const deloads = data.deload_suggestions || [];
     if (deloads.length) {
       box.appendChild(el('h3', { text: 'Deload suggestions' }));
-      box.appendChild(el('ul', {}, deloads.map(d => el('li', { text: `${d.liftCode}: ${d.suggestion}` }))));
+      box.appendChild(el('ul', {}, deloads.map(d => {
+        const li = el('li', {}, [
+          el('a', { class: 'lift-link', href: '#', 'data-lift': d.liftCode, text: d.liftCode }),
+          document.createTextNode(`: ${d.suggestion}`)
+        ]);
+        return li;
+      })));
     } else {
       box.appendChild(el('p', { class: 'muted', text: 'No deloads needed — no lift has been stalled 4+ sessions.' }));
     }
@@ -327,10 +367,17 @@ async function loadStalls() {
       box.appendChild(el('span', { class: 'muted', text: 'No stalled lifts — keep it up.' }));
       return;
     }
-    box.appendChild(renderTable(
-      ['Lift', 'Sessions stalled', 'Last best weight', 'Since'],
-      stalls.map(s => [s.liftCode, s.sessions_stalled, s.last_best_weight, s.first_session_date])
-    ));
+    const table = el('table', {});
+    const thead = el('thead', {}, el('tr', {}, ['Lift', 'Sessions stalled', 'Last best weight', 'Since'].map(h => el('th', { text: h }))));
+    const tbody = el('tbody', {}, stalls.map(s => el('tr', {}, [
+      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.liftCode })),
+      el('td', { text: String(s.sessions_stalled) }),
+      el('td', { text: String(s.last_best_weight) }),
+      el('td', { text: String(s.first_session_date) })
+    ])));
+    table.appendChild(thead);
+    table.appendChild(tbody);
+    box.appendChild(table);
   } catch (err) {
     box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
@@ -386,10 +433,111 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
     const res = await api(`/api/recommend/next/${encodeURIComponent(liftCode)}`);
     const data = res.data || {};
     recBox.innerHTML = '';
-    recBox.appendChild(el('p', { text: data.recommendation || '' }));
-    recBox.appendChild(el('p', { class: 'muted', text: data.reasoning || '' }));
+
+    if (data.next_target) {
+      const t = data.next_target;
+      const confidenceClass = data.confidence === 'high' ? 'ok' : data.confidence === 'medium' ? 'warn' : 'muted';
+      recBox.appendChild(el('div', { class: 'next-target-card' }, [
+        el('div', { class: 'next-target-weight', text: `${t.weight}` }),
+        el('div', { class: 'next-target-meta', text: `× ${t.reps} reps · ${t.sets} sets` })
+      ]));
+      recBox.appendChild(el('p', { text: data.recommendation }));
+      recBox.appendChild(el('p', { class: 'muted', text: data.reasoning }));
+      const meta = [
+        data.sessions_analyzed ? `${data.sessions_analyzed} sessions analyzed` : '',
+        data.e1rm_trend ? `e1RM trend: ${data.e1rm_trend}` : '',
+        data.confidence ? `confidence: ${data.confidence}` : ''
+      ].filter(Boolean).join('  ·  ');
+      if (meta) recBox.appendChild(el('p', { class: `muted small ${confidenceClass}`, text: meta }));
+    } else {
+      recBox.appendChild(el('p', { text: data.recommendation || '' }));
+      recBox.appendChild(el('p', { class: 'muted', text: data.reasoning || '' }));
+    }
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+});
+
+/* ===== Lift-link navigation (dashboard → progress) ===== */
+
+document.addEventListener('click', e => {
+  const link = e.target.closest('.lift-link');
+  if (!link) return;
+  e.preventDefault();
+  const liftCode = link.dataset.lift;
+  if (!liftCode) return;
+  // Switch to Progress tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const progressBtn = document.querySelector('[data-tab="progress"]');
+  progressBtn.classList.add('active');
+  document.getElementById('tab-progress').classList.add('active');
+  // Pre-fill and submit the progress form
+  const liftInput = document.getElementById('progress-lift-code');
+  liftInput.value = liftCode;
+  document.getElementById('progress-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+});
+
+/* ===== Catalog search ===== */
+
+document.getElementById('catalog-search-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = document.getElementById('catalog-search-q').value.trim();
+  const box = document.getElementById('catalog-search-result');
+  if (!q) return;
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  try {
+    const res = await api(`/api/catalog/search?q=${encodeURIComponent(q)}`);
+    const results = res.data?.results || [];
+    box.innerHTML = '';
+    if (!results.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No matching exercises.' }));
+      return;
+    }
+    box.appendChild(renderTable(
+      ['Canonical name', 'Muscle group', 'Lift code', 'Variants'],
+      results.map(r => [r.canonical_name, r.muscle_group, r.lift_code, (r.variants || []).join(', ')])
+    ));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
+  }
+});
+
+/* ===== Session search ===== */
+
+document.getElementById('session-search-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const params = new URLSearchParams();
+  const liftCode = document.getElementById('ss-lift-code').value.trim();
+  const exercise = document.getElementById('ss-exercise').value.trim();
+  const muscleGroup = document.getElementById('ss-muscle-group').value.trim();
+  const dateFrom = document.getElementById('ss-date-from').value;
+  const dateTo = document.getElementById('ss-date-to').value;
+  if (liftCode) params.set('liftCode', liftCode);
+  if (exercise) params.set('exercise', exercise);
+  if (muscleGroup) params.set('muscleGroup', muscleGroup);
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+
+  const box = document.getElementById('session-search-result');
+  box.innerHTML = '<span class="muted">Searching…</span>';
+  try {
+    const res = await api(`/api/search/sessions?${params.toString()}`);
+    const data = res.data || {};
+    const sets = data.rows || [];
+    const sessionCount = data.session_ids?.length ?? 0;
+    box.innerHTML = '';
+    box.appendChild(el('p', { class: 'muted', text: `${sets.length} set(s) found across ${sessionCount} session(s).` }));
+    if (!sets.length) return;
+    box.appendChild(renderTable(
+      ['Date', 'Session', 'Exercise', 'Set', 'Weight', 'Reps', 'RIR', 'Notes'],
+      sets.slice(0, 100).map(s => [s.date_clean, s.session_id, s.canonical_exercise || s.exercise, s.set_number, s.weight, s.reps, s.rir, s.notes])
+    ));
+    if (sets.length > 100) {
+      box.appendChild(el('p', { class: 'muted', text: `Showing first 100 of ${sets.length} rows.` }));
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
   }
 });
 
@@ -404,9 +552,38 @@ const loggerStatus = document.getElementById('logger-status');
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
 
+// Cache last-time lookups to avoid redundant API calls within a session.
+const lastTimeCache = new Map();
+
+async function showLastTimeHint(exerciseInput, hintEl) {
+  const exercise = exerciseInput.value.trim();
+  if (!exercise || !getApiKey()) { hintEl.textContent = ''; return; }
+
+  let data = lastTimeCache.get(exercise.toLowerCase());
+  if (!data) {
+    try {
+      const res = await api(`/api/exercises/last-session?exercise=${encodeURIComponent(exercise)}`);
+      data = res.data || {};
+      lastTimeCache.set(exercise.toLowerCase(), data);
+    } catch {
+      hintEl.textContent = '';
+      return;
+    }
+  }
+
+  if (!data.sets || !data.sets.length) { hintEl.textContent = ''; return; }
+  const summary = data.sets.map(s => `${s.weight}×${s.reps}`).join('  ');
+  hintEl.textContent = `Last (${data.date}): ${summary}`;
+}
+
 function addSetRow(values = {}) {
+  const exerciseInput = el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press', list: 'exercise-catalog' });
+  const hintEl = el('div', { class: 'last-time-hint' });
+  exerciseInput.addEventListener('blur', () => showLastTimeHint(exerciseInput, hintEl));
+  if (values.exercise) showLastTimeHint(exerciseInput, hintEl);
+
   const row = el('tr', {}, [
-    el('td', {}, el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press', list: 'exercise-catalog' })),
+    el('td', {}, [exerciseInput, hintEl]),
     el('td', {}, el('input', { type: 'number', class: 'set-number', value: values.set_number || String(setsTableBody.children.length + 1), min: '1' })),
     el('td', {}, el('input', { type: 'number', class: 'set-weight', value: values.weight ?? '', min: '0', step: 'any' })),
     el('td', {}, el('input', { type: 'number', class: 'set-reps', value: values.reps ?? '', min: '0' })),
@@ -422,6 +599,30 @@ function addSetRow(values = {}) {
 }
 
 document.getElementById('add-set-btn').addEventListener('click', () => addSetRow());
+
+document.getElementById('copy-last-session-btn').addEventListener('click', async () => {
+  const statusBox = document.getElementById('copy-last-session-status');
+  setStatus(statusBox, 'Loading last session…', 'ok');
+  try {
+    const res = await api('/api/history/recent?limit=100');
+    const sets = res.data?.recent_sets || [];
+    if (!sets.length) {
+      setStatus(statusBox, 'No prior sessions found.', 'error');
+      return;
+    }
+    // Find the most recent session (last session_id in the list)
+    const lastSessionId = sets[sets.length - 1].session_id;
+    const sessionSets = sets.filter(s => s.session_id === lastSessionId);
+    setsTableBody.innerHTML = '';
+    for (const s of sessionSets) {
+      addSetRow({ exercise: s.canonical_exercise || s.exercise, set_number: s.set_number });
+    }
+    invalidatePreview();
+    setStatus(statusBox, `Copied ${sessionSets.length} exercise slots from session ${lastSessionId}. Fill in weights and reps.`, 'ok');
+  } catch (err) {
+    setStatus(statusBox, `Could not load: ${err.message}`, 'error');
+  }
+});
 
 function generateSessionId(dateValue) {
   const compact = String(dateValue || '').replace(/[^0-9]/g, '');
@@ -722,10 +923,200 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   }
 });
 
+/* ===== Session loader (correct an existing session) ===== */
+
+document.getElementById('load-session-btn').addEventListener('click', async () => {
+  const sessionId = document.getElementById('load-session-id').value.trim();
+  const statusBox = document.getElementById('load-session-status');
+  if (!sessionId) {
+    setStatus(statusBox, 'Enter a session ID first.', 'error');
+    return;
+  }
+  try {
+    const res = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
+    const data = res.data || {};
+    document.getElementById('log-date').value = data.date || '';
+    document.getElementById('log-session-id').value = data.session_id || '';
+    setsTableBody.innerHTML = '';
+    for (const row of (data.rows || [])) {
+      addSetRow({
+        exercise: row.exercise,
+        set_number: row.set_number,
+        weight: row.weight,
+        reps: row.reps,
+        rir: row.rir,
+        notes: row.notes
+      });
+    }
+    invalidatePreview();
+    setStatus(statusBox, `Loaded ${data.set_count} sets from session ${sessionId}. Edit what needs fixing, then preview.`, 'ok');
+  } catch (err) {
+    setStatus(statusBox, `Could not load session: ${err.message}`, 'error');
+  }
+});
+
+/* ===== Body tab — Bodyweight ===== */
+
+let pendingBwWrite = null;
+
+function bwInvalidate() {
+  pendingBwWrite = null;
+  document.getElementById('bw-preview-panel').hidden = true;
+  document.getElementById('bw-preview-content').innerHTML = '';
+  const btn = document.getElementById('bw-approve-btn');
+  btn.disabled = true;
+  btn.textContent = 'Write to Google Sheets';
+  const note = document.getElementById('bw-gate-note');
+  if (note) note.textContent = 'Run a preview above to enable this button.';
+}
+
+document.getElementById('bw-form').addEventListener('input', bwInvalidate);
+
+document.getElementById('bw-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  bwInvalidate();
+  const bwStatus = document.getElementById('bw-status');
+  setStatus(bwStatus, '', 'ok');
+
+  const date = document.getElementById('bw-date').value;
+  const weight = document.getElementById('bw-weight').value;
+  const notes = document.getElementById('bw-notes').value.trim();
+
+  const previewBtn = document.getElementById('bw-preview-btn');
+  previewBtn.disabled = true;
+  previewBtn.textContent = 'Previewing…';
+
+  try {
+    const result = await api('/api/bodyweight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, weight: Number(weight), notes, test_mode: 'true' })
+    });
+    const data = result.data || {};
+    const content = document.getElementById('bw-preview-content');
+    content.innerHTML = '';
+    content.appendChild(el('div', { class: 'no-write-proof' }, [
+      el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
+      el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
+    ]));
+    const entry = data.entry_preview || {};
+    content.appendChild(renderTable(
+      ['Date', 'Weight', 'Notes'],
+      [[entry.date, entry.weight, entry.notes]]
+    ));
+
+    pendingBwWrite = { date, weight: Number(weight), notes };
+    document.getElementById('bw-preview-panel').hidden = false;
+    document.getElementById('bw-approve-btn').disabled = false;
+    const gateNote = document.getElementById('bw-gate-note');
+    if (gateNote) gateNote.textContent = 'Review above, then click to write.';
+  } catch (err) {
+    setStatus(bwStatus, `Preview failed: ${err.message}`, 'error');
+  } finally {
+    previewBtn.disabled = false;
+    previewBtn.textContent = 'Preview — no data saved';
+  }
+});
+
+document.getElementById('bw-cancel-btn').addEventListener('click', bwInvalidate);
+
+document.getElementById('bw-approve-btn').addEventListener('click', async () => {
+  if (!pendingBwWrite) return;
+  const approveBtn = document.getElementById('bw-approve-btn');
+  const bwStatus = document.getElementById('bw-status');
+  approveBtn.disabled = true;
+  approveBtn.textContent = 'Writing to Sheets…';
+  try {
+    await api('/api/bodyweight', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pendingBwWrite)
+    });
+    bwInvalidate();
+    document.getElementById('bw-form').reset();
+    document.getElementById('bw-date').value = new Date().toISOString().slice(0, 10);
+    setStatus(bwStatus, 'Bodyweight written to Google Sheets. ✓', 'ok');
+    loadBwHistory();
+  } catch (err) {
+    setStatus(bwStatus, `Write failed: ${err.message}`, 'error');
+    approveBtn.disabled = false;
+    approveBtn.textContent = 'Write to Google Sheets';
+  }
+});
+
+async function loadBwHistory() {
+  const box = document.getElementById('bw-history');
+  if (!getApiKey()) {
+    box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    return;
+  }
+  try {
+    const res = await api('/api/bodyweight/history?days=90');
+    const data = res.data || {};
+    box.innerHTML = '';
+    const entries = data.entries || [];
+    if (!entries.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'No bodyweight entries in the last 90 days.' }));
+      return;
+    }
+    const trendClass = data.trend === 'up' ? 'up' : data.trend === 'down' ? 'down' : '';
+    const trendPill = el('span', { class: `pill ${trendClass}`, text: `trend: ${data.trend}` });
+    const latest = data.latest;
+    const summary = el('p', {}, [
+      document.createTextNode(`Latest: ${latest?.weight ?? '—'}  ·  90-day avg: ${data.average ?? '—'}  `),
+      trendPill
+    ]);
+    box.appendChild(summary);
+    box.appendChild(svgLineChart(
+      entries.map(e => ({ x: e.date, y: e.weight })),
+      { color: '#16a34a', label: 'Bodyweight over time' }
+    ));
+    box.appendChild(renderTable(
+      ['Date', 'Weight', 'Notes'],
+      entries.slice().reverse().slice(0, 20).map(e => [e.date, e.weight, e.notes])
+    ));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+}
+
+async function loadPendingExercises() {
+  const box = document.getElementById('pending-exercises');
+  if (!getApiKey()) {
+    box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    return;
+  }
+  try {
+    const res = await api('/api/pending-exercises');
+    const items = res.data?.pending_exercises || [];
+    box.innerHTML = '';
+    if (!items.length) {
+      box.appendChild(el('span', { class: 'muted', text: 'All exercises in recent sessions matched the catalog.' }));
+      return;
+    }
+    box.appendChild(renderTable(
+      ['Exercise (as typed)', 'Closest catalog match', 'Lift code'],
+      items.map(item => {
+        const best = item.closest_matches?.[0];
+        return [item.exercise, best?.canonical_exercise ?? '—', best?.lift_code ?? '—'];
+      })
+    ));
+    box.appendChild(el('p', { class: 'muted', text: `${items.length} exercise(s) need catalog entries. Add them to Exercise_Catalog with the canonical name and a variant matching what you type.` }));
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+}
+
+async function loadBodyTab() {
+  await Promise.all([loadBwHistory(), loadPendingExercises()]);
+}
+
 /* ===== Init ===== */
 
 function setDefaultDate() {
-  document.getElementById('log-date').value = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  document.getElementById('log-date').value = today;
+  document.getElementById('bw-date').value = today;
 }
 
 addSetRow();
@@ -733,3 +1124,9 @@ setDefaultDate();
 checkConnection();
 loadDashboard();
 loadExerciseDatalist();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {
+    // offline shell is an optional enhancement — the app works without it
+  });
+}
