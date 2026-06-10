@@ -117,18 +117,24 @@
             <label>Location <input type="text" id="log-location" placeholder="Gym"></label>
           </div>
 
-          <h3>Sets</h3>
-          <div class="table-scroll">
-            <table id="sets-table">
-              <thead>
-                <tr><th>Exercise</th><th>Set #</th><th>Weight</th><th>Reps</th><th>RIR</th><th>Notes</th><th></th></tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <h3>Workout</h3>
+          <label class="workout-text-label" for="workout-text">Workout text</label>
+          <textarea id="workout-text" class="workout-text" rows="8" placeholder="Bench 135 10/4, 185 8/3&#10;Squats 225 5/2 x3&#10;OHP 95 10/3, 105 8/2&#10;Laterals 20 15/2 x3"></textarea>
+
+          <div id="parsed-rows-editor" class="parsed-rows-editor" hidden>
+            <h3>Edit parsed rows</h3>
+            <div class="table-scroll">
+              <table id="sets-table">
+                <thead>
+                  <tr><th>Exercise</th><th>Set #</th><th>Weight</th><th>Reps</th><th>RIR</th><th>Notes</th><th></th></tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <button type="button" id="add-set-btn" class="secondary">+ Add set</button>
+            <button type="button" id="copy-last-session-btn" class="secondary">Copy last session's exercises</button>
+            <div id="copy-last-session-status"></div>
           </div>
-          <button type="button" id="add-set-btn" class="secondary">+ Add set</button>
-          <button type="button" id="copy-last-session-btn" class="secondary">Copy last session's exercises</button>
-          <div id="copy-last-session-status"></div>
 
           <h3>Effort</h3>
           <div class="form-row">
