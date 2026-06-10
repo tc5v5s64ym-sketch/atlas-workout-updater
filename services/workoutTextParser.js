@@ -1,0 +1,447 @@
+const NUMBER_WORDS = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+};
+
+const EXERCISE_ALIASES = [
+  ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db', 'db incline', 'incline press', 'incline']],
+  ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
+  ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
+  ['Deadlift', ['deadlift', 'dead', 'dl']],
+  ['RDL', ['romanian deadlift', 'romanian dl', 'rdl']],
+  ['Overhead Press', ['overhead press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
+  ['Lat Pulldown', ['lat pulldown', 'lat pull', 'pull down', 'pulldown', 'lats']],
+  ['Seated Row', ['seated row', 'cable row', 'machine row']],
+  ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
+  ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
+  ['Face Pull', ['face pulls', 'face pull']],
+  ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
+  ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
+  ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
+  ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
+  ['Dips (Weighted)', ['weighted dips', 'dips', 'dip']],
+];
+
+const AMBIGUOUS_ALIASES = {
+  press: 'Which press - OHP, bench, or incline?',
+  row: 'Which row - seated, bent-over, cable, or machine?',
+  rows: 'Which row - seated, bent-over, cable, or machine?',
+};
+
+function normalizeParserText(value) {
+  return String(value || '')
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\u00d7/g, 'x')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeKey(value) {
+  return normalizeParserText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleCaseFallback(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function setRecord({ weight = null, reps = null, rir = null, rpe = null, set_type = 'working', notes = null, weight_unit = 'lb', load_note = null }) {
+  const row = {
+    weight,
+    weight_unit: weight == null ? null : weight_unit,
+    reps,
+    rir,
+    rpe,
+    set_type,
+    notes,
+  };
+  if (load_note) row.load_note = load_note;
+  return row;
+}
+
+function buildLogResult({ rawText, rawName, canonicalName, sets, warnings = [] }) {
+  return {
+    intent: 'log_sets',
+    raw_text: rawText,
+    raw_name: rawName,
+    exercise: canonicalName,
+    canonical_name: canonicalName,
+    sets,
+    warnings,
+  };
+}
+
+function findExerciseInText(text) {
+  const normalized = normalizeKey(text);
+  if (!normalized) return null;
+
+  for (const [ambiguous, message] of Object.entries(AMBIGUOUS_ALIASES)) {
+    if (normalized === ambiguous || normalized.startsWith(`${ambiguous} `)) {
+      return { ambiguous: true, rawName: ambiguous, message };
+    }
+  }
+
+  const aliases = [];
+  for (const [canonicalName, names] of EXERCISE_ALIASES) {
+    for (const alias of names) aliases.push({ canonicalName, alias, key: normalizeKey(alias) });
+  }
+  aliases.sort((a, b) => b.key.length - a.key.length);
+
+  for (const candidate of aliases) {
+    const atStart = normalized === candidate.key || normalized.startsWith(`${candidate.key} `);
+    const anywhere = new RegExp(`\\b${escapeRegExp(candidate.key)}\\b`).test(normalized);
+    if (atStart || anywhere) {
+      return {
+        canonicalName: candidate.canonicalName,
+        rawName: candidate.alias,
+        rest: stripExerciseText(text, candidate.key),
+      };
+    }
+  }
+
+  return null;
+}
+
+function stripExerciseText(text, exerciseKey) {
+  const normalizedWords = normalizeKey(text).split(' ');
+  const exerciseWords = exerciseKey.split(' ');
+  let start = -1;
+  for (let i = 0; i <= normalizedWords.length - exerciseWords.length; i += 1) {
+    if (normalizedWords.slice(i, i + exerciseWords.length).join(' ') === exerciseKey) {
+      start = i;
+      break;
+    }
+  }
+  if (start === -1) return text;
+
+  const originalWords = normalizeParserText(text).split(' ');
+  return originalWords
+    .slice(0, start)
+    .concat(originalWords.slice(start + exerciseWords.length))
+    .join(' ')
+    .replace(/^\s*(today|was|were|is|:|,|then|and)\s*/i, '')
+    .trim();
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function detectIntent(text) {
+  const normalized = normalizeKey(text);
+  if (!normalized) return 'unknown';
+  if (/\b(what are we doing|whats next|what's next|back at the gym|give me todays workout|give me today's workout|what'?s the plan|where did we leave off)\b/.test(normalized)) {
+    return 'plan_request';
+  }
+  if (/\b(log everything|log everything to spreadsheet|finish session|save session|thats it|that's it|we're done|were done)\b/.test(normalized)) {
+    return 'finish_session';
+  }
+  if (/\b(delete last set|remove last set|delete that|remove that)\b/.test(normalized)) {
+    return 'delete_last_set';
+  }
+  if (/\b(change that to|make that|rir was|call it)\b/.test(normalized)) {
+    return 'update_last_set';
+  }
+  if (/\b(duration|active calories|active|total calories|avg hr|average hr|peak hr|watch data|apple watch)\b/.test(normalized)) {
+    return 'effort_capture';
+  }
+  return 'log_sets';
+}
+
+function parseWorkoutText(input, context = {}) {
+  const rawText = normalizeParserText(input);
+  const intent = detectIntent(rawText);
+
+  if (intent === 'unknown') {
+    return { intent: 'unknown', raw_text: rawText, warnings: ['empty_input'] };
+  }
+  if (intent === 'plan_request') {
+    return { intent, raw_text: rawText };
+  }
+  if (intent === 'finish_session') {
+    return { intent, raw_text: rawText, requires_effort_check: true };
+  }
+  if (intent === 'delete_last_set') {
+    return { intent, raw_text: rawText };
+  }
+  if (intent === 'update_last_set') {
+    return parseUpdateLastSet(rawText, context);
+  }
+  if (intent === 'effort_capture') {
+    return parseEffortCapture(rawText);
+  }
+
+  return parseLogSets(rawText, context);
+}
+
+function parseUpdateLastSet(rawText) {
+  const rir = parseNumberMatch(rawText.match(/\brir\s*(?:was|to|=)?\s*(\d+(?:\.\d+)?)/i) || rawText.match(/\b(?:call it|to)\s*(\d+(?:\.\d+)?)/i));
+  return {
+    intent: 'update_last_set',
+    raw_text: rawText,
+    update: {
+      ...(rir == null ? {} : { rir }),
+    },
+  };
+}
+
+function parseEffortCapture(rawText) {
+  const duration = parseNumberMatch(rawText.match(/\bduration\s*(\d+(?:\.\d+)?)/i));
+  const active = parseNumberMatch(rawText.match(/\bactive(?:\s+calories)?\s*(\d+(?:\.\d+)?)/i));
+  const total = parseNumberMatch(rawText.match(/\btotal(?:\s+calories)?\s*(\d+(?:\.\d+)?)/i));
+  const avg = parseNumberMatch(rawText.match(/\b(?:avg|average)\s*hr\s*(\d+(?:\.\d+)?)/i));
+  const peak = parseNumberMatch(rawText.match(/\bpeak\s*hr\s*(\d+(?:\.\d+)?)/i));
+  const locationMatch = rawText.match(/\bpeak\s*hr\s*\d+(?:\.\d+)?\s+(.+)$/i);
+
+  return {
+    intent: 'effort_capture',
+    raw_text: rawText,
+    effort: {
+      duration_min: duration,
+      active_calories: active,
+      total_calories: total,
+      avg_hr: avg,
+      peak_hr: peak,
+      location: locationMatch ? locationMatch[1].trim() : null,
+    },
+  };
+}
+
+function parseNumberMatch(match) {
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseLogSets(rawText, context = {}) {
+  const exercise = findExerciseInText(rawText);
+  if (exercise?.ambiguous) {
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: exercise.message,
+      warnings: ['ambiguous_exercise_alias'],
+    };
+  }
+
+  if (!exercise) {
+    if (context.activeExercise) {
+      return parseWithExercise(rawText, {
+        canonicalName: context.activeExercise,
+        rawName: context.activeExercise,
+        rest: rawText,
+      });
+    }
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: 'Which exercise is this for?',
+      warnings: ['missing_exercise'],
+    };
+  }
+
+  if (exercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(exercise.rest)) {
+    const reps = extractNumbers(exercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: 'Knee raises: do you mean bodyweight reps 20, 15, 15?',
+      partial: {
+        exercise: exercise.canonicalName,
+        raw_name: exercise.rawName,
+        sets: reps,
+      },
+      warnings: ['missing_weight_or_bodyweight_context'],
+    };
+  }
+
+  return parseWithExercise(rawText, exercise);
+}
+
+function parseWithExercise(rawText, exercise) {
+  const rest = exercise.rest || '';
+  const sets = parseSetGroups(rest);
+  if (!sets.length) {
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: `Could not find sets for ${exercise.canonicalName}.`,
+      partial: { exercise: exercise.canonicalName, raw_name: exercise.rawName },
+      warnings: ['missing_sets'],
+    };
+  }
+
+  return buildLogResult({
+    rawText,
+    rawName: titleCaseFallback(exercise.rawName),
+    canonicalName: exercise.canonicalName,
+    sets,
+  });
+}
+
+function parseSetGroups(text) {
+  const cleaned = normalizeParserText(text)
+    .replace(/\b(today|i did|did|was|were)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return parseDumbbellList(cleaned)
+    || parseSetsFirst(cleaned)
+    || parseWeightRepsSets(cleaned)
+    || parseNaturalSets(cleaned)
+    || parseDaleShorthand(cleaned)
+    || [];
+}
+
+function parseDumbbellList(text) {
+  const match = text.match(/\b(\d+(?:\.\d+)?)s\s+((?:\d+\s*,\s*)+\d+)\b/i);
+  if (!match) return null;
+  const weight = Number(match[1]);
+  return match[2].split(/\s*,\s*/).map(reps => setRecord({
+    weight,
+    reps: Number(reps),
+    rir: null,
+    load_note: 'per_hand',
+  }));
+}
+
+function parseSetsFirst(text) {
+  const match = text.match(/\b(\d+)\s*x\s*(\d+)\s*@\s*(\d+(?:\.\d+)?)\b/i);
+  if (!match) return null;
+  const setCount = Number(match[1]);
+  const reps = Number(match[2]);
+  const weight = Number(match[3]);
+  return Array.from({ length: setCount }, () => setRecord({ weight, reps, rir: null }));
+}
+
+function parseWeightRepsSets(text) {
+  const match = text.match(/\b(\d+(?:\.\d+)?)\s*x\s*(\d+)\s*x\s*(\d+)\b/i);
+  if (!match) return null;
+  const weight = Number(match[1]);
+  const reps = Number(match[2]);
+  const setCount = Number(match[3]);
+  return Array.from({ length: setCount }, () => setRecord({ weight, reps, rir: null }));
+}
+
+function parseNaturalSets(text) {
+  const lowered = text.toLowerCase();
+  const allAroundRir = parseNumberMatch(lowered.match(/\ball around rir\s*(\d+(?:\.\d+)?)/i));
+  const firstThenMatch = lowered.match(/\b(\d+(?:\.\d+)?)\s+for\s+(\d+),?\s+then\s+(\d+)\s+and\s+(\d+)/i);
+  if (firstThenMatch) {
+    const weight = Number(firstThenMatch[1]);
+    return [firstThenMatch[2], firstThenMatch[3], firstThenMatch[4]].map(reps => setRecord({
+      weight,
+      reps: Number(reps),
+      rir: allAroundRir,
+    }));
+  }
+
+  const matches = [...lowered.matchAll(/\b(\d+(?:\.\d+)?)\s+for\s+(\d+)(?:\s+(one|two|three|four|five|\d+)\s+times)?/gi)];
+  if (!matches.length) return null;
+
+  const sets = [];
+  for (const match of matches) {
+    const weight = Number(match[1]);
+    const reps = Number(match[2]);
+    const repeat = match[3] ? (NUMBER_WORDS[match[3]] || Number(match[3])) : 1;
+    for (let i = 0; i < repeat; i += 1) {
+      sets.push(setRecord({ weight, reps, rir: allAroundRir }));
+    }
+  }
+  return sets;
+}
+
+function parseDaleShorthand(text) {
+  const rirWordMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(?:lb|lbs)?\s+(\d+)\s*reps?\s+rir\s*(\d+(?:\.\d+)?)\b/i);
+  if (rirWordMatch) {
+    return [setRecord({
+      weight: Number(rirWordMatch[1]),
+      reps: Number(rirWordMatch[2]),
+      rir: Number(rirWordMatch[3]),
+    })];
+  }
+
+  const tokens = normalizeParserText(text)
+    .replace(/,/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const sets = [];
+  let currentWeight = null;
+  let previousSet = null;
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    const repeat = token.match(/^x(\d+)$/i);
+    if (repeat && previousSet) {
+      const totalInstances = Number(repeat[1]);
+      for (let copy = 1; copy < totalInstances; copy += 1) {
+        sets.push({ ...previousSet });
+      }
+      continue;
+    }
+
+    const slash = token.match(/^(\d+)\/(\d+(?:\.\d+)?)$/);
+    if (slash && currentWeight != null) {
+      previousSet = setRecord({
+        weight: currentWeight,
+        reps: Number(slash[1]),
+        rir: Number(slash[2]),
+      });
+      sets.push(previousSet);
+      continue;
+    }
+
+    const weight = token.match(/^(\d+(?:\.\d+)?)(?:lb|lbs)?$/i);
+    const nextSlash = tokens[i + 1]?.match(/^(\d+)\/(\d+(?:\.\d+)?)$/);
+    if (weight && nextSlash) {
+      currentWeight = Number(weight[1]);
+      previousSet = setRecord({
+        weight: currentWeight,
+        reps: Number(nextSlash[1]),
+        rir: Number(nextSlash[2]),
+      });
+      sets.push(previousSet);
+      i += 1;
+      continue;
+    }
+
+    const appStyle = tokens.slice(i).join(' ').match(/^(\d+(?:\.\d+)?)\s*(?:lb|lbs)?\s+(\d+)\s*(?:reps?)?\s*(?:rir\s*)?(\d+(?:\.\d+)?)?$/i);
+    if (appStyle && sets.length === 0) {
+      previousSet = setRecord({
+        weight: Number(appStyle[1]),
+        reps: Number(appStyle[2]),
+        rir: appStyle[3] == null ? null : Number(appStyle[3]),
+      });
+      sets.push(previousSet);
+      break;
+    }
+  }
+
+  return sets;
+}
+
+function looksLikeBodyweightRepsOnly(text) {
+  const numbers = extractNumbers(text);
+  return numbers.length > 1 && numbers.every(value => value > 0 && value <= 100);
+}
+
+function extractNumbers(text) {
+  return [...String(text || '').matchAll(/\b(\d+(?:\.\d+)?)\b/g)].map(match => Number(match[1]));
+}
+
+module.exports = {
+  parseWorkoutText,
+  normalizeParserText,
+  canonicalizeExerciseName: findExerciseInText,
+};
