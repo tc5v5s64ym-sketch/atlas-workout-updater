@@ -836,6 +836,49 @@ app.get('/api/sessions/:sessionId', async (req, res) => {
   }
 });
 
+// GET /api/exercises/last-session?exercise=Back+Squat
+// Returns the sets from the most recent session that included this exercise.
+// Used by the logger to show "last time" hints without a full reload.
+app.get('/api/exercises/last-session', async (req, res) => {
+  const exercise = String(req.query.exercise || '').trim();
+  if (!exercise) return standardError(req, res, 'exercise query param required', null, 400);
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const lowerExercise = exercise.toLowerCase();
+    // Find all rows where exercise or canonical_exercise matches (substring)
+    const matchingRows = allLog.filter(row => {
+      const ex = String(row[2] || '').toLowerCase();
+      const canonical = String(row[3] || '').toLowerCase();
+      return ex.includes(lowerExercise) || canonical.includes(lowerExercise);
+    });
+    if (!matchingRows.length) {
+      return standardSuccess(req, res, 'No prior sets for this exercise', { sets: [], session_id: null, date: null });
+    }
+    // Find the most recent session containing this exercise
+    const sortedRows = matchingRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+    const lastSessionId = String(sortedRows[0][1] || '');
+    const sessionRows = lastSessionId
+      ? matchingRows.filter(row => String(row[1] || '') === lastSessionId)
+      : [sortedRows[0]];
+    const sets = sessionRows.map(row => ({
+      set_number: String(row[6] || ''),
+      weight: String(row[7] || ''),
+      reps: String(row[8] || ''),
+      rir: String(row[9] || ''),
+      notes: String(row[10] || '')
+    }));
+    return standardSuccess(req, res, 'Last session sets', {
+      exercise,
+      session_id: lastSessionId,
+      date: String(sortedRows[0][0] || ''),
+      sets
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to fetch last session', error.message, 500);
+  }
+});
+
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
 
