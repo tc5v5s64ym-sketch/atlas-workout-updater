@@ -52,6 +52,7 @@ A dry-run session must not appear in recent history.
 - Never commit Google credentials.
 - Never commit screenshots, spreadsheets, or private workout data.
 - Redact secrets in logs, docs, PRs, and summaries.
+- Follow [SECRET_HYGIENE_PLAN.md](SECRET_HYGIENE_PLAN.md) before rotating, removing, or rewriting any committed secret history.
 
 ## Render Environment Variables
 

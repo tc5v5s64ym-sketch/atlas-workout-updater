@@ -36,6 +36,7 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Product plan: [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md)
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
+- Secret hygiene plan: [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md)
 - API reference: [API_REFERENCE.md](API_REFERENCE.md)
 
 ## For AI Agents
