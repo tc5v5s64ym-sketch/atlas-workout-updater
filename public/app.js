@@ -464,6 +464,11 @@ function invalidatePreview() {
   pendingWrite = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
+  const btn = document.getElementById('approve-btn');
+  btn.disabled = true;
+  btn.textContent = 'Write to Google Sheets';
+  const note = document.getElementById('preview-gate-note');
+  if (note) note.textContent = 'Run a preview above to enable this button.';
 }
 
 document.getElementById('logger-form').addEventListener('input', invalidatePreview);
@@ -517,11 +522,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       renderLogWorkoutPreview(result, effortRow);
     }
     previewPanel.hidden = false;
+    document.getElementById('approve-btn').disabled = false;
+    const gateNote = document.getElementById('preview-gate-note');
+    if (gateNote) gateNote.textContent = 'Review the dry-run above, then click to write.';
   } catch (err) {
     setStatus(loggerStatus, `Preview failed: ${err.message}`, 'error');
   } finally {
     previewBtn.disabled = false;
-    previewBtn.textContent = 'Preview (dry-run)';
+    previewBtn.textContent = 'Preview — no data saved';
   }
 });
 
@@ -552,7 +560,11 @@ function renderWarnings(warnings) {
 function renderLogWorkoutPreview(result, effortRow) {
   const data = result.data || {};
   previewContent.innerHTML = '';
-  previewContent.appendChild(el('div', { class: 'preview-ok', text: `Dry-run confirmed: nothing was written (sheet_write: ${data.sheet_write}).` }));
+  const proof = el('div', { class: 'no-write-proof' }, [
+    el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
+    el('span', { class: 'proof-fields', text: `sheet_write: ${data.sheet_write}  ·  test_mode: true` })
+  ]);
+  previewContent.appendChild(proof);
   previewContent.appendChild(renderWarnings(data.warnings));
   previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.log_rows_preview || []).length})` }));
   previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.log_rows_preview || []));
@@ -570,10 +582,11 @@ function renderCompleteWorkoutPreview(result) {
   const outer = result.data || {};
   const data = outer.data || {};
   previewContent.innerHTML = '';
-  previewContent.appendChild(el('div', {
-    class: 'preview-ok',
-    text: `Dry-run confirmed: test_mode=${data.test_mode}, sheet_written=${data.sheet_written}, no_write_confirmed=${data.no_write_confirmed}.`
-  }));
+  const proof = el('div', { class: 'no-write-proof' }, [
+    el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
+    el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
+  ]);
+  previewContent.appendChild(proof);
   previewContent.appendChild(renderWarnings(outer.warnings));
 
   const dup = data.duplicate_check || {};
@@ -603,7 +616,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.disabled = true;
-  approveBtn.textContent = 'Saving…';
+  approveBtn.textContent = 'Writing to Sheets…';
 
   try {
     if (pendingWrite.mode === 'screenshot') {
@@ -622,13 +635,12 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     setsTableBody.innerHTML = '';
     addSetRow();
     setDefaultDate();
-    setStatus(loggerStatus, 'Workout saved. ✓', 'ok');
+    setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
     loadDashboard();
   } catch (err) {
-    setStatus(loggerStatus, `Save failed: ${err.message}`, 'error');
-  } finally {
+    setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
     approveBtn.disabled = false;
-    approveBtn.textContent = 'Approve & Save';
+    approveBtn.textContent = 'Write to Google Sheets';
   }
 });
 

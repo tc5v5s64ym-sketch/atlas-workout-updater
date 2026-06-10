@@ -97,9 +97,14 @@ button {
 }
 
 button:hover { filter: brightness(1.08); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
+button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
 button.secondary { background: #e5eaf0; color: var(--ink); }
-button.danger { background: var(--ok); }
+button.approve {
+  background: #15803d;
+  color: #ffffff;
+  letter-spacing: 0.01em;
+  font-size: 0.95rem;
+}
 
 .inline-form { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 
@@ -109,11 +114,13 @@ button.danger { background: var(--ok); }
 .form-row label.wide { flex: 1; }
 .form-row label.wide input { width: 100%; }
 
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
 #sets-table input { width: 100%; min-width: 56px; padding: 5px 7px; }
 #sets-table td:first-child input { min-width: 150px; }
-#sets-table .remove-set { background: none; color: var(--danger); padding: 2px 8px; font-size: 1rem; }
+#sets-table .remove-set { background: none; color: var(--danger); padding: 4px 10px; font-size: 1rem; min-width: 36px; }
 
-.action-row { margin-top: 16px; display: flex; gap: 10px; }
+.action-row { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
 
 .safety-note {
   background: #eef4ff;
@@ -123,10 +130,39 @@ button.danger { background: var(--ok); }
   font-size: 0.85rem;
 }
 
+.preview-gate-note {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 #preview-panel {
   margin-top: 20px;
   border-top: 2px solid var(--accent);
   padding-top: 12px;
+}
+
+.no-write-proof {
+  background: #f0fdf4;
+  border: 2px solid var(--ok);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 0.88rem;
+}
+
+.no-write-proof .proof-headline {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--ok);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.no-write-proof .proof-fields {
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: var(--muted);
 }
 
 .preview-warnings {
@@ -167,6 +203,14 @@ button.danger { background: var(--ok); }
 code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
 @media (max-width: 640px) {
-  main { padding: 12px; }
-  nav { overflow-x: auto; }
+  main { padding: 10px; }
+  nav { overflow-x: auto; white-space: nowrap; }
+  .tab-btn { padding: 10px 12px; font-size: 0.88rem; }
+  .form-row { flex-direction: column; }
+  .form-row label { flex-direction: column; }
+  input, select, button { min-height: 42px; }
+  #sets-table input { min-height: 36px; }
+  button.approve { width: 100%; justify-content: center; }
+  .action-row { flex-direction: column; }
+  .action-row button { width: 100%; }
 }

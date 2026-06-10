@@ -65,7 +65,7 @@
     <section id="tab-logger" class="tab">
       <div class="card">
         <h2>Log Workout</h2>
-        <p class="safety-note">Nothing is saved until you preview and explicitly approve. Preview runs in <code>test_mode</code> with a no-write guarantee.</p>
+        <p class="safety-note"><strong>Two-step write flow.</strong> Preview sends your data with <code>test_mode=true</code> — nothing is written. Only after you review the dry-run result and click <em>Write to Sheets</em> does any data leave this device.</p>
 
         <form id="logger-form">
           <div class="form-row">
@@ -75,12 +75,14 @@
           </div>
 
           <h3>Sets</h3>
-          <table id="sets-table">
-            <thead>
-              <tr><th>Exercise</th><th>Set #</th><th>Weight</th><th>Reps</th><th>RIR</th><th>Notes</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+          <div class="table-scroll">
+            <table id="sets-table">
+              <thead>
+                <tr><th>Exercise</th><th>Set #</th><th>Weight</th><th>Reps</th><th>RIR</th><th>Notes</th><th></th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
           <button type="button" id="add-set-btn" class="secondary">+ Add set</button>
 
           <h3>Effort</h3>
@@ -106,7 +108,7 @@
           </div>
 
           <div class="action-row">
-            <button type="submit" id="preview-btn">Preview (dry-run)</button>
+            <button type="submit" id="preview-btn">Preview — no data saved</button>
           </div>
         </form>
 
@@ -114,9 +116,10 @@
           <h3>Review before saving</h3>
           <div id="preview-content"></div>
           <div class="action-row">
-            <button id="approve-btn" class="danger">Approve &amp; Save</button>
+            <button id="approve-btn" class="approve" disabled>Write to Google Sheets</button>
             <button id="cancel-preview-btn" class="secondary">Edit / Cancel</button>
           </div>
+          <p class="preview-gate-note" id="preview-gate-note">Run a preview above to enable this button.</p>
         </div>
 
         <div id="logger-status"></div>
