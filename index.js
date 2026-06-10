@@ -113,7 +113,7 @@ const recentExerciseCache = createTtlCache(20 * 1000);
 
 const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
-const { requiredSheetTabs, optionalSheetTabs } = require('./config/sheetContract');
+const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus } = require('./config/sheetContract');
 
 
 
@@ -722,19 +722,20 @@ app.get('/api/health/sheets', async (req, res) => {
 
   try {
     const tabs = await getSpreadsheetTabs();
-    const status = requiredSheetTabs.reduce((acc, tab) => {
-      acc[tab] = { exists: tabs.includes(tab) };
+    const contractStatus = buildSheetContractStatus(tabs);
+    const status = Object.entries(contractStatus.required).reduce((acc, [tab, exists]) => {
+      acc[tab] = { exists };
       return acc;
     }, {});
-    const optional = optionalSheetTabs.reduce((acc, tab) => {
-      acc[tab] = { exists: tabs.includes(tab), required: false };
+    const optional = Object.entries(contractStatus.optional).reduce((acc, [tab, exists]) => {
+      acc[tab] = { exists, required: false };
       return acc;
     }, {});
     return standardSuccess(req, res, 'Google Sheets health check', {
       tabs: status,
       optionalTabs: optional,
       availableTabs: tabs,
-      missingRequiredTabs: requiredSheetTabs.filter(tab => !tabs.includes(tab))
+      missingRequiredTabs: contractStatus.missingRequiredTabs
     });
   } catch (error) {
     return standardError(req, res, 'Failed to verify Google Sheets tabs', error.message, 500);

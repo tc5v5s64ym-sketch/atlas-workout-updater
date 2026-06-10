@@ -50,12 +50,13 @@ function getData(obj) { return obj?.data || obj; }
 function extractDryRunSafetyFields(responseJson) {
   const responseBody = getData(responseJson) || responseJson;
   const nested = responseBody.data || {};
+  const legacyNested = nested.data || {};
   return {
-    test_mode: responseBody.test_mode ?? nested.test_mode,
-    would_write: responseBody.would_write ?? nested.would_write,
-    sheet_written: responseBody.sheet_written ?? nested.sheet_written,
-    no_write_confirmed: responseBody.no_write_confirmed ?? nested.no_write_confirmed,
-    sheet_write: responseBody.sheet_write ?? nested.sheet_write
+    test_mode: responseBody.test_mode ?? nested.test_mode ?? legacyNested.test_mode,
+    would_write: responseBody.would_write ?? nested.would_write ?? legacyNested.would_write,
+    sheet_written: responseBody.sheet_written ?? nested.sheet_written ?? legacyNested.sheet_written,
+    no_write_confirmed: responseBody.no_write_confirmed ?? nested.no_write_confirmed ?? legacyNested.no_write_confirmed,
+    sheet_write: responseBody.sheet_write ?? nested.sheet_write ?? legacyNested.sheet_write
   };
 }
 
@@ -63,7 +64,12 @@ function assertDryRunNoWrite(responseJson) {
   const fields = extractDryRunSafetyFields(responseJson);
   assert.equal(fields.test_mode, true, 'Dry-run response must confirm test_mode=true');
   assert.notEqual(fields.sheet_written, true, 'Dry-run response must not report sheet_written=true');
-  assert.equal(fields.no_write_confirmed, true, 'Dry-run response must explicitly confirm no_write_confirmed=true');
+  const explicitNoWrite = fields.no_write_confirmed === true && fields.sheet_written === false;
+  const legacySkipped = fields.sheet_write === 'skipped';
+  assert.ok(
+    explicitNoWrite || legacySkipped,
+    'Dry-run response must explicitly prove no-write with no_write_confirmed=true and sheet_written=false, or legacy sheet_write="skipped"'
+  );
   return fields;
 }
 
