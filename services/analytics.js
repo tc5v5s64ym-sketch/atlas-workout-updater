@@ -402,6 +402,68 @@ function detectStalls(logRows, minSessions = 3) {
   return stalls;
 }
 
+function suggestDeloads(logRows, minSessions = 4) {
+  const stalls = detectStalls(logRows, minSessions);
+  return stalls.map(stall => {
+    const deloadWeight = Math.round(stall.last_best_weight * 0.9);
+    return {
+      liftCode: stall.liftCode,
+      sessions_stalled: stall.sessions_stalled,
+      last_best_weight: stall.last_best_weight,
+      suggested_deload_weight: deloadWeight,
+      suggestion: `No progression in ${stall.sessions_stalled} sessions. Deload to ~${deloadWeight} (−10%) for one session, then rebuild.`
+    };
+  });
+}
+
+function computeFatigueStatus(logRows, referenceDate = new Date()) {
+  const ref = new Date(referenceDate);
+  const dayMs = 24 * 60 * 60 * 1000;
+  const recentCutoff = new Date(ref.getTime() - 7 * dayMs).toISOString().slice(0, 10);
+  const baselineCutoff = new Date(ref.getTime() - 28 * dayMs).toISOString().slice(0, 10);
+
+  let recentVolume = 0;
+  let baselineVolume = 0;
+
+  logRows.map(normalizeLogRow).forEach(row => {
+    if (!row.date_clean || !row.weight || row.weight <= 0 || !row.reps) return;
+    const volume = row.weight * row.reps;
+    if (row.date_clean >= recentCutoff) {
+      recentVolume += volume;
+    } else if (row.date_clean >= baselineCutoff) {
+      baselineVolume += volume;
+    }
+  });
+
+  // Baseline window is 21 days (days 8-28); convert to a weekly average.
+  const baselineWeekly = baselineVolume / 3;
+  let ratio = null;
+  let status = 'no_baseline';
+  let guidance = 'Not enough training history in the prior 3 weeks to judge fatigue.';
+
+  if (baselineWeekly > 0) {
+    ratio = Math.round((recentVolume / baselineWeekly) * 100) / 100;
+    if (ratio >= 1.5) {
+      status = 'high';
+      guidance = 'This week\'s volume is well above your recent average. Watch recovery and consider an easier session.';
+    } else if (ratio <= 0.5) {
+      status = 'low';
+      guidance = 'This week\'s volume is well below your recent average. Good time to push if you feel recovered.';
+    } else {
+      status = 'normal';
+      guidance = 'Weekly volume is in a normal range relative to your recent average.';
+    }
+  }
+
+  return {
+    recent_volume: Math.round(recentVolume),
+    baseline_weekly_volume: Math.round(baselineWeekly),
+    ratio,
+    status,
+    guidance
+  };
+}
+
 function previewTestRows(logRows, effortRows) {
   const logCandidates = logRows
     .map(normalizeLogRow)
@@ -426,5 +488,7 @@ module.exports = {
   recommendNextSet,
   buildBodyweightHistory,
   previewTestRows,
-  detectStalls
+  detectStalls,
+  suggestDeloads,
+  computeFatigueStatus
 };

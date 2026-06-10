@@ -26,7 +26,9 @@ const {
   recommendNextSet,
   buildBodyweightHistory,
   previewTestRows,
-  detectStalls
+  detectStalls,
+  suggestDeloads,
+  computeFatigueStatus
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -1028,6 +1030,23 @@ app.post('/api/admin/preview-test-rows', async (req, res) => {
     return standardSuccess(req, res, 'Preview test rows', preview);
   } catch (error) {
     return standardError(req, res, 'Failed to preview test rows', error.message, 500);
+  }
+});
+
+// GET /api/coaching/insights
+app.get('/api/coaching/insights', async (req, res) => {
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const stalls = detectStalls(allLog, 3);
+    const deloadSuggestions = suggestDeloads(allLog, 4);
+    const fatigue = computeFatigueStatus(allLog);
+    return standardSuccess(req, res, 'Coaching insights', {
+      fatigue,
+      stalls,
+      deload_suggestions: deloadSuggestions
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to compute coaching insights', error.message, 500);
   }
 });
 

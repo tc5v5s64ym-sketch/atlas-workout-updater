@@ -49,6 +49,87 @@ function setStatus(container, message, kind) {
   if (message) container.appendChild(el('div', { class: `status-msg ${kind}`, text: message }));
 }
 
+/* ===== Inline SVG charts (no dependencies) ===== */
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  return node;
+}
+
+function svgLineChart(points, { width = 420, height = 140, color = '#2563eb', label = '' } = {}) {
+  // points: [{ x: label, y: number }]
+  const pad = { top: 12, right: 12, bottom: 24, left: 44 };
+  const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, role: 'img', 'aria-label': label });
+  const ys = points.map(p => p.y).filter(Number.isFinite);
+  if (points.length < 2 || !ys.length) {
+    return el('p', { class: 'muted', text: 'Not enough data to chart.' });
+  }
+
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const ySpan = yMax - yMin || 1;
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const xStep = plotW / (points.length - 1);
+  const toX = i => pad.left + i * xStep;
+  const toY = v => pad.top + plotH - ((v - yMin) / ySpan) * plotH;
+
+  // y-axis min/max labels and gridlines
+  for (const v of [yMin, yMax]) {
+    const y = toY(v);
+    svg.appendChild(svgEl('line', { x1: pad.left, y1: y, x2: width - pad.right, y2: y, stroke: '#dbe2ea', 'stroke-width': 1 }));
+    const text = svgEl('text', { x: pad.left - 6, y: y + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#66788d' });
+    text.textContent = String(Math.round(v));
+    svg.appendChild(text);
+  }
+
+  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(p.y).toFixed(1)}`).join(' ');
+  svg.appendChild(svgEl('path', { d: path, fill: 'none', stroke: color, 'stroke-width': 2 }));
+  points.forEach((p, i) => {
+    svg.appendChild(svgEl('circle', { cx: toX(i), cy: toY(p.y), r: 3, fill: color }));
+  });
+
+  // first/last x labels
+  const firstLabel = svgEl('text', { x: pad.left, y: height - 8, 'font-size': 10, fill: '#66788d' });
+  firstLabel.textContent = points[0].x;
+  const lastLabel = svgEl('text', { x: width - pad.right, y: height - 8, 'text-anchor': 'end', 'font-size': 10, fill: '#66788d' });
+  lastLabel.textContent = points[points.length - 1].x;
+  svg.appendChild(firstLabel);
+  svg.appendChild(lastLabel);
+  return svg;
+}
+
+function svgBarChart(entries, { width = 420, barHeight = 20, gap = 6, color = '#2563eb', label = '' } = {}) {
+  // entries: [{ name, value }]
+  if (!entries.length) return el('p', { class: 'muted', text: 'No data to chart.' });
+  const labelW = 110;
+  const valueW = 56;
+  const maxValue = Math.max(...entries.map(e => e.value)) || 1;
+  const plotW = width - labelW - valueW;
+  const height = entries.length * (barHeight + gap);
+  const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, role: 'img', 'aria-label': label });
+
+  entries.forEach((entry, i) => {
+    const y = i * (barHeight + gap);
+    const name = svgEl('text', { x: labelW - 8, y: y + barHeight * 0.7, 'text-anchor': 'end', 'font-size': 11, fill: '#1c2733' });
+    name.textContent = entry.name;
+    svg.appendChild(name);
+    svg.appendChild(svgEl('rect', {
+      x: labelW, y, height: barHeight,
+      width: Math.max(2, (entry.value / maxValue) * plotW),
+      fill: color, rx: 3
+    }));
+    const value = svgEl('text', { x: labelW + Math.max(2, (entry.value / maxValue) * plotW) + 6, y: y + barHeight * 0.7, 'font-size': 11, fill: '#66788d' });
+    value.textContent = String(Math.round(entry.value));
+    svg.appendChild(value);
+  });
+
+  return svg;
+}
+
 /* ===== Tabs ===== */
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -102,16 +183,44 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    for (const id of ['coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       document.getElementById(id).innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
     return;
   }
 
+  loadCoaching();
   loadWeeklySummary();
   loadRecentHistory();
   loadRecentPrs();
   loadStalls();
+}
+
+async function loadCoaching() {
+  const box = document.getElementById('coaching');
+  try {
+    const res = await api('/api/coaching/insights');
+    const data = res.data || {};
+    box.innerHTML = '';
+
+    const fatigue = data.fatigue || {};
+    const fatigueClass = fatigue.status === 'high' ? 'preview-warnings' : 'preview-ok';
+    box.appendChild(el('div', { class: fatigueClass }, [
+      el('strong', { text: `Fatigue: ${fatigue.status || 'unknown'}` }),
+      el('span', { text: fatigue.ratio !== null && fatigue.ratio !== undefined ? ` (this week is ${fatigue.ratio}× your recent weekly average)` : '' }),
+      el('p', { text: fatigue.guidance || '' })
+    ]));
+
+    const deloads = data.deload_suggestions || [];
+    if (deloads.length) {
+      box.appendChild(el('h3', { text: 'Deload suggestions' }));
+      box.appendChild(el('ul', {}, deloads.map(d => el('li', { text: `${d.liftCode}: ${d.suggestion}` }))));
+    } else {
+      box.appendChild(el('p', { class: 'muted', text: 'No deloads needed — no lift has been stalled 4+ sessions.' }));
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
 }
 
 async function loadWeeklySummary() {
@@ -126,6 +235,14 @@ async function loadWeeklySummary() {
       return;
     }
     box.appendChild(el('ul', {}, highlights.map(h => el('li', { text: h }))));
+
+    const breakdown = Object.entries(data.muscleGroupBreakdown || {})
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+    if (breakdown.length) {
+      box.appendChild(el('h3', { text: 'Volume by muscle group' }));
+      box.appendChild(svgBarChart(breakdown, { label: 'Weekly volume by muscle group' }));
+    }
   } catch (err) {
     box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
@@ -215,6 +332,19 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
     if (weights.length) {
       const oneRms = data.estimated_1rm_over_time || [];
       const volumes = data.volume_over_time || [];
+
+      resultBox.appendChild(el('h3', { text: 'Best weight over time' }));
+      resultBox.appendChild(svgLineChart(
+        weights.map(w => ({ x: w.date, y: w.best_weight })),
+        { label: 'Best weight over time' }
+      ));
+      resultBox.appendChild(el('h3', { text: 'Estimated 1RM over time' }));
+      resultBox.appendChild(svgLineChart(
+        oneRms.map(r => ({ x: r.date, y: r.estimated_1rm })),
+        { color: '#16a34a', label: 'Estimated 1RM over time' }
+      ));
+
+      resultBox.appendChild(el('h3', { text: 'Session detail' }));
       resultBox.appendChild(renderTable(
         ['Date', 'Session', 'Best weight', 'Est. 1RM', 'Volume'],
         weights.map((w, i) => [w.date, w.session_id, w.best_weight, oneRms[i]?.estimated_1rm ?? '', volumes[i]?.volume ?? ''])
