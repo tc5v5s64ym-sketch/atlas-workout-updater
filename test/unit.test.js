@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
 const { normalizeDurationString } = require('../services/duration');
 const {
@@ -16,6 +18,8 @@ const {
   buildSheetContractStatus
 } = require('../config/sheetContract');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
+
+const repoRoot = path.resolve(__dirname, '..');
 
 test('required sheet contract excludes Dashboard', () => {
   assert.deepEqual(requiredSheetTabs, ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary']);
@@ -375,6 +379,50 @@ test('Mission Control accepts only explicit no-write dry-run proof', () => {
     sheet_written: 'maybe',
     no_write_confirmed: false
   }), /explicitly prove no-write/);
+});
+
+test('conversational logger keeps preview no-write proof required before enabling save', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  assert.match(appSource, /function hasLogWorkoutNoWriteProof/);
+  assert.match(appSource, /data\.test_mode === true/);
+  assert.match(appSource, /data\.sheet_written === false/);
+  assert.match(appSource, /data\.no_write_confirmed === true/);
+  assert.match(appSource, /data\.sheet_write === 'skipped'/);
+  assert.match(appSource, /function hasCompleteWorkoutNoWriteProof/);
+  assert.match(appSource, /Preview did not prove no-write safety/);
+  assert.match(appSource, /document\.getElementById\('approve-btn'\)\.disabled = !pendingWrite/);
+});
+
+test('conversational logger form edits invalidate stale previews before save', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  assert.match(appSource, /function invalidatePreview\(\)/);
+  assert.match(appSource, /pendingWrite = null/);
+  assert.match(appSource, /previewPanel\.hidden = true/);
+  assert.match(appSource, /btn\.disabled = true/);
+  assert.match(appSource, /logger-form'\)\.addEventListener\('input', invalidatePreview\)/);
+  assert.match(appSource, /Run a preview above to enable this button/);
+});
+
+test('conversational logger renders textbox first and parsed rows as fallback editor', () => {
+  const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  assert.match(htmlSource, /id="workout-text"/);
+  assert.match(htmlSource, /id="parsed-rows-editor"[^>]*hidden/);
+  assert.match(appSource, /function parseWorkoutText/);
+  assert.match(appSource, /rowsFromWorkoutInput\(\)/);
+  assert.match(appSource, /parsedRowsEditor\.hidden = false/);
+});
+
+test('log-workout test_mode preview exposes explicit no-write proof fields', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+
+  assert.match(indexSource, /test_mode: true/);
+  assert.match(indexSource, /sheet_write: 'skipped'/);
+  assert.match(indexSource, /sheet_written: false/);
+  assert.match(indexSource, /no_write_confirmed: true/);
 });
 
 test('recommendNextSet returns progression recommendation', () => {
