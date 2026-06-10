@@ -21,6 +21,7 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 ## Docs
 
 - Agent instructions: [CODEX.md](CODEX.md)
+- Product vision: [docs/ATLAS_PRODUCT_VISION.md](docs/ATLAS_PRODUCT_VISION.md)
 - Atlas context: [docs/ATLAS_CONTEXT.md](docs/ATLAS_CONTEXT.md)
 - Safety rules: [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md)
 - Workflow: [docs/WORKFLOW.md](docs/WORKFLOW.md)
