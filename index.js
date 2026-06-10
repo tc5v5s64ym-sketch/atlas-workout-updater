@@ -1568,6 +1568,8 @@ app.post('/api/log-workout', async (req, res) => {
     const previewBody = {
       test_mode: true,
       sheet_write: 'skipped',
+      sheet_written: false,
+      no_write_confirmed: true,
       effortWritten: Boolean(formattedEffortRow),
       log_rows_preview: formattedLogRows
     };

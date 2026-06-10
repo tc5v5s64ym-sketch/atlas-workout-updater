@@ -220,6 +220,40 @@ test('enrichLogRow resolves Lats to Lat Pulldown when present', () => {
   assert.equal(result.enriched.lift_code, 'LPD01');
 });
 
+test('enrichLogRow resolves common conversational aliases safely', () => {
+  const map = new Map([
+    ['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Quads', lift_code: 'SQ01' }],
+    ['overhead press', { canonical_exercise: 'Overhead Press', muscle_group: 'Shoulders', lift_code: 'OHP01' }],
+    ['hanging knee raises', { canonical_exercise: 'Hanging Knee Raises', muscle_group: 'Core', lift_code: 'HNR01' }],
+    ['hammer curls', { canonical_exercise: 'Hammer Curls', muscle_group: 'Arms', lift_code: 'HC01' }],
+    ['face pull', { canonical_exercise: 'Face Pull', muscle_group: 'Rear Delts', lift_code: 'FP01' }],
+    ['leg curl', { canonical_exercise: 'Leg Curl', muscle_group: 'Hamstrings', lift_code: 'LC01' }]
+  ]);
+
+  assert.equal(enrichLogRow({ exercise: 'Squat' }, map).enriched.canonical_exercise, 'Back Squat');
+  assert.equal(enrichLogRow({ exercise: 'Squats' }, map).enriched.canonical_exercise, 'Back Squat');
+  assert.equal(enrichLogRow({ exercise: 'Ohp' }, map).enriched.canonical_exercise, 'Overhead Press');
+  assert.equal(enrichLogRow({ exercise: 'Knee raises' }, map).enriched.canonical_exercise, 'Hanging Knee Raises');
+  assert.equal(enrichLogRow({ exercise: 'Hammers' }, map).enriched.canonical_exercise, 'Hammer Curls');
+  assert.equal(enrichLogRow({ exercise: 'Face pulls' }, map).enriched.canonical_exercise, 'Face Pull');
+  assert.equal(enrichLogRow({ exercise: 'Leg curls' }, map).enriched.canonical_exercise, 'Leg Curl');
+});
+
+test('enrichLogRow leaves vague row shorthand unresolved for review', () => {
+  const map = new Map([
+    ['seated row', { canonical_exercise: 'Seated Row', muscle_group: 'Back', lift_code: 'SR01' }],
+    ['bent over row', { canonical_exercise: 'Bent-Over Row', muscle_group: 'Back', lift_code: 'BOR01' }],
+    ['cable row', { canonical_exercise: 'Cable Row', muscle_group: 'Back', lift_code: 'CR01' }]
+  ]);
+
+  const rowsResult = enrichLogRow({ exercise: 'Rows' }, map);
+  assert.equal(rowsResult.enriched.canonical_exercise, '');
+  assert.ok(rowsResult.warnings[0].startsWith('Unknown exercise:'));
+
+  assert.equal(enrichLogRow({ exercise: 'Seated row' }, map).enriched.canonical_exercise, 'Seated Row');
+  assert.equal(enrichLogRow({ exercise: 'Cable row' }, map).enriched.canonical_exercise, 'Cable Row');
+});
+
 test('enrichLogRow fuzzy-matches plural to singular (Squats → Back Squat via variant)', () => {
   const map = new Map([
     ['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }],

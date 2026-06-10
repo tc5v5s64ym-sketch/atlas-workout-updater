@@ -547,10 +547,13 @@ const setsTableBody = document.querySelector('#sets-table tbody');
 const previewPanel = document.getElementById('preview-panel');
 const previewContent = document.getElementById('preview-content');
 const loggerStatus = document.getElementById('logger-status');
+const workoutTextInput = document.getElementById('workout-text');
+const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 
 // Pending approval state. Set only after a successful dry-run preview;
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
+let lastParsedWorkoutText = '';
 
 // Cache last-time lookups to avoid redundant API calls within a session.
 const lastTimeCache = new Map();
@@ -596,6 +599,7 @@ function addSetRow(values = {}) {
     invalidatePreview();
   });
   setsTableBody.appendChild(row);
+  parsedRowsEditor.hidden = false;
 }
 
 document.getElementById('add-set-btn').addEventListener('click', () => addSetRow());
@@ -614,9 +618,11 @@ document.getElementById('copy-last-session-btn').addEventListener('click', async
     const lastSessionId = sets[sets.length - 1].session_id;
     const sessionSets = sets.filter(s => s.session_id === lastSessionId);
     setsTableBody.innerHTML = '';
+    parsedRowsEditor.hidden = false;
     for (const s of sessionSets) {
       addSetRow({ exercise: s.canonical_exercise || s.exercise, set_number: s.set_number });
     }
+    lastParsedWorkoutText = workoutTextInput.value.trim();
     invalidatePreview();
     setStatus(statusBox, `Copied ${sessionSets.length} exercise slots from session ${lastSessionId}. Fill in weights and reps.`, 'ok');
   } catch (err) {
@@ -647,6 +653,96 @@ function collectLogRows(sessionId, date) {
     });
   }
   return rows;
+}
+
+function splitWorkoutLine(line) {
+  const match = line.match(/^(.+?)\s+(\d+(?:\.\d+)?(?:\s|x|×).*)$/i);
+  if (!match) return null;
+  return { exercise: match[1].trim(), setText: match[2].trim() };
+}
+
+function parseSetSegment(segment) {
+  const repeatMatch = segment.match(/\b(?:x|×)\s*(\d+)\s*$/i);
+  const repeat = repeatMatch ? Number(repeatMatch[1]) : 1;
+  const cleaned = repeatMatch ? segment.slice(0, repeatMatch.index).trim() : segment.trim();
+  const match = cleaned.match(/^(\d+(?:\.\d+)?)\s*(?:x|×|for)?\s*(\d+)(?:\s*\/\s*(\d+(?:\.\d+)?)|\s*(?:rir|@)\s*(\d+(?:\.\d+)?))?$/i);
+  if (!match) return null;
+  return {
+    weight: match[1],
+    reps: match[2],
+    rir: match[3] || match[4] || '',
+    repeat: Number.isFinite(repeat) && repeat > 0 ? repeat : 1
+  };
+}
+
+function parseWorkoutText(text) {
+  const rows = [];
+  const errors = [];
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const parsedLine = splitWorkoutLine(line);
+    if (!parsedLine) {
+      errors.push(`Could not parse line: ${line}`);
+      continue;
+    }
+
+    const segments = parsedLine.setText
+      .split(/[,;]/)
+      .map(segment => segment.trim())
+      .filter(Boolean);
+    if (!segments.length) {
+      errors.push(`No sets found for: ${parsedLine.exercise}`);
+      continue;
+    }
+
+    let setNumber = 1;
+    for (const segment of segments) {
+      const parsedSet = parseSetSegment(segment);
+      if (!parsedSet) {
+        errors.push(`Could not parse set "${segment}" for ${parsedLine.exercise}`);
+        continue;
+      }
+      for (let i = 0; i < parsedSet.repeat; i += 1) {
+        rows.push({
+          exercise: parsedLine.exercise,
+          set_number: String(setNumber),
+          weight: parsedSet.weight,
+          reps: parsedSet.reps,
+          rir: parsedSet.rir,
+          notes: ''
+        });
+        setNumber += 1;
+      }
+    }
+  }
+
+  return { rows, errors };
+}
+
+function populateSetRows(rows) {
+  setsTableBody.innerHTML = '';
+  for (const row of rows) addSetRow(row);
+  parsedRowsEditor.hidden = rows.length === 0;
+}
+
+function rowsFromWorkoutInput() {
+  const workoutText = workoutTextInput.value.trim();
+  if (workoutText && workoutText !== lastParsedWorkoutText) {
+    const parsed = parseWorkoutText(workoutText);
+    if (parsed.errors.length > 0) {
+      throw new Error(parsed.errors.join(' | '));
+    }
+    if (!parsed.rows.length) {
+      throw new Error('Workout text did not produce any set rows.');
+    }
+    populateSetRows(parsed.rows);
+    parsedRowsEditor.hidden = true;
+    lastParsedWorkoutText = workoutText;
+  }
 }
 
 function effortMode() {
@@ -702,7 +798,10 @@ document.getElementById('logger-form').addEventListener('input', invalidatePrevi
 
 function hasLogWorkoutNoWriteProof(result) {
   const data = result?.data || {};
-  return data.test_mode === true && data.sheet_write === 'skipped';
+  return data.test_mode === true &&
+    data.sheet_write === 'skipped' &&
+    data.sheet_written === false &&
+    data.no_write_confirmed === true;
 }
 
 function hasCompleteWorkoutNoWriteProof(result) {
@@ -725,10 +824,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const sessionId = document.getElementById('log-session-id').value.trim() || generateSessionId(date);
   const location = document.getElementById('log-location').value.trim();
   const notes = document.getElementById('log-notes').value.trim();
-  const logRows = collectLogRows(sessionId, date);
+  let logRows = [];
+  try {
+    rowsFromWorkoutInput();
+    logRows = collectLogRows(sessionId, date);
+  } catch (err) {
+    setStatus(loggerStatus, `Could not parse workout text: ${err.message}`, 'error');
+    return;
+  }
 
   if (!logRows.length) {
-    setStatus(loggerStatus, 'Add at least one set with an exercise name.', 'error');
+    setStatus(loggerStatus, 'Enter workout text first, then preview. You can edit parsed rows after preview.', 'error');
     return;
   }
 
@@ -767,6 +873,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       renderLogWorkoutPreview(result, effortRow);
     }
     previewPanel.hidden = false;
+    parsedRowsEditor.hidden = false;
     document.getElementById('approve-btn').disabled = !pendingWrite;
     const gateNote = document.getElementById('preview-gate-note');
     if (gateNote) gateNote.textContent = 'Review the dry-run above, then click to write.';
@@ -833,7 +940,7 @@ function renderLogWorkoutPreview(result, effortRow) {
   previewContent.innerHTML = '';
   const proof = el('div', { class: 'no-write-proof' }, [
     el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
-    el('span', { class: 'proof-fields', text: `sheet_write: ${data.sheet_write}  ·  test_mode: true` })
+    el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}  ·  sheet_write: ${data.sheet_write}` })
   ]);
   previewContent.appendChild(proof);
   const logAutoMatches = renderAutoMatches(data.auto_matches);
@@ -912,7 +1019,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     invalidatePreview();
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
-    addSetRow();
+    parsedRowsEditor.hidden = true;
+    lastParsedWorkoutText = '';
     setDefaultDate();
     setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
     loadDashboard();
@@ -938,6 +1046,7 @@ document.getElementById('load-session-btn').addEventListener('click', async () =
     document.getElementById('log-date').value = data.date || '';
     document.getElementById('log-session-id').value = data.session_id || '';
     setsTableBody.innerHTML = '';
+    parsedRowsEditor.hidden = false;
     for (const row of (data.rows || [])) {
       addSetRow({
         exercise: row.exercise,
@@ -948,6 +1057,7 @@ document.getElementById('load-session-btn').addEventListener('click', async () =
         notes: row.notes
       });
     }
+    lastParsedWorkoutText = workoutTextInput.value.trim();
     invalidatePreview();
     setStatus(statusBox, `Loaded ${data.set_count} sets from session ${sessionId}. Edit what needs fixing, then preview.`, 'ok');
   } catch (err) {
@@ -1119,7 +1229,6 @@ function setDefaultDate() {
   document.getElementById('bw-date').value = today;
 }
 
-addSetRow();
 setDefaultDate();
 checkConnection();
 loadDashboard();

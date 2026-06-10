@@ -85,7 +85,19 @@ input, select {
   background: #fff;
 }
 
-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  resize: vertical;
+  background: #fff;
+}
+
+input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 button {
   padding: 8px 16px;
@@ -117,6 +129,21 @@ button.approve {
 .form-row label.wide input { width: 100%; }
 
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.workout-text-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.workout-text {
+  min-height: 170px;
+}
+
+.parsed-rows-editor {
+  margin-top: 14px;
+}
 
 #sets-table input { width: 100%; min-width: 56px; padding: 5px 7px; }
 #sets-table td:first-child input { min-width: 150px; }

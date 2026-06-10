@@ -22,14 +22,23 @@ const SHORTHAND_EXPANSIONS = {
 
 const PREFERRED_ALIAS_TARGETS = {
   bench: ['bench press'],
+  squat: ['back squat'],
+  squats: ['back squat'],
   dips: ['dips weighted', 'weighted dips', 'dips'],
   lateral: ['lateral raises', 'lateral raise'],
   laterals: ['lateral raises', 'lateral raise'],
-  lats: ['lat pulldown', 'lat pulldowns']
+  lats: ['lat pulldown', 'lat pulldowns'],
+  'knee raises': ['hanging knee raises'],
+  hammers: ['hammer curls', 'hammer curl'],
+  'face pulls': ['face pull'],
+  'leg curls': ['leg curl']
 };
+
+const BLOCKED_AMBIGUOUS_ALIASES = new Set(['lats', 'row', 'rows']);
 
 function findPreferredAliasMatch(normalizedKey, catalogMap) {
   const targets = PREFERRED_ALIAS_TARGETS[normalizedKey];
+  if (!targets && BLOCKED_AMBIGUOUS_ALIASES.has(normalizedKey)) return { blocked: true };
   if (!targets) return null;
 
   for (const target of targets) {
@@ -45,7 +54,7 @@ function findPreferredAliasMatch(normalizedKey, catalogMap) {
     }
   }
 
-  return normalizedKey === 'lats' ? { blocked: true } : null;
+  return BLOCKED_AMBIGUOUS_ALIASES.has(normalizedKey) ? { blocked: true } : null;
 }
 
 // Returns { entry, autoMatch } when a non-exact match is found, or null.
