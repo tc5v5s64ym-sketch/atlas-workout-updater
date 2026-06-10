@@ -800,6 +800,117 @@ app.get('/api/schema/complete-workout', (req, res) => {
   });
 });
 
+// GET /api/sessions/:sessionId — fetch all log rows for a session (for correction pre-fill)
+app.get('/api/sessions/:sessionId', async (req, res) => {
+
+  const sessionId = String(req.params.sessionId || '').trim();
+  if (!sessionId) return standardError(req, res, 'sessionId is required', null, 400);
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const sessionRows = allLog.filter(row => String(row[1] || '').trim() === sessionId);
+    if (!sessionRows.length) {
+      return standardError(req, res, `No rows found for session "${sessionId}"`, null, 404);
+    }
+    const rows = sessionRows.map(row => ({
+      date_clean: String(row[0] || ''),
+      session_id: String(row[1] || ''),
+      exercise: String(row[2] || ''),
+      canonical_exercise: String(row[3] || ''),
+      muscle_group: String(row[4] || ''),
+      lift_code: String(row[5] || ''),
+      set_number: String(row[6] || ''),
+      weight: String(row[7] || ''),
+      reps: String(row[8] || ''),
+      rir: String(row[9] || ''),
+      notes: String(row[10] || '')
+    }));
+    return standardSuccess(req, res, 'Session rows', {
+      session_id: sessionId,
+      date: rows[0]?.date_clean || '',
+      set_count: rows.length,
+      rows
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to fetch session', error.message, 500);
+  }
+});
+
+// GET /api/exercises/last-session?exercise=Back+Squat
+// Returns the sets from the most recent session that included this exercise.
+// Used by the logger to show "last time" hints without a full reload.
+app.get('/api/exercises/last-session', async (req, res) => {
+  const exercise = String(req.query.exercise || '').trim();
+  if (!exercise) return standardError(req, res, 'exercise query param required', null, 400);
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const lowerExercise = exercise.toLowerCase();
+    // Find all rows where exercise or canonical_exercise matches (substring)
+    const matchingRows = allLog.filter(row => {
+      const ex = String(row[2] || '').toLowerCase();
+      const canonical = String(row[3] || '').toLowerCase();
+      return ex.includes(lowerExercise) || canonical.includes(lowerExercise);
+    });
+    if (!matchingRows.length) {
+      return standardSuccess(req, res, 'No prior sets for this exercise', { sets: [], session_id: null, date: null });
+    }
+    // Find the most recent session containing this exercise
+    const sortedRows = matchingRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+    const lastSessionId = String(sortedRows[0][1] || '');
+    const sessionRows = lastSessionId
+      ? matchingRows.filter(row => String(row[1] || '') === lastSessionId)
+      : [sortedRows[0]];
+    const sets = sessionRows.map(row => ({
+      set_number: String(row[6] || ''),
+      weight: String(row[7] || ''),
+      reps: String(row[8] || ''),
+      rir: String(row[9] || ''),
+      notes: String(row[10] || '')
+    }));
+    return standardSuccess(req, res, 'Last session sets', {
+      exercise,
+      session_id: lastSessionId,
+      date: String(sortedRows[0][0] || ''),
+      sets
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to fetch last session', error.message, 500);
+  }
+});
+
+// GET /api/plan/today
+// Returns next-set recommendations for all distinct lift codes trained in the
+// last 60 days, ordered by most recently trained first. Used by the dashboard
+// "Today's Plan" card.
+app.get('/api/plan/today', async (req, res) => {
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    // Find distinct lift codes that have been trained at all
+    const liftCodes = [...new Set(
+      allLog
+        .map(row => String(row[5] || '').trim())
+        .filter(code => code && code !== 'lift_code')
+    )];
+
+    // Build recommendations in parallel for all lift codes
+    const recommendations = liftCodes
+      .map(code => recommendNextSet(allLog, code))
+      .filter(r => r.next_target !== null)
+      .sort((a, b) => {
+        // Sort by most recent session date (last_working_sets last date)
+        const dateA = a.last_working_sets?.length ? a.last_working_sets[a.last_working_sets.length - 1].date_clean : '';
+        const dateB = b.last_working_sets?.length ? b.last_working_sets[b.last_working_sets.length - 1].date_clean : '';
+        return String(dateB).localeCompare(String(dateA));
+      })
+      .slice(0, 12); // cap at 12 lifts for dashboard
+
+    return standardSuccess(req, res, 'Today\'s training plan', { recommendations });
+  } catch (error) {
+    return standardError(req, res, 'Failed to build today\'s plan', error.message, 500);
+  }
+});
+
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
 
@@ -980,6 +1091,7 @@ app.get('/api/session/:sessionId', async (req, res) => {
 app.post('/api/bodyweight', async (req, res) => {
 
   const { date, weight, notes } = req.body || {};
+  const testMode = isTestModeEnabled(req.body?.test_mode);
   if (!date) {
     return standardError(req, res, 'date is required', null, 400);
   }
@@ -999,9 +1111,17 @@ app.post('/api/bodyweight', async (req, res) => {
     if (!tabs.includes('Bodyweight')) {
       return standardError(req, res, 'Bodyweight tab is missing. Cannot append bodyweight entry.', null, 400);
     }
-    const row = [normalizedDate, weightValue, notes || ''];
-    await appendRows('Bodyweight', [row]);
-    return standardSuccess(req, res, 'Bodyweight entry appended', { entry: { date: normalizedDate, weight: weightValue, notes: notes || '' } });
+    const entry = { date: normalizedDate, weight: weightValue, notes: notes || '' };
+    if (testMode) {
+      return standardSuccess(req, res, 'Bodyweight dry-run', {
+        test_mode: true,
+        sheet_written: false,
+        no_write_confirmed: true,
+        entry_preview: entry
+      });
+    }
+    await appendRows('Bodyweight', [[normalizedDate, weightValue, notes || '']]);
+    return standardSuccess(req, res, 'Bodyweight entry appended', { entry });
   } catch (error) {
     return standardError(req, res, 'Failed to append bodyweight entry', error.message, 500);
   }

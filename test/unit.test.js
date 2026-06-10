@@ -349,7 +349,7 @@ test('recommendNextSet returns progression recommendation', () => {
     ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '3', '']
   ];
   const rec = recommendNextSet(rows, 'SQ');
-  assert.match(rec.recommendation, /Increase the weight/);
+  assert.match(rec.recommendation, /Increase to/);
 });
 
 test('recommendNextSet returns no-history message for unknown lift', () => {
