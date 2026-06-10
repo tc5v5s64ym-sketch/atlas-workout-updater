@@ -21,10 +21,15 @@ Atlas is the production backend that parses, enriches, validates, and writes wor
 ## Docs
 
 - Foundation audit: [docs/FOUNDATION_AUDIT.md](docs/FOUNDATION_AUDIT.md)
+- Post-cutover baseline: [docs/BASELINE_POST_CUTOVER.md](docs/BASELINE_POST_CUTOVER.md)
 - Mission Control: [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md)
 - Sheet contract: [docs/SHEET_CONTRACT.md](docs/SHEET_CONTRACT.md)
 - Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- First real write plan: [docs/FIRST_REAL_WRITE.md](docs/FIRST_REAL_WRITE.md)
+- API audit: [docs/API_AUDIT.md](docs/API_AUDIT.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Product plan: [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md)
 - Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
 - API reference: [API_REFERENCE.md](API_REFERENCE.md)
 
