@@ -20,6 +20,34 @@ const SHORTHAND_EXPANSIONS = {
   bp: 'bench press',
 };
 
+const PREFERRED_ALIAS_TARGETS = {
+  bench: ['bench press'],
+  dips: ['dips weighted', 'weighted dips', 'dips'],
+  lateral: ['lateral raises', 'lateral raise'],
+  laterals: ['lateral raises', 'lateral raise'],
+  lats: ['lat pulldown', 'lat pulldowns']
+};
+
+function findPreferredAliasMatch(normalizedKey, catalogMap) {
+  const targets = PREFERRED_ALIAS_TARGETS[normalizedKey];
+  if (!targets) return null;
+
+  for (const target of targets) {
+    const exactTarget = catalogMap.get(target);
+    if (exactTarget) return { entry: exactTarget };
+  }
+
+  for (const target of targets) {
+    for (const entry of catalogMap.values()) {
+      if (normalizeExerciseKey(entry.canonical_exercise) === target) {
+        return { entry };
+      }
+    }
+  }
+
+  return normalizedKey === 'lats' ? { blocked: true } : null;
+}
+
 // Returns { entry, autoMatch } when a non-exact match is found, or null.
 // Priority: plural→singular exact → abbreviation expansion → substring containment.
 function findFuzzyMatch(normalizedKey, catalogMap) {
@@ -43,7 +71,7 @@ function findFuzzyMatch(normalizedKey, catalogMap) {
     ? normalizedKey.slice(0, -1)
     : normalizedKey;
 
-  if (searchKey.length >= 3) {
+  if (searchKey.length >= 4) {
     const subMatches = [];
     for (const [catalogKey, entry] of catalogMap.entries()) {
       if (catalogKey.includes(searchKey)) subMatches.push({ catalogKey, entry });
@@ -122,6 +150,24 @@ function buildExerciseCatalogMap(rows) {
 
 function enrichLogRow(rowObj, catalogMap) {
   const key = normalizeExerciseKey(rowObj.exercise);
+
+  const preferredAlias = findPreferredAliasMatch(key, catalogMap);
+  if (preferredAlias) {
+    if (!preferredAlias.entry) {
+      return {
+        enriched: { ...rowObj, canonical_exercise: '', muscle_group: '', lift_code: '' },
+        warnings: [`Unknown exercise: ${rowObj.exercise}`]
+      };
+    }
+    const enriched = { ...rowObj,
+      canonical_exercise: preferredAlias.entry.canonical_exercise,
+      muscle_group: preferredAlias.entry.muscle_group,
+      lift_code: preferredAlias.entry.lift_code || ''
+    };
+    const autoMatch = `"${rowObj.exercise}" â†’ "${preferredAlias.entry.canonical_exercise}"`;
+    const warnings = preferredAlias.entry.lift_code ? null : [`No lift code for exercise '${rowObj.exercise}'.`];
+    return { enriched, warnings, autoMatch };
+  }
 
   // Exact match (includes any variants already indexed in the map)
   const exactMatch = catalogMap.get(key);
