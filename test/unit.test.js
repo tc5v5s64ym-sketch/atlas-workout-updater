@@ -183,6 +183,17 @@ test('enrichLogRow returns Unknown for truly unrecognised exercise', () => {
   assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
 });
 
+test('enrichLogRow warns instead of auto-matching ambiguous substring shorthand', () => {
+  const map = new Map([
+    ['bench press', { canonical_exercise: 'Bench Press', muscle_group: 'Chest', lift_code: 'BP' }],
+    ['overhead press', { canonical_exercise: 'Overhead Press', muscle_group: 'Shoulders', lift_code: 'OHP' }]
+  ]);
+  const result = enrichLogRow({ exercise: 'Press' }, map);
+  assert.equal(result.enriched.canonical_exercise, '');
+  assert.equal(result.autoMatch, undefined);
+  assert.ok(result.warnings[0].startsWith('Ambiguous exercise match:'));
+});
+
 test('duration normalization supports mm:ss and hh:mm:ss', () => {
   assert.equal(normalizeDurationString('45:30'), '00:45:30');
   assert.equal(normalizeDurationString('1:05:09'), '01:05:09');

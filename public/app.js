@@ -499,6 +499,18 @@ function invalidatePreview() {
 
 document.getElementById('logger-form').addEventListener('input', invalidatePreview);
 
+function hasLogWorkoutNoWriteProof(result) {
+  const data = result?.data || {};
+  return data.test_mode === true && data.sheet_write === 'skipped';
+}
+
+function hasCompleteWorkoutNoWriteProof(result) {
+  const data = result?.data?.data || {};
+  return data.test_mode === true &&
+    data.sheet_written === false &&
+    data.no_write_confirmed === true;
+}
+
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
   setStatus(loggerStatus, '', 'ok');
@@ -530,6 +542,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
       const result = await submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, testMode: true });
+      if (!hasCompleteWorkoutNoWriteProof(result)) {
+        throw new Error('Preview did not prove no-write safety. Nothing can be written.');
+      }
       pendingWrite = { mode: 'screenshot', file, logRows, sessionId, date, location, notes };
       renderCompleteWorkoutPreview(result);
     } else {
@@ -544,11 +559,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!hasLogWorkoutNoWriteProof(result)) {
+        throw new Error('Preview did not prove no-write safety. Nothing can be written.');
+      }
       pendingWrite = { mode: 'manual', payload };
       renderLogWorkoutPreview(result, effortRow);
     }
     previewPanel.hidden = false;
-    document.getElementById('approve-btn').disabled = false;
+    document.getElementById('approve-btn').disabled = !pendingWrite;
     const gateNote = document.getElementById('preview-gate-note');
     if (gateNote) gateNote.textContent = 'Review the dry-run above, then click to write.';
   } catch (err) {

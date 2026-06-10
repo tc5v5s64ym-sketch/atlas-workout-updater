@@ -48,14 +48,19 @@ function findFuzzyMatch(normalizedKey, catalogMap) {
     for (const [catalogKey, entry] of catalogMap.entries()) {
       if (catalogKey.includes(searchKey)) subMatches.push({ catalogKey, entry });
     }
-    if (subMatches.length > 0) {
+    if (subMatches.length > 1) {
+      return {
+        ambiguous: true,
+        alternatives: subMatches
+          .slice(0, 5)
+          .map(m => m.entry.canonical_exercise)
+      };
+    }
+    if (subMatches.length === 1) {
       // prefer the shortest matching catalog key (most specific / least padded)
-      subMatches.sort((a, b) => a.catalogKey.length - b.catalogKey.length);
       const best = subMatches[0];
       return {
-        entry: best.entry,
-        ambiguous: subMatches.length > 1,
-        alternatives: subMatches.slice(1, 3).map(m => m.entry.canonical_exercise)
+        entry: best.entry
       };
     }
   }
@@ -133,14 +138,18 @@ function enrichLogRow(rowObj, catalogMap) {
   // Fuzzy fallback: plural, abbreviation, substring
   const fuzzy = findFuzzyMatch(key, catalogMap);
   if (fuzzy) {
+    if (!fuzzy.entry) {
+      return {
+        enriched: { ...rowObj, canonical_exercise: '', muscle_group: '', lift_code: '' },
+        warnings: [`Ambiguous exercise match: ${rowObj.exercise} could be ${fuzzy.alternatives.join(', ')}`]
+      };
+    }
     const enriched = { ...rowObj,
       canonical_exercise: fuzzy.entry.canonical_exercise,
       muscle_group: fuzzy.entry.muscle_group,
       lift_code: fuzzy.entry.lift_code || ''
     };
-    const autoMatch = fuzzy.ambiguous
-      ? `"${rowObj.exercise}" → "${fuzzy.entry.canonical_exercise}" (also matched: ${fuzzy.alternatives.join(', ')})`
-      : `"${rowObj.exercise}" → "${fuzzy.entry.canonical_exercise}"`;
+    const autoMatch = `"${rowObj.exercise}" → "${fuzzy.entry.canonical_exercise}"`;
     const warnings = fuzzy.entry.lift_code ? null : [`No lift code for exercise '${rowObj.exercise}'.`];
     return { enriched, warnings, autoMatch };
   }

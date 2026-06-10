@@ -394,7 +394,9 @@ function normalizeAndValidateParsedMetrics(parsedMetrics) {
   if (normalized.totalCalories < normalized.activeCalories) {
     warnings.push('totalCalories is less than activeCalories');
   }
-  if (normalized.peakHR < normalized.averageHR) {
+  if (typeof normalized.peakHR === 'number' &&
+      typeof normalized.averageHR === 'number' &&
+      normalized.peakHR < normalized.averageHR) {
     warnings.push('peakHR is less than averageHR');
   }
 
