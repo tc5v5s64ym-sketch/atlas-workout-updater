@@ -5,6 +5,26 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      smoke_mode:
+        description: 'Smoke test mode (basic | read-only | full | dry-run-only)'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - basic
+          - read-only
+          - full
+          - dry-run-only
+      expected_sheet_label:
+        description: 'Expected sheet label for logging only (current | cleaned | unknown)'
+        required: true
+        default: 'current'
+        type: choice
+        options:
+          - current
+          - cleaned
+          - unknown
 
 jobs:
   unit-tests:
@@ -51,4 +71,6 @@ jobs:
         env:
           ATLAS_BASE_URL: ${{ secrets.ATLAS_BASE_URL }}
           ATLAS_API_KEY: ${{ secrets.ATLAS_API_KEY }}
+          ATLAS_SMOKE_MODE: ${{ github.event.inputs.smoke_mode || 'basic' }}
+          ATLAS_EXPECTED_SHEET_LABEL: ${{ github.event.inputs.expected_sheet_label || 'unknown' }}
         run: node scripts/smoke-test-render.js
