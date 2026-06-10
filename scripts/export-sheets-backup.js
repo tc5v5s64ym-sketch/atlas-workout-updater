@@ -38,27 +38,41 @@ function buildBackupManifest({ spreadsheetId, tabs, timestamp }) {
   };
 }
 
-async function main() {
-  const { validateConfig, getSpreadsheetTabs } = require('../sheets');
+async function createReadOnlySheetsClient() {
   const { google } = require('googleapis');
-
-  validateConfig();
-
-  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-  const requestedTabs = process.argv.slice(2);
-
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
       private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
       type: 'service_account'
     },
-    // Read-only scope: this script cannot write even if it tried.
+    // Read-only scope: this script cannot write even if it tried. Every
+    // Sheets call in this file must go through this client — never through
+    // sheets.js helpers, which build a full-scope (write-capable) client.
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly']
   });
-  const sheets = google.sheets({ version: 'v4', auth: await auth.getClient() });
+  return google.sheets({ version: 'v4', auth: await auth.getClient() });
+}
 
-  const allTabs = await getSpreadsheetTabs();
+async function listTabs(sheets, spreadsheetId) {
+  const response = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties.title'
+  });
+  return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
+}
+
+async function main() {
+  const { validateConfig } = require('../sheets');
+
+  validateConfig();
+
+  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+  const requestedTabs = process.argv.slice(2);
+
+  const sheets = await createReadOnlySheetsClient();
+
+  const allTabs = await listTabs(sheets, spreadsheetId);
   const tabsToExport = requestedTabs.length
     ? allTabs.filter(tab => requestedTabs.includes(tab))
     : allTabs;
@@ -104,4 +118,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { rowsToCsv, toCsvCell, buildBackupManifest };
+module.exports = { rowsToCsv, toCsvCell, buildBackupManifest, listTabs };
