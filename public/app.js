@@ -519,9 +519,38 @@ const loggerStatus = document.getElementById('logger-status');
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
 
+// Cache last-time lookups to avoid redundant API calls within a session.
+const lastTimeCache = new Map();
+
+async function showLastTimeHint(exerciseInput, hintEl) {
+  const exercise = exerciseInput.value.trim();
+  if (!exercise || !getApiKey()) { hintEl.textContent = ''; return; }
+
+  let data = lastTimeCache.get(exercise.toLowerCase());
+  if (!data) {
+    try {
+      const res = await api(`/api/exercises/last-session?exercise=${encodeURIComponent(exercise)}`);
+      data = res.data || {};
+      lastTimeCache.set(exercise.toLowerCase(), data);
+    } catch {
+      hintEl.textContent = '';
+      return;
+    }
+  }
+
+  if (!data.sets || !data.sets.length) { hintEl.textContent = ''; return; }
+  const summary = data.sets.map(s => `${s.weight}×${s.reps}`).join('  ');
+  hintEl.textContent = `Last (${data.date}): ${summary}`;
+}
+
 function addSetRow(values = {}) {
+  const exerciseInput = el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press', list: 'exercise-catalog' });
+  const hintEl = el('div', { class: 'last-time-hint' });
+  exerciseInput.addEventListener('blur', () => showLastTimeHint(exerciseInput, hintEl));
+  if (values.exercise) showLastTimeHint(exerciseInput, hintEl);
+
   const row = el('tr', {}, [
-    el('td', {}, el('input', { type: 'text', class: 'set-exercise', value: values.exercise || '', placeholder: 'Bench Press', list: 'exercise-catalog' })),
+    el('td', {}, [exerciseInput, hintEl]),
     el('td', {}, el('input', { type: 'number', class: 'set-number', value: values.set_number || String(setsTableBody.children.length + 1), min: '1' })),
     el('td', {}, el('input', { type: 'number', class: 'set-weight', value: values.weight ?? '', min: '0', step: 'any' })),
     el('td', {}, el('input', { type: 'number', class: 'set-reps', value: values.reps ?? '', min: '0' })),
@@ -537,6 +566,30 @@ function addSetRow(values = {}) {
 }
 
 document.getElementById('add-set-btn').addEventListener('click', () => addSetRow());
+
+document.getElementById('copy-last-session-btn').addEventListener('click', async () => {
+  const statusBox = document.getElementById('copy-last-session-status');
+  setStatus(statusBox, 'Loading last session…', 'ok');
+  try {
+    const res = await api('/api/history/recent?limit=100');
+    const sets = res.data?.recent_sets || [];
+    if (!sets.length) {
+      setStatus(statusBox, 'No prior sessions found.', 'error');
+      return;
+    }
+    // Find the most recent session (last session_id in the list)
+    const lastSessionId = sets[sets.length - 1].session_id;
+    const sessionSets = sets.filter(s => s.session_id === lastSessionId);
+    setsTableBody.innerHTML = '';
+    for (const s of sessionSets) {
+      addSetRow({ exercise: s.canonical_exercise || s.exercise, set_number: s.set_number });
+    }
+    invalidatePreview();
+    setStatus(statusBox, `Copied ${sessionSets.length} exercise slots from session ${lastSessionId}. Fill in weights and reps.`, 'ok');
+  } catch (err) {
+    setStatus(statusBox, `Could not load: ${err.message}`, 'error');
+  }
+});
 
 function generateSessionId(dateValue) {
   const compact = String(dateValue || '').replace(/[^0-9]/g, '');

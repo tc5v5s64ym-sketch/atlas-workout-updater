@@ -122,6 +122,8 @@ button.approve {
 #sets-table td:first-child input { min-width: 150px; }
 #sets-table .remove-set { background: none; color: var(--danger); padding: 4px 10px; font-size: 1rem; min-width: 36px; }
 
+.last-time-hint { font-size: 0.72rem; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+
 .action-row { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
 
 .safety-note {
