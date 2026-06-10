@@ -1,0 +1,78 @@
+name: Daily Mission Control
+
+on:
+  schedule:
+    # Daily at 12:00 UTC
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  daily-read-only-check:
+    name: Daily read-only smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Mission Control (read-only)
+        env:
+          ATLAS_BASE_URL: ${{ secrets.ATLAS_BASE_URL }}
+          ATLAS_API_KEY: ${{ secrets.ATLAS_API_KEY }}
+          ATLAS_SMOKE_MODE: read-only
+          ATLAS_EXPECTED_SHEET_LABEL: cleaned
+          ATLAS_REQUIRE_NO_DASHBOARD: 'true'
+          ATLAS_ALLOW_EMPTY_PENDING: 'true'
+        run: node scripts/smoke-test-render.js
+
+      - name: Alert on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'Daily Mission Control check failed';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `The scheduled read-only Mission Control smoke test failed on ${new Date().toISOString()}.`,
+              '',
+              `Run: ${runUrl}`,
+              '',
+              'Follow docs/TROUBLESHOOTING.md and docs/BACKUP_ROLLBACK.md if production is unhealthy.',
+              'No writes are involved in this check — it is read-only validation.'
+            ].join('\n');
+
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'mission-control-alert'
+            });
+
+            if (openIssues.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: openIssues[0].number,
+                body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['mission-control-alert']
+              });
+            }

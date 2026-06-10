@@ -498,3 +498,69 @@ test('buildBackupManifest summarizes exported tabs', () => {
   assert.equal(manifest.tab_count, 2);
   assert.deepEqual(manifest.tabs[0], { name: 'Log_Cleaned', rows: 100 });
 });
+
+// ── Coaching: deloads and fatigue ─────────────────────────────────────────────
+
+const { suggestDeloads, computeFatigueStatus } = require('../services/analytics');
+
+test('suggestDeloads recommends a 10% reduction for persistent stalls', () => {
+  const rows = [
+    ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '1', ''],
+    ['2026-04-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '1', ''],
+    ['2026-04-10', 'S3', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '1', ''],
+    ['2026-04-15', 'S4', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '1', '']
+  ];
+  const suggestions = suggestDeloads(rows, 4);
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].liftCode, 'BP');
+  assert.equal(suggestions[0].suggested_deload_weight, 180);
+  assert.match(suggestions[0].suggestion, /Deload/);
+});
+
+test('suggestDeloads returns nothing for progressing lifts', () => {
+  const rows = [
+    ['2026-04-01', 'S1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-04-05', 'S2', 'Squat', 'Squat', 'Legs', 'SQ', '1', '235', '5', '2', ''],
+    ['2026-04-10', 'S3', 'Squat', 'Squat', 'Legs', 'SQ', '1', '245', '5', '2', ''],
+    ['2026-04-15', 'S4', 'Squat', 'Squat', 'Legs', 'SQ', '1', '255', '5', '2', '']
+  ];
+  assert.equal(suggestDeloads(rows, 4).length, 0);
+});
+
+test('computeFatigueStatus flags high recent volume against baseline', () => {
+  const ref = new Date('2026-06-10T12:00:00Z');
+  const rows = [
+    // Baseline weeks (days 8-28 before ref): ~1000 volume/week
+    ['2026-05-15', 'B1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', ''],
+    ['2026-05-22', 'B2', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', ''],
+    ['2026-05-29', 'B3', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', ''],
+    // Recent week: 2000 volume (2x baseline weekly)
+    ['2026-06-08', 'R1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '200', '10', '2', '']
+  ];
+  const fatigue = computeFatigueStatus(rows, ref);
+  assert.equal(fatigue.status, 'high');
+  assert.ok(fatigue.ratio >= 1.5);
+  assert.equal(fatigue.recent_volume, 2000);
+});
+
+test('computeFatigueStatus reports normal when volumes are comparable', () => {
+  const ref = new Date('2026-06-10T12:00:00Z');
+  const rows = [
+    ['2026-05-15', 'B1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', ''],
+    ['2026-05-22', 'B2', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', ''],
+    ['2026-05-29', 'B3', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', ''],
+    ['2026-06-08', 'R1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', '']
+  ];
+  const fatigue = computeFatigueStatus(rows, ref);
+  assert.equal(fatigue.status, 'normal');
+});
+
+test('computeFatigueStatus reports no_baseline without prior history', () => {
+  const ref = new Date('2026-06-10T12:00:00Z');
+  const rows = [
+    ['2026-06-08', 'R1', 'Squat', 'Squat', 'Legs', 'SQ', '1', '100', '10', '2', '']
+  ];
+  const fatigue = computeFatigueStatus(rows, ref);
+  assert.equal(fatigue.status, 'no_baseline');
+  assert.equal(fatigue.ratio, null);
+});

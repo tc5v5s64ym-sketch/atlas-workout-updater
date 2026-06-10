@@ -30,7 +30,8 @@ const routeDefinitions = [
   { path: '/api/bodyweight', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/bodyweight/history', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/admin/preview-test-rows', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/stalls', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false }
+  { path: '/api/stalls', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/coaching/insights', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false }
 ];
 
 module.exports = { routeDefinitions };
