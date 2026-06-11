@@ -23,7 +23,8 @@ const fakeSheetsState = {
   appendCalls: [],
   // Set to true only inside tests that intentionally exercise the live-write branch.
   // Default false ensures dry-run tests trip the throw guard if appendRows fires unexpectedly.
-  allowAppend: false
+  allowAppend: false,
+  deleteCalls: []
 };
 
 const fakeSheets = {
@@ -33,6 +34,9 @@ const fakeSheets = {
       throw new Error('appendRows should not be called by endpoint smoke tests');
     }
     return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
+  },
+  deleteRowsByRange: async (tabName, startIndex, endIndex) => {
+    fakeSheetsState.deleteCalls.push({ tabName, startIndex, endIndex });
   },
   validateConfig: () => {},
   getExerciseCatalog: async () => exerciseCatalogRows,
@@ -335,4 +339,129 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
   } finally {
     fakeSheetsState.allowAppend = false;
   }
+});
+
+// ── undo-last tests ─────────────────────────────────────────────────────────
+// All undo tests use the fake Sheets layer; no real Google Sheets access occurs.
+// logRows fixture (sheet-row mapping, header is row 1):
+//   sheet row 2 → logRows[0]: SESSION-OLD, Bench Press
+//   sheet row 3 → logRows[1]: SESSION-NEW, Bench Press (top set)
+//   sheet row 4 → logRows[2]: SESSION-NEW, Bench Press (backoff)
+//   sheet row 5 → logRows[3]: SESSION-NEW, Back Squat
+
+test('api smoke: undo-last rejects missing log_appended_range with 400', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(body.status, 'error');
+  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+});
+
+test('api smoke: undo-last rejects wrong tab with 400', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      log_appended_range: 'Effort!A1:L1',
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /Log_Cleaned/);
+  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+});
+
+test('api smoke: undo-last rejects rows_to_delete mismatch with 400', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      log_appended_range: 'Log_Cleaned!A847:L847', // span = 1
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 2,                           // mismatch
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /rows_to_delete/);
+  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+});
+
+test('api smoke: undo-last returns 409 and does not delete on session_id mismatch', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  // Sheet row 2 → logRows[0] → SESSION-OLD; we claim SESSION-NEW → mismatch
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      log_appended_range: 'Log_Cleaned!A2:L2',
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /session_id mismatch/i);
+  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+});
+
+test('api smoke: undo-last returns 409 and does not delete when target row is missing', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  // Sheet row 6 is beyond logRows (which only covers rows 2–5), so allRows[4] is undefined
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      log_appended_range: 'Log_Cleaned!A6:L6',
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /missing or empty/i);
+  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+});
+
+test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns rows_deleted: 1', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  // Sheet row 3 → logRows[1] → SESSION-NEW; ownership verified → delete proceeds
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      log_appended_range: 'Log_Cleaned!A3:L3',
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(body.data.rows_deleted, 1);
+  assert.equal(body.data.deleted_range, 'Log_Cleaned!A3:L3');
+
+  // Exactly one deleteRowsByRange call with correct 0-based indices
+  // sheet row 3 → startIndex=2 (inclusive), endIndex=3 (exclusive)
+  assert.equal(fakeSheetsState.deleteCalls.length, 1);
+  const call = fakeSheetsState.deleteCalls[0];
+  assert.equal(call.tabName, 'Log_Cleaned');
+  assert.equal(call.startIndex, 2);
+  assert.equal(call.endIndex, 3);
 });

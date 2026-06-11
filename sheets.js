@@ -156,8 +156,33 @@ async function getLogCompositeKeys() {
   return keys;
 }
 
+async function deleteRowsByRange(tabName, startIndex, endIndex) {
+  // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
+  const sheets = await getSheetsClient();
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties'
+  });
+  const sheet = (meta.data.sheets || []).find(s => s.properties.title === tabName);
+  if (!sheet) {
+    throw new Error(`Sheet tab "${tabName}" not found in spreadsheet.`);
+  }
+  const sheetId = sheet.properties.sheetId;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: { sheetId, dimension: 'ROWS', startIndex, endIndex }
+        }
+      }]
+    }
+  });
+}
+
 module.exports = {
   appendRows,
+  deleteRowsByRange,
   validateConfig,
   getExerciseCatalog,
   getEffortSessionIds,

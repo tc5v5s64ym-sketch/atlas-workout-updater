@@ -7,6 +7,7 @@ const path = require('path');
 const multer = require('multer');
 const {
   appendRows,
+  deleteRowsByRange,
   validateConfig,
   getExerciseCatalog,
   getEffortSessionIds,
@@ -1665,6 +1666,95 @@ app.post('/api/log-workout', async (req, res) => {
     console.error('❌ Failed to append workout data:', error);
     return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
   }
+});
+
+// POST /api/log-workout/undo-last
+// Deletes a specific row range from Log_Cleaned that was just appended by /api/log-workout.
+// Requires the exact range string returned in the write response (log_appended_range),
+// a matching session_id, and an explicit confirm_delete: true flag.
+// Performs a read-back check before deleting to verify session_id ownership.
+app.post('/api/log-workout/undo-last', async (req, res) => {
+  const payload = req.body;
+  if (!payload || typeof payload !== 'object') {
+    return standardError(req, res, 'Invalid JSON payload.', null, 400);
+  }
+
+  const { log_appended_range, session_id, rows_to_delete, confirm_delete } = payload;
+
+  if (confirm_delete !== true) {
+    return standardError(req, res, 'confirm_delete must be true to proceed with deletion.', null, 400);
+  }
+  if (!log_appended_range || typeof log_appended_range !== 'string') {
+    return standardError(req, res, 'log_appended_range is required.', null, 400);
+  }
+  if (!session_id || typeof session_id !== 'string') {
+    return standardError(req, res, 'session_id is required.', null, 400);
+  }
+
+  // Parse A1 range: TabName!A{startRow}:{col}{endRow}
+  const rangeMatch = log_appended_range.match(/^([^!]+)!A(\d+):[A-Z]+(\d+)$/);
+  if (!rangeMatch) {
+    return standardError(req, res, `log_appended_range is not a valid A1 range (expected e.g. Log_Cleaned!A847:L847), got "${log_appended_range}".`, null, 400);
+  }
+
+  const rangeTab = rangeMatch[1];
+  const startRow = Number(rangeMatch[2]); // 1-indexed, inclusive
+  const endRow = Number(rangeMatch[3]);   // 1-indexed, inclusive
+  const rowSpan = endRow - startRow + 1;
+
+  if (rangeTab !== logSheetName) {
+    return standardError(req, res, `log_appended_range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
+  }
+  if (rowSpan < 1 || rowSpan > 10) {
+    return standardError(req, res, `Row span must be between 1 and 10, got ${rowSpan}.`, null, 400);
+  }
+  if (Number(rows_to_delete) !== rowSpan) {
+    return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
+  }
+
+  // Read back rows before deleting to verify session_id ownership
+  let allRows;
+  try {
+    allRows = await getSheetRows(logSheetName);
+  } catch (error) {
+    return standardError(req, res, 'Failed to read sheet rows for verification.', null, 500);
+  }
+
+  const normalizedExpected = String(session_id).trim().toLowerCase();
+  for (let r = startRow; r <= endRow; r++) {
+    // allRows is 0-indexed with header excluded: sheet row 2 → allRows[0], row N → allRows[N-2]
+    const dataIndex = r - 2;
+    const row = allRows[dataIndex];
+    if (!row || row.every(cell => String(cell) === '')) {
+      return standardError(
+        req, res,
+        `Target sheet row ${r} is missing or empty — cannot verify session_id ownership. Undo aborted — no rows were deleted.`,
+        null, 409
+      );
+    }
+    const rowSessionId = String(row[1] || '').trim();
+    if (rowSessionId.toLowerCase() !== normalizedExpected) {
+      return standardError(
+        req, res,
+        `session_id mismatch at sheet row ${r}: expected "${session_id}", found "${rowSessionId}". Undo aborted — no rows were deleted.`,
+        null, 409
+      );
+    }
+  }
+
+  // All rows verified — proceed with deletion
+  try {
+    const startIndex = startRow - 1; // 0-based inclusive
+    const endIndex = endRow;         // 0-based exclusive
+    await deleteRowsByRange(logSheetName, startIndex, endIndex);
+  } catch (error) {
+    return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);
+  }
+
+  return standardSuccess(req, res, 'Rows deleted', {
+    deleted_range: log_appended_range,
+    rows_deleted: rowSpan
+  });
 });
 
 app.use((req, res) => {
