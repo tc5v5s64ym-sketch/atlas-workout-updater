@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "lint": "node --check index.js && node --check sheets.js && node --check services/analytics.js && node --check services/validation.js && node --check services/vision.js && node --check middleware.js && node --check response.js && node --check services/cache.js && node --check services/exerciseEnrichment.js && node --check services/duration.js && node --check services/workoutTextParser.js && node --check scripts/smoke-test-render.js && node --check scripts/check-changed-files-for-secrets.js && node --check scripts/export-sheets-backup.js",
+    "lint": "node --check index.js && node --check sheets.js && node --check services/analytics.js && node --check services/validation.js && node --check services/vision.js && node --check middleware.js && node --check response.js && node --check services/cache.js && node --check services/exerciseEnrichment.js && node --check services/duration.js && node --check services/workoutTextParser.js && node --check rules/ruleTypes.js && node --check rules/validationRules.js && node --check rules/safetyRules.js && node --check rules/progressionRules.js && node --check scripts/smoke-test-render.js && node --check scripts/check-changed-files-for-secrets.js && node --check scripts/export-sheets-backup.js",
     "test": "node --test --test-reporter=spec",
     "scan:secrets": "node scripts/check-changed-files-for-secrets.js",
     "smoke:render": "node scripts/smoke-test-render.js",

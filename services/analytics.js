@@ -517,6 +517,7 @@ function previewTestRows(logRows, effortRows) {
 }
 
 module.exports = {
+  normalizeLogRow,
   buildSessionSummary,
   computeExerciseProgress,
   computeMuscleGroupVolume,

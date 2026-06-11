@@ -453,6 +453,11 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
       recBox.appendChild(el('p', { text: data.recommendation || '' }));
       recBox.appendChild(el('p', { class: 'muted', text: data.reasoning || '' }));
     }
+
+    const rd = data.rule_decision;
+    if (rd && rd.decision !== 'no_data') {
+      recBox.appendChild(el('p', { class: 'small muted', text: `Rule ${rd.rule_id}: ${rd.reasoning}` }));
+    }
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
@@ -978,6 +983,17 @@ function renderAutoMatches(autoMatches) {
   ]);
 }
 
+function renderRuleFlags(ruleFlags) {
+  if (!ruleFlags || !ruleFlags.length) return null;
+  const severityClass = ruleFlags.some(f => f.severity === 'error')
+    ? 'preview-warnings'
+    : ruleFlags.some(f => f.severity === 'warning') ? 'preview-warnings' : 'preview-auto-match';
+  return el('div', { class: severityClass }, [
+    el('strong', { text: 'Coach flags:' }),
+    el('ul', {}, ruleFlags.map(f => el('li', { text: f.reasoning })))
+  ]);
+}
+
 function renderUnknownExerciseSuggestions(pendingExercises) {
   if (!pendingExercises || !pendingExercises.length) return null;
   const items = pendingExercises.map(pe => {
@@ -1009,6 +1025,8 @@ function renderLogWorkoutPreview(result, effortRow) {
   const logAutoMatches = renderAutoMatches(data.auto_matches);
   if (logAutoMatches) previewContent.appendChild(logAutoMatches);
   previewContent.appendChild(renderWarnings(data.warnings));
+  const logRuleFlags = renderRuleFlags(data.rule_flags);
+  if (logRuleFlags) previewContent.appendChild(logRuleFlags);
   const logSuggestions = renderUnknownExerciseSuggestions(data.pending_exercises);
   if (logSuggestions) previewContent.appendChild(logSuggestions);
   previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.log_rows_preview || []).length})` }));

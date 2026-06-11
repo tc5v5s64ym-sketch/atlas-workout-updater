@@ -18,6 +18,7 @@ const {
   effortSheetName
 } = require('./sheets');
 const {
+  normalizeLogRow: normalizeAnalyticsLogRow,
   buildSessionSummary,
   computeExerciseProgress,
   computeMuscleGroupVolume,
@@ -38,6 +39,9 @@ const { parseWorkoutScreenshot } = require('./services/vision');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
+const { validateLogRowsBounds } = require('./rules/validationRules');
+const { evaluateSessionSafety } = require('./rules/safetyRules');
+const { holdUntilClean } = require('./rules/progressionRules');
 
 validateConfig();
 (async () => {
@@ -432,6 +436,16 @@ function normalizeManualEffortMetrics(formFields) {
 }
 
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, catalogMap = null) {
+  // Hard bounds before anything else — including the catalog fetch. A 2250-lb
+  // typo must never reach the sheet, and implausible input shouldn't cost an
+  // API call either.
+  const normalizedForBounds = logRows.map(row => normalizeLogRow(row, topLevelSessionId, topLevelDate));
+  const boundErrors = validateLogRowsBounds(normalizedForBounds);
+  if (boundErrors.length > 0) {
+    const detail = boundErrors.map(e => `row ${e.row_index + 1}: ${e.error}`).join('; ');
+    throw new Error(`Implausible set values rejected — ${detail}`);
+  }
+
   if (!catalogMap || !(catalogMap instanceof Map)) {
     const catalogRows = await getExerciseCatalog();
     catalogMap = buildExerciseCatalogMap(catalogRows);
@@ -439,10 +453,13 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
   const warnings = [];
   const auto_matches = [];
   const pending_exercises = [];
+  const enrichedRowObjects = [];
+
   const formattedRows = logRows.map(row => {
     const rowObj = normalizeLogRow(row, topLevelSessionId, topLevelDate);
     const result = enrichLogRow(rowObj, catalogMap);
     const enriched = result.enriched;
+    enrichedRowObjects.push(enriched);
     if (result.autoMatch) auto_matches.push(result.autoMatch);
     const rowWarnings = result.warnings || null;
     if (rowWarnings) {
@@ -465,7 +482,7 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
     return logRowObjectToArray(enriched);
   });
 
-  return { formattedRows, warnings, pending_exercises, auto_matches };
+  return { formattedRows, warnings, pending_exercises, auto_matches, enrichedRowObjects };
 }
 
 app.get('/', (req, res) => {
@@ -923,6 +940,10 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
   try {
     const allLog = await getSheetRows(logSheetName);
     const recommendation = recommendNextSet(allLog, liftCode);
+    const normalizedRows = allLog
+      .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
+      .map(normalizeAnalyticsLogRow);
+    recommendation.rule_decision = holdUntilClean(normalizedRows, liftCode);
     return standardSuccess(req, res, 'Recommendation generated', recommendation);
   } catch (error) {
     return standardError(req, res, 'Failed to compute recommendation', error.message, 500);
@@ -1390,6 +1411,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     let enrichWarnings = [];
     let pendingExercises = [];
     let autoMatches = [];
+    let completeRuleFlags = [];
     try {
       // fetch catalog once and pass the map to the enricher to ensure consistent lookup
       const catalogRows = await getExerciseCatalog();
@@ -1399,6 +1421,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       enrichWarnings = enrichResult.warnings || [];
       pendingExercises = enrichResult.pending_exercises || [];
       autoMatches = enrichResult.auto_matches || [];
+      completeRuleFlags = evaluateSessionSafety(enrichResult.enrichedRowObjects || [], formFields.notes || '');
       // store pending exercises in memory (dedupe by exercise)
       for (const pe of pendingExercises) {
         const key = String(pe.exercise || '').trim().toLowerCase();
@@ -1488,6 +1511,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     };
 
     if (combinedWarnings.length > 0) responseBody.warnings = combinedWarnings;
+    if (completeRuleFlags.length > 0) responseBody.data.rule_flags = completeRuleFlags;
 
     if (testMode) {
       responseBody.test_mode = true;
@@ -1555,12 +1579,14 @@ app.post('/api/log-workout', async (req, res) => {
   let warnings = [];
   let pendingExercisesForPreview = [];
   let autoMatchesForPreview = [];
+  let ruleFlags = [];
   try {
     const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings || [];
     pendingExercisesForPreview = logResult.pending_exercises || [];
     autoMatchesForPreview = logResult.auto_matches || [];
+    ruleFlags = evaluateSessionSafety(logResult.enrichedRowObjects || [], payload.notes || '');
   } catch (error) {
     return standardError(req, res, error.message, null, 400);
   }
@@ -1587,6 +1613,7 @@ app.post('/api/log-workout', async (req, res) => {
     if (warnings.length > 0) previewBody.warnings = [...new Set(warnings)];
     if (pendingExercisesForPreview.length > 0) previewBody.pending_exercises = pendingExercisesForPreview;
     if (autoMatchesForPreview.length > 0) previewBody.auto_matches = autoMatchesForPreview;
+    if (ruleFlags.length > 0) previewBody.rule_flags = ruleFlags;
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
@@ -1628,6 +1655,9 @@ app.post('/api/log-workout', async (req, res) => {
     }
     if (warnings.length > 0) {
       responseBody.warnings = [...new Set(warnings)];
+    }
+    if (ruleFlags.length > 0) {
+      responseBody.rule_flags = ruleFlags;
     }
 
     return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
