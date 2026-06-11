@@ -419,6 +419,25 @@ test('api smoke: undo-last returns 409 and does not delete on session_id mismatc
   assert.deepEqual(fakeSheetsState.deleteCalls, []);
 });
 
+test('api smoke: undo-last returns 409 and does not delete when target row is missing', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  // Sheet row 6 is beyond logRows (which only covers rows 2–5), so allRows[4] is undefined
+  const { response, body } = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify({
+      log_appended_range: 'Log_Cleaned!A6:L6',
+      session_id: 'SESSION-NEW',
+      rows_to_delete: 1,
+      confirm_delete: true
+    })
+  });
+
+  assert.equal(response.status, 409);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /missing or empty/i);
+  assert.deepEqual(fakeSheetsState.deleteCalls, []);
+});
+
 test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns rows_deleted: 1', async () => {
   fakeSheetsState.deleteCalls.length = 0;
   // Sheet row 3 → logRows[1] → SESSION-NEW; ownership verified → delete proceeds

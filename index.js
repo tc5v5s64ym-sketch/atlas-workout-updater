@@ -1724,7 +1724,13 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     // allRows is 0-indexed with header excluded: sheet row 2 → allRows[0], row N → allRows[N-2]
     const dataIndex = r - 2;
     const row = allRows[dataIndex];
-    if (!row || row.every(cell => String(cell) === '')) continue;
+    if (!row || row.every(cell => String(cell) === '')) {
+      return standardError(
+        req, res,
+        `Target sheet row ${r} is missing or empty — cannot verify session_id ownership. Undo aborted — no rows were deleted.`,
+        null, 409
+      );
+    }
     const rowSessionId = String(row[1] || '').trim();
     if (rowSessionId.toLowerCase() !== normalizedExpected) {
       return standardError(
