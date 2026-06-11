@@ -561,6 +561,10 @@ let pendingWrite = null;
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 
+// Populated after a successful manual write so the undo button can fire.
+// Cleared when a new preview cycle starts (form input → invalidatePreview).
+let lastWrite = null;
+
 // Cache last-time lookups to avoid redundant API calls within a session.
 const lastTimeCache = new Map();
 
@@ -871,6 +875,7 @@ function collectManualEffort(sessionId, date, location, notes) {
 
 function invalidatePreview() {
   pendingWrite = null;
+  lastWrite = null;
   lastParserStatus = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
@@ -1098,6 +1103,37 @@ function renderCompleteWorkoutPreview(result) {
 
 document.getElementById('cancel-preview-btn').addEventListener('click', invalidatePreview);
 
+async function handleUndoLastWrite() {
+  if (!lastWrite) return;
+  const { log_appended_range, session_id, log_rows_written } = lastWrite;
+  const undoBtn = loggerStatus.querySelector('.undo-write-btn');
+  if (undoBtn) {
+    undoBtn.disabled = true;
+    undoBtn.textContent = 'Undoing…';
+  }
+  try {
+    await api('/api/log-workout/undo-last', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        log_appended_range,
+        session_id,
+        rows_to_delete: log_rows_written,
+        confirm_delete: true
+      })
+    });
+    lastWrite = null;
+    setStatus(loggerStatus, 'Last write undone.', 'ok');
+  } catch (err) {
+    setStatus(loggerStatus, `Undo failed: ${err.message}`, 'error');
+    if (undoBtn) {
+      undoBtn.disabled = false;
+      undoBtn.textContent = 'Undo last write';
+      loggerStatus.appendChild(undoBtn);
+    }
+  }
+}
+
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (!pendingWrite) {
     setStatus(loggerStatus, 'No previewed workout to approve. Run a preview first.', 'error');
@@ -1129,6 +1165,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       if (!(Number(writeResult?.data?.log_rows_written || 0) > 0)) {
         throw new Error(`Write confirmed but log_rows_written=${writeResult?.data?.log_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
       }
+      lastWrite = {
+        log_appended_range: writeResult.data.logAppendedRange,
+        session_id: realPayload.session_id,
+        log_rows_written: writeResult.data.log_rows_written
+      };
     }
     invalidatePreview();
     document.getElementById('logger-form').reset();
@@ -1138,6 +1179,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     lastParserStatus = null;
     setDefaultDate();
     setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
+    if (lastWrite) {
+      const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
+      undoBtn.addEventListener('click', handleUndoLastWrite);
+      loggerStatus.appendChild(undoBtn);
+    }
     loadDashboard();
   } catch (err) {
     setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
