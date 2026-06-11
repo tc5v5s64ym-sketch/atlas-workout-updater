@@ -418,6 +418,66 @@ test('conversational logger renders textbox first and parsed rows as fallback ed
   assert.match(appSource, /parsedRowsEditor\.hidden = false/);
 });
 
+test('conversational logger calls backend parser before local parser fallback', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+
+  assert.match(appSource, /async function parseWorkoutTextWithBackend/);
+  assert.match(appSource, /api\('\/api\/parse-workout-text'/);
+  assert.match(appSource, /test_mode: true/);
+  assert.ok(rowsFunction.indexOf('parseWorkoutTextWithBackend(workoutText)') < rowsFunction.indexOf('parseWorkoutText(workoutText)'));
+  assert.match(rowsFunction, /Backend parser unavailable - using local parser fallback/);
+});
+
+test('conversational logger converts backend parser output to editable rows', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const converter = appSource.slice(
+    appSource.indexOf('function rowsFromBackendParsedWorkout(parsed)'),
+    appSource.indexOf('async function parseWorkoutTextWithBackend')
+  );
+
+  assert.match(converter, /parsed\.intent !== 'log_sets'/);
+  assert.match(converter, /parsed\.canonical_name \|\| parsed\.exercise \|\| parsed\.raw_name/);
+  assert.match(converter, /set_number: String\(index \+ 1\)/);
+  assert.match(converter, /weight: set\.weight == null \? '' : String\(set\.weight\)/);
+  assert.match(converter, /reps: set\.reps == null \? '' : String\(set\.reps\)/);
+  assert.match(converter, /rir: set\.rir == null \? '' : String\(set\.rir\)/);
+});
+
+test('conversational logger backend parser success alone cannot enable save', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const parserFunction = appSource.slice(
+    appSource.indexOf('async function parseWorkoutTextWithBackend(workoutText)'),
+    appSource.indexOf('function populateSetRows')
+  );
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+
+  assert.doesNotMatch(parserFunction, /pendingWrite\s*=/);
+  assert.doesNotMatch(rowsFunction, /pendingWrite\s*=/);
+  assert.match(appSource, /if \(!hasLogWorkoutNoWriteProof\(result\)\)/);
+  assert.match(appSource, /if \(!hasCompleteWorkoutNoWriteProof\(result\)\)/);
+  assert.match(appSource, /document\.getElementById\('approve-btn'\)\.disabled = !pendingWrite/);
+});
+
+test('conversational logger requires backend parser no-write proof before using parser rows', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const parserFunction = appSource.slice(
+    appSource.indexOf('async function parseWorkoutTextWithBackend(workoutText)'),
+    appSource.indexOf('function populateSetRows')
+  );
+
+  assert.match(parserFunction, /data\.test_mode !== true/);
+  assert.match(parserFunction, /data\.sheet_written !== false/);
+  assert.match(parserFunction, /data\.no_write_confirmed !== true/);
+  assert.match(parserFunction, /Backend parser did not prove no-write safety/);
+});
+
 test('log-workout test_mode preview exposes explicit no-write proof fields', () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
 
