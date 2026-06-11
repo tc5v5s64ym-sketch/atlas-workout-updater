@@ -1584,3 +1584,69 @@ test('duplicate-write: undo button is unaffected — still wired after success',
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
+
+// ── Readback verification ─────────────────────────────────────────────────────
+
+test('readback: verify-range route registered as GET, read-only, auth-required', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/log-workout/verify-range');
+  assert.ok(route, 'route definition must exist');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.authRequired, true);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+});
+
+test('readback: verify-range endpoint enforces Log_Cleaned tab restriction', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  assert.match(src, /\/api\/log-workout\/verify-range/, 'endpoint must be registered');
+  assert.match(src, /range must target/, 'must reject non-Log_Cleaned tabs');
+  assert.match(src, /not a valid A1 range/, 'must reject malformed range strings');
+});
+
+test('readback: verify-range endpoint verifies session_id and row count before returning ok', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const endpointStart = src.indexOf("'/api/log-workout/verify-range'");
+  const endpointBlock = src.slice(endpointStart, endpointStart + 3000);
+  assert.match(endpointBlock, /session_id mismatch/, 'must check session_id in returned rows');
+  assert.match(endpointBlock, /row count mismatch/, 'must check returned row count matches span');
+  assert.match(endpointBlock, /verified.*true/, 'must return verified: true on success');
+  assert.match(endpointBlock, /readRange\(range\)/, 'must call readRange with the validated range');
+});
+
+test('readback: verifyWrittenRange function exists and fails quietly', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /async function verifyWrittenRange\(/, 'verifyWrittenRange must exist');
+  const fn = appSource.slice(
+    appSource.indexOf('async function verifyWrittenRange('),
+    appSource.indexOf('async function verifyWrittenRange(') + 400
+  );
+  assert.match(fn, /return false/, 'must return false on any failure');
+  assert.match(fn, /verify-range/, 'must call verify-range endpoint');
+  assert.match(fn, /verified.*true/, 'must check verified: true in response');
+});
+
+test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
+  assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
+  assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
+  // undo button must come before verify call
+  const undoIdx = handler.indexOf('undo-write-btn');
+  const verifyIdx = handler.indexOf('verifyWrittenRange');
+  const reactionIdx = handler.indexOf('fetchReaction');
+  assert.ok(undoIdx < verifyIdx, 'undo button must be appended before verify fires');
+  assert.ok(verifyIdx < reactionIdx, 'verify must fire before reaction fetch');
+});
+
+test('readback: verification failure cannot affect write success — no throw, no await block', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('async function verifyWrittenRange('),
+    appSource.indexOf('async function verifyWrittenRange(') + 550
+  );
+  // Must catch all errors and return false — never re-throw
+  assert.match(fn, /catch/, 'must have a catch block');
+  assert.match(fn, /return false/, 'catch must return false, not throw');
+});
