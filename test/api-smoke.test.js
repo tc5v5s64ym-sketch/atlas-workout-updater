@@ -20,13 +20,19 @@ const exerciseCatalogRows = [
 ];
 
 const fakeSheetsState = {
-  appendCalls: []
+  appendCalls: [],
+  // Set to true only inside tests that intentionally exercise the live-write branch.
+  // Default false ensures dry-run tests trip the throw guard if appendRows fires unexpectedly.
+  allowAppend: false
 };
 
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     fakeSheetsState.appendCalls.push({ tabName, rows });
-    throw new Error('appendRows should not be called by endpoint smoke tests');
+    if (!fakeSheetsState.allowAppend) {
+      throw new Error('appendRows should not be called by endpoint smoke tests');
+    }
+    return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
   },
   validateConfig: () => {},
   getExerciseCatalog: async () => exerciseCatalogRows,
@@ -176,3 +182,69 @@ test('api smoke: recommend-next returns stable read shape', async () => {
   assert.ok(body.data.recommendation);
   assert.ok(body.data.rule_decision);
 });
+
+// Missing test_mode currently means live-write branch.
+// This test pins the current behavior: absent test_mode = real append to Log_Cleaned.
+// A future PR may add an explicit confirm_write gate, but this task does not change that contract.
+test('api smoke: live log-workout without test_mode appends one row to Log_Cleaned', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'LIVE-WRITE-SMOKE-01',
+        date: '2026-06-11',
+        // test_mode intentionally omitted — this exercises the live-write branch
+        log_rows: [
+          {
+            exercise: 'Bench Press',
+            set_number: 1,
+            weight: 135,
+            reps: 10,
+            rir: 5,
+            notes: ''
+          }
+        ]
+      })
+    });
+
+    // Response must indicate success with confirmed write
+    assert.equal(response.status, 200);
+    assert.equal(body.status, 'ok');
+    assert.equal(body.data.sheet_write, 'success');
+
+    // Exactly one appendRows call — no effort row, so only the log append fires
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    const call = fakeSheetsState.appendCalls[0];
+
+    // Must target the log tab, not Effort
+    assert.equal(call.tabName, 'Log_Cleaned');
+
+    // Exactly one row appended
+    assert.equal(call.rows.length, 1);
+
+    const row = call.rows[0];
+
+    // 12-column contract (logCleanedColumns order):
+    // [0] date_clean  [1] session_id  [2] exercise  [3] canonical_exercise
+    // [4] muscle_group  [5] lift_code  [6] set_number  [7] weight
+    // [8] reps  [9] rir  [10] notes  [11] volume_calc
+    assert.equal(row.length, 12);
+    assert.equal(row[0], '2026-06-11');           // date
+    assert.equal(row[1], 'LIVE-WRITE-SMOKE-01');  // session_id
+    assert.equal(row[3], 'Bench Press');           // canonical_exercise
+    assert.equal(row[4], 'Chest');                 // muscle_group
+    assert.equal(row[5], 'BEN01');                 // lift_code
+    assert.equal(Number(row[6]), 1);               // set_number
+    assert.equal(Number(row[7]), 135);             // weight — Bench 135 10/5
+    assert.equal(Number(row[8]), 10);              // reps  — Bench 135 10/5
+    assert.equal(Number(row[9]), 5);               // rir   — Bench 135 10/5
+    assert.equal(Number(row[11]), 1350);           // volume_calc = 135 * 10
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
