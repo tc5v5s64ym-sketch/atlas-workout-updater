@@ -124,9 +124,10 @@ function findExerciseMentions(text) {
       if (!aliasWords.length) continue;
       for (let i = 0; i <= normalizedWords.length - aliasWords.length; i += 1) {
         if (normalizedWords.slice(i, i + aliasWords.length).join(' ') === aliasWords.join(' ')) {
-          const key = `${canonicalName}:${i}`;
+          const end = i + aliasWords.length;
+          const key = `${canonicalName}:${i}:${end}`;
           if (!seen.has(key)) {
-            mentions.push({ canonicalName, index: i, alias });
+            mentions.push({ canonicalName, index: i, end, alias });
             seen.add(key);
           }
         }
@@ -134,7 +135,13 @@ function findExerciseMentions(text) {
     }
   }
 
-  return mentions;
+  return mentions
+    .sort((a, b) => (b.end - b.index) - (a.end - a.index))
+    .filter((mention, index, sortedMentions) => !sortedMentions.some((other, otherIndex) =>
+      otherIndex < index &&
+      other.index <= mention.index &&
+      other.end >= mention.end
+    ));
 }
 
 function hasMultipleExerciseMentions(text) {
