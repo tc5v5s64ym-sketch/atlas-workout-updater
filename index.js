@@ -33,7 +33,8 @@ const {
   suggestDeloads,
   computeFatigueStatus,
   buildWeeklyReport,
-  buildExerciseDetail
+  buildExerciseDetail,
+  buildRecentSessions
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -877,6 +878,21 @@ app.get('/api/schema/complete-workout', (req, res) => {
     required_for_manual_dry_run: ['test_mode=true', 'effort_json or manual effort fields'],
     optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write', 'effort_json']
   });
+});
+
+// GET /api/sessions/recent — list recent sessions with aggregated data (MUST be before /:sessionId)
+app.get('/api/sessions/recent', async (req, res) => {
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 15));
+  try {
+    const [allLog, allEffort] = await Promise.all([
+      getSheetRows(logSheetName),
+      getSheetRows(effortSheetName)
+    ]);
+    const result = buildRecentSessions(allLog, allEffort, { limit });
+    return standardSuccess(req, res, 'Recent sessions', result);
+  } catch (err) {
+    return standardError(req, res, 'Failed to load recent sessions', err);
+  }
 });
 
 // GET /api/sessions/:sessionId — fetch all log rows for a session (for correction pre-fill)
