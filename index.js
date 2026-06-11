@@ -942,7 +942,7 @@ app.get('/api/plan/today', async (req, res) => {
     const liftCodes = [...new Set(
       allLog
         .map(row => String(row[5] || '').trim())
-        .filter(code => code && code !== 'lift_code')
+        .filter(code => code && code !== 'lift_code' && /[a-zA-Z]/.test(code))
     )];
 
     // Build recommendations in parallel for all lift codes

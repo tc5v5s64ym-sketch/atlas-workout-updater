@@ -1096,6 +1096,44 @@ test('recommendNextSet returns no-history message for unknown lift', () => {
   assert.match(rec.recommendation, /No recent working sets/);
 });
 
+// ── Today's Plan — exercise_name field ────────────────────────────────────────
+
+test("today's plan: recommendNextSet includes exercise_name from canonical_exercise", () => {
+  const rows = [
+    ['2026-06-01', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '225', '5', '2', ''],
+    ['2026-06-08', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '235', '5', '2', ''],
+  ];
+  const rec = recommendNextSet(rows, 'SQ01');
+  assert.equal(rec.exercise_name, 'Back Squat', 'must resolve canonical_exercise to exercise_name');
+  assert.equal(rec.liftCode, 'SQ01', 'liftCode must still be present');
+});
+
+test("today's plan: recommendNextSet falls back to liftCode when no exercise name", () => {
+  const rows = [
+    ['2026-06-01', 'S1', '', '', 'Legs', 'MYSTERY01', '1', '100', '5', '2', ''],
+  ];
+  const rec = recommendNextSet(rows, 'MYSTERY01');
+  assert.equal(rec.exercise_name, 'MYSTERY01', 'must fall back to liftCode when names are empty');
+});
+
+test("today's plan: recommendNextSet returns exercise_name equal to liftCode for unknown code", () => {
+  const rec = recommendNextSet([], 'UNKNOWN');
+  assert.equal(rec.exercise_name, 'UNKNOWN', 'no-history path must include exercise_name');
+});
+
+test("today's plan: /api/plan/today filters out numeric-only lift codes", () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const planBlock = src.slice(src.indexOf("'/api/plan/today'"), src.indexOf("'/api/plan/today'") + 800);
+  assert.match(planBlock, /\[a-zA-Z\]/, 'must filter lift codes that contain no letters');
+});
+
+test("today's plan: app.js uses exercise_name field for card title, not liftCode directly", () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 1200);
+  assert.match(planFn, /exercise_name/, 'must reference exercise_name field');
+  assert.match(planFn, /plan-card-code/, 'must include secondary lift code span');
+});
+
 // ── Validation helpers ────────────────────────────────────────────────────────
 
 test('parseNumber handles numeric, string, and blank inputs', () => {

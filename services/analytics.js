@@ -292,6 +292,7 @@ function recommendNextSet(logRows, liftCode) {
   if (!rows.length) {
     return {
       liftCode: normalizedCode,
+      exercise_name: normalizedCode,
       last_working_sets: [],
       recommendation: 'No recent working sets found for this lift code.',
       reasoning: 'There is not enough history to make a recommendation.',
@@ -299,6 +300,8 @@ function recommendNextSet(logRows, liftCode) {
       sessions_analyzed: 0
     };
   }
+
+  const exercise_name = rows[rows.length - 1].canonical_exercise || rows[rows.length - 1].exercise || normalizedCode;
 
   // Count distinct sessions for this lift
   const sessions = [...new Set(rows.map(r => r.session_id))];
@@ -352,6 +355,7 @@ function recommendNextSet(logRows, liftCode) {
 
   return {
     liftCode: normalizedCode,
+    exercise_name,
     last_working_sets: lastSets,
     recommendation,
     reasoning,

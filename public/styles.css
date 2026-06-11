@@ -287,7 +287,8 @@ a.lift-link:hover { text-decoration: underline; }
 .plan-card-medium { border-left-color: var(--warn); background: #fffbeb; }
 .plan-card-low { border-left-color: var(--border); background: var(--card); }
 
-.plan-card-lift { font-size: 0.78rem; color: var(--muted); margin-bottom: 2px; }
+.plan-card-lift { font-size: 0.82rem; color: var(--muted); margin-bottom: 2px; }
+.plan-card-code { display: block; font-size: 0.68rem; color: var(--muted); opacity: 0.7; margin-top: 1px; }
 .plan-card-target { font-size: 1.25rem; font-weight: 700; color: var(--ink); line-height: 1.2; }
 .plan-card-sets { font-size: 0.82rem; color: var(--muted); }
 .plan-card-rec { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }

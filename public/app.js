@@ -290,9 +290,11 @@ async function loadTodaysPlan() {
     for (const r of recs) {
       const t = r.next_target;
       const confidenceClass = r.confidence === 'high' ? 'plan-card-high' : r.confidence === 'medium' ? 'plan-card-medium' : 'plan-card-low';
+      const exerciseName = r.exercise_name || r.liftCode;
       const card = el('div', { class: `plan-card ${confidenceClass}` }, [
         el('div', { class: 'plan-card-lift' }, [
-          el('a', { class: 'lift-link', href: '#', 'data-lift': r.liftCode, text: r.liftCode })
+          el('a', { class: 'lift-link', href: '#', 'data-lift': r.liftCode, text: exerciseName }),
+          el('span', { class: 'plan-card-code muted', text: r.liftCode })
         ]),
         el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
         el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),
