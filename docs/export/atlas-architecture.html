@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas Architecture Pass</title>
+<style>
+  :root {
+    --ink: #1a202c;
+    --muted: #4a5568;
+    --accent: #2563eb;
+    --border: #e2e8f0;
+    --code-bg: #f1f5f9;
+    --ok: #16a34a;
+    --warn: #d97706;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Georgia, serif;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--ink);
+    background: #fff;
+    padding: 48px 64px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  @media print {
+    body { padding: 20px 32px; font-size: 12px; }
+    pre { font-size: 10px; }
+    h2 { page-break-before: always; }
+    h2:first-of-type { page-break-before: avoid; }
+    .no-break { page-break-inside: avoid; }
+  }
+
+  /* Cover */
+  .cover {
+    text-align: center;
+    padding: 60px 0 48px;
+    border-bottom: 2px solid var(--accent);
+    margin-bottom: 48px;
+  }
+  .cover h1 {
+    font-size: 2.4rem;
+    font-weight: 800;
+    color: var(--accent);
+    letter-spacing: -0.02em;
+  }
+  .cover .subtitle {
+    font-size: 1.1rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .cover .date {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 24px;
+  }
+
+  /* Preamble */
+  .preamble {
+    background: #f8faff;
+    border-left: 4px solid var(--accent);
+    padding: 16px 20px;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 40px;
+    font-size: 0.92rem;
+    color: var(--muted);
+  }
+
+  /* TOC */
+  .toc {
+    background: #f8f9fa;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px 28px;
+    margin-bottom: 48px;
+  }
+  .toc h2 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 14px;
+    border: none;
+  }
+  .toc ol {
+    padding-left: 20px;
+    columns: 2;
+    column-gap: 32px;
+  }
+  .toc li { margin-bottom: 4px; }
+  .toc a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Headings */
+  h2 {
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 48px 0 16px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--border);
+  }
+  h2 .section-num {
+    color: var(--accent);
+    margin-right: 10px;
+  }
+  h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 24px 0 10px;
+  }
+
+  /* Body text */
+  p { margin-bottom: 14px; }
+  strong { font-weight: 700; }
+  em { font-style: italic; }
+
+  /* Lists */
+  ul, ol {
+    padding-left: 22px;
+    margin-bottom: 14px;
+  }
+  li { margin-bottom: 4px; }
+  li p { margin-bottom: 4px; }
+
+  /* Code */
+  code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 0.85em;
+  }
+  pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 16px 20px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 16px 0;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    white-space: pre;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+    color: inherit;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.88rem;
+  }
+  th {
+    background: #f1f5f9;
+    text-align: left;
+    padding: 8px 12px;
+    font-weight: 700;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  td {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #f8f9fa; }
+
+  /* Hr */
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+
+  /* Callout */
+  .callout {
+    background: #eff6ff;
+    border-left: 4px solid var(--accent);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 0.9rem;
+  }
+
+  /* Footnote */
+  .footnote {
+    margin-top: 64px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Atlas Architecture Pass</h1>
+  <div class="subtitle">Full-system design specification — prototype to production</div>
+  <div class="date">June 2026</div>
+</div>
+
+<div class="preamble">
+  A note before the spec: the current atlas-workout-updater backend already proves out several of these ideas — approve-before-save, dry-run proofs, fuzzy exercise matching, a progression engine v0.1, Sheets as persistence. This document treats that as the prototype it is and designs the system it should grow into. Where the prototype already got something right, I say so; where it's a dead end, I say that too.
+</div>
+
+<div class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s1">Product Architecture Overview</a></li>
+    <li><a href="#s2">Recommended Backend Architecture</a></li>
+    <li><a href="#s3">API Endpoint Design</a></li>
+    <li><a href="#s4">Database Schema</a></li>
+    <li><a href="#s5">Workout Parser Integration</a></li>
+    <li><a href="#s6">AI Coaching Layer</a></li>
+    <li><a href="#s7">Rules Engine</a></li>
+    <li><a href="#s8">Conversation Design</a></li>
+    <li><a href="#s9">App / UI Implications</a></li>
+    <li><a href="#s10">Build Sequence</a></li>
+    <li><a href="#s11">Risk Register</a></li>
+    <li><a href="#s12">Final Recommendation</a></li>
+  </ol>
+</div>
+
+<!-- ========== SECTION 1 ========== -->
+<h2 id="s1"><span class="section-num">1.</span> Product Architecture Overview</h2>
+
+<pre>
+┌─────────────────────────────────────────────────────────┐
+│ FRONTEND (React mobile UI)                              │
+│ Renders state. Captures input. Nothing else.            │
+└──────────────────────┬──────────────────────────────────┘
+                       │ HTTPS / JSON
+┌──────────────────────▼──────────────────────────────────┐
+│ BACKEND API (Node/Express) — SOURCE OF TRUTH            │
+│                                                         │
+│  ┌────────────┐  ┌─────────────┐  ┌──────────────────┐  │
+│  │ Workout    │  │ Rules       │  │ Progress/Trend   │  │
+│  │ Parser     │  │ Engine      │  │ Engine           │  │
+│  │ (determin- │  │ (determin-  │  │ (e1RM, volume,   │  │
+│  │  istic)    │  │  istic)     │  │  stalls, PRs)    │  │
+│  └────────────┘  └─────────────┘  └──────────────────┘  │
+│  ┌────────────┐  ┌─────────────┐  ┌──────────────────┐  │
+│  │ Effort     │  │ Memory /    │  │ AI Coaching      │  │
+│  │ Importer   │  │ Context     │  │ Layer (LLM)      │  │
+│  │ (Watch)    │  │ Builder     │  │ — advisory only  │  │
+│  └────────────┘  └─────────────┘  └──────────────────┘  │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────┐
+│ DATABASE (Postgres long-term; Sheets as temp adapter)   │
+└─────────────────────────────────────────────────────────┘
+</pre>
+
+<p><strong>Where each responsibility lives, and why:</strong></p>
+<table>
+  <thead>
+    <tr><th>Component</th><th>Lives in</th><th>Reason</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Workout parser</td><td>Backend</td><td>Deterministic, testable, versioned. Frontend parsing means two parsers drifting apart; AI parsing means non-reproducible logs.</td></tr>
+    <tr><td>Rules engine</td><td>Backend</td><td>Safety decisions must be deterministic and auditable. "Why did Atlas say hold?" must have one answer.</td></tr>
+    <tr><td>Progress/trend engine</td><td>Backend</td><td>Computed from DB, cached, served. Frontend never computes e1RM — it renders it.</td></tr>
+    <tr><td>AI coaching</td><td>Backend (<code>ai/</code> module)</td><td>The LLM call happens server-side with server-assembled context. Frontend never talks to the LLM directly — that's how you get hallucinated numbers in the UI and leaked API keys.</td></tr>
+    <tr><td>Memory/context</td><td>Backend</td><td>Context is <em>queried from the DB</em> per request, not accumulated in a chat transcript. The transcript is conversation; the database is memory.</td></tr>
+    <tr><td>Effort importer</td><td>Backend</td><td>Image → vision model → <strong>structured candidate</strong> → validation → user confirmation → DB. Never image → DB.</td></tr>
+    <tr><td>Session state during a live workout</td><td>Backend (with frontend optimistic mirror)</td><td>If the phone dies mid-session, the session survives.</td></tr>
+    <tr><td>Validation</td><td>Backend always; frontend additionally for UX</td><td>Frontend validation is a courtesy. Backend validation is the contract.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <strong>The core principle, made operational:</strong><br><br>
+  The AI sits in exactly two seats, both advisory: (1) <strong>Fallback intent classifier</strong> — when the deterministic parser returns low confidence, the AI converts text to a structured intent proposal that goes back through the same validation as parser output. The AI's output is never trusted more than the parser's; it's trusted <em>less</em> (lower confidence ceiling, always flagged for confirmation). (2) <strong>Explainer/conversationalist</strong> — it receives structured facts (recent sessions, rule decisions, trends) and produces prose. It never produces the facts.<br><br>
+  The write path is always: <strong>structured data → validation → rules check → DB</strong>. The AI can propose entries into the top of that funnel. It can never skip a stage. This is the generalization of the approve-before-save pattern already proven in the prototype.
+</div>
+
+<!-- ========== SECTION 2 ========== -->
+<h2 id="s2"><span class="section-num">2.</span> Recommended Backend Architecture</h2>
+
+<p>Node.js + Express is right. The workload is I/O-bound JSON plumbing with one external LLM call — Node's sweet spot. No reason to deviate.</p>
+
+<pre>
+atlas-backend/
+├── index.js                        # app bootstrap, middleware, route mounting only
+├── routes/
+│   ├── parseRoutes.js              # /api/parse-workout-text
+│   ├── sessionRoutes.js            # session CRUD + live logging
+│   ├── effortRoutes.js             # effort import
+│   ├── progressRoutes.js           # history, trends, overview
+│   ├── chatRoutes.js               # /api/chat
+│   └── recommendationRoutes.js     # /api/recommend-next-session, /api/today
+├── controllers/
+│   ├── sessionController.js        # req/res shaping, calls services, no logic
+│   ├── parseController.js
+│   ├── effortController.js
+│   ├── progressController.js
+│   ├── chatController.js
+│   └── recommendationController.js
+├── services/
+│   ├── sessionService.js           # session lifecycle, set CRUD, finish logic
+│   ├── effortService.js            # effort normalization + plausibility checks
+│   ├── progressService.js          # e1RM, volume, trends, PRs (wraps trend engine)
+│   ├── recommendationService.js    # combines rules + history → next targets
+│   ├── exerciseService.js          # catalog, alias resolution, fuzzy matching
+│   └── contextService.js           # builds AI context blocks from DB (memory layer)
+├── parsers/
+│   ├── workoutLanguageParser.js    # deterministic parser
+│   ├── intentClassifier.js         # routes text: log / command / question / effort
+│   └── effortParser.js             # Watch screenshot fields → structured effort
+├── rules/
+│   ├── progressionRules.js         # load/hold/build-reps decisions
+│   ├── safetyRules.js              # RIR caution, pain flags, impossible values
+│   ├── validationRules.js          # bounds: weight, reps, RIR, duration, HR
+│   └── ruleTypes.js                # shared decision shape: {decision, rule_id, reasoning}
+├── ai/
+│   ├── atlasCoach.js               # LLM call orchestration for /api/chat
+│   ├── promptBuilder.js            # assembles system prompt + context blocks
+│   ├── intentFallback.js           # AI parse fallback (returns intent proposals)
+│   └── prompts/
+│       ├── coachSystem.txt
+│       └── fewshot.json
+├── db/
+│   ├── index.js                    # connection/adapter selection
+│   ├── adapters/
+│   │   ├── postgresAdapter.js
+│   │   └── sheetsAdapter.js        # temp; same interface, so swap is config not rewrite
+│   ├── migrations/
+│   └── repositories/
+│       ├── sessionRepo.js
+│       ├── setRepo.js
+│       ├── exerciseRepo.js
+│       ├── effortRepo.js
+│       └── eventRepo.js            # parser_events, ai_coach_events
+├── schemas/
+│   ├── sessionSchema.js            # JSON Schema or zod — the session contract
+│   ├── setSchema.js
+│   ├── parserOutputSchema.js       # THE parser contract (see §5)
+│   ├── effortSchema.js
+│   └── intentSchema.js             # AI fallback output must validate against this
+└── tests/
+    ├── parser/                     # parser test suite lives here
+    ├── rules/
+    ├── services/
+    └── fixtures/
+        └── daleSessions.json       # real anonymized logs as regression corpus
+</pre>
+
+<p>Two structural rules that matter more than the file names:</p>
+<ul>
+  <li><strong>Repositories are the only code that touches the DB.</strong> Services call repos. This is what makes the Sheets→Postgres swap a one-file change.</li>
+  <li><strong><code>ai/</code> may import from <code>services/</code> and <code>schemas/</code>. Nothing imports from <code>ai/</code> except <code>chatController</code> and <code>intentFallback</code> consumers.</strong> The AI layer is a leaf, not a trunk. If <code>sessionService</code> ever imports <code>atlasCoach</code>, the architecture has failed.</li>
+</ul>
+
+<!-- ========== SECTION 3 ========== -->
+<h2 id="s3"><span class="section-num">3.</span> API Endpoint Design</h2>
+
+<p>All endpoints: <code>Authorization</code> via API key header now, JWT later (see §11). All responses share an envelope: <code>{ ok, data, warnings[], error }</code>. Validation failures return 422 with field-level errors.</p>
+
+<h3>POST /api/parse-workout-text</h3>
+<p>Owner: <code>parseController</code> → <code>workoutLanguageParser</code> (+ <code>intentFallback</code> if low confidence). <strong>AI: fallback only.</strong> Purpose: convert raw text to structured intent. <em>Never writes to DB.</em> Pure function over text + minimal context.</p>
+<pre>
+// Request
+{ "text": "Bench 135 10/5 185 8/3 225 5/2", "session_id": "uuid-or-null" }
+
+// Response (success)
+{
+  "ok": true,
+  "data": {
+    "intent": "log_sets",
+    "confidence": 0.97,
+    "parser": "deterministic",
+    "parser_version": "1.4.0",
+    "sets": [
+      { "exercise_raw": "Bench", "exercise_id": "ex_bench_press", "weight": 135, "reps": 10, "set_count": 5, "rir": null },
+      { "exercise_raw": "Bench", "exercise_id": "ex_bench_press", "weight": 185, "reps": 8, "set_count": 3, "rir": null },
+      { "exercise_raw": "Bench", "exercise_id": "ex_bench_press", "weight": 225, "reps": 5, "set_count": 2, "rir": null }
+    ],
+    "clarifications": []
+  }
+}
+</pre>
+
+<h3>POST /api/start-session — AI: no</h3>
+<pre>
+// Request
+{ "date": "2026-06-10", "location": "Gym", "planned_focus": "push" }
+// Response
+{ "ok": true, "data": { "session_id": "ses_abc", "status": "active", "started_at": "2026-06-10T17:02:00Z" } }
+</pre>
+<p>Validation: only one active session per user (409 if one exists, returning its id so the client can resume); date within ±1 day of now unless explicitly backdating.</p>
+
+<h3>POST /api/log-set — AI: no</h3>
+<p>The hot path. Must be fast and unconditional once data is valid.</p>
+<pre>
+// Request
+{ "session_id": "ses_abc", "exercise_id": "ex_bench_press", "weight": 205, "reps": 6, "rir": 2, "source": "ui" }
+// Response
+{
+  "ok": true,
+  "data": { "set_id": "set_991", "set_number": 3 },
+  "warnings": [],
+  "rule_flags": [
+    { "rule_id": "rir_caution", "severity": "info", "message": "RIR 2 at 205 — this is the consistency target for bench." }
+  ]
+}
+</pre>
+
+<h3>POST /api/log-session — AI: no</h3>
+<p>Batch path: full parsed session in one call.</p>
+<pre>
+// Response
+{ "ok": true, "data": { "session_id": "ses_def", "sets_created": 11, "prs_detected": [], "duplicate_check": { "is_probable_duplicate": false } } }
+</pre>
+<p>Duplicate detection: same date + >70% overlapping exercise/weight/reps → 409 with matching session id, requiring an explicit <code>force: true</code> to override.</p>
+
+<h3>PATCH /api/session/:id/set/:setId — AI: no</h3>
+<pre>
+// Request
+{ "weight": 225, "reps": 6, "correction_source": "user_text", "raw_text": "actually that last set was 6 not 5" }
+// Response
+{ "ok": true, "data": { "set_id": "set_991", "previous": { "reps": 5 }, "current": { "reps": 6 } } }
+</pre>
+<p>Corrections never overwrite silently: previous values go to a <code>set_revisions</code> append.</p>
+
+<h3>POST /api/finish-session — AI: no</h3>
+<pre>
+// Response
+{
+  "ok": true,
+  "data": {
+    "session_id": "ses_abc",
+    "summary": { "duration_min": 58, "total_sets": 14, "total_volume": 12450, "exercises": 4 },
+    "prs": [ { "exercise_id": "ex_bench_press", "type": "rep_pr", "detail": "205×6 @ RIR 2 — best 6 at this weight" } ],
+    "rule_decisions": [ { "exercise_id": "ex_bench_press", "decision": "hold", "rule_id": "bench_hold_205_until_clean_6s", "reasoning": "2 of 3 required clean sets of 6 at RIR≥2. One more session." } ],
+    "effort_prompt": true
+  }
+}
+</pre>
+
+<h3>POST /api/log-effort — AI: vision model for screenshot extraction only</h3>
+<pre>
+// Manual request
+{ "session_id": "ses_abc", "duration_min": 58, "active_calories": 412, "total_calories": 540, "avg_hr": 121, "peak_hr": 162, "source": "manual" }
+
+// Screenshot path: returns CANDIDATE, not committed:
+{ "ok": true, "data": { "status": "needs_confirmation", "candidate": { "duration_min": 58, ... }, "candidate_id": "eff_cand_77" } }
+// Then POST /api/log-effort/confirm { "candidate_id": "eff_cand_77" }
+</pre>
+
+<h3>GET /api/today — AI: no (pure rules + history)</h3>
+<pre>
+{
+  "ok": true,
+  "data": {
+    "active_session": null,
+    "last_session": { "session_id": "ses_xyz", "date": "2026-06-08", "focus": "push" },
+    "plan": [
+      {
+        "exercise_id": "ex_bench_press",
+        "target": { "weight": 205, "reps": 6, "sets": 3 },
+        "decision": "hold",
+        "reasoning": "Hold 205 until clean 6s at RIR 2.",
+        "confidence": "high",
+        "last_performance": "205: 6/5/5 @ RIR 2/1/1"
+      }
+    ]
+  }
+}
+</pre>
+
+<h3>POST /api/chat — AI: yes (the only endpoint where the LLM generates the response)</h3>
+<pre>
+// Request
+{ "message": "should I go up on bench next time?", "conversation_id": "conv_5" }
+// Response
+{
+  "ok": true,
+  "data": {
+    "reply": "Not yet. You got 6/5/5 at 205 with RIR dropping to 1 on the last two sets. The standard is three clean sets of 6 at RIR 2. You're one good session away — get that, then we load to 210.",
+    "structured_actions": [],
+    "facts_used": [ "session:ses_xyz", "rule:bench_hold_205_until_clean_6s" ]
+  }
+}
+</pre>
+<p>If the model proposes an action, it returns a <code>structured_actions</code> array validated against <code>intentSchema</code> — the frontend renders a confirm card and only then calls <code>/api/log-set</code>. The model's prose never directly mutates state. <code>facts_used</code> enables auditing hallucinations.</p>
+
+<!-- ========== SECTION 4 ========== -->
+<h2 id="s4"><span class="section-num">4.</span> Database Schema</h2>
+
+<p>Postgres. UUIDs for PKs. Every table gets <code>created_at</code>/<code>updated_at</code>. Every domain table gets <code>user_id</code> <strong>now</strong> — one user row, no auth complexity, but no painful backfill later.</p>
+
+<table>
+  <thead><tr><th>Table</th><th>Key columns</th><th>Why it exists / design notes</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>users</strong></td>
+      <td><code>id</code>, <code>email</code> unique, <code>display_name</code></td>
+      <td>Exists so every other table has a real FK target. Index: email.</td>
+    </tr>
+    <tr>
+      <td><strong>user_preferences</strong></td>
+      <td><code>user_id</code> FK, <code>key</code>, <code>value</code> (jsonb)</td>
+      <td>Key-value because preferences churn — don't make each one a migration. Unique(user_id, key).</td>
+    </tr>
+    <tr>
+      <td><strong>exercises</strong></td>
+      <td><code>user_id</code> nullable, <code>canonical_name</code>, <code>muscle_group</code>, <code>lift_code</code>, <code>is_active</code></td>
+      <td>The canonical catalog. Per-user rows allow custom exercises without polluting the global catalog. Index: (user_id, canonical_name).</td>
+    </tr>
+    <tr>
+      <td><strong>exercise_aliases</strong></td>
+      <td><code>exercise_id</code> FK, <code>alias</code>, <code>source</code> (seed/parser_learned/user_confirmed), <code>confidence</code></td>
+      <td>Where "Ohp→Overhead Press", "Lats→Lat Pulldown" live. Confirmed match once → write alias → parser never asks again. <strong>This makes vocabulary data rather than code.</strong> Index: alias (parser's hottest lookup).</td>
+    </tr>
+    <tr>
+      <td><strong>sessions</strong></td>
+      <td><code>user_id</code> FK, <code>date</code>, <code>status</code> (active/finished/abandoned), <code>total_volume</code>, <code>source</code></td>
+      <td>Partial index on status='active' enforces the one-active-session rule cheaply.</td>
+    </tr>
+    <tr>
+      <td><strong>sets</strong></td>
+      <td><code>session_id</code> FK, <code>exercise_id</code> FK, <code>weight</code>, <code>reps</code>, <code>rir</code> nullable, <code>source</code>, <code>parser_event_id</code> FK nullable, <code>deleted_at</code> nullable</td>
+      <td>Absence of RIR is signal — never default it to a number. <code>parser_event_id</code> links committed sets to the raw text that produced them.</td>
+    </tr>
+    <tr>
+      <td><strong>set_revisions</strong></td>
+      <td><code>set_id</code> FK, <code>previous_values</code> (jsonb), <code>changed_fields</code> (text[]), <code>correction_source</code>, <code>raw_text</code></td>
+      <td>PATCH updates the live row and appends here. You can always answer "what did the parser originally hear vs. what did the user fix it to" — the data Codex needs to improve the parser.</td>
+    </tr>
+    <tr>
+      <td><strong>effort_logs</strong></td>
+      <td><code>session_id</code> FK unique, <code>duration_min</code>, <code>active_calories</code>, <code>avg_hr</code>, <code>peak_hr</code>, <code>source</code>, <code>screenshot_extraction</code> (jsonb)</td>
+      <td>Unique on session_id. Raw extraction stored alongside confirmed values gives an accuracy corpus for the vision pipeline.</td>
+    </tr>
+    <tr>
+      <td><strong>bodyweight_logs</strong></td>
+      <td><code>user_id</code>, <code>date</code>, <code>weight</code>, <code>notes</code></td>
+      <td>Build now (one migration), wire UI later.</td>
+    </tr>
+    <tr>
+      <td><strong>session_notes</strong></td>
+      <td><code>session_id</code> FK, <code>text</code>, <code>tags</code> (text[])</td>
+      <td>Separate from sessions because notes arrive mid-session via chat. Tagged pain notes feed <code>safetyRules</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>parser_events</strong></td>
+      <td><code>raw_text</code>, <code>parser_version</code>, <code>output</code> (jsonb), <code>confidence</code>, <code>resolution</code>, <code>fallback_used</code></td>
+      <td>Parser flight recorder and regression-test gold mine. Every weird string becomes a future test fixture.</td>
+    </tr>
+    <tr>
+      <td><strong>ai_coach_events</strong></td>
+      <td><code>user_message</code>, <code>context_snapshot</code> (jsonb), <code>reply</code>, <code>structured_actions</code> (jsonb), <code>facts_used</code> (text[]), <code>model</code>, <code>tokens</code></td>
+      <td>When the AI says something wrong, you can see precisely what context it had. Hallucination debugging is impossible without this.</td>
+    </tr>
+    <tr>
+      <td><strong>recommendations</strong></td>
+      <td><code>session_id</code> nullable (filled when logged), <code>payload</code> (jsonb), <code>rule_ids</code> (text[])</td>
+      <td>Enables plan-vs-actual adherence measurement later.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Raw vs. parsed vs. corrected:</strong> raw text → <code>parser_events.raw_text</code> (immutable). Parsed output → <code>parser_events.output</code> (immutable) and, on commit, <code>sets</code> rows linked via <code>parser_event_id</code>. Corrections → live values on <code>sets</code>, history in <code>set_revisions</code>. Three layers, nothing ever destroyed.</p>
+
+<p><strong>Multi-user without overbuilding:</strong> <code>user_id</code> on every table + a single seeded user + API-key auth resolving to that user. No orgs, no roles, no tenancy middleware. That's it. Resist anything more.</p>
+
+<!-- ========== SECTION 5 ========== -->
+<h2 id="s5"><span class="section-num">5.</span> Workout Parser Integration</h2>
+
+<h3>Pipeline</h3>
+<pre>
+raw text
+  → intentClassifier (cheap regex/keyword pre-pass: log? command? question? effort?)
+  → workoutLanguageParser (deterministic grammar)
+      ├─ confidence ≥ 0.9 → schema validation → rules validation → commit (or confirm-card if batch)
+      ├─ 0.5–0.9          → clarification question to user → re-parse with answer
+      └─ &lt; 0.5            → ai/intentFallback → intent proposal → ALWAYS user-confirmed → same validation → commit
+  → parser_events row written in ALL cases, including failures
+  → committed sets trigger rule flags → flags travel back in the response
+  → (chat-originated only) atlasCoach renders the confirmation/coaching line
+</pre>
+
+<p>The AI fallback's ceiling: its proposals are never auto-committed regardless of its self-reported confidence. Deterministic-high is the only auto-commit tier.</p>
+
+<h3>Parser Output Contract (<code>schemas/parserOutputSchema.js</code>)</h3>
+<pre>
+{
+  "parser_version": "1.4.0",
+  "intent": "log_sets | correct_set | finish_session | start_session | effort_capture | plan_request | question | unknown",
+  "confidence": 0.0,
+  "sets": [],
+  "correction": null,
+  "clarifications": [],
+  "unparsed_fragments": [],
+  "warnings": []
+}
+</pre>
+<p>Set object: <code>{ exercise_raw, exercise_id|null, alias_confidence, weight, weight_unit, reps, set_count, rir, is_warmup, source_fragment }</code>. <code>source_fragment</code> is the exact substring that produced the set — essential for clarification UX and debugging.</p>
+
+<h3>Grammar conventions to encode</h3>
+<p>In Dale's shorthand, <code>WEIGHT REPS/SETS</code> is the dominant pattern (<code>135 10/5</code> = 135 for 10 reps × 5 sets). Repeated weight groups chain (<code>185 8/3 225 5/2</code>). Bare <code>REPS/SETS</code> after a group inherits the weight (<code>240 5/2 5/1</code>). <code>x3</code> is a set multiplier. When two readings are grammatically valid, emit a clarification — the parser's prime directive is <em>never guess silently</em>.</p>
+
+<h3>Examples through the contract</h3>
+<p><strong>Successful parse</strong> — <code>"Ohp 95 10/4 105 10/2 10/2"</code>:</p>
+<pre>
+{ "intent": "log_sets", "confidence": 0.96,
+  "sets": [
+    { "exercise_raw": "Ohp", "exercise_id": "ex_overhead_press", "alias_confidence": 1.0, "weight": 95, "reps": 10, "set_count": 4 },
+    { "exercise_raw": "Ohp", "exercise_id": "ex_overhead_press", "weight": 105, "reps": 10, "set_count": 2 },
+    { "exercise_raw": "Ohp", "exercise_id": "ex_overhead_press", "weight": 105, "reps": 10, "set_count": 2 }
+  ], "clarifications": [] }
+</pre>
+
+<p><strong>Ambiguous parse</strong> — <code>"Lats 170 8/2 x3"</code>:</p>
+<pre>
+{ "intent": "log_sets", "confidence": 0.62,
+  "sets": [ { "exercise_raw": "Lats", "exercise_id": "ex_lat_pulldown", "alias_confidence": 0.85, "weight": 170, "reps": 8, "set_count": 2 } ],
+  "clarifications": [ {
+    "fragment": "x3",
+    "question": "Does x3 mean 3 total sets of 170×8, or repeat the 2 sets three times (6 sets)?",
+    "options": [
+      { "label": "3 sets total", "patch": { "set_count": 3 } },
+      { "label": "6 sets total", "patch": { "set_count": 6 } }
+    ]
+  } ] }
+</pre>
+
+<p><strong>Correction</strong> — <code>"actually that last bench set was 6 not 5"</code>:</p>
+<pre>
+{ "intent": "correct_set", "confidence": 0.91,
+  "correction": { "target": "last_set", "exercise_id": "ex_bench_press", "field_patches": { "reps": 6 }, "previous_claimed": { "reps": 5 } } }
+</pre>
+
+<!-- ========== SECTION 6 ========== -->
+<h2 id="s6"><span class="section-num">6.</span> AI Coaching Layer</h2>
+
+<h3>System prompt structure</h3>
+<pre>
+[IDENTITY]      Atlas: direct, concise strength coach. Short replies. No hype.
+[HARD RULES]    1. Only state numbers present in CONTEXT blocks. If a number
+                   isn't there, say you don't have it.
+                2. Never invent sessions, sets, or effort data.
+                3. RULE_DECISIONS are final. Explain them; never override them.
+                   If the user pushes back, restate the criterion to beat.
+                4. To log/correct data, emit a structured_action JSON block —
+                   never claim the data "is logged."
+                5. RIR 0–1 reported → acknowledge effort, counsel caution,
+                   never celebrate grinding.
+                6. Pain mention → stop coaching the load, flag it, suggest the
+                   note be tagged.
+[OUTPUT FORMAT] reply: ≤4 sentences default. structured_actions: array,
+                usually empty, validated downstream.
+</pre>
+
+<h3>Context blocks injected per request (~2–3k tokens budget)</h3>
+<pre>
+&lt;USER_PROFILE&gt;     name, units, training age, stated goals, injury history tags
+&lt;ACTIVE_SESSION&gt;   (if any) started 17:02 · bench: 135×10, 185×8, 205×6@RIR2, 205×5@RIR1
+&lt;RECENT_SESSIONS&gt;  last 5, compressed one line each:
+                   06-08 push 52min · bench 205: 6/5/5 @RIR 2/1/1 · ohp 105: 10/10
+                   06-06 legs 61min · squat 205: 7/6/6 @RIR 2/2/1 · PR: rep
+&lt;EXERCISE_STATE&gt;   bench — HOLD at 205 · criterion: 3×6 @RIR2 · progress: 2/3 · e1RM: +2.1%/30d
+&lt;RULE_DECISIONS&gt;   verbatim output of progressionRules/safetyRules incl. rule_id and reasoning
+&lt;PREFERENCES&gt;      "no grinding singles", "protect left shoulder", units=lb
+&lt;CONVERSATION&gt;     last ~10 turns of this conversation only
+</pre>
+
+<p>The compressed one-line session format matters: it's dense, unambiguous, and cheap. Don't inject raw JSON rows — the model wastes attention re-parsing them.</p>
+
+<h3>Few-shot examples (4–6 exchanges, highest-leverage)</h3>
+<ol>
+  <li>User asks to add weight early → model cites the rule criterion and holds the line.</li>
+  <li>User logs a set in chat → model emits <code>structured_action</code>, replies "Got it — confirm and I'll log 205×6."</li>
+  <li>User asks about a lift with no history → model says it has no data, asks one question.</li>
+  <li>User reports a grindy set → acknowledgment without celebration, caution note.</li>
+  <li>User mentions pain → load coaching stops, note-tagging suggested.</li>
+</ol>
+
+<h3>Enforcement beyond prompting</h3>
+<p><code>structured_actions</code> validate against <code>intentSchema</code> or get dropped with a logged failure. A post-pass regex extracts weights/reps from the reply and checks them against <code>facts_used</code> context — mismatches flag the event for review. The model literally cannot write to the DB because no tool/route exists for it.</p>
+
+<!-- ========== SECTION 7 ========== -->
+<h2 id="s7"><span class="section-num">7.</span> Rules Engine</h2>
+
+<p>Every rule is a pure function: <code>(history, currentSession, config) → { decision, rule_id, severity, reasoning, criterion_progress }</code>. Decisions are data, stored with the session, and the AI receives them verbatim. Dale's logic ships as the <strong>default config, expressed as parameters — not as code</strong> — so rule shapes generalize while his numbers stay his.</p>
+
+<h3>Progression rules</h3>
+<table>
+  <thead><tr><th>Rule</th><th>Logic</th><th>Example config</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>hold_until_clean</code></td>
+      <td>Hold load until N sessions with all working sets ≥ target reps at RIR ≥ threshold</td>
+      <td>Bench: <code>{ load: 205, target_reps: 6, min_rir: 2, required_sessions: 3 }</code></td>
+    </tr>
+    <tr>
+      <td><code>rep_ladder_before_load</code></td>
+      <td>After hitting rep pattern A, target pattern B before loading</td>
+      <td>Squat: after <code>205×7/6/6</code>, target <code>7/7/6</code> or <code>7×3</code>, then +load</td>
+    </tr>
+    <tr>
+      <td><code>load_increment</code></td>
+      <td>When criterion met: +5 lb upper, +10 lb lower (config per lift)</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>progression_pathway</code></td>
+      <td>Meta-rule: hold weight → build reps → build RIR consistency → then load. A lift is always in exactly one phase.</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Safety rules</h3>
+<table>
+  <thead><tr><th>Rule</th><th>Trigger</th><th>Output</th></tr></thead>
+  <tbody>
+    <tr><td><code>rir_caution</code></td><td>Any working set at RIR ≤ 1</td><td>Info flag; reply tone shifts to caution; never blocks the log</td></tr>
+    <tr><td><code>rir_drift</code></td><td>Session-over-session RIR at same load declining (2→1→1)</td><td>Warning: "fatigue accumulating at this load" — drifting sessions don't count as clean</td></tr>
+    <tr><td><code>junk_rep_guard</code></td><td>Rep PR at RIR 0</td><td>PR recorded with <code>quality: grind</code> — not celebrated</td></tr>
+    <tr><td><code>deload_warning</code></td><td>No progress in N sessions + RIR drift</td><td>Suggest −10% for one session (advisory)</td></tr>
+    <tr><td><code>missed_reps</code></td><td>Working set below target by ≥2 reps</td><td>Flag; 2 consecutive missed sessions → escalate toward deload</td></tr>
+    <tr><td><code>pain_flag</code></td><td>Note/chat tagged pain</td><td>Hard flag; AI must not coach load increases on that lift until user clears it</td></tr>
+    <tr><td><code>impossible_values</code></td><td>weight >1500, reps >100, RIR >10, e1RM jump >15% in one session</td><td>Reject at validation (422), never store</td></tr>
+    <tr><td><code>duplicate_session</code></td><td>Same date + >70% set overlap</td><td>409 + matching session id; require <code>force</code></td></tr>
+  </tbody>
+</table>
+
+<p><strong>PR detection</strong> (in progressService, quality-gated by rules): weight PR, rep PR at weight, e1RM PR — each recorded with <code>quality: clean | grind</code> from RIR. Only clean PRs get celebrated. That single design choice operationalizes "do not celebrate junk reps."</p>
+
+<!-- ========== SECTION 8 ========== -->
+<h2 id="s8"><span class="section-num">8.</span> Conversation Design</h2>
+
+<p>Atlas's voice in one line: <em>a good training partner who keeps the logbook and isn't impressed easily.</em> Templates (the AI paraphrases — these set length, tone, and information order):</p>
+
+<table>
+  <thead><tr><th>Trigger</th><th>Response template</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>"What are we doing today?"</td>
+      <td>Push day. Bench at 205 — the standard is still three clean 6s at RIR 2, you've got two. OHP after, 105 for 10s. Same lat work as Friday unless something's bugging you.</td>
+    </tr>
+    <tr>
+      <td>Clean set logged</td>
+      <td>205×6 at RIR 2. That's two clean sessions — one more like this and we load to 210.</td>
+    </tr>
+    <tr>
+      <td>Grindy set logged</td>
+      <td>Logged, 205×6 at RIR 0. That one cost you. It counts as reps but not toward the standard — I want those 6s with two left in the tank.</td>
+    </tr>
+    <tr>
+      <td>Milestone (clean)</td>
+      <td>That's the third clean session at 205. Standard met. Next bench day: 210, and don't be surprised if reps dip to 5s for a week — that's normal, not a problem.</td>
+    </tr>
+    <tr>
+      <td>Asks to add weight early</td>
+      <td>Not yet. Last session was 6/5/5 with RIR falling to 1 — that's strength being built, not strength ready to load. Beat the standard first: three sets of 6 at RIR 2. You're close.</td>
+    </tr>
+    <tr>
+      <td>Finishes session</td>
+      <td>Done — 14 sets, 12,450 lb total, 58 minutes. Bench moved the needle today. Got your Watch data?</td>
+    </tr>
+    <tr>
+      <td>Parser clarification</td>
+      <td>Quick check on "Lats 170 8/2 x3" — three total sets of 170×8, or the two sets repeated three times (six total)?</td>
+    </tr>
+  </tbody>
+</table>
+
+<p><strong>Anti-patterns</strong> (enforced in system prompt): no exclamation stacking, no "Great job!! 💪", no restating what the user just said at length, no hedging walls, no corporate safety boilerplate — caution is expressed as a coach would ("that one cost you"), not as a liability disclaimer.</p>
+
+<!-- ========== SECTION 9 ========== -->
+<h2 id="s9"><span class="section-num">9.</span> App / UI Implications</h2>
+
+<p>The frontend's job description: <strong>render backend state, capture input, stay dumb.</strong></p>
+
+<ul>
+  <li><strong>Live session state:</strong> backend owns the active session; frontend holds a local mirror keyed by <code>session_id</code>. On app open, <code>GET /api/today</code> reports any active session and the client rehydrates — a dead phone battery never loses a workout.</li>
+  <li><strong>Optimistic logging:</strong> render the set immediately as <code>pending</code>, reconcile on the <code>/api/log-set</code> response (which carries the authoritative <code>set_id</code> and any <code>rule_flags</code>). On failure, the row turns into an error state with retry — never silently vanishes.</li>
+  <li><strong>Set editing:</strong> every set row is tappable → edit sheet → PATCH. Show a subtle "edited" mark when <code>revision_count > 0</code>.</li>
+  <li><strong>Pending clarification state:</strong> a parser clarification is a blocking card attached to the specific text submission — option chips from the parser's <code>clarifications[].options</code>, plus a "let me retype it" escape hatch. The session keeps accepting other input; only the ambiguous fragment is held.</li>
+  <li><strong>Confirm cards:</strong> parser-batch commits and AI <code>structured_actions</code> render as the same component — proposed data table + Confirm/Edit/Discard. One pattern, learned once.</li>
+  <li><strong>Manual fallback:</strong> the structured set-entry form is always one tap away. Parser fails, chat is down — logging still works.</li>
+  <li><strong>Chat + structured hybrid:</strong> chat input routes through <code>/api/parse-workout-text</code>; recognized logs materialize as set rows (with confirm card), and conversation goes to <code>/api/chat</code>. The user shouldn't have to choose modes — <code>intentClassifier</code> chooses for them.</li>
+  <li><strong>Progress tab:</strong> exactly two calls — <code>/api/progress/overview</code> for landing, <code>/api/exercises/:id/progress</code> on drill-in. No client-side aggregation, no e1RM math in JS.</li>
+  <li><strong>Effort modal:</strong> triggered by <code>effort_prompt: true</code> at finish. Two paths: manual fields, or photo → candidate display with per-field edit → confirm. Extracted values are shown as editable, never auto-committed.</li>
+</ul>
+
+<!-- ========== SECTION 10 ========== -->
+<h2 id="s10"><span class="section-num">10.</span> Build Sequence</h2>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Step</th><th>Goal</th><th>Done when</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Parser test corpus</td><td>Freeze expected behavior before code</td><td>60+ cases: all §5 examples, every shorthand from real logs, ambiguity cases, garbage input</td></tr>
+    <tr><td>2</td><td>Parser contract schema</td><td>Freeze the output shape</td><td>Every test fixture validates against schema</td></tr>
+    <tr><td>3</td><td>Parser module</td><td>Implements against the corpus</td><td>All tier-1 tests green; ambiguous cases emit clarifications not guesses</td></tr>
+    <tr><td>4</td><td>Parser endpoint + flight recorder</td><td>Expose parser, log everything</td><td>POST returns contract output; every call writes <code>parser_events</code></td></tr>
+    <tr><td>5</td><td>Session/set data contract + DB</td><td>The session schema, both adapters</td><td>Postgres migrations run; sheetsAdapter passes same repo interface tests</td></tr>
+    <tr><td>6</td><td>log-session + duplicate guard</td><td>Batch commit path</td><td>Parsed session commits; dupes 409; invalid sets 422</td></tr>
+    <tr><td>7</td><td>Active session flow</td><td>start / log-set / patch / delete / finish</td><td>Full lifecycle works; corrections preserve history; one-active-session enforced</td></tr>
+    <tr><td>8</td><td>Rules engine v1</td><td>Dale's logic as config-driven rules</td><td>Bench-hold and squat-ladder rules produce correct decisions on fixture history</td></tr>
+    <tr><td>9</td><td>Recommendation endpoint</td><td>/api/today + /api/recommend-next-session</td><td>Plan reflects rule decisions with reasoning and last-performance strings</td></tr>
+    <tr><td>10</td><td>Context builder</td><td>DB → AI context blocks</td><td>Produces all §6 blocks, compressed format, ≤3k tokens on real data</td></tr>
+    <tr><td>11</td><td>AI chat endpoint</td><td>atlasCoach + audit trail</td><td>Replies grounded in context; structured_actions validate; events logged with context snapshot</td></tr>
+    <tr><td>12</td><td>AI parse fallback</td><td>Low-confidence text → intent proposals</td><td>Garbage-tier inputs produce schema-valid proposals flagged needs-confirmation</td></tr>
+    <tr><td>13</td><td>App integration: Train tab</td><td>Wire prototype UI to real endpoints</td><td>Live logging, optimistic rows, confirm cards, clarification cards all against real API</td></tr>
+    <tr><td>14</td><td>History/progress endpoints</td><td>Progress + Coach tabs go live</td><td>Overview + per-exercise endpoints serve charts incl. rule-state line</td></tr>
+    <tr><td>15</td><td>Effort importer</td><td>Watch screenshot → candidate → confirm</td><td>Screenshot → editable candidate → confirmed effort_logs row</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Steps 1–4 are the immediate priority.</strong> Step 5's adapter interface is the most important architectural moment in the list — it's what makes Sheets disposable.</p>
+
+<!-- ========== SECTION 11 ========== -->
+<h2 id="s11"><span class="section-num">11.</span> Risk Register</h2>
+
+<table>
+  <thead><tr><th>Risk</th><th>Why it matters</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>AI hallucinates logs/numbers</td>
+      <td>One invented "you benched 225 last week" destroys trust in every number Atlas ever shows</td>
+      <td>AI has no write path; <code>facts_used</code> audit; post-pass number check against context; <code>ai_coach_events</code> snapshots for every reply</td>
+    </tr>
+    <tr>
+      <td>Parser silently misreads shorthand</td>
+      <td>Wrong data is worse than no data — it poisons progression decisions invisibly</td>
+      <td>Confidence tiers with clarify-don't-guess; confirm cards on batch commits; <code>parser_events</code> + <code>set_revisions</code> make every misread visible and recoverable</td>
+    </tr>
+    <tr>
+      <td>Bad data corrupts progress trends</td>
+      <td>One 2250-lb typo wrecks every e1RM chart and rule decision downstream</td>
+      <td><code>impossible_values</code> rejection at the gate; e1RM-jump anomaly flag; soft deletes + revisions mean any cleanup is non-destructive</td>
+    </tr>
+    <tr>
+      <td>Frontend becomes too smart</td>
+      <td>Parsing or rules logic in the UI forks the source of truth</td>
+      <td>Hard rule: frontend renders and captures only. Any arithmetic on sets in frontend code is a defect.</td>
+    </tr>
+    <tr>
+      <td>Backend coupled to Dale-only language</td>
+      <td>"Ohp/Lats/Hammers" hard-coded = unusable for user #2 and brittle for Dale himself</td>
+      <td><code>exercise_aliases</code> table makes vocabulary data; rules take config not constants; parser handles structure, aliases handle names</td>
+    </tr>
+    <tr>
+      <td>Overbuilding the database early</td>
+      <td>Weeks on org/tenant/roles modeling for a one-user app is pure waste</td>
+      <td><code>user_id</code> column + single seeded user is the entire multi-user provision. Anything more is banned until there's a second user.</td>
+    </tr>
+    <tr>
+      <td>Google Sheets limitations</td>
+      <td>Slow, race-prone on concurrent writes, no transactions, quota limits</td>
+      <td>Sheets demoted to one adapter behind the repo interface (step 5); Postgres is the target; Sheets becomes an export format</td>
+    </tr>
+    <tr>
+      <td>Auth/security</td>
+      <td>Workout data is health-adjacent personal data; a bare API on the internet gets scraped</td>
+      <td>Now: API key header, HTTPS, rate limiting, key never in client bundles or logs. At user #2: JWT + per-user keys.</td>
+    </tr>
+    <tr>
+      <td>Watch effort parsing accuracy</td>
+      <td>Wrong HR/calories silently logged corrupts the fatigue picture</td>
+      <td>Candidate→confirm flow, never auto-commit; plausibility bounds; raw extraction stored beside confirmed values to measure accuracy</td>
+    </tr>
+    <tr>
+      <td>User trust erosion</td>
+      <td>Dale stops trusting Atlas the first time it's confidently wrong; trust loss is unrecoverable in a coaching product</td>
+      <td>Every recommendation carries reasoning + the data behind it; every commit is confirmable; every mistake is correctable with audit trail; AI says "I don't have that" instead of improvising. Trust is the actual product.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ========== SECTION 12 ========== -->
+<h2 id="s12"><span class="section-num">12.</span> Final Recommendation</h2>
+
+<p><strong>Build next, in order:</strong> the parser test corpus, then the parser, then the parser endpoint with <code>parser_events</code> logging (steps 1–4). Nothing else matters until text reliably becomes structured data, because every other component — rules, recommendations, AI coaching — consumes that output. Then the DB adapter interface and session contract (step 5), because that's the moment Sheets stops being a load-bearing wall.</p>
+
+<p><strong>Do not build yet:</strong> offline mode, multi-user auth beyond a <code>user_id</code> column, the Fuel tab, nutrition anything, voice input, social features, a recommendation ML model, or any rules-engine sophistication beyond Dale's actual current logic. Every one of these is a real future feature and a fake current priority. Also do not "improve" the AI by giving it more autonomy — the constraint <em>is</em> the design.</p>
+
+<p><strong>Freeze as contracts now, version them, and treat changes as breaking:</strong></p>
+<ol>
+  <li><strong>Parser output schema</strong> (§5) — the keystone contract. Codex builds against it, the backend consumes it, the test corpus validates it.</li>
+  <li><strong>Set/session schema</strong> (§4) — every engine reads these shapes.</li>
+  <li><strong>Rule decision shape</strong> — <code>{ decision, rule_id, severity, reasoning, criterion_progress }</code> — consumed by API responses, the AI context, and the UI alike.</li>
+  <li><strong>The write-path invariant</strong> — structured → validated → rules-checked → committed, with the AI permanently outside the gate proposing, never writing.</li>
+</ol>
+
+<div class="callout">
+  The prototype already proved the most important instinct: approve-before-save, dry-run proofs, deterministic enrichment with AI nowhere near the write path. The architecture above is that same instinct applied to the whole system. Atlas becomes a real conversational training system precisely to the degree that the conversation is a <em>view</em> over trustworthy structured data — and a chatbot stapled to a UI to the degree that it isn't. The parser corpus is the next commit. Start there.
+</div>
+
+<div class="footnote">
+  Atlas Architecture Pass — June 2026 &nbsp;·&nbsp; Generated from deep review session &nbsp;·&nbsp; This document is a design specification; no code was changed in its production.
+</div>
+
+</body>
+</html>
