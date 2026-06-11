@@ -8,7 +8,8 @@ const { normalizeDurationString } = require('../services/duration');
 const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
-  buildBodyweightHistory, previewTestRows, detectStalls
+  buildBodyweightHistory, previewTestRows, detectStalls,
+  buildWeeklyReport
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
@@ -1649,4 +1650,94 @@ test('readback: verification failure cannot affect write success — no throw, n
   // Must catch all errors and return false — never re-throw
   assert.match(fn, /catch/, 'must have a catch block');
   assert.match(fn, /return false/, 'catch must return false, not throw');
+});
+
+// ── Weekly Report ─────────────────────────────────────────────────────────────
+
+test('weekly report: buildWeeklyReport returns correct structure for a normal week', () => {
+  const today = '2026-06-11';
+  const rows = [
+    ['2026-06-05', 'W1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-06-05', 'W1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '8', '2', ''],
+    ['2026-06-08', 'W2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-06-08', 'W2', 'Overhead Press', 'Overhead Press', 'Shoulders', 'OHP', '1', '115', '8', '2', ''],
+  ];
+  const report = buildWeeklyReport(rows, { today });
+  assert.equal(report.period_start, '2026-06-05');
+  assert.equal(report.period_end, '2026-06-11');
+  assert.equal(report.sessions_count, 2);
+  assert.equal(report.total_sets, 4);
+  assert.ok(report.total_volume > 0, 'total_volume must be positive');
+  assert.ok(Array.isArray(report.top_exercises), 'top_exercises must be an array');
+  assert.ok(report.top_exercises.length > 0, 'must have at least one top exercise');
+  assert.ok(typeof report.summary_markdown === 'string', 'summary_markdown must be a string');
+  assert.match(report.summary_markdown, /Weekly Training Report/);
+  assert.match(report.summary_markdown, /Sessions: 2/);
+  // All required response keys must be present
+  for (const key of ['period_start', 'period_end', 'sessions_count', 'total_sets', 'total_volume', 'top_exercises', 'muscle_group_volume', 'prs', 'stalls_or_watchouts', 'recommendations', 'summary_markdown']) {
+    assert.ok(key in report, `response must include key: ${key}`);
+  }
+});
+
+test('weekly report: buildWeeklyReport returns zero-state for empty data', () => {
+  const report = buildWeeklyReport([], { today: '2026-06-11' });
+  assert.equal(report.sessions_count, 0);
+  assert.equal(report.total_sets, 0);
+  assert.equal(report.total_volume, 0);
+  assert.deepEqual(report.top_exercises, []);
+  assert.deepEqual(report.prs, []);
+  assert.deepEqual(report.stalls_or_watchouts, []);
+  assert.match(report.summary_markdown, /No training data/);
+});
+
+test('weekly report: buildWeeklyReport detects weight improvements vs prior period', () => {
+  const today = '2026-06-11';
+  const rows = [
+    // Prior week (Jun 4): BP at 215
+    ['2026-06-04', 'P1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '215', '8', '2', ''],
+    // This week (Jun 8): BP at 225 — improvement
+    ['2026-06-08', 'W1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '225', '8', '2', ''],
+  ];
+  const report = buildWeeklyReport(rows, { today });
+  assert.equal(report.prs.length, 1, 'must detect one improvement');
+  assert.equal(report.prs[0].lift_code, 'BP');
+  assert.equal(report.prs[0].prev_best, 215);
+  assert.equal(report.prs[0].this_week_best, 225);
+  assert.equal(report.prs[0].type, 'weight');
+  assert.match(report.summary_markdown, /Improvements/);
+});
+
+test('weekly report: buildWeeklyReport surfaces stalls from history for this week\'s lifts', () => {
+  const today = '2026-06-11';
+  const rows = [
+    // Stalled: 4 sessions at same weight, spread across weeks
+    ['2026-05-01', 'A1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-08', 'A2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-15', 'A3', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    // This week — same lift appears in report
+    ['2026-06-08', 'W1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+  ];
+  const report = buildWeeklyReport(rows, { today });
+  assert.equal(report.sessions_count, 1, 'only this week counted');
+  assert.ok(report.stalls_or_watchouts.some(s => s.liftCode === 'SQ'), 'SQ must be flagged as stalled');
+});
+
+test('weekly report: endpoint registered as GET and read-only', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/report/weekly');
+  assert.ok(route, 'route definition must exist');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+  assert.equal(route.authRequired, true);
+});
+
+test('weekly report: weekly-report-btn wired in app.js and renders summary_markdown', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /weekly-report-btn/, 'button must be referenced in app.js');
+  assert.match(appSource, /\/api\/report\/weekly/, 'must call /api/report/weekly endpoint');
+  const handlerStart = appSource.indexOf("getElementById('weekly-report-btn')");
+  assert.ok(handlerStart !== -1, 'button handler must be registered');
+  const handlerBlock = appSource.slice(handlerStart, handlerStart + 1700);
+  assert.match(handlerBlock, /summary_markdown/, 'must render summary_markdown from response');
+  assert.match(handlerBlock, /finally/, 'must re-enable button in finally block');
 });

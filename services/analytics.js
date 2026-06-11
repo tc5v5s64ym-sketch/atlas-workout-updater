@@ -516,6 +516,143 @@ function previewTestRows(logRows, effortRows) {
   };
 }
 
+function buildWeeklyReport(logRows, { days = 7, today = null } = {}) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  const refDate = today
+    ? new Date(today + 'T12:00:00Z')
+    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z');
+  const periodEnd = refDate.toISOString().slice(0, 10);
+  const periodStart = new Date(refDate.getTime() - (days - 1) * dayMs).toISOString().slice(0, 10);
+  const priorEnd = new Date(refDate.getTime() - days * dayMs).toISOString().slice(0, 10);
+  const priorStart = new Date(refDate.getTime() - (2 * days - 1) * dayMs).toISOString().slice(0, 10);
+
+  const weekRows = logRows.filter(row => {
+    const d = String(row[0] || '').slice(0, 10);
+    return d >= periodStart && d <= periodEnd && Number(row[7]) > 0;
+  });
+  const priorRows = logRows.filter(row => {
+    const d = String(row[0] || '').slice(0, 10);
+    return d >= priorStart && d <= priorEnd && Number(row[7]) > 0;
+  });
+
+  const sessions_count = new Set(
+    weekRows.map(r => String(r[1] || '').trim()).filter(Boolean)
+  ).size;
+
+  let total_sets = 0;
+  let total_volume = 0;
+  weekRows.forEach(row => {
+    total_sets++;
+    total_volume += (Number(row[7]) || 0) * (Number(row[8]) || 0);
+  });
+  total_volume = Math.round(total_volume);
+
+  // Top exercises by volume this week
+  const exerciseMap = new Map();
+  weekRows.forEach(row => {
+    const exercise = String(row[3] || row[2] || '').trim();
+    const liftCode = String(row[5] || '').trim();
+    const key = liftCode || exercise;
+    if (!key) return;
+    const vol = (Number(row[7]) || 0) * (Number(row[8]) || 0);
+    if (!exerciseMap.has(key)) exerciseMap.set(key, { exercise, lift_code: liftCode, volume: 0, sets: 0 });
+    const e = exerciseMap.get(key);
+    e.volume += vol;
+    e.sets++;
+  });
+  const top_exercises = [...exerciseMap.values()]
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 5)
+    .map(e => ({ ...e, volume: Math.round(e.volume) }));
+
+  // Muscle group volume this week
+  const muscle_group_volume = {};
+  weekRows.forEach(row => {
+    const mg = String(row[4] || 'Unknown').trim() || 'Unknown';
+    muscle_group_volume[mg] = (muscle_group_volume[mg] || 0) + (Number(row[7]) || 0) * (Number(row[8]) || 0);
+  });
+  for (const mg in muscle_group_volume) muscle_group_volume[mg] = Math.round(muscle_group_volume[mg]);
+
+  // PRs: this week's best weight vs prior week's best weight per lift
+  const thisBest = new Map();
+  weekRows.forEach(row => {
+    const liftCode = String(row[5] || '').trim();
+    if (!liftCode) return;
+    const weight = Number(row[7]) || 0;
+    const exercise = String(row[3] || row[2] || '').trim();
+    if (!thisBest.has(liftCode) || weight > thisBest.get(liftCode).best_weight) {
+      thisBest.set(liftCode, { best_weight: weight, exercise });
+    }
+  });
+  const priorBest = new Map();
+  priorRows.forEach(row => {
+    const liftCode = String(row[5] || '').trim();
+    if (!liftCode) return;
+    const weight = Number(row[7]) || 0;
+    if (!priorBest.has(liftCode) || weight > priorBest.get(liftCode).best_weight) {
+      priorBest.set(liftCode, { best_weight: weight });
+    }
+  });
+  const prs = [];
+  for (const [liftCode, { best_weight, exercise }] of thisBest) {
+    const prior = priorBest.get(liftCode);
+    if (prior && best_weight > prior.best_weight) {
+      prs.push({ lift_code: liftCode, exercise, prev_best: prior.best_weight, this_week_best: best_weight, type: 'weight' });
+    }
+  }
+
+  // Stalls: detect across full history, filter to lifts trained this week
+  const weekLiftCodes = new Set(thisBest.keys());
+  const stalls_or_watchouts = detectStalls(logRows, 3).filter(s => weekLiftCodes.has(s.liftCode));
+
+  // Recommendations for the top 3 lifts by volume this week
+  const recommendations = top_exercises
+    .filter(e => e.lift_code)
+    .slice(0, 3)
+    .map(e => {
+      const rec = recommendNextSet(logRows, e.lift_code);
+      return { lift_code: e.lift_code, recommendation: rec.recommendation, next_target: rec.next_target || null };
+    });
+
+  // summary_markdown
+  const lines = [`**Weekly Training Report** — ${periodStart} to ${periodEnd}`, ''];
+  if (sessions_count === 0) {
+    lines.push('No training data found for this period.');
+  } else {
+    lines.push(`Sessions: ${sessions_count} · Sets: ${total_sets} · Volume: ${total_volume.toLocaleString()} lb`);
+    if (top_exercises.length) {
+      lines.push(`Main lifts: ${top_exercises.map(e => e.exercise || e.lift_code).filter(Boolean).join(', ')}`);
+    }
+    const mgSorted = Object.entries(muscle_group_volume).sort((a, b) => b[1] - a[1]).slice(0, 4);
+    if (mgSorted.length) {
+      lines.push(`Volume by group: ${mgSorted.map(([mg, vol]) => `${mg} ${vol.toLocaleString()}`).join(' · ')}`);
+    }
+    if (prs.length) {
+      lines.push(`Improvements: ${prs.map(p => `${p.exercise || p.lift_code} ${p.prev_best} → ${p.this_week_best} lb`).join(', ')}`);
+    }
+    if (stalls_or_watchouts.length) {
+      lines.push(`Watchouts: ${stalls_or_watchouts.map(s => `${s.liftCode} stalled at ${s.last_best_weight} lb (${s.sessions_stalled} sessions)`).join(', ')}`);
+    }
+    const recLines = recommendations.filter(r => r.recommendation).map(r => `${r.lift_code}: ${r.recommendation}`);
+    if (recLines.length) lines.push(`Next focus: ${recLines.join(' · ')}`);
+  }
+  const summary_markdown = lines.join('\n');
+
+  return {
+    period_start: periodStart,
+    period_end: periodEnd,
+    sessions_count,
+    total_sets,
+    total_volume,
+    top_exercises,
+    muscle_group_volume,
+    prs,
+    stalls_or_watchouts,
+    recommendations,
+    summary_markdown
+  };
+}
+
 module.exports = {
   normalizeLogRow,
   buildSessionSummary,
@@ -528,5 +665,6 @@ module.exports = {
   previewTestRows,
   detectStalls,
   suggestDeloads,
-  computeFatigueStatus
+  computeFatigueStatus,
+  buildWeeklyReport
 };
