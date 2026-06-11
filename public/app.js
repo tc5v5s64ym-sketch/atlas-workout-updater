@@ -851,6 +851,7 @@ function collectManualEffort(sessionId, date, location, notes) {
 
 function invalidatePreview() {
   pendingWrite = null;
+  lastParserStatus = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
   const btn = document.getElementById('approve-btn');
