@@ -642,6 +642,53 @@ test('workout parser supports Dale bench shorthand', () => {
   assert.deepEqual(compactParsedSets(result), [[135, 10, 5], [185, 8, 3], [225, 5, 2]]);
 });
 
+test('slp_x_notation_does_not_create_70_rows', () => {
+  const result = parseWorkoutText('slp 70 x 12 @2');
+  // parseSetsFirst must not treat 70 as set count — guard rejects setCount > 10
+  assert.ok(result.sets === undefined || result.sets.length <= 10,
+    `expected ≤10 sets, got ${result.sets?.length}`);
+  assert.ok(!result.sets?.some(s => s.weight === 2),
+    'weight must not be 2 (the catastrophic misparse value)');
+});
+
+test('slp_multiplication_symbol_does_not_create_70_rows', () => {
+  // normalizeParserText converts × (U+00D7) to x before parsing
+  const result = parseWorkoutText('slp 70 × 12 @2');
+  assert.ok(result.sets === undefined || result.sets.length <= 10,
+    `expected ≤10 sets, got ${result.sets?.length}`);
+  assert.ok(!result.sets?.some(s => s.weight === 2),
+    'weight must not be 2 after multiplication-sign normalisation');
+});
+
+test('sets_first_small_count_boundary_still_safe', () => {
+  // parseSetsFirst setCount=3 is below the cap of 10 — must not produce wrong output
+  const result = parseWorkoutText('slp 3 x 10 @225');
+  // Either produces 3 sets at weight=225 or clarifies — neither is catastrophic
+  if (result.intent === 'log_sets') {
+    assert.equal(result.sets.length, 3);
+    assert.ok(result.sets.every(s => s.weight === 225),
+      'each set must have the correct weight when set-count notation is used');
+  } else {
+    assert.equal(result.intent, 'needs_clarification');
+  }
+});
+
+test('sets_first_above_cap_refuses', () => {
+  // setCount=11 exceeds the guard threshold — parseSetsFirst must return null
+  // and the input should clarify rather than produce 11 rows
+  const result = parseWorkoutText('slp 11 x 10 @225');
+  assert.ok(result.sets === undefined || result.sets.length <= 10,
+    `setCount 11 must not produce 11+ rows, got ${result.sets?.length}`);
+});
+
+test('slp_slash_notation_unaffected', () => {
+  // The fix must not regress normal slash (reps/RIR) shorthand for SLP
+  const result = parseWorkoutText('slp 70 12/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Single-Leg Seated Leg Press');
+  assert.deepEqual(compactParsedSets(result), [[70, 12, 2]]);
+});
+
 test('shorthand_single_group_slash_is_reps_rir', () => {
   const result = parseWorkoutText('Bench 225 5/2');
   assert.equal(result.intent, 'log_sets');
