@@ -496,6 +496,39 @@ test('conversational logger shows parser source without changing save gating', (
   assert.match(cssSource, /\.parser-status/);
 });
 
+test('backend down fallback parity and gating', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fallbackFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const local = parseWorkoutText('Bench 225 5/2');
+
+  assert.equal(local.intent, 'log_sets');
+  assert.equal(local.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(local), [[225, 5, 2]]);
+  assert.match(fallbackFunction, /Backend parser unavailable - using local parser fallback/);
+  assert.match(fallbackFunction, /lastParserStatus = \{ source: 'local' \}/);
+  assert.doesNotMatch(fallbackFunction, /pendingWrite\s*=/);
+  assert.match(appSource, /if \(!hasLogWorkoutNoWriteProof\(result\)\)/);
+  assert.match(appSource, /data\.test_mode === true/);
+  assert.match(appSource, /data\.sheet_written === false/);
+  assert.match(appSource, /data\.no_write_confirmed === true/);
+});
+
+test('parser source state clears on invalidate', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const invalidateFunction = appSource.slice(
+    appSource.indexOf('function invalidatePreview()'),
+    appSource.indexOf("document.getElementById('logger-form').addEventListener('input', invalidatePreview)")
+  );
+
+  assert.match(invalidateFunction, /pendingWrite = null/);
+  assert.match(invalidateFunction, /lastParserStatus = null/);
+  assert.match(invalidateFunction, /previewPanel\.hidden = true/);
+  assert.match(invalidateFunction, /btn\.disabled = true/);
+});
+
 test('log-workout test_mode preview exposes explicit no-write proof fields', () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
 
@@ -514,6 +547,28 @@ test('workout parser supports Dale bench shorthand', () => {
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'Bench Press');
   assert.deepEqual(compactParsedSets(result), [[135, 10, 5], [185, 8, 3], [225, 5, 2]]);
+});
+
+test('shorthand_single_group_slash_is_reps_rir', () => {
+  const result = parseWorkoutText('Bench 225 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.equal(result.sets.length, 1);
+  assert.deepEqual(compactParsedSets(result), [[225, 5, 2]]);
+});
+
+test('shorthand_chained_sets_inherit_weight', () => {
+  const result = parseWorkoutText('Squats 205 7/2 6/2 6/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Back Squat');
+  assert.deepEqual(compactParsedSets(result), [[205, 7, 2], [205, 6, 2], [205, 6, 1]]);
+});
+
+test('shorthand_multiple_weight_groups', () => {
+  const result = parseWorkoutText('Bench 135 10/4 185 8/3 225 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(compactParsedSets(result), [[135, 10, 4], [185, 8, 3], [225, 5, 2]]);
 });
 
 test('workout parser supports Dale squat shorthand with implied same weight', () => {
@@ -542,6 +597,29 @@ test('workout parser supports xN repeat shorthand for lats, face pulls, and leg 
   const legCurls = parseWorkoutText('Leg curls 70 15/2 x3');
   assert.equal(legCurls.canonical_name, 'Leg Curl');
   assert.deepEqual(compactParsedSets(legCurls), [[70, 15, 2], [70, 15, 2], [70, 15, 2]]);
+});
+
+test('x3_means_three_total_instances', () => {
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.equal(result.sets.length, 3);
+  assert.deepEqual(compactParsedSets(result), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
+});
+
+test('x3_with_no_previous_set_cannot_invent_rows', () => {
+  const result = parseWorkoutText('Bench x3');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
+  assert.match(result.message, /Could not find sets|no valid sets/i);
+  assert.ok(result.warnings.includes('missing_sets'));
+});
+
+test('implied_weight_carries_across_slash_groups', () => {
+  const result = parseWorkoutText('Ohp 95 10/3 10/2 9/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Overhead Press');
+  assert.deepEqual(compactParsedSets(result), [[95, 10, 3], [95, 10, 2], [95, 9, 1]]);
 });
 
 test('workout parser supports hammer curl shorthand', () => {
@@ -639,6 +717,23 @@ test('workout parser keeps press aliases safe and specific', () => {
   const generic = parseWorkoutText('Press 105 8/2');
   assert.equal(generic.intent, 'needs_clarification');
   assert.match(generic.message, /Which press/);
+});
+
+test('ambiguous_press_asks_never_guesses', () => {
+  const result = parseWorkoutText('Press 135 8/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.match(result.message, /Which press/);
+  assert.equal(result.sets, undefined);
+  assert.notEqual(result.canonical_name, 'Overhead Press');
+  assert.notEqual(result.canonical_name, 'Bench Press');
+  assert.notEqual(result.canonical_name, 'Incline DB Press');
+});
+
+test('finish_session_log_everything', () => {
+  const result = parseWorkoutText('Log everything to spreadsheet');
+  assert.equal(result.intent, 'finish_session');
+  assert.equal(result.requires_effort_check, true);
+  assert.equal(result.sets, undefined);
 });
 
 test('parser does not leak implied weight across multiple exercises', () => {
