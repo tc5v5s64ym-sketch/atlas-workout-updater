@@ -739,6 +739,51 @@ test('workout parser supports xN repeat shorthand for lats, face pulls, and leg 
   assert.deepEqual(compactParsedSets(legCurls), [[70, 15, 2], [70, 15, 2], [70, 15, 2]]);
 });
 
+test('wd_alias_parses_weighted_dips', () => {
+  const result = parseWorkoutText('Wd 45 10/1 8/2 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Dips (Weighted)');
+  assert.deepEqual(compactParsedSets(result), [[45, 10, 1], [45, 8, 2], [45, 8, 2]]);
+});
+
+test('kr_bodyweight_repeat_parses_three_sets', () => {
+  const result = parseWorkoutText('Kr 15 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(set => set.weight === null && set.weight_unit === null));
+  assert.deepEqual(result.sets.map(set => [set.reps, set.rir]), [[15, null], [15, null], [15, null]]);
+});
+
+test('dale_repeat_x3_still_works', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
+});
+
+test('dale_repeat_x10_boundary_allowed', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x10');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.equal(result.sets.length, 10);
+  assert.ok(result.sets.every(set => set.weight === 170 && set.reps === 8 && set.rir === 2));
+});
+
+test('dale_repeat_x11_refuses', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x11');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
+  assert.ok(result.warnings.includes('missing_sets'));
+});
+
+test('dale_repeat_x99_refuses', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x99');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
+  assert.ok(result.warnings.includes('missing_sets'));
+});
+
 test('x3_means_three_total_instances', () => {
   const result = parseWorkoutText('Lat pulldown 170 8/2 x3');
   assert.equal(result.intent, 'log_sets');

@@ -22,7 +22,7 @@ const EXERCISE_ALIASES = [
   ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
-  ['Dips (Weighted)', ['weighted dips', 'dips', 'dip']],
+  ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
 ];
 
 const AMBIGUOUS_ALIASES = {
@@ -341,6 +341,18 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
+  if (exercise.canonicalName === 'Hanging Knee Raises') {
+    const bodyweightSets = parseBodyweightReps(exercise.rest);
+    if (bodyweightSets.length) {
+      return buildLogResult({
+        rawText,
+        rawName: titleCaseFallback(exercise.rawName),
+        canonicalName: exercise.canonicalName,
+        sets: bodyweightSets,
+      });
+    }
+  }
+
   if (exercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(exercise.rest)) {
     const reps = extractNumbers(exercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
     return {
@@ -476,6 +488,7 @@ function parseDaleShorthand(text) {
     const repeat = token.match(/^x(\d+)$/i);
     if (repeat && previousSet) {
       const totalInstances = Number(repeat[1]);
+      if (totalInstances > 10) return null;
       for (let copy = 1; copy < totalInstances; copy += 1) {
         sets.push({ ...previousSet });
       }
@@ -520,6 +533,18 @@ function parseDaleShorthand(text) {
   }
 
   return sets;
+}
+
+function parseBodyweightReps(text) {
+  const cleaned = normalizeParserText(text);
+  const repeatMatch = cleaned.match(/^(\d+)\s*x(\d+)$/i);
+  if (repeatMatch) {
+    const reps = Number(repeatMatch[1]);
+    const count = Number(repeatMatch[2]);
+    if (count > 10) return [];
+    return Array.from({ length: count }, () => setRecord({ weight: null, reps, rir: null, weight_unit: null }));
+  }
+  return [];
 }
 
 function looksLikeBodyweightRepsOnly(text) {
