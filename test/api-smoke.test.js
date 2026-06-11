@@ -302,6 +302,7 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
     assert.equal(response.status, 200);
     assert.equal(body.status, 'ok');
     assert.equal(body.data.sheet_write, 'success');
+    assert.ok(body.data.log_rows_written > 0, `log_rows_written must be > 0, got ${body.data.log_rows_written}`);
 
     // Exactly one appendRows call — no effort row, so only the log append fires
     assert.equal(fakeSheetsState.appendCalls.length, 1);

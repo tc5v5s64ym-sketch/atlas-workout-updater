@@ -1645,6 +1645,7 @@ app.post('/api/log-workout', async (req, res) => {
     const responseBody = {
       message: 'Workout data appended successfully.',
       logAppendedRange: logResponse.data.updates?.updatedRange,
+      log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
       effortWritten: Boolean(formattedEffortRow),
       test_mode: false,
       sheet_write: 'success'

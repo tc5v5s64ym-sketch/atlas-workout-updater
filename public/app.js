@@ -1126,6 +1126,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       if (writeResult?.data?.sheet_write !== 'success') {
         throw new Error(`Write response did not confirm success (sheet_write=${writeResult?.data?.sheet_write ?? 'missing'}). Check Sheets.`);
       }
+      if (!(Number(writeResult?.data?.log_rows_written || 0) > 0)) {
+        throw new Error(`Write confirmed but log_rows_written=${writeResult?.data?.log_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
+      }
     }
     invalidatePreview();
     document.getElementById('logger-form').reset();
