@@ -31,7 +31,8 @@ const {
   previewTestRows,
   detectStalls,
   suggestDeloads,
-  computeFatigueStatus
+  computeFatigueStatus,
+  buildWeeklyReport
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -1031,6 +1032,24 @@ app.get('/api/summary/weekly', async (req, res) => {
     });
   } catch (error) {
     return standardError(req, res, 'Failed to build weekly summary', error.message, 500);
+  }
+});
+
+// GET /api/report/weekly
+// Returns a structured weekly training report using existing log data.
+// Uses the prior period of equal length for PR/improvement comparisons.
+// Optional ?days=N overrides the default 7-day lookback (range: 3–14).
+app.get('/api/report/weekly', async (req, res) => {
+  const rawDays = parseInt(req.query.days || '7', 10);
+  if (Number.isNaN(rawDays) || rawDays < 3 || rawDays > 14) {
+    return standardError(req, res, 'days must be an integer between 3 and 14', null, 400);
+  }
+  try {
+    const allLog = await getRecentRows(logSheetName, 1000);
+    const report = buildWeeklyReport(allLog, { days: rawDays });
+    return standardSuccess(req, res, 'Weekly report', report);
+  } catch (error) {
+    return standardError(req, res, 'Failed to build weekly report', error.message, 500);
   }
 });
 

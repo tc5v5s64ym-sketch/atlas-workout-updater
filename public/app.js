@@ -463,6 +463,46 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
   }
 });
 
+/* ===== Weekly Report ===== */
+
+document.getElementById('weekly-report-btn').addEventListener('click', async () => {
+  const box = document.getElementById('weekly-report-result');
+  const btn = document.getElementById('weekly-report-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  box.innerHTML = '<span class="muted">Loading…</span>';
+  try {
+    const res = await api('/api/report/weekly');
+    const data = res.data || {};
+    box.innerHTML = '';
+    if (data.summary_markdown) {
+      box.appendChild(el('pre', { style: 'white-space:pre-wrap;font-family:inherit;font-size:0.9rem;line-height:1.6;margin:0' }, [data.summary_markdown]));
+    }
+    if (data.prs && data.prs.length) {
+      box.appendChild(el('h3', { text: 'Improvements this week' }));
+      box.appendChild(renderTable(
+        ['Lift', 'Prior best', 'This week'],
+        data.prs.map(p => [p.exercise || p.lift_code, `${p.prev_best} lb`, `${p.this_week_best} lb`])
+      ));
+    }
+    if (data.stalls_or_watchouts && data.stalls_or_watchouts.length) {
+      box.appendChild(el('h3', { text: 'Watchouts' }));
+      box.appendChild(renderTable(
+        ['Lift', 'Sessions stalled', 'Last best'],
+        data.stalls_or_watchouts.map(s => [s.liftCode, s.sessions_stalled, `${s.last_best_weight} lb`])
+      ));
+    }
+    if (!data.sessions_count) {
+      box.appendChild(el('p', { class: 'muted', text: 'No training data logged in this period.' }));
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Load weekly report';
+  }
+});
+
 /* ===== Lift-link navigation (dashboard → progress) ===== */
 
 document.addEventListener('click', e => {
