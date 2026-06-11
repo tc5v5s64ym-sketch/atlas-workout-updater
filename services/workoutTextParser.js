@@ -124,10 +124,9 @@ function findExerciseMentions(text) {
       if (!aliasWords.length) continue;
       for (let i = 0; i <= normalizedWords.length - aliasWords.length; i += 1) {
         if (normalizedWords.slice(i, i + aliasWords.length).join(' ') === aliasWords.join(' ')) {
-          const end = i + aliasWords.length;
-          const key = `${canonicalName}:${i}:${end}`;
+          const key = `${canonicalName}:${i}:${i + aliasWords.length}`;
           if (!seen.has(key)) {
-            mentions.push({ canonicalName, index: i, end, alias });
+            mentions.push({ canonicalName, index: i, alias, aliasWords });
             seen.add(key);
           }
         }
@@ -136,11 +135,11 @@ function findExerciseMentions(text) {
   }
 
   return mentions
-    .sort((a, b) => (b.end - b.index) - (a.end - a.index))
-    .filter((mention, index, sortedMentions) => !sortedMentions.some((other, otherIndex) =>
-      otherIndex < index &&
+    .filter(mention => !mentions.some(other =>
+      other.canonicalName !== mention.canonicalName &&
       other.index <= mention.index &&
-      other.end >= mention.end
+      other.index + other.aliasWords.length >= mention.index + mention.aliasWords.length &&
+      other.aliasWords.length > mention.aliasWords.length
     ));
 }
 

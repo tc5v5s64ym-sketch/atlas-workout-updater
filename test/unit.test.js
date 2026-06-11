@@ -859,21 +859,28 @@ test('workout parser keeps press aliases safe and specific', () => {
   assert.match(generic.message, /Which press/);
 });
 
-test('rdl_long_form_is_single_exercise', () => {
+test('rdl_full_phrase_parses_as_single_exercise', () => {
   const result = parseWorkoutText('Romanian deadlift 185 5/2');
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'RDL');
   assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
 });
 
-test('rdl_short_form_is_single_exercise', () => {
+test('rdl_short_phrase_parses_as_single_exercise', () => {
   const result = parseWorkoutText('romanian dl 185 5/2');
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'RDL');
   assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
 });
 
-test('rdl_then_deadlift_is_still_mixed', () => {
+test('rdl_code_still_works', () => {
+  const result = parseWorkoutText('RDL 185 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
+});
+
+test('rdl_and_deadlift_together_is_still_mixed', () => {
   const result = parseWorkoutText('RDL 185 5/2 deadlift 225 3/2');
   assert.equal(result.intent, 'needs_clarification');
   assert.match(result.message, /multiple exercises|mixed exercise/i);
