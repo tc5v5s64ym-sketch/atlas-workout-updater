@@ -32,7 +32,8 @@ const {
   detectStalls,
   suggestDeloads,
   computeFatigueStatus,
-  buildWeeklyReport
+  buildWeeklyReport,
+  buildExerciseDetail
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -705,6 +706,21 @@ app.get('/api/exercises/:liftCode/progress', async (req, res) => {
     return standardSuccess(req, res, 'Exercise progress', progress);
   } catch (error) {
     return standardError(req, res, 'Failed to fetch exercise progress', error.message, 500);
+  }
+});
+
+// GET /api/exercises/:liftCode/detail
+// Combined single-call exercise detail: names, session count, last 5 sessions,
+// best recent set (30-day window), volume trend, and current recommendation.
+app.get('/api/exercises/:liftCode/detail', async (req, res) => {
+  const liftCode = String(req.params.liftCode || '').trim();
+  if (!liftCode) return standardError(req, res, 'liftCode is required in path', null, 400);
+  try {
+    const allLog = await getRecentRows(logSheetName, 1000);
+    const detail = buildExerciseDetail(allLog, liftCode);
+    return standardSuccess(req, res, 'Exercise detail', detail);
+  } catch (error) {
+    return standardError(req, res, 'Failed to fetch exercise detail', error.message, 500);
   }
 });
 

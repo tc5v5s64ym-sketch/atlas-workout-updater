@@ -31,6 +31,7 @@ const routeDefinitions = [
   { path: '/api/log-workout/verify-range', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/session/:sessionId/summary', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/exercises/:liftCode/progress', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/exercises/:liftCode/detail', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/volume/muscle-groups', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/search/sessions', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/bodyweight', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
