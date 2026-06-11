@@ -739,8 +739,16 @@ function parserStatusNode(status) {
 
 function rowsFromBackendParsedWorkout(parsed) {
   if (!parsed || parsed.intent !== 'log_sets' || !Array.isArray(parsed.sets)) {
-    const message = parsed?.message || parsed?.warnings?.join(' | ') || `Parser returned ${parsed?.intent || 'no'} intent.`;
-    throw new Error(message);
+    let message = parsed?.message || parsed?.warnings?.join(' | ') || 'Parser needs clarification.';
+    if (parsed?.intent === 'finish_session') {
+      message = 'That looks like a finish/save command. Enter or review workout rows first, then run Preview before approving a write.';
+    } else if (parsed?.intent === 'effort_capture') {
+      message = 'That looks like watch/effort data. Enter it in the Effort fields below.';
+    }
+    const err = new Error(message);
+    err.noFallback = true;
+    err.displayMessage = message;
+    throw err;
   }
 
   const exercise = parsed.canonical_name || parsed.exercise || parsed.raw_name || '';
@@ -773,11 +781,17 @@ async function parseWorkoutTextWithBackend(workoutText) {
 
   const data = result?.data || {};
   if (data.test_mode !== true || data.sheet_written !== false || data.no_write_confirmed !== true) {
-    throw new Error('Backend parser did not prove no-write safety.');
+    const err = new Error('Backend parser did not prove no-write safety.');
+    err.noFallback = true;
+    throw err;
   }
 
   const rows = rowsFromBackendParsedWorkout(data.parsed);
-  if (!rows.length) throw new Error('Backend parser did not produce any set rows.');
+  if (!rows.length) {
+    const err = new Error('Backend parser did not produce any set rows.');
+    err.noFallback = true;
+    throw err;
+  }
   return { rows, warnings: data.warnings || [] };
 }
 
@@ -795,6 +809,7 @@ async function rowsFromWorkoutInput() {
       populateSetRows(parsed.rows);
       lastParserStatus = { source: 'backend' };
     } catch (backendError) {
+      if (!shouldUseLocalFallback(backendError)) throw backendError;
       setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
       const parsed = parseWorkoutText(workoutText);
       if (parsed.errors.length > 0) {
@@ -809,6 +824,11 @@ async function rowsFromWorkoutInput() {
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = workoutText;
   }
+}
+
+function shouldUseLocalFallback(err) {
+  return err.noFallback !== true &&
+    (err.status === undefined || err.status >= 500);
 }
 
 function effortMode() {
@@ -896,7 +916,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     await rowsFromWorkoutInput();
     logRows = collectLogRows(sessionId, date);
   } catch (err) {
-    setStatus(loggerStatus, `Could not parse workout text: ${err.message}`, 'error');
+    setStatus(loggerStatus, err.displayMessage || `Could not parse workout text: ${err.message}`, 'error');
     return;
   }
 

@@ -447,6 +447,99 @@ test('conversational logger converts backend parser output to editable rows', ()
   assert.match(converter, /rir: set\.rir == null \? '' : String\(set\.rir\)/);
 });
 
+test('fallback_gate_classifies_errors_correctly', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const helperSource = appSource.slice(
+    appSource.indexOf('function shouldUseLocalFallback(err)'),
+    appSource.indexOf('function effortMode()')
+  );
+  const shouldUseLocalFallback = new Function(`${helperSource}; return shouldUseLocalFallback;`)();
+
+  assert.equal(shouldUseLocalFallback(new Error('network failed')), true);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('server failed'), { status: 500 })), true);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('server unavailable'), { status: 503 })), true);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('bad request'), { status: 400 })), false);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('unauthorized'), { status: 401 })), false);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('forbidden'), { status: 403 })), false);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('clarify'), { noFallback: true })), false);
+});
+
+test('clarification_intents_are_tagged_no_fallback', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const converterSource = appSource.slice(
+    appSource.indexOf('function rowsFromBackendParsedWorkout(parsed)'),
+    appSource.indexOf('async function parseWorkoutTextWithBackend')
+  );
+  const rowsFromBackendParsedWorkout = new Function(`${converterSource}; return rowsFromBackendParsedWorkout;`)();
+  const press = buildWorkoutTextParseDryRunResponse({
+    text: 'Press 135 8/2',
+    test_mode: 'true'
+  });
+
+  assert.throws(
+    () => rowsFromBackendParsedWorkout(press.parsed),
+    err => err.noFallback === true && /Which press/i.test(err.message)
+  );
+  assert.throws(
+    () => rowsFromBackendParsedWorkout({ intent: 'finish_session', sets: [] }),
+    err => err.noFallback === true && /finish\/save command/i.test(err.message)
+  );
+  assert.throws(
+    () => rowsFromBackendParsedWorkout({ intent: 'effort_capture', sets: [] }),
+    err => err.noFallback === true && /watch\/effort data/i.test(err.message)
+  );
+});
+
+test('clarification_blocks_local_parser_invocation', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const catchStart = rowsFunction.indexOf('catch (backendError)');
+  const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;', catchStart);
+  const localParserCall = rowsFunction.indexOf('parseWorkoutText(workoutText)', catchStart);
+
+  assert.ok(catchStart >= 0);
+  assert.ok(rethrowCheck > catchStart);
+  assert.ok(localParserCall > rethrowCheck);
+});
+
+test('parser_status_label_cannot_lie', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const localAssignments = appSource.match(/lastParserStatus = \{ source: 'local' \}/g) || [];
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const catchStart = rowsFunction.indexOf('catch (backendError)');
+  const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;', catchStart);
+  const localStatus = rowsFunction.indexOf("lastParserStatus = { source: 'local' }", catchStart);
+  const noFallbackPath = rowsFunction.slice(catchStart, rethrowCheck);
+
+  assert.equal(localAssignments.length, 1);
+  assert.ok(localStatus > rethrowCheck);
+  assert.doesNotMatch(noFallbackPath, /lastParserStatus\s*=/);
+});
+
+test('clarification_leaves_text_unparsed', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const backendPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)');
+  const localPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)', backendPopulate + 1);
+  const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;');
+  const markParsed = rowsFunction.indexOf('lastParsedWorkoutText = workoutText');
+
+  assert.ok(backendPopulate >= 0);
+  assert.ok(localPopulate > backendPopulate);
+  assert.ok(markParsed > backendPopulate);
+  assert.ok(markParsed > localPopulate);
+  assert.ok(rethrowCheck < markParsed);
+});
+
 test('conversational logger backend parser success alone cannot enable save', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const parserFunction = appSource.slice(
