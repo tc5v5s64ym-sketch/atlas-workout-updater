@@ -113,6 +113,35 @@ function findExerciseInText(text) {
   return null;
 }
 
+function findExerciseMentions(text) {
+  const normalizedWords = normalizeKey(text).split(' ').filter(Boolean);
+  const mentions = [];
+  const seen = new Set();
+
+  for (const [canonicalName, names] of EXERCISE_ALIASES) {
+    for (const alias of names) {
+      const aliasWords = normalizeKey(alias).split(' ').filter(Boolean);
+      if (!aliasWords.length) continue;
+      for (let i = 0; i <= normalizedWords.length - aliasWords.length; i += 1) {
+        if (normalizedWords.slice(i, i + aliasWords.length).join(' ') === aliasWords.join(' ')) {
+          const key = `${canonicalName}:${i}`;
+          if (!seen.has(key)) {
+            mentions.push({ canonicalName, index: i, alias });
+            seen.add(key);
+          }
+        }
+      }
+    }
+  }
+
+  return mentions;
+}
+
+function hasMultipleExerciseMentions(text) {
+  const canonicalNames = new Set(findExerciseMentions(text).map(mention => mention.canonicalName));
+  return canonicalNames.size > 1;
+}
+
 function stripExerciseText(text, exerciseKey) {
   const normalizedWords = normalizeKey(text).split(' ');
   const exerciseWords = exerciseKey.split(' ');
@@ -150,7 +179,7 @@ function detectIntent(text) {
   if (/\b(delete last set|remove last set|delete that|remove that)\b/.test(normalized)) {
     return 'delete_last_set';
   }
-  if (/\b(change that to|make that|rir was|call it)\b/.test(normalized)) {
+  if (/\b(change that to|make that|rir was|call it|change rir to|change reps to|change weight to|actually call it)\b/.test(normalized)) {
     return 'update_last_set';
   }
   if (/\b(duration|active calories|active|total calories|avg hr|average hr|peak hr|watch data|apple watch)\b/.test(normalized)) {
@@ -214,12 +243,30 @@ function buildWorkoutTextParseDryRunResponse(payload) {
 }
 
 function parseUpdateLastSet(rawText) {
-  const rir = parseNumberMatch(rawText.match(/\brir\s*(?:was|to|=)?\s*(\d+(?:\.\d+)?)/i) || rawText.match(/\b(?:call it|to)\s*(\d+(?:\.\d+)?)/i));
+  const rir = parseNumberMatch(
+    rawText.match(/\brir\s*(?:was|to|=)?\s*(\d+(?:\.\d+)?)/i) ||
+    rawText.match(/\b(?:call it|actually call it)\s+rir\s*(\d+(?:\.\d+)?)/i)
+  );
+  const reps = parseNumberMatch(rawText.match(/\breps?\s*(?:was|to|=)?\s*(\d+(?:\.\d+)?)/i));
+  const weight = parseNumberMatch(rawText.match(/\bweight\s*(?:was|to|=)?\s*(\d+(?:\.\d+)?)/i));
+  if (rir == null && reps == null && weight == null) {
+    const bareNumber = parseNumberMatch(rawText.match(/\b(?:change that to|make that|call it|to)\s*(\d+(?:\.\d+)?)\b/i));
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: bareNumber == null
+        ? 'What should change - reps, weight, or RIR?'
+        : `${bareNumber} what - reps, weight, or RIR?`,
+      warnings: ['ambiguous_correction_field'],
+    };
+  }
   return {
     intent: 'update_last_set',
     raw_text: rawText,
     update: {
       ...(rir == null ? {} : { rir }),
+      ...(reps == null ? {} : { reps }),
+      ...(weight == null ? {} : { weight }),
     },
   };
 }
@@ -253,6 +300,15 @@ function parseNumberMatch(match) {
 }
 
 function parseLogSets(rawText, context = {}) {
+  if (hasMultipleExerciseMentions(rawText)) {
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: 'This looks like mixed exercise input. Log one exercise at a time or split the exercises first.',
+      warnings: ['multiple_exercises_in_input'],
+    };
+  }
+
   const exercise = findExerciseInText(rawText);
   if (exercise?.ambiguous) {
     return {
