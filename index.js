@@ -43,15 +43,14 @@ const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
 
-validateConfig();
-(async () => {
+async function runStartupDiagnostics() {
   try {
     const tabs = await getSpreadsheetTabs();
     console.log(JSON.stringify({ event: 'startup_diagnostics', ok: true, tabs_present: tabs.length, required_env: ['ATLAS_API_KEY','GOOGLE_SHEETS_ID','GOOGLE_SERVICE_ACCOUNT_EMAIL','GOOGLE_PRIVATE_KEY','OPENAI_API_KEY'] }));
   } catch (error) {
     console.log(JSON.stringify({ event: 'startup_diagnostics', ok: false, error: error.message }));
   }
-})();
+}
 
 const atlasApiKey = process.env.ATLAS_API_KEY;
 
@@ -1694,7 +1693,18 @@ app.use((err, req, res, next) => {
   );
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Atlas Workout Updater listening on port ${port}`);
-});
+function startServer() {
+  validateConfig();
+  runStartupDiagnostics();
+
+  const port = process.env.PORT || 3000;
+  return app.listen(port, () => {
+    console.log(`Atlas Workout Updater listening on port ${port}`);
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { app, startServer };
