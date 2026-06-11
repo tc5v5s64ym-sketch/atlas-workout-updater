@@ -1144,6 +1144,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   approveBtn.disabled = true;
   approveBtn.textContent = 'Writing to Sheets…';
 
+  let pendingLastWrite = null;
   try {
     if (pendingWrite.mode === 'screenshot') {
       const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
@@ -1165,7 +1166,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       if (!(Number(writeResult?.data?.log_rows_written || 0) > 0)) {
         throw new Error(`Write confirmed but log_rows_written=${writeResult?.data?.log_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
       }
-      lastWrite = {
+      // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
+      pendingLastWrite = {
         log_appended_range: writeResult.data.logAppendedRange,
         session_id: realPayload.session_id,
         log_rows_written: writeResult.data.log_rows_written
@@ -1179,7 +1181,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     lastParserStatus = null;
     setDefaultDate();
     setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
-    if (lastWrite) {
+    if (pendingLastWrite) {
+      lastWrite = pendingLastWrite;
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);
       loggerStatus.appendChild(undoBtn);
