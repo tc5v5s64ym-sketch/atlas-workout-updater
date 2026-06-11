@@ -723,23 +723,73 @@ function parseWorkoutText(text) {
   return { rows, errors };
 }
 
+function rowsFromBackendParsedWorkout(parsed) {
+  if (!parsed || parsed.intent !== 'log_sets' || !Array.isArray(parsed.sets)) {
+    const message = parsed?.message || parsed?.warnings?.join(' | ') || `Parser returned ${parsed?.intent || 'no'} intent.`;
+    throw new Error(message);
+  }
+
+  const exercise = parsed.canonical_name || parsed.exercise || parsed.raw_name || '';
+  if (!exercise) throw new Error('Parser did not return an exercise.');
+
+  return parsed.sets.map((set, index) => ({
+    exercise,
+    set_number: String(index + 1),
+    weight: set.weight == null ? '' : String(set.weight),
+    reps: set.reps == null ? '' : String(set.reps),
+    rir: set.rir == null ? '' : String(set.rir),
+    notes: set.load_note ? set.load_note : ''
+  }));
+}
+
+async function parseWorkoutTextWithBackend(workoutText) {
+  const result = await api('/api/parse-workout-text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text: workoutText,
+      context: {
+        activeExercise: null,
+        activeSessionType: null,
+        todayPlan: null
+      },
+      test_mode: true
+    })
+  });
+
+  const data = result?.data || {};
+  if (data.test_mode !== true || data.sheet_written !== false || data.no_write_confirmed !== true) {
+    throw new Error('Backend parser did not prove no-write safety.');
+  }
+
+  const rows = rowsFromBackendParsedWorkout(data.parsed);
+  if (!rows.length) throw new Error('Backend parser did not produce any set rows.');
+  return { rows, warnings: data.warnings || [] };
+}
+
 function populateSetRows(rows) {
   setsTableBody.innerHTML = '';
   for (const row of rows) addSetRow(row);
   parsedRowsEditor.hidden = rows.length === 0;
 }
 
-function rowsFromWorkoutInput() {
+async function rowsFromWorkoutInput() {
   const workoutText = workoutTextInput.value.trim();
   if (workoutText && workoutText !== lastParsedWorkoutText) {
-    const parsed = parseWorkoutText(workoutText);
-    if (parsed.errors.length > 0) {
-      throw new Error(parsed.errors.join(' | '));
+    try {
+      const parsed = await parseWorkoutTextWithBackend(workoutText);
+      populateSetRows(parsed.rows);
+    } catch (backendError) {
+      setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
+      const parsed = parseWorkoutText(workoutText);
+      if (parsed.errors.length > 0) {
+        throw new Error(parsed.errors.join(' | '));
+      }
+      if (!parsed.rows.length) {
+        throw new Error('Workout text did not produce any set rows.');
+      }
+      populateSetRows(parsed.rows);
     }
-    if (!parsed.rows.length) {
-      throw new Error('Workout text did not produce any set rows.');
-    }
-    populateSetRows(parsed.rows);
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = workoutText;
   }
@@ -826,7 +876,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const notes = document.getElementById('log-notes').value.trim();
   let logRows = [];
   try {
-    rowsFromWorkoutInput();
+    await rowsFromWorkoutInput();
     logRows = collectLogRows(sessionId, date);
   } catch (err) {
     setStatus(loggerStatus, `Could not parse workout text: ${err.message}`, 'error');
