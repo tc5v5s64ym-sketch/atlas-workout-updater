@@ -1046,6 +1046,41 @@ test('parse-workout-text route is registered as read-only and no-write capable',
   assert.doesNotMatch(indexSource.match(/app\.post\('\/api\/parse-workout-text'[\s\S]*?app\.post\('\/api\/parse-workout-image'/)[0], /appendRows|getSheetRows|getRecentRows|parseWorkoutScreenshot/);
 });
 
+test('last_session_route_registered_before_lift_code_param', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const lastSessionIndex = indexSource.indexOf("app.get('/api/exercises/last-session'");
+  const liftCodeIndex = indexSource.indexOf("app.get('/api/exercises/:liftCode'");
+
+  assert.ok(lastSessionIndex >= 0);
+  assert.ok(liftCodeIndex >= 0);
+  assert.ok(lastSessionIndex < liftCodeIndex);
+});
+
+test('route_definitions_include_last_session', () => {
+  const route = routeDefinitions.find(candidate => candidate.path === '/api/exercises/last-session');
+
+  assert.ok(route);
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.authRequired, true);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+});
+
+test('route_definitions_cover_obvious_registered_routes', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const registeredRoutes = [...indexSource.matchAll(/app\.(get|post)\('([^']+)'/g)]
+    .map(match => ({ method: match[1].toUpperCase(), path: match[2] }))
+    .filter(route => route.path !== '/app');
+  const definitionKeys = new Set(routeDefinitions.flatMap(route =>
+    route.methods.map(method => `${method} ${route.path}`)
+  ));
+  const missing = registeredRoutes
+    .filter(route => !definitionKeys.has(`${route.method} ${route.path}`))
+    .map(route => `${route.method} ${route.path}`);
+
+  assert.deepEqual(missing, []);
+});
+
 test('recommendNextSet returns progression recommendation', () => {
   const rows = [
     ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
