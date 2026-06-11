@@ -554,6 +554,7 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
 let lastParsedWorkoutText = '';
+let lastParserStatus = null;
 
 // Cache last-time lookups to avoid redundant API calls within a session.
 const lastTimeCache = new Map();
@@ -723,6 +724,14 @@ function parseWorkoutText(text) {
   return { rows, errors };
 }
 
+function parserStatusNode(status) {
+  if (!status) return null;
+  const label = status.source === 'backend'
+    ? 'Parsed by backend parser'
+    : 'Backend parser unavailable - local parser fallback used';
+  return el('div', { class: 'parser-status', text: label });
+}
+
 function rowsFromBackendParsedWorkout(parsed) {
   if (!parsed || parsed.intent !== 'log_sets' || !Array.isArray(parsed.sets)) {
     const message = parsed?.message || parsed?.warnings?.join(' | ') || `Parser returned ${parsed?.intent || 'no'} intent.`;
@@ -779,6 +788,7 @@ async function rowsFromWorkoutInput() {
     try {
       const parsed = await parseWorkoutTextWithBackend(workoutText);
       populateSetRows(parsed.rows);
+      lastParserStatus = { source: 'backend' };
     } catch (backendError) {
       setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
       const parsed = parseWorkoutText(workoutText);
@@ -789,6 +799,7 @@ async function rowsFromWorkoutInput() {
         throw new Error('Workout text did not produce any set rows.');
       }
       populateSetRows(parsed.rows);
+      lastParserStatus = { source: 'local' };
     }
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = workoutText;
@@ -988,6 +999,8 @@ function renderUnknownExerciseSuggestions(pendingExercises) {
 function renderLogWorkoutPreview(result, effortRow) {
   const data = result.data || {};
   previewContent.innerHTML = '';
+  const parseStatus = parserStatusNode(lastParserStatus);
+  if (parseStatus) previewContent.appendChild(parseStatus);
   const proof = el('div', { class: 'no-write-proof' }, [
     el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
     el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}  ·  sheet_write: ${data.sheet_write}` })
@@ -1014,6 +1027,8 @@ function renderCompleteWorkoutPreview(result) {
   const outer = result.data || {};
   const data = outer.data || {};
   previewContent.innerHTML = '';
+  const parseStatus = parserStatusNode(lastParserStatus);
+  if (parseStatus) previewContent.appendChild(parseStatus);
   const proof = el('div', { class: 'no-write-proof' }, [
     el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
     el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
@@ -1071,6 +1086,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = '';
+    lastParserStatus = null;
     setDefaultDate();
     setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
     loadDashboard();

@@ -182,6 +182,16 @@ button.approve {
   font-size: 0.88rem;
 }
 
+.parser-status {
+  background: #f8fafc;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 10px 0 8px;
+  padding: 8px 10px;
+}
+
 .no-write-proof .proof-headline {
   font-weight: 700;
   font-size: 0.95rem;

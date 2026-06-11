@@ -478,6 +478,24 @@ test('conversational logger requires backend parser no-write proof before using 
   assert.match(parserFunction, /Backend parser did not prove no-write safety/);
 });
 
+test('conversational logger shows parser source without changing save gating', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  const statusFunction = appSource.slice(
+    appSource.indexOf('function parserStatusNode(status)'),
+    appSource.indexOf('function rowsFromBackendParsedWorkout')
+  );
+
+  assert.match(appSource, /let lastParserStatus = null/);
+  assert.match(statusFunction, /Parsed by backend parser/);
+  assert.match(statusFunction, /Backend parser unavailable - local parser fallback used/);
+  assert.match(appSource, /lastParserStatus = \{ source: 'backend' \}/);
+  assert.match(appSource, /lastParserStatus = \{ source: 'local' \}/);
+  assert.match(appSource, /const parseStatus = parserStatusNode\(lastParserStatus\)/);
+  assert.doesNotMatch(statusFunction, /pendingWrite\s*=/);
+  assert.match(cssSource, /\.parser-status/);
+});
+
 test('log-workout test_mode preview exposes explicit no-write proof fields', () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
 
