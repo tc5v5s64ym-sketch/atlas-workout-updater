@@ -574,6 +574,50 @@ function buildExerciseDetail(logRows, liftCode, { recentDays = 30, today = null 
   };
 }
 
+function buildRecentSessions(logRows, effortRows, { limit = 15 } = {}) {
+  const safeLimit = Math.min(Math.max(1, Number(limit) || 15), 50);
+
+  const normalizedLog = logRows.map(normalizeLogRow).filter(r => r.session_id);
+  const normalizedEffort = (effortRows || []).map(normalizeEffortRow);
+
+  const effortBySession = new Map();
+  normalizedEffort.forEach(e => { if (e.session_id) effortBySession.set(e.session_id, e); });
+
+  const sessionMap = new Map();
+  normalizedLog.forEach(r => {
+    if (!sessionMap.has(r.session_id)) {
+      sessionMap.set(r.session_id, {
+        session_id: r.session_id,
+        date: r.date_clean,
+        exercises: new Set(),
+        sets_count: 0,
+        total_volume: 0
+      });
+    }
+    const s = sessionMap.get(r.session_id);
+    if (r.date_clean > s.date) s.date = r.date_clean;
+    if (r.canonical_exercise || r.exercise) s.exercises.add(r.canonical_exercise || r.exercise);
+    if (r.weight > 0) {
+      s.sets_count++;
+      s.total_volume += r.weight * r.reps;
+    }
+  });
+
+  const sessions = [...sessionMap.values()]
+    .sort((a, b) => b.date !== a.date ? b.date.localeCompare(a.date) : b.session_id.localeCompare(a.session_id))
+    .slice(0, safeLimit)
+    .map(s => ({
+      session_id: s.session_id,
+      date: s.date,
+      exercises: [...s.exercises],
+      sets_count: s.sets_count,
+      total_volume: Math.round(s.total_volume),
+      effort: effortBySession.get(s.session_id) || null
+    }));
+
+  return { sessions, count: sessions.length };
+}
+
 function buildWeeklyReport(logRows, { days = 7, today = null } = {}) {
   const dayMs = 24 * 60 * 60 * 1000;
   const refDate = today
@@ -725,5 +769,6 @@ module.exports = {
   suggestDeloads,
   computeFatigueStatus,
   buildWeeklyReport,
-  buildExerciseDetail
+  buildExerciseDetail,
+  buildRecentSessions
 };

@@ -24,6 +24,7 @@
     <button data-tab="dashboard" class="tab-btn active">Dashboard</button>
     <button data-tab="progress" class="tab-btn">Progress</button>
     <button data-tab="logger" class="tab-btn">Log Workout</button>
+    <button data-tab="history" class="tab-btn">History</button>
     <button data-tab="body" class="tab-btn">Body</button>
     <button data-tab="settings" class="tab-btn">Settings</button>
   </nav>
@@ -191,6 +192,17 @@
         </div>
 
         <div id="logger-status"></div>
+      </div>
+    </section>
+
+    <!-- ============ HISTORY (recent sessions) ============ -->
+    <section id="tab-history" class="tab">
+      <div class="card">
+        <h2>Recent Sessions</h2>
+        <div class="action-row">
+          <button type="button" id="load-sessions-btn">Load recent sessions</button>
+        </div>
+        <div id="sessions-result"></div>
       </div>
     </section>
 

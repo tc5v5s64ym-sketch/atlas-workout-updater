@@ -166,7 +166,57 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
     if (btn.dataset.tab === 'dashboard') loadDashboard();
     if (btn.dataset.tab === 'body') loadBodyTab();
+    if (btn.dataset.tab === 'history') loadHistory();
   });
+});
+
+/* ===== History tab ===== */
+
+async function loadSessions() {
+  const result = document.getElementById('sessions-result');
+  const btn = document.getElementById('load-sessions-btn');
+  result.textContent = 'Loading…';
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api('/api/sessions/recent');
+    const sessions = res?.data?.sessions || [];
+    if (!sessions.length) {
+      result.innerHTML = '<p class="muted">No sessions found.</p>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const s of sessions) {
+      const details = el('details', {});
+      const sum = el('summary', {});
+      sum.textContent = `${s.date}  ${s.session_id}  — ${s.exercises.join(', ')} (${s.sets_count} sets, ${s.total_volume.toLocaleString()} lbs)`;
+      details.appendChild(sum);
+      if (s.effort) {
+        const e = s.effort;
+        const p = el('p', { class: 'muted' });
+        p.textContent = [
+          e.duration && `Duration: ${e.duration}`,
+          e.active_calories && `Active cal: ${e.active_calories}`,
+          e.average_hr && `Avg HR: ${e.average_hr}`
+        ].filter(Boolean).join(' · ');
+        details.appendChild(p);
+      }
+      frag.appendChild(details);
+    }
+    result.innerHTML = '';
+    result.appendChild(frag);
+  } catch (err) {
+    result.textContent = err.message || 'Failed to load sessions.';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function loadHistory() {
+  // Tab content loads on button click
+}
+
+document.getElementById('load-sessions-btn')?.addEventListener('click', () => {
+  loadSessions();
 });
 
 /* ===== Connection check ===== */

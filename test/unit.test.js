@@ -9,7 +9,7 @@ const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
   buildBodyweightHistory, previewTestRows, detectStalls,
-  buildWeeklyReport, buildExerciseDetail
+  buildWeeklyReport, buildExerciseDetail, buildRecentSessions
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
@@ -1826,4 +1826,87 @@ test('exercise detail: detail-form wired in app.js and calls correct endpoint', 
   assert.match(handlerBlock, /sessions_count/, 'must check sessions_count for empty state');
   assert.match(handlerBlock, /last_sessions/, 'must render last_sessions table');
   assert.match(handlerBlock, /recommendation/, 'must render recommendation');
+});
+
+// ── Session History ────────────────────────────────────────────────────────────
+
+const HISTORY_LOG = [
+  ['2026-06-10', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+  ['2026-06-10', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '8', '2', ''],
+  ['2026-06-10', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '2', '185', '8', '2', ''],
+  ['2026-06-05', 'S1', 'Deadlift', 'Deadlift', 'Back', 'DL', '1', '315', '3', '2', ''],
+];
+
+const HISTORY_EFFORT = [
+  ['2026-06-10', 'S2', '1:05:00', '420', '580', '138', '172', 'Gym', ''],
+];
+
+test('session history: buildRecentSessions returns correct structure', () => {
+  const result = buildRecentSessions(HISTORY_LOG, HISTORY_EFFORT);
+  assert.ok(Array.isArray(result.sessions), 'sessions must be an array');
+  assert.equal(result.count, 2, 'should find 2 distinct sessions');
+  const s2 = result.sessions.find(s => s.session_id === 'S2');
+  assert.ok(s2, 'S2 session must be present');
+  assert.equal(s2.date, '2026-06-10');
+  assert.ok(Array.isArray(s2.exercises), 'exercises must be an array');
+  assert.ok(s2.exercises.length > 0, 'exercises must not be empty');
+  assert.ok(s2.sets_count > 0, 'sets_count must be positive');
+  assert.ok(s2.total_volume > 0, 'total_volume must be positive');
+});
+
+test('session history: buildRecentSessions joins effort data', () => {
+  const result = buildRecentSessions(HISTORY_LOG, HISTORY_EFFORT);
+  const s2 = result.sessions.find(s => s.session_id === 'S2');
+  assert.ok(s2.effort !== null, 'S2 must have effort joined');
+  assert.equal(s2.effort.active_calories, 420);
+  const s1 = result.sessions.find(s => s.session_id === 'S1');
+  assert.equal(s1.effort, null, 'S1 has no effort row');
+});
+
+test('session history: buildRecentSessions returns sessions sorted by date desc', () => {
+  const result = buildRecentSessions(HISTORY_LOG, HISTORY_EFFORT);
+  assert.equal(result.sessions[0].session_id, 'S2', 'most recent session must come first');
+  assert.equal(result.sessions[1].session_id, 'S1');
+});
+
+test('session history: buildRecentSessions handles empty data', () => {
+  const result = buildRecentSessions([], []);
+  assert.equal(result.sessions.length, 0);
+  assert.equal(result.count, 0);
+});
+
+test('session history: buildRecentSessions respects limit', () => {
+  const rows = [];
+  for (let i = 1; i <= 20; i++) {
+    rows.push([`2026-0${i < 10 ? '0' + i : i}-01`, `SX${i}`, 'Squat', 'Back Squat', 'Legs', 'SQ', '1', '200', '5', '2', '']);
+  }
+  const result = buildRecentSessions(rows, [], { limit: 5 });
+  assert.equal(result.sessions.length, 5, 'must respect limit of 5');
+  assert.equal(result.count, 5);
+});
+
+test('session history: /api/sessions/recent endpoint registered as GET and read-only', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/sessions/recent');
+  assert.ok(route, 'route definition must exist');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+  assert.equal(route.authRequired, true);
+});
+
+test('session history: /api/sessions/recent registered BEFORE /:sessionId in index.js', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const recentIdx = src.indexOf("'/api/sessions/recent'");
+  const paramIdx = src.indexOf("'/api/sessions/:sessionId'");
+  assert.ok(recentIdx !== -1, '/api/sessions/recent endpoint must exist');
+  assert.ok(paramIdx !== -1, '/api/sessions/:sessionId endpoint must exist');
+  assert.ok(recentIdx < paramIdx, '/api/sessions/recent must be registered before /:sessionId');
+});
+
+test('session history: load-sessions-btn wired in app.js and calls correct endpoint', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /load-sessions-btn/, 'load-sessions-btn must be referenced');
+  assert.match(appSource, /\/api\/sessions\/recent/, 'must call /api/sessions/recent');
+  assert.match(appSource, /loadHistory/, 'loadHistory function must exist');
+  assert.match(appSource, /sessions-result/, 'sessions-result container must be used');
 });
