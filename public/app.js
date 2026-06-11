@@ -897,6 +897,18 @@ async function fetchReaction(liftCode) {
   }
 }
 
+async function verifyWrittenRange(range, sessionId, expectedRows) {
+  if (!range || !sessionId || !getApiKey()) return false;
+  try {
+    const params = new URLSearchParams({ range, session_id: sessionId });
+    if (expectedRows) params.set('expected_rows', String(expectedRows));
+    const res = await api(`/api/log-workout/verify-range?${params}`);
+    return res?.data?.verified === true;
+  } catch {
+    return false;
+  }
+}
+
 function renderAtlasSuggestion(rec) {
   if (!rec || !rec.next_target || !rec.last_working_sets || !rec.last_working_sets.length) return null;
   const lastSet = rec.last_working_sets[rec.last_working_sets.length - 1];
@@ -1292,6 +1304,17 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);
       loggerStatus.appendChild(undoBtn);
+    }
+    if (pendingLastWrite?.log_appended_range) {
+      verifyWrittenRange(
+        pendingLastWrite.log_appended_range,
+        pendingLastWrite.session_id,
+        pendingLastWrite.log_rows_written
+      ).then(ok => {
+        loggerStatus.appendChild(el('div', { class: 'parser-status', text: ok
+          ? 'Verified in Sheet ✓'
+          : 'Write succeeded, but readback verification unavailable' }));
+      });
     }
     if (reactionLiftCodes.length) {
       fetchReaction(reactionLiftCodes[0]).then(rec => {

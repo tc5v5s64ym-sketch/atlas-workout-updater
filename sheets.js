@@ -156,6 +156,16 @@ async function getLogCompositeKeys() {
   return keys;
 }
 
+async function readRange(rangeA1) {
+  const sheets = await getSheetsClient();
+  console.log(`[sheets.js] Reading range ${rangeA1}`);
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: rangeA1
+  });
+  return response.data.values || [];
+}
+
 async function deleteRowsByRange(tabName, startIndex, endIndex) {
   // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
   const sheets = await getSheetsClient();
@@ -182,6 +192,7 @@ async function deleteRowsByRange(tabName, startIndex, endIndex) {
 
 module.exports = {
   appendRows,
+  readRange,
   deleteRowsByRange,
   validateConfig,
   getExerciseCatalog,

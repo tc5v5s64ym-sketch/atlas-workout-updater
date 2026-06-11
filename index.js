@@ -7,6 +7,7 @@ const path = require('path');
 const multer = require('multer');
 const {
   appendRows,
+  readRange,
   deleteRowsByRange,
   validateConfig,
   getExerciseCatalog,
@@ -1754,6 +1755,78 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   return standardSuccess(req, res, 'Rows deleted', {
     deleted_range: log_appended_range,
     rows_deleted: rowSpan
+  });
+});
+
+// GET /api/log-workout/verify-range
+// Read-only post-write verification. Reads back the exact appended range from
+// Log_Cleaned and confirms session_id ownership + row count.
+// Only targets Log_Cleaned; rejects any other tab to prevent data fishing.
+app.get('/api/log-workout/verify-range', async (req, res) => {
+  const { range, session_id, expected_rows } = req.query;
+
+  if (!range || typeof range !== 'string') {
+    return standardError(req, res, 'range query param is required.', null, 400);
+  }
+  if (!session_id || typeof session_id !== 'string') {
+    return standardError(req, res, 'session_id query param is required.', null, 400);
+  }
+
+  const rangeMatch = range.match(/^([^!]+)!A(\d+):[A-Z]+(\d+)$/);
+  if (!rangeMatch) {
+    return standardError(req, res, `range is not a valid A1 range (expected e.g. Log_Cleaned!A847:L847), got "${range}".`, null, 400);
+  }
+
+  const rangeTab = rangeMatch[1];
+  const startRow = Number(rangeMatch[2]);
+  const endRow = Number(rangeMatch[3]);
+  const rowSpan = endRow - startRow + 1;
+
+  if (rangeTab !== logSheetName) {
+    return standardError(req, res, `range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
+  }
+  if (rowSpan < 1 || rowSpan > 10) {
+    return standardError(req, res, `Row span must be between 1 and 10, got ${rowSpan}.`, null, 400);
+  }
+
+  if (expected_rows !== undefined) {
+    const expectedCount = Number(expected_rows);
+    if (!Number.isInteger(expectedCount) || expectedCount < 1 || expectedCount !== rowSpan) {
+      return standardError(req, res, `expected_rows (${expected_rows}) does not match range row span (${rowSpan}).`, null, 400);
+    }
+  }
+
+  let rows;
+  try {
+    rows = await readRange(range);
+  } catch (error) {
+    console.error('❌ Readback verification — sheet read error:', error);
+    return standardError(req, res, 'Readback verification failed: sheet read error.', null, 500);
+  }
+
+  if (rows.length === 0) {
+    return standardError(req, res, `Readback found no rows at range "${range}".`, null, 409);
+  }
+  if (rows.length !== rowSpan) {
+    return standardError(req, res, `Readback row count mismatch: expected ${rowSpan}, found ${rows.length}.`, null, 409);
+  }
+
+  const normalizedExpected = String(session_id).trim().toLowerCase();
+  for (let i = 0; i < rows.length; i++) {
+    const rowSessionId = String(rows[i][1] || '').trim().toLowerCase();
+    if (rowSessionId !== normalizedExpected) {
+      return standardError(
+        req, res,
+        `session_id mismatch at row ${i + 1}: expected "${session_id}", found "${rows[i][1] || '(empty)'}".`,
+        null, 409
+      );
+    }
+  }
+
+  return standardSuccess(req, res, 'Readback verified', {
+    verified: true,
+    rows_found: rows.length,
+    range
   });
 });
 
