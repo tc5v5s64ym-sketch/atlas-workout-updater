@@ -873,6 +873,47 @@ function collectManualEffort(sessionId, date, location, notes) {
   };
 }
 
+function extractLiftCodes(logRowsPreview) {
+  const seen = new Set();
+  const codes = [];
+  for (const row of (logRowsPreview || [])) {
+    const code = String(row[5] || '').trim();
+    if (code && !seen.has(code)) { seen.add(code); codes.push(code); }
+  }
+  return codes;
+}
+
+async function fetchReaction(liftCode) {
+  if (!liftCode || !getApiKey()) return null;
+  try {
+    const res = await api(`/api/recommend/next/${encodeURIComponent(liftCode)}`);
+    return res.data || null;
+  } catch {
+    return null;
+  }
+}
+
+function renderAtlasSuggestion(rec) {
+  if (!rec || !rec.next_target || !rec.last_working_sets || !rec.last_working_sets.length) return null;
+  const lastSet = rec.last_working_sets[rec.last_working_sets.length - 1];
+  const target = rec.next_target;
+  const lastLabel = lastSet.rir != null ? `${lastSet.weight} × ${lastSet.reps} @${lastSet.rir}` : `${lastSet.weight} × ${lastSet.reps}`;
+  const targetLabel = `${target.weight} × ${target.reps} × ${target.sets}`;
+  const rows = [
+    ['Last', lastLabel],
+    ['Target', targetLabel],
+  ];
+  if (rec.reasoning) rows.push(['Why', rec.reasoning]);
+  const sessionNote = rec.sessions_analyzed ? ` · ${rec.sessions_analyzed} sessions` : '';
+  return el('div', { class: 'atlas-suggestion' }, [
+    el('div', { class: 'suggestion-header', text: `Atlas — ${rec.liftCode}${sessionNote}` }),
+    ...rows.map(([label, value]) => el('div', { class: 'suggestion-row' }, [
+      el('span', { class: 'suggestion-label', text: label }),
+      el('span', { text: value }),
+    ])),
+  ]);
+}
+
 function invalidatePreview() {
   pendingWrite = null;
   lastWrite = null;
@@ -1064,6 +1105,16 @@ function renderLogWorkoutPreview(result, effortRow) {
       [data.effort_row_preview || Object.values(effortRow)]
     ));
   }
+  const liftCodes = extractLiftCodes(data.log_rows_preview);
+  if (pendingWrite) pendingWrite.liftCodes = liftCodes;
+  if (liftCodes.length && getApiKey()) {
+    const suggestionSlot = el('div', {});
+    previewContent.appendChild(suggestionSlot);
+    fetchReaction(liftCodes[0]).then(rec => {
+      const node = renderAtlasSuggestion(rec);
+      if (node) suggestionSlot.replaceWith(node);
+    }).catch(() => {});
+  }
 }
 
 function renderCompleteWorkoutPreview(result) {
@@ -1091,6 +1142,16 @@ function renderCompleteWorkoutPreview(result) {
 
   previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.rows_to_write || []).length})` }));
   previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.rows_to_write || []));
+  const completeLiftCodes = extractLiftCodes(data.rows_to_write);
+  if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;
+  if (completeLiftCodes.length && getApiKey()) {
+    const suggestionSlot = el('div', {});
+    previewContent.appendChild(suggestionSlot);
+    fetchReaction(completeLiftCodes[0]).then(rec => {
+      const node = renderAtlasSuggestion(rec);
+      if (node) suggestionSlot.replaceWith(node);
+    }).catch(() => {});
+  }
 
   previewContent.appendChild(el('h3', { text: 'Parsed effort (from screenshot)' }));
   const effort = data.parsed_effort || {};
@@ -1144,6 +1205,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   approveBtn.disabled = true;
   approveBtn.textContent = 'Writing to Sheets…';
 
+  const reactionLiftCodes = pendingWrite.liftCodes || [];
   let pendingLastWrite = null;
   try {
     if (pendingWrite.mode === 'screenshot') {
@@ -1186,6 +1248,12 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);
       loggerStatus.appendChild(undoBtn);
+    }
+    if (reactionLiftCodes.length) {
+      fetchReaction(reactionLiftCodes[0]).then(rec => {
+        if (!rec || !rec.recommendation || !rec.next_target) return;
+        loggerStatus.appendChild(el('div', { class: 'atlas-suggestion', text: `Next: ${rec.recommendation}` }));
+      }).catch(() => {});
     }
     loadDashboard();
   } catch (err) {
