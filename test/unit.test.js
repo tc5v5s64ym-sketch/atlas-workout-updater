@@ -1535,3 +1535,52 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   assert.ok(verdictIdx !== -1, 'buildVerdict must exist in approve handler');
   assert.ok(undoIdx < verdictIdx, 'undo button must be appended before verdict fetch fires');
 });
+
+// ── Duplicate-write protection ────────────────────────────────────────────────
+
+test('duplicate-write: writeInFlight guard variable exists in app.js', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /let writeInFlight\s*=\s*false/, 'writeInFlight must be declared false');
+});
+
+test('duplicate-write: approve handler checks guard and sets it before request', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  // Guard must be the first check (before pendingWrite check)
+  const guardIdx = handler.indexOf('if (writeInFlight) return');
+  const pendingIdx = handler.indexOf('if (!pendingWrite)');
+  assert.ok(guardIdx !== -1, 'writeInFlight guard must exist in handler');
+  assert.ok(guardIdx < pendingIdx, 'guard must come before pendingWrite check');
+  // Must set writeInFlight = true before the try block
+  assert.match(handler, /writeInFlight = true/, 'must set writeInFlight = true');
+});
+
+test('duplicate-write: finally block always clears writeInFlight', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  assert.match(handler, /finally\s*\{/, 'handler must have a finally block');
+  const finallyIdx = handler.indexOf('finally');
+  const clearIdx = handler.indexOf('writeInFlight = false', finallyIdx);
+  assert.ok(clearIdx !== -1 && clearIdx > finallyIdx, 'writeInFlight = false must be inside finally');
+});
+
+test('duplicate-write: successful write sets button text to Written ✓', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
+  // Written ✓ must appear before the catch block
+  const writtenIdx = handler.indexOf('Written');
+  const catchIdx = handler.indexOf('} catch (err)');
+  assert.ok(writtenIdx < catchIdx, 'Written ✓ text must be in success path, not catch');
+});
+
+test('duplicate-write: undo button is unaffected — still wired after success', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
+  assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
+});

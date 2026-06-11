@@ -565,6 +565,10 @@ let lastParserStatus = null;
 // Cleared when a new preview cycle starts (form input → invalidatePreview).
 let lastWrite = null;
 
+// True while a live write request is in-flight. Guards against double-submit
+// from rapid clicks before the button's disabled state is processed by the browser.
+let writeInFlight = false;
+
 // Cache last-time lookups to avoid redundant API calls within a session.
 const lastTimeCache = new Map();
 
@@ -1234,11 +1238,13 @@ async function handleUndoLastWrite() {
 }
 
 document.getElementById('approve-btn').addEventListener('click', async () => {
+  if (writeInFlight) return;
   if (!pendingWrite) {
     setStatus(loggerStatus, 'No previewed workout to approve. Run a preview first.', 'error');
     return;
   }
 
+  writeInFlight = true;
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.disabled = true;
   approveBtn.textContent = 'Writing to Sheets…';
@@ -1309,10 +1315,13 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }).catch(() => {});
     }
     loadDashboard();
+    approveBtn.textContent = 'Written ✓';
   } catch (err) {
     setStatus(loggerStatus, `Write failed: ${err.message}`, 'error');
     approveBtn.disabled = false;
     approveBtn.textContent = 'Write to Google Sheets';
+  } finally {
+    writeInFlight = false;
   }
 });
 
