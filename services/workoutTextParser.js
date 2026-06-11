@@ -404,6 +404,7 @@ function parseSetsFirst(text) {
   const match = text.match(/\b(\d+)\s*x\s*(\d+)\s*@\s*(\d+(?:\.\d+)?)\b/i);
   if (!match) return null;
   const setCount = Number(match[1]);
+  if (setCount > 10) return null;
   const reps = Number(match[2]);
   const weight = Number(match[3]);
   return Array.from({ length: setCount }, () => setRecord({ weight, reps, rir: null }));
