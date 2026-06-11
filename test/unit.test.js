@@ -1442,3 +1442,53 @@ test('listTabs returns empty array when spreadsheet has no sheets data', async (
   const fakeClient = { spreadsheets: { get: async () => ({ data: {} }) } };
   assert.deepEqual(await listTabs(fakeClient, 'sheet-123'), []);
 });
+
+// ── Reaction layer — source-level contracts ───────────────────────────────────
+
+test('reaction layer: fetchReaction exists and fails quietly', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /async function fetchReaction\(/, 'fetchReaction must exist');
+  const fetchFn = appSource.slice(
+    appSource.indexOf('async function fetchReaction('),
+    appSource.indexOf('async function fetchReaction(') + 600
+  );
+  assert.match(fetchFn, /return null/, 'must return null on unavailable data');
+  assert.match(fetchFn, /catch/, 'must catch errors silently');
+  assert.match(fetchFn, /\/api\/recommend\/next\//, 'must call the recommend endpoint');
+});
+
+test('reaction layer: renderAtlasSuggestion and extractLiftCodes exist', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function renderAtlasSuggestion\(/, 'renderAtlasSuggestion must exist');
+  assert.match(appSource, /function extractLiftCodes\(/, 'extractLiftCodes must exist');
+  const atlasFn = appSource.slice(
+    appSource.indexOf('function renderAtlasSuggestion('),
+    appSource.indexOf('function renderAtlasSuggestion(') + 800
+  );
+  assert.match(atlasFn, /atlas-suggestion/, 'must use atlas-suggestion CSS class');
+  assert.match(atlasFn, /return null/, 'must return null when no useful data');
+});
+
+test('reaction layer: renderLogWorkoutPreview injects suggestion and never blocks on failure', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const previewFn = appSource.slice(
+    appSource.indexOf('function renderLogWorkoutPreview('),
+    appSource.indexOf('function renderCompleteWorkoutPreview(')
+  );
+  assert.match(previewFn, /extractLiftCodes/, 'must extract lift codes from preview rows');
+  assert.match(previewFn, /fetchReaction/, 'must call fetchReaction');
+  assert.match(previewFn, /\.catch\(/, 'must catch to prevent blocking preview render');
+  assert.match(previewFn, /pendingWrite\.liftCodes/, 'must store lift codes for write reaction');
+});
+
+test('reaction layer: approve-btn captures lift codes and fires write reaction', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const approveSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf(anchor) + 3000
+  );
+  assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
+  assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
+  assert.match(approveSection, /\.catch\(/, 'write reaction must fail quietly');
+});

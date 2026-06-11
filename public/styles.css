@@ -237,6 +237,18 @@ button.approve {
 .status-msg.ok { background: #f0fdf4; border: 1px solid #bbf7d0; }
 .status-msg.error { background: #fef2f2; border: 1px solid #fecaca; }
 
+.atlas-suggestion {
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  font-size: 0.85rem;
+}
+.atlas-suggestion .suggestion-header { font-weight: 600; margin-bottom: 6px; color: #3730a3; }
+.atlas-suggestion .suggestion-row { display: flex; gap: 8px; margin: 2px 0; }
+.atlas-suggestion .suggestion-label { color: var(--muted); min-width: 52px; flex-shrink: 0; }
+
 .pill {
   display: inline-block;
   padding: 1px 8px;
