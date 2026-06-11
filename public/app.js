@@ -258,14 +258,42 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 /* ===== Dashboard (read-only) ===== */
 
+async function loadSuggestedSession() {
+  const box = document.getElementById('suggested-session');
+  try {
+    const res = await api('/api/plan/suggested-session');
+    const data = res.data || {};
+    box.innerHTML = '';
+    if (!data.ok) {
+      box.appendChild(el('p', { class: 'muted', text: data.message || 'No suggested session available yet.' }));
+      return;
+    }
+    box.appendChild(el('p', { class: 'session-title', text: data.title }));
+    const ol = el('ol', { class: 'session-list' });
+    for (const ex of (data.exercises || [])) {
+      ol.appendChild(el('li', { class: 'session-item' }, [
+        el('span', { class: 'session-exercise', text: ex.exercise }),
+        el('span', { class: 'session-target', text: ` — ${ex.target_weight} × ${ex.target_reps} — ${ex.target_sets} sets` })
+      ]));
+    }
+    box.appendChild(ol);
+    if (data.why) {
+      box.appendChild(el('p', { class: 'session-why', text: data.why }));
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+}
+
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    for (const id of ['suggested-session', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       document.getElementById(id).innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
     return;
   }
 
+  loadSuggestedSession();
   loadTodaysPlan();
   loadCoaching();
   loadWeeklySummary();

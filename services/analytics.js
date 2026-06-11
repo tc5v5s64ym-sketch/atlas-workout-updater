@@ -578,6 +578,120 @@ function buildExerciseDetail(logRows, liftCode, { recentDays = 30, today = null 
   };
 }
 
+function buildSuggestedSession(logRows, { today = null } = {}) {
+  const ANCHOR_TYPES = {
+    squat: ['SQ01', 'SQ'],
+    bench: ['BEN01', 'BENCH'],
+    deadlift: ['DL01', 'DL', 'RDL01', 'RDL'],
+  };
+  const TYPE_LABELS = {
+    squat: 'Squat Focus', bench: 'Bench Focus', deadlift: 'Deadlift Focus', builder: 'Builder Session',
+  };
+  const TYPE_SHORT = { squat: 'Squat', bench: 'Bench', deadlift: 'Deadlift', builder: 'Builder' };
+
+  const validCode = c => c && /[a-zA-Z]/.test(c);
+  const normalizedLog = logRows.map(normalizeLogRow).filter(r => r.session_id && validCode(r.lift_code) && r.weight > 0);
+
+  if (!normalizedLog.length) {
+    return { ok: false, message: 'Not enough workout history to suggest a session.' };
+  }
+
+  const sessionMap = new Map();
+  for (const r of normalizedLog) {
+    if (!sessionMap.has(r.session_id)) {
+      sessionMap.set(r.session_id, { session_id: r.session_id, date: r.date_clean, liftCodes: [] });
+    }
+    const s = sessionMap.get(r.session_id);
+    if (r.date_clean > s.date) s.date = r.date_clean;
+    if (!s.liftCodes.includes(r.lift_code)) s.liftCodes.push(r.lift_code);
+  }
+
+  const sessions = [...sessionMap.values()]
+    .filter(s => s.liftCodes.length >= 2)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (sessions.length < 2) {
+    return { ok: false, message: 'Not enough workout history to suggest a session.' };
+  }
+
+  function classifySession(liftCodes) {
+    for (const [type, anchors] of Object.entries(ANCHOR_TYPES)) {
+      if (anchors.some(a => liftCodes.includes(a))) return type;
+    }
+    return 'builder';
+  }
+
+  const lastDateByType = {};
+  const templateByType = {};
+  for (const s of sessions) {
+    const type = classifySession(s.liftCodes);
+    if (!lastDateByType[type]) {
+      lastDateByType[type] = s.date;
+      templateByType[type] = s;
+    }
+  }
+
+  const knownTypes = Object.keys(lastDateByType);
+  const suggestedType = [...knownTypes].sort((a, b) =>
+    (lastDateByType[a] || '').localeCompare(lastDateByType[b] || '')
+  )[0];
+
+  const templateSession = templateByType[suggestedType];
+  const exercises = [];
+  for (const liftCode of templateSession.liftCodes) {
+    const rec = recommendNextSet(logRows, liftCode);
+    if (!rec.next_target || rec.sessions_analyzed === 0) continue;
+    exercises.push({
+      exercise: rec.exercise_name || liftCode,
+      lift_code: liftCode,
+      target_weight: rec.next_target.weight,
+      target_reps: rec.next_target.reps,
+      target_sets: rec.next_target.sets,
+      reason: rec.recommendation
+    });
+  }
+
+  if (!exercises.length) {
+    return { ok: false, message: 'No exercises with current recommendations found.' };
+  }
+
+  const anchorsForType = ANCHOR_TYPES[suggestedType] || [];
+  exercises.sort((a, b) => {
+    const aA = anchorsForType.includes(a.lift_code) ? 0 : 1;
+    const bA = anchorsForType.includes(b.lift_code) ? 0 : 1;
+    return aA - bA;
+  });
+  const sessionExercises = exercises.slice(0, 7);
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  const refMs = today
+    ? new Date(today + 'T12:00:00Z').getTime()
+    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z').getTime();
+  const lastMs = new Date(lastDateByType[suggestedType] + 'T12:00:00Z').getTime();
+  const daysSince = Math.round((refMs - lastMs) / dayMs);
+  const shortLabel = TYPE_SHORT[suggestedType] || suggestedType;
+
+  const whyParts = [
+    `${shortLabel} session is due — last done ${daysSince} day${daysSince === 1 ? '' : 's'} ago.`
+  ];
+  const otherTypes = knownTypes.filter(t => t !== suggestedType);
+  if (otherTypes.length) {
+    const recentOther = [...otherTypes].sort((a, b) =>
+      (lastDateByType[b] || '').localeCompare(lastDateByType[a] || '')
+    )[0];
+    whyParts.push(`${TYPE_SHORT[recentOther] || recentOther} was more recent — rotating for balanced stimulus.`);
+  }
+  whyParts.push(`Exercise selection based on last ${shortLabel} session structure.`);
+
+  return {
+    ok: true,
+    session_type: suggestedType,
+    title: `Suggested Session — ${TYPE_LABELS[suggestedType] || 'General'}`,
+    exercises: sessionExercises,
+    why: whyParts.join(' ')
+  };
+}
+
 function buildRecentSessions(logRows, effortRows, { limit = 15 } = {}) {
   const safeLimit = Math.min(Math.max(1, Number(limit) || 15), 50);
 
@@ -774,5 +888,6 @@ module.exports = {
   computeFatigueStatus,
   buildWeeklyReport,
   buildExerciseDetail,
-  buildRecentSessions
+  buildRecentSessions,
+  buildSuggestedSession
 };

@@ -293,6 +293,14 @@ a.lift-link:hover { text-decoration: underline; }
 .plan-card-sets { font-size: 0.82rem; color: var(--muted); }
 .plan-card-rec { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
 
+/* ===== Suggested session ===== */
+.session-title { margin: 0 0 8px; font-size: 0.95rem; font-weight: 600; color: var(--ink); }
+.session-list { padding-left: 1.4rem; margin: 0 0 10px; }
+.session-item { margin: 6px 0; font-size: 0.9rem; }
+.session-exercise { font-weight: 600; color: var(--ink); }
+.session-target { color: var(--muted); }
+.session-why { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; font-size: 0.8rem; font-style: italic; color: var(--muted); }
+
 /* ===== Progression engine ===== */
 .next-target-card {
   background: #f0f9ff;
