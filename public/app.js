@@ -1110,15 +1110,22 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
   try {
     if (pendingWrite.mode === 'screenshot') {
-      await submitCompleteWorkout({ ...pendingWrite, testMode: false });
+      const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
+      const rowsWritten = writeResult?.data?.data?.log_rows_written;
+      if (!rowsWritten || rowsWritten === 0) {
+        throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+      }
     } else {
       const realPayload = { ...pendingWrite.payload };
       delete realPayload.test_mode;
-      await api('/api/log-workout', {
+      const writeResult = await api('/api/log-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(realPayload)
       });
+      if (writeResult?.data?.sheet_write !== 'success') {
+        throw new Error(`Write response did not confirm success (sheet_write=${writeResult?.data?.sheet_write ?? 'missing'}). Check Sheets.`);
+      }
     }
     invalidatePreview();
     document.getElementById('logger-form').reset();
