@@ -641,6 +641,28 @@ test('workout parser keeps press aliases safe and specific', () => {
   assert.match(generic.message, /Which press/);
 });
 
+test('parser does not leak implied weight across multiple exercises', () => {
+  const result = parseWorkoutText('Bench 225 5/2 squats 185 5/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.match(result.message, /multiple exercises|mixed exercise/i);
+  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
+  assert.equal(result.sets, undefined);
+  assert.notDeepEqual(result.sets?.map(set => [set.weight, set.reps, set.rir]), [[225, 5, 2], [185, 5, 2]]);
+});
+
+test('bare correction number asks clarification instead of defaulting to RIR', () => {
+  const result = parseWorkoutText('change that to 8');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.update, undefined);
+  assert.equal(result.sets, undefined);
+  assert.match(result.message, /8 what.*reps.*weight.*RIR/i);
+
+  assert.deepEqual(parseWorkoutText('change rir to 1').update, { rir: 1 });
+  assert.deepEqual(parseWorkoutText('actually call it RIR 1').update, { rir: 1 });
+  assert.deepEqual(parseWorkoutText('change reps to 8').update, { reps: 8 });
+  assert.deepEqual(parseWorkoutText('change weight to 225').update, { weight: 225 });
+});
+
 test('parse-workout-text dry-run response parses Dale shorthand without writes', () => {
   const result = buildWorkoutTextParseDryRunResponse({
     text: 'Bench 135 10/5 185 8/3 225 5/2',
