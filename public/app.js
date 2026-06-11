@@ -560,6 +560,7 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 let pendingWrite = null;
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
+let activeExercise = null;
 
 // Cache last-time lookups to avoid redundant API calls within a session.
 const lastTimeCache = new Map();
@@ -771,7 +772,7 @@ async function parseWorkoutTextWithBackend(workoutText) {
     body: JSON.stringify({
       text: workoutText,
       context: {
-        activeExercise: null,
+        activeExercise,
         activeSessionType: null,
         todayPlan: null
       },
@@ -786,13 +787,23 @@ async function parseWorkoutTextWithBackend(workoutText) {
     throw err;
   }
 
-  const rows = rowsFromBackendParsedWorkout(data.parsed);
+  const parsed = data.parsed;
+  const intent = parsed?.intent;
+
+  if (intent === 'delete_last_set') {
+    return { intent: 'delete_last_set', rows: null, warnings: data.warnings || [] };
+  }
+  if (intent === 'update_last_set') {
+    return { intent: 'update_last_set', rows: null, update: parsed.update, warnings: data.warnings || [] };
+  }
+
+  const rows = rowsFromBackendParsedWorkout(parsed);
   if (!rows.length) {
     const err = new Error('Backend parser did not produce any set rows.');
     err.noFallback = true;
     throw err;
   }
-  return { rows, warnings: data.warnings || [] };
+  return { intent: 'log_sets', rows, warnings: data.warnings || [] };
 }
 
 function populateSetRows(rows) {
@@ -801,29 +812,62 @@ function populateSetRows(rows) {
   parsedRowsEditor.hidden = rows.length === 0;
 }
 
+function deleteLastSetRow() {
+  const rows = Array.from(setsTableBody.children);
+  if (!rows.length) return;
+  rows[rows.length - 1].remove();
+  if (!setsTableBody.children.length) parsedRowsEditor.hidden = true;
+}
+
+function applyUpdateToLastRow(update) {
+  if (!update) return;
+  const rows = Array.from(setsTableBody.children);
+  if (!rows.length) return;
+  const lastRow = rows[rows.length - 1];
+  if (update.weight != null) lastRow.querySelector('.set-weight').value = String(update.weight);
+  if (update.reps != null) lastRow.querySelector('.set-reps').value = String(update.reps);
+  if (update.rir != null) lastRow.querySelector('.set-rir').value = String(update.rir);
+}
+
 async function rowsFromWorkoutInput() {
   const workoutText = workoutTextInput.value.trim();
-  if (workoutText && workoutText !== lastParsedWorkoutText) {
-    try {
-      const parsed = await parseWorkoutTextWithBackend(workoutText);
-      populateSetRows(parsed.rows);
-      lastParserStatus = { source: 'backend' };
-    } catch (backendError) {
-      if (!shouldUseLocalFallback(backendError)) throw backendError;
-      setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
-      const parsed = parseWorkoutText(workoutText);
-      if (parsed.errors.length > 0) {
-        throw new Error(parsed.errors.join(' | '));
-      }
-      if (!parsed.rows.length) {
-        throw new Error('Workout text did not produce any set rows.');
-      }
-      populateSetRows(parsed.rows);
-      lastParserStatus = { source: 'local' };
-    }
+  if (!workoutText || workoutText === lastParsedWorkoutText) return;
+
+  let parsed;
+  try {
+    parsed = await parseWorkoutTextWithBackend(workoutText);
+  } catch (backendError) {
+    if (!shouldUseLocalFallback(backendError)) throw backendError;
+    setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
+    const localResult = parseWorkoutText(workoutText);
+    if (localResult.errors.length > 0) throw new Error(localResult.errors.join(' | '));
+    if (!localResult.rows.length) throw new Error('Workout text did not produce any set rows.');
+    populateSetRows(localResult.rows);
+    lastParserStatus = { source: 'local' };
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = workoutText;
+    return;
   }
+
+  if (parsed.intent === 'delete_last_set') {
+    deleteLastSetRow();
+    setStatus(loggerStatus, 'Last set removed.', 'ok');
+    lastParsedWorkoutText = workoutText;
+    return;
+  }
+
+  if (parsed.intent === 'update_last_set') {
+    applyUpdateToLastRow(parsed.update);
+    setStatus(loggerStatus, 'Last set updated.', 'ok');
+    lastParsedWorkoutText = workoutText;
+    return;
+  }
+
+  populateSetRows(parsed.rows);
+  lastParserStatus = { source: 'backend' };
+  activeExercise = parsed.rows[0]?.exercise || null;
+  parsedRowsEditor.hidden = true;
+  lastParsedWorkoutText = workoutText;
 }
 
 function shouldUseLocalFallback(err) {
@@ -1110,15 +1154,22 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
   try {
     if (pendingWrite.mode === 'screenshot') {
-      await submitCompleteWorkout({ ...pendingWrite, testMode: false });
+      const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
+      const rowsWritten = writeResult?.data?.data?.log_rows_written;
+      if (!rowsWritten || rowsWritten === 0) {
+        throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+      }
     } else {
       const realPayload = { ...pendingWrite.payload };
       delete realPayload.test_mode;
-      await api('/api/log-workout', {
+      const writeResult = await api('/api/log-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(realPayload)
       });
+      if (writeResult?.data?.sheet_write !== 'success') {
+        throw new Error(`Write response did not confirm success (sheet_write=${writeResult?.data?.sheet_write ?? 'missing'}). Check Sheets.`);
+      }
     }
     invalidatePreview();
     document.getElementById('logger-form').reset();
@@ -1126,6 +1177,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = '';
     lastParserStatus = null;
+    activeExercise = null;
     setDefaultDate();
     setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
     loadDashboard();

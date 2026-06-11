@@ -529,15 +529,40 @@ test('clarification_leaves_text_unparsed', () => {
     appSource.indexOf('function effortMode()')
   );
   const backendPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)');
-  const localPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)', backendPopulate + 1);
+  const localPopulate = rowsFunction.indexOf('populateSetRows(localResult.rows)');
   const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;');
-  const markParsed = rowsFunction.indexOf('lastParsedWorkoutText = workoutText');
+  const markParsed = rowsFunction.lastIndexOf('lastParsedWorkoutText = workoutText');
 
-  assert.ok(backendPopulate >= 0);
-  assert.ok(localPopulate > backendPopulate);
+  assert.ok(backendPopulate >= 0, 'backend populateSetRows call missing');
+  assert.ok(localPopulate >= 0, 'local fallback populateSetRows call missing');
   assert.ok(markParsed > backendPopulate);
   assert.ok(markParsed > localPopulate);
   assert.ok(rethrowCheck < markParsed);
+});
+
+test('update_last_set_and_delete_last_set_are_wired_in_app', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  assert.match(rowsFunction, /parsed\.intent === 'delete_last_set'/, 'delete_last_set dispatch missing');
+  assert.match(rowsFunction, /parsed\.intent === 'update_last_set'/, 'update_last_set dispatch missing');
+  assert.match(rowsFunction, /deleteLastSetRow\(\)/, 'deleteLastSetRow call missing');
+  assert.match(rowsFunction, /applyUpdateToLastRow\(parsed\.update\)/, 'applyUpdateToLastRow call missing');
+  assert.match(appSource, /function deleteLastSetRow\(\)/, 'deleteLastSetRow definition missing');
+  assert.match(appSource, /function applyUpdateToLastRow\(update\)/, 'applyUpdateToLastRow definition missing');
+});
+
+test('update_last_set_parser_returns_update_fields', () => {
+  const result = parseWorkoutText('rir was 2');
+  assert.equal(result.intent, 'update_last_set');
+  assert.equal(result.update.rir, 2);
+});
+
+test('delete_last_set_parser_returns_intent', () => {
+  const result = parseWorkoutText('delete last set');
+  assert.equal(result.intent, 'delete_last_set');
 });
 
 test('conversational logger backend parser success alone cannot enable save', () => {
@@ -753,6 +778,29 @@ test('kr_bodyweight_repeat_parses_three_sets', () => {
   assert.equal(result.sets.length, 3);
   assert.ok(result.sets.every(set => set.weight === null && set.weight_unit === null));
   assert.deepEqual(result.sets.map(set => [set.reps, set.rir]), [[15, null], [15, null], [15, null]]);
+});
+
+test('kr_bodyweight_slash_rir_varied_sets', () => {
+  const result = parseWorkoutText('Kr 15/1 12/2 10/3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(set => set.weight === null && set.weight_unit === null));
+  assert.deepEqual(result.sets.map(set => [set.reps, set.rir]), [[15, 1], [12, 2], [10, 3]]);
+});
+
+test('kr_bodyweight_slash_plus_repeat', () => {
+  const result = parseWorkoutText('Kr 15/1 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(set => set.weight === null && set.reps === 15 && set.rir === 1));
+});
+
+test('kr_bodyweight_slash_plus_x11_refuses', () => {
+  const result = parseWorkoutText('Kr 15/1 x11');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
 });
 
 test('dale_repeat_x3_still_works', () => {
