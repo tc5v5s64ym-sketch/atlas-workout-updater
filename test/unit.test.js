@@ -1486,9 +1486,52 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 3000
+    appSource.indexOf(anchor) + 4500
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
   assert.match(approveSection, /\.catch\(/, 'write reaction must fail quietly');
+});
+
+// ── Post-write verdict ────────────────────────────────────────────────────────
+
+test('verdict: buildVerdict exists in app.js and returns null for empty data', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function buildVerdict\(/, 'buildVerdict must exist');
+  const fn = appSource.slice(
+    appSource.indexOf('function buildVerdict('),
+    appSource.indexOf('function buildVerdict(') + 900
+  );
+  assert.match(fn, /return null/, 'must return null when no useful data');
+  assert.match(fn, /rule_decision/, 'must read holdUntilClean rule_decision');
+  assert.match(fn, /e1rm_trend/, 'must check e1rm trend');
+  assert.match(fn, /criterion_progress/, 'must surface criterion progress');
+});
+
+test('verdict: post-write block shows Logged verdict and Next recommendation', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const approveSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf(anchor) + 4500
+  );
+  assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
+  assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
+  assert.match(approveSection, /'Next'/, 'must label recommendation row "Next"');
+  assert.match(approveSection, /\.catch\(/, 'must fail quietly');
+});
+
+test('verdict: write safety unchanged — undo button still wired after verdict block', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const approveSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf(anchor) + 3500
+  );
+  // undo button must still be appended before the verdict fetch
+  const undoIdx = approveSection.indexOf('undo-write-btn');
+  const verdictIdx = approveSection.indexOf('buildVerdict');
+  assert.ok(undoIdx !== -1, 'undo button must still exist in approve handler');
+  assert.ok(verdictIdx !== -1, 'buildVerdict must exist in approve handler');
+  assert.ok(undoIdx < verdictIdx, 'undo button must be appended before verdict fetch fires');
 });

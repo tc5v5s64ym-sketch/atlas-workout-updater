@@ -914,6 +914,44 @@ function renderAtlasSuggestion(rec) {
   ]);
 }
 
+function buildVerdict(rec) {
+  if (!rec || !rec.last_working_sets || !rec.last_working_sets.length) return null;
+
+  const rule = rec.rule_decision;
+
+  // holdUntilClean says criterion is met — green light to load
+  if (rule?.decision === 'load') {
+    return rule.criterion_progress
+      ? `${rule.criterion_progress} — ready to load`
+      : 'standard met — ready to load';
+  }
+
+  // holdUntilClean says hold — show progress toward criterion
+  if (rule?.decision === 'hold' && rule.criterion_progress) {
+    return rule.criterion_progress;
+  }
+
+  // e1RM trending down — flag it
+  if (rec.e1rm_trend === 'down') {
+    return 'e1RM trending down';
+  }
+
+  // Weight increase vs any of the last 5 sets (recent-best, not all-time)
+  const allSets = rec.last_working_sets;
+  const lastSet = allSets[allSets.length - 1];
+  const prevWeights = allSets.slice(0, -1).map(s => s.weight || 0).filter(w => w > 0);
+  if (prevWeights.length > 0 && lastSet.weight > Math.max(...prevWeights)) {
+    return `weight up to ${lastSet.weight} lb`;
+  }
+
+  // e1RM trending up
+  if (rec.e1rm_trend === 'up') {
+    return 'e1RM trending up';
+  }
+
+  return null;
+}
+
 function invalidatePreview() {
   pendingWrite = null;
   lastWrite = null;
@@ -1251,8 +1289,23 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     }
     if (reactionLiftCodes.length) {
       fetchReaction(reactionLiftCodes[0]).then(rec => {
-        if (!rec || !rec.recommendation || !rec.next_target) return;
-        loggerStatus.appendChild(el('div', { class: 'atlas-suggestion', text: `Next: ${rec.recommendation}` }));
+        if (!rec) return;
+        const verdict = buildVerdict(rec);
+        const lines = [];
+        if (verdict) {
+          lines.push(el('div', { class: 'suggestion-row' }, [
+            el('span', { class: 'suggestion-label', text: 'Logged' }),
+            el('span', { text: verdict }),
+          ]));
+        }
+        if (rec.recommendation && rec.next_target) {
+          lines.push(el('div', { class: 'suggestion-row' }, [
+            el('span', { class: 'suggestion-label', text: 'Next' }),
+            el('span', { text: rec.recommendation }),
+          ]));
+        }
+        if (!lines.length) return;
+        loggerStatus.appendChild(el('div', { class: 'atlas-suggestion' }, lines));
       }).catch(() => {});
     }
     loadDashboard();
