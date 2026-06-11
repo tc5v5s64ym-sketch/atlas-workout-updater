@@ -96,12 +96,23 @@ test('api smoke: health returns service status', async () => {
   assert.equal(body.data.service, 'atlas-workout-updater');
 });
 
-test('api smoke: routes include last-session endpoint', async () => {
+test('api smoke: routes include key endpoints and write metadata', async () => {
   const { response, body } = await requestJson('/routes');
-  const paths = body.data.routes.map(route => route.path);
+  const routes = body.data.routes;
+  const paths = routes.map(route => route.path);
+  const routeByPath = new Map(routes.map(route => [route.path, route]));
 
   assert.equal(response.status, 200);
   assert.ok(paths.includes('/api/exercises/last-session'));
+  assert.ok(paths.includes('/api/parse-workout-text'));
+  assert.ok(paths.includes('/api/log-workout'));
+  assert.ok(paths.includes('/api/complete-workout'));
+  assert.equal(routeByPath.get('/api/parse-workout-text').readOnly, true);
+  assert.equal(routeByPath.get('/api/parse-workout-text').writeCapable, false);
+  assert.equal(routeByPath.get('/api/log-workout').readOnly, false);
+  assert.equal(routeByPath.get('/api/log-workout').writeCapable, true);
+  assert.equal(routeByPath.get('/api/complete-workout').readOnly, false);
+  assert.equal(routeByPath.get('/api/complete-workout').writeCapable, true);
 });
 
 test('api smoke: last-session reaches literal handler', async () => {
@@ -120,6 +131,7 @@ test('api smoke: last-session reaches literal handler', async () => {
 });
 
 test('api smoke: parse-workout-text dry-run proves no write', async () => {
+  fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({
@@ -134,6 +146,46 @@ test('api smoke: parse-workout-text dry-run proves no write', async () => {
   assert.equal(body.data.no_write_confirmed, true);
   assert.equal(body.data.parsed.intent, 'log_sets');
   assert.deepEqual(body.data.parsed.sets.map(set => [set.weight, set.reps, set.rir]), [[225, 5, 2]]);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: parse-workout-text clarification does not create rows', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({
+      text: 'Press 135 8/2',
+      test_mode: true
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.parsed.intent, 'needs_clarification');
+  assert.match(body.data.parsed.message, /Which press/i);
+  assert.equal(body.data.parsed.sets, undefined);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: parse-workout-text refuses excessive Dale repeat', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({
+      text: 'Lats 170 8/2 x99',
+      test_mode: true
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.parsed.intent, 'needs_clarification');
+  assert.ok((body.data.parsed.sets?.length || 0) <= 10);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
 test('api smoke: log-workout test_mode returns dry-run proof without append', async () => {
@@ -167,6 +219,31 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: log-workout invalid payload errors without append', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-INVALID',
+      test_mode: true,
+      log_rows: [
+        {
+          exercise: 'Bench Press',
+          set_number: 1,
+          weight: 225,
+          reps: 5,
+          rir: 2
+        }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /date is required/i);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: recommend-next returns stable read shape', async () => {
   const { response, body } = await requestJson('/api/recommend/next/BEN01');
 
@@ -175,4 +252,15 @@ test('api smoke: recommend-next returns stable read shape', async () => {
   assert.equal(body.data.liftCode, 'BEN01');
   assert.ok(body.data.recommendation);
   assert.ok(body.data.rule_decision);
+});
+
+test('api smoke: plan-today returns stable read shape', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/plan/today');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.ok(Array.isArray(body.data.recommendations));
+  assert.ok(body.data.recommendations.some(item => item.liftCode === 'BEN01'));
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
