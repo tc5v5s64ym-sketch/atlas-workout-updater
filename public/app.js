@@ -548,6 +548,60 @@ document.getElementById('catalog-search-form').addEventListener('submit', async 
   }
 });
 
+/* ===== Exercise Detail ===== */
+
+document.getElementById('detail-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const liftCode = document.getElementById('detail-lift-code').value.trim();
+  const box = document.getElementById('detail-result');
+  if (!liftCode) return;
+  box.innerHTML = '<span class="muted">Loading…</span>';
+  try {
+    const res = await api(`/api/exercises/${encodeURIComponent(liftCode)}/detail`);
+    const data = res.data || {};
+    box.innerHTML = '';
+
+    if (!data.sessions_count) {
+      box.appendChild(el('p', { class: 'muted', text: `No data found for lift code "${liftCode}".` }));
+      return;
+    }
+
+    // Summary line: name · code · N sessions · trend pill
+    const trendPill = el('span', { class: `pill ${data.volume_trend}`, text: `trend: ${data.volume_trend}` });
+    const nameStr = data.exercise_names.length ? data.exercise_names.join(' / ') : data.lift_code;
+    const summaryLine = el('p', {}, [`${nameStr} · ${data.lift_code} · ${data.sessions_count} sessions `, trendPill]);
+    box.appendChild(summaryLine);
+
+    // Best recent set
+    if (data.best_recent_set) {
+      const s = data.best_recent_set;
+      const setText = s.rir != null ? `${s.weight} × ${s.reps} @${s.rir}` : `${s.weight} × ${s.reps}`;
+      box.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
+    }
+
+    // Last sessions table
+    if (data.last_sessions.length) {
+      box.appendChild(el('h3', { text: 'Last sessions' }));
+      box.appendChild(renderTable(
+        ['Date', 'Best weight', 'Est. 1RM', 'Volume', 'Sets'],
+        data.last_sessions.map(s => [s.date, s.best_weight ?? '—', s.estimated_1rm ?? '—', s.volume ?? '—', s.sets])
+      ));
+    }
+
+    // Recommendation
+    if (data.recommendation) {
+      const r = data.recommendation;
+      box.appendChild(el('p', { class: 'muted', text: r.recommendation }));
+      if (r.next_target) {
+        const t = r.next_target;
+        box.appendChild(el('p', { class: 'small muted', text: `Next target: ${t.weight} × ${t.reps} × ${t.sets} sets · confidence: ${r.confidence}` }));
+      }
+    }
+  } catch (err) {
+    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+  }
+});
+
 /* ===== Session search ===== */
 
 document.getElementById('session-search-form').addEventListener('submit', async e => {

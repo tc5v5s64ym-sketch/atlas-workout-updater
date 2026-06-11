@@ -516,6 +516,64 @@ function previewTestRows(logRows, effortRows) {
   };
 }
 
+function buildExerciseDetail(logRows, liftCode, { recentDays = 30, today = null } = {}) {
+  const normalizedCode = String(liftCode || '').trim().toUpperCase();
+  if (!normalizedCode) {
+    return { lift_code: '', exercise_names: [], sessions_count: 0, last_sessions: [], best_recent_set: null, volume_trend: 'flat', recommendation: null };
+  }
+
+  const progress = computeExerciseProgress(logRows, normalizedCode);
+  const sessionCount = progress.sessions.length;
+  const startIdx = Math.max(0, sessionCount - 5);
+  const last_sessions = progress.sessions.slice(startIdx).map((s, i) => ({
+    date: s.date,
+    session_id: s.session_id,
+    best_weight: progress.best_weight_over_time[startIdx + i]?.best_weight ?? null,
+    estimated_1rm: progress.estimated_1rm_over_time[startIdx + i]?.estimated_1rm ?? null,
+    volume: Math.round(s.total_volume),
+    sets: s.total_sets
+  }));
+
+  const normalRows = logRows.map(normalizeLogRow).filter(r => r.lift_code === normalizedCode && r.weight > 0);
+  const exercise_names = [...new Set(normalRows.map(r => r.canonical_exercise || r.exercise).filter(Boolean))];
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  const refMs = today
+    ? new Date(today + 'T12:00:00Z').getTime()
+    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z').getTime();
+  const cutoffDate = new Date(refMs - recentDays * dayMs).toISOString().slice(0, 10);
+  const recentRows = normalRows.filter(r => r.date_clean >= cutoffDate);
+  let best_recent_set = null;
+  if (recentRows.length > 0) {
+    const best = recentRows.reduce((acc, r) => (r.weight > acc.weight ? r : acc), recentRows[0]);
+    best_recent_set = {
+      date: best.date_clean,
+      weight: best.weight,
+      reps: best.reps,
+      rir: best.rir != null ? best.rir : null,
+      exercise: best.canonical_exercise || best.exercise
+    };
+  }
+
+  const rec = recommendNextSet(logRows, normalizedCode);
+  const recommendation = rec.sessions_analyzed > 0 ? {
+    recommendation: rec.recommendation,
+    reasoning: rec.reasoning,
+    next_target: rec.next_target || null,
+    confidence: rec.confidence
+  } : null;
+
+  return {
+    lift_code: normalizedCode,
+    exercise_names,
+    sessions_count: sessionCount,
+    last_sessions,
+    best_recent_set,
+    volume_trend: progress.recent_trend,
+    recommendation
+  };
+}
+
 function buildWeeklyReport(logRows, { days = 7, today = null } = {}) {
   const dayMs = 24 * 60 * 60 * 1000;
   const refDate = today
@@ -666,5 +724,6 @@ module.exports = {
   detectStalls,
   suggestDeloads,
   computeFatigueStatus,
-  buildWeeklyReport
+  buildWeeklyReport,
+  buildExerciseDetail
 };

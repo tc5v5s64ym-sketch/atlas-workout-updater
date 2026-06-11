@@ -9,7 +9,7 @@ const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
   buildBodyweightHistory, previewTestRows, detectStalls,
-  buildWeeklyReport
+  buildWeeklyReport, buildExerciseDetail
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
@@ -1740,4 +1740,90 @@ test('weekly report: weekly-report-btn wired in app.js and renders summary_markd
   const handlerBlock = appSource.slice(handlerStart, handlerStart + 1700);
   assert.match(handlerBlock, /summary_markdown/, 'must render summary_markdown from response');
   assert.match(handlerBlock, /finally/, 'must re-enable button in finally block');
+});
+
+// ── Exercise Detail ───────────────────────────────────────────────────────────
+
+test('exercise detail: buildExerciseDetail returns correct structure for a known lift', () => {
+  // Use SAMPLE_LOG: SQ has 2 sessions (2026-05-10 @ 225, 2026-05-12 @ 235)
+  // With today='2026-06-11', cutoff = 2026-05-12 — so only 2026-05-12 row is in window
+  const detail = buildExerciseDetail(SAMPLE_LOG, 'SQ', { today: '2026-06-11' });
+  assert.equal(detail.lift_code, 'SQ');
+  assert.deepEqual(detail.exercise_names, ['Back Squat']);
+  assert.equal(detail.sessions_count, 2);
+  assert.equal(detail.last_sessions.length, 2, 'both sessions returned (≤ 5 total)');
+  assert.ok(detail.last_sessions[0].best_weight > 0, 'last_sessions must have best_weight');
+  assert.ok(detail.last_sessions[0].sets > 0, 'last_sessions must have sets');
+  assert.equal(detail.volume_trend, 'up', 'SQ weight went 225 → 235 so trend is up');
+  // best_recent_set: cutoff = 2026-05-12 → only 2026-05-12 row (235 lb) is in window
+  assert.ok(detail.best_recent_set !== null, 'best_recent_set must be populated');
+  assert.equal(detail.best_recent_set.weight, 235, 'best recent is the May-12 set at 235 lb');
+  // Verify all required keys are present
+  for (const key of ['lift_code', 'exercise_names', 'sessions_count', 'last_sessions', 'best_recent_set', 'volume_trend', 'recommendation']) {
+    assert.ok(key in detail, `response must include key: ${key}`);
+  }
+});
+
+test('exercise detail: buildExerciseDetail handles unknown lift code gracefully', () => {
+  const detail = buildExerciseDetail(SAMPLE_LOG, 'UNKNOWN', { today: '2026-06-11' });
+  assert.equal(detail.lift_code, 'UNKNOWN');
+  assert.deepEqual(detail.exercise_names, []);
+  assert.equal(detail.sessions_count, 0);
+  assert.deepEqual(detail.last_sessions, []);
+  assert.equal(detail.best_recent_set, null);
+  assert.equal(detail.volume_trend, 'flat');
+  assert.equal(detail.recommendation, null);
+});
+
+test('exercise detail: buildExerciseDetail handles low-data lift (one session)', () => {
+  // DL has one session (2026-05-12 @ 315 lb)
+  const detail = buildExerciseDetail(SAMPLE_LOG, 'DL', { today: '2026-06-11' });
+  assert.equal(detail.sessions_count, 1);
+  assert.equal(detail.last_sessions.length, 1);
+  assert.equal(detail.last_sessions[0].best_weight, 315);
+  assert.equal(detail.exercise_names[0], 'Deadlift');
+  assert.equal(detail.best_recent_set.weight, 315);
+});
+
+test('exercise detail: best_recent_set is null when all sessions are outside the window', () => {
+  // BP only has rows on 2026-05-10, which is 32 days before today 2026-06-11
+  // With recentDays=30 and today='2026-06-11', cutoff = 2026-05-12 → May 10 is excluded
+  const detail = buildExerciseDetail(SAMPLE_LOG, 'BP', { today: '2026-06-11', recentDays: 30 });
+  assert.equal(detail.sessions_count, 1, 'one BP session');
+  assert.equal(detail.best_recent_set, null, 'May-10 is outside the 30-day window');
+});
+
+test('exercise detail: last_sessions is capped at 5 even with more history', () => {
+  // Build a lift with 7 sessions
+  const rows = [];
+  for (let i = 1; i <= 7; i++) {
+    rows.push([`2026-0${i < 10 ? '0' + i : i}-10`, `S${i}`, 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', String(185 + i * 5), '8', '2', '']);
+  }
+  const detail = buildExerciseDetail(rows, 'BP', { today: '2026-06-30' });
+  assert.equal(detail.sessions_count, 7);
+  assert.equal(detail.last_sessions.length, 5, 'last_sessions must be capped at 5');
+  // The last session (highest weight) must appear
+  assert.equal(detail.last_sessions[4].best_weight, 185 + 7 * 5);
+});
+
+test('exercise detail: endpoint registered as GET and read-only', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/exercises/:liftCode/detail');
+  assert.ok(route, 'route definition must exist');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+  assert.equal(route.authRequired, true);
+});
+
+test('exercise detail: detail-form wired in app.js and calls correct endpoint', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /detail-form/, 'detail-form must be referenced in app.js');
+  assert.match(appSource, /detail-lift-code/, 'detail-lift-code input must be referenced');
+  assert.match(appSource, /\/api\/exercises\/.*\/detail/, 'must call exercises detail endpoint');
+  const handlerStart = appSource.indexOf("getElementById('detail-form')");
+  assert.ok(handlerStart !== -1, 'detail-form handler must be registered');
+  const handlerBlock = appSource.slice(handlerStart, handlerStart + 2100);
+  assert.match(handlerBlock, /sessions_count/, 'must check sessions_count for empty state');
+  assert.match(handlerBlock, /last_sessions/, 'must render last_sessions table');
+  assert.match(handlerBlock, /recommendation/, 'must render recommendation');
 });
