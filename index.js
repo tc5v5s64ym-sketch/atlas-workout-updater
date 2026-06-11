@@ -34,7 +34,8 @@ const {
   computeFatigueStatus,
   buildWeeklyReport,
   buildExerciseDetail,
-  buildRecentSessions
+  buildRecentSessions,
+  buildSuggestedSession
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -960,6 +961,17 @@ app.get('/api/plan/today', async (req, res) => {
     return standardSuccess(req, res, 'Today\'s training plan', { recommendations });
   } catch (error) {
     return standardError(req, res, 'Failed to build today\'s plan', error.message, 500);
+  }
+});
+
+// GET /api/plan/suggested-session
+app.get('/api/plan/suggested-session', async (req, res) => {
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const session = buildSuggestedSession(allLog);
+    return standardSuccess(req, res, 'Suggested session', session);
+  } catch (error) {
+    return standardError(req, res, 'Failed to build suggested session', error.message, 500);
   }
 });
 

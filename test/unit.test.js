@@ -9,7 +9,7 @@ const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
   buildBodyweightHistory, previewTestRows, detectStalls,
-  buildWeeklyReport, buildExerciseDetail, buildRecentSessions
+  buildWeeklyReport, buildExerciseDetail, buildRecentSessions, buildSuggestedSession
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
@@ -1947,4 +1947,89 @@ test('session history: load-sessions-btn wired in app.js and calls correct endpo
   assert.match(appSource, /\/api\/sessions\/recent/, 'must call /api/sessions/recent');
   assert.match(appSource, /loadHistory/, 'loadHistory function must exist');
   assert.match(appSource, /sessions-result/, 'sessions-result container must be used');
+});
+
+// ── Suggested Session ──────────────────────────────────────────────────────────
+
+const SUGGESTED_LOG = [
+  // Bench day — older (2026-05-20)
+  ['2026-05-20', 'B1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '8', '2', ''],
+  ['2026-05-20', 'B1', 'Incline DB Press', 'Incline DB Press', 'Chest', 'IDB01', '1', '55', '12', '2', ''],
+  ['2026-05-20', 'B1', 'Face Pull', 'Face Pull', 'Shoulders', 'FP01', '1', '40', '15', '2', ''],
+  // Squat day — recent (2026-06-10)
+  ['2026-06-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '225', '5', '2', ''],
+  ['2026-06-10', 'S1', 'Leg Press', 'Single-Leg Leg Press', 'Legs', 'SLP01', '1', '80', '12', '2', ''],
+  ['2026-06-10', 'S1', 'Leg Curl', 'Seated Leg Curl', 'Legs', 'SLC01', '1', '80', '15', '2', ''],
+  ['2026-06-10', 'S1', 'Lat Pulldown', 'Lat Pulldown', 'Back', 'LPD01', '1', '145', '10', '2', ''],
+];
+
+test('suggested session: returns ok structure with title, exercises, why', () => {
+  const result = buildSuggestedSession(SUGGESTED_LOG, { today: '2026-06-11' });
+  assert.equal(result.ok, true);
+  assert.ok(typeof result.session_type === 'string', 'must include session_type');
+  assert.ok(typeof result.title === 'string' && result.title.length > 0, 'must include title');
+  assert.ok(Array.isArray(result.exercises), 'exercises must be an array');
+  assert.ok(typeof result.why === 'string' && result.why.length > 0, 'must include why');
+});
+
+test('suggested session: exercise count is between 1 and 7', () => {
+  const result = buildSuggestedSession(SUGGESTED_LOG, { today: '2026-06-11' });
+  assert.ok(result.ok);
+  assert.ok(result.exercises.length >= 1 && result.exercises.length <= 7,
+    `exercise count ${result.exercises.length} must be 1–7`);
+});
+
+test('suggested session: suggests bench when squat was done more recently', () => {
+  const result = buildSuggestedSession(SUGGESTED_LOG, { today: '2026-06-11' });
+  assert.ok(result.ok);
+  assert.equal(result.session_type, 'bench', 'oldest session type (bench) must be suggested next');
+  assert.match(result.title, /Bench/);
+});
+
+test('suggested session: each exercise has required fields', () => {
+  const result = buildSuggestedSession(SUGGESTED_LOG, { today: '2026-06-11' });
+  assert.ok(result.ok);
+  for (const ex of result.exercises) {
+    assert.ok(ex.exercise, 'exercise name must be present');
+    assert.ok(ex.lift_code, 'lift_code must be present');
+    assert.ok(ex.target_weight != null, 'target_weight must be present');
+    assert.ok(ex.target_reps != null, 'target_reps must be present');
+    assert.ok(ex.target_sets != null, 'target_sets must be present');
+  }
+});
+
+test('suggested session: returns ok:false with insufficient history', () => {
+  const result = buildSuggestedSession([], { today: '2026-06-11' });
+  assert.equal(result.ok, false);
+  assert.ok(typeof result.message === 'string');
+});
+
+test('suggested session: garbage numeric lift codes are excluded', () => {
+  const logWithGarbage = [
+    ...SUGGESTED_LOG,
+    ['2026-06-10', 'S1', 'Unknown', 'Unknown', '', '3', '1', '15', '0', '', ''],
+  ];
+  const result = buildSuggestedSession(logWithGarbage, { today: '2026-06-11' });
+  if (result.ok) {
+    for (const ex of result.exercises) {
+      assert.ok(/[a-zA-Z]/.test(ex.lift_code), `lift_code "${ex.lift_code}" must contain at least one letter`);
+    }
+  }
+});
+
+test('suggested session: /api/plan/suggested-session is GET and read-only', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/plan/suggested-session');
+  assert.ok(route, 'route must be registered');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+  assert.equal(route.authRequired, true);
+});
+
+test('suggested session: loadSuggestedSession exists in app.js and calls endpoint', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /loadSuggestedSession/, 'loadSuggestedSession must exist');
+  assert.match(appSource, /suggested-session/, 'must reference suggested-session element');
+  assert.match(appSource, /\/api\/plan\/suggested-session/, 'must call suggested-session endpoint');
+  assert.match(appSource, /session-list/, 'must render a session-list element');
 });
