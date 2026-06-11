@@ -43,15 +43,14 @@ const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
 
-validateConfig();
-(async () => {
+async function runStartupDiagnostics() {
   try {
     const tabs = await getSpreadsheetTabs();
     console.log(JSON.stringify({ event: 'startup_diagnostics', ok: true, tabs_present: tabs.length, required_env: ['ATLAS_API_KEY','GOOGLE_SHEETS_ID','GOOGLE_SERVICE_ACCOUNT_EMAIL','GOOGLE_PRIVATE_KEY','OPENAI_API_KEY'] }));
   } catch (error) {
     console.log(JSON.stringify({ event: 'startup_diagnostics', ok: false, error: error.message }));
   }
-})();
+}
 
 const atlasApiKey = process.env.ATLAS_API_KEY;
 
@@ -582,6 +581,49 @@ registerRoute('get', '/api/history/recent', async (req, res) => {
   }
 });
 
+// GET /api/exercises/last-session?exercise=Back+Squat
+// Returns the sets from the most recent session that included this exercise.
+// Used by the logger to show "last time" hints without a full reload.
+app.get('/api/exercises/last-session', async (req, res) => {
+  const exercise = String(req.query.exercise || '').trim();
+  if (!exercise) return standardError(req, res, 'exercise query param required', null, 400);
+
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const lowerExercise = exercise.toLowerCase();
+    // Find all rows where exercise or canonical_exercise matches (substring)
+    const matchingRows = allLog.filter(row => {
+      const ex = String(row[2] || '').toLowerCase();
+      const canonical = String(row[3] || '').toLowerCase();
+      return ex.includes(lowerExercise) || canonical.includes(lowerExercise);
+    });
+    if (!matchingRows.length) {
+      return standardSuccess(req, res, 'No prior sets for this exercise', { sets: [], session_id: null, date: null });
+    }
+    // Find the most recent session containing this exercise
+    const sortedRows = matchingRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
+    const lastSessionId = String(sortedRows[0][1] || '');
+    const sessionRows = lastSessionId
+      ? matchingRows.filter(row => String(row[1] || '') === lastSessionId)
+      : [sortedRows[0]];
+    const sets = sessionRows.map(row => ({
+      set_number: String(row[6] || ''),
+      weight: String(row[7] || ''),
+      reps: String(row[8] || ''),
+      rir: String(row[9] || ''),
+      notes: String(row[10] || '')
+    }));
+    return standardSuccess(req, res, 'Last session sets', {
+      exercise,
+      session_id: lastSessionId,
+      date: String(sortedRows[0][0] || ''),
+      sets
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to fetch last session', error.message, 500);
+  }
+});
+
 // GET /api/exercises/:liftCode
 app.get('/api/exercises/:liftCode', async (req, res) => {
 
@@ -851,49 +893,6 @@ app.get('/api/sessions/:sessionId', async (req, res) => {
     });
   } catch (error) {
     return standardError(req, res, 'Failed to fetch session', error.message, 500);
-  }
-});
-
-// GET /api/exercises/last-session?exercise=Back+Squat
-// Returns the sets from the most recent session that included this exercise.
-// Used by the logger to show "last time" hints without a full reload.
-app.get('/api/exercises/last-session', async (req, res) => {
-  const exercise = String(req.query.exercise || '').trim();
-  if (!exercise) return standardError(req, res, 'exercise query param required', null, 400);
-
-  try {
-    const allLog = await getSheetRows(logSheetName);
-    const lowerExercise = exercise.toLowerCase();
-    // Find all rows where exercise or canonical_exercise matches (substring)
-    const matchingRows = allLog.filter(row => {
-      const ex = String(row[2] || '').toLowerCase();
-      const canonical = String(row[3] || '').toLowerCase();
-      return ex.includes(lowerExercise) || canonical.includes(lowerExercise);
-    });
-    if (!matchingRows.length) {
-      return standardSuccess(req, res, 'No prior sets for this exercise', { sets: [], session_id: null, date: null });
-    }
-    // Find the most recent session containing this exercise
-    const sortedRows = matchingRows.sort((a, b) => String(b[0]).localeCompare(String(a[0])));
-    const lastSessionId = String(sortedRows[0][1] || '');
-    const sessionRows = lastSessionId
-      ? matchingRows.filter(row => String(row[1] || '') === lastSessionId)
-      : [sortedRows[0]];
-    const sets = sessionRows.map(row => ({
-      set_number: String(row[6] || ''),
-      weight: String(row[7] || ''),
-      reps: String(row[8] || ''),
-      rir: String(row[9] || ''),
-      notes: String(row[10] || '')
-    }));
-    return standardSuccess(req, res, 'Last session sets', {
-      exercise,
-      session_id: lastSessionId,
-      date: String(sortedRows[0][0] || ''),
-      sets
-    });
-  } catch (error) {
-    return standardError(req, res, 'Failed to fetch last session', error.message, 500);
   }
 });
 
@@ -1694,7 +1693,18 @@ app.use((err, req, res, next) => {
   );
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Atlas Workout Updater listening on port ${port}`);
-});
+function startServer() {
+  validateConfig();
+  runStartupDiagnostics();
+
+  const port = process.env.PORT || 3000;
+  return app.listen(port, () => {
+    console.log(`Atlas Workout Updater listening on port ${port}`);
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { app, startServer };

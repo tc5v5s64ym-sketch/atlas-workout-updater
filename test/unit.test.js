@@ -447,6 +447,99 @@ test('conversational logger converts backend parser output to editable rows', ()
   assert.match(converter, /rir: set\.rir == null \? '' : String\(set\.rir\)/);
 });
 
+test('fallback_gate_classifies_errors_correctly', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const helperSource = appSource.slice(
+    appSource.indexOf('function shouldUseLocalFallback(err)'),
+    appSource.indexOf('function effortMode()')
+  );
+  const shouldUseLocalFallback = new Function(`${helperSource}; return shouldUseLocalFallback;`)();
+
+  assert.equal(shouldUseLocalFallback(new Error('network failed')), true);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('server failed'), { status: 500 })), true);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('server unavailable'), { status: 503 })), true);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('bad request'), { status: 400 })), false);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('unauthorized'), { status: 401 })), false);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('forbidden'), { status: 403 })), false);
+  assert.equal(shouldUseLocalFallback(Object.assign(new Error('clarify'), { noFallback: true })), false);
+});
+
+test('clarification_intents_are_tagged_no_fallback', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const converterSource = appSource.slice(
+    appSource.indexOf('function rowsFromBackendParsedWorkout(parsed)'),
+    appSource.indexOf('async function parseWorkoutTextWithBackend')
+  );
+  const rowsFromBackendParsedWorkout = new Function(`${converterSource}; return rowsFromBackendParsedWorkout;`)();
+  const press = buildWorkoutTextParseDryRunResponse({
+    text: 'Press 135 8/2',
+    test_mode: 'true'
+  });
+
+  assert.throws(
+    () => rowsFromBackendParsedWorkout(press.parsed),
+    err => err.noFallback === true && /Which press/i.test(err.message)
+  );
+  assert.throws(
+    () => rowsFromBackendParsedWorkout({ intent: 'finish_session', sets: [] }),
+    err => err.noFallback === true && /finish\/save command/i.test(err.message)
+  );
+  assert.throws(
+    () => rowsFromBackendParsedWorkout({ intent: 'effort_capture', sets: [] }),
+    err => err.noFallback === true && /watch\/effort data/i.test(err.message)
+  );
+});
+
+test('clarification_blocks_local_parser_invocation', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const catchStart = rowsFunction.indexOf('catch (backendError)');
+  const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;', catchStart);
+  const localParserCall = rowsFunction.indexOf('parseWorkoutText(workoutText)', catchStart);
+
+  assert.ok(catchStart >= 0);
+  assert.ok(rethrowCheck > catchStart);
+  assert.ok(localParserCall > rethrowCheck);
+});
+
+test('parser_status_label_cannot_lie', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const localAssignments = appSource.match(/lastParserStatus = \{ source: 'local' \}/g) || [];
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const catchStart = rowsFunction.indexOf('catch (backendError)');
+  const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;', catchStart);
+  const localStatus = rowsFunction.indexOf("lastParserStatus = { source: 'local' }", catchStart);
+  const noFallbackPath = rowsFunction.slice(catchStart, rethrowCheck);
+
+  assert.equal(localAssignments.length, 1);
+  assert.ok(localStatus > rethrowCheck);
+  assert.doesNotMatch(noFallbackPath, /lastParserStatus\s*=/);
+});
+
+test('clarification_leaves_text_unparsed', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  const backendPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)');
+  const localPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)', backendPopulate + 1);
+  const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;');
+  const markParsed = rowsFunction.indexOf('lastParsedWorkoutText = workoutText');
+
+  assert.ok(backendPopulate >= 0);
+  assert.ok(localPopulate > backendPopulate);
+  assert.ok(markParsed > backendPopulate);
+  assert.ok(markParsed > localPopulate);
+  assert.ok(rethrowCheck < markParsed);
+});
+
 test('conversational logger backend parser success alone cannot enable save', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const parserFunction = appSource.slice(
@@ -646,6 +739,51 @@ test('workout parser supports xN repeat shorthand for lats, face pulls, and leg 
   assert.deepEqual(compactParsedSets(legCurls), [[70, 15, 2], [70, 15, 2], [70, 15, 2]]);
 });
 
+test('wd_alias_parses_weighted_dips', () => {
+  const result = parseWorkoutText('Wd 45 10/1 8/2 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Dips (Weighted)');
+  assert.deepEqual(compactParsedSets(result), [[45, 10, 1], [45, 8, 2], [45, 8, 2]]);
+});
+
+test('kr_bodyweight_repeat_parses_three_sets', () => {
+  const result = parseWorkoutText('Kr 15 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(set => set.weight === null && set.weight_unit === null));
+  assert.deepEqual(result.sets.map(set => [set.reps, set.rir]), [[15, null], [15, null], [15, null]]);
+});
+
+test('dale_repeat_x3_still_works', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
+});
+
+test('dale_repeat_x10_boundary_allowed', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x10');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.equal(result.sets.length, 10);
+  assert.ok(result.sets.every(set => set.weight === 170 && set.reps === 8 && set.rir === 2));
+});
+
+test('dale_repeat_x11_refuses', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x11');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
+  assert.ok(result.warnings.includes('missing_sets'));
+});
+
+test('dale_repeat_x99_refuses', () => {
+  const result = parseWorkoutText('Lats 170 8/2 x99');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
+  assert.ok(result.warnings.includes('missing_sets'));
+});
+
 test('x3_means_three_total_instances', () => {
   const result = parseWorkoutText('Lat pulldown 170 8/2 x3');
   assert.equal(result.intent, 'log_sets');
@@ -766,6 +904,36 @@ test('workout parser keeps press aliases safe and specific', () => {
   assert.match(generic.message, /Which press/);
 });
 
+test('rdl_full_phrase_parses_as_single_exercise', () => {
+  const result = parseWorkoutText('Romanian deadlift 185 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
+});
+
+test('rdl_short_phrase_parses_as_single_exercise', () => {
+  const result = parseWorkoutText('romanian dl 185 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
+});
+
+test('rdl_code_still_works', () => {
+  const result = parseWorkoutText('RDL 185 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
+});
+
+test('rdl_and_deadlift_together_is_still_mixed', () => {
+  const result = parseWorkoutText('RDL 185 5/2 deadlift 225 3/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.match(result.message, /multiple exercises|mixed exercise/i);
+  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
+  assert.equal(result.sets, undefined);
+  assert.notDeepEqual(result.sets?.map(set => [set.weight, set.reps, set.rir]), [[185, 5, 2], [225, 3, 2]]);
+});
+
 test('ambiguous_press_asks_never_guesses', () => {
   const result = parseWorkoutText('Press 135 8/2');
   assert.equal(result.intent, 'needs_clarification');
@@ -876,6 +1044,41 @@ test('parse-workout-text route is registered as read-only and no-write capable',
   assert.match(indexSource, /app\.post\('\/api\/parse-workout-text'/);
   assert.match(indexSource, /buildWorkoutTextParseDryRunResponse\(req\.body\)/);
   assert.doesNotMatch(indexSource.match(/app\.post\('\/api\/parse-workout-text'[\s\S]*?app\.post\('\/api\/parse-workout-image'/)[0], /appendRows|getSheetRows|getRecentRows|parseWorkoutScreenshot/);
+});
+
+test('last_session_route_registered_before_lift_code_param', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const lastSessionIndex = indexSource.indexOf("app.get('/api/exercises/last-session'");
+  const liftCodeIndex = indexSource.indexOf("app.get('/api/exercises/:liftCode'");
+
+  assert.ok(lastSessionIndex >= 0);
+  assert.ok(liftCodeIndex >= 0);
+  assert.ok(lastSessionIndex < liftCodeIndex);
+});
+
+test('route_definitions_include_last_session', () => {
+  const route = routeDefinitions.find(candidate => candidate.path === '/api/exercises/last-session');
+
+  assert.ok(route);
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.authRequired, true);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+});
+
+test('route_definitions_cover_obvious_registered_routes', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const registeredRoutes = [...indexSource.matchAll(/app\.(get|post)\('([^']+)'/g)]
+    .map(match => ({ method: match[1].toUpperCase(), path: match[2] }))
+    .filter(route => route.path !== '/app');
+  const definitionKeys = new Set(routeDefinitions.flatMap(route =>
+    route.methods.map(method => `${method} ${route.path}`)
+  ));
+  const missing = registeredRoutes
+    .filter(route => !definitionKeys.has(`${route.method} ${route.path}`))
+    .map(route => `${route.method} ${route.path}`);
+
+  assert.deepEqual(missing, []);
 });
 
 test('recommendNextSet returns progression recommendation', () => {
