@@ -273,14 +273,31 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
     panel.hidden = false;
     panel.className = 'coach-panel';
     panel.innerHTML = '';
-    panel.appendChild(el('div', {}, [
-      el('p', { class: 'coach-panel-exercise', text: exercise }),
-      el('p', { class: 'coach-panel-target', text: `Today: ${targetWeight} × ${targetReps} — ${targetSets} sets` }),
-      el('p', { class: 'coach-panel-reason', text: 'Loading last session…' })
-    ]));
-    const dismissBtn = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'margin-top:8px;font-size:0.8rem' });
-    dismissBtn.addEventListener('click', () => { panel.hidden = true; });
-    panel.appendChild(dismissBtn);
+    const buildPanelContent = (lastText, reasoning) => {
+      const nodes = [
+        el('p', { class: 'coach-panel-exercise', text: `Ok, ${exercise} time.` }),
+        lastText ? el('p', { class: 'coach-panel-last', text: `Last session: ${lastText}.` }) : null,
+        el('p', { class: 'coach-panel-target', text: `Today: aim for ${targetWeight} × ${targetReps} for ${targetSets} sets.` }),
+        reasoning ? el('p', { class: 'coach-panel-reason', text: reasoning }) : null
+      ].filter(Boolean);
+      const row = el('div', { class: 'coach-panel-btn-row' });
+      const dismissBtn = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'font-size:0.8rem' });
+      dismissBtn.addEventListener('click', () => { panel.hidden = true; });
+      const backBtn = el('button', { type: 'button', class: 'coach-back-btn', text: '← Back to session' });
+      backBtn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-tab="dashboard"]').classList.add('active');
+        document.getElementById('tab-dashboard').classList.add('active');
+        document.getElementById('suggested-session')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      row.appendChild(backBtn);
+      row.appendChild(dismissBtn);
+      return [...nodes, row];
+    };
+
+    panel.innerHTML = '';
+    panel.appendChild(el('div', {}, buildPanelContent(null, 'Loading last session…')));
     // Enhance async with last working set
     if (getApiKey()) {
       fetchReaction(liftCode).then(rec => {
@@ -290,15 +307,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
           ? (last.rir != null ? `${last.weight} × ${last.reps} @${last.rir}` : `${last.weight} × ${last.reps}`)
           : null;
         panel.innerHTML = '';
-        panel.appendChild(el('div', {}, [
-          el('p', { class: 'coach-panel-exercise', text: exercise }),
-          lastText ? el('p', { class: 'coach-panel-last', text: `Last: ${lastText}` }) : null,
-          el('p', { class: 'coach-panel-target', text: `Today: ${targetWeight} × ${targetReps} — ${targetSets} sets` }),
-          rec.reasoning ? el('p', { class: 'coach-panel-reason', text: rec.reasoning }) : null
-        ].filter(Boolean)));
-        const db = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'margin-top:8px;font-size:0.8rem' });
-        db.addEventListener('click', () => { panel.hidden = true; });
-        panel.appendChild(db);
+        panel.appendChild(el('div', {}, buildPanelContent(lastText, rec.reasoning || null)));
       }).catch(() => {});
     }
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -380,12 +389,13 @@ async function loadTodaysPlan() {
       const exerciseName = r.exercise_name || r.liftCode;
       const card = el('div', { class: `plan-card ${confidenceClass}` }, [
         el('div', { class: 'plan-card-lift' }, [
-          el('a', { class: 'lift-link', href: '#', 'data-lift': r.liftCode, text: exerciseName }),
+          el('span', { class: 'plan-card-lift-name', text: exerciseName }),
           el('span', { class: 'plan-card-code muted', text: r.liftCode })
         ]),
         el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
         el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),
-        el('div', { class: 'plan-card-rec', text: r.recommendation })
+        el('div', { class: 'plan-card-rec', text: r.recommendation }),
+        el('a', { class: 'lift-link plan-card-progress-link', href: '#', 'data-lift': r.liftCode, text: 'View progress →' })
       ]);
       grid.appendChild(card);
     }

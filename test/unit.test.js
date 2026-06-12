@@ -1177,7 +1177,7 @@ test("today's plan: /api/plan/today filters out numeric-only lift codes", () => 
 
 test("today's plan: app.js uses exercise_name field for card title, not liftCode directly", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 1600);
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
   assert.match(planFn, /exercise_name/, 'must reference exercise_name field');
   assert.match(planFn, /plan-card-code/, 'must include secondary lift code span');
 });
@@ -2088,7 +2088,7 @@ test('session queue: startLift function exists and switches to logger tab', () =
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /function startLift\(/, 'startLift must exist');
   const fnStart = appSource.indexOf('function startLift(');
-  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  const fnBlock = appSource.slice(fnStart, fnStart + 3500);
   assert.match(fnBlock, /tab-logger/, 'must switch to logger tab');
   assert.match(fnBlock, /coach-panel/, 'must show coach panel');
   assert.match(fnBlock, /workout-text/, 'must reference workout textarea');
@@ -2116,4 +2116,41 @@ test('session queue: loadTodaysPlan includes helper copy about targets', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /not a required workout/, 'must include helper copy about targets');
   assert.match(appSource, /Log a few sessions/, 'must include new-user message');
+});
+
+// ── Mobile tap fix tests ──────────────────────────────────────────────────────
+
+test('mobile tap fix: plan-card exercise name is not a lift-link anchor', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  // exercise name must be a span, not an anchor with lift-link
+  assert.match(planFn, /plan-card-lift-name/, 'exercise name must use plan-card-lift-name span');
+  // a View progress link must exist as the navigation path
+  assert.match(planFn, /View progress/, 'must have explicit View progress link');
+  assert.match(planFn, /plan-card-progress-link/, 'must use plan-card-progress-link class');
+  // must not use lift-link class on the exercise name span
+  assert.doesNotMatch(planFn, /lift-link.*text: exerciseName/, 'exercise name must not use lift-link directly');
+});
+
+test('mobile tap fix: session-start-btn has active state in CSS', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /session-start-btn:active/, 'must have :active state for touch feedback');
+  assert.match(css, /border-left.*accent/, 'must have accent border for visual affordance');
+});
+
+test('mobile tap fix: coach panel uses conversational wording', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnStart = appSource.indexOf('function startLift(');
+  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  assert.match(fnBlock, /Ok,.*time\./, 'coach panel must open with conversational greeting');
+  assert.match(fnBlock, /aim for/, 'coach panel must use aim for in target text');
+  assert.match(fnBlock, /Last session:/, 'coach panel must label last set as Last session');
+});
+
+test('mobile tap fix: startLift coach panel includes back-to-session button', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnStart = appSource.indexOf('function startLift(');
+  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  assert.match(fnBlock, /Back to session/, 'coach panel must have Back to session button');
+  assert.match(fnBlock, /tab-dashboard/, 'back button must switch to dashboard tab');
 });
