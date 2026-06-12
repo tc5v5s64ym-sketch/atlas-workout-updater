@@ -660,6 +660,9 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
   const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr });
   const fatigue = computeFatigueStatus(logRows, new Date(todayStr + 'T12:00:00'));
   const stalls = detectStalls(logRows);
+  // Lifts with no progression over their last few sessions. Used to keep stale
+  // lifts out of PR attempts and to surface a deload when several plateau.
+  const stalledCodes = new Set(stalls.map(s => s.liftCode));
 
   const rm = Object.fromEntries(readiness.map(r => [r.pattern, r]));
   const canTrain = (...ps) => ps.some(p => ['ready', 'fresh'].includes(rm[p]?.status));
@@ -692,6 +695,10 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     const db = b.last_working_sets?.length ? b.last_working_sets[b.last_working_sets.length - 1].date_clean : '';
     return db.localeCompare(da);
   });
+
+  // Friendly name for a stalled lift code (falls back to the code itself).
+  const liftNameByCode = new Map(allRecs.map(r => [r.liftCode, r.exercise_name]));
+  const stallName = code => liftNameByCode.get(code) || code;
 
   const upwardLifts = allRecs.filter(r => r.e1rm_trend === 'up');
   const fatiguedPatterns = readiness.filter(r => r.status === 'fatigued');
@@ -750,6 +757,12 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     if (rm.lower?.daysSince) data.push({ label: 'Lower body', value: `${rm.lower.daysSince}d since last session`, context: rm.lower.status });
 
     const exercises = exForPatterns(['push', 'pull']);
+    // Plateaued lifts make a heavy strength day less appealing — nudge toward a deload.
+    for (const s of stalls.slice(0, 2)) {
+      if (!exercises.some(ex => ex.lift_code === s.liftCode)) continue;
+      why.push(`${stallName(s.liftCode)} hasn't improved in ${s.sessions_stalled} sessions — consider a lighter, technique-focused day`);
+    }
+    if (stalls.length) score -= Math.min(stalls.length * 8, 24);
     const confReasons = [];
     if (upPush.length) confReasons.push('Pressing trend is upward');
     if (isFatigued('lower')) confReasons.push('Clear lower-body fatigue signal');
@@ -921,9 +934,12 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     const why = [];
     const data = [];
 
-    if (upwardLifts.length > 0) {
+    // A stalled lift is not a PR candidate — only test lifts that are actually moving.
+    const trendingFresh = upwardLifts.filter(r => !stalledCodes.has(r.liftCode));
+
+    if (trendingFresh.length > 0) {
       score += 30;
-      const best = upwardLifts[0];
+      const best = trendingFresh[0];
       why.push(`${best.exercise_name} is trending upward — conditions are right for a PR attempt`);
       data.push({ label: best.exercise_name, value: `e1RM trending up`, context: `target ${best.next_target.weight} × ${best.next_target.reps}` });
     }
@@ -932,7 +948,7 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     if (daysSinceLast != null && daysSinceLast <= 1) score -= 20;
     if (fatiguedPatterns.length >= 2) score -= 15;
 
-    const exercises = upwardLifts.slice(0, 3).map(r => ({
+    const exercises = trendingFresh.slice(0, 3).map(r => ({
       exercise: r.exercise_name,
       lift_code: r.liftCode,
       target_weight: r.next_target.weight,
@@ -945,14 +961,43 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
       label: 'Test Progress',
       score,
       focus: 'PR attempts on strongest trending lifts',
-      confidence: upwardLifts.length > 0 && fatigue.status !== 'high' ? 'high' : 'low',
-      confidence_reasons: upwardLifts.length > 0 ? ['Upward e1RM trend detected'] : ['No clear upward trend found'],
+      confidence: trendingFresh.length > 0 && fatigue.status !== 'high' ? 'high' : 'low',
+      confidence_reasons: trendingFresh.length > 0 ? ['Upward e1RM trend detected'] : ['No clear upward trend found'],
       why_today: why.length ? why : ['Best when a lift has trended up for 3+ sessions and fatigue is low'],
       data_points: data,
       what_it_protects: [],
       watch_for: ['Warmup must feel smooth before going heavy', 'Abort PR attempt if set 1 is harder than expected', 'Do not test when overall fatigue is high'],
-      pivot_logic: upwardLifts.slice(0, 1).map(r => ({ exercise: r.exercise_name, condition: 'Warmup feels heavy', action: 'Abort PR — switch to a regular strength session' })),
+      pivot_logic: trendingFresh.slice(0, 1).map(r => ({ exercise: r.exercise_name, condition: 'Warmup feels heavy', action: 'Abort PR — switch to a regular strength session' })),
       exercises
+    });
+  }
+
+  // ── Deload & Reset (only when several lifts have plateaued) ───────
+  if (stalls.length >= 2) {
+    const top = stalls.slice(0, 3);
+    const why = top.map(s =>
+      `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${Math.round(s.last_best_weight * 0.9)} lb`
+    );
+    intents.push({
+      id: 'deload_reset',
+      label: 'Deload & Reset',
+      score: 45 + stalls.length * 5,
+      focus: 'Drop ~10%, sharpen form, rebuild momentum',
+      confidence: stalls.length >= 3 ? 'high' : 'medium',
+      confidence_reasons: [`${stalls.length} lifts show no progression`],
+      why_today: why,
+      data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: 'no progression' })),
+      what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
+      watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
+      pivot_logic: [],
+      exercises: top.map(s => ({
+        exercise: stallName(s.liftCode),
+        lift_code: s.liftCode,
+        target_weight: Math.round(s.last_best_weight * 0.9),
+        target_reps: 5,
+        target_sets: 3,
+        reason: 'Deload — 10% lighter, focus on clean reps'
+      }))
     });
   }
 
