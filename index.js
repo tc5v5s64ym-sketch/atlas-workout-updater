@@ -878,7 +878,7 @@ app.get('/api/schema/complete-workout', (req, res) => {
   return standardSuccess(req, res, 'Complete-workout multipart schema', {
     required: ['log_rows_json'],
     required_for_screenshot_flow: ['image'],
-    required_for_manual_dry_run: ['test_mode=true', 'effort_json or manual effort fields'],
+    required_for_effort_only_flow: ['image or manual effort fields'],
     optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write', 'effort_json']
   });
 });
@@ -1422,10 +1422,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
   const formFields = req.body || {};
   const testMode = isTestModeEnabled(formFields.test_mode);
-  const allowManualEffortDryRun = testMode && (formFields.effort_json || formFields.effort || formFields.duration);
+  const hasManualEffortMetrics = Boolean(formFields.effort_json || formFields.effort || formFields.duration);
 
-  if (!req.file && !allowManualEffortDryRun) {
-    return standardError(req, res, 'image file is required in multipart/form-data under field name image unless test_mode=true with manual effort metrics', null, 400);
+  if (!req.file && !hasManualEffortMetrics) {
+    return standardError(req, res, 'image file or manual effort metrics are required for complete-workout preview/write', null, 400);
   }
 
   // log_rows_json is required
@@ -1442,9 +1442,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     return res.status(400).json({ error: `log_rows_json is not valid JSON: ${err.message}` });
   }
 
-  if (!Array.isArray(parsedLogRows) || parsedLogRows.length === 0) {
+  if (!Array.isArray(parsedLogRows)) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: 'log_rows_json must be a non-empty JSON array' });
+    return res.status(400).json({ error: 'log_rows_json must be a JSON array' });
+  }
+
+  const effortOnly = parsedLogRows.length === 0;
+  if (effortOnly && !req.file && !hasManualEffortMetrics) {
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: 'Workout rows are required unless a screenshot or manual effort data is provided.' });
   }
 
   try {
@@ -1487,31 +1493,33 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     }
 
     // 5) Enrich and format log rows using existing catalog logic
-    let formattedLogRows;
+    let formattedLogRows = [];
     let enrichWarnings = [];
     let pendingExercises = [];
     let autoMatches = [];
     let completeRuleFlags = [];
-    try {
-      // fetch catalog once and pass the map to the enricher to ensure consistent lookup
-      const catalogRows = await getExerciseCatalog();
-      const catalogMap = buildExerciseCatalogMap(catalogRows);
-      const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
-      formattedLogRows = enrichResult.formattedRows;
-      enrichWarnings = enrichResult.warnings || [];
-      pendingExercises = enrichResult.pending_exercises || [];
-      autoMatches = enrichResult.auto_matches || [];
-      completeRuleFlags = evaluateSessionSafety(enrichResult.enrichedRowObjects || [], formFields.notes || '');
-      // store pending exercises in memory (dedupe by exercise)
-      for (const pe of pendingExercises) {
-        const key = String(pe.exercise || '').trim().toLowerCase();
-        if (!key) continue;
-        const exists = pendingExercisesMemory.some(e => String(e.exercise || '').trim().toLowerCase() === key);
-        if (!exists) pendingExercisesMemory.push(pe);
+    if (!effortOnly) {
+      try {
+        // fetch catalog once and pass the map to the enricher to ensure consistent lookup
+        const catalogRows = await getExerciseCatalog();
+        const catalogMap = buildExerciseCatalogMap(catalogRows);
+        const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
+        formattedLogRows = enrichResult.formattedRows;
+        enrichWarnings = enrichResult.warnings || [];
+        pendingExercises = enrichResult.pending_exercises || [];
+        autoMatches = enrichResult.auto_matches || [];
+        completeRuleFlags = evaluateSessionSafety(enrichResult.enrichedRowObjects || [], formFields.notes || '');
+        // store pending exercises in memory (dedupe by exercise)
+        for (const pe of pendingExercises) {
+          const key = String(pe.exercise || '').trim().toLowerCase();
+          if (!key) continue;
+          const exists = pendingExercisesMemory.some(e => String(e.exercise || '').trim().toLowerCase() === key);
+          if (!exists) pendingExercisesMemory.push(pe);
+        }
+      } catch (error) {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
       }
-    } catch (error) {
-      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
     }
 
     // 6) Build effort_row from normalized metrics
@@ -1523,23 +1531,25 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     });
 
     // 7) Duplicate protection for Log_Cleaned rows (session_id + exercise + set_number)
-    const existingLogKeys = await getLogCompositeKeys();
-    const intendedKeys = formattedLogRows.map(row => {
-      // formatted row order follows logCleanedColumns
-      const sid = String(row[1] || '').trim().toLowerCase();
-      const ex = String(row[2] || '').trim().toLowerCase();
-      const setn = String(row[6] || '').trim().toLowerCase();
-      return `${sid}||${ex}||${setn}`;
-    });
-
     const rowsToWrite = [];
     const skippedDuplicates = [];
-    for (let i = 0; i < formattedLogRows.length; i += 1) {
-      const key = intendedKeys[i];
-      if (existingLogKeys.includes(key)) {
-        skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
-      } else {
-        rowsToWrite.push(formattedLogRows[i]);
+    if (!effortOnly) {
+      const existingLogKeys = await getLogCompositeKeys();
+      const intendedKeys = formattedLogRows.map(row => {
+        // formatted row order follows logCleanedColumns
+        const sid = String(row[1] || '').trim().toLowerCase();
+        const ex = String(row[2] || '').trim().toLowerCase();
+        const setn = String(row[6] || '').trim().toLowerCase();
+        return `${sid}||${ex}||${setn}`;
+      });
+
+      for (let i = 0; i < formattedLogRows.length; i += 1) {
+        const key = intendedKeys[i];
+        if (existingLogKeys.includes(key)) {
+          skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
+        } else {
+          rowsToWrite.push(formattedLogRows[i]);
+        }
       }
     }
 
@@ -1576,6 +1586,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         session_id: sessionId,
         date: dateValue,
         test_mode: testMode,
+        effort_only: effortOnly,
         would_write: rowsToWrite.length > 0 || !duplicateSession,
         sheet_written: !testMode && effortWritten,
         log_rows_written: testMode ? 0 : logAppendCount,

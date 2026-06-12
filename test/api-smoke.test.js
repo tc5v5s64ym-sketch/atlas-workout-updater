@@ -65,6 +65,27 @@ require.cache[sheetsPath] = {
   exports: fakeSheets
 };
 
+const fakeVision = {
+  parseWorkoutScreenshot: async () => ({
+    parsed_metrics: {
+      duration: '00:42:00',
+      activeCalories: 410,
+      totalCalories: 520,
+      averageHR: 148,
+      peakHR: 171,
+      workoutType: 'Traditional Strength Training'
+    }
+  })
+};
+
+const visionPath = require.resolve('../services/vision');
+require.cache[visionPath] = {
+  id: visionPath,
+  filename: visionPath,
+  loaded: true,
+  exports: fakeVision
+};
+
 const { app } = require('../index');
 
 let server;
@@ -93,6 +114,16 @@ async function requestJson(path, options = {}) {
       ...(path.startsWith('/api') ? { 'x-atlas-api-key': process.env.ATLAS_API_KEY } : {}),
       ...(options.headers || {})
     }
+  });
+  const body = await response.json();
+  return { response, body };
+}
+
+async function requestMultipart(path, formData) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    body: formData,
+    headers: path.startsWith('/api') ? { 'x-atlas-api-key': process.env.ATLAS_API_KEY } : {}
   });
   const body = await response.json();
   return { response, body };
@@ -226,6 +257,111 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.equal(body.data.no_write_confirmed, true);
   assert.equal(body.data.log_rows_preview[0][3], 'Bench Press');
   assert.equal(body.data.log_rows_preview[0][5], 'BEN01');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: complete-workout allows effort-only screenshot preview with empty log rows', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const form = new FormData();
+  form.append('session_id', 'EFFORT-SHOT-ONLY-01');
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.status, 'ok');
+  assert.equal(data.test_mode, true);
+  assert.equal(data.no_write_confirmed, true);
+  assert.equal(data.sheet_written, false);
+  assert.equal(data.effort_only, true);
+  assert.equal(data.effort_source, 'screenshot');
+  assert.deepEqual(data.log_rows_preview, []);
+  assert.deepEqual(data.rows_to_write, []);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: complete-workout effort-only live write appends only Effort rows', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+
+  try {
+    const form = new FormData();
+    form.append('session_id', 'EFFORT-MANUAL-ONLY-01');
+    form.append('date', '2026-06-11');
+    form.append('log_rows_json', JSON.stringify([]));
+    form.append('effort_json', JSON.stringify({
+      duration: '42',
+      activeCalories: 410,
+      totalCalories: 520,
+      averageHR: 148,
+      peakHR: 171,
+      workoutType: 'Traditional Strength Training'
+    }));
+
+    const { response, body } = await requestMultipart('/api/complete-workout', form);
+    const data = body.data.data;
+
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.status, 'ok');
+    assert.equal(data.effort_only, true);
+    assert.equal(data.sheet_written, true);
+    assert.equal(data.effort_written, true);
+    assert.equal(data.log_rows_written, 0);
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+    assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Effort');
+    assert.equal(fakeSheetsState.appendCalls[0].rows.length, 1);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: complete-workout still blocks blank workout text when no effort data exists', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const form = new FormData();
+  form.append('session_id', 'EFFORT-MISSING-01');
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /image file or manual effort metrics are required/i);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: complete-workout still previews workout rows alongside screenshot effort', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const form = new FormData();
+  form.append('session_id', 'EFFORT-WITH-WORKOUT-01');
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify([
+    {
+      exercise: 'Bench Press',
+      set_number: 1,
+      weight: 225,
+      reps: 5,
+      rir: 2,
+      notes: ''
+    }
+  ]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.effort_only, false);
+  assert.equal(data.effort_source, 'screenshot');
+  assert.equal(data.no_write_confirmed, true);
+  assert.equal(data.rows_to_write.length, 1);
+  assert.equal(data.rows_to_write[0][3], 'Bench Press');
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
