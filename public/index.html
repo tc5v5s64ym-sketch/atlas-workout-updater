@@ -42,7 +42,7 @@
       <div id="coach-panel" hidden></div>
 
       <h2 class="coach-greeting" id="coach-greeting">Ready when you are.</h2>
-      <p class="coach-subtitle">Type your workout in shorthand, or tap <strong>+</strong> to add an Apple Watch screenshot. Atlas previews everything before anything is written.</p>
+      <p class="coach-subtitle">Log a workout, or just ask.</p>
 
       <div class="suggestion-chips" id="suggestion-chips">
         <button type="button" class="chip" data-chip="example">Bench 135 10/4, 225 5/2 x3</button>
@@ -50,15 +50,6 @@
         <button type="button" class="chip" data-chip="last">Show my last session</button>
         <button type="button" class="chip" data-chip="report">Weekly report</button>
       </div>
-
-      <details class="load-session-details">
-        <summary>Load existing session to correct</summary>
-        <div class="inline-form" style="margin-top:10px">
-          <input type="text" id="load-session-id" placeholder="Session ID (e.g. 20260610-PM-01)">
-          <button type="button" id="load-session-btn" class="secondary">Load</button>
-        </div>
-        <div id="load-session-status"></div>
-      </details>
 
       <!-- Conversation thread: user bubbles, Atlas preview card, write/status replies -->
       <div id="coach-thread" class="coach-thread">
@@ -89,7 +80,7 @@
           <button type="submit" id="preview-btn" class="composer-send" title="Preview — no data saved">Preview — no data saved</button>
         </div>
 
-        <p class="safety-note compact">Sending previews with <code>test_mode=true</code> — nothing is written until you review the dry-run and tap <em>Write to Google Sheets</em>.</p>
+        <p class="safety-note compact">Previews send <code>test_mode=true</code> — nothing is saved until you approve.</p>
 
         <details id="logger-details" class="logger-details">
           <summary>Details <span class="muted">(date, session, effort, notes)</span></summary>
@@ -123,6 +114,15 @@
           <div class="form-row">
             <label class="wide">Workout notes <input type="text" id="log-notes" placeholder="optional"></label>
           </div>
+
+          <details class="load-session-details">
+            <summary>Load existing session to correct</summary>
+            <div class="inline-form" style="margin-top:10px">
+              <input type="text" id="load-session-id" placeholder="Session ID (e.g. 20260610-PM-01)">
+              <button type="button" id="load-session-btn" class="secondary">Load</button>
+            </div>
+            <div id="load-session-status"></div>
+          </details>
         </details>
 
         <div id="parsed-rows-editor" class="parsed-rows-editor" hidden>

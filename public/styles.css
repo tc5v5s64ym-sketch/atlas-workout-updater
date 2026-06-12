@@ -286,16 +286,43 @@ main {
    Coach (chat-first front door)
    ============================================================================ */
 
+/* Coach is a single calm column: greeting up top, composer docked at the
+   bottom, conversation in between. margin-top:auto on the form pushes the
+   composer down when the thread is short; sticky keeps it docked while the
+   thread scrolls. */
+#tab-logger.active {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 140px);
+  min-height: calc(100dvh - 140px);
+}
+
+#logger-form {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: var(--s2) 0 calc(var(--s2) + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+  z-index: 20;
+}
+
+/* Folds that open inside the docked form grow upward — keep them scrollable */
+#logger-form .logger-details[open],
+#logger-form .parsed-rows-editor:not([hidden]) {
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
 .coach-greeting {
-  font-size: 1.6rem;
+  font-size: 1.9rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
-  margin: var(--s4) 0 var(--s1);
+  letter-spacing: -0.025em;
+  margin: var(--s6) 0 var(--s1);
 }
 .coach-subtitle {
-  color: var(--muted);
-  font-size: 0.95rem;
-  margin: 0 0 var(--s4);
+  color: var(--faint);
+  font-size: 0.92rem;
+  margin: 0 0 var(--s5);
 }
 
 .suggestion-chips {
