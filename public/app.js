@@ -258,6 +258,59 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 /* ===== Dashboard (read-only) ===== */
 
+function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
+  // Switch to Log Workout tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const logBtn = document.querySelector('[data-tab="logger"]');
+  if (logBtn) logBtn.classList.add('active');
+  const logTab = document.getElementById('tab-logger');
+  if (logTab) logTab.classList.add('active');
+
+  // Show coaching panel with known data immediately
+  const panel = document.getElementById('coach-panel');
+  if (panel) {
+    panel.hidden = false;
+    panel.className = 'coach-panel';
+    panel.innerHTML = '';
+    panel.appendChild(el('div', {}, [
+      el('p', { class: 'coach-panel-exercise', text: exercise }),
+      el('p', { class: 'coach-panel-target', text: `Today: ${targetWeight} × ${targetReps} — ${targetSets} sets` }),
+      el('p', { class: 'coach-panel-reason', text: 'Loading last session…' })
+    ]));
+    const dismissBtn = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'margin-top:8px;font-size:0.8rem' });
+    dismissBtn.addEventListener('click', () => { panel.hidden = true; });
+    panel.appendChild(dismissBtn);
+    // Enhance async with last working set
+    if (getApiKey()) {
+      fetchReaction(liftCode).then(rec => {
+        if (!rec || !panel || panel.hidden) return;
+        const last = rec.last_working_sets?.[rec.last_working_sets.length - 1];
+        const lastText = last
+          ? (last.rir != null ? `${last.weight} × ${last.reps} @${last.rir}` : `${last.weight} × ${last.reps}`)
+          : null;
+        panel.innerHTML = '';
+        panel.appendChild(el('div', {}, [
+          el('p', { class: 'coach-panel-exercise', text: exercise }),
+          lastText ? el('p', { class: 'coach-panel-last', text: `Last: ${lastText}` }) : null,
+          el('p', { class: 'coach-panel-target', text: `Today: ${targetWeight} × ${targetReps} — ${targetSets} sets` }),
+          rec.reasoning ? el('p', { class: 'coach-panel-reason', text: rec.reasoning }) : null
+        ].filter(Boolean)));
+        const db = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'margin-top:8px;font-size:0.8rem' });
+        db.addEventListener('click', () => { panel.hidden = true; });
+        panel.appendChild(db);
+      }).catch(() => {});
+    }
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Pre-fill workout textarea if empty
+  const textarea = document.getElementById('workout-text');
+  if (textarea && !textarea.value.trim()) {
+    textarea.value = `${exercise} ${targetWeight} ${targetReps} x${targetSets}`;
+  }
+}
+
 async function loadSuggestedSession() {
   const box = document.getElementById('suggested-session');
   try {
@@ -265,16 +318,20 @@ async function loadSuggestedSession() {
     const data = res.data || {};
     box.innerHTML = '';
     if (!data.ok) {
-      box.appendChild(el('p', { class: 'muted', text: data.message || 'No suggested session available yet.' }));
+      box.appendChild(el('p', { class: 'muted', text: 'No suggested session yet — log a few sessions and Atlas can start giving better suggestions.' }));
       return;
     }
     box.appendChild(el('p', { class: 'session-title', text: data.title }));
+    box.appendChild(el('p', { class: 'muted', style: 'font-size:0.8rem;margin:0 0 6px', text: 'Follow in order, or tap any exercise if equipment is busy.' }));
     const ol = el('ol', { class: 'session-list' });
     for (const ex of (data.exercises || [])) {
-      ol.appendChild(el('li', { class: 'session-item' }, [
+      const btn = el('button', { class: 'session-start-btn', type: 'button' }, [
         el('span', { class: 'session-exercise', text: ex.exercise }),
-        el('span', { class: 'session-target', text: ` — ${ex.target_weight} × ${ex.target_reps} — ${ex.target_sets} sets` })
-      ]));
+        el('span', { class: 'session-target', text: ` — ${ex.target_weight} × ${ex.target_reps} — ${ex.target_sets} sets` }),
+        el('span', { class: 'session-tap-hint', text: '  Tap to start' })
+      ]);
+      btn.addEventListener('click', () => startLift(ex.exercise, ex.lift_code, ex.target_weight, ex.target_reps, ex.target_sets));
+      ol.appendChild(el('li', { class: 'session-item' }, btn));
     }
     box.appendChild(ol);
     if (data.why) {
@@ -309,8 +366,10 @@ async function loadTodaysPlan() {
     const recs = res.data?.recommendations || [];
     box.innerHTML = '';
 
+    box.appendChild(el('p', { class: 'muted', style: 'font-size:0.8rem;margin:0 0 8px', text: 'These are next targets by exercise, not a required workout.' }));
+
     if (!recs.length) {
-      box.appendChild(el('span', { class: 'muted', text: 'No training history found — log your first workout to see a plan here.' }));
+      box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas can start giving better suggestions.' }));
       return;
     }
 
