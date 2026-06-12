@@ -2113,6 +2113,35 @@ test('session queue: Current Lift Targets heading in index.html', () => {
   assert.match(html, /Current Lift Targets/, 'heading must say Current Lift Targets');
 });
 
+test('dashboard simplification: Suggested Session card removed from dashboard HTML', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
+  assert.doesNotMatch(dashSection, /id="suggested-session"/, 'suggested-session element must not be in dashboard');
+  assert.doesNotMatch(dashSection, /<h2>Suggested Session<\/h2>/, 'Suggested Session heading must not be in dashboard');
+  assert.match(dashSection, /intent-grid-card/, 'What to train today tiles must remain');
+  assert.match(dashSection, /todays-plan/, 'Current Lift Targets must remain');
+});
+
+test('dashboard simplification: loadDashboard does not call loadSuggestedSession', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const dashFn = appSource.slice(
+    appSource.indexOf('async function loadDashboard('),
+    appSource.indexOf('async function loadDashboard(') + 700
+  );
+  assert.doesNotMatch(dashFn, /loadSuggestedSession/, 'loadDashboard must not call loadSuggestedSession');
+  assert.match(dashFn, /loadIntentDashboard/, 'loadDashboard must still call loadIntentDashboard');
+  assert.match(dashFn, /loadTodaysPlan/, 'loadDashboard must still call loadTodaysPlan');
+});
+
+test('dashboard simplification: loadSuggestedSession guards against missing DOM element', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('async function loadSuggestedSession('),
+    appSource.indexOf('async function loadSuggestedSession(') + 300
+  );
+  assert.match(fn, /if \(!box\) return/, 'must guard against null element so function is safe to call even without the card');
+});
+
 test('session queue: loadTodaysPlan includes helper copy about targets', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /progression targets.*not a required order|not a required order/, 'must include helper copy about targets');
