@@ -448,6 +448,7 @@ async function loadIntentDashboard() {
     const res = await api('/api/plan/intent-recommendation');
     const data = res.data || {};
     renderTodaysRead(data);
+    renderCoachReadStrip(data);
     renderIntentGrid(data);
     if (readCard) readCard.hidden = false;
     if (gridCard) gridCard.hidden = false;
@@ -489,6 +490,28 @@ function renderTodaysRead(data) {
   }
   if (todaysRead.recommended_reason) {
     box.appendChild(el('p', { class: 'todays-read-reason', text: todaysRead.recommended_reason }));
+  }
+}
+
+function renderCoachReadStrip(data) {
+  const strip = document.getElementById('coach-read-strip');
+  if (!strip) return;
+  const todaysRead = data.todays_read || {};
+  const patterns = todaysRead.patterns || [];
+  if (!patterns.length) return;
+  strip.innerHTML = '';
+  const dots = el('div', { class: 'strip-dots' });
+  for (const p of patterns) {
+    const status = p.status || 'unknown';
+    const rawLabel = p.label || p.pattern;
+    dots.appendChild(el('span', {
+      class: `strip-dot pattern-dot-${status}`,
+      title: `${FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel}: ${FRIENDLY_STATUS_WORDS[status] || status}`
+    }));
+  }
+  strip.appendChild(dots);
+  if (todaysRead.recommended_label) {
+    strip.appendChild(el('span', { class: 'strip-rec', text: `Today: ${todaysRead.recommended_label}` }));
   }
 }
 
@@ -608,8 +631,7 @@ async function loadTodaysPlan() {
       const exerciseName = r.exercise_name || r.liftCode;
       const card = el('div', { class: `plan-card ${confidenceClass} plan-card-startable` }, [
         el('div', { class: 'plan-card-lift' }, [
-          el('span', { class: 'plan-card-lift-name', text: exerciseName }),
-          el('span', { class: 'plan-card-code muted', text: r.liftCode })
+          el('span', { class: 'plan-card-lift-name', text: exerciseName })
         ]),
         el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
         el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),

@@ -1234,7 +1234,7 @@ test("today's plan: app.js uses exercise_name field for card title, not liftCode
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const planFn = appSource.slice(appSource.indexOf('async function loadTodaysPlan'), appSource.indexOf('async function loadTodaysPlan') + 2000);
   assert.match(planFn, /exercise_name/, 'must reference exercise_name field');
-  assert.match(planFn, /plan-card-code/, 'must include secondary lift code span');
+  assert.match(planFn, /plan-card-lift-name/, 'must render exercise name as card title');
 });
 
 // ── Validation helpers ────────────────────────────────────────────────────────
@@ -2956,13 +2956,12 @@ test('chat: composer owns the preview submit button as send', () => {
   assert.match(composerBlock, /Preview — no data saved/, 'send button keeps the preview wording');
 });
 
-test('chat: details fold keeps date, effort and notes reachable', () => {
+test('chat: form keeps date, effort and notes reachable', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  const detailsIdx = html.indexOf('id="logger-details"');
-  assert.ok(detailsIdx > -1, 'logger-details fold must exist');
-  const detailsBlock = html.slice(detailsIdx, html.indexOf('id="parsed-rows-editor"'));
+  assert.ok(html.indexOf('id="logger-details"') > -1, 'logger-details container must exist');
+  // Session fields live in hidden div (auto-populated); effort fields accessible via + menu
   for (const id of ['log-date', 'log-session-id', 'log-location', 'effort-details', 'effort-image', 'log-notes']) {
-    assert.match(detailsBlock, new RegExp(`id="${id}"`), `${id} must stay reachable inside the details fold`);
+    assert.match(html, new RegExp(`id="${id}"`), `${id} must exist in the form`);
   }
 });
 
@@ -3178,4 +3177,67 @@ test('glance: styles define the glance card row and status words', () => {
   assert.match(css, /\.glance-hint/, 'hint line style must exist');
   assert.match(css, /\.pattern-dot-status/, 'dot status word style must exist');
   assert.match(css, /\.drawer-more/, 'drawer fold style must exist');
+});
+
+// ── Coach polish (lift names · session auto-populate · read strip) ─────────────
+
+test('polish: plan cards show exercise name — lift code secondary span removed', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const planFn = appSource.slice(appSource.indexOf('async function loadTodaysPlan'), appSource.indexOf('async function loadTodaysPlan') + 2000);
+  assert.match(planFn, /plan-card-lift-name/, 'exercise name span must be present');
+  assert.doesNotMatch(planFn, /plan-card-code muted/, 'lift code secondary span must not be rendered');
+});
+
+test('polish: session fields are hidden and auto-populated — no visible form fold', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  // The hidden container must exist with all session fields inside
+  const detailsIdx = html.indexOf('id="logger-details"');
+  assert.ok(detailsIdx > -1, 'logger-details container must exist');
+  const block = html.slice(detailsIdx, html.indexOf('id="parsed-rows-editor"'));
+  for (const id of ['log-date', 'log-session-id', 'log-location', 'log-notes']) {
+    assert.match(block, new RegExp(`id="${id}"`), `${id} must remain in the hidden session container`);
+  }
+  // The old visible summary text must be gone
+  assert.doesNotMatch(html, />Details.*date, session, effort, notes</, 'visible Details summary must be removed');
+});
+
+test('polish: effort section is a direct form child accessible via + menu', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  // effort-details must appear before logger-details (i.e. NOT nested inside it)
+  const effortIdx = html.indexOf('id="effort-details"');
+  const sessionIdx = html.indexOf('id="logger-details"');
+  assert.ok(effortIdx > -1, 'effort-details must exist');
+  assert.ok(effortIdx < sessionIdx, 'effort-details must come before the hidden session container, not inside it');
+});
+
+test('polish: coach-read-strip container exists in Coach surface', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="coach-read-strip"/, 'strip container must exist in tab-logger');
+  // Must appear before suggestion chips (between greeting and chips)
+  const stripIdx = html.indexOf('id="coach-read-strip"');
+  const chipsIdx = html.indexOf('id="suggestion-chips"');
+  assert.ok(stripIdx < chipsIdx, 'strip must appear above suggestion chips');
+});
+
+test('polish: renderCoachReadStrip renders compact dots and pick text', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function renderCoachReadStrip\(/, 'function must exist');
+  const fn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 800);
+  assert.match(fn, /coach-read-strip/, 'must target the strip container');
+  assert.match(fn, /strip-dot/, 'must render compact dots');
+  assert.match(fn, /strip-rec/, 'must render pick text');
+  assert.match(fn, /FRIENDLY_PATTERN_LABELS/, 'must use friendly labels for dot titles');
+});
+
+test('polish: loadIntentDashboard calls renderCoachReadStrip', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(appSource.indexOf('async function loadIntentDashboard('), appSource.indexOf('async function loadIntentDashboard(') + 600);
+  assert.match(fn, /renderCoachReadStrip/, 'loadIntentDashboard must call renderCoachReadStrip');
+});
+
+test('polish: coach-read-strip and strip-dot styled in CSS', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.coach-read-strip/, 'strip container must be styled');
+  assert.match(css, /\.strip-dot/, 'compact dot must be styled');
+  assert.match(css, /\.strip-rec/, 'pick text must be styled');
 });
