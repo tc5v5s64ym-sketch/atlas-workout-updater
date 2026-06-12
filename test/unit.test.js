@@ -1569,6 +1569,31 @@ test('reaction layer: renderLogWorkoutPreview injects suggestion and never block
   assert.match(previewFn, /pendingWrite\.liftCodes/, 'must store lift codes for write reaction');
 });
 
+test('effort-only preview: submit handler allows empty workout rows when screenshot or manual effort exists', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('logger-form').addEventListener('submit'";
+  const submitSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf('async function submitCompleteWorkout(')
+  );
+
+  assert.match(submitSection, /const effortOnly = !logRows\.length && Boolean\(file \|\| manualEffort\)/);
+  assert.match(submitSection, /if \(!logRows\.length && !effortOnly\)/);
+  assert.match(submitSection, /mode: 'effort-only'/);
+});
+
+test('effort-only preview: complete-workout preview shows no-workout copy and effort-only CTA', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const previewFn = appSource.slice(
+    appSource.indexOf('function renderCompleteWorkoutPreview('),
+    appSource.indexOf("document.getElementById('cancel-preview-btn')")
+  );
+
+  assert.match(previewFn, /Effort-only preview/);
+  assert.match(previewFn, /Write Effort to Google Sheets/);
+  assert.match(previewFn, /data\.effort_source === 'manual'/);
+});
+
 test('reaction layer: approve-btn captures lift codes and fires write reaction', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
@@ -1579,6 +1604,19 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
   assert.match(approveSection, /\.catch\(/, 'write reaction must fail quietly');
+});
+
+test('effort-only approve: complete-workout path accepts Effort-only writes without log rows', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const approveSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf(anchor) + 5000
+  );
+
+  assert.match(approveSection, /pendingWrite\.mode === 'screenshot' \|\| pendingWrite\.mode === 'effort-only'/);
+  assert.match(approveSection, /writeData\.effort_only === true/);
+  assert.match(approveSection, /writeData\.effort_written !== true \|\| writeData\.sheet_written !== true/);
 });
 
 // ── Post-write verdict ────────────────────────────────────────────────────────
@@ -1614,7 +1652,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 3500
+    appSource.indexOf(anchor) + 5000
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -2487,7 +2525,7 @@ test('intent dashboard: openIntentDrawer and closeIntentDrawer exist and are wir
 
   const openFn = appSource.slice(
     appSource.indexOf('function openIntentDrawer('),
-    appSource.indexOf('function openIntentDrawer(') + 2800
+    appSource.indexOf('function openIntentDrawer(') + 3600
   );
   assert.match(openFn, /drawer-title/, 'must render drawer title');
   assert.match(openFn, /drawer-section-title/, 'must render section titles');

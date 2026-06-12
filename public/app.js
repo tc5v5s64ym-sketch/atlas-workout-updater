@@ -1452,6 +1452,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const sessionId = document.getElementById('log-session-id').value.trim() || generateSessionId(date);
   const location = document.getElementById('log-location').value.trim();
   const notes = document.getElementById('log-notes').value.trim();
+  const mode = effortMode();
   let logRows = [];
   try {
     await rowsFromWorkoutInput();
@@ -1461,7 +1462,24 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
-  if (!logRows.length) {
+  let manualEffort = null;
+  try {
+    if (mode === 'manual') {
+      manualEffort = collectManualEffort(sessionId, date, location, notes);
+    }
+  } catch (err) {
+    setStatus(loggerStatus, err.message, 'error');
+    return;
+  }
+
+  let file = null;
+  if (mode === 'screenshot') {
+    const imageInput = document.getElementById('effort-image');
+    file = imageInput.files[0] || null;
+  }
+
+  const effortOnly = !logRows.length && Boolean(file || manualEffort);
+  if (!logRows.length && !effortOnly) {
     setStatus(loggerStatus, 'Enter workout text first, then preview. You can edit parsed rows after preview.', 'error');
     return;
   }
@@ -1471,20 +1489,24 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   previewBtn.textContent = 'Previewing…';
 
   try {
-    if (effortMode() === 'screenshot') {
-      const imageInput = document.getElementById('effort-image');
-      const file = imageInput.files[0];
+    if (mode === 'screenshot') {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
       const result = await submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, testMode: true });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'screenshot', file, logRows, sessionId, date, location, notes };
+      pendingWrite = { mode: 'screenshot', file, logRows, sessionId, date, location, notes, effortOnly };
+      renderCompleteWorkoutPreview(result);
+    } else if (effortOnly) {
+      const result = await submitCompleteWorkout({ logRows, sessionId, date, location, notes, manualEffort, testMode: true });
+      if (!hasCompleteWorkoutNoWriteProof(result)) {
+        throw new Error('Preview did not prove no-write safety. Nothing can be written.');
+      }
+      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true };
       renderCompleteWorkoutPreview(result);
     } else {
-      let effortRow = null;
-      effortRow = collectManualEffort(sessionId, date, location, notes);
+      const effortRow = manualEffort;
 
       const payload = { session_id: sessionId, date, log_rows: logRows, test_mode: 'true' };
       if (effortRow) payload.effort_row = effortRow;
@@ -1504,7 +1526,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     parsedRowsEditor.hidden = false;
     document.getElementById('approve-btn').disabled = !pendingWrite;
     const gateNote = document.getElementById('preview-gate-note');
-    if (gateNote) gateNote.textContent = 'Review the dry-run above, then click to write.';
+    if (gateNote) gateNote.textContent = effortOnly
+      ? 'Review the dry-run above, then click to write Effort only.'
+      : 'Review the dry-run above, then click to write.';
   } catch (err) {
     setStatus(loggerStatus, `Preview failed: ${err.message}`, 'error');
   } finally {
@@ -1513,14 +1537,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   }
 });
 
-async function submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, testMode }) {
+async function submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, manualEffort, testMode }) {
   const form = new FormData();
-  form.append('image', file);
-  form.append('log_rows_json', JSON.stringify(logRows));
+  if (file) form.append('image', file);
+  form.append('log_rows_json', JSON.stringify(logRows || []));
   form.append('session_id', sessionId);
   form.append('date', date);
   if (location) form.append('location', location);
   if (notes) form.append('notes', notes);
+  if (manualEffort) form.append('effort_json', JSON.stringify(manualEffort));
   if (testMode) form.append('test_mode', 'true');
   return api('/api/complete-workout', { method: 'POST', body: form });
 }
@@ -1616,6 +1641,7 @@ function renderCompleteWorkoutPreview(result) {
   // complete-workout nests its body one level deeper than log-workout
   const outer = result.data || {};
   const data = outer.data || {};
+  const effortOnly = data.effort_only === true;
   previewContent.innerHTML = '';
   const parseStatus = parserStatusNode(lastParserStatus);
   if (parseStatus) previewContent.appendChild(parseStatus);
@@ -1635,8 +1661,12 @@ function renderCompleteWorkoutPreview(result) {
     previewContent.appendChild(el('div', { class: 'preview-warnings', text: `${dup.duplicate_log_rows} row(s) will be skipped as duplicates.` }));
   }
 
-  previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.rows_to_write || []).length})` }));
-  previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.rows_to_write || []));
+  if (effortOnly) {
+    previewContent.appendChild(el('div', { class: 'preview-ok', text: 'Effort-only preview — no workout sets will be written.' }));
+  } else {
+    previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.rows_to_write || []).length})` }));
+    previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.rows_to_write || []));
+  }
   const completeLiftCodes = extractLiftCodes(data.rows_to_write);
   if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;
   if (completeLiftCodes.length && getApiKey()) {
@@ -1648,13 +1678,15 @@ function renderCompleteWorkoutPreview(result) {
     }).catch(() => {});
   }
 
-  previewContent.appendChild(el('h3', { text: 'Parsed effort (from screenshot)' }));
+  previewContent.appendChild(el('h3', { text: data.effort_source === 'manual' ? 'Parsed effort (manual entry)' : 'Parsed effort (from screenshot)' }));
   const effort = data.parsed_effort || {};
   previewContent.appendChild(renderTable(
     ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR', 'Type'],
     [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, effort.peakHR, effort.workoutType]]
   ));
   previewContent.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 5` }));
+  const approveBtn = document.getElementById('approve-btn');
+  approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
 }
 
 document.getElementById('cancel-preview-btn').addEventListener('click', invalidatePreview);
@@ -1705,11 +1737,18 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   const reactionLiftCodes = pendingWrite.liftCodes || [];
   let pendingLastWrite = null;
   try {
-    if (pendingWrite.mode === 'screenshot') {
+    if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
       const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
-      const rowsWritten = writeResult?.data?.data?.log_rows_written;
-      if (!rowsWritten || rowsWritten === 0) {
-        throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+      const writeData = writeResult?.data?.data || {};
+      if (writeData.effort_only === true) {
+        if (writeData.effort_written !== true || writeData.sheet_written !== true) {
+          throw new Error('Effort-only write did not confirm an Effort sheet write. Verify Sheets before approving again.');
+        }
+      } else {
+        const rowsWritten = writeData.log_rows_written;
+        if (!rowsWritten || rowsWritten === 0) {
+          throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+        }
       }
     } else {
       const realPayload = { ...pendingWrite.payload };
@@ -1740,7 +1779,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     lastParserStatus = null;
     activeExercise = null;
     setDefaultDate();
-    setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
+    setStatus(
+      loggerStatus,
+      pendingWrite.effortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+      'ok'
+    );
     if (pendingLastWrite) {
       lastWrite = pendingLastWrite;
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
