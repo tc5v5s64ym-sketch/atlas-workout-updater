@@ -2,6 +2,30 @@ const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
 
+function buildWorkoutScreenshotPrompt() {
+  return [
+    'Extract workout metrics visible in this Apple Watch workout screenshot.',
+    'Return strict JSON only with this exact schema:',
+    '{',
+    '  "date": string|null,',
+    '  "duration": string|null,',
+    '  "activeCalories": number|null,',
+    '  "totalCalories": number|null,',
+    '  "averageHR": number|null,',
+    '  "peakHR": number|null,',
+    '  "workoutType": string|null',
+    '}',
+    'Heart rate rules:',
+    '- averageHR: use only the value next to labels like "Avg HR", "Average HR", or "Avg Heart Rate".',
+    '- peakHR: use only the value next to labels like "Max HR", "Maximum HR", "Peak HR", or "Peak Heart Rate", or the highest visible heart-rate value on the screenshot.',
+    '- averageHR and peakHR are different metrics. Do not confuse them and do not copy one into the other.',
+    '- If averageHR is visible but no peak/max heart-rate label or highest HR value is visible, return peakHR: null.',
+    'If a workout date is visible and unambiguous, return it as YYYY-MM-DD.',
+    'Use null when a value is not visible.',
+    'Do not include markdown, code fences, or extra keys.'
+  ].join('\n');
+}
+
 async function parseWorkoutScreenshot(imagePath) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is required for workout image parsing.');
@@ -26,22 +50,7 @@ async function parseWorkoutScreenshot(imagePath) {
         content: [
           {
             type: 'input_text',
-            text: [
-              'Extract workout metrics visible in this Apple Watch workout screenshot.',
-              'Return strict JSON only with this exact schema:',
-              '{',
-              '  "date": string|null,',
-              '  "duration": string|null,',
-              '  "activeCalories": number|null,',
-              '  "totalCalories": number|null,',
-              '  "averageHR": number|null,',
-              '  "peakHR": number|null,',
-              '  "workoutType": string|null',
-              '}',
-              'If a workout date is visible and unambiguous, return it as YYYY-MM-DD.',
-              'Use null when a value is not visible.',
-              'Do not include markdown, code fences, or extra keys.'
-            ].join('\n')
+            text: buildWorkoutScreenshotPrompt()
           },
           {
             type: 'input_image',
@@ -104,5 +113,6 @@ function getMimeTypeFromPath(filePath) {
 }
 
 module.exports = {
+  buildWorkoutScreenshotPrompt,
   parseWorkoutScreenshot
 };
