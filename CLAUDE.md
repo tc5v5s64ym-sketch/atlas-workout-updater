@@ -33,7 +33,7 @@ Read `docs/INVARIANTS.md` for rules that must never be broken.
 
 | Behaviour | Where |
 |---|---|
-| Slash notation: `225 5/2` = 225 lb × 5 reps @ RIR 2 | `lib/parseWorkout.js` |
+| Slash notation: `225 5/2` = 225 lb × 5 reps @ RIR 2 | `services/workoutTextParser.js` |
 | `test_mode` absent = live write | `index.js` log-workout handler |
 | Dry-run proof fields: `sheet_written:false`, `no_write_confirmed:true` | `index.js` |
 | Live-write proof fields: `sheet_write:'success'`, `log_rows_written>0` | `index.js` |
@@ -96,7 +96,7 @@ When in doubt, do less and ask.
 |---|---|
 | `index.js` | All Express routes and request handlers |
 | `sheets.js` | Google Sheets client — read, append, delete |
-| `lib/parseWorkout.js` | Natural-language parser (sacred) |
+| `services/workoutTextParser.js` | Natural-language parser (sacred) |
 | `public/app.js` | Single-page frontend |
 | `config/routes.js` | Route manifest for `/routes` endpoint |
 | `test/api-smoke.test.js` | Full API smoke suite with stubbed Sheets |
