@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
 
+const originalConsoleLog = console.log;
+
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
@@ -103,6 +105,7 @@ let server;
 let baseUrl;
 
 test.before(async () => {
+  console.log = () => {};
   server = await new Promise(resolve => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -111,10 +114,14 @@ test.before(async () => {
 });
 
 test.after(async () => {
-  if (!server) return;
-  await new Promise((resolve, reject) => {
-    server.close(error => (error ? reject(error) : resolve()));
-  });
+  try {
+    if (!server) return;
+    await new Promise((resolve, reject) => {
+      server.close(error => (error ? reject(error) : resolve()));
+    });
+  } finally {
+    console.log = originalConsoleLog;
+  }
 });
 
 test.beforeEach(() => {
@@ -142,6 +149,16 @@ async function requestMultipart(path, formData) {
   });
   const body = await response.json();
   return { response, body };
+}
+
+async function withMutedConsoleLog(fn) {
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.log = originalLog;
+  }
 }
 
 test('api smoke: health returns service status', async () => {
@@ -396,31 +413,33 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
   fakeSheetsState.allowAppend = true;
 
   try {
-    const form = new FormData();
-    form.append('session_id', 'EFFORT-MANUAL-ONLY-01');
-    form.append('date', '2026-06-11');
-    form.append('log_rows_json', JSON.stringify([]));
-    form.append('effort_json', JSON.stringify({
-      duration: '42',
-      activeCalories: 410,
-      totalCalories: 520,
-      averageHR: 148,
-      peakHR: 171,
-      workoutType: 'Traditional Strength Training'
-    }));
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'EFFORT-MANUAL-ONLY-01');
+      form.append('date', '2026-06-11');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('effort_json', JSON.stringify({
+        duration: '42',
+        activeCalories: 410,
+        totalCalories: 520,
+        averageHR: 148,
+        peakHR: 171,
+        workoutType: 'Traditional Strength Training'
+      }));
 
-    const { response, body } = await requestMultipart('/api/complete-workout', form);
-    const data = body.data.data;
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
 
-    assert.equal(response.status, 200, JSON.stringify(body));
-    assert.equal(body.status, 'ok');
-    assert.equal(data.effort_only, true);
-    assert.equal(data.sheet_written, true);
-    assert.equal(data.effort_written, true);
-    assert.equal(data.log_rows_written, 0);
-    assert.equal(fakeSheetsState.appendCalls.length, 1);
-    assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Effort');
-    assert.equal(fakeSheetsState.appendCalls[0].rows.length, 1);
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(body.status, 'ok');
+      assert.equal(data.effort_only, true);
+      assert.equal(data.sheet_written, true);
+      assert.equal(data.effort_written, true);
+      assert.equal(data.log_rows_written, 0);
+      assert.equal(fakeSheetsState.appendCalls.length, 1);
+      assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Effort');
+      assert.equal(fakeSheetsState.appendCalls[0].rows.length, 1);
+    });
   } finally {
     fakeSheetsState.allowAppend = false;
   }
