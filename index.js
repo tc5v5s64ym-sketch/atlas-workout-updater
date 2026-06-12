@@ -50,7 +50,7 @@ const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require
 const { success: standardSuccess, error: standardError } = require('./response');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
-const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
+const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
 const trainingStore = require('./services/trainingStore');
@@ -524,6 +524,7 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
           pending_exercises.push({
             exercise: rowObj.exercise,
             suggested_canonical_name: suggestions[0]?.canonical_exercise || rowObj.exercise,
+            suggested_lift_code: enriched.lift_code || '',
             closest_matches: suggestions,
             reason: 'No Exercise_Catalog match'
           });
