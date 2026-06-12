@@ -375,11 +375,17 @@ main {
   height: 40px;
   border-radius: var(--r-pill);
   padding: 0;
-  font-size: 1.1rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* The button keeps its full text for screen readers; visually we show an
+     icon so app.js's textContent swaps ("Previewing…") never break layout. */
+  font-size: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
+.composer-send::before { content: "\2191"; font-size: 1.15rem; font-weight: 700; }
+.composer-send:disabled::before { content: "\2026"; }
 
 .workout-text-label { display: none; }
 
@@ -539,6 +545,67 @@ button.approve {
   border-top: 1px solid var(--border);
   padding-top: var(--s4);
 }
+
+/* ============================================================================
+   Coach thread — conversation layout (chat.js)
+   ============================================================================ */
+
+.coach-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+}
+#thread-messages { display: flex; flex-direction: column; gap: var(--s2); }
+#thread-messages:empty { display: none; }
+
+.chat-bubble {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-bubble-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-bottom-right-radius: var(--r-sm);
+}
+
+/* Inside the thread the preview panel reads as Atlas's reply card */
+.coach-thread #preview-panel {
+  margin-top: 0;
+  border-top: none;
+  padding: var(--s4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+.coach-thread #preview-panel > h3:first-child { margin-top: 0; }
+
+#logger-status:empty { display: none; }
+
+/* Compact safety footnote under the composer */
+.safety-note.compact {
+  background: none;
+  border: none;
+  padding: var(--s1) var(--s1) 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.logger-details { margin-top: var(--s3); }
+.logger-details > summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.logger-details[open] > summary { margin-bottom: var(--s2); }
 
 .no-write-proof {
   background: var(--ok-soft);

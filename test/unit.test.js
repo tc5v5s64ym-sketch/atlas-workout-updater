@@ -2929,3 +2929,63 @@ test('shell: styles define dark mode and the new component tokens', () => {
   // Coach surface hides the Progress sub-nav
   assert.match(css, /\[data-surface="coach"\]\s*#subnav/, 'subnav must be hidden on the Coach surface');
 });
+
+// ── Coach chat thread (UI PR 3) ────────────────────────────────────────────────
+
+test('chat: coach thread holds messages, preview card and status in order', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="coach-thread"/, 'coach thread container must exist');
+  const threadIdx = html.indexOf('id="coach-thread"');
+  const formIdx = html.indexOf('id="logger-form"');
+  assert.ok(threadIdx > -1 && threadIdx < formIdx, 'thread must render above the composer form');
+  const threadBlock = html.slice(threadIdx, formIdx);
+  const msgIdx = threadBlock.indexOf('id="thread-messages"');
+  const previewIdx = threadBlock.indexOf('id="preview-panel"');
+  const statusIdx = threadBlock.indexOf('id="logger-status"');
+  assert.ok(msgIdx > -1, 'thread-messages must be inside the thread');
+  assert.ok(previewIdx > msgIdx, 'preview panel must follow user messages');
+  assert.ok(statusIdx > previewIdx, 'status replies must follow the preview card');
+});
+
+test('chat: composer owns the preview submit button as send', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const composerIdx = html.indexOf('class="composer"');
+  const composerBlock = html.slice(composerIdx, composerIdx + 1200);
+  assert.match(composerBlock, /id="preview-btn"[^>]*class="composer-send"/, 'preview button must be the composer send button');
+  // Send still previews — the accessible name keeps the no-write promise
+  assert.match(composerBlock, /Preview — no data saved/, 'send button keeps the preview wording');
+});
+
+test('chat: details fold keeps date, effort and notes reachable', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const detailsIdx = html.indexOf('id="logger-details"');
+  assert.ok(detailsIdx > -1, 'logger-details fold must exist');
+  const detailsBlock = html.slice(detailsIdx, html.indexOf('id="parsed-rows-editor"'));
+  for (const id of ['log-date', 'log-session-id', 'log-location', 'effort-details', 'effort-image', 'log-notes']) {
+    assert.match(detailsBlock, new RegExp(`id="${id}"`), `${id} must stay reachable inside the details fold`);
+  }
+});
+
+test('chat: chat.js is a visual layer that never touches write endpoints', () => {
+  const chat = fs.readFileSync(path.join(repoRoot, 'public', 'chat.js'), 'utf8');
+  assert.match(chat, /addEventListener\('submit'/, 'must narrate form submission as a user bubble');
+  assert.match(chat, /chat-bubble-user/, 'must append user bubbles');
+  assert.match(chat, /MutationObserver/, 'must observe app.js-owned panels rather than drive them');
+  assert.doesNotMatch(chat, /appendRows|sheet_write|confirm_delete|\/api\//, 'chat.js must never call the API or write paths');
+});
+
+test('chat: chat.js loads last so app.js owns the trust loop wiring', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const appIdx = html.indexOf('src="app.js"');
+  const navIdx = html.indexOf('src="nav.js"');
+  const chatIdx = html.indexOf('src="chat.js"');
+  assert.ok(appIdx > -1 && navIdx > appIdx && chatIdx > navIdx, 'script order must be app.js, nav.js, chat.js');
+});
+
+test('chat: styles define the thread bubbles and in-thread preview card', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.coach-thread/, 'must style the thread container');
+  assert.match(css, /\.chat-bubble-user/, 'must style user bubbles');
+  assert.match(css, /\.coach-thread #preview-panel/, 'preview panel must restyle as an in-thread card');
+  assert.match(css, /\.composer-send/, 'must style the composer send button');
+});
