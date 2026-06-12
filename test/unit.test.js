@@ -2810,3 +2810,68 @@ test('bodyweight: rowsFromBackendParsedWorkout converts null weight to "0"', () 
   assert.doesNotMatch(fnBody, /weight.*null.*''|''.*null.*weight/,
     "null weight must NOT convert to empty string — that fails backend validation");
 });
+
+// ---------------------------------------------------------------------------
+// UI shell redesign — two-surface Coach | Progress (PR: ui-design-tokens-v1)
+// ---------------------------------------------------------------------------
+
+test('shell: header has Coach and Progress segmented control', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /class="segmented"/, 'must have a segmented control');
+  assert.match(html, /data-surface="coach"[^>]*>Coach</, 'must have a Coach surface button');
+  assert.match(html, /data-surface="progress"[^>]*>Progress</, 'must have a Progress surface button');
+});
+
+test('shell: loads nav.js after app.js so the trust loop wiring binds first', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const appIdx = html.indexOf('src="app.js"');
+  const navIdx = html.indexOf('src="nav.js"');
+  assert.ok(appIdx >= 0, 'app.js must still be loaded');
+  assert.ok(navIdx > appIdx, 'nav.js must load after app.js');
+});
+
+test('shell: Coach surface keeps the workout composer and approval gate intact', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  // Composer wraps the existing workout textarea + the "+" attachment affordance
+  assert.match(html, /class="composer"/, 'must have a composer container');
+  assert.match(html, /id="composer-attach"/, 'composer must have the + attachment button');
+  const composerIdx = html.indexOf('class="composer"');
+  const composerBlock = html.slice(composerIdx, composerIdx + 600);
+  assert.match(composerBlock, /id="workout-text"/, 'composer must contain the workout textarea');
+  // Trust loop must survive the reskin
+  assert.match(html, /id="preview-btn"/, 'preview button must remain');
+  assert.match(html, /id="approve-btn"[^>]*disabled/, 'approve button must remain disabled until preview');
+  assert.match(html, /test_mode=true/, 'two-step write-flow safety note must remain');
+});
+
+test('shell: all original tab sections survive the redesign', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  for (const id of ['tab-logger', 'tab-dashboard', 'tab-progress', 'tab-history', 'tab-body', 'tab-settings']) {
+    assert.match(html, new RegExp(`id="${id}"`), `${id} section must still exist`);
+  }
+  // The .tab-btn engine app.js depends on must still have every data-tab control
+  for (const tab of ['dashboard', 'progress', 'logger', 'history', 'body', 'settings']) {
+    assert.match(html, new RegExp(`data-tab="${tab}"`), `data-tab="${tab}" control must exist for app.js tab engine`);
+  }
+});
+
+test('shell: nav.js routes surfaces without touching the trust loop', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  assert.match(nav, /MutationObserver/, 'must observe tab changes to stay in sync with app.js');
+  assert.match(nav, /\.tab-btn/, 'must navigate through the existing .tab-btn engine');
+  // nav.js is presentation-only: it must never perform or confirm writes
+  assert.doesNotMatch(nav, /appendRows|sheet_write|confirm_delete|\/api\/log-workout/, 'nav.js must not touch write endpoints');
+});
+
+test('shell: styles define dark mode and the new component tokens', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /prefers-color-scheme:\s*dark/, 'must support a dark theme');
+  assert.match(css, /--accent:/, 'must define the accent design token');
+  assert.match(css, /\.segmented/, 'must style the segmented control');
+  assert.match(css, /\.surface-btn/, 'must style surface buttons');
+  assert.match(css, /\.composer/, 'must style the chat composer');
+  assert.match(css, /\.composer-attach/, 'must style the + attachment button');
+  assert.match(css, /\.chip/, 'must style suggestion chips');
+  // Coach surface hides the Progress sub-nav
+  assert.match(css, /\[data-surface="coach"\]\s*#subnav/, 'subnav must be hidden on the Coach surface');
+});
