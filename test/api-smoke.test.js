@@ -96,10 +96,13 @@ let fakeVisionParsedMetrics = {
   workoutType: 'Traditional Strength Training'
 };
 
+let fakeVisionCalls = 0;
+
 const fakeVision = {
-  parseWorkoutScreenshot: async () => ({
-    parsed_metrics: { ...fakeVisionParsedMetrics }
-  })
+  parseWorkoutScreenshot: async () => {
+    fakeVisionCalls += 1;
+    return { parsed_metrics: { ...fakeVisionParsedMetrics } };
+  }
 };
 
 const visionPath = require.resolve('../services/vision');
@@ -519,6 +522,57 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
   }
 });
 
+// PR-02: a screenshot approval re-sends the reviewed effort as effort_json with
+// NO image, so what gets written is exactly what the owner saw — and the vision
+// model is never run a second time. These tests pin that backend contract.
+test('api smoke: complete-workout approval payload (effort_json, no image) writes the reviewed effort values and never calls vision', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionCalls = 0;
+  fakeSheetsState.allowAppend = true;
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'APPROVE-PREVIEWED-01');
+      form.append('date', '2026-06-11');
+      form.append('log_rows_json', JSON.stringify([
+        { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]));
+      form.append('effort_json', JSON.stringify({
+        duration: '00:42:00',
+        activeCalories: 410,
+        totalCalories: 520,
+        averageHR: 148,
+        peakHR: 171,
+        workoutType: 'Traditional Strength Training'
+      }));
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.effort_source, 'manual');
+      assert.equal(data.sheet_written, true);
+      assert.equal(data.log_rows_written, 1);
+
+      // No image attached → the vision model must not run.
+      assert.equal(fakeVisionCalls, 0);
+
+      const effortAppend = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort');
+      assert.ok(effortAppend, 'expected an Effort append');
+      // Effort row: [date, session, duration, activeCal, totalCal, avgHR, peakHR, location, notes]
+      const effortRow = effortAppend.rows[0];
+      assert.equal(effortRow[1], 'APPROVE-PREVIEWED-01');
+      assert.equal(effortRow[3], 410);
+      assert.equal(effortRow[4], 520);
+      assert.equal(effortRow[5], 148);
+      assert.equal(effortRow[6], 171);
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 test('api smoke: complete-workout dry-run with write_id does not consume idempotency state', async () => {
   fakeSheetsState.appendCalls.length = 0;
 
@@ -560,6 +614,48 @@ test('api smoke: complete-workout dry-run with write_id does not consume idempot
       assert.equal(live.body.data.data.sheet_written, true);
       assert.equal(live.body.data.data.duplicate_write, false);
       assert.equal(fakeSheetsState.appendCalls.length, 1);
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: complete-workout approval payload preserves a missing peak HR as an empty cell with a warning', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionCalls = 0;
+  fakeSheetsState.allowAppend = true;
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'APPROVE-NO-PEAK-01');
+      form.append('date', '2026-06-11');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('effort_json', JSON.stringify({
+        duration: '00:42:00',
+        activeCalories: 410,
+        totalCalories: 520,
+        averageHR: 148,
+        peakHR: '',
+        workoutType: 'Traditional Strength Training'
+      }));
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.effort_written, true);
+      assert.equal(fakeVisionCalls, 0);
+      // warnings sit on the response envelope (body.data), a sibling of body.data.data
+      const warnings = body.data.warnings || [];
+      assert.ok(
+        warnings.some(w => /peakHR missing/i.test(w)),
+        `expected a missing-peak warning, got ${JSON.stringify(warnings)}`
+      );
+
+      const effortAppend = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort');
+      assert.ok(effortAppend, 'expected an Effort append');
+      assert.equal(effortAppend.rows[0][6], '');
     });
   } finally {
     fakeSheetsState.allowAppend = false;
