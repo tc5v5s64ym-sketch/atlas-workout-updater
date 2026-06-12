@@ -317,8 +317,13 @@
       radio.checked = true;
       radio.dispatchEvent(new Event('change', { bubbles: true }));
     }
+    // Reveal the effort block (hidden by CSS, not by the hidden attribute) and
+    // open the <details> so the fields are visible.
     const details = document.getElementById('effort-details');
-    if (details) details.open = true;
+    if (details) {
+      details.classList.add('effort-open');
+      details.open = true;
+    }
   }
 
   // "+" → Apple Watch screenshot: flips the existing effort flow to screenshot
@@ -336,6 +341,24 @@
     document.getElementById('effort-duration')?.focus();
   });
 
+  // "+" → Fix a past session: un-hide #logger-details, open the load-session
+  // <details>, scroll to it, and focus the session ID input.
+  document.getElementById('attach-fix-session')?.addEventListener('click', () => {
+    closeAttachMenu();
+    const loggerDetails = document.getElementById('logger-details');
+    if (loggerDetails) {
+      loggerDetails.hidden = false;
+      const loadSessionDetails = loggerDetails.querySelector('.load-session-details');
+      if (loadSessionDetails) {
+        loadSessionDetails.open = true;
+        requestAnimationFrame(() => {
+          loadSessionDetails.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          document.getElementById('load-session-id')?.focus();
+        });
+      }
+    }
+  });
+
   // Chat-first screenshot: picking a file is the "send" gesture. The moment a
   // screenshot is chosen we fire the existing preview flow automatically — no
   // separate Preview tap. app.js still owns the dry-run + approval gate.
@@ -350,6 +373,35 @@
       document.getElementById('logger-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     });
   });
+
+  /* ===== "Edited since preview" nudge ===== */
+  // When the user edits the textarea while the preview panel is visible, remind
+  // them to re-preview before approving. A single <p> in #logger-status carries
+  // the message; it is removed as soon as the form is submitted (new preview).
+  // app.js's approval gating is not changed — this is purely informational.
+
+  const EDITED_MSG_ID = 'edited-since-preview-msg';
+
+  function showEditedNudge() {
+    const loggerStatus = document.getElementById('logger-status');
+    const previewPanel = document.getElementById('preview-panel');
+    if (!loggerStatus || !previewPanel || previewPanel.hidden) return;
+    if (document.getElementById(EDITED_MSG_ID)) return;    // already shown
+    const p = document.createElement('p');
+    p.id = EDITED_MSG_ID;
+    p.className = 'edited-since-preview';
+    p.textContent = 'Edited since preview — preview again to save.';
+    loggerStatus.prepend(p);
+  }
+
+  function clearEditedNudge() {
+    document.getElementById(EDITED_MSG_ID)?.remove();
+  }
+
+  document.getElementById('workout-text')?.addEventListener('input', showEditedNudge);
+
+  // Remove the nudge on form submit (new preview wipes the old state)
+  document.getElementById('logger-form')?.addEventListener('submit', clearEditedNudge);
 
   /* ===== Time-of-day greeting ===== */
 
