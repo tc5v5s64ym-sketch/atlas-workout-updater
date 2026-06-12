@@ -2816,23 +2816,60 @@ test('scoreIntents: returns ok with no history', () => {
 
 // ── Stalls-aware recommendations (Phase 1) ─────────────────────────────────────
 
-test('scoreIntents: surfaces a Deload & Reset intent when 2+ lifts are stalled', () => {
+test('scoreIntents: surfaces a Deload & Reset intent when 2+ rested lifts are stalled', () => {
+  // Both stalled lifts were last trained ~6-7 days ago → muscle groups are rested,
+  // so deloading them today is appropriate.
   const rows = makeIntentLogRows([
-    { date: '2026-06-02', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
-    { date: '2026-06-06', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
-    { date: '2026-06-10', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
-    { date: '2026-06-02', session: 'A1', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
-    { date: '2026-06-06', session: 'A2', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
-    { date: '2026-06-10', session: 'A3', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
+    { date: '2026-05-28', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-01', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-05', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-05-28', session: 'A1', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
+    { date: '2026-06-01', session: 'A2', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
+    { date: '2026-06-05', session: 'A3', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
   ]);
   const result = scoreIntents(rows, [], { today: '2026-06-12' });
   const deload = result.intents.find(i => i.id === 'deload_reset');
-  assert.ok(deload, 'Deload & Reset must appear when multiple lifts stall');
+  assert.ok(deload, 'Deload & Reset must appear when multiple rested lifts stall');
   assert.ok(deload.exercises.length >= 2, 'deload must list the stalled lifts');
   assert.ok(deload.why_today.some(w => /deload/i.test(w)), 'deload must explain the lighter target');
   // Deload targets are reduced from the stalled best (≈10% lighter).
   const bench = deload.exercises.find(ex => ex.lift_code === 'BENCH01');
   assert.ok(bench && bench.target_weight < 185, 'deload weight must drop below the stalled best');
+});
+
+test('scoreIntents: a stalled lift trained yesterday is held out of the deload, with an honest reason', () => {
+  const rows = makeIntentLogRows([
+    // Bench stalled, but chest was trained HARD yesterday → push is not rested.
+    { date: '2026-06-03', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-07', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-11', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    // Leg press stalled and legs are rested (last trained 6 days ago).
+    { date: '2026-05-30', session: 'B1', muscle: 'Legs', liftCode: 'LEGP01', weight: 300, reps: 8, rir: 2 },
+    { date: '2026-06-02', session: 'B2', muscle: 'Legs', liftCode: 'LEGP01', weight: 300, reps: 8, rir: 2 },
+    { date: '2026-06-06', session: 'B3', muscle: 'Legs', liftCode: 'LEGP01', weight: 300, reps: 8, rir: 2 },
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  const deload = result.intents.find(i => i.id === 'deload_reset');
+  assert.ok(deload, 'deload should still appear because a rested stalled lift exists');
+  const codes = deload.exercises.map(ex => ex.lift_code);
+  assert.ok(codes.includes('LEGP01'), 'the rested stalled lift is recommended today');
+  assert.ok(!codes.includes('BENCH01'), 'the recently-trained stalled lift must NOT be recommended today');
+  assert.ok(deload.why_today.some(w => /not today/.test(w) && /trained recently/.test(w)),
+    'must honestly say the held lift is due soon but not today');
+});
+
+test('scoreIntents: no deload when every stalled lift was trained recently', () => {
+  const rows = makeIntentLogRows([
+    { date: '2026-06-03', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-07', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-11', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-03', session: 'A1', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
+    { date: '2026-06-07', session: 'A2', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
+    { date: '2026-06-11', session: 'A3', muscle: 'Back', liftCode: 'ROW01', weight: 155, reps: 8, rir: 1 },
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  assert.equal(result.intents.find(i => i.id === 'deload_reset'), undefined,
+    'deload must not be offered when no stalled muscle group is rested');
 });
 
 test('scoreIntents: no Deload intent when fewer than two lifts are stalled', () => {
@@ -2865,15 +2902,24 @@ test('scoreIntents: a stalled lift is kept out of Test Progress while a progress
   assert.ok(codes.includes('RISE01'), 'progressing lift must remain a PR candidate');
 });
 
-test('scoreIntents: Build Strength flags a stalled push/pull lift in its why_today', () => {
-  const rows = makeIntentLogRows([
-    { date: '2026-06-02', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
-    { date: '2026-06-06', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
-    { date: '2026-06-10', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+test('scoreIntents: Build Strength flags a stalled push/pull lift only when its muscle is rested', () => {
+  // Rested case (last trained 7 days ago) → push is fresh, so the stall is flagged.
+  const rested = makeIntentLogRows([
+    { date: '2026-05-28', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-01', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-05', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
   ]);
-  const result = scoreIntents(rows, [], { today: '2026-06-12' });
-  const bs = result.intents.find(i => i.id === 'build_strength');
-  assert.ok(bs.why_today.some(w => /hasn't improved in \d+ sessions/.test(w)), 'must call out the stalled lift');
+  const restedBs = scoreIntents(rested, [], { today: '2026-06-12' }).intents.find(i => i.id === 'build_strength');
+  assert.ok(restedBs.why_today.some(w => /hasn't improved in \d+ sessions/.test(w)), 'rested stalled lift must be called out');
+
+  // Recently-trained case (yesterday) → push not rested, so no stall call-out here.
+  const recent = makeIntentLogRows([
+    { date: '2026-06-03', session: 'A1', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-07', session: 'A2', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+    { date: '2026-06-11', session: 'A3', muscle: 'Chest', liftCode: 'BENCH01', weight: 185, reps: 5, rir: 1 },
+  ]);
+  const recentBs = scoreIntents(recent, [], { today: '2026-06-12' }).intents.find(i => i.id === 'build_strength');
+  assert.ok(!recentBs.why_today.some(w => /hasn't improved in \d+ sessions/.test(w)), 'recently-trained stall must not be flagged for today');
 });
 
 test('scoreIntents: intent-recommendation route is GET and read-only', () => {

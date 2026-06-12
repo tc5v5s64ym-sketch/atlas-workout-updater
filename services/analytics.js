@@ -815,6 +815,17 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     ]);
   }
 
+  // A stall is a *progression* signal (this lift needs a deload), which is
+  // separate from a *today readiness* signal (is this muscle group rested now?).
+  // Keep them apart so we never recommend deloading a muscle trained recently.
+  const patternOf = code => liftInfo.get(code)?.pattern || null;
+  const restedEnough = code => {
+    const st = rm[patternOf(code)]?.status;
+    return st === 'ready' || st === 'fresh' || st === 'unknown' || st == null;
+  };
+  const eligibleStalls = stalls.filter(s => restedEnough(s.liftCode));
+  const holdStalls = stalls.filter(s => !restedEnough(s.liftCode));
+
   const intents = [];
 
   // ── Build Strength ───────────────────────────────────────────────
@@ -841,8 +852,9 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     if (rm.lower?.daysSince) data.push({ label: 'Lower body', value: `${rm.lower.daysSince}d since last session`, context: rm.lower.status });
 
     const exercises = exForPatterns(['push', 'pull']);
-    // Plateaued lifts make a heavy strength day less appealing — nudge toward a deload.
-    for (const s of stalls.slice(0, 2)) {
+    // Only flag a plateau on lifts whose muscle group could actually be trained
+    // today — warning about a fatigued lift here would just repeat the deload bug.
+    for (const s of eligibleStalls.slice(0, 2)) {
       if (!exercises.some(ex => ex.lift_code === s.liftCode)) continue;
       why.push(`${stallName(s.liftCode)} hasn't improved in ${s.sessions_stalled} sessions — consider a lighter, technique-focused day`);
     }
@@ -1056,19 +1068,26 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
     });
   }
 
-  // ── Deload & Reset (only when several lifts have plateaued) ───────
-  if (stalls.length >= 2) {
-    const top = stalls.slice(0, 3);
+  // ── Deload & Reset (only for stalled lifts whose muscle group is rested) ──────
+  // Appears when 2+ lifts have plateaued AND at least one of them sits on a
+  // rested muscle group. Stalled lifts trained recently are surfaced as an
+  // honest "due soon, not today" note rather than recommended for a session.
+  if (eligibleStalls.length >= 1 && stalls.length >= 2) {
+    const top = eligibleStalls.slice(0, 3);
+    const patternLabel = code => rm[patternOf(code)]?.label || 'that muscle group';
     const why = top.map(s =>
       `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${Math.round(s.last_best_weight * 0.9)} lb`
     );
+    for (const s of holdStalls.slice(0, 2)) {
+      why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
+    }
     intents.push({
       id: 'deload_reset',
       label: 'Deload & Reset',
-      score: 45 + stalls.length * 5,
+      score: 45 + eligibleStalls.length * 5,
       focus: 'Drop ~10%, sharpen form, rebuild momentum',
-      confidence: stalls.length >= 3 ? 'high' : 'medium',
-      confidence_reasons: [`${stalls.length} lifts show no progression`],
+      confidence: eligibleStalls.length >= 3 ? 'high' : 'medium',
+      confidence_reasons: [`${eligibleStalls.length} rested lift${eligibleStalls.length === 1 ? '' : 's'} ready for a reset`],
       why_today: why,
       data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: 'no progression' })),
       what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
