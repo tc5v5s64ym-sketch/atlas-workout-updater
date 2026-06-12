@@ -154,3 +154,15 @@ test('golden: mixed exercises in one input are blocked', () => {
   assert.ok(result.warnings.includes('multiple_exercises_in_input'));
   assert.match(result.message, /mixed exercise/i);
 });
+
+test('golden: knee raises slash-pair format produces bodyweight sets with reps and RIR', () => {
+  // "Knee raises 20/2 20/2 13/2" — slash pairs with no leading weight token.
+  // Parser must return intent=log_sets with weight:null on every set.
+  const result = parseWorkoutText('Knee raises 20/2 20/2 13/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(s => s.weight === null && s.weight_unit === null),
+    'all sets must have null weight for bodyweight exercise');
+  assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[20, 2], [20, 2], [13, 2]]);
+});

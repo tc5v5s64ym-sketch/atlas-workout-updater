@@ -444,7 +444,7 @@ test('conversational logger converts backend parser output to editable rows', ()
   assert.match(converter, /parsed\.intent !== 'log_sets'/);
   assert.match(converter, /parsed\.canonical_name \|\| parsed\.exercise \|\| parsed\.raw_name/);
   assert.match(converter, /set_number: String\(index \+ 1\)/);
-  assert.match(converter, /weight: set\.weight == null \? '' : String\(set\.weight\)/);
+  assert.match(converter, /weight: set\.weight == null \? '0' : String\(set\.weight\)/);
   assert.match(converter, /reps: set\.reps == null \? '' : String\(set\.reps\)/);
   assert.match(converter, /rir: set\.rir == null \? '' : String\(set\.rir\)/);
 });
@@ -2508,4 +2508,43 @@ test('intent dashboard: CSS has all required intent and drawer classes', () => {
   assert.match(css, /\.pattern-dot-fatigued/, 'must have fatigued dot style');
   assert.match(css, /\.pattern-dot-ready/, 'must have ready dot style');
   assert.match(css, /\.intent-start-btn/, 'must have intent-start-btn class');
+});
+
+// ---------------------------------------------------------------------------
+// Bodyweight exercise logging — frontend null-weight handling
+// ---------------------------------------------------------------------------
+
+test('bodyweight: parser returns null weight for knee raises slash-pair format', () => {
+  const result = parseWorkoutText('Knee raises 20/2 20/2 13/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(s => s.weight === null), 'all sets must have weight: null');
+  assert.deepEqual(result.sets.map(s => s.reps), [20, 20, 13]);
+  assert.deepEqual(result.sets.map(s => s.rir), [2, 2, 2]);
+});
+
+test('bodyweight: parser returns null weight for Kr repeat format', () => {
+  const result = parseWorkoutText('Kr 15 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.ok(result.sets.every(s => s.weight === null), 'bodyweight reps must have weight: null');
+});
+
+test('bodyweight: weighted dips still carry the plate weight', () => {
+  const result = parseWorkoutText('Wd 45 10/1 8/2 8/2');
+  assert.equal(result.canonical_name, 'Dips (Weighted)');
+  assert.ok(result.sets.every(s => s.weight === 45), 'weighted dips must retain weight');
+});
+
+test('bodyweight: rowsFromBackendParsedWorkout converts null weight to "0"', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnStart = appSource.indexOf('function rowsFromBackendParsedWorkout(');
+  assert.ok(fnStart >= 0, 'rowsFromBackendParsedWorkout must exist');
+  const fnBody = appSource.slice(fnStart, fnStart + 1100);
+  // Must map null weight to '0', not to '' which fails backend validation
+  assert.match(fnBody, /weight.*null.*'0'|'0'.*null.*weight/,
+    "null weight must convert to '0' (not '') so backend validation passes for bodyweight exercises");
+  assert.doesNotMatch(fnBody, /weight.*null.*''|''.*null.*weight/,
+    "null weight must NOT convert to empty string — that fails backend validation");
 });
