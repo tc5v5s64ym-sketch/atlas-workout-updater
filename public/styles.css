@@ -951,6 +951,11 @@ a.lift-link:hover { text-decoration: underline; }
 .session-title { margin: 0 0 var(--s1); font-size: 0.95rem; font-weight: 600; color: var(--ink); }
 .session-list { list-style: decimal; padding-left: 1.4rem; margin: var(--s2) 0 var(--s3); }
 .session-item { margin: var(--s1) 0; }
+.session-summary { cursor: pointer; user-select: none; padding: var(--s1) 0; }
+.session-effort-line { margin: var(--s1) 0 var(--s2); font-size: 0.85rem; }
+.session-detail-slot { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--border); }
+.session-detail-heading { margin: var(--s2) 0 var(--s1); font-size: 0.88rem; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.session-quality { font-size: 0.88rem; color: var(--muted); margin-bottom: var(--s2); }
 .session-start-btn {
   background: var(--card);
   border: 1px solid var(--border);

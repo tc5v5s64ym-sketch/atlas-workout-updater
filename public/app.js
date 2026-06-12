@@ -186,13 +186,19 @@ async function loadSessions() {
     }
     const frag = document.createDocumentFragment();
     for (const s of sessions) {
-      const details = el('details', {});
-      const sum = el('summary', {});
-      sum.textContent = `${s.date}  ${s.session_id}  — ${s.exercises.join(', ')} (${s.sets_count} sets, ${s.total_volume.toLocaleString()} lbs)`;
+      const details = el('details', { class: 'session-item' });
+      const sum = el('summary', { class: 'session-summary' });
+      const meta = [
+        s.date,
+        s.session_id,
+        `${s.exercises.join(', ')} (${s.sets_count} sets, ${s.total_volume.toLocaleString()} lbs)`
+      ].join('  —  ');
+      sum.textContent = meta;
       details.appendChild(sum);
+
       if (s.effort) {
         const e = s.effort;
-        const p = el('p', { class: 'muted' });
+        const p = el('p', { class: 'muted session-effort-line' });
         p.textContent = [
           e.duration && `Duration: ${e.duration}`,
           e.active_calories && `Active cal: ${e.active_calories}`,
@@ -200,6 +206,17 @@ async function loadSessions() {
         ].filter(Boolean).join(' · ');
         details.appendChild(p);
       }
+
+      // Lazy-load full session detail on first expand.
+      const detailSlot = el('div', { class: 'session-detail-slot' });
+      details.appendChild(detailSlot);
+      let detailLoaded = false;
+      details.addEventListener('toggle', () => {
+        if (!details.open || detailLoaded) return;
+        detailLoaded = true;
+        loadSessionDetail(s.session_id, detailSlot);
+      });
+
       frag.appendChild(details);
     }
     result.innerHTML = '';
@@ -211,11 +228,48 @@ async function loadSessions() {
   }
 }
 
+async function loadSessionDetail(sessionId, slot) {
+  slot.innerHTML = '<span class="muted">Loading detail…</span>';
+  try {
+    const res = await api(`/api/session/${encodeURIComponent(sessionId)}/summary`);
+    const d = res.data || {};
+    slot.innerHTML = '';
+
+    if (d.quality_score != null) {
+      slot.appendChild(el('div', { class: 'session-quality', text: `Quality score: ${d.quality_score} / 5` }));
+    }
+
+    const sets = d.sets || d.rows || [];
+    if (sets.length) {
+      slot.appendChild(el('h4', { class: 'session-detail-heading', text: 'Sets' }));
+      slot.appendChild(renderTable(
+        ['Exercise', 'Set', 'Weight', 'Reps', 'RIR', 'Notes'],
+        sets.map(r => [r.exercise || r.canonical_exercise, r.set_number, r.weight, r.reps, r.rir ?? '—', r.notes || ''])
+      ));
+    }
+
+    if (d.effort) {
+      const e = d.effort;
+      slot.appendChild(el('h4', { class: 'session-detail-heading', text: 'Effort' }));
+      slot.appendChild(renderTable(
+        ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR'],
+        [[e.duration, e.active_calories, e.total_calories, e.average_hr, e.peak_hr ?? '—']]
+      ));
+    }
+  } catch (err) {
+    slot.innerHTML = `<span class="muted">Could not load detail: ${err.message}</span>`;
+  }
+}
+
+let historyLoaded = false;
 function loadHistory() {
-  // Tab content loads on button click
+  if (historyLoaded) return;
+  historyLoaded = true;
+  loadSessions();
 }
 
 document.getElementById('load-sessions-btn')?.addEventListener('click', () => {
+  historyLoaded = false;
   loadSessions();
 });
 
