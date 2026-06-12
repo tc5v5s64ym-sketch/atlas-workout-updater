@@ -14,7 +14,7 @@ const {
   getEffortSessionIds,
   getLogCompositeKeys,
   getRecentRows,
-  getSheetRows,
+  getSheetRows: getSheetRowsRaw,
   getSpreadsheetTabs,
   logSheetName,
   effortSheetName
@@ -143,6 +143,34 @@ const pendingExercisesMemory = [];
 // TODO(gpt-integration-layer): separate model orchestration and prompt policy from HTTP layer.
 // TODO(mobile-client): add API compatibility/versioning strategy for mobile app consumers.
 const catalogCache = createTtlCache(60 * 1000);
+
+// A single dashboard load fans out across ~8 read endpoints, each re-reading the
+// full Log_Cleaned / Effort tabs. Cache those full reads for a short window and
+// drop the cache on every successful live write/delete (invalidateSheetRowsCache),
+// so a write is immediately visible to the next read.
+//
+// Only the log and effort full reads are cached. Everything routed through
+// getSheetRowsRaw — other tabs (e.g. Bodyweight) and, critically, the undo
+// handler's pre-delete read-back — always hits the sheet live and is never cached.
+const SHEET_ROWS_TTL_MS = 30 * 1000;
+let sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
+
+async function getSheetRows(tabName) {
+  if (tabName !== logSheetName && tabName !== effortSheetName) {
+    return getSheetRowsRaw(tabName);
+  }
+  const cached = sheetRowsCache.get(tabName);
+  if (cached) return cached;
+  const rows = await getSheetRowsRaw(tabName);
+  sheetRowsCache.set(tabName, rows);
+  return rows;
+}
+
+function invalidateSheetRowsCache() {
+  // A fresh cache instance is the simplest correct clear — createTtlCache closes
+  // over a private Map, so swapping the reference drops every entry at once.
+  sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
+}
 
 const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
@@ -1612,6 +1640,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         }
         await appendRows(effortSheetName, [effortRow]);
         effortWritten = true;
+        invalidateSheetRowsCache();
       } catch (error) {
         if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
@@ -1825,6 +1854,7 @@ app.post('/api/log-workout', async (req, res) => {
       effortResponse = await appendRows(effortSheetName, [formattedEffortRow]);
       console.log('✅ Effort row appended successfully. Range:', effortResponse.data.updates?.updatedRange);
     }
+    invalidateSheetRowsCache();
 
     const responseBody = {
       message: 'Workout data appended successfully.',
@@ -1903,10 +1933,11 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
   }
 
-  // Read back rows before deleting to verify session_id ownership
+  // Read back rows before deleting to verify session_id ownership. This is a
+  // safety read — it must reflect the live sheet, never a cached snapshot.
   let allRows;
   try {
-    allRows = await getSheetRows(logSheetName);
+    allRows = await getSheetRowsRaw(logSheetName);
   } catch (error) {
     return standardError(req, res, 'Failed to read sheet rows for verification.', null, 500);
   }
@@ -1938,6 +1969,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     const startIndex = startRow - 1; // 0-based inclusive
     const endIndex = endRow;         // 0-based exclusive
     await deleteRowsByRange(logSheetName, startIndex, endIndex);
+    invalidateSheetRowsCache();
   } catch (error) {
     return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);
   }
