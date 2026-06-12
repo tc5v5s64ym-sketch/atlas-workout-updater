@@ -9,7 +9,8 @@ const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
   buildBodyweightHistory, previewTestRows, detectStalls,
-  buildWeeklyReport, buildExerciseDetail, buildRecentSessions, buildSuggestedSession
+  buildWeeklyReport, buildExerciseDetail, buildRecentSessions, buildSuggestedSession,
+  classifyMuscleGroup, buildMuscleGroupReadiness, scoreIntents
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
@@ -2184,4 +2185,201 @@ test('start-any-lift: plan-card-startable has :active state in CSS', () => {
 test('start-any-lift: helper text tells user to tap any card', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /Tap any card to start that lift/, 'helper copy must guide mobile users');
+});
+
+// ── Intent analytics: classifyMuscleGroup ──────────────────────────────────────
+
+test('classifyMuscleGroup: maps standard muscle group strings to patterns', () => {
+  assert.equal(classifyMuscleGroup('Legs'), 'lower');
+  assert.equal(classifyMuscleGroup('Quads'), 'lower');
+  assert.equal(classifyMuscleGroup('Chest'), 'push');
+  assert.equal(classifyMuscleGroup('Shoulders'), 'push');
+  assert.equal(classifyMuscleGroup('Back'), 'pull');
+  assert.equal(classifyMuscleGroup('Lats'), 'pull');
+  assert.equal(classifyMuscleGroup('Rear Delts'), 'pull');
+  assert.equal(classifyMuscleGroup('Core'), 'core');
+  assert.equal(classifyMuscleGroup('Posterior Chain'), 'hinge');
+  assert.equal(classifyMuscleGroup('Lower Back'), 'hinge');
+});
+
+test('classifyMuscleGroup: Rear Delts routes to pull not push', () => {
+  assert.equal(classifyMuscleGroup('Rear Delts'), 'pull');
+  assert.notEqual(classifyMuscleGroup('Rear Delts'), 'push');
+});
+
+test('classifyMuscleGroup: Posterior Chain routes to hinge not lower', () => {
+  assert.equal(classifyMuscleGroup('Posterior Chain'), 'hinge');
+  assert.notEqual(classifyMuscleGroup('Posterior Chain'), 'lower');
+});
+
+test('classifyMuscleGroup: returns null for unknown muscle group', () => {
+  assert.equal(classifyMuscleGroup('Unknown'), null);
+  assert.equal(classifyMuscleGroup(''), null);
+  assert.equal(classifyMuscleGroup(null), null);
+});
+
+// ── Intent analytics: buildMuscleGroupReadiness ────────────────────────────────
+
+const makeLogRow = (date, sessionId, muscleGroup, weight = 100, reps = 5, rir = 2) => [
+  date, sessionId, muscleGroup, muscleGroup, muscleGroup, 'TST01',
+  '1', String(weight), String(reps), String(rir), ''
+];
+
+test('buildMuscleGroupReadiness: fatigued when trained today', () => {
+  const today = '2026-06-12';
+  const rows = [makeLogRow('2026-06-12', 'S1', 'Chest')];
+  const result = buildMuscleGroupReadiness(rows, { today });
+  const push = result.find(r => r.pattern === 'push');
+  assert.equal(push.status, 'fatigued');
+  assert.equal(push.daysSince, 0);
+});
+
+test('buildMuscleGroupReadiness: fatigued when trained yesterday at @1 RIR', () => {
+  const today = '2026-06-12';
+  const rows = [makeLogRow('2026-06-11', 'S1', 'Chest', 100, 5, 1)];
+  const result = buildMuscleGroupReadiness(rows, { today });
+  const push = result.find(r => r.pattern === 'push');
+  assert.equal(push.status, 'fatigued');
+});
+
+test('buildMuscleGroupReadiness: recovering when trained yesterday at @2 RIR', () => {
+  const today = '2026-06-12';
+  const rows = [makeLogRow('2026-06-11', 'S1', 'Chest', 100, 5, 2)];
+  const result = buildMuscleGroupReadiness(rows, { today });
+  const push = result.find(r => r.pattern === 'push');
+  assert.equal(push.status, 'recovering');
+});
+
+test('buildMuscleGroupReadiness: ready when trained 3 days ago', () => {
+  const today = '2026-06-12';
+  const rows = [makeLogRow('2026-06-09', 'S1', 'Back')];
+  const result = buildMuscleGroupReadiness(rows, { today });
+  const pull = result.find(r => r.pattern === 'pull');
+  assert.equal(pull.status, 'ready');
+});
+
+test('buildMuscleGroupReadiness: fresh when not trained in 5+ days', () => {
+  const today = '2026-06-12';
+  const rows = [makeLogRow('2026-06-07', 'S1', 'Back')];
+  const result = buildMuscleGroupReadiness(rows, { today });
+  const pull = result.find(r => r.pattern === 'pull');
+  assert.equal(pull.status, 'fresh');
+  assert.equal(pull.daysSince, 5);
+});
+
+test('buildMuscleGroupReadiness: unknown for patterns never trained', () => {
+  const today = '2026-06-12';
+  const rows = [makeLogRow('2026-06-10', 'S1', 'Chest')]; // only push trained
+  const result = buildMuscleGroupReadiness(rows, { today });
+  const core = result.find(r => r.pattern === 'core');
+  assert.equal(core.status, 'unknown');
+  assert.equal(core.daysSince, null);
+});
+
+test('buildMuscleGroupReadiness: returns all 5 patterns', () => {
+  const result = buildMuscleGroupReadiness([], { today: '2026-06-12' });
+  const patterns = result.map(r => r.pattern).sort();
+  assert.deepEqual(patterns, ['core', 'hinge', 'lower', 'pull', 'push']);
+});
+
+// ── Intent analytics: scoreIntents ────────────────────────────────────────────
+
+function makeIntentLogRows(entries) {
+  // entries: [{ date, session, muscle, weight, reps, rir }]
+  return entries.map(e => [
+    e.date, e.session, e.exercise || e.muscle, e.exercise || e.muscle,
+    e.muscle, e.liftCode || 'TST01', '1',
+    String(e.weight || 100), String(e.reps || 5), String(e.rir ?? 2), ''
+  ]);
+}
+
+test('scoreIntents: returns all 8 intent ids', () => {
+  const rows = makeIntentLogRows([
+    { date: '2026-06-09', session: 'S1', muscle: 'Chest', liftCode: 'BEN01', weight: 225, reps: 5, rir: 2 },
+    { date: '2026-06-09', session: 'S1', muscle: 'Back', liftCode: 'LPD01', weight: 150, reps: 8, rir: 2 },
+    { date: '2026-06-07', session: 'S2', muscle: 'Legs', liftCode: 'SQ01', weight: 200, reps: 5, rir: 2 }
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  const ids = result.intents.map(i => i.id).sort();
+  assert.deepEqual(ids, ['balanced', 'build_muscle', 'build_strength', 'custom', 'fix_blind_spots', 'recovery_pump', 'short_session', 'test_progress'].sort());
+});
+
+test('scoreIntents: exactly one intent is recommended (non-custom)', () => {
+  const rows = makeIntentLogRows([
+    { date: '2026-06-09', session: 'S1', muscle: 'Chest', liftCode: 'BEN01', weight: 225, reps: 5, rir: 2 }
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  const recommended = result.intents.filter(i => i.recommended);
+  assert.equal(recommended.length, 1, 'exactly one intent must be recommended');
+  assert.notEqual(recommended[0].id, 'custom', 'custom must never be recommended');
+});
+
+test('scoreIntents: recovery_pump scores high when overall fatigue is high', () => {
+  // Fill in lots of volume in past 7 days vs low baseline
+  const rows = [];
+  for (let i = 0; i < 5; i++) {
+    rows.push(...makeIntentLogRows([
+      { date: '2026-06-10', session: `S${i}`, muscle: 'Chest', liftCode: `B${i}`, weight: 200, reps: 10, rir: 1 }
+    ]));
+  }
+  // Add small baseline (older) to make ratio > 1.5
+  rows.push(...makeIntentLogRows([
+    { date: '2026-05-20', session: 'OLD', muscle: 'Chest', liftCode: 'B00', weight: 100, reps: 5, rir: 3 }
+  ]));
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  const recovery = result.intents.find(i => i.id === 'recovery_pump');
+  // Score should be higher than baseline 30
+  assert.ok(recovery.score > 30, `recovery_pump score should be > 30, got ${recovery.score}`);
+});
+
+test('scoreIntents: fix_blind_spots scores high when a pattern is fresh', () => {
+  const rows = makeIntentLogRows([
+    { date: '2026-06-05', session: 'S1', muscle: 'Back', liftCode: 'LPD01', weight: 150, reps: 8, rir: 2 }
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  const fbs = result.intents.find(i => i.id === 'fix_blind_spots');
+  assert.ok(fbs.score > 40, `fix_blind_spots score should be > 40, got ${fbs.score}`);
+  assert.equal(fbs.confidence, 'high');
+});
+
+test('scoreIntents: todays_read contains per-pattern readiness', () => {
+  const rows = makeIntentLogRows([
+    { date: '2026-06-12', session: 'S1', muscle: 'Chest', liftCode: 'BEN01', weight: 225, reps: 5, rir: 1 }
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  assert.ok(result.todays_read, 'todays_read must exist');
+  assert.ok(Array.isArray(result.todays_read.patterns), 'patterns must be an array');
+  assert.ok(result.todays_read.recommended_intent_id, 'must include recommended_intent_id');
+  const push = result.todays_read.patterns.find(p => p.pattern === 'push');
+  assert.equal(push.status, 'fatigued', 'push must be fatigued after training today');
+});
+
+test('scoreIntents: each intent has required fields', () => {
+  const rows = makeIntentLogRows([
+    { date: '2026-06-10', session: 'S1', muscle: 'Chest', liftCode: 'BEN01', weight: 200, reps: 5, rir: 2 }
+  ]);
+  const result = scoreIntents(rows, [], { today: '2026-06-12' });
+  for (const intent of result.intents) {
+    assert.ok(typeof intent.id === 'string', `${intent.id}: id must be string`);
+    assert.ok(typeof intent.label === 'string', `${intent.id}: label must be string`);
+    assert.ok(typeof intent.score === 'number', `${intent.id}: score must be number`);
+    assert.ok(typeof intent.recommended === 'boolean', `${intent.id}: recommended must be boolean`);
+    assert.ok(Array.isArray(intent.why_today), `${intent.id}: why_today must be array`);
+    assert.ok(Array.isArray(intent.exercises), `${intent.id}: exercises must be array`);
+  }
+});
+
+test('scoreIntents: returns ok with no history', () => {
+  const result = scoreIntents([], [], { today: '2026-06-12' });
+  assert.ok(result.intents.length === 8, 'must return all 8 intents even with no history');
+  assert.ok(result.todays_read, 'todays_read must exist even with no history');
+});
+
+test('scoreIntents: intent-recommendation route is GET and read-only', () => {
+  const { routeDefinitions } = require('../config/routes');
+  const route = routeDefinitions.find(r => r.path === '/api/plan/intent-recommendation');
+  assert.ok(route, 'route must be registered');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
 });
