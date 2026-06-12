@@ -613,6 +613,18 @@ button.approve {
   color: var(--accent-ink);
   border-bottom-right-radius: var(--r-sm);
 }
+.chat-bubble-atlas {
+  align-self: flex-start;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: var(--r-sm);
+}
+.chat-bubble-atlas .atlas-reply-gate {
+  margin-top: var(--s1);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
 
 /* Inside the thread the preview panel reads as Atlas's reply card */
 .coach-thread #preview-panel {
