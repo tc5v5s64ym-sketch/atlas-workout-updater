@@ -269,12 +269,15 @@ code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: 0.8
 a.lift-link { color: var(--accent); text-decoration: none; font-weight: 600; }
 a.lift-link:hover { text-decoration: underline; }
 
-/* ===== Today's Plan grid ===== */
+/* ===== Current Lift Targets grid ===== */
 .plan-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px;
   margin-top: 8px;
+}
+@media (max-width: 600px) {
+  .plan-grid { grid-template-columns: 1fr; }
 }
 
 .plan-card {
@@ -294,12 +297,29 @@ a.lift-link:hover { text-decoration: underline; }
 .plan-card-rec { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
 
 /* ===== Suggested session ===== */
-.session-title { margin: 0 0 8px; font-size: 0.95rem; font-weight: 600; color: var(--ink); }
-.session-list { padding-left: 1.4rem; margin: 0 0 10px; }
-.session-item { margin: 6px 0; font-size: 0.9rem; }
+.session-title { margin: 0 0 4px; font-size: 0.95rem; font-weight: 600; color: var(--ink); }
+.session-list { list-style: decimal; padding-left: 1.4rem; margin: 8px 0 10px; }
+.session-item { margin: 4px 0; }
+.session-start-btn {
+  background: none; border: none; cursor: pointer; padding: 6px 0;
+  text-align: left; width: 100%; border-radius: 4px;
+  font-family: inherit; font-size: 0.9rem;
+}
+.session-start-btn:hover, .session-start-btn:focus { background: #f0f9ff; }
 .session-exercise { font-weight: 600; color: var(--ink); }
 .session-target { color: var(--muted); }
+.session-tap-hint { font-size: 0.75rem; color: var(--muted); opacity: 0.7; }
 .session-why { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; font-size: 0.8rem; font-style: italic; color: var(--muted); }
+
+/* ===== Coach panel ===== */
+.coach-panel {
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.coach-panel-exercise { font-weight: 700; font-size: 1rem; color: var(--ink); }
+.coach-panel-target { font-size: 1.1rem; color: #1d4ed8; font-weight: 600; margin: 4px 0; }
+.coach-panel-last { font-size: 0.82rem; color: var(--muted); }
+.coach-panel-reason { font-size: 0.82rem; color: var(--muted); margin-top: 4px; font-style: italic; }
 
 /* ===== Progression engine ===== */
 .next-target-card {

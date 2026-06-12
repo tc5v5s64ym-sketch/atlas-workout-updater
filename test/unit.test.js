@@ -1129,7 +1129,7 @@ test("today's plan: /api/plan/today filters out numeric-only lift codes", () => 
 
 test("today's plan: app.js uses exercise_name field for card title, not liftCode directly", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 1200);
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 1600);
   assert.match(planFn, /exercise_name/, 'must reference exercise_name field');
   assert.match(planFn, /plan-card-code/, 'must include secondary lift code span');
 });
@@ -2032,4 +2032,40 @@ test('suggested session: loadSuggestedSession exists in app.js and calls endpoin
   assert.match(appSource, /suggested-session/, 'must reference suggested-session element');
   assert.match(appSource, /\/api\/plan\/suggested-session/, 'must call suggested-session endpoint');
   assert.match(appSource, /session-list/, 'must render a session-list element');
+});
+
+// ── Session Queue UX ──────────────────────────────────────────────────────────
+
+test('session queue: startLift function exists and switches to logger tab', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function startLift\(/, 'startLift must exist');
+  const fnStart = appSource.indexOf('function startLift(');
+  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  assert.match(fnBlock, /tab-logger/, 'must switch to logger tab');
+  assert.match(fnBlock, /coach-panel/, 'must show coach panel');
+  assert.match(fnBlock, /workout-text/, 'must reference workout textarea');
+});
+
+test('session queue: session items render as tappable buttons', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /session-start-btn/, 'must use session-start-btn class');
+  assert.match(appSource, /Tap to start/, 'must include tap hint text');
+  assert.match(appSource, /startLift.*ex\.exercise/, 'must call startLift with exercise data');
+});
+
+test('session queue: coach-panel element exists in index.html logger section', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const loggerSection = html.slice(html.indexOf('tab-logger'), html.indexOf('tab-logger') + 2000);
+  assert.match(loggerSection, /id="coach-panel"/, 'coach-panel must be in logger section');
+});
+
+test('session queue: Current Lift Targets heading in index.html', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /Current Lift Targets/, 'heading must say Current Lift Targets');
+});
+
+test('session queue: loadTodaysPlan includes helper copy about targets', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /not a required workout/, 'must include helper copy about targets');
+  assert.match(appSource, /Log a few sessions/, 'must include new-user message');
 });
