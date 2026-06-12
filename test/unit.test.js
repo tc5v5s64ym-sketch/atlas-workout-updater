@@ -9,7 +9,7 @@ const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
   buildBodyweightHistory, previewTestRows, detectStalls,
-  buildWeeklyReport, buildExerciseDetail, buildRecentSessions, buildSuggestedSession,
+  buildWeeklyReport, buildProgressSummary, buildExerciseDetail, buildRecentSessions, buildSuggestedSession,
   classifyMuscleGroup, buildMuscleGroupReadiness, scoreIntents
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
@@ -2047,6 +2047,93 @@ test('session history: buildRecentSessions respects limit', () => {
   const result = buildRecentSessions(rows, [], { limit: 5 });
   assert.equal(result.sessions.length, 5, 'must respect limit of 5');
   assert.equal(result.count, 5);
+});
+
+test('progress summary: returns correct structure for normal data', () => {
+  const rows = [
+    ['2026-05-26', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '2', ''],
+    ['2026-05-26', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '2', '200', '5', '2', ''],
+    ['2026-05-28', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '300', '5', '2', ''],
+    ['2026-06-02', 'S3', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '205', '5', '2', ''],
+    ['2026-06-04', 'S4', 'Lat Pulldown', 'Lat Pulldown', 'Back', 'LPD', '1', '160', '8', '2', ''],
+    ['2026-06-09', 'S5', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '210', '5', '2', ''],
+    ['2026-06-10', 'S6', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '305', '5', '2', '']
+  ];
+
+  const summary = buildProgressSummary(rows, { today: '2026-06-11' });
+
+  assert.equal(summary.total_sessions, 6);
+  assert.equal(summary.total_sets, 7);
+  assert.equal(summary.total_volume, 8380);
+  assert.equal(summary.first_session_date, '2026-05-26');
+  assert.equal(summary.latest_session_date, '2026-06-10');
+  assert.equal(summary.current_week_sessions, 2);
+  assert.equal(summary.weekly_streak, 0);
+  assert.equal(summary.streak_target_per_week, 3);
+  assert.equal(summary.average_sessions_per_week, 2);
+  assert.ok(Array.isArray(summary.sessions_by_week));
+  assert.ok(Array.isArray(summary.volume_by_week));
+  assert.ok(Array.isArray(summary.top_exercises));
+  assert.equal(summary.top_exercises[0].exercise, 'Bench Press');
+  assert.equal(summary.recent_prs.length, 0);
+});
+
+test('progress summary: counts a 2+ week streak when recent weeks meet target', () => {
+  const rows = [
+    ['2026-05-26', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '2', ''],
+    ['2026-05-28', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '300', '5', '2', ''],
+    ['2026-05-30', 'S3', 'Lat Pulldown', 'Lat Pulldown', 'Back', 'LPD', '1', '160', '8', '2', ''],
+    ['2026-06-02', 'S4', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '205', '5', '2', ''],
+    ['2026-06-04', 'S5', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '305', '5', '2', ''],
+    ['2026-06-06', 'S6', 'Lat Pulldown', 'Lat Pulldown', 'Back', 'LPD', '1', '165', '8', '2', '']
+  ];
+
+  const summary = buildProgressSummary(rows, { today: '2026-06-07' });
+  assert.equal(summary.current_week_sessions, 3);
+  assert.equal(summary.weekly_streak, 2);
+});
+
+test('progress summary: streak resets when current week is below target', () => {
+  const rows = [
+    ['2026-05-26', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '2', ''],
+    ['2026-05-28', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '300', '5', '2', ''],
+    ['2026-05-30', 'S3', 'Lat Pulldown', 'Lat Pulldown', 'Back', 'LPD', '1', '160', '8', '2', ''],
+    ['2026-06-02', 'S4', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '205', '5', '2', ''],
+    ['2026-06-03', 'S5', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '305', '5', '2', ''],
+    ['2026-06-04', 'S6', 'Lat Pulldown', 'Lat Pulldown', 'Back', 'LPD', '1', '165', '8', '2', ''],
+    ['2026-06-09', 'S7', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '210', '5', '2', '']
+  ];
+
+  const summary = buildProgressSummary(rows, { today: '2026-06-11' });
+  assert.equal(summary.current_week_sessions, 1);
+  assert.equal(summary.weekly_streak, 0);
+});
+
+test('progress summary: returns zero-state for empty data', () => {
+  const summary = buildProgressSummary([], { today: '2026-06-11' });
+  assert.equal(summary.total_sessions, 0);
+  assert.equal(summary.average_sessions_per_week, 0);
+  assert.equal(summary.total_sets, 0);
+  assert.equal(summary.total_volume, 0);
+  assert.equal(summary.first_session_date, null);
+  assert.equal(summary.latest_session_date, null);
+  assert.equal(summary.current_week_sessions, 0);
+  assert.equal(summary.weekly_streak, 0);
+  assert.equal(summary.streak_target_per_week, 3);
+  assert.deepEqual(summary.top_exercises, []);
+  assert.deepEqual(summary.recent_prs, []);
+  assert.deepEqual(summary.watchouts, []);
+  assert.equal(summary.sessions_by_week.length, 12);
+  assert.equal(summary.volume_by_week.length, 12);
+});
+
+test('progress summary: endpoint registered as GET and read-only', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/progress/summary');
+  assert.ok(route, 'route definition must exist');
+  assert.deepEqual(route.methods, ['GET']);
+  assert.equal(route.readOnly, true);
+  assert.equal(route.writeCapable, false);
+  assert.equal(route.authRequired, true);
 });
 
 test('session history: /api/sessions/recent endpoint registered as GET and read-only', () => {

@@ -33,6 +33,7 @@ const {
   suggestDeloads,
   computeFatigueStatus,
   buildWeeklyReport,
+  buildProgressSummary,
   buildExerciseDetail,
   buildRecentSessions,
   buildSuggestedSession,
@@ -1129,6 +1130,17 @@ app.get('/api/summary/weekly', async (req, res) => {
     });
   } catch (error) {
     return standardError(req, res, 'Failed to build weekly summary', error.message, 500);
+  }
+});
+
+// GET /api/progress/summary
+app.get('/api/progress/summary', async (req, res) => {
+  try {
+    const allLog = await getSheetRows(logSheetName);
+    const summary = buildProgressSummary(allLog);
+    return standardSuccess(req, res, 'Progress summary', summary);
+  } catch (error) {
+    return standardError(req, res, 'Failed to build progress summary', error.message, 500);
   }
 });
 

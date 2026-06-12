@@ -156,10 +156,13 @@ test('api smoke: routes include key endpoints and write metadata', async () => {
   assert.equal(response.status, 200);
   assert.ok(paths.includes('/api/exercises/last-session'));
   assert.ok(paths.includes('/api/parse-workout-text'));
+  assert.ok(paths.includes('/api/progress/summary'));
   assert.ok(paths.includes('/api/log-workout'));
   assert.ok(paths.includes('/api/complete-workout'));
   assert.equal(routeByPath.get('/api/parse-workout-text').readOnly, true);
   assert.equal(routeByPath.get('/api/parse-workout-text').writeCapable, false);
+  assert.equal(routeByPath.get('/api/progress/summary').readOnly, true);
+  assert.equal(routeByPath.get('/api/progress/summary').writeCapable, false);
   assert.equal(routeByPath.get('/api/log-workout').readOnly, false);
   assert.equal(routeByPath.get('/api/log-workout').writeCapable, true);
   assert.equal(routeByPath.get('/api/complete-workout').readOnly, false);
@@ -516,6 +519,24 @@ test('api smoke: plan-today returns stable read shape', async () => {
   assert.equal(body.status, 'ok');
   assert.ok(Array.isArray(body.data.recommendations));
   assert.ok(body.data.recommendations.some(item => item.liftCode === 'BEN01'));
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: progress-summary returns stable read shape', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/progress/summary');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(typeof body.data.total_sessions, 'number');
+  assert.equal(typeof body.data.average_sessions_per_week, 'number');
+  assert.equal(typeof body.data.total_sets, 'number');
+  assert.equal(typeof body.data.total_volume, 'number');
+  assert.ok(Array.isArray(body.data.sessions_by_week));
+  assert.ok(Array.isArray(body.data.volume_by_week));
+  assert.ok(Array.isArray(body.data.top_exercises));
+  assert.ok(Array.isArray(body.data.recent_prs));
+  assert.ok(Array.isArray(body.data.watchouts));
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 

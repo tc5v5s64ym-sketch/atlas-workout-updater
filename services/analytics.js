@@ -1140,6 +1140,189 @@ function buildRecentSessions(logRows, effortRows, { limit = 15 } = {}) {
   return { sessions, count: sessions.length };
 }
 
+function isoDateAtUtcNoon(dateStr) {
+  return new Date(`${dateStr}T12:00:00Z`);
+}
+
+function getWeekStartIso(dateStr) {
+  const date = isoDateAtUtcNoon(dateStr);
+  const day = date.getUTCDay();
+  const offset = day === 0 ? 6 : day - 1;
+  date.setUTCDate(date.getUTCDate() - offset);
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysIso(dateStr, days) {
+  const date = isoDateAtUtcNoon(dateStr);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function weeksBetweenInclusive(startWeek, endWeek) {
+  const startMs = isoDateAtUtcNoon(startWeek).getTime();
+  const endMs = isoDateAtUtcNoon(endWeek).getTime();
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  return Math.floor((endMs - startMs) / weekMs) + 1;
+}
+
+function buildProgressSummary(logRows, { today = null, streakTargetPerWeek = 3, weeks = 12 } = {}) {
+  const normalizedRows = (logRows || [])
+    .map(normalizeLogRow)
+    .filter(row => row.session_id && row.date_clean);
+
+  const safeWeeks = Math.min(Math.max(8, Number(weeks) || 12), 12);
+  const target = Math.max(1, Number(streakTargetPerWeek) || 3);
+  const todayStr = today || new Date().toISOString().slice(0, 10);
+  const currentWeekStart = getWeekStartIso(todayStr);
+
+  if (!normalizedRows.length) {
+    const weekBuckets = [];
+    for (let i = safeWeeks - 1; i >= 0; i -= 1) {
+      const weekStart = addDaysIso(currentWeekStart, -7 * i);
+      weekBuckets.push({
+        week_start: weekStart,
+        week_end: addDaysIso(weekStart, 6),
+        sessions: 0,
+        total_volume: 0,
+        total_sets: 0
+      });
+    }
+    return {
+      total_sessions: 0,
+      average_sessions_per_week: 0,
+      total_sets: 0,
+      total_volume: 0,
+      first_session_date: null,
+      latest_session_date: null,
+      current_week_sessions: 0,
+      weekly_streak: 0,
+      streak_target_per_week: target,
+      sessions_by_week: weekBuckets.map(({ week_start, week_end, sessions }) => ({ week_start, week_end, sessions })),
+      volume_by_week: weekBuckets.map(({ week_start, week_end, total_volume, total_sets }) => ({ week_start, week_end, total_volume, total_sets })),
+      top_exercises: [],
+      recent_prs: [],
+      watchouts: []
+    };
+  }
+
+  const sessionMap = new Map();
+  const exerciseMap = new Map();
+  let totalSets = 0;
+  let totalVolume = 0;
+
+  normalizedRows.forEach(row => {
+    const session = sessionMap.get(row.session_id) || { session_id: row.session_id, date: row.date_clean };
+    if (row.date_clean < session.date) session.date = row.date_clean;
+    sessionMap.set(row.session_id, session);
+
+    totalSets += 1;
+    const volume = row.weight && row.reps ? row.weight * row.reps : 0;
+    totalVolume += volume;
+
+    const exerciseKey = row.lift_code || row.canonical_exercise || row.exercise;
+    if (exerciseKey) {
+      const existing = exerciseMap.get(exerciseKey) || {
+        exercise: row.canonical_exercise || row.exercise || row.lift_code,
+        lift_code: row.lift_code || '',
+        set_count: 0,
+        session_ids: new Set(),
+        total_volume: 0,
+        last_date: row.date_clean
+      };
+      existing.set_count += 1;
+      existing.session_ids.add(row.session_id);
+      existing.total_volume += volume;
+      if (row.date_clean > existing.last_date) existing.last_date = row.date_clean;
+      exerciseMap.set(exerciseKey, existing);
+    }
+  });
+
+  const sessions = [...sessionMap.values()].sort((a, b) => a.date.localeCompare(b.date) || a.session_id.localeCompare(b.session_id));
+  const totalSessions = sessions.length;
+  const firstSessionDate = sessions[0].date;
+  const latestSessionDate = sessions[sessions.length - 1].date;
+  const firstWeekStart = getWeekStartIso(firstSessionDate);
+  const latestWeekStart = getWeekStartIso(latestSessionDate);
+  const activeTrainingWeeks = Math.max(1, weeksBetweenInclusive(firstWeekStart, latestWeekStart));
+  const averageSessionsPerWeek = Math.round((totalSessions / activeTrainingWeeks) * 100) / 100;
+
+  const sessionsPerWeek = new Map();
+  const sessionIdsPerWeek = new Map();
+  sessions.forEach(session => {
+    const weekStart = getWeekStartIso(session.date);
+    sessionsPerWeek.set(weekStart, (sessionsPerWeek.get(weekStart) || 0) + 1);
+    if (!sessionIdsPerWeek.has(weekStart)) sessionIdsPerWeek.set(weekStart, new Set());
+    sessionIdsPerWeek.get(weekStart).add(session.session_id);
+  });
+
+  const volumePerWeek = new Map();
+  normalizedRows.forEach(row => {
+    const weekStart = getWeekStartIso(row.date_clean);
+    const current = volumePerWeek.get(weekStart) || { total_volume: 0, total_sets: 0 };
+    current.total_volume += row.weight && row.reps ? row.weight * row.reps : 0;
+    current.total_sets += 1;
+    volumePerWeek.set(weekStart, current);
+  });
+
+  const weekBuckets = [];
+  for (let i = safeWeeks - 1; i >= 0; i -= 1) {
+    const weekStart = addDaysIso(currentWeekStart, -7 * i);
+    const volumeBucket = volumePerWeek.get(weekStart) || { total_volume: 0, total_sets: 0 };
+    weekBuckets.push({
+      week_start: weekStart,
+      week_end: addDaysIso(weekStart, 6),
+      sessions: sessionsPerWeek.get(weekStart) || 0,
+      total_volume: Math.round(volumeBucket.total_volume),
+      total_sets: volumeBucket.total_sets
+    });
+  }
+
+  let weeklyStreak = 0;
+  for (let i = weekBuckets.length - 1; i >= 0; i -= 1) {
+    if (weekBuckets[i].sessions >= target) {
+      weeklyStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  const topExercises = [...exerciseMap.values()]
+    .map(item => ({
+      exercise: item.exercise,
+      lift_code: item.lift_code,
+      set_count: item.set_count,
+      session_count: item.session_ids.size,
+      total_volume: Math.round(item.total_volume),
+      last_date: item.last_date
+    }))
+    .sort((a, b) =>
+      b.set_count - a.set_count ||
+      b.session_count - a.session_count ||
+      b.total_volume - a.total_volume ||
+      (b.last_date || '').localeCompare(a.last_date || '')
+    )
+    .slice(0, 8);
+
+  const watchouts = detectStalls(logRows, 3).slice(0, 5);
+
+  return {
+    total_sessions: totalSessions,
+    average_sessions_per_week: averageSessionsPerWeek,
+    total_sets: totalSets,
+    total_volume: Math.round(totalVolume),
+    first_session_date: firstSessionDate,
+    latest_session_date: latestSessionDate,
+    current_week_sessions: sessionsPerWeek.get(currentWeekStart) || 0,
+    weekly_streak: weeklyStreak,
+    streak_target_per_week: target,
+    sessions_by_week: weekBuckets.map(({ week_start, week_end, sessions }) => ({ week_start, week_end, sessions })),
+    volume_by_week: weekBuckets.map(({ week_start, week_end, total_volume, total_sets }) => ({ week_start, week_end, total_volume, total_sets })),
+    top_exercises: topExercises,
+    recent_prs: [],
+    watchouts
+  };
+}
+
 function buildWeeklyReport(logRows, { days = 7, today = null } = {}) {
   const dayMs = 24 * 60 * 60 * 1000;
   const refDate = today
@@ -1291,6 +1474,7 @@ module.exports = {
   suggestDeloads,
   computeFatigueStatus,
   buildWeeklyReport,
+  buildProgressSummary,
   buildExerciseDetail,
   buildRecentSessions,
   buildSuggestedSession,
