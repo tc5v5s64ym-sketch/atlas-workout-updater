@@ -1663,6 +1663,31 @@ test('reaction layer: renderLogWorkoutPreview injects suggestion and never block
   assert.match(previewFn, /pendingWrite\.liftCodes/, 'must store lift codes for write reaction');
 });
 
+test('preview summary: both preview renderers use the compact rows summary, not the full table', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function renderRowsSummary\(/, 'renderRowsSummary helper must exist');
+
+  const logFn = appSource.slice(
+    appSource.indexOf('function renderLogWorkoutPreview('),
+    appSource.indexOf('function renderCompleteWorkoutPreview(')
+  );
+  const completeFn = appSource.slice(
+    appSource.indexOf('function renderCompleteWorkoutPreview('),
+    appSource.indexOf("document.getElementById('cancel-preview-btn')")
+  );
+  assert.match(logFn, /renderRowsSummary\(data\.log_rows_preview/, 'log preview must render the summary');
+  assert.match(completeFn, /renderRowsSummary\(data\.rows_to_write/, 'complete preview must render the summary');
+  assert.doesNotMatch(logFn, /Workout rows to write/, 'full rows table heading must be gone from log preview');
+  assert.doesNotMatch(completeFn, /Workout rows to write/, 'full rows table heading must be gone from complete preview');
+
+  const summaryFn = appSource.slice(
+    appSource.indexOf('function renderRowsSummary('),
+    appSource.indexOf('function renderWarnings(')
+  );
+  assert.match(summaryFn, /set.*to write/, 'summary must state the set count being written');
+  assert.doesNotMatch(summaryFn, /api\(|fetch\(/, 'summary helper must be a pure render — no requests');
+});
+
 test('effort-only preview: submit handler allows empty workout rows when screenshot or manual effort exists', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('logger-form').addEventListener('submit'";
@@ -1708,7 +1733,7 @@ test('screenshot preview date resolution: multipart submit omits blank date and 
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const submitFunction = appSource.slice(
     appSource.indexOf('async function submitCompleteWorkout('),
-    appSource.indexOf('const LOG_PREVIEW_HEADERS')
+    appSource.indexOf('function renderRowsSummary(')
   );
 
   assert.match(submitFunction, /if \(sessionId\) form\.append\('session_id', sessionId\)/);
