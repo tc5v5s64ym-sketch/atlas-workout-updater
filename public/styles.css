@@ -589,6 +589,66 @@ button.approve {
 
 #logger-status:empty { display: none; }
 
+/* ── Trust loop card: written → undo → verified → verdict ──────────────────
+   app.js appends these nodes to #logger-status in sequence after a live
+   write. Inside the thread they read as one Atlas reply card with state
+   rows. Selectors only restyle — the nodes and their wiring are app.js's. */
+
+.coach-thread #logger-status {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--s4);
+  box-shadow: var(--shadow-sm);
+}
+
+/* State 1 — Written ✓ (or the error state) */
+.coach-thread #logger-status .status-msg { margin-top: 0; }
+.coach-thread #logger-status .status-msg.ok {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--ok);
+}
+
+/* State 2 — Undo stays one tap away */
+.coach-thread #logger-status .undo-write-btn {
+  margin-top: var(--s3);
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  border-radius: var(--r-pill);
+}
+
+/* State 3 — Verified in Sheet (readback) */
+.coach-thread #logger-status .parser-status {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: var(--s2) 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* State 4 — Coach verdict (Logged / Next) */
+.coach-thread #logger-status .atlas-suggestion {
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: var(--s3) 0 0;
+  margin: var(--s3) 0 0;
+}
+.coach-thread #logger-status .suggestion-label {
+  min-width: 56px;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  padding-top: 2px;
+}
+
 /* Compact safety footnote under the composer */
 .safety-note.compact {
   background: none;
