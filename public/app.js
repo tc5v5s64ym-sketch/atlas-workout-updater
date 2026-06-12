@@ -167,6 +167,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'dashboard') loadDashboard();
     if (btn.dataset.tab === 'body') loadBodyTab();
     if (btn.dataset.tab === 'history') loadHistory();
+    if (btn.dataset.tab === 'progress') loadProgressLiftList();
   });
 });
 
@@ -1021,6 +1022,162 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
   }
 });
 
+/* ===== Progress lift list (name-based) ===== */
+
+// Cache the lift list so repeated tab visits don't re-fetch until a new session.
+let liftListCache = null;
+
+async function loadProgressLiftList() {
+  const card = document.getElementById('lift-list-card');
+  const resultBox = document.getElementById('lift-list-result');
+  if (!card) return;
+
+  // Show the lift list, hide the drill-down.
+  card.hidden = false;
+  const drillCard = document.getElementById('lift-drilldown-card');
+  if (drillCard) drillCard.hidden = true;
+
+  if (!getApiKey()) {
+    resultBox.innerHTML = '<span class="muted">Set your API key in Settings to see your lifts.</span>';
+    return;
+  }
+
+  // If we already have a cached list (within the same page load) re-render it.
+  if (liftListCache) {
+    renderLiftList(liftListCache, resultBox);
+    return;
+  }
+
+  resultBox.innerHTML = '<span class="muted">Loading your lifts…</span>';
+  try {
+    const res = await api('/api/plan/today');
+    const recs = res.data?.recommendations || [];
+    liftListCache = recs;
+    renderLiftList(recs, resultBox);
+  } catch (err) {
+    resultBox.innerHTML = `<span class="muted">Could not load lifts: ${err.message}</span>`;
+  }
+}
+
+function renderLiftList(recs, box) {
+  box.innerHTML = '';
+  if (!recs.length) {
+    box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas will list your lifts here.' }));
+    return;
+  }
+  const list = el('div', { class: 'lift-list' });
+  for (const r of recs) {
+    const name = r.exercise_name || r.liftCode;
+    const target = r.next_target;
+    const targetText = target ? `${target.weight} × ${target.reps}` : '';
+    const item = el('button', { type: 'button', class: 'lift-list-item' }, [
+      el('span', { class: 'lift-list-name', text: name }),
+      targetText ? el('span', { class: 'lift-list-target', text: targetText }) : null
+    ].filter(Boolean));
+    item.addEventListener('click', () => openLiftDrillDown(name, r.liftCode));
+    list.appendChild(item);
+  }
+  box.appendChild(list);
+  box.appendChild(el('p', { class: 'muted small', style: 'margin-top:8px', text: 'Tap any lift to see progress, last sessions, and your next target.' }));
+}
+
+async function openLiftDrillDown(exerciseName, liftCode) {
+  const listCard = document.getElementById('lift-list-card');
+  const drillCard = document.getElementById('lift-drilldown-card');
+  const titleEl = document.getElementById('lift-drilldown-title');
+  const contentEl = document.getElementById('lift-drilldown-content');
+  if (!drillCard || !contentEl) return;
+
+  // Switch cards
+  if (listCard) listCard.hidden = true;
+  drillCard.hidden = false;
+  if (titleEl) titleEl.textContent = exerciseName;
+  contentEl.innerHTML = '<span class="muted">Loading…</span>';
+
+  // Fire all three endpoints in parallel.
+  const [progressResult, detailResult, recResult] = await Promise.allSettled([
+    api(`/api/exercises/${encodeURIComponent(liftCode)}/progress`),
+    api(`/api/exercises/${encodeURIComponent(liftCode)}/detail`),
+    api(`/api/recommend/next/${encodeURIComponent(liftCode)}`)
+  ]);
+
+  contentEl.innerHTML = '';
+
+  // ── Recommendation (next target) ──
+  if (recResult.status === 'fulfilled') {
+    const rec = recResult.value.data || {};
+    if (rec.next_target) {
+      const t = rec.next_target;
+      contentEl.appendChild(el('div', { class: 'next-target-card' }, [
+        el('div', { class: 'next-target-weight', text: `${t.weight}` }),
+        el('div', { class: 'next-target-meta', text: `× ${t.reps} reps · ${t.sets} sets` })
+      ]));
+      contentEl.appendChild(el('p', { text: rec.recommendation || '' }));
+      contentEl.appendChild(el('p', { class: 'muted', text: rec.reasoning || '' }));
+      const rd = rec.rule_decision;
+      if (rd && rd.decision !== 'no_data') {
+        contentEl.appendChild(el('p', { class: 'small muted', text: `Rule ${rd.rule_id}: ${rd.reasoning}` }));
+      }
+    } else if (rec.recommendation) {
+      contentEl.appendChild(el('p', { text: rec.recommendation }));
+      contentEl.appendChild(el('p', { class: 'muted', text: rec.reasoning || '' }));
+    }
+  } else {
+    contentEl.appendChild(el('p', { class: 'muted small', text: 'Could not load recommendation.' }));
+  }
+
+  // ── Detail (last sessions + best recent set) ──
+  if (detailResult.status === 'fulfilled') {
+    const d = detailResult.value.data || {};
+    if (d.sessions_count) {
+      if (d.best_recent_set) {
+        const s = d.best_recent_set;
+        const setText = s.rir != null ? `${s.weight} × ${s.reps} @${s.rir}` : `${s.weight} × ${s.reps}`;
+        contentEl.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
+      }
+      if (d.last_sessions && d.last_sessions.length) {
+        contentEl.appendChild(el('h3', { text: 'Last sessions' }));
+        contentEl.appendChild(renderTable(
+          ['Date', 'Best weight', 'Est. 1RM', 'Volume', 'Sets'],
+          d.last_sessions.map(s => [s.date, s.best_weight ?? '—', s.estimated_1rm ?? '—', s.volume ?? '—', s.sets])
+        ));
+      }
+    }
+  }
+
+  // ── Progress chart (weight over time) ──
+  if (progressResult.status === 'fulfilled') {
+    const p = progressResult.value.data || {};
+    const weights = p.best_weight_over_time || [];
+    if (weights.length >= 2) {
+      const oneRms = p.estimated_1rm_over_time || [];
+      contentEl.appendChild(el('h3', { text: 'Best weight over time' }));
+      contentEl.appendChild(svgLineChart(
+        weights.map(w => ({ x: w.date, y: w.best_weight })),
+        { label: 'Best weight over time' }
+      ));
+      if (oneRms.length >= 2) {
+        contentEl.appendChild(el('h3', { text: 'Estimated 1RM over time' }));
+        contentEl.appendChild(svgLineChart(
+          oneRms.map(r => ({ x: r.date, y: r.estimated_1rm })),
+          { color: '#16a34a', label: 'Estimated 1RM over time' }
+        ));
+      }
+    }
+  }
+
+  if (!contentEl.children.length) {
+    contentEl.appendChild(el('p', { class: 'muted', text: 'No data found for this lift yet.' }));
+  }
+}
+
+document.getElementById('lift-drilldown-back')?.addEventListener('click', () => {
+  const drillCard = document.getElementById('lift-drilldown-card');
+  if (drillCard) drillCard.hidden = true;
+  // loadProgressLiftList shows the list card and populates it (uses cache if available).
+  loadProgressLiftList();
+});
+
 /* ===== Weekly Report ===== */
 
 document.getElementById('weekly-report-btn').addEventListener('click', async () => {
@@ -1069,16 +1226,22 @@ document.addEventListener('click', e => {
   e.preventDefault();
   const liftCode = link.dataset.lift;
   if (!liftCode) return;
-  // Switch to Progress tab
+  // Switch to Progress tab (surface switch if needed)
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   const progressBtn = document.querySelector('[data-tab="progress"]');
-  progressBtn.classList.add('active');
-  document.getElementById('tab-progress').classList.add('active');
-  // Pre-fill and submit the progress form
+  if (progressBtn) progressBtn.classList.add('active');
+  const progressTab = document.getElementById('tab-progress');
+  if (progressTab) progressTab.classList.add('active');
+  // Pre-fill the hidden legacy form (keeps existing event handler bindings
+  // working if anything dispatches submit directly on it).
   const liftInput = document.getElementById('progress-lift-code');
-  liftInput.value = liftCode;
-  document.getElementById('progress-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  if (liftInput) liftInput.value = liftCode;
+  // Determine exercise name for the drill-down title.
+  // Try the lift-list cache first, then fall back to liftCode itself.
+  const cached = (liftListCache || []).find(r => r.liftCode === liftCode);
+  const exerciseName = cached?.exercise_name || link.dataset.exerciseName || liftCode;
+  openLiftDrillDown(exerciseName, liftCode);
 });
 
 /* ===== Catalog search ===== */

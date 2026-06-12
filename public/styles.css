@@ -1212,6 +1212,81 @@ a.lift-link:hover { text-decoration: underline; }
 }
 
 /* ============================================================================
+   Lift list (Trends tab — name-based tappable list)
+   ============================================================================ */
+
+.lift-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lift-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  background: var(--card-sunken);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(10, 132, 255, 0.08);
+  transition: background 0.12s, box-shadow 0.12s, transform 0.08s;
+  min-height: 48px;
+}
+
+.lift-list-item:hover { background: var(--accent-soft); filter: none; }
+.lift-list-item:active { transform: scale(0.98); opacity: 0.88; filter: none; }
+
+.lift-list-name { font-weight: 600; color: var(--ink); }
+.lift-list-target { font-size: 0.82rem; color: var(--muted); margin-left: auto; padding-left: var(--s3); white-space: nowrap; }
+
+/* Drill-down panel */
+.lift-drilldown-header {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+  flex-wrap: wrap;
+}
+
+.lift-drilldown-back-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  border-radius: var(--r-pill);
+  min-height: 36px;
+}
+
+.lift-drilldown-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Settings section heading */
+.settings-section-heading {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: var(--s5) 0 var(--s2) var(--s1);
+}
+
+/* ============================================================================
    Mobile
    ============================================================================ */
 
