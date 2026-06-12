@@ -2048,7 +2048,27 @@ async function submitCompleteWorkout({ file, logRows, sessionId, date, location,
   return api('/api/complete-workout', { method: 'POST', body: form });
 }
 
-const LOG_PREVIEW_HEADERS = ['Date', 'Session', 'Exercise', 'Canonical', 'Muscle group', 'Lift code', 'Set', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume'];
+// Compact one-line confirmation of what the write will contain. The full
+// per-set detail is already editable in the "Edit parsed rows" table, so the
+// preview only needs the count + exercises + session for a final sanity check.
+function renderRowsSummary(rows) {
+  if (!rows || !rows.length) {
+    return el('div', { class: 'preview-rows-summary', text: 'No workout sets to write.' });
+  }
+  const counts = new Map();
+  for (const r of rows) {
+    const name = r[2] || 'Unknown';
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  const exercises = [...counts.entries()].map(([name, n]) => `${name} ×${n}`).join(', ');
+  const date = rows[0][0] || '';
+  const sessionId = rows[0][1] || '';
+  return el('div', { class: 'preview-rows-summary' }, [
+    el('strong', { text: `${rows.length} set${rows.length === 1 ? '' : 's'} to write` }),
+    el('span', { text: ` — ${exercises}` }),
+    el('span', { class: 'preview-rows-meta', text: [date, sessionId].filter(Boolean).join(' · ') })
+  ]);
+}
 
 function renderWarnings(warnings) {
   if (!warnings || !warnings.length) {
@@ -2114,8 +2134,7 @@ function renderLogWorkoutPreview(result, effortRow) {
   if (logRuleFlags) previewContent.appendChild(logRuleFlags);
   const logSuggestions = renderUnknownExerciseSuggestions(data.pending_exercises);
   if (logSuggestions) previewContent.appendChild(logSuggestions);
-  previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.log_rows_preview || []).length})` }));
-  previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.log_rows_preview || []));
+  previewContent.appendChild(renderRowsSummary(data.log_rows_preview || []));
   if (effortRow) {
     previewContent.appendChild(el('h3', { text: 'Effort row to write' }));
     previewContent.appendChild(renderTable(
@@ -2162,8 +2181,7 @@ function renderCompleteWorkoutPreview(result) {
   if (effortOnly) {
     previewContent.appendChild(el('div', { class: 'preview-ok', text: 'Effort-only preview — no workout sets will be written.' }));
   } else {
-    previewContent.appendChild(el('h3', { text: `Workout rows to write (${(data.rows_to_write || []).length})` }));
-    previewContent.appendChild(renderTable(LOG_PREVIEW_HEADERS, data.rows_to_write || []));
+    previewContent.appendChild(renderRowsSummary(data.rows_to_write || []));
   }
   const completeLiftCodes = extractLiftCodes(data.rows_to_write);
   if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;

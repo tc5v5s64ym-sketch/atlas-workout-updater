@@ -796,6 +796,11 @@ button.approve {
   background: var(--ok-soft); border: 1px solid var(--ok-border);
   border-radius: var(--r); padding: 12px 14px; margin: var(--s3) 0; font-size: 0.85rem;
 }
+.preview-rows-summary {
+  background: var(--card-sunken); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 12px 14px; margin: var(--s3) 0; font-size: 0.88rem;
+}
+.preview-rows-meta { display: block; margin-top: var(--s1); font-size: 0.78rem; color: var(--muted); }
 
 .status-msg { margin-top: var(--s3); padding: 12px 14px; border-radius: var(--r); font-size: 0.88rem; }
 .status-msg.ok { background: var(--ok-soft); border: 1px solid var(--ok-border); color: var(--ink); }
