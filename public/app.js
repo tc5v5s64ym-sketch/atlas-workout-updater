@@ -459,6 +459,10 @@ async function loadIntentDashboard() {
   }
 }
 
+// Plain-language overrides so the glance layer never needs gym jargon.
+const FRIENDLY_PATTERN_LABELS = { Hinge: 'Hips & back', Pressing: 'Push', Pulling: 'Pull', 'Lower body': 'Legs' };
+const FRIENDLY_STATUS_WORDS = { fatigued: 'Worked', recovering: 'Recovering', ready: 'Ready', fresh: 'Fresh', unknown: '—' };
+
 function renderTodaysRead(data) {
   const box = document.getElementById('todays-read');
   if (!box) return;
@@ -469,16 +473,19 @@ function renderTodaysRead(data) {
 
   const dotRow = el('div', { class: 'pattern-dots' });
   for (const p of patterns) {
+    const status = p.status || 'unknown';
+    const rawLabel = p.label || p.pattern;
     const wrap = el('div', { class: 'pattern-dot-wrap' }, [
-      el('div', { class: `pattern-dot pattern-dot-${p.status || 'unknown'}`, title: p.detail || p.status || '' }),
-      el('div', { class: 'pattern-dot-label', text: p.label || p.pattern })
+      el('div', { class: `pattern-dot pattern-dot-${status}`, title: p.detail || status }),
+      el('div', { class: 'pattern-dot-label', text: FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel }),
+      el('div', { class: `pattern-dot-status pattern-status-${status}`, text: FRIENDLY_STATUS_WORDS[status] || status })
     ]);
     dotRow.appendChild(wrap);
   }
   box.appendChild(dotRow);
 
   if (todaysRead.recommended_label) {
-    box.appendChild(el('p', { class: 'todays-read-rec', text: `Suggested: ${todaysRead.recommended_label}` }));
+    box.appendChild(el('p', { class: 'todays-read-rec', text: `Today's pick: ${todaysRead.recommended_label}` }));
   }
   if (todaysRead.recommended_reason) {
     box.appendChild(el('p', { class: 'todays-read-reason', text: todaysRead.recommended_reason }));
@@ -520,29 +527,29 @@ function openIntentDrawer(intent) {
     content.appendChild(el('span', { class: 'drawer-recommended-badge', text: 'Recommended for today' }));
   }
 
+  // Glance layer: at most two plain "why" lines, then the workout itself.
   if (intent.why_today && intent.why_today.length) {
     content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Why today' }));
-    content.appendChild(el('ul', { class: 'drawer-list' }, intent.why_today.map(w => el('li', { text: w }))));
+    content.appendChild(el('ul', { class: 'drawer-list' }, intent.why_today.slice(0, 2).map(w => el('li', { text: w }))));
   }
 
-  if (intent.data_points && intent.data_points.length) {
-    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Data' }));
-    content.appendChild(el('ul', { class: 'drawer-list' }, intent.data_points.map(d => el('li', { text: d }))));
+  // Everything analytical folds behind one tap — the data is all still there.
+  const moreSections = [];
+  if (intent.why_today && intent.why_today.length > 2) {
+    moreSections.push(['More reasons', intent.why_today.slice(2)]);
   }
-
-  if (intent.what_it_protects && intent.what_it_protects.length) {
-    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'What it protects' }));
-    content.appendChild(el('ul', { class: 'drawer-list' }, intent.what_it_protects.map(w => el('li', { text: w }))));
-  }
-
-  if (intent.watch_for && intent.watch_for.length) {
-    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Watch for' }));
-    content.appendChild(el('ul', { class: 'drawer-list' }, intent.watch_for.map(w => el('li', { text: w }))));
-  }
-
-  if (intent.pivot_logic && intent.pivot_logic.length) {
-    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'If something feels off' }));
-    content.appendChild(el('ul', { class: 'drawer-list' }, intent.pivot_logic.map(p => el('li', { text: p }))));
+  if (intent.data_points && intent.data_points.length) moreSections.push(['The numbers behind this', intent.data_points]);
+  if (intent.what_it_protects && intent.what_it_protects.length) moreSections.push(['What it protects', intent.what_it_protects]);
+  if (intent.watch_for && intent.watch_for.length) moreSections.push(['Watch for', intent.watch_for]);
+  if (intent.pivot_logic && intent.pivot_logic.length) moreSections.push(['If something feels off', intent.pivot_logic]);
+  if (moreSections.length) {
+    const fold = el('details', { class: 'drawer-more' });
+    fold.appendChild(el('summary', { text: 'More detail' }));
+    for (const [title, items] of moreSections) {
+      fold.appendChild(el('h3', { class: 'drawer-section-title', text: title }));
+      fold.appendChild(el('ul', { class: 'drawer-list' }, items.map(item => el('li', { text: item }))));
+    }
+    content.appendChild(fold);
   }
 
   if (intent.exercises && intent.exercises.length) {
@@ -624,6 +631,12 @@ async function loadTodaysPlan() {
   }
 }
 
+// One friendly line in the glance row so the data is digestible without opening.
+function setGlanceHint(id, text) {
+  const hint = document.getElementById(id);
+  if (hint) hint.textContent = text || '';
+}
+
 async function loadCoaching() {
   const box = document.getElementById('coaching');
   try {
@@ -632,6 +645,7 @@ async function loadCoaching() {
     box.innerHTML = '';
 
     const fatigue = data.fatigue || {};
+    setGlanceHint('coaching-hint', fatigue.status === 'high' ? 'Ease off a touch this week' : 'On track ✓');
     const fatigueClass = fatigue.status === 'high' ? 'preview-warnings' : 'preview-ok';
     box.appendChild(el('div', { class: fatigueClass }, [
       el('strong', { text: `Fatigue: ${fatigue.status || 'unknown'}` }),
@@ -664,6 +678,7 @@ async function loadWeeklySummary() {
     const data = res.data || {};
     box.innerHTML = '';
     const highlights = data.highlights || [];
+    setGlanceHint('weekly-summary-hint', highlights.length ? highlights[0] : 'No sessions yet this week');
     if (!highlights.length) {
       box.appendChild(el('span', { class: 'muted', text: 'No training logged in the last 7 days.' }));
       return;
@@ -688,6 +703,7 @@ async function loadRecentHistory() {
     const res = await api('/api/history/recent?limit=10');
     const sets = res.data?.recent_sets || [];
     box.innerHTML = '';
+    setGlanceHint('recent-history-hint', sets.length ? `Last: ${sets[0].exercise} · ${sets[0].date_clean}` : 'Nothing logged yet');
     if (!sets.length) {
       box.appendChild(el('span', { class: 'muted', text: 'No recent sets.' }));
       return;
@@ -707,6 +723,7 @@ async function loadRecentPrs() {
     const res = await api('/api/prs/recent');
     const prs = res.data?.prs || [];
     box.innerHTML = '';
+    setGlanceHint('recent-prs-hint', prs.length ? `${prs.length} personal best${prs.length === 1 ? '' : 's'} 🎉` : 'Your bests will land here');
     if (!prs.length) {
       box.appendChild(el('span', { class: 'muted', text: 'No PRs recorded yet.' }));
       return;
@@ -731,6 +748,7 @@ async function loadStalls() {
     const res = await api('/api/stalls?minSessions=3');
     const stalls = res.data?.stalls || [];
     box.innerHTML = '';
+    setGlanceHint('stalls-hint', stalls.length ? `${stalls.length} lift${stalls.length === 1 ? '' : 's'} could use a change` : 'All clear ✓');
     if (!stalls.length) {
       box.appendChild(el('span', { class: 'muted', text: 'No stalled lifts — keep it up.' }));
       return;

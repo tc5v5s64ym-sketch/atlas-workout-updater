@@ -2778,7 +2778,7 @@ test('intent dashboard: renderTodaysRead and renderIntentGrid render correct con
 
   const readFn = appSource.slice(
     appSource.indexOf('function renderTodaysRead('),
-    appSource.indexOf('function renderTodaysRead(') + 900
+    appSource.indexOf('function renderTodaysRead(') + 1400
   );
   assert.match(readFn, /pattern-dots/, 'renderTodaysRead must render pattern-dots container');
   assert.match(readFn, /pattern-dot-/, 'must apply per-status CSS class to dots');
@@ -3127,4 +3127,55 @@ test('shell cache: service worker version bumped and all shell scripts precached
   }
   // The API must still never be intercepted
   assert.match(sw, /startsWith\('\/api'\)/, 'API traffic must stay uncached');
+});
+
+// ── Glanceable dashboard ───────────────────────────────────────────────────────
+
+test('glance: data-heavy dashboard cards collapse to one friendly line each', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
+  for (const hint of ['recent-prs-hint', 'stalls-hint', 'weekly-summary-hint', 'recent-history-hint', 'coaching-hint']) {
+    assert.match(dashSection, new RegExp(`id="${hint}"`), `${hint} glance line must exist`);
+  }
+  // The full data containers survive — same information, one tap deeper
+  for (const id of ['recent-prs', 'stalls', 'weekly-summary', 'recent-history', 'coaching']) {
+    assert.match(dashSection, new RegExp(`id="${id}"`), `${id} detail container must remain`);
+  }
+  assert.match(dashSection, /glance-card/, 'cards must use the collapsible glance style');
+});
+
+test('glance: loaders fill the friendly hint lines', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /function setGlanceHint/, 'hint helper must exist');
+  for (const hint of ['recent-prs-hint', 'stalls-hint', 'weekly-summary-hint', 'recent-history-hint', 'coaching-hint']) {
+    assert.ok(app.includes(`setGlanceHint('${hint}'`), `${hint} must be filled by its loader`);
+  }
+});
+
+test('glance: readiness dots speak plain language, not gym jargon', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /FRIENDLY_PATTERN_LABELS/, 'pattern label overrides must exist');
+  assert.match(app, /Hips & back/, 'Hinge must read as Hips & back');
+  assert.match(app, /FRIENDLY_STATUS_WORDS/, 'status word map must exist');
+  assert.match(app, /pattern-dot-status/, 'status word must render under each dot');
+});
+
+test('glance: intent drawer shows the point first and folds the analysis', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function openIntentDrawer('), app.indexOf('function closeIntentDrawer('));
+  assert.match(fn, /why_today\.slice\(0, 2\)/, 'glance layer caps why-today at two lines');
+  assert.match(fn, /drawer-more/, 'analysis must fold behind More detail');
+  assert.match(fn, /More detail/, 'fold must be labelled plainly');
+  // Nothing is lost — every section still renders inside the fold
+  for (const section of ['data_points', 'what_it_protects', 'watch_for', 'pivot_logic']) {
+    assert.match(fn, new RegExp(section), `${section} must still be available one tap deeper`);
+  }
+});
+
+test('glance: styles define the glance card row and status words', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.glance-card > summary/, 'glance summary row style must exist');
+  assert.match(css, /\.glance-hint/, 'hint line style must exist');
+  assert.match(css, /\.pattern-dot-status/, 'dot status word style must exist');
+  assert.match(css, /\.drawer-more/, 'drawer fold style must exist');
 });
