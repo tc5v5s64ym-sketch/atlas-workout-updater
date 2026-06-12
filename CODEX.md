@@ -122,14 +122,35 @@ Dashboard:
 
 ## Current PR Status And Priority
 
-As of this instruction file, the recent safety sequence is:
+As of this instruction refresh, the recent merged UI/product sequence is:
 
-1. PR #24: merged - no-write safety regression coverage plus sheet contract/catalog tests.
-2. PR #26: merged - Mission Control reliability.
-3. PR #27: merged - docs/runbooks/roadmap.
-4. PR #25: closed as superseded by PR #24.
+1. PR #96: merged - two-surface Coach/Progress shell with design tokens.
+2. PR #98: merged - Coach chat thread, composer send, and in-thread preview card.
+3. PR #99: merged - trust loop as in-thread card states.
+4. PR #100: merged - Progress surface v1.
+5. PR #101: merged - frontend sends `write_id` for duplicate protection.
+6. PR #102: merged - Coach declutter, bottom-docked composer, and service-worker cache bump.
+7. PR #103: merged - glanceable dashboard with friendly one-liners first and full data one tap deeper.
 
-For future work, verify current GitHub state before relying on this list.
+At handoff, no open PRs were visible.
+
+If another AI agent may have run out mid-build and no PR is open yet, assume there may be unpushed local or session-only work. In that situation, avoid recently touched UI files unless the owner gives explicit direction.
+
+Current safe next lanes after interrupted UI work:
+
+1. Docs-only status refresh work.
+2. Parser golden tests or other isolated tests-only work.
+3. Small isolated backend work outside likely interrupted UI files.
+
+Verify current GitHub state before relying on any PR/status summary in this file.
+
+## Interrupted Agent Work Rule
+
+When an AI coding session runs out mid-build and no PR is open, do not guess and continue the same feature.
+
+1. First check open PRs and recent PRs.
+2. Avoid files likely touched by the interrupted agent, especially recent UI files.
+3. Prefer docs-only, tests-only, or isolated backend work until the owner confirms the unfinished branch state.
 
 ## Morning Summary Format
 
