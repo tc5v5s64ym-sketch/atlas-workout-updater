@@ -43,6 +43,7 @@
 
       <h2 class="coach-greeting" id="coach-greeting">Ready when you are.</h2>
       <p class="coach-subtitle">Log a workout, or just ask.</p>
+      <div id="coach-read-strip" class="coach-read-strip"></div>
 
       <div class="suggestion-chips" id="suggestion-chips">
         <button type="button" class="chip" data-chip="example">Bench 135 10/4, 225 5/2 x3</button>
@@ -82,34 +83,34 @@
 
         <p class="safety-note compact">Previews send <code>test_mode=true</code> — nothing is saved until you approve.</p>
 
-        <details id="logger-details" class="logger-details">
-          <summary>Details <span class="muted">(date, session, effort, notes)</span></summary>
+        <!-- Effort entry: opened via + → Manual effort entry or + → Apple Watch screenshot -->
+        <details id="effort-details">
+          <summary>Effort <span class="muted">(optional)</span></summary>
+          <div class="form-row" style="margin-top:10px">
+            <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>
+            <label class="radio"><input type="radio" name="effort-mode" value="screenshot"> Apple Watch screenshot</label>
+          </div>
 
-          <div class="form-row" style="margin-top:12px">
+          <div id="effort-manual" class="form-row">
+            <label>Duration <input type="text" id="effort-duration" placeholder="hh:mm:ss or minutes"></label>
+            <label>Active cal <input type="number" id="effort-active-cal" min="1" max="3000"></label>
+            <label>Total cal <input type="number" id="effort-total-cal" min="1" max="4000"></label>
+            <label>Avg HR <input type="number" id="effort-avg-hr" min="40" max="220"></label>
+            <label>Peak HR <input type="number" id="effort-peak-hr" min="40" max="230"></label>
+          </div>
+
+          <div id="effort-screenshot" class="form-row" hidden>
+            <label>Screenshot <input type="file" id="effort-image" accept="image/png,image/jpeg,image/webp"></label>
+          </div>
+        </details>
+
+        <!-- Session fields: hidden, auto-populated silently -->
+        <div id="logger-details" hidden>
+          <div class="form-row">
             <label>Date <input type="date" id="log-date" required></label>
             <label>Session ID <input type="text" id="log-session-id" placeholder="auto if blank"></label>
             <label>Location <input type="text" id="log-location" placeholder="Gym"></label>
           </div>
-
-          <details id="effort-details">
-            <summary>Effort <span class="muted">(optional)</span></summary>
-            <div class="form-row" style="margin-top:10px">
-              <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>
-              <label class="radio"><input type="radio" name="effort-mode" value="screenshot"> Apple Watch screenshot</label>
-            </div>
-
-            <div id="effort-manual" class="form-row">
-              <label>Duration <input type="text" id="effort-duration" placeholder="hh:mm:ss or minutes"></label>
-              <label>Active cal <input type="number" id="effort-active-cal" min="1" max="3000"></label>
-              <label>Total cal <input type="number" id="effort-total-cal" min="1" max="4000"></label>
-              <label>Avg HR <input type="number" id="effort-avg-hr" min="40" max="220"></label>
-              <label>Peak HR <input type="number" id="effort-peak-hr" min="40" max="230"></label>
-            </div>
-
-            <div id="effort-screenshot" class="form-row" hidden>
-              <label>Screenshot <input type="file" id="effort-image" accept="image/png,image/jpeg,image/webp"></label>
-            </div>
-          </details>
 
           <div class="form-row">
             <label class="wide">Workout notes <input type="text" id="log-notes" placeholder="optional"></label>
@@ -123,7 +124,7 @@
             </div>
             <div id="load-session-status"></div>
           </details>
-        </details>
+        </div>
 
         <div id="parsed-rows-editor" class="parsed-rows-editor" hidden>
           <h3>Edit parsed rows</h3>

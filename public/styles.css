@@ -306,8 +306,8 @@ main {
   z-index: 20;
 }
 
-/* Folds that open inside the docked form grow upward — keep them scrollable */
-#logger-form .logger-details[open],
+/* Effort details and parsed-rows editor scroll when tall */
+#logger-form #effort-details[open],
 #logger-form .parsed-rows-editor:not([hidden]) {
   max-height: 46vh;
   overflow-y: auto;
@@ -322,8 +322,20 @@ main {
 .coach-subtitle {
   color: var(--faint);
   font-size: 0.92rem;
+  margin: 0 0 var(--s2);
+}
+
+.coach-read-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: 14px;
   margin: 0 0 var(--s5);
 }
+.coach-read-strip:empty { display: none; }
+.strip-dots { display: flex; gap: 7px; align-items: center; }
+.strip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); display: inline-block; }
+.strip-rec { font-size: 0.78rem; color: var(--muted); }
 
 .suggestion-chips {
   display: flex;
@@ -685,14 +697,14 @@ button.approve {
   color: var(--muted);
 }
 
-.logger-details { margin-top: var(--s3); }
-.logger-details > summary {
+#effort-details { margin-top: var(--s3); }
+#effort-details > summary {
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--muted);
 }
-.logger-details[open] > summary { margin-bottom: var(--s2); }
+#effort-details[open] > summary { margin-bottom: var(--s2); }
 
 .no-write-proof {
   background: var(--ok-soft);
