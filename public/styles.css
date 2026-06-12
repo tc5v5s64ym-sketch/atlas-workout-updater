@@ -98,6 +98,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html { -webkit-text-size-adjust: 100%; }
 
@@ -1301,8 +1302,8 @@ a.lift-link:hover { text-decoration: underline; }
   .segmented { margin: 0 auto 0 0; }
   main { padding: var(--s3); }
   .subnav { padding: var(--s2) var(--s3) 0; }
-  .form-row { flex-direction: column; }
-  .form-row label { flex-direction: column; }
+  .form-row { flex-direction: column; align-items: stretch; }
+  .form-row label { flex-direction: column; align-items: stretch; }
   input, select, button { min-height: 44px; }
   #sets-table input { min-height: 38px; }
   button.approve { width: 100%; justify-content: center; }
