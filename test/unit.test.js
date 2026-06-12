@@ -1178,7 +1178,7 @@ test("today's plan: /api/plan/today filters out numeric-only lift codes", () => 
 
 test("today's plan: app.js uses exercise_name field for card title, not liftCode directly", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  const planFn = appSource.slice(appSource.indexOf('async function loadTodaysPlan'), appSource.indexOf('async function loadTodaysPlan') + 2000);
   assert.match(planFn, /exercise_name/, 'must reference exercise_name field');
   assert.match(planFn, /plan-card-code/, 'must include secondary lift code span');
 });
@@ -2123,7 +2123,7 @@ test('session queue: loadTodaysPlan includes helper copy about targets', () => {
 
 test('mobile tap fix: plan-card exercise name is not a lift-link anchor', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  const planFn = appSource.slice(appSource.indexOf('async function loadTodaysPlan'), appSource.indexOf('async function loadTodaysPlan') + 2000);
   // exercise name must be a span, not an anchor with lift-link
   assert.match(planFn, /plan-card-lift-name/, 'exercise name must use plan-card-lift-name span');
   // a View progress link must exist as the navigation path
@@ -2160,7 +2160,7 @@ test('mobile tap fix: startLift coach panel includes back-to-session button', ()
 
 test('start-any-lift: plan cards are tappable and call startLift', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  const planFn = appSource.slice(appSource.indexOf('async function loadTodaysPlan'), appSource.indexOf('async function loadTodaysPlan') + 2000);
   assert.match(planFn, /plan-card-startable/, 'card must have startable class');
   assert.match(planFn, /card\.addEventListener.*click/, 'card must have click handler');
   assert.match(planFn, /startLift\(exerciseName/, 'card click must call startLift with exercise name');
@@ -2169,7 +2169,7 @@ test('start-any-lift: plan cards are tappable and call startLift', () => {
 
 test('start-any-lift: plan card footer has Tap to start hint and View progress link', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  const planFn = appSource.slice(appSource.indexOf('async function loadTodaysPlan'), appSource.indexOf('async function loadTodaysPlan') + 2000);
   assert.match(planFn, /plan-card-footer/, 'must have plan-card-footer container');
   assert.match(planFn, /plan-card-tap-hint/, 'must have tap hint element');
   assert.match(planFn, /Tap to start/, 'must include Tap to start text');
@@ -2382,4 +2382,101 @@ test('scoreIntents: intent-recommendation route is GET and read-only', () => {
   assert.deepEqual(route.methods, ['GET']);
   assert.equal(route.readOnly, true);
   assert.equal(route.writeCapable, false);
+});
+
+// ── Intent Dashboard Frontend ──────────────────────────────────────────────────
+
+test('intent dashboard: loadIntentDashboard exists and calls intent-recommendation endpoint', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /async function loadIntentDashboard\(/, 'loadIntentDashboard must exist');
+  const fn = appSource.slice(
+    appSource.indexOf('async function loadIntentDashboard('),
+    appSource.indexOf('async function loadIntentDashboard(') + 500
+  );
+  assert.match(fn, /\/api\/plan\/intent-recommendation/, 'must call intent-recommendation endpoint');
+  assert.match(fn, /renderTodaysRead/, 'must call renderTodaysRead');
+  assert.match(fn, /renderIntentGrid/, 'must call renderIntentGrid');
+});
+
+test('intent dashboard: loadDashboard calls loadIntentDashboard', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const dashFn = appSource.slice(
+    appSource.indexOf('async function loadDashboard('),
+    appSource.indexOf('async function loadDashboard(') + 900
+  );
+  assert.match(dashFn, /loadIntentDashboard\(\)/, 'loadDashboard must call loadIntentDashboard');
+});
+
+test('intent dashboard: Todays Read and Intent Grid cards exist in index.html', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="todays-read-card"/, 'todays-read-card must exist in HTML');
+  assert.match(html, /id="todays-read"/, 'todays-read container must exist in HTML');
+  assert.match(html, /id="intent-grid-card"/, 'intent-grid-card must exist in HTML');
+  assert.match(html, /id="intent-grid"/, 'intent-grid container must exist in HTML');
+  assert.match(html, /Today's Read/, 'must have Today\'s Read heading');
+  assert.match(html, /What to train today/, 'must have What to train today heading');
+});
+
+test('intent dashboard: Intent Drawer overlay exists in index.html', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="intent-drawer"/, 'intent-drawer must exist');
+  assert.match(html, /id="intent-drawer-backdrop"/, 'backdrop must exist');
+  assert.match(html, /id="intent-drawer-close"/, 'close button must exist');
+  assert.match(html, /id="intent-drawer-content"/, 'drawer content container must exist');
+  assert.match(html, /intent-drawer-panel/, 'drawer panel must exist');
+});
+
+test('intent dashboard: renderTodaysRead and renderIntentGrid render correct containers', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function renderTodaysRead\(/, 'renderTodaysRead must exist');
+  assert.match(appSource, /function renderIntentGrid\(/, 'renderIntentGrid must exist');
+
+  const readFn = appSource.slice(
+    appSource.indexOf('function renderTodaysRead('),
+    appSource.indexOf('function renderTodaysRead(') + 900
+  );
+  assert.match(readFn, /pattern-dots/, 'renderTodaysRead must render pattern-dots container');
+  assert.match(readFn, /pattern-dot-/, 'must apply per-status CSS class to dots');
+  assert.match(readFn, /todays-read-rec/, 'must render recommendation label');
+
+  const gridFn = appSource.slice(
+    appSource.indexOf('function renderIntentGrid('),
+    appSource.indexOf('function renderIntentGrid(') + 900
+  );
+  assert.match(gridFn, /intent-grid/, 'renderIntentGrid must render intent-grid container');
+  assert.match(gridFn, /intent-tile/, 'must render intent-tile elements');
+  assert.match(gridFn, /intent-tile-recommended/, 'must mark recommended tile');
+  assert.match(gridFn, /openIntentDrawer/, 'tile click must call openIntentDrawer');
+});
+
+test('intent dashboard: openIntentDrawer and closeIntentDrawer exist and are wired', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function openIntentDrawer\(/, 'openIntentDrawer must exist');
+  assert.match(appSource, /function closeIntentDrawer\(/, 'closeIntentDrawer must exist');
+  assert.match(appSource, /intent-drawer-backdrop.*closeIntentDrawer|closeIntentDrawer.*intent-drawer-backdrop/, 'backdrop click must close drawer');
+  assert.match(appSource, /intent-drawer-close.*closeIntentDrawer|closeIntentDrawer.*intent-drawer-close/, 'close button must close drawer');
+
+  const openFn = appSource.slice(
+    appSource.indexOf('function openIntentDrawer('),
+    appSource.indexOf('function openIntentDrawer(') + 2800
+  );
+  assert.match(openFn, /drawer-title/, 'must render drawer title');
+  assert.match(openFn, /drawer-section-title/, 'must render section titles');
+  assert.match(openFn, /intent-start-btn/, 'must include START SESSION button');
+  assert.match(openFn, /startLift/, 'START SESSION must call startLift');
+  assert.match(openFn, /closeIntentDrawer/, 'START SESSION must close drawer first');
+});
+
+test('intent dashboard: CSS has all required intent and drawer classes', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.intent-grid/, 'must have .intent-grid class');
+  assert.match(css, /\.intent-tile/, 'must have .intent-tile class');
+  assert.match(css, /\.intent-tile-recommended/, 'must have .intent-tile-recommended class');
+  assert.match(css, /\.intent-drawer/, 'must have .intent-drawer class');
+  assert.match(css, /position.*fixed|fixed.*position/, 'intent-drawer must be fixed position');
+  assert.match(css, /\.intent-drawer\[hidden\]/, 'must override hidden attribute on drawer');
+  assert.match(css, /\.pattern-dot/, 'must have .pattern-dot class');
+  assert.match(css, /\.pattern-dot-fatigued/, 'must have fatigued dot style');
+  assert.match(css, /\.pattern-dot-ready/, 'must have ready dot style');
+  assert.match(css, /\.intent-start-btn/, 'must have intent-start-btn class');
 });

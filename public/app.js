@@ -353,12 +353,18 @@ async function loadSuggestedSession() {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['suggested-session', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
-      document.getElementById(id).innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
+    for (const id of ['todays-read', 'intent-grid', 'suggested-session', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+      const target = document.getElementById(id);
+      if (target) target.innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
+    const readCard = document.getElementById('todays-read-card');
+    const gridCard = document.getElementById('intent-grid-card');
+    if (readCard) readCard.hidden = false;
+    if (gridCard) gridCard.hidden = false;
     return;
   }
 
+  loadIntentDashboard();
   loadSuggestedSession();
   loadTodaysPlan();
   loadCoaching();
@@ -366,6 +372,147 @@ async function loadDashboard() {
   loadRecentHistory();
   loadRecentPrs();
   loadStalls();
+}
+
+/* ===== Intent Dashboard ===== */
+
+async function loadIntentDashboard() {
+  const readCard = document.getElementById('todays-read-card');
+  const gridCard = document.getElementById('intent-grid-card');
+  try {
+    const res = await api('/api/plan/intent-recommendation');
+    const data = res.data || {};
+    renderTodaysRead(data);
+    renderIntentGrid(data);
+    if (readCard) readCard.hidden = false;
+    if (gridCard) gridCard.hidden = false;
+  } catch (err) {
+    const readBox = document.getElementById('todays-read');
+    if (readBox) readBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    if (readCard) readCard.hidden = false;
+    if (gridCard) gridCard.hidden = true;
+  }
+}
+
+function renderTodaysRead(data) {
+  const box = document.getElementById('todays-read');
+  if (!box) return;
+  const todaysRead = data.todays_read || {};
+  const patterns = todaysRead.patterns || [];
+
+  box.innerHTML = '';
+
+  const dotRow = el('div', { class: 'pattern-dots' });
+  for (const p of patterns) {
+    const wrap = el('div', { class: 'pattern-dot-wrap' }, [
+      el('div', { class: `pattern-dot pattern-dot-${p.status || 'unknown'}`, title: p.detail || p.status || '' }),
+      el('div', { class: 'pattern-dot-label', text: p.label || p.pattern })
+    ]);
+    dotRow.appendChild(wrap);
+  }
+  box.appendChild(dotRow);
+
+  if (todaysRead.recommended_label) {
+    box.appendChild(el('p', { class: 'todays-read-rec', text: `Suggested: ${todaysRead.recommended_label}` }));
+  }
+  if (todaysRead.recommended_reason) {
+    box.appendChild(el('p', { class: 'todays-read-reason', text: todaysRead.recommended_reason }));
+  }
+}
+
+function renderIntentGrid(data) {
+  const box = document.getElementById('intent-grid');
+  if (!box) return;
+  box.innerHTML = '';
+  const intents = data.intents || [];
+  const grid = el('div', { class: 'intent-grid' });
+  for (const intent of intents) {
+    const tileClass = `intent-tile${intent.recommended ? ' intent-tile-recommended' : ''}`;
+    const tile = el('button', { type: 'button', class: tileClass });
+    if (intent.recommended) {
+      tile.appendChild(el('span', { class: 'intent-star', text: '★ ' }));
+    }
+    tile.appendChild(el('span', { class: 'intent-tile-label', text: intent.label }));
+    if (intent.focus) {
+      tile.appendChild(el('span', { class: 'intent-tile-focus', text: intent.focus }));
+    }
+    tile.addEventListener('click', () => openIntentDrawer(intent));
+    grid.appendChild(tile);
+  }
+  box.appendChild(grid);
+  box.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;margin-top:6px', text: 'Tap any tile to see the coaching brief and start a session.' }));
+}
+
+function openIntentDrawer(intent) {
+  const drawer = document.getElementById('intent-drawer');
+  const content = document.getElementById('intent-drawer-content');
+  if (!drawer || !content) return;
+
+  content.innerHTML = '';
+
+  content.appendChild(el('h2', { class: 'drawer-title', text: intent.label }));
+  if (intent.recommended) {
+    content.appendChild(el('span', { class: 'drawer-recommended-badge', text: 'Recommended for today' }));
+  }
+
+  if (intent.why_today && intent.why_today.length) {
+    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Why today' }));
+    content.appendChild(el('ul', { class: 'drawer-list' }, intent.why_today.map(w => el('li', { text: w }))));
+  }
+
+  if (intent.data_points && intent.data_points.length) {
+    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Data' }));
+    content.appendChild(el('ul', { class: 'drawer-list' }, intent.data_points.map(d => el('li', { text: d }))));
+  }
+
+  if (intent.what_it_protects && intent.what_it_protects.length) {
+    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'What it protects' }));
+    content.appendChild(el('ul', { class: 'drawer-list' }, intent.what_it_protects.map(w => el('li', { text: w }))));
+  }
+
+  if (intent.watch_for && intent.watch_for.length) {
+    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Watch for' }));
+    content.appendChild(el('ul', { class: 'drawer-list' }, intent.watch_for.map(w => el('li', { text: w }))));
+  }
+
+  if (intent.pivot_logic && intent.pivot_logic.length) {
+    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'If something feels off' }));
+    content.appendChild(el('ul', { class: 'drawer-list' }, intent.pivot_logic.map(p => el('li', { text: p }))));
+  }
+
+  if (intent.exercises && intent.exercises.length) {
+    content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Exercises' }));
+    const exList = el('div', { class: 'drawer-exercises' });
+    for (const ex of intent.exercises) {
+      const target = ex.next_target;
+      const nameEl = el('span', { class: 'drawer-exercise-name', text: ex.exercise || ex.liftCode });
+      const targetEl = target
+        ? el('span', { class: 'drawer-exercise-target', text: `${target.weight} × ${target.reps}` })
+        : null;
+      exList.appendChild(el('div', { class: 'drawer-exercise-row' }, targetEl ? [nameEl, targetEl] : [nameEl]));
+    }
+    content.appendChild(exList);
+
+    const firstEx = intent.exercises[0];
+    if (firstEx && firstEx.next_target) {
+      const startBtn = el('button', { type: 'button', class: 'approve intent-start-btn', text: 'START SESSION' });
+      startBtn.addEventListener('click', () => {
+        closeIntentDrawer();
+        const t = firstEx.next_target;
+        startLift(firstEx.exercise || firstEx.liftCode, firstEx.liftCode, t.weight, t.reps, t.sets || 3);
+      });
+      content.appendChild(startBtn);
+    }
+  }
+
+  drawer.hidden = false;
+  const panel = drawer.querySelector('.intent-drawer-panel');
+  if (panel) panel.scrollTop = 0;
+}
+
+function closeIntentDrawer() {
+  const drawer = document.getElementById('intent-drawer');
+  if (drawer) drawer.hidden = true;
 }
 
 async function loadTodaysPlan() {
@@ -1845,6 +1992,9 @@ setDefaultDate();
 checkConnection();
 loadDashboard();
 loadExerciseDatalist();
+
+document.getElementById('intent-drawer-backdrop')?.addEventListener('click', closeIntentDrawer);
+document.getElementById('intent-drawer-close')?.addEventListener('click', closeIntentDrawer);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {
