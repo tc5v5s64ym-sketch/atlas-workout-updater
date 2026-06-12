@@ -2296,6 +2296,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   approveBtn.textContent = 'Writing to Sheets…';
 
   const reactionLiftCodes = pendingWrite.liftCodes || [];
+  // Captured up front — the preview teardown below nulls pendingWrite, and
+  // the success message still needs to know which kind of write this was.
+  const wasEffortOnly = pendingWrite.effortOnly === true;
   let pendingLastWrite = null;
   let duplicateBlocked = false;
   try {
@@ -2372,7 +2375,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       loggerStatus,
       duplicateBlocked
         ? 'Duplicate tap blocked — this workout was already written. ✓'
-        : pendingWrite.effortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+        : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
       'ok'
     );
     if (pendingLastWrite) {
