@@ -597,6 +597,39 @@ function classifyMuscleGroup(muscleGroup) {
   return null;
 }
 
+// ─── Recovery model ───────────────────────────────────────────────────────────
+// Per-pattern readiness used to snap between day-count bins (0 / 1 / 2–4 / 5+),
+// which made fatigue jump rather than ease. These helpers replace the bins with
+// a continuous exponential recovery curve whose speed depends on how hard the
+// last session was (lower RIR = closer to failure = slower recovery).
+
+// Recovery time-constant in days for a session ending at the given minimum RIR.
+// Null/unknown RIR falls back to a moderate default.
+function recoveryTau(minRir) {
+  if (minRir == null || !Number.isFinite(minRir)) return 2.0;
+  if (minRir <= 0) return 3.0;   // trained to failure — slowest recovery
+  if (minRir >= 3) return 1.6;   // plenty left in the tank — fastest recovery
+  return 3.0 - (minRir / 3) * 1.4; // smooth ramp between the two extremes
+}
+
+// Recovery fraction in [0,1]: 0 = just trained, 1 = fully recovered.
+function recoveryFraction(daysSince, minRir) {
+  if (daysSince == null || daysSince < 0) return null;
+  return 1 - Math.exp(-daysSince / recoveryTau(minRir));
+}
+
+// Map a recovery fraction to the discrete readiness label the UI and intent
+// engine consume. Thresholds are tuned so a typical @2 RIR session reproduces
+// the original day bins (0→fatigued, 1–2→recovering, 3–4→ready, 5+→fresh),
+// while harder or easier sessions now shift the curve earlier or later.
+function readinessStatus(recovery) {
+  if (recovery == null) return 'unknown';
+  if (recovery < 0.36) return 'fatigued';
+  if (recovery < 0.70) return 'recovering';
+  if (recovery < 0.89) return 'ready';
+  return 'fresh';
+}
+
 // ─── Per-movement-pattern readiness ──────────────────────────────────────────
 function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
   const todayStr = today || new Date().toISOString().slice(0, 10);
@@ -628,13 +661,9 @@ function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
     let daysSince = null;
     if (best) daysSince = Math.floor((new Date(todayStr) - new Date(best.date)) / 86400000);
 
-    let status = 'unknown';
-    if (daysSince === null) status = 'unknown';
-    else if (daysSince === 0) status = 'fatigued';
-    else if (daysSince === 1 && best.minRir != null && best.minRir <= 1) status = 'fatigued';
-    else if (daysSince <= 2) status = 'recovering';
-    else if (daysSince <= 4) status = 'ready';
-    else status = 'fresh';
+    const minRir = best?.minRir ?? null;
+    const recovery = recoveryFraction(daysSince, minRir);
+    const status = readinessStatus(recovery);
 
     const detail = daysSince === null ? 'No training data'
       : daysSince === 0 ? 'Trained today'
@@ -646,6 +675,7 @@ function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
       label: LABELS[pattern],
       status,
       daysSince,
+      recovery: recovery == null ? null : Math.round(recovery * 100) / 100,
       lastDate: best?.date || null,
       lastSessionVolume: best?.volume || 0,
       lastSessionMinRir: best?.minRir ?? null,
