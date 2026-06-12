@@ -217,56 +217,43 @@
 
     <!-- ============ TRENDS (progress, read-only) ============ -->
     <section id="tab-progress" class="tab">
-      <div class="card">
-        <h2>Exercise Progress</h2>
-        <form id="progress-form" class="inline-form">
-          <input type="text" id="progress-lift-code" placeholder="Lift code (e.g. SQ01)" required list="exercise-catalog">
-          <button type="submit">Load</button>
+
+      <!-- Hidden legacy forms — IDs kept so existing app.js event handlers
+           still bind. The .lift-link deep-link path populates #progress-lift-code
+           and dispatches submit to trigger the drill-down. -->
+      <div style="display:none" aria-hidden="true">
+        <form id="progress-form">
+          <input type="text" id="progress-lift-code" list="exercise-catalog">
+        </form>
+        <form id="detail-form">
+          <input type="text" id="detail-lift-code" list="exercise-catalog">
         </form>
         <div id="progress-result"></div>
+        <div id="recommendation-result"></div>
+        <div id="detail-result"></div>
       </div>
-      <div class="card">
-        <h2>Next Set Recommendation</h2>
-        <div id="recommendation-result" class="muted">Load a lift code above to see a recommendation.</div>
+
+      <!-- Lift list: tappable exercises, most-recently-trained first -->
+      <div class="card" id="lift-list-card">
+        <h2>Your Lifts</h2>
+        <div id="lift-list-result"><span class="muted">Loading your lifts…</span></div>
       </div>
-      <div class="card">
-        <h2>Catalog Lookup</h2>
-        <form id="catalog-search-form" class="inline-form">
-          <input type="text" id="catalog-search-q" placeholder="Exercise name or lift code">
-          <button type="submit">Search</button>
-        </form>
-        <div id="catalog-search-result"></div>
+
+      <!-- Drill-down panel: shown when a lift is tapped -->
+      <div class="card" id="lift-drilldown-card" hidden>
+        <div class="lift-drilldown-header">
+          <button type="button" id="lift-drilldown-back" class="secondary lift-drilldown-back-btn">&#8592; All lifts</button>
+          <h2 id="lift-drilldown-title" class="lift-drilldown-title"></h2>
+        </div>
+        <div id="lift-drilldown-content"><span class="muted">Loading…</span></div>
       </div>
+
       <div class="card">
         <h2>Weekly Report</h2>
         <div class="action-row">
           <button type="button" id="weekly-report-btn">Load weekly report</button>
         </div>
         <div id="weekly-report-result"></div>
-      </div>
-
-      <div class="card">
-        <h2>Exercise Detail</h2>
-        <form id="detail-form" class="inline-form">
-          <input type="text" id="detail-lift-code" placeholder="Lift code (e.g. SQ01)" required list="exercise-catalog">
-          <button type="submit">Load detail</button>
-        </form>
-        <div id="detail-result"></div>
-      </div>
-
-      <div class="card">
-        <h2>Session Search</h2>
-        <form id="session-search-form">
-          <div class="form-row">
-            <label>Lift code <input type="text" id="ss-lift-code" placeholder="SQ01" list="exercise-catalog"></label>
-            <label>Exercise <input type="text" id="ss-exercise" placeholder="Back Squat"></label>
-            <label>Muscle group <input type="text" id="ss-muscle-group" placeholder="Legs"></label>
-            <label>Date from <input type="date" id="ss-date-from"></label>
-            <label>Date to <input type="date" id="ss-date-to"></label>
-            <button type="submit">Search</button>
-          </div>
-        </form>
-        <div id="session-search-result"></div>
       </div>
     </section>
 
@@ -350,6 +337,32 @@
           <button type="button" id="load-debug-config-btn" class="secondary">Show config</button>
         </div>
         <div id="debug-result"></div>
+      </div>
+
+      <h3 class="settings-section-heading">Data</h3>
+
+      <div class="card">
+        <h2>Catalog Lookup</h2>
+        <form id="catalog-search-form" class="inline-form">
+          <input type="text" id="catalog-search-q" placeholder="Exercise name or lift code">
+          <button type="submit">Search</button>
+        </form>
+        <div id="catalog-search-result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Session Search</h2>
+        <form id="session-search-form">
+          <div class="form-row">
+            <label>Lift code <input type="text" id="ss-lift-code" placeholder="SQ01" list="exercise-catalog"></label>
+            <label>Exercise <input type="text" id="ss-exercise" placeholder="Back Squat"></label>
+            <label>Muscle group <input type="text" id="ss-muscle-group" placeholder="Legs"></label>
+            <label>Date from <input type="date" id="ss-date-from"></label>
+            <label>Date to <input type="date" id="ss-date-to"></label>
+            <button type="submit">Search</button>
+          </div>
+        </form>
+        <div id="session-search-result"></div>
       </div>
     </section>
   </main>
