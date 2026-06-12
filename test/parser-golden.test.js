@@ -189,27 +189,38 @@ test('golden: Atlas parser handles a wider workout phrase matrix safely', () => 
     },
     {
       input: 'chin ups 8/2 x3',
-      intent: 'needs_clarification',
-      warning: 'missing_exercise',
-      message: /Which exercise is this for/i,
+      intent: 'log_sets',
+      canonical: 'Chin Ups',
+      expectedSets: [[null, 8, 2], [null, 8, 2], [null, 8, 2]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
     },
     {
       input: 'hang cleans 135 3/2 x5',
-      intent: 'needs_clarification',
-      warning: 'missing_exercise',
-      message: /Which exercise is this for/i,
+      intent: 'log_sets',
+      canonical: 'Hang Cleans',
+      expectedSets: [[135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
     },
     {
       input: 'db walking lunges 40s 12/2 x3',
-      intent: 'needs_clarification',
-      warning: 'missing_exercise',
-      message: /Which exercise is this for/i,
+      intent: 'log_sets',
+      canonical: 'Db Walking Lunges',
+      expectedSets: [[40, 12, 2], [40, 12, 2], [40, 12, 2]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
+      assertSetShape(result) {
+        assert.ok(result.sets.every(set => set.load_note === 'per_hand'));
+      },
     },
     {
       input: 'backflips 10 x3',
-      intent: 'needs_clarification',
-      warning: 'missing_exercise',
-      message: /Which exercise is this for/i,
+      intent: 'log_sets',
+      canonical: 'Backflips',
+      expectedSets: [[null, 10, null], [null, 10, null], [null, 10, null]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
     },
     {
       input: 'press 135 8/2',
@@ -232,7 +243,15 @@ test('golden: Atlas parser handles a wider workout phrase matrix safely', () => 
     if (testCase.intent === 'log_sets') {
       assert.equal(result.canonical_name, testCase.canonical, testCase.input);
       assert.deepEqual(sets(result), testCase.expectedSets, testCase.input);
-      assert.deepEqual(result.warnings, [], `${testCase.input} should be warning-free`);
+      if (testCase.warning) {
+        assert.ok(result.warnings.includes(testCase.warning), testCase.input);
+      } else {
+        assert.deepEqual(result.warnings, [], `${testCase.input} should be warning-free`);
+      }
+      if (testCase.needsCatalogReview) {
+        assert.equal(result.needs_catalog_review, true, `${testCase.input} should require catalog review`);
+      }
+      if (typeof testCase.assertSetShape === 'function') testCase.assertSetShape(result);
       continue;
     }
 
@@ -263,6 +282,9 @@ test('golden: fuzz-style parser safety invariants hold across mixed workout phra
       assert.ok(result.canonical_name, `${input} should resolve to a canonical exercise`);
       assert.ok(result.sets.length > 0, `${input} should produce at least one set`);
       assert.ok(result.sets.length <= 10, `${input} should stay inside repeat guardrails`);
+      if (result.warnings.includes('unknown_exercise')) {
+        assert.equal(result.needs_catalog_review, true, `${input} should require catalog review when unknown`);
+      }
       for (const set of result.sets) {
         assert.ok(Number.isFinite(set.reps) && set.reps > 0, `${input} has invalid reps`);
         assert.ok(set.weight == null || Number.isFinite(set.weight), `${input} has invalid weight`);
@@ -273,5 +295,24 @@ test('golden: fuzz-style parser safety invariants hold across mixed workout phra
 
     assert.equal(result.sets, undefined, `${input} should not create rows when clarification is required`);
     assert.ok(Array.isArray(result.warnings) && result.warnings.length > 0, `${input} should explain why it was blocked`);
+  }
+});
+
+test('golden: unknown exercises parse with review-needed metadata instead of clarification', () => {
+  const cases = [
+    ['chin ups 8/2 x3', 'Chin Ups', [[null, 8, 2], [null, 8, 2], [null, 8, 2]]],
+    ['hang cleans 135 3/2 x5', 'Hang Cleans', [[135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2]]],
+    ['db walking lunges 40s 12/2 x3', 'Db Walking Lunges', [[40, 12, 2], [40, 12, 2], [40, 12, 2]]],
+    ['backflips 10 x3', 'Backflips', [[null, 10, null], [null, 10, null], [null, 10, null]]],
+  ];
+
+  for (const [input, canonicalName, expectedSets] of cases) {
+    const result = parseWorkoutText(input);
+    assert.equal(result.intent, 'log_sets', input);
+    assert.equal(result.canonical_name, canonicalName, input);
+    assert.equal(result.exercise, canonicalName, input);
+    assert.equal(result.needs_catalog_review, true, input);
+    assert.ok(result.warnings.includes('unknown_exercise'), input);
+    assert.deepEqual(sets(result), expectedSets, input);
   }
 });
