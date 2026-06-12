@@ -1048,6 +1048,13 @@ function generateSessionId(dateValue) {
   return `${compact}-${suffix}-01`;
 }
 
+function getLocalDateString(dateTime = new Date()) {
+  const year = dateTime.getFullYear();
+  const month = String(dateTime.getMonth() + 1).padStart(2, '0');
+  const day = String(dateTime.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function collectLogRows(sessionId, date) {
   const rows = [];
   for (const tr of setsTableBody.children) {
@@ -1444,15 +1451,16 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();
 
-  const date = document.getElementById('log-date').value;
-  if (!date) {
+  const mode = effortMode();
+  const date = document.getElementById('log-date').value.trim();
+  if (!date && mode !== 'screenshot') {
     setStatus(loggerStatus, 'Date is required.', 'error');
     return;
   }
-  const sessionId = document.getElementById('log-session-id').value.trim() || generateSessionId(date);
+  const sessionIdInput = document.getElementById('log-session-id');
+  const sessionId = sessionIdInput.value.trim() || (date ? generateSessionId(date) : '');
   const location = document.getElementById('log-location').value.trim();
   const notes = document.getElementById('log-notes').value.trim();
-  const mode = effortMode();
   let logRows = [];
   try {
     await rowsFromWorkoutInput();
@@ -1496,7 +1504,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'screenshot', file, logRows, sessionId, date, location, notes, effortOnly };
+      const resolvedData = result?.data?.data || {};
+      const resolvedDate = resolvedData.date || date || getLocalDateString();
+      const resolvedSessionId = resolvedData.session_id || sessionId || generateSessionId(resolvedDate);
+      document.getElementById('log-date').value = resolvedDate;
+      sessionIdInput.value = resolvedSessionId;
+      pendingWrite = {
+        mode: 'screenshot',
+        file,
+        logRows,
+        sessionId: resolvedSessionId,
+        date: resolvedDate,
+        location,
+        notes,
+        effortOnly
+      };
       renderCompleteWorkoutPreview(result);
     } else if (effortOnly) {
       const result = await submitCompleteWorkout({ logRows, sessionId, date, location, notes, manualEffort, testMode: true });
@@ -1541,8 +1563,8 @@ async function submitCompleteWorkout({ file, logRows, sessionId, date, location,
   const form = new FormData();
   if (file) form.append('image', file);
   form.append('log_rows_json', JSON.stringify(logRows || []));
-  form.append('session_id', sessionId);
-  form.append('date', date);
+  if (sessionId) form.append('session_id', sessionId);
+  if (date) form.append('date', date);
   if (location) form.append('location', location);
   if (notes) form.append('notes', notes);
   if (manualEffort) form.append('effort_json', JSON.stringify(manualEffort));
@@ -2026,7 +2048,7 @@ async function loadBodyTab() {
 /* ===== Init ===== */
 
 function setDefaultDate() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateString();
   document.getElementById('log-date').value = today;
   document.getElementById('bw-date').value = today;
 }

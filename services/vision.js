@@ -30,6 +30,7 @@ async function parseWorkoutScreenshot(imagePath) {
               'Extract workout metrics visible in this Apple Watch workout screenshot.',
               'Return strict JSON only with this exact schema:',
               '{',
+              '  "date": string|null,',
               '  "duration": string|null,',
               '  "activeCalories": number|null,',
               '  "totalCalories": number|null,',
@@ -37,6 +38,7 @@ async function parseWorkoutScreenshot(imagePath) {
               '  "peakHR": number|null,',
               '  "workoutType": string|null',
               '}',
+              'If a workout date is visible and unambiguous, return it as YYYY-MM-DD.',
               'Use null when a value is not visible.',
               'Do not include markdown, code fences, or extra keys.'
             ].join('\n')
@@ -65,6 +67,7 @@ async function parseWorkoutScreenshot(imagePath) {
   return {
     status: 'image received',
     parsed_metrics: {
+      date: parsed.date ?? null,
       duration: parsed.duration ?? null,
       activeCalories: parsed.activeCalories ?? null,
       totalCalories: parsed.totalCalories ?? null,
