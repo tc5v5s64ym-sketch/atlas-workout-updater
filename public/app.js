@@ -1693,6 +1693,32 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   }
 });
 
+// Pre-fill the manual effort form fields with parsed values so the user can
+// correct them (e.g. add a missing peak HR) and re-preview.
+function prefillEffortForm(effort) {
+  if (!effort) return;
+  const dur = document.getElementById('effort-duration');
+  const cal = document.getElementById('effort-active-cal');
+  const tot = document.getElementById('effort-total-cal');
+  const avg = document.getElementById('effort-avg-hr');
+  const peak = document.getElementById('effort-peak-hr');
+  const radio = document.querySelector('input[name="effort-mode"][value="manual"]');
+  const details = document.getElementById('effort-details');
+
+  if (dur && effort.duration != null) dur.value = effort.duration;
+  if (cal && effort.activeCalories != null) cal.value = effort.activeCalories;
+  if (tot && effort.totalCalories != null) tot.value = effort.totalCalories;
+  if (avg && effort.averageHR != null) avg.value = effort.averageHR;
+  if (peak && effort.peakHR != null) peak.value = effort.peakHR;
+  if (radio && !radio.checked) {
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  if (details) details.open = true;
+  document.getElementById('effort-details')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (peak && effort.peakHR == null) peak.focus();
+}
+
 // Map the previewed/normalized effort metrics back to the effort_json shape the
 // backend's manual-effort path accepts (normalizeManualEffortMetrics). A missing
 // peak HR is preserved as-is (null/'' is optional and survives the round trip).
@@ -1861,6 +1887,20 @@ function renderCompleteWorkoutPreview(result) {
     ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR', 'Type'],
     [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, peakHrCell, effort.workoutType]]
   ));
+
+  if (effort.peakHR == null) {
+    const chip = el('div', { class: 'effort-missing-chip' });
+    chip.innerHTML = '&#9888;&#65039; Peak HR not captured — ';
+    const fixLink = el('a', { href: '#', class: 'effort-fix-link', text: 'enter it manually' });
+    fixLink.addEventListener('click', ev => { ev.preventDefault(); prefillEffortForm(effort); });
+    chip.appendChild(fixLink);
+    previewContent.appendChild(chip);
+  } else {
+    const editLink = el('a', { href: '#', class: 'effort-fix-link', text: 'Edit effort values' });
+    editLink.addEventListener('click', ev => { ev.preventDefault(); prefillEffortForm(effort); });
+    previewContent.appendChild(editLink);
+  }
+
   previewContent.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 5` }));
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';

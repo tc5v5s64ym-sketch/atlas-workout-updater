@@ -3312,6 +3312,21 @@ test('screenshot: styles define the Atlas reply bubble', () => {
   assert.match(css, /\.atlas-reply-gate/, 'the "nothing saved" gate line must be styled');
 });
 
+test('effort-preview: missing peak HR shows a warn chip with a fix link', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /effort-missing-chip/, 'must render a warning chip class when peak HR is null');
+  assert.match(app, /effort\.peakHR == null/, 'chip must be conditional on null peak HR');
+  assert.match(app, /prefillEffortForm/, 'chip must offer a prefill action');
+});
+
+test('effort-preview: prefillEffortForm is a pure DOM helper and never writes', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function prefillEffortForm('), app.indexOf('function prefillEffortForm(') + 1200);
+  assert.doesNotMatch(fn, /api\(|fetch\(|log-workout|complete-workout|appendRows/, 'prefillEffortForm must not write');
+  assert.match(fn, /effort-duration/, 'must pre-fill the duration field');
+  assert.match(fn, /effort-peak-hr/, 'must pre-fill the peak HR field');
+});
+
 // ── Trust loop card states (UI PR 4) ───────────────────────────────────────────
 
 test('trust cards: status card styles every write state row in the thread', () => {
