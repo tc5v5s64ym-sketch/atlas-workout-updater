@@ -1014,8 +1014,8 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
     }
 
     const rd = data.rule_decision;
-    if (rd && rd.decision !== 'no_data') {
-      recBox.appendChild(el('p', { class: 'small muted', text: `Rule ${rd.rule_id}: ${rd.reasoning}` }));
+    if (rd && rd.decision !== 'no_data' && rd.reasoning) {
+      recBox.appendChild(el('p', { class: 'small muted', text: rd.reasoning }));
     }
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
@@ -1115,8 +1115,8 @@ async function openLiftDrillDown(exerciseName, liftCode) {
       contentEl.appendChild(el('p', { text: rec.recommendation || '' }));
       contentEl.appendChild(el('p', { class: 'muted', text: rec.reasoning || '' }));
       const rd = rec.rule_decision;
-      if (rd && rd.decision !== 'no_data') {
-        contentEl.appendChild(el('p', { class: 'small muted', text: `Rule ${rd.rule_id}: ${rd.reasoning}` }));
+      if (rd && rd.decision !== 'no_data' && rd.reasoning) {
+        contentEl.appendChild(el('p', { class: 'small muted', text: rd.reasoning }));
       }
     } else if (rec.recommendation) {
       contentEl.appendChild(el('p', { text: rec.recommendation }));
