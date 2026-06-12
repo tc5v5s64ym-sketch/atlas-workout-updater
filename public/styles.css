@@ -296,6 +296,24 @@ a.lift-link:hover { text-decoration: underline; }
 .plan-card-sets { font-size: 0.82rem; color: var(--muted); }
 .plan-card-rec { font-size: 0.72rem; color: var(--muted); margin-top: 4px; line-height: 1.3; }
 
+.plan-card-startable {
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(37,99,235,0.08);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.plan-card-startable:hover { box-shadow: 0 2px 8px rgba(37,99,235,0.12); }
+.plan-card-startable:active { transform: scale(0.97); opacity: 0.88; }
+
+.plan-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 7px;
+}
+.plan-card-tap-hint { font-size: 0.68rem; color: var(--accent); font-weight: 600; }
+.plan-card-progress-link { font-size: 0.68rem; color: var(--muted); text-decoration: none; }
+.plan-card-progress-link:hover { text-decoration: underline; color: var(--accent); }
+
 /* ===== Suggested session ===== */
 .session-title { margin: 0 0 4px; font-size: 0.95rem; font-weight: 600; color: var(--ink); }
 .session-list { list-style: decimal; padding-left: 1.4rem; margin: 8px 0 10px; }
