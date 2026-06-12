@@ -2387,12 +2387,14 @@ test('session history: /api/sessions/recent registered BEFORE /:sessionId in ind
   assert.ok(recentIdx < paramIdx, '/api/sessions/recent must be registered before /:sessionId');
 });
 
-test('session history: load-sessions-btn wired in app.js and calls correct endpoint', () => {
+test('session history: auto-load wired in app.js and calls correct endpoint', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /load-sessions-btn/, 'load-sessions-btn must be referenced');
   assert.match(appSource, /\/api\/sessions\/recent/, 'must call /api/sessions/recent');
   assert.match(appSource, /loadHistory/, 'loadHistory function must exist');
   assert.match(appSource, /sessions-result/, 'sessions-result container must be used');
+  assert.match(appSource, /atlasRefreshSessions/, 'refresh bridge for nav.js must exist');
+  const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.doesNotMatch(htmlSource, /load-sessions-btn/, 'manual load button must stay removed — list auto-loads');
 });
 
 // ── Session Queue UX ──────────────────────────────────────────────────────────
