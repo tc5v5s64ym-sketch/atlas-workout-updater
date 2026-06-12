@@ -166,3 +166,112 @@ test('golden: knee raises slash-pair format produces bodyweight sets with reps a
     'all sets must have null weight for bodyweight exercise');
   assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[20, 2], [20, 2], [13, 2]]);
 });
+
+test('golden: Atlas parser handles a wider workout phrase matrix safely', () => {
+  const cases = [
+    {
+      input: 'bench 225 5/2 x3',
+      intent: 'log_sets',
+      canonical: 'Bench Press',
+      expectedSets: [[225, 5, 2], [225, 5, 2], [225, 5, 2]],
+    },
+    {
+      input: 'lat pull 170 10/2 175 8/2 8/1',
+      intent: 'log_sets',
+      canonical: 'Lat Pulldown',
+      expectedSets: [[170, 10, 2], [175, 8, 2], [175, 8, 1]],
+    },
+    {
+      input: 'face pulls 50 15/2 x3',
+      intent: 'log_sets',
+      canonical: 'Face Pull',
+      expectedSets: [[50, 15, 2], [50, 15, 2], [50, 15, 2]],
+    },
+    {
+      input: 'chin ups 8/2 x3',
+      intent: 'needs_clarification',
+      warning: 'missing_exercise',
+      message: /Which exercise is this for/i,
+    },
+    {
+      input: 'hang cleans 135 3/2 x5',
+      intent: 'needs_clarification',
+      warning: 'missing_exercise',
+      message: /Which exercise is this for/i,
+    },
+    {
+      input: 'db walking lunges 40s 12/2 x3',
+      intent: 'needs_clarification',
+      warning: 'missing_exercise',
+      message: /Which exercise is this for/i,
+    },
+    {
+      input: 'backflips 10 x3',
+      intent: 'needs_clarification',
+      warning: 'missing_exercise',
+      message: /Which exercise is this for/i,
+    },
+    {
+      input: 'press 135 8/2',
+      intent: 'needs_clarification',
+      warning: 'ambiguous_exercise_alias',
+      message: /Which press/i,
+    },
+    {
+      input: 'row 135 8/2',
+      intent: 'needs_clarification',
+      warning: 'ambiguous_exercise_alias',
+      message: /Which row/i,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = parseWorkoutText(testCase.input);
+    assert.equal(result.intent, testCase.intent, testCase.input);
+
+    if (testCase.intent === 'log_sets') {
+      assert.equal(result.canonical_name, testCase.canonical, testCase.input);
+      assert.deepEqual(sets(result), testCase.expectedSets, testCase.input);
+      assert.deepEqual(result.warnings, [], `${testCase.input} should be warning-free`);
+      continue;
+    }
+
+    assert.equal(result.sets, undefined, `${testCase.input} must not invent rows`);
+    assert.ok(result.warnings.includes(testCase.warning), testCase.input);
+    assert.match(result.message, testCase.message, testCase.input);
+  }
+});
+
+test('golden: fuzz-style parser safety invariants hold across mixed workout phrases', () => {
+  const samples = [
+    'bench 225 5/2 x3',
+    'lat pull 170 10/2 175 8/2 8/1',
+    'face pulls 50 15/2 x3',
+    'chin ups 8/2 x3',
+    'hang cleans 135 3/2 x5',
+    'db walking lunges 40s 12/2 x3',
+    'backflips 10 x3',
+    'press 135 8/2',
+    'row 135 8/2',
+  ];
+
+  for (const input of samples) {
+    const result = parseWorkoutText(input);
+    assert.ok(['log_sets', 'needs_clarification'].includes(result.intent), `${input} produced unexpected intent ${result.intent}`);
+
+    if (result.intent === 'log_sets') {
+      assert.ok(result.canonical_name, `${input} should resolve to a canonical exercise`);
+      assert.ok(result.sets.length > 0, `${input} should produce at least one set`);
+      assert.ok(result.sets.length <= 10, `${input} should stay inside repeat guardrails`);
+      for (const set of result.sets) {
+        assert.ok(Number.isFinite(set.reps) && set.reps > 0, `${input} has invalid reps`);
+        assert.ok(set.weight == null || Number.isFinite(set.weight), `${input} has invalid weight`);
+        assert.ok(set.rir == null || Number.isFinite(set.rir), `${input} has invalid RIR`);
+      }
+      continue;
+    }
+
+    assert.equal(result.sets, undefined, `${input} should not create rows when clarification is required`);
+    assert.ok(Array.isArray(result.warnings) && result.warnings.length > 0, `${input} should explain why it was blocked`);
+  }
+});
