@@ -145,31 +145,37 @@
 
     <!-- ============ TODAY (dashboard, read-only) ============ -->
     <section id="tab-dashboard" class="tab">
-      <div id="progress-snapshot-card" class="card">
-        <h2>Training Snapshot</h2>
-        <div id="progress-snapshot" class="loading">Loading…</div>
+
+      <!-- Above fold: readiness · pick · action · consistency -->
+      <div id="todays-read" class="readiness-strip"></div>
+
+      <div id="todays-pick" class="card today-pick-card">
+        <span class="loading">Loading…</span>
       </div>
-      <div id="todays-read-card" class="card" hidden>
-        <h2>Today's Read</h2>
-        <div id="todays-read"></div>
-      </div>
-      <div id="intent-grid-card" class="card" hidden>
-        <h2>What to train today</h2>
-        <div id="intent-grid"></div>
-      </div>
-      <div class="card">
-        <h2>Current Lift Targets</h2>
-        <div id="todays-plan" class="loading">Loading…</div>
-      </div>
-      <!-- Glance rows: one friendly line each; tap to open the full data -->
+
+      <button id="start-session-btn" type="button" class="approve today-start-btn" hidden>START SESSION</button>
+
+      <div id="consistency-line" class="consistency-line"></div>
+
+      <!-- Below fold: glance-cards (collapsed by default) -->
       <details class="card glance-card">
         <summary>
-          <span class="glance-title">&#127942; Highlights</span>
-          <span class="glance-hint" id="recent-prs-hint"></span>
+          <span class="glance-title">&#128197; This week</span>
+          <span class="glance-hint" id="this-week-hint"></span>
           <span class="glance-chevron">&#8250;</span>
         </summary>
-        <div id="recent-prs" class="loading">Loading…</div>
+        <div id="progress-snapshot" class="loading">Loading…</div>
       </details>
+
+      <details class="card glance-card">
+        <summary>
+          <span class="glance-title">&#127919; Other training options</span>
+          <span class="glance-hint" id="other-training-hint"></span>
+          <span class="glance-chevron">&#8250;</span>
+        </summary>
+        <div id="intent-grid"></div>
+      </details>
+
       <details class="card glance-card">
         <summary>
           <span class="glance-title">&#9888;&#65039; Watchouts</span>
@@ -178,14 +184,26 @@
         </summary>
         <div id="stalls" class="loading">Loading…</div>
       </details>
+
       <details class="card glance-card">
         <summary>
-          <span class="glance-title">&#128202; This week</span>
+          <span class="glance-title">&#128202; This week's training</span>
           <span class="glance-hint" id="weekly-summary-hint"></span>
           <span class="glance-chevron">&#8250;</span>
         </summary>
         <div id="weekly-summary" class="loading">Loading…</div>
+        <div id="coaching"></div>
       </details>
+
+      <details class="card glance-card">
+        <summary>
+          <span class="glance-title">&#127942; Highlights</span>
+          <span class="glance-hint" id="recent-prs-hint"></span>
+          <span class="glance-chevron">&#8250;</span>
+        </summary>
+        <div id="recent-prs" class="loading">Loading…</div>
+      </details>
+
       <details class="card glance-card">
         <summary>
           <span class="glance-title">&#128197; Recent sessions</span>
@@ -194,14 +212,7 @@
         </summary>
         <div id="recent-history" class="loading">Loading…</div>
       </details>
-      <details class="card glance-card">
-        <summary>
-          <span class="glance-title">&#127919; Coach's notes</span>
-          <span class="glance-hint" id="coaching-hint"></span>
-          <span class="glance-chevron">&#8250;</span>
-        </summary>
-        <div id="coaching" class="loading">Loading…</div>
-      </details>
+
     </section>
 
     <!-- ============ TRENDS (progress, read-only) ============ -->

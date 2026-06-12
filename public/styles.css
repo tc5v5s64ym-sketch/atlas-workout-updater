@@ -799,6 +799,43 @@ button.approve {
 .glance-card[open] summary .glance-chevron { transform: rotate(90deg); }
 .glance-card > :not(summary) { padding: 0 var(--s5) var(--s5); }
 
+/* ── Today tab — above-fold hierarchy ──────────────────────────────────────── */
+
+/* Readiness strip — no heading, dots sit flush with the top */
+.readiness-strip { padding: var(--s3) 0 var(--s1); }
+.readiness-strip:empty { display: none; }
+
+/* Today's pick — hero card (largest weight on screen) */
+.today-pick-card { margin-bottom: var(--s2); }
+.today-pick-headline {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: var(--s2);
+}
+.today-pick-reason { font-size: 0.92rem; margin: 0 0 var(--s1); }
+
+/* START SESSION — full-width primary action */
+.today-start-btn {
+  display: block;
+  width: 100%;
+  margin: 0 0 var(--s3);
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: var(--r-lg);
+}
+
+/* One-line consistency summary */
+.consistency-line {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin-bottom: var(--s4);
+  padding: 0 var(--s1);
+}
+.consistency-line:empty { display: none; }
+
 /* Friendly status word under each readiness dot */
 .pattern-dot-status { font-size: 0.66rem; margin-top: 1px; }
 .pattern-status-ready, .pattern-status-fresh { color: var(--ok); }
