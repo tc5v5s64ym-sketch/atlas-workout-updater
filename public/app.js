@@ -2565,8 +2565,9 @@ async function loadBwHistory() {
       box.appendChild(el('span', { class: 'muted', text: 'No bodyweight entries in the last 90 days.' }));
       return;
     }
-    const trendClass = data.trend === 'up' ? 'up' : data.trend === 'down' ? 'down' : '';
-    const trendPill = el('span', { class: `pill ${trendClass}`, text: `trend: ${data.trend}` });
+    // Bodyweight direction isn't inherently good or bad (down is the goal on a
+    // cut), so the pill stays neutral — no green/red judgment colors.
+    const trendPill = el('span', { class: 'pill', text: `trend: ${data.trend}` });
     const latest = data.latest;
     const summary = el('p', {}, [
       document.createTextNode(`Latest: ${latest?.weight ?? '—'}  ·  90-day avg: ${data.average ?? '—'}  `),
