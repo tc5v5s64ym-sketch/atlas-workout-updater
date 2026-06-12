@@ -11,3 +11,4 @@ credentials*.json
 *.key
 *.pem
 backups/
+.claude/
