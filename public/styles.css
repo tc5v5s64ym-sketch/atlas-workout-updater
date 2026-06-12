@@ -1305,20 +1305,28 @@ a.lift-link:hover { text-decoration: underline; }
   .action-row button { width: 100%; }
   .coach-greeting { font-size: 1.4rem; }
 
-  /* Coach surface: pin composer to bottom within thumb reach on narrow screens.
-     The thread grows and scrolls above it. Composer buttons are already 40px
-     from .composer-attach / .composer-send; the 44px min-height on button
-     above handles the approve/cancel row. */
-  body[data-surface="coach"] main {
-    padding-bottom: 0;          /* composer's own safe-area padding handles the gap */
+  /* Coach surface on mobile: single natural scroll — no nested scroll windows.
+     The whole page scrolls as one column: greeting → thread → rows editor →
+     composer → safe-area gap. De-sticky the form so the rows editor and the
+     composer bar are part of the same document flow. */
+  #logger-form {
+    position: static;
+    z-index: auto;
+    padding-bottom: calc(var(--s4) + env(safe-area-inset-bottom, 0px));
   }
 
-  /* Ensure the thread itself can scroll when content grows past the viewport */
+  /* Without the sticky form, the thread no longer needs its own scroll cage */
   #coach-thread {
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    /* Limit height so the form stays sticky — subtract header + some padding */
-    max-height: calc(100dvh - 200px);
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  /* Remove the inner max-height cap on parsed-rows and effort — they're in
+     the normal page flow now and full height is fine */
+  #logger-form #effort-details[open],
+  #logger-form .parsed-rows-editor:not([hidden]) {
+    max-height: none;
+    overflow-y: visible;
   }
 
   .composer-attach,
