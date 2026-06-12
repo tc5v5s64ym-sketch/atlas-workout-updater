@@ -1646,7 +1646,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         location,
         notes,
         effortOnly,
-        writeId: generateWriteId()
+        writeId: generateWriteId(),
+        // The effort metrics the owner is reviewing. On approval we write THESE,
+        // not a second vision parse of the same image — so what gets saved is
+        // exactly what was shown. See the approve handler's screenshot branch.
+        parsedEffort: resolvedData.parsed_effort || null
       };
       renderCompleteWorkoutPreview(result);
       addAtlasEffortReply(result);
@@ -1688,6 +1692,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     previewBtn.textContent = 'Preview — no data saved';
   }
 });
+
+// Map the previewed/normalized effort metrics back to the effort_json shape the
+// backend's manual-effort path accepts (normalizeManualEffortMetrics). A missing
+// peak HR is preserved as-is (null/'' is optional and survives the round trip).
+function effortJsonFromParsedEffort(effort) {
+  if (!effort) return null;
+  return {
+    duration: effort.duration,
+    activeCalories: effort.activeCalories,
+    totalCalories: effort.totalCalories,
+    averageHR: effort.averageHR,
+    peakHR: effort.peakHR,
+    workoutType: effort.workoutType
+  };
+}
 
 async function submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId }) {
   const form = new FormData();
@@ -1925,7 +1944,13 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   let duplicateBlocked = false;
   try {
     if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
-      const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
+      const writeArgs = { ...pendingWrite, testMode: false };
+      // Write the previewed metrics, not a re-parse: send effort_json, drop the image.
+      if (pendingWrite.mode === 'screenshot' && pendingWrite.parsedEffort) {
+        writeArgs.file = null;
+        writeArgs.manualEffort = effortJsonFromParsedEffort(pendingWrite.parsedEffort);
+      }
+      const writeResult = await submitCompleteWorkout(writeArgs);
       const writeData = writeResult?.data?.data || {};
       // Server-side idempotency: a retried write_id is refused with proof the
       // original write completed. Strict — accept only when the original itself
