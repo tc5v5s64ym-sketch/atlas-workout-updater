@@ -1,0 +1,96 @@
+const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+
+const writeRecords = new Map();
+
+function normalizeWriteId(writeId) {
+  if (writeId === undefined || writeId === null) return null;
+  const normalized = String(writeId).trim();
+  return normalized || null;
+}
+
+function pruneExpired(now = Date.now(), ttlMs = DEFAULT_TTL_MS) {
+  for (const [writeId, record] of writeRecords.entries()) {
+    if (now - record.created_at_ms > ttlMs) {
+      writeRecords.delete(writeId);
+    }
+  }
+}
+
+function beginWrite(writeId, metadata = {}, options = {}) {
+  const normalizedWriteId = normalizeWriteId(writeId);
+  if (!normalizedWriteId) {
+    return { enabled: false, write_id: null };
+  }
+
+  const now = options.now || Date.now();
+  pruneExpired(now, options.ttlMs || DEFAULT_TTL_MS);
+
+  const existing = writeRecords.get(normalizedWriteId);
+  if (existing) {
+    return {
+      enabled: true,
+      duplicate: true,
+      write_id: normalizedWriteId,
+      record: { ...existing }
+    };
+  }
+
+  const token = `${normalizedWriteId}:${now}:${Math.random().toString(36).slice(2)}`;
+  const record = {
+    write_id: normalizedWriteId,
+    status: 'in_progress',
+    created_at_ms: now,
+    created_at: new Date(now).toISOString(),
+    metadata: { ...metadata },
+    token
+  };
+
+  writeRecords.set(normalizedWriteId, record);
+  return {
+    enabled: true,
+    duplicate: false,
+    write_id: normalizedWriteId,
+    token
+  };
+}
+
+function completeWrite(writeId, token, response = {}, options = {}) {
+  const normalizedWriteId = normalizeWriteId(writeId);
+  if (!normalizedWriteId) return false;
+
+  const existing = writeRecords.get(normalizedWriteId);
+  if (!existing || existing.token !== token) return false;
+
+  const now = options.now || Date.now();
+  writeRecords.set(normalizedWriteId, {
+    ...existing,
+    status: 'completed',
+    completed_at_ms: now,
+    completed_at: new Date(now).toISOString(),
+    response: { ...response }
+  });
+  return true;
+}
+
+function failWrite(writeId, token) {
+  const normalizedWriteId = normalizeWriteId(writeId);
+  if (!normalizedWriteId) return false;
+
+  const existing = writeRecords.get(normalizedWriteId);
+  if (!existing || existing.token !== token) return false;
+
+  writeRecords.delete(normalizedWriteId);
+  return true;
+}
+
+function resetIdempotencyStore() {
+  writeRecords.clear();
+}
+
+module.exports = {
+  beginWrite,
+  completeWrite,
+  failWrite,
+  normalizeWriteId,
+  resetIdempotencyStore
+};
