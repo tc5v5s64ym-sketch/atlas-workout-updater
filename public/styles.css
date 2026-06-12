@@ -281,6 +281,10 @@ main {
 
 .loading, .muted { color: var(--muted); }
 .small { font-size: 0.8rem; }
+.status-ok { color: var(--ok); font-size: 0.92rem; }
+.status-warn { color: var(--warn); font-size: 0.92rem; }
+.status-error { color: var(--danger); font-size: 0.92rem; }
+.debug-pre { font-size: 0.78rem; overflow-x: auto; background: var(--card-sunken); border-radius: var(--r-sm); padding: var(--s3); margin: var(--s2) 0 0; white-space: pre-wrap; word-break: break-all; }
 
 /* ============================================================================
    Coach (chat-first front door)
