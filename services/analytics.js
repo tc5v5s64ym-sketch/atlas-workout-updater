@@ -282,7 +282,7 @@ function isLowerBodyGroup(muscleGroup) {
   return /leg|quad|hamstring|glute|calf|lower body|hip/i.test(muscleGroup || '');
 }
 
-function recommendNextSet(logRows, liftCode) {
+function recommendNextSet(logRows, liftCode, { today = null } = {}) {
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
   const rows = logRows
     .map(normalizeLogRow)
@@ -297,11 +297,23 @@ function recommendNextSet(logRows, liftCode) {
       recommendation: 'No recent working sets found for this lift code.',
       reasoning: 'There is not enough history to make a recommendation.',
       next_target: null,
-      sessions_analyzed: 0
+      sessions_analyzed: 0,
+      days_since_last_session: null
     };
   }
 
   const exercise_name = rows[rows.length - 1].canonical_exercise || rows[rows.length - 1].exercise || normalizedCode;
+
+  // How long since this lift was last trained. Progression assumes recent data;
+  // after a layoff we repeat rather than add load (staleness guard below).
+  const dayMs = 24 * 60 * 60 * 1000;
+  const refMs = today
+    ? new Date(today + 'T12:00:00Z').getTime()
+    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z').getTime();
+  const lastDate = rows[rows.length - 1].date_clean;
+  const daysSinceLastSession = lastDate
+    ? Math.max(0, Math.round((refMs - new Date(lastDate + 'T12:00:00Z').getTime()) / dayMs))
+    : null;
 
   // Count distinct sessions for this lift
   const sessions = [...new Set(rows.map(r => r.session_id))];
@@ -353,6 +365,20 @@ function recommendNextSet(logRows, liftCode) {
     }
   }
 
+  // Staleness guard. Progression (adding load, adding a rep) assumes the last
+  // session is recent. After a long gap, adding weight off old data is a guess —
+  // repeat the last working weight to reconfirm first. Either way the age is
+  // stated so the advice reads honestly instead of pretending the gap isn't there.
+  if (daysSinceLastSession != null && daysSinceLastSession > 10) {
+    nextWeight = lastSet.weight;
+    nextReps = lastSet.reps;
+    recommendation = `Repeat ${nextWeight} × ${nextReps} to reconfirm this lift.`;
+    reasoning = `Based on your last session, ${daysSinceLastSession} days ago — too long a gap to assume progression. Repeat the last working weight and see where you are before adding load.`;
+    confidence = confidence === 'high' ? 'medium' : 'low';
+  } else if (daysSinceLastSession != null && daysSinceLastSession >= 7) {
+    reasoning = `${reasoning} Based on your last session, ${daysSinceLastSession} days ago.`;
+  }
+
   return {
     liftCode: normalizedCode,
     exercise_name,
@@ -362,7 +388,8 @@ function recommendNextSet(logRows, liftCode) {
     next_target: { weight: nextWeight, reps: nextReps, sets: 3 },
     e1rm_trend: e1rmTrend,
     sessions_analyzed: sessions.length,
-    confidence
+    confidence,
+    days_since_last_session: daysSinceLastSession
   };
 }
 

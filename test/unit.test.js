@@ -1190,8 +1190,48 @@ test('recommendNextSet returns progression recommendation', () => {
     ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
     ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '3', '']
   ];
-  const rec = recommendNextSet(rows, 'SQ');
+  // Pin `today` so the recency-aware guard sees a fresh last session deterministically.
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-13' });
   assert.match(rec.recommendation, /Increase to/);
+});
+
+// ── Recommendation staleness guard ────────────────────────────────────────────
+
+test('recommendNextSet: fresh data (3 days) still progresses, no age tacked on', () => {
+  const rows = [
+    ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-15' }); // 3 days
+  assert.match(rec.recommendation, /Increase to/);
+  assert.equal(rec.confidence, 'high');
+  assert.equal(rec.days_since_last_session, 3);
+  assert.doesNotMatch(rec.reasoning, /days ago/);
+});
+
+test('recommendNextSet: 8-day-old data keeps the recommendation but states the age', () => {
+  const rows = [
+    ['2026-05-04', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-06', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-14' }); // 8 days
+  assert.match(rec.recommendation, /Increase to/, 'recommendation unchanged at 7-10 days');
+  assert.equal(rec.confidence, 'high', 'confidence unchanged at 7-10 days');
+  assert.equal(rec.days_since_last_session, 8);
+  assert.match(rec.reasoning, /8 days ago/);
+});
+
+test('recommendNextSet: 23-day-old data repeats, downgrades confidence, states the age', () => {
+  const rows = [
+    ['2026-04-20', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-04-21', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '235', '5', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-14' }); // 23 days
+  assert.match(rec.recommendation, /Repeat 235 × 5/, 'must repeat last working weight, not add load');
+  assert.equal(rec.next_target.weight, 235, 'no progression off stale data');
+  assert.equal(rec.confidence, 'medium', 'high downgraded one step to medium');
+  assert.equal(rec.days_since_last_session, 23);
+  assert.match(rec.reasoning, /23 days ago/);
 });
 
 test('recommendNextSet returns no-history message for unknown lift', () => {
