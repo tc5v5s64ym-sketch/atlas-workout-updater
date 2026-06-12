@@ -421,38 +421,6 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
   }
 }
 
-async function loadSuggestedSession() {
-  const box = document.getElementById('suggested-session');
-  if (!box) return;
-  try {
-    const res = await api('/api/plan/suggested-session');
-    const data = res.data || {};
-    box.innerHTML = '';
-    if (!data.ok) {
-      box.appendChild(el('p', { class: 'muted', text: 'No suggested session yet — log a few sessions and Atlas can start giving better suggestions.' }));
-      return;
-    }
-    box.appendChild(el('p', { class: 'session-title', text: data.title }));
-    box.appendChild(el('p', { class: 'muted', style: 'font-size:0.8rem;margin:0 0 6px', text: 'Follow in order, or tap any exercise if equipment is busy.' }));
-    const ol = el('ol', { class: 'session-list' });
-    for (const ex of (data.exercises || [])) {
-      const btn = el('button', { class: 'session-start-btn', type: 'button' }, [
-        el('span', { class: 'session-exercise', text: ex.exercise }),
-        el('span', { class: 'session-target', text: ` — ${ex.target_weight} × ${ex.target_reps} — ${ex.target_sets} sets` }),
-        el('span', { class: 'session-tap-hint', text: '  Tap to start' })
-      ]);
-      btn.addEventListener('click', () => startLift(ex.exercise, ex.lift_code, ex.target_weight, ex.target_reps, ex.target_sets));
-      ol.appendChild(el('li', { class: 'session-item' }, btn));
-    }
-    box.appendChild(ol);
-    if (data.why) {
-      box.appendChild(el('p', { class: 'session-why', text: data.why }));
-    }
-  } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
-  }
-}
-
 async function loadDashboard() {
   if (!getApiKey()) {
     const pickBox = document.getElementById('todays-pick');
