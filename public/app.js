@@ -354,7 +354,7 @@ async function loadSuggestedSession() {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['todays-read', 'intent-grid', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    for (const id of ['progress-snapshot', 'todays-read', 'intent-grid', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       const target = document.getElementById(id);
       if (target) target.innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
@@ -365,6 +365,7 @@ async function loadDashboard() {
     return;
   }
 
+  loadProgressSnapshot();
   loadIntentDashboard();
   loadTodaysPlan();
   loadCoaching();
@@ -372,6 +373,70 @@ async function loadDashboard() {
   loadRecentHistory();
   loadRecentPrs();
   loadStalls();
+}
+
+/* ===== Training Snapshot (read-only — GET /api/progress/summary) ===== */
+
+async function loadProgressSnapshot() {
+  const box = document.getElementById('progress-snapshot');
+  if (!box) return;
+  try {
+    const res = await api('/api/progress/summary');
+    renderProgressSnapshot(res.data || {});
+  } catch (err) {
+    box.innerHTML = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load snapshot: ${err.message}` }));
+  }
+}
+
+function renderProgressSnapshot(s) {
+  const box = document.getElementById('progress-snapshot');
+  if (!box) return;
+  box.innerHTML = '';
+
+  const target = Number(s.streak_target_per_week || 3);
+  const grid = el('div', { class: 'metric-grid' });
+  const metrics = [
+    [s.total_sessions, 'Sessions'],
+    [s.average_sessions_per_week, 'Avg / week'],
+    [s.total_sets, 'Total sets'],
+    [`${s.current_week_sessions ?? 0}/${target}`, 'This week']
+  ];
+  for (const [value, label] of metrics) {
+    grid.appendChild(el('div', { class: 'metric-tile' }, [
+      el('div', { class: 'metric-value', text: String(value ?? '—') }),
+      el('div', { class: 'metric-label', text: label })
+    ]));
+  }
+  box.appendChild(grid);
+
+  // Consistency streak — fire is for showing up, not overtraining.
+  const streak = Number(s.weekly_streak || 0);
+  if (streak > 0) {
+    box.appendChild(el('div', { class: 'streak-line streak-active', text: `\u{1F525} ${streak}-week streak` }));
+    box.appendChild(el('p', { class: 'streak-sub', text: `You've hit ${target}+ sessions/week for ${streak} week${streak === 1 ? '' : 's'} in a row.` }));
+  } else {
+    const remaining = Math.max(0, target - Number(s.current_week_sessions || 0));
+    box.appendChild(el('div', { class: 'streak-line streak-paused', text: 'Streak paused' }));
+    box.appendChild(el('p', { class: 'streak-sub', text: `Log ${remaining} more session${remaining === 1 ? '' : 's'} this week to restart your ${target}x/week streak.` }));
+  }
+
+  // 12-week consistency strip
+  const weeks = s.sessions_by_week || [];
+  if (weeks.length) {
+    const strip = el('div', { class: 'consistency-strip' });
+    const max = Math.max(target, ...weeks.map(w => Number(w.sessions) || 0));
+    for (const w of weeks) {
+      const sessions = Number(w.sessions) || 0;
+      const cls = sessions === 0 ? 'week-bar week-bar-zero' : sessions >= target ? 'week-bar week-bar-hit' : 'week-bar';
+      const bar = el('div', { class: cls });
+      bar.style.height = `${Math.max(6, Math.round((sessions / max) * 38))}px`;
+      bar.title = `Week of ${w.week_start}: ${sessions} session${sessions === 1 ? '' : 's'}`;
+      strip.appendChild(bar);
+    }
+    box.appendChild(strip);
+    box.appendChild(el('p', { class: 'muted small', text: `Last ${weeks.length} weeks · ${target}+ sessions lights a streak week` }));
+  }
 }
 
 /* ===== Intent Dashboard ===== */
