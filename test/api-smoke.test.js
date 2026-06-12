@@ -27,7 +27,11 @@ const fakeSheetsState = {
   // Set to true only inside tests that intentionally exercise the live-write branch.
   // Default false ensures dry-run tests trip the throw guard if appendRows fires unexpectedly.
   allowAppend: false,
-  deleteCalls: []
+  deleteCalls: [],
+  // Per-tab getSheetRows call counts (read-path cache tests reset and inspect these).
+  reads: {},
+  // Duplicate-protection reads, tracked to prove they are never served from the cache.
+  safetyReadCalls: { effortSessionIds: 0, logCompositeKeys: 0 }
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -50,14 +54,21 @@ const fakeSheets = {
   },
   validateConfig: () => {},
   getExerciseCatalog: async () => exerciseCatalogRows,
-  getEffortSessionIds: async () => [],
-  getLogCompositeKeys: async () => [],
+  getEffortSessionIds: async () => {
+    fakeSheetsState.safetyReadCalls.effortSessionIds += 1;
+    return [];
+  },
+  getLogCompositeKeys: async () => {
+    fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
+    return [];
+  },
   getRecentRows: async tabName => {
     if (tabName === 'Log_Cleaned') return logRows;
     if (tabName === 'Effort') return [];
     return [];
   },
   getSheetRows: async tabName => {
+    fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
     if (tabName === 'Log_Cleaned') return logRows;
     if (tabName === 'Effort') return [];
     return [];
@@ -1072,4 +1083,56 @@ test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', 
   assert.equal(body.data.no_write_confirmed, true);
   assert.equal(body.data.log_rows_preview.length, 3);
   assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+// ── Read-path TTL cache (PR-07) ───────────────────────────────────────────────
+// A live effort write goes through complete-workout, which invalidates the cache.
+async function liveEffortWrite(sessionId) {
+  const form = new FormData();
+  form.append('session_id', sessionId);
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('effort_json', JSON.stringify({
+    duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+  }));
+  return requestMultipart('/api/complete-workout', form);
+}
+
+test('read-path cache: analytics reads are cached within the TTL and a live write invalidates them', async () => {
+  fakeSheetsState.allowAppend = true;
+  try {
+    await withMutedConsoleLog(async () => {
+      // Start from a known-empty cache: a live write clears anything earlier tests left.
+      await liveEffortWrite('CACHE-RESET-01');
+
+      // Both endpoints read Log_Cleaned through index.js's cached getSheetRows.
+      fakeSheetsState.reads = {};
+      await requestJson('/api/plan/today');            // cache miss → reads Log_Cleaned once
+      await requestJson('/api/stalls?minSessions=3');  // cache hit  → no further read
+      assert.equal(fakeSheetsState.reads['Log_Cleaned'], 1, 'second analytics read should be served from cache');
+
+      // A live write must invalidate, so the next read hits the sheet again.
+      await liveEffortWrite('CACHE-RESET-02');
+      fakeSheetsState.reads = {};
+      await requestJson('/api/plan/today');
+      assert.equal(fakeSheetsState.reads['Log_Cleaned'], 1, 'read after a write must be fresh, not cached');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('read-path cache: duplicate-protection reads are never served from the cache', async () => {
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.safetyReadCalls.effortSessionIds = 0;
+  try {
+    await withMutedConsoleLog(async () => {
+      await liveEffortWrite('CACHE-SAFETY-01');
+      await liveEffortWrite('CACHE-SAFETY-02');
+    });
+    // Each write re-reads the effort session ids live — the row cache never covers it.
+    assert.equal(fakeSheetsState.safetyReadCalls.effortSessionIds, 2);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
 });
