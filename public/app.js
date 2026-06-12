@@ -289,7 +289,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelector('[data-tab="dashboard"]').classList.add('active');
         document.getElementById('tab-dashboard').classList.add('active');
-        document.getElementById('suggested-session')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
       row.appendChild(backBtn);
       row.appendChild(dismissBtn);
@@ -322,6 +322,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
 
 async function loadSuggestedSession() {
   const box = document.getElementById('suggested-session');
+  if (!box) return;
   try {
     const res = await api('/api/plan/suggested-session');
     const data = res.data || {};
@@ -353,7 +354,7 @@ async function loadSuggestedSession() {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['todays-read', 'intent-grid', 'suggested-session', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    for (const id of ['todays-read', 'intent-grid', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       const target = document.getElementById(id);
       if (target) target.innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
@@ -365,7 +366,6 @@ async function loadDashboard() {
   }
 
   loadIntentDashboard();
-  loadSuggestedSession();
   loadTodaysPlan();
   loadCoaching();
   loadWeeklySummary();
