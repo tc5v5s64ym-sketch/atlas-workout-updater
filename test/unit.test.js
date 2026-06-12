@@ -1692,7 +1692,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 4500
+    appSource.indexOf(anchor) + 6000
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -1704,7 +1704,7 @@ test('effort-only approve: complete-workout path accepts Effort-only writes with
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 5000
+    appSource.indexOf(anchor) + 6500
   );
 
   assert.match(approveSection, /pendingWrite\.mode === 'screenshot' \|\| pendingWrite\.mode === 'effort-only'/);
@@ -1732,7 +1732,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 4500
+    appSource.indexOf(anchor) + 6000
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -1745,7 +1745,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 5000
+    appSource.indexOf(anchor) + 6500
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -1765,7 +1765,7 @@ test('duplicate-write: writeInFlight guard variable exists in app.js', () => {
 test('duplicate-write: approve handler checks guard and sets it before request', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
   // Guard must be the first check (before pendingWrite check)
   const guardIdx = handler.indexOf('if (writeInFlight) return');
   const pendingIdx = handler.indexOf('if (!pendingWrite)');
@@ -1778,7 +1778,7 @@ test('duplicate-write: approve handler checks guard and sets it before request',
 test('duplicate-write: finally block always clears writeInFlight', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
   assert.match(handler, /finally\s*\{/, 'handler must have a finally block');
   const finallyIdx = handler.indexOf('finally');
   const clearIdx = handler.indexOf('writeInFlight = false', finallyIdx);
@@ -1788,7 +1788,7 @@ test('duplicate-write: finally block always clears writeInFlight', () => {
 test('duplicate-write: successful write sets button text to Written ✓', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
   assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
   // Written ✓ must appear before the catch block
   const writtenIdx = handler.indexOf('Written');
@@ -1799,7 +1799,7 @@ test('duplicate-write: successful write sets button text to Written ✓', () => 
 test('duplicate-write: undo button is unaffected — still wired after success', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
@@ -1847,7 +1847,7 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
 test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 5000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
   assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
   assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
   assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
@@ -3056,4 +3056,40 @@ test('snapshot: snapshot loader is read-only — no write calls added', () => {
   const snapshotBlock = app.slice(fnStart, fnEnd);
   assert.ok(snapshotBlock.length > 0, 'snapshot block must exist before loadTodaysPlan');
   assert.doesNotMatch(snapshotBlock, /POST|log-workout|complete-workout|undo|confirm_delete/, 'snapshot code must be read-only');
+});
+
+// ── Frontend write_id idempotency wiring ───────────────────────────────────────
+
+test('write_id: every previewed manual workout carries a fresh write_id', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /function generateWriteId/, 'generateWriteId helper must exist');
+  assert.match(app, /crypto\.randomUUID/, 'must prefer crypto.randomUUID');
+  assert.match(app, /test_mode: 'true', write_id: generateWriteId\(\)/, 'preview payload must include the write_id');
+});
+
+test('write_id: duplicate acceptance is strict — all three proof fields required', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 6500);
+  assert.match(handler, /duplicate_write === true/, 'must require duplicate_write flag');
+  assert.match(handler, /sheet_write === 'skipped_duplicate'/, 'must require the skipped_duplicate marker');
+  assert.match(handler, /original_sheet_write === 'success'/, 'must require the original write to have succeeded');
+});
+
+test('write_id: fresh-write proof is not weakened by the duplicate path', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 6500);
+  // The success + rows-written checks must still guard every non-duplicate write
+  const guardIdx = handler.indexOf('if (!duplicateBlocked)');
+  const successIdx = handler.indexOf("sheet_write !== 'success'");
+  const rowsIdx = handler.indexOf('log_rows_written || 0) > 0');
+  assert.ok(guardIdx !== -1, 'non-duplicate branch must exist');
+  assert.ok(successIdx > guardIdx, 'sheet_write success proof must remain inside the non-duplicate branch');
+  assert.ok(rowsIdx > guardIdx, 'rows-written proof must remain inside the non-duplicate branch');
+});
+
+test('write_id: blocked duplicate reports honestly instead of pretending to write', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /Duplicate tap blocked — this workout was already written/, 'duplicate status message must exist');
 });
