@@ -106,16 +106,185 @@
         }
         break;
       case 'train':
-        go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        chipAnswerTrain();
         break;
       case 'last':
-        go('history', () => document.getElementById('load-sessions-btn')?.click());
+        chipAnswerLast();
         break;
       case 'report':
-        go('progress', () => document.getElementById('weekly-report-btn')?.click());
+        chipAnswerReport();
         break;
     }
   });
+
+  /* ===== Chip answer cards — render Atlas replies inline in #thread-messages ===== */
+
+  function atlasReply(content) {
+    const thread = document.getElementById('thread-messages');
+    if (!thread) return null;
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble chat-bubble-atlas';
+    bubble.appendChild(content);
+    thread.appendChild(bubble);
+    requestAnimationFrame(() => bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+    return bubble;
+  }
+
+  function chipAnswerTrain() {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<span class="chip-loading">Loading today’s pick…</span>';
+    const bubble = atlasReply(wrap);
+    if (!bubble) { go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); return; }
+
+    api('/api/plan/intent-recommendation').then(res => {
+      const data = res.data || {};
+      const todaysRead = data.todays_read || {};
+      const patterns = todaysRead.patterns || [];
+      wrap.innerHTML = '';
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'chip-reply-title';
+      titleEl.textContent = todaysRead.recommended_label
+        ? `Today: ${todaysRead.recommended_label}`
+        : 'No pick yet — log a few sessions.';
+      wrap.appendChild(titleEl);
+
+      if (todaysRead.recommended_reason) {
+        const reason = document.createElement('div');
+        reason.className = 'chip-reply-sub';
+        reason.textContent = todaysRead.recommended_reason;
+        wrap.appendChild(reason);
+      }
+
+      if (patterns.length) {
+        const dots = document.createElement('div');
+        dots.className = 'chip-dots';
+        for (const p of patterns) {
+          const dot = document.createElement('span');
+          dot.className = `chip-dot pattern-dot-${p.status || 'unknown'}`;
+          const label = FRIENDLY_PATTERN_LABELS[p.label || p.pattern] || p.label || p.pattern;
+          dot.title = `${label}: ${FRIENDLY_STATUS_WORDS[p.status || 'unknown'] || p.status || '—'}`;
+          dots.appendChild(dot);
+          const lbl = document.createElement('span');
+          lbl.className = 'chip-dot-label';
+          lbl.textContent = label;
+          dots.appendChild(lbl);
+        }
+        wrap.appendChild(dots);
+      }
+
+      const more = document.createElement('a');
+      more.href = '#';
+      more.className = 'chip-reply-more';
+      more.textContent = 'See full Today tab →';
+      more.addEventListener('click', ev => {
+        ev.preventDefault();
+        go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+      });
+      wrap.appendChild(more);
+    }).catch(err => {
+      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    });
+  }
+
+  function chipAnswerLast() {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<span class="chip-loading">Loading last session…</span>';
+    const bubble = atlasReply(wrap);
+    if (!bubble) { go('history', () => document.getElementById('load-sessions-btn')?.click()); return; }
+
+    api('/api/history/recent?limit=5&exclude_test=true').then(res => {
+      const sets = res.data?.recent_sets || [];
+      wrap.innerHTML = '';
+
+      if (!sets.length) {
+        wrap.innerHTML = '<span class="muted">No sessions logged yet.</span>';
+        return;
+      }
+
+      const firstDate = sets[0].date_clean || '';
+      const firstSession = sets[0].session_id || '';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'chip-reply-title';
+      titleEl.textContent = `Last session · ${firstDate}${firstSession ? ' · ' + firstSession : ''}`;
+      wrap.appendChild(titleEl);
+
+      const sessionSets = firstSession
+        ? sets.filter(s => s.session_id === firstSession)
+        : sets;
+
+      // Group by exercise
+      const byEx = [];
+      const seen = new Map();
+      for (const s of sessionSets) {
+        if (!seen.has(s.exercise)) { seen.set(s.exercise, []); byEx.push(s.exercise); }
+        seen.get(s.exercise).push(s);
+      }
+      for (const ex of byEx) {
+        const exSets = seen.get(ex);
+        const row = document.createElement('div');
+        row.className = 'chip-reply-row';
+        const setBits = exSets.map(s => `${s.weight}×${s.reps}${s.rir != null ? '/' + s.rir : ''}`).join(', ');
+        row.textContent = `${ex}: ${setBits}`;
+        wrap.appendChild(row);
+      }
+
+      const more = document.createElement('a');
+      more.href = '#';
+      more.className = 'chip-reply-more';
+      more.textContent = 'Full history →';
+      more.addEventListener('click', ev => {
+        ev.preventDefault();
+        go('history', () => document.getElementById('load-sessions-btn')?.click());
+      });
+      wrap.appendChild(more);
+    }).catch(err => {
+      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    });
+  }
+
+  function chipAnswerReport() {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = '<span class="chip-loading">Loading weekly report…</span>';
+    const bubble = atlasReply(wrap);
+    if (!bubble) { go('progress', () => document.getElementById('weekly-report-btn')?.click()); return; }
+
+    api('/api/summary/weekly').then(res => {
+      const data = res.data || {};
+      const highlights = data.highlights || [];
+      wrap.innerHTML = '';
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'chip-reply-title';
+      titleEl.textContent = 'This week';
+      wrap.appendChild(titleEl);
+
+      if (!highlights.length) {
+        wrap.innerHTML += '<span class="muted">No training logged in the last 7 days.</span>';
+      } else {
+        const ul = document.createElement('ul');
+        ul.className = 'chip-reply-list';
+        for (const h of highlights) {
+          const li = document.createElement('li');
+          li.textContent = h;
+          ul.appendChild(li);
+        }
+        wrap.appendChild(ul);
+      }
+
+      const more = document.createElement('a');
+      more.href = '#';
+      more.className = 'chip-reply-more';
+      more.textContent = 'Full report →';
+      more.addEventListener('click', ev => {
+        ev.preventDefault();
+        go('progress', () => document.getElementById('weekly-report-btn')?.click());
+      });
+      wrap.appendChild(more);
+    }).catch(err => {
+      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    });
+  }
 
   /* ===== Composer "+" attachment menu ===== */
 

@@ -3267,9 +3267,18 @@ test('screenshot: picking a file auto-fires the preview (no separate Preview tap
   assert.match(nav, /logger-form'\)\?\.dispatchEvent\(new Event\('submit'/, 'must dispatch the form submit');
 });
 
-test('screenshot: nav.js stays a visual router and never calls the API', () => {
+test('chips: nav.js chip handlers are read-only and never touch write paths', () => {
   const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
-  assert.doesNotMatch(nav, /appendRows|sheet_write|confirm_delete|fetch\(|\/api\//, 'nav.js must not touch write paths');
+  // nav.js may call read-only API endpoints for chip answer cards, but must never
+  // reach write endpoints or perform sheet mutations.
+  assert.doesNotMatch(nav, /appendRows|sheet_write|confirm_delete|\/api\/log-workout|\/api\/complete-workout|\/api\/bodyweight(?!\/history)/, 'nav.js must not touch write paths');
+  // chip handlers must use api() (delegated to app.js) not a raw fetch
+  assert.doesNotMatch(nav, /\bfetch\(/, 'nav.js must not call fetch() directly — use api()');
+  // train/last/report chips must render in-thread
+  assert.match(nav, /chipAnswerTrain/, 'must have chipAnswerTrain handler');
+  assert.match(nav, /chipAnswerLast/, 'must have chipAnswerLast handler');
+  assert.match(nav, /chipAnswerReport/, 'must have chipAnswerReport handler');
+  assert.match(nav, /chat-bubble-atlas/, 'must render atlas reply bubbles');
 });
 
 test('screenshot: chat.js drops the attachment bubble on file change, not on submit', () => {
