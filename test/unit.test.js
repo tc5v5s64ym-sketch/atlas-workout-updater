@@ -3010,3 +3010,50 @@ test('trust cards: the trust loop wiring in app.js is untouched', () => {
   assert.match(app, /Verified in Sheet/, 'readback verification message must remain');
   assert.match(app, /undo-write-btn/, 'undo button must still be appended after a write');
 });
+
+// ── Progress surface v1: Training Snapshot (UI PR 5) ───────────────────────────
+
+test('snapshot: Training Snapshot card leads the Today dashboard', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
+  assert.match(dashSection, /id="progress-snapshot-card"/, 'snapshot card must be on the dashboard');
+  assert.match(dashSection, /Training Snapshot/, 'snapshot heading must be present');
+  const snapIdx = dashSection.indexOf('progress-snapshot-card');
+  const readIdx = dashSection.indexOf('todays-read-card');
+  assert.ok(snapIdx < readIdx, 'snapshot must lead the dashboard, above Today\'s Read');
+});
+
+test('snapshot: loadProgressSnapshot reads the summary endpoint and renders metrics', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /async function loadProgressSnapshot/, 'loader must exist');
+  assert.match(app, /\/api\/progress\/summary/, 'must read the progress summary endpoint');
+  assert.match(app, /function renderProgressSnapshot/, 'renderer must exist');
+  assert.match(app, /metric-grid/, 'must render the metric grid');
+  assert.match(app, /loadProgressSnapshot\(\);/, 'loadDashboard must call the snapshot loader');
+});
+
+test('snapshot: streak copy rewards consistency and explains the restart', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /-week streak/, 'active streak line must show week count');
+  assert.match(app, /Streak paused/, 'paused state must be honest, not shaming');
+  assert.match(app, /to restart your/, 'paused state must say how to restart');
+  assert.match(app, /sessions_by_week/, 'consistency strip must use weekly buckets');
+});
+
+test('snapshot: styles define the metric grid, streak and consistency strip', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.metric-grid/, 'metric grid styles must exist');
+  assert.match(css, /\.metric-tile/, 'metric tile styles must exist');
+  assert.match(css, /\.streak-line/, 'streak line styles must exist');
+  assert.match(css, /\.consistency-strip/, 'consistency strip styles must exist');
+  assert.match(css, /\.week-bar-hit/, 'streak-hit week bar style must exist');
+});
+
+test('snapshot: snapshot loader is read-only — no write calls added', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnStart = app.indexOf('async function loadProgressSnapshot');
+  const fnEnd = app.indexOf('async function loadTodaysPlan');
+  const snapshotBlock = app.slice(fnStart, fnEnd);
+  assert.ok(snapshotBlock.length > 0, 'snapshot block must exist before loadTodaysPlan');
+  assert.doesNotMatch(snapshotBlock, /POST|log-workout|complete-workout|undo|confirm_delete/, 'snapshot code must be read-only');
+});
