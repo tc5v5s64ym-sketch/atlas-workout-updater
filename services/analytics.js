@@ -612,10 +612,61 @@ function recoveryTau(minRir) {
   return 3.0 - (minRir / 3) * 1.4; // smooth ramp between the two extremes
 }
 
-// Recovery fraction in [0,1]: 0 = just trained, 1 = fully recovered.
-function recoveryFraction(daysSince, minRir) {
+// Recovery fraction in [0,1]: 0 = just trained, 1 = fully recovered. The optional
+// tauMultiplier stretches (>1) or compresses (<1) recovery based on how systemically
+// hard the session was, derived from Apple Watch effort (see effortTauMultiplier).
+function recoveryFraction(daysSince, minRir, tauMultiplier = 1) {
   if (daysSince == null || daysSince < 0) return null;
-  return 1 - Math.exp(-daysSince / recoveryTau(minRir));
+  return 1 - Math.exp(-daysSince / (recoveryTau(minRir) * tauMultiplier));
+}
+
+// Per-session systemic effort intensity in [0,1], normalised against the owner's
+// own effort history (Apple Watch avg HR, active calories, duration). Returns an
+// empty map when there isn't enough spread to normalise, keeping recovery neutral.
+function effortIntensityBySession(effortRows = []) {
+  const rows = (effortRows || []).map(normalizeEffortRow).filter(e => e.session_id);
+  if (rows.length < 2) return new Map();
+
+  const SIGNALS = ['average_hr', 'active_calories', 'duration_min'];
+  const perSession = rows.map(e => {
+    const durationMin = parseDurationMinutes(e.duration);
+    return {
+      session_id: e.session_id,
+      average_hr: Number.isFinite(e.average_hr) && e.average_hr > 0 ? e.average_hr : null,
+      active_calories: Number.isFinite(e.active_calories) && e.active_calories > 0 ? e.active_calories : null,
+      duration_min: Number.isFinite(durationMin) && durationMin > 0 ? durationMin : null
+    };
+  });
+
+  const range = {};
+  for (const k of SIGNALS) {
+    const vals = perSession.map(s => s[k]).filter(v => v != null);
+    range[k] = vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+  }
+
+  const norm = (k, v) => {
+    if (v == null || !range[k]) return null;
+    const { min, max } = range[k];
+    if (max === min) return 0.5; // no spread on this signal — treat as neutral
+    return (v - min) / (max - min);
+  };
+
+  const map = new Map();
+  for (const s of perSession) {
+    const parts = SIGNALS.map(k => norm(k, s[k])).filter(v => v != null);
+    if (!parts.length) continue;
+    const intensity = parts.reduce((a, b) => a + b, 0) / parts.length;
+    map.set(s.session_id, Math.max(0, Math.min(1, intensity)));
+  }
+  return map;
+}
+
+// Map a session's effort intensity to a recovery time-constant multiplier.
+// Neutral (1.0) at median effort or when effort data is absent; a brutal session
+// stretches recovery, an easy one shortens it. Bounded to ±30%.
+function effortTauMultiplier(intensity) {
+  if (intensity == null) return 1;
+  return 1 + (intensity - 0.5) * 0.6; // 0 → 0.7, 0.5 → 1.0, 1 → 1.3
 }
 
 // Map a recovery fraction to the discrete readiness label the UI and intent
@@ -631,17 +682,18 @@ function readinessStatus(recovery) {
 }
 
 // ─── Per-movement-pattern readiness ──────────────────────────────────────────
-function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
+function buildMuscleGroupReadiness(logRows, { today = null, effortRows = [] } = {}) {
   const todayStr = today || new Date().toISOString().slice(0, 10);
   const normalized = logRows.map(normalizeLogRow).filter(r => r.weight > 0 && r.date_clean);
+  const effortIntensity = effortIntensityBySession(effortRows);
 
-  // key = `${session_id}:${pattern}` → { date, volume, minRir }
+  // key = `${session_id}:${pattern}` → { session_id, date, volume, minRir }
   const bySessionPattern = {};
   for (const row of normalized) {
     const pattern = classifyMuscleGroup(row.muscle_group);
     if (!pattern) continue;
     const key = `${row.session_id}:${pattern}`;
-    if (!bySessionPattern[key]) bySessionPattern[key] = { date: row.date_clean, volume: 0, minRir: null };
+    if (!bySessionPattern[key]) bySessionPattern[key] = { session_id: row.session_id, date: row.date_clean, volume: 0, minRir: null };
     const d = bySessionPattern[key];
     if (row.date_clean > d.date) d.date = row.date_clean;
     d.volume += (row.weight || 0) * (row.reps || 0);
@@ -662,7 +714,8 @@ function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
     if (best) daysSince = Math.floor((new Date(todayStr) - new Date(best.date)) / 86400000);
 
     const minRir = best?.minRir ?? null;
-    const recovery = recoveryFraction(daysSince, minRir);
+    const intensity = best ? (effortIntensity.get(best.session_id) ?? null) : null;
+    const recovery = recoveryFraction(daysSince, minRir, effortTauMultiplier(intensity));
     const status = readinessStatus(recovery);
 
     const detail = daysSince === null ? 'No training data'
@@ -676,6 +729,7 @@ function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
       status,
       daysSince,
       recovery: recovery == null ? null : Math.round(recovery * 100) / 100,
+      effortIntensity: intensity == null ? null : Math.round(intensity * 100) / 100,
       lastDate: best?.date || null,
       lastSessionVolume: best?.volume || 0,
       lastSessionMinRir: best?.minRir ?? null,
@@ -687,7 +741,7 @@ function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
 // ─── Intent scoring engine ────────────────────────────────────────────────────
 function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
   const todayStr = today || new Date().toISOString().slice(0, 10);
-  const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr });
+  const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr, effortRows });
   const fatigue = computeFatigueStatus(logRows, new Date(todayStr + 'T12:00:00'));
   const stalls = detectStalls(logRows);
   // Lifts with no progression over their last few sessions. Used to keep stale

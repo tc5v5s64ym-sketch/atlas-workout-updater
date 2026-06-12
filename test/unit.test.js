@@ -2667,6 +2667,60 @@ test('recovery curve: intensity can change the readiness label at the same rest 
   assert.equal(statusFor(2), 'ready', 'moderate session is ready at 3 days');
 });
 
+// ── Effort data folded into recovery (Phase 2b) ────────────────────────────────
+// Effort rows are arrays: [date, session_id, duration, active_cal, total_cal, avg_hr, peak_hr, location, notes]
+
+test('effort fatigue: a high-effort session recovers slower than a low-effort one at the same gap', () => {
+  const today = '2026-06-12';
+  const logRows = [makeLogRow('2026-06-09', 'HARD', 'Chest', 100, 5, 2)]; // 3 days, @2 RIR
+  // Same session, opposite effort profiles. The OTHER row only provides spread to normalise against.
+  const hardEffort = [
+    ['2026-06-09', 'HARD', '75:00', 600, 750, 170, 185, '', ''],
+    ['2026-06-01', 'OTHER', '30:00', 200, 300, 110, 130, '', ''],
+  ];
+  const easyEffort = [
+    ['2026-06-09', 'HARD', '30:00', 200, 300, 110, 130, '', ''],
+    ['2026-06-01', 'OTHER', '75:00', 600, 750, 170, 185, '', ''],
+  ];
+  const pushWith = effort => buildMuscleGroupReadiness(logRows, { today, effortRows: effort }).find(r => r.pattern === 'push');
+  const hard = pushWith(hardEffort);
+  const easy = pushWith(easyEffort);
+  assert.ok(hard.recovery < easy.recovery, `high-effort must recover slower (hard=${hard.recovery}, easy=${easy.recovery})`);
+  assert.equal(hard.status, 'recovering', 'a hard session is still recovering at 3 days');
+  assert.equal(easy.status, 'ready', 'an easy session is ready at 3 days');
+  assert.ok(hard.effortIntensity > easy.effortIntensity, 'effort intensity must be surfaced and ordered');
+});
+
+test('effort fatigue: recovery stays neutral when effort data is absent or too sparse', () => {
+  const today = '2026-06-12';
+  const logRows = [makeLogRow('2026-06-09', 'S1', 'Chest', 100, 5, 2)];
+  const baseline = buildMuscleGroupReadiness(logRows, { today }).find(r => r.pattern === 'push');
+  // A single effort row can't be normalised → must match the no-effort baseline exactly.
+  const oneEffort = [['2026-06-09', 'S1', '60:00', 400, 500, 150, 175, '', '']];
+  const withOne = buildMuscleGroupReadiness(logRows, { today, effortRows: oneEffort }).find(r => r.pattern === 'push');
+  assert.equal(withOne.recovery, baseline.recovery, 'one effort row must not shift recovery');
+  assert.equal(withOne.effortIntensity, null, 'sparse effort yields null intensity');
+  assert.equal(baseline.effortIntensity, null, 'no effort yields null intensity');
+});
+
+test('scoreIntents: threads effort data into readiness (high-effort session shows less recovery)', () => {
+  const today = '2026-06-12';
+  const rows = makeIntentLogRows([
+    { date: '2026-06-09', session: 'HARD', muscle: 'Chest', liftCode: 'BEN01', weight: 200, reps: 5, rir: 2 },
+  ]);
+  const effortHigh = [
+    ['2026-06-09', 'HARD', '80:00', 650, 800, 175, 188, '', ''],
+    ['2026-06-01', 'OTHER', '25:00', 180, 260, 105, 125, '', ''],
+  ];
+  const effortLow = [
+    ['2026-06-09', 'HARD', '25:00', 180, 260, 105, 125, '', ''],
+    ['2026-06-01', 'OTHER', '80:00', 650, 800, 175, 188, '', ''],
+  ];
+  const pushVia = effort => scoreIntents(rows, effort, { today }).todays_read.patterns.find(p => p.pattern === 'push');
+  assert.ok(pushVia(effortHigh).recovery < pushVia(effortLow).recovery,
+    'effort must flow through scoreIntents into per-pattern recovery');
+});
+
 // ── Intent analytics: scoreIntents ────────────────────────────────────────────
 
 function makeIntentLogRows(entries) {
