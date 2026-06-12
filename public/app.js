@@ -1496,6 +1496,14 @@ function invalidatePreview() {
 
 document.getElementById('logger-form').addEventListener('input', invalidatePreview);
 
+// One write_id per previewed workout: if the live write is retried (double
+// tap, network blip), the backend recognises the id and refuses to append
+// twice, returning proof the original write completed instead.
+function generateWriteId() {
+  if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `w-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function hasLogWorkoutNoWriteProof(result) {
   const data = result?.data || {};
   return data.test_mode === true &&
@@ -1595,7 +1603,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     } else {
       const effortRow = manualEffort;
 
-      const payload = { session_id: sessionId, date, log_rows: logRows, test_mode: 'true' };
+      const payload = { session_id: sessionId, date, log_rows: logRows, test_mode: 'true', write_id: generateWriteId() };
       if (effortRow) payload.effort_row = effortRow;
 
       const result = await api('/api/log-workout', {
@@ -1823,6 +1831,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
   const reactionLiftCodes = pendingWrite.liftCodes || [];
   let pendingLastWrite = null;
+  let duplicateBlocked = false;
   try {
     if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
       const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
@@ -1845,18 +1854,31 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(realPayload)
       });
-      if (writeResult?.data?.sheet_write !== 'success') {
-        throw new Error(`Write response did not confirm success (sheet_write=${writeResult?.data?.sheet_write ?? 'missing'}). Check Sheets.`);
-      }
-      if (!(Number(writeResult?.data?.log_rows_written || 0) > 0)) {
-        throw new Error(`Write confirmed but log_rows_written=${writeResult?.data?.log_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
+      const writeData = writeResult?.data || {};
+      // Server-side idempotency: a retried write_id is refused with proof the
+      // original write completed. Strict — all three fields must agree, and
+      // the original must itself have been a confirmed success.
+      duplicateBlocked = writeData.duplicate_write === true &&
+        writeData.sheet_write === 'skipped_duplicate' &&
+        writeData.original_sheet_write === 'success';
+      if (!duplicateBlocked) {
+        if (writeData.sheet_write !== 'success') {
+          throw new Error(`Write response did not confirm success (sheet_write=${writeData.sheet_write ?? 'missing'}). Check Sheets.`);
+        }
+        if (!(Number(writeData.log_rows_written || 0) > 0)) {
+          throw new Error(`Write confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
+        }
       }
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
-      pendingLastWrite = {
-        log_appended_range: writeResult.data.logAppendedRange,
-        session_id: realPayload.session_id,
-        log_rows_written: writeResult.data.log_rows_written
-      };
+      // On a blocked duplicate the original response is echoed back, so the
+      // same undo details still point at the rows the first write appended.
+      if (writeData.logAppendedRange) {
+        pendingLastWrite = {
+          log_appended_range: writeData.logAppendedRange,
+          session_id: realPayload.session_id,
+          log_rows_written: writeData.log_rows_written
+        };
+      }
     }
     invalidatePreview();
     document.getElementById('logger-form').reset();
@@ -1868,7 +1890,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     setDefaultDate();
     setStatus(
       loggerStatus,
-      pendingWrite.effortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+      duplicateBlocked
+        ? 'Duplicate tap blocked — this workout was already written. ✓'
+        : pendingWrite.effortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
       'ok'
     );
     if (pendingLastWrite) {
