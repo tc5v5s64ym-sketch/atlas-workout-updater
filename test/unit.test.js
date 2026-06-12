@@ -2136,6 +2136,104 @@ test('progress summary: endpoint registered as GET and read-only', () => {
   assert.equal(route.authRequired, true);
 });
 
+test('trainingStore read layer can be stubbed and builds progress summary', async () => {
+  const sheetsPath = require.resolve('../sheets');
+  const trainingStorePath = require.resolve('../services/trainingStore');
+  const originalSheetsCache = require.cache[sheetsPath];
+  const originalTrainingStoreCache = require.cache[trainingStorePath];
+  const calls = [];
+
+  require.cache[sheetsPath] = {
+    id: sheetsPath,
+    filename: sheetsPath,
+    loaded: true,
+    exports: {
+      getRecentRows: async (tabName, limit) => {
+        calls.push(['getRecentRows', tabName, limit]);
+        return [];
+      },
+      getSheetRows: async tabName => {
+        calls.push(['getSheetRows', tabName]);
+        if (tabName === 'Log_Cleaned') {
+          return [
+            ['2026-06-09', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '200', '5', '2', ''],
+            ['2026-06-10', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '300', '5', '2', '']
+          ];
+        }
+        return [];
+      },
+      logSheetName: 'Log_Cleaned',
+      effortSheetName: 'Effort'
+    }
+  };
+  delete require.cache[trainingStorePath];
+
+  try {
+    const trainingStore = require('../services/trainingStore');
+    const summary = await trainingStore.getProgressSummary({ today: '2026-06-11' });
+
+    assert.equal(summary.total_sessions, 2);
+    assert.equal(summary.total_sets, 2);
+    assert.equal(summary.total_volume, 2500);
+    assert.deepEqual(calls, [['getSheetRows', 'Log_Cleaned']]);
+  } finally {
+    if (originalSheetsCache) require.cache[sheetsPath] = originalSheetsCache;
+    else delete require.cache[sheetsPath];
+    if (originalTrainingStoreCache) require.cache[trainingStorePath] = originalTrainingStoreCache;
+    else delete require.cache[trainingStorePath];
+  }
+});
+
+test('trainingStore read layer combines log and effort rows for recent sessions', async () => {
+  const sheetsPath = require.resolve('../sheets');
+  const trainingStorePath = require.resolve('../services/trainingStore');
+  const originalSheetsCache = require.cache[sheetsPath];
+  const originalTrainingStoreCache = require.cache[trainingStorePath];
+  const calls = [];
+
+  require.cache[sheetsPath] = {
+    id: sheetsPath,
+    filename: sheetsPath,
+    loaded: true,
+    exports: {
+      getRecentRows: async (tabName, limit) => {
+        calls.push(['getRecentRows', tabName, limit]);
+        return [];
+      },
+      getSheetRows: async tabName => {
+        calls.push(['getSheetRows', tabName]);
+        if (tabName === 'Log_Cleaned') {
+          return [
+            ['2026-06-10', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '200', '5', '2', '']
+          ];
+        }
+        if (tabName === 'Effort') {
+          return [['2026-06-10', 'S1', '45', '300', '400', '120', '160', 'Gym', '']];
+        }
+        return [];
+      },
+      logSheetName: 'Log_Cleaned',
+      effortSheetName: 'Effort'
+    }
+  };
+  delete require.cache[trainingStorePath];
+
+  try {
+    const trainingStore = require('../services/trainingStore');
+    const result = await trainingStore.getRecentSessions({ limit: 5 });
+
+    assert.equal(result.sessions.length, 1);
+    assert.equal(result.sessions[0].session_id, 'S1');
+    assert.equal(result.sessions[0].effort.duration, '45');
+    assert.deepEqual(calls, [['getSheetRows', 'Log_Cleaned'], ['getSheetRows', 'Effort']]);
+  } finally {
+    if (originalSheetsCache) require.cache[sheetsPath] = originalSheetsCache;
+    else delete require.cache[sheetsPath];
+    if (originalTrainingStoreCache) require.cache[trainingStorePath] = originalTrainingStoreCache;
+    else delete require.cache[trainingStorePath];
+  }
+});
+
 test('session history: /api/sessions/recent endpoint registered as GET and read-only', () => {
   const route = routeDefinitions.find(r => r.path === '/api/sessions/recent');
   assert.ok(route, 'route definition must exist');

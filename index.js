@@ -53,6 +53,7 @@ const { parseWorkoutScreenshot } = require('./services/vision');
 const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
+const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
@@ -763,8 +764,7 @@ app.get('/api/exercises/:liftCode/detail', async (req, res) => {
   const liftCode = String(req.params.liftCode || '').trim();
   if (!liftCode) return standardError(req, res, 'liftCode is required in path', null, 400);
   try {
-    const allLog = await getRecentRows(logSheetName, 1000);
-    const detail = buildExerciseDetail(allLog, liftCode);
+    const detail = await trainingStore.getExerciseDetail(liftCode, { rowLimit: 1000 });
     return standardSuccess(req, res, 'Exercise detail', detail);
   } catch (error) {
     return standardError(req, res, 'Failed to fetch exercise detail', error.message, 500);
@@ -930,11 +930,7 @@ app.get('/api/schema/complete-workout', (req, res) => {
 app.get('/api/sessions/recent', async (req, res) => {
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 15));
   try {
-    const [allLog, allEffort] = await Promise.all([
-      getSheetRows(logSheetName),
-      getSheetRows(effortSheetName)
-    ]);
-    const result = buildRecentSessions(allLog, allEffort, { limit });
+    const result = await trainingStore.getRecentSessions({ limit });
     return standardSuccess(req, res, 'Recent sessions', result);
   } catch (err) {
     return standardError(req, res, 'Failed to load recent sessions', err);
@@ -1141,8 +1137,7 @@ app.get('/api/summary/weekly', async (req, res) => {
 // GET /api/progress/summary
 app.get('/api/progress/summary', async (req, res) => {
   try {
-    const allLog = await getSheetRows(logSheetName);
-    const summary = buildProgressSummary(allLog);
+    const summary = await trainingStore.getProgressSummary();
     return standardSuccess(req, res, 'Progress summary', summary);
   } catch (error) {
     return standardError(req, res, 'Failed to build progress summary', error.message, 500);
@@ -1159,8 +1154,7 @@ app.get('/api/report/weekly', async (req, res) => {
     return standardError(req, res, 'days must be an integer between 3 and 14', null, 400);
   }
   try {
-    const allLog = await getRecentRows(logSheetName, 1000);
-    const report = buildWeeklyReport(allLog, { days: rawDays });
+    const report = await trainingStore.getWeeklyReportData({ days: rawDays, rowLimit: 1000 });
     return standardSuccess(req, res, 'Weekly report', report);
   } catch (error) {
     return standardError(req, res, 'Failed to build weekly report', error.message, 500);
