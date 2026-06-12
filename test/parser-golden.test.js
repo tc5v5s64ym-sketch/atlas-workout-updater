@@ -166,3 +166,153 @@ test('golden: knee raises slash-pair format produces bodyweight sets with reps a
     'all sets must have null weight for bodyweight exercise');
   assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[20, 2], [20, 2], [13, 2]]);
 });
+
+test('golden: Atlas parser handles a wider workout phrase matrix safely', () => {
+  const cases = [
+    {
+      input: 'bench 225 5/2 x3',
+      intent: 'log_sets',
+      canonical: 'Bench Press',
+      expectedSets: [[225, 5, 2], [225, 5, 2], [225, 5, 2]],
+    },
+    {
+      input: 'lat pull 170 10/2 175 8/2 8/1',
+      intent: 'log_sets',
+      canonical: 'Lat Pulldown',
+      expectedSets: [[170, 10, 2], [175, 8, 2], [175, 8, 1]],
+    },
+    {
+      input: 'face pulls 50 15/2 x3',
+      intent: 'log_sets',
+      canonical: 'Face Pull',
+      expectedSets: [[50, 15, 2], [50, 15, 2], [50, 15, 2]],
+    },
+    {
+      input: 'chin ups 8/2 x3',
+      intent: 'log_sets',
+      canonical: 'Chin Ups',
+      expectedSets: [[null, 8, 2], [null, 8, 2], [null, 8, 2]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
+    },
+    {
+      input: 'hang cleans 135 3/2 x5',
+      intent: 'log_sets',
+      canonical: 'Hang Cleans',
+      expectedSets: [[135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
+    },
+    {
+      input: 'db walking lunges 40s 12/2 x3',
+      intent: 'log_sets',
+      canonical: 'Db Walking Lunges',
+      expectedSets: [[40, 12, 2], [40, 12, 2], [40, 12, 2]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
+      assertSetShape(result) {
+        assert.ok(result.sets.every(set => set.load_note === 'per_hand'));
+      },
+    },
+    {
+      input: 'backflips 10 x3',
+      intent: 'log_sets',
+      canonical: 'Backflips',
+      expectedSets: [[null, 10, null], [null, 10, null], [null, 10, null]],
+      warning: 'unknown_exercise',
+      needsCatalogReview: true,
+    },
+    {
+      input: 'press 135 8/2',
+      intent: 'needs_clarification',
+      warning: 'ambiguous_exercise_alias',
+      message: /Which press/i,
+    },
+    {
+      input: 'row 135 8/2',
+      intent: 'needs_clarification',
+      warning: 'ambiguous_exercise_alias',
+      message: /Which row/i,
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = parseWorkoutText(testCase.input);
+    assert.equal(result.intent, testCase.intent, testCase.input);
+
+    if (testCase.intent === 'log_sets') {
+      assert.equal(result.canonical_name, testCase.canonical, testCase.input);
+      assert.deepEqual(sets(result), testCase.expectedSets, testCase.input);
+      if (testCase.warning) {
+        assert.ok(result.warnings.includes(testCase.warning), testCase.input);
+      } else {
+        assert.deepEqual(result.warnings, [], `${testCase.input} should be warning-free`);
+      }
+      if (testCase.needsCatalogReview) {
+        assert.equal(result.needs_catalog_review, true, `${testCase.input} should require catalog review`);
+      }
+      if (typeof testCase.assertSetShape === 'function') testCase.assertSetShape(result);
+      continue;
+    }
+
+    assert.equal(result.sets, undefined, `${testCase.input} must not invent rows`);
+    assert.ok(result.warnings.includes(testCase.warning), testCase.input);
+    assert.match(result.message, testCase.message, testCase.input);
+  }
+});
+
+test('golden: fuzz-style parser safety invariants hold across mixed workout phrases', () => {
+  const samples = [
+    'bench 225 5/2 x3',
+    'lat pull 170 10/2 175 8/2 8/1',
+    'face pulls 50 15/2 x3',
+    'chin ups 8/2 x3',
+    'hang cleans 135 3/2 x5',
+    'db walking lunges 40s 12/2 x3',
+    'backflips 10 x3',
+    'press 135 8/2',
+    'row 135 8/2',
+  ];
+
+  for (const input of samples) {
+    const result = parseWorkoutText(input);
+    assert.ok(['log_sets', 'needs_clarification'].includes(result.intent), `${input} produced unexpected intent ${result.intent}`);
+
+    if (result.intent === 'log_sets') {
+      assert.ok(result.canonical_name, `${input} should resolve to a canonical exercise`);
+      assert.ok(result.sets.length > 0, `${input} should produce at least one set`);
+      assert.ok(result.sets.length <= 10, `${input} should stay inside repeat guardrails`);
+      if (result.warnings.includes('unknown_exercise')) {
+        assert.equal(result.needs_catalog_review, true, `${input} should require catalog review when unknown`);
+      }
+      for (const set of result.sets) {
+        assert.ok(Number.isFinite(set.reps) && set.reps > 0, `${input} has invalid reps`);
+        assert.ok(set.weight == null || Number.isFinite(set.weight), `${input} has invalid weight`);
+        assert.ok(set.rir == null || Number.isFinite(set.rir), `${input} has invalid RIR`);
+      }
+      continue;
+    }
+
+    assert.equal(result.sets, undefined, `${input} should not create rows when clarification is required`);
+    assert.ok(Array.isArray(result.warnings) && result.warnings.length > 0, `${input} should explain why it was blocked`);
+  }
+});
+
+test('golden: unknown exercises parse with review-needed metadata instead of clarification', () => {
+  const cases = [
+    ['chin ups 8/2 x3', 'Chin Ups', [[null, 8, 2], [null, 8, 2], [null, 8, 2]]],
+    ['hang cleans 135 3/2 x5', 'Hang Cleans', [[135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2], [135, 3, 2]]],
+    ['db walking lunges 40s 12/2 x3', 'Db Walking Lunges', [[40, 12, 2], [40, 12, 2], [40, 12, 2]]],
+    ['backflips 10 x3', 'Backflips', [[null, 10, null], [null, 10, null], [null, 10, null]]],
+  ];
+
+  for (const [input, canonicalName, expectedSets] of cases) {
+    const result = parseWorkoutText(input);
+    assert.equal(result.intent, 'log_sets', input);
+    assert.equal(result.canonical_name, canonicalName, input);
+    assert.equal(result.exercise, canonicalName, input);
+    assert.equal(result.needs_catalog_review, true, input);
+    assert.ok(result.warnings.includes('unknown_exercise'), input);
+    assert.deepEqual(sets(result), expectedSets, input);
+  }
+});
