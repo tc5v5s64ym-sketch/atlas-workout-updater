@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { resetIdempotencyStore } = require('../services/idempotency');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -114,6 +115,10 @@ test.after(async () => {
   await new Promise((resolve, reject) => {
     server.close(error => (error ? reject(error) : resolve()));
   });
+});
+
+test.beforeEach(() => {
+  resetIdempotencyStore();
 });
 
 async function requestJson(path, options = {}) {
@@ -607,6 +612,150 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
 });
 
 // ── undo-last tests ─────────────────────────────────────────────────────────
+// log-workout idempotency tests
+test('api smoke: live log-workout with write_id appends once and skips duplicate retry', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+
+  const payload = {
+    session_id: 'LIVE-WRITE-IDEMPOTENT-01',
+    date: '2026-06-11',
+    write_id: 'write-live-idempotent-01',
+    log_rows: [
+      {
+        exercise: 'Bench Press',
+        set_number: 1,
+        weight: 135,
+        reps: 10,
+        rir: 5,
+        notes: ''
+      }
+    ]
+  };
+
+  try {
+    const first = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.status, 'ok');
+    assert.equal(first.body.data.sheet_write, 'success');
+    assert.equal(first.body.data.write_id, 'write-live-idempotent-01');
+    assert.equal(first.body.data.duplicate_write, false);
+    assert.equal(first.body.data.idempotency_status, 'completed');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    const duplicate = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+
+    assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
+    assert.equal(duplicate.body.status, 'ok');
+    assert.equal(duplicate.body.data.duplicate_write, true);
+    assert.equal(duplicate.body.data.write_id, 'write-live-idempotent-01');
+    assert.equal(duplicate.body.data.sheet_write, 'skipped_duplicate');
+    assert.equal(duplicate.body.data.sheet_written, false);
+    assert.equal(duplicate.body.data.original_sheet_write, 'success');
+    assert.equal(duplicate.body.data.logAppendedRange, first.body.data.logAppendedRange);
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: dry-run with write_id does not consume idempotency state', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+
+  const payload = {
+    session_id: 'DRY-RUN-IDEMPOTENT-01',
+    date: '2026-06-11',
+    write_id: 'write-dry-run-idempotent-01',
+    test_mode: true,
+    log_rows: [
+      {
+        exercise: 'Bench Press',
+        set_number: 1,
+        weight: 135,
+        reps: 10,
+        rir: 5,
+        notes: ''
+      }
+    ]
+  };
+
+  const preview = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  assert.equal(preview.response.status, 200, JSON.stringify(preview.body));
+  assert.equal(preview.body.data.test_mode, true);
+  assert.equal(preview.body.data.sheet_written, false);
+  assert.equal(preview.body.data.no_write_confirmed, true);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+
+  fakeSheetsState.allowAppend = true;
+  try {
+    const livePayload = { ...payload };
+    delete livePayload.test_mode;
+
+    const live = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(livePayload)
+    });
+
+    assert.equal(live.response.status, 200, JSON.stringify(live.body));
+    assert.equal(live.body.data.sheet_write, 'success');
+    assert.equal(live.body.data.duplicate_write, false);
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: different write_id values write normally', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+
+  const basePayload = {
+    session_id: 'LIVE-WRITE-IDEMPOTENT-02',
+    date: '2026-06-11',
+    log_rows: [
+      {
+        exercise: 'Bench Press',
+        set_number: 1,
+        weight: 135,
+        reps: 10,
+        rir: 5,
+        notes: ''
+      }
+    ]
+  };
+
+  try {
+    const first = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({ ...basePayload, write_id: 'write-live-idempotent-02a' })
+    });
+    const second = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({ ...basePayload, write_id: 'write-live-idempotent-02b' })
+    });
+
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    assert.equal(second.response.status, 200, JSON.stringify(second.body));
+    assert.equal(first.body.data.duplicate_write, false);
+    assert.equal(second.body.data.duplicate_write, false);
+    assert.equal(fakeSheetsState.appendCalls.length, 2);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// undo-last tests
 // All undo tests use the fake Sheets layer; no real Google Sheets access occurs.
 // logRows fixture (sheet-row mapping, header is row 1):
 //   sheet row 2 → logRows[0]: SESSION-OLD, Bench Press

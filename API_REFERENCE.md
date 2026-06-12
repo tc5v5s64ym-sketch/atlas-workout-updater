@@ -79,6 +79,10 @@ POST /api/log-workout
 # JSON body with session_id, date, log_rows
 # Optional: effort_row
 # Optional: test_mode=true to preview without writing
+# Optional live-write idempotency: write_id
+# Reusing the same write_id after a completed live write returns duplicate_write=true
+# and does not append rows again. V1 stores write_id state in process memory, so it
+# resets on service restart/deploy.
 ```
 
 ## Catalog Endpoints

@@ -40,6 +40,11 @@ const {
   buildMuscleGroupReadiness,
   scoreIntents
 } = require('./services/analytics');
+const {
+  beginWrite,
+  completeWrite,
+  failWrite
+} = require('./services/idempotency');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
 const { success: standardSuccess, error: standardError } = require('./response');
@@ -1697,6 +1702,7 @@ app.post('/api/log-workout', async (req, res) => {
 
   const { session_id, date, log_rows, effort_row } = payload;
   const testMode = isTestModeEnabled(payload.test_mode);
+  const writeId = payload.write_id;
 
   if (!session_id) {
     return standardError(req, res, 'session_id is required.', null, 400);
@@ -1764,16 +1770,47 @@ app.post('/api/log-workout', async (req, res) => {
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
+  const idempotency = beginWrite(writeId, {
+    endpoint: '/api/log-workout',
+    session_id,
+    date,
+    log_rows_count: formattedLogRows.length,
+    effort_row_present: Boolean(formattedEffortRow)
+  });
+
+  if (idempotency.duplicate) {
+    const record = idempotency.record || {};
+    const original = record.response || {};
+    const duplicateBody = {
+      ...original,
+      duplicate_write: true,
+      write_id: idempotency.write_id,
+      idempotency_status: record.status || 'unknown',
+      sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+      sheet_written: false,
+      original_sheet_write: original.sheet_write || null,
+      original_completed_at: record.completed_at || null
+    };
+
+    const message = record.status === 'completed'
+      ? 'Duplicate write_id; original write was already processed.'
+      : 'Duplicate write_id; original write is already in progress.';
+
+    return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
+  }
+
   if (formattedEffortRow) {
     let existingEffortSessionIds;
     try {
       existingEffortSessionIds = await getEffortSessionIds();
     } catch (error) {
       console.error('❌ Failed to check duplicate session IDs:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
     if (existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(session_id).toLowerCase())) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
   }
@@ -1808,9 +1845,17 @@ app.post('/api/log-workout', async (req, res) => {
       responseBody.rule_flags = ruleFlags;
     }
 
+    if (idempotency.enabled) {
+      responseBody.write_id = idempotency.write_id;
+      responseBody.duplicate_write = false;
+      responseBody.idempotency_status = 'completed';
+      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    }
+
     return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
     console.error('❌ Failed to append workout data:', error);
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
   }
 });
