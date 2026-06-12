@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { normalizeExerciseKey, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
+const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
 const { parseWorkoutText, buildWorkoutTextParseDryRunResponse } = require('../services/workoutTextParser');
 const { normalizeDurationString } = require('../services/duration');
 const {
@@ -214,7 +214,7 @@ test('enrichLogRow never maps Lats shorthand to Lateral Raises', () => {
     ['lateral raises', { canonical_exercise: 'Lateral Raises', muscle_group: 'Shoulders', lift_code: 'LAT01' }]
   ]);
   const result = enrichLogRow({ exercise: 'Lats' }, map);
-  assert.equal(result.enriched.canonical_exercise, '');
+  assert.equal(result.enriched.canonical_exercise, 'Lats');
   assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
 });
 
@@ -255,7 +255,7 @@ test('enrichLogRow leaves vague row shorthand unresolved for review', () => {
   ]);
 
   const rowsResult = enrichLogRow({ exercise: 'Rows' }, map);
-  assert.equal(rowsResult.enriched.canonical_exercise, '');
+  assert.equal(rowsResult.enriched.canonical_exercise, 'Rows');
   assert.ok(rowsResult.warnings[0].startsWith('Unknown exercise:'));
 
   assert.equal(enrichLogRow({ exercise: 'Seated row' }, map).enriched.canonical_exercise, 'Seated Row');
@@ -281,7 +281,7 @@ test('enrichLogRow expands OHP abbreviation to Overhead Press', () => {
 test('enrichLogRow returns Unknown for truly unrecognised exercise', () => {
   const map = new Map([['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: 'SQ' }]]);
   const result = enrichLogRow({ exercise: 'Zorblax Machine' }, map);
-  assert.equal(result.enriched.canonical_exercise, '');
+  assert.equal(result.enriched.canonical_exercise, 'Zorblax Machine');
   assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
 });
 
@@ -291,9 +291,63 @@ test('enrichLogRow warns instead of auto-matching ambiguous substring shorthand'
     ['overhead press', { canonical_exercise: 'Overhead Press', muscle_group: 'Shoulders', lift_code: 'OHP' }]
   ]);
   const result = enrichLogRow({ exercise: 'Press' }, map);
-  assert.equal(result.enriched.canonical_exercise, '');
+  assert.equal(result.enriched.canonical_exercise, 'Press');
   assert.equal(result.autoMatch, undefined);
   assert.ok(result.warnings[0].startsWith('Ambiguous exercise match:'));
+});
+
+// ── generateLiftCode + lift-code fallback ─────────────────────────────────────
+
+test('generateLiftCode: known exercises map to canonical codes', () => {
+  assert.equal(generateLiftCode('Back Squat'), 'SQ01');
+  assert.equal(generateLiftCode('back squat'), 'SQ01');
+  assert.equal(generateLiftCode('Bench Press'), 'BEN01');
+  assert.equal(generateLiftCode('bench'), 'BEN01');
+  assert.equal(generateLiftCode('Deadlift'), 'DL01');
+  assert.equal(generateLiftCode('Romanian Deadlift'), 'RDL01');
+  assert.equal(generateLiftCode('rdl'), 'RDL01');
+  assert.equal(generateLiftCode('Elliptical'), 'ELL01');
+  assert.equal(generateLiftCode('Lat Pulldown'), 'LAT01');
+  assert.equal(generateLiftCode('Face Pull'), 'FP01');
+  assert.equal(generateLiftCode('Knee Raises'), 'KR01');
+});
+
+test('generateLiftCode: unknown exercise gets initialism fallback', () => {
+  assert.equal(generateLiftCode('Cable Goblin Raises'), 'CGR01');
+  assert.equal(generateLiftCode('Zorblax Machine'), 'ZMX01');
+  assert.equal(generateLiftCode('Press'), 'PRE01');
+});
+
+test('generateLiftCode: empty or missing name returns UNK01', () => {
+  assert.equal(generateLiftCode(''), 'UNK01');
+  assert.equal(generateLiftCode(null), 'UNK01');
+});
+
+test('enrichLogRow: catalog entry with blank lift_code gets a generated fallback', () => {
+  const map = new Map([['back squat', { canonical_exercise: 'Back Squat', muscle_group: 'Legs', lift_code: '' }]]);
+  const result = enrichLogRow({ exercise: 'Back Squat' }, map);
+  assert.equal(result.enriched.lift_code, 'SQ01');
+  assert.ok(result.warnings && result.warnings[0].includes('Generated lift code'));
+});
+
+test('enrichLogRow: unknown exercise gets generated lift code, never blank', () => {
+  const map = new Map();
+  const result = enrichLogRow({ exercise: 'Cable Goblin Raises' }, map);
+  assert.equal(result.enriched.lift_code, 'CGR01');
+  assert.ok(result.enriched.lift_code.length > 0, 'lift_code must never be blank');
+  assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
+});
+
+test('enrichLogRow: row-provided lift code takes priority over generated fallback', () => {
+  const map = new Map([['custom move', { canonical_exercise: 'Custom Move', muscle_group: 'Core', lift_code: '' }]]);
+  const result = enrichLogRow({ exercise: 'Custom Move', lift_code: 'CM99' }, map);
+  assert.equal(result.enriched.lift_code, 'CM99');
+  assert.ok(!result.warnings, 'no warning when lift code is row-provided');
+});
+
+test('generateLiftCode: single-word exercise uses first 3 letters', () => {
+  assert.equal(generateLiftCode('Pullover'), 'PUL01');
+  assert.equal(generateLiftCode('Row'), 'ROW01');
 });
 
 test('duration normalization supports mm:ss and hh:mm:ss', () => {
