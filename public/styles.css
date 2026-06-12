@@ -1025,6 +1025,10 @@ a.lift-link:hover { text-decoration: underline; }
 .pattern-dot-unknown   { background: var(--border-strong); }
 .pattern-dot-label { font-size: 0.65rem; color: var(--muted); text-align: center; line-height: 1.2; }
 
+/* Thin recovery bar under each readiness dot — fill width = % recovered */
+.pattern-recovery { width: 32px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: 1px; }
+.pattern-recovery-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
+
 .todays-read-rec { font-weight: 600; margin: var(--s2) 0 2px; font-size: 0.9rem; }
 .todays-read-reason { margin: 0; font-size: 0.82rem; color: var(--muted); }
 

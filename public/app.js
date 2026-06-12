@@ -464,6 +464,14 @@ async function loadIntentDashboard() {
 const FRIENDLY_PATTERN_LABELS = { Hinge: 'Hips & back', Pressing: 'Push', Pulling: 'Pull', 'Lower body': 'Legs' };
 const FRIENDLY_STATUS_WORDS = { fatigued: 'Worked', recovering: 'Recovering', ready: 'Ready', fresh: 'Fresh', unknown: '—' };
 
+// One-line readiness tooltip: when last trained, how recovered, how hard that session was.
+function readinessTitle(p) {
+  const parts = [p.detail || p.status || ''];
+  if (p.recovery != null) parts.push(`${Math.round(p.recovery * 100)}% recovered`);
+  if (p.effortIntensity != null) parts.push(`last effort ${Math.round(p.effortIntensity * 100)}%`);
+  return parts.filter(Boolean).join(' · ');
+}
+
 function renderTodaysRead(data) {
   const box = document.getElementById('todays-read');
   if (!box) return;
@@ -476,10 +484,15 @@ function renderTodaysRead(data) {
   for (const p of patterns) {
     const status = p.status || 'unknown';
     const rawLabel = p.label || p.pattern;
+    const pct = p.recovery == null ? 0 : Math.round(p.recovery * 100);
+    const recoveryBar = el('div', { class: 'pattern-recovery', title: readinessTitle(p) }, [
+      el('div', { class: `pattern-recovery-fill pattern-dot-${status}`, style: `width:${pct}%` })
+    ]);
     const wrap = el('div', { class: 'pattern-dot-wrap' }, [
-      el('div', { class: `pattern-dot pattern-dot-${status}`, title: p.detail || status }),
+      el('div', { class: `pattern-dot pattern-dot-${status}`, title: readinessTitle(p) }),
       el('div', { class: 'pattern-dot-label', text: FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel }),
-      el('div', { class: `pattern-dot-status pattern-status-${status}`, text: FRIENDLY_STATUS_WORDS[status] || status })
+      el('div', { class: `pattern-dot-status pattern-status-${status}`, text: FRIENDLY_STATUS_WORDS[status] || status }),
+      recoveryBar
     ]);
     dotRow.appendChild(wrap);
   }
@@ -504,9 +517,11 @@ function renderCoachReadStrip(data) {
   for (const p of patterns) {
     const status = p.status || 'unknown';
     const rawLabel = p.label || p.pattern;
+    const friendly = `${FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel}: ${FRIENDLY_STATUS_WORDS[status] || status}`;
+    const recovery = p.recovery == null ? '' : ` (${Math.round(p.recovery * 100)}% recovered)`;
     dots.appendChild(el('span', {
       class: `strip-dot pattern-dot-${status}`,
-      title: `${FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel}: ${FRIENDLY_STATUS_WORDS[status] || status}`
+      title: `${friendly}${recovery}`
     }));
   }
   strip.appendChild(dots);

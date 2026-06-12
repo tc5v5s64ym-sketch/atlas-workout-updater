@@ -2950,6 +2950,32 @@ test('intent dashboard: renderTodaysRead and renderIntentGrid render correct con
   assert.match(gridFn, /openIntentDrawer/, 'tile click must call openIntentDrawer');
 });
 
+test('read surfacing: Today\'s Read shows a recovery bar and a recovery/effort tooltip', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function readinessTitle\(/, 'tooltip helper must exist');
+  const titleFn = appSource.slice(appSource.indexOf('function readinessTitle('), appSource.indexOf('function readinessTitle(') + 400);
+  assert.match(titleFn, /recovered/, 'tooltip must report % recovered');
+  assert.match(titleFn, /effortIntensity/, 'tooltip must report last effort intensity');
+
+  const readFn = appSource.slice(appSource.indexOf('function renderTodaysRead('), appSource.indexOf('function renderTodaysRead(') + 1600);
+  assert.match(readFn, /pattern-recovery/, 'must render the recovery bar');
+  assert.match(readFn, /p\.recovery/, 'bar width must be driven by the recovery fraction');
+  assert.match(readFn, /readinessTitle/, 'dots must use the enriched tooltip');
+});
+
+test('read surfacing: coach strip tooltip includes recovery percentage', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const stripFn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 800);
+  assert.match(stripFn, /recovered/, 'strip tooltip must mention recovery when present');
+  assert.match(stripFn, /p\.recovery/, 'strip must read the recovery field');
+});
+
+test('read surfacing: recovery bar styled in CSS', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.pattern-recovery\b/, 'recovery track must be styled');
+  assert.match(css, /\.pattern-recovery-fill/, 'recovery fill must be styled');
+});
+
 test('intent dashboard: openIntentDrawer and closeIntentDrawer exist and are wired', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /function openIntentDrawer\(/, 'openIntentDrawer must exist');
@@ -3433,7 +3459,7 @@ test('polish: coach-read-strip container exists in Coach surface', () => {
 test('polish: renderCoachReadStrip renders compact dots and pick text', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /function renderCoachReadStrip\(/, 'function must exist');
-  const fn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 800);
+  const fn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 1100);
   assert.match(fn, /coach-read-strip/, 'must target the strip container');
   assert.match(fn, /strip-dot/, 'must render compact dots');
   assert.match(fn, /strip-rec/, 'must render pick text');
