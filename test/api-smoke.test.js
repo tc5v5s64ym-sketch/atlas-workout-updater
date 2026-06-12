@@ -225,6 +225,24 @@ test('api smoke: parse-workout-text dry-run proves no write', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: parse-workout-image is parse-only — auto_write=true performs no write', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // allowAppend stays false: if the removed auto_write branch ever wrote, the
+  // append stub would throw and this test would fail loudly.
+  const form = new FormData();
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+  form.append('auto_write', 'true');
+
+  const { response, body } = await requestMultipart('/api/parse-workout-image', form);
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.status, 'ok');
+  assert.equal(body.data.sheet_write, 'skipped', 'parse-workout-image must never write');
+  assert.ok(body.data.parsed, 'still returns parsed effort metrics');
+  assert.ok(Array.isArray(body.data.effort_row), 'still returns a preview effort_row');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: parse-workout-text clarification does not create rows', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/parse-workout-text', {

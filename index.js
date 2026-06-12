@@ -374,10 +374,6 @@ function generateSessionId(dateValue) {
   return `${formattedDate}-${suffix}-01`;
 }
 
-function isAutoWriteEnabled(value) {
-  return String(value || '').toLowerCase() === 'true';
-}
-
 function isTestModeEnabled(value) {
   return String(value || '').toLowerCase() === 'true';
 }
@@ -923,7 +919,7 @@ app.get('/api/schema/complete-workout', (req, res) => {
     required: ['log_rows_json'],
     required_for_screenshot_flow: ['image'],
     required_for_effort_only_flow: ['image or manual effort fields'],
-    optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'auto_write', 'effort_json']
+    optional: ['session_id', 'date', 'location', 'notes', 'test_mode', 'effort_json']
   });
 });
 
@@ -1404,47 +1400,15 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
     try {
       parsedForResponse.duration = normalizeDurationString(visionResult.parsed_metrics.duration);
     } catch (err) {
-      // leave original duration if normalization fails; validation will catch issues when auto_write is enabled
+      // leave original duration if normalization fails; this endpoint only previews
       parsedForResponse.duration = visionResult.parsed_metrics.duration;
     }
 
-    // Build an effort row to include in the response (may be overwritten if auto_write triggers a validated write)
-    let { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(parsedForResponse, formFields);
-
-    let sheetWrite = 'skipped';
-    let validationWarnings = [];
-
-    if (isAutoWriteEnabled(formFields.auto_write)) {
-      // Validate and normalize parsed metrics before attempting any write.
-      let normalizedMetrics;
-      try {
-        const result = normalizeAndValidateParsedMetrics(visionResult.parsed_metrics);
-        normalizedMetrics = result.normalized;
-        validationWarnings = result.warnings || [];
-      } catch (error) {
-        return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
-      }
-
-      // Rebuild effort row from normalized metrics so what's written is normalized
-      ({ effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(normalizedMetrics, {
-        ...formFields,
-        screenshot_date: parsedForResponse.date
-      }));
-
-      try {
-        const existingEffortSessionIds = await getEffortSessionIds();
-        const duplicate = existingEffortSessionIds
-          .map(id => String(id).toLowerCase())
-          .includes(String(sessionId).toLowerCase());
-
-        if (!duplicate) {
-          await appendRows(effortSheetName, [effortRow]);
-          sheetWrite = 'success';
-        }
-      } catch (error) {
-        sheetWrite = 'failed';
-      }
-    }
+    // Parse-only endpoint: build the effort row for the response preview, but never
+    // write it. Saving effort requires explicit owner approval via the
+    // approve-before-save flow (/api/complete-workout). sheet_write is always 'skipped'.
+    const { effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(parsedForResponse, formFields);
+    const sheetWrite = 'skipped';
 
     const responseBody = {
       status: visionResult.status,
@@ -1456,10 +1420,6 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
       effort_row: effortRow,
       sheet_write: sheetWrite
     };
-
-    if (validationWarnings.length > 0) {
-      responseBody.warnings = validationWarnings;
-    }
 
     return standardSuccess(req, res, 'parse-workout-image processed', responseBody, 200);
   } catch (error) {

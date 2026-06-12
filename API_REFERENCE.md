@@ -65,9 +65,11 @@ POST /api/admin/preview-test-rows
 ## Workout Ingestion Endpoints
 
 ```bash
-# Parse workout screenshot (image only)
+# Parse workout screenshot (image only) — parse-only, never writes
 POST /api/parse-workout-image
-# Multipart form-data: image=[file], auto_write=true
+# Multipart form-data: image=[file]
+# Returns parsed effort + a preview effort_row with sheet_write: "skipped".
+# To save effort, use the approve-before-save flow via /api/complete-workout.
 
 # Complete workout (image + log rows)
 POST /api/complete-workout
