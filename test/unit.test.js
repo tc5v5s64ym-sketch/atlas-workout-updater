@@ -2627,6 +2627,46 @@ test('buildMuscleGroupReadiness: returns all 5 patterns', () => {
   assert.deepEqual(patterns, ['core', 'hinge', 'lower', 'pull', 'push']);
 });
 
+// ── Continuous recovery curve (Phase 2a) ───────────────────────────────────────
+
+test('recovery curve: exposes a continuous recovery fraction that climbs with rest', () => {
+  const today = '2026-06-12';
+  const recoveryAt = daysAgo => {
+    const d = new Date(today); d.setUTCDate(d.getUTCDate() - daysAgo);
+    const rows = [makeLogRow(d.toISOString().slice(0, 10), 'S1', 'Chest', 100, 5, 2)];
+    return buildMuscleGroupReadiness(rows, { today }).find(r => r.pattern === 'push').recovery;
+  };
+  const r0 = recoveryAt(0), r1 = recoveryAt(1), r3 = recoveryAt(3), r6 = recoveryAt(6);
+  assert.equal(r0, 0, 'just-trained recovery must be 0');
+  assert.ok(r1 > r0 && r3 > r1 && r6 > r3, 'recovery must rise monotonically with rest days');
+  assert.ok(r6 > 0.9, 'a week out should be nearly fully recovered');
+  assert.equal(buildMuscleGroupReadiness([], { today }).find(r => r.pattern === 'push').recovery, null,
+    'never-trained pattern has null recovery');
+});
+
+test('recovery curve: a harder session (lower RIR) recovers slower than an easy one', () => {
+  const today = '2026-06-12';
+  const date = '2026-06-09'; // 3 days prior for both
+  const recoveryFor = rir =>
+    buildMuscleGroupReadiness([makeLogRow(date, 'S1', 'Chest', 100, 5, rir)], { today })
+      .find(r => r.pattern === 'push').recovery;
+  const hard = recoveryFor(0);   // trained to failure
+  const easy = recoveryFor(3);   // left plenty in the tank
+  assert.ok(easy > hard, `easy session must recover faster (easy=${easy}, hard=${hard})`);
+});
+
+test('recovery curve: intensity can change the readiness label at the same rest gap', () => {
+  const today = '2026-06-12';
+  const date = '2026-06-09'; // 3 days prior
+  const statusFor = rir =>
+    buildMuscleGroupReadiness([makeLogRow(date, 'S1', 'Chest', 100, 5, rir)], { today })
+      .find(r => r.pattern === 'push').status;
+  // A brutal (failure) session is still only "recovering" at 3 days, while a
+  // moderate one is "ready" — the curve, not a fixed day-bin, decides.
+  assert.equal(statusFor(0), 'recovering', 'failure session is still recovering at 3 days');
+  assert.equal(statusFor(2), 'ready', 'moderate session is ready at 3 days');
+});
+
 // ── Intent analytics: scoreIntents ────────────────────────────────────────────
 
 function makeIntentLogRows(entries) {
