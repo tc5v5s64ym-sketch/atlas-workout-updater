@@ -1474,6 +1474,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
   const formFields = req.body || {};
   const testMode = isTestModeEnabled(formFields.test_mode);
+  const writeId = formFields.write_id;
   const hasManualEffortMetrics = Boolean(formFields.effort_json || formFields.effort || formFields.duration);
 
   if (!req.file && !hasManualEffortMetrics) {
@@ -1611,7 +1612,40 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     let logAppendCount = rowsToWrite.length;
     let effortWritten = false;
+    let idempotency = { enabled: false, write_id: null };
     if (!testMode) {
+      // Idempotency guard: a retried write_id must never append a second time.
+      // Mirrors the /api/log-workout contract (beginWrite → completeWrite/failWrite).
+      idempotency = beginWrite(writeId, {
+        endpoint: '/api/complete-workout',
+        session_id: sessionId,
+        date: dateValue,
+        log_rows_count: rowsToWrite.length,
+        effort_only: effortOnly
+      });
+
+      if (idempotency.duplicate) {
+        const record = idempotency.record || {};
+        const originalData = (record.response && record.response.data) || {};
+        const duplicateData = {
+          ...originalData,
+          duplicate_write: true,
+          write_id: idempotency.write_id,
+          idempotency_status: record.status || 'unknown',
+          sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+          sheet_written: false,
+          original_sheet_written: originalData.sheet_written === true,
+          original_log_rows_written: originalData.log_rows_written ?? null,
+          original_effort_written: originalData.effort_written === true,
+          original_completed_at: record.completed_at || null
+        };
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        const dupMessage = record.status === 'completed'
+          ? 'Duplicate write_id; original complete-workout was already processed.'
+          : 'Duplicate write_id; original complete-workout is already in progress.';
+        return standardSuccess(req, res, dupMessage, { status: 'ok', message: dupMessage, data: duplicateData }, record.status === 'completed' ? 200 : 409);
+      }
+
       try {
         if (rowsToWrite.length > 0) {
           await appendRows(logSheetName, rowsToWrite);
@@ -1619,6 +1653,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         await appendRows(effortSheetName, [effortRow]);
         effortWritten = true;
       } catch (error) {
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         return standardError(req, res, 'Failed to append workout data.', null, 500);
       }
@@ -1678,6 +1713,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // include pending_exercises and auto_matches when present
     if (pendingExercises.length > 0) responseBody.pending_exercises = pendingExercises;
     if (autoMatches.length > 0) responseBody.auto_matches = autoMatches;
+
+    // Record the completed live write so a retried write_id replays this exact
+    // response instead of appending again. Dry runs never touch idempotency state.
+    if (!testMode && idempotency.enabled) {
+      responseBody.data.write_id = idempotency.write_id;
+      responseBody.data.duplicate_write = false;
+      responseBody.data.idempotency_status = 'completed';
+      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    }
 
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {

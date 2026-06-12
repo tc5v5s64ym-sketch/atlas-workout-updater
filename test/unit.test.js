@@ -3376,6 +3376,29 @@ test('write_id: blocked duplicate reports honestly instead of pretending to writ
   assert.match(app, /Duplicate tap blocked — this workout was already written/, 'duplicate status message must exist');
 });
 
+test('write_id: complete-workout sends write_id only on the live write', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('async function submitCompleteWorkout('), app.indexOf('async function submitCompleteWorkout(') + 800);
+  assert.match(fn, /\bwriteId\b/, 'submitCompleteWorkout must accept writeId');
+  assert.match(fn, /writeId && !testMode/, 'write_id must be withheld from dry-run previews');
+  assert.match(fn, /form\.append\('write_id'/, 'live write must send write_id');
+});
+
+test('write_id: screenshot and effort previews each stamp a write_id for the live write', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.ok((app.match(/writeId: generateWriteId\(\)/g) || []).length >= 2,
+    'both the screenshot and effort-only pendingWrite objects must carry a write_id');
+});
+
+test('write_id: screenshot approve accepts a blocked duplicate from complete-workout', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const idx = app.indexOf("pendingWrite.mode === 'screenshot'");
+  const branch = app.slice(idx, idx + 1000);
+  assert.match(branch, /duplicate_write === true/, 'must recognise a blocked duplicate');
+  assert.match(branch, /sheet_write === 'skipped_duplicate'/, 'must check the duplicate marker');
+  assert.match(branch, /original_sheet_written === true/, 'acceptance requires the original to have written');
+});
+
 // ── Coach declutter + shell cache bump ─────────────────────────────────────────
 
 test('declutter: load-session corrector lives inside the Details fold, off the main screen', () => {
