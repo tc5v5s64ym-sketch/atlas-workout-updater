@@ -167,6 +167,21 @@
     document.getElementById('effort-duration')?.focus();
   });
 
+  // Chat-first screenshot: picking a file is the "send" gesture. The moment a
+  // screenshot is chosen we fire the existing preview flow automatically — no
+  // separate Preview tap. app.js still owns the dry-run + approval gate.
+  const effortImage = document.getElementById('effort-image');
+  effortImage?.addEventListener('change', () => {
+    if (!effortImage.files || !effortImage.files.length) return;
+    const screenshotMode = document.querySelector('input[name="effort-mode"]:checked')?.value === 'screenshot';
+    if (!screenshotMode) return;
+    closeAttachMenu();
+    // rAF so chat.js can paint the attachment bubble before the request fires.
+    requestAnimationFrame(() => {
+      document.getElementById('logger-form')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    });
+  });
+
   /* ===== Time-of-day greeting ===== */
 
   const greeting = document.getElementById('coach-greeting');

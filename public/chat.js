@@ -36,13 +36,15 @@
   // app.js's submit handler runs preview; we only narrate the send.
   form.addEventListener('submit', () => {
     const text = (workoutText?.value || '').trim();
-    if (text) {
-      addUserBubble(text);
-      return;
-    }
-    const mode = document.querySelector('input[name="effort-mode"]:checked')?.value;
-    const file = document.getElementById('effort-image')?.files?.[0];
-    if (mode === 'screenshot' && file) addUserBubble(`\u{1F4F7} ${file.name}`);
+    if (text) addUserBubble(text);
+  });
+
+  // A chosen screenshot is the user's "message" — drop the attachment bubble in
+  // the moment it's picked, before the auto-preview fires (see nav.js).
+  const effortImage = document.getElementById('effort-image');
+  effortImage?.addEventListener('change', () => {
+    const file = effortImage.files?.[0];
+    if (file) addUserBubble(`\u{1F4F7} ${file.name}`);
   });
 
   // Bring Atlas's reply (preview card) into view when it appears.
@@ -63,14 +65,4 @@
     }).observe(loggerStatus, { childList: true });
   }
 
-  // Opening the nested Effort section must also open the outer Details fold.
-  const effortDetails = document.getElementById('effort-details');
-  effortDetails?.addEventListener('toggle', () => {
-    if (!effortDetails.open) return;
-    let node = effortDetails.parentElement;
-    while (node) {
-      if (node.tagName === 'DETAILS') node.open = true;
-      node = node.parentElement;
-    }
-  });
 })();

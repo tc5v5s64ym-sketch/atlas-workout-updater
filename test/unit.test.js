@@ -2989,6 +2989,61 @@ test('chat: styles define the thread bubbles and in-thread preview card', () => 
   assert.match(css, /\.composer-send/, 'must style the composer send button');
 });
 
+// ── Screenshot chat-first upload (Phase 1) ─────────────────────────────────────
+
+test('screenshot: picking a file auto-fires the preview (no separate Preview tap)', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  // A change listener on the file input dispatches the form submit automatically.
+  assert.match(nav, /effortImage\?\.addEventListener\('change'/, 'must listen for file selection');
+  assert.match(nav, /effort-mode"\]:checked'\)\?\.value === 'screenshot'/, 'must only auto-submit in screenshot mode');
+  assert.match(nav, /logger-form'\)\?\.dispatchEvent\(new Event\('submit'/, 'must dispatch the form submit');
+});
+
+test('screenshot: nav.js stays a visual router and never calls the API', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  assert.doesNotMatch(nav, /appendRows|sheet_write|confirm_delete|fetch\(|\/api\//, 'nav.js must not touch write paths');
+});
+
+test('screenshot: chat.js drops the attachment bubble on file change, not on submit', () => {
+  const chat = fs.readFileSync(path.join(repoRoot, 'public', 'chat.js'), 'utf8');
+  assert.match(chat, /effortImage\?\.addEventListener\('change'/, 'bubble must appear when the file is chosen');
+  // The submit handler must no longer carry the screenshot-bubble branch.
+  const submitBlock = chat.slice(chat.indexOf("addEventListener('submit'"), chat.indexOf("addEventListener('submit'") + 200);
+  assert.doesNotMatch(submitBlock, /effort-mode/, 'submit handler must not re-derive the screenshot bubble');
+});
+
+test('screenshot: Atlas replies in-thread with parsed effort and a "nothing saved" gate', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /function addAtlasEffortReply\(/, 'effort reply narrator must exist');
+  const fn = app.slice(app.indexOf('function addAtlasEffortReply('), app.indexOf('function addAtlasEffortReply(') + 1200);
+  assert.match(fn, /thread-messages/, 'reply must land in the chat thread');
+  assert.match(fn, /chat-bubble-atlas/, 'reply must read as an Atlas bubble');
+  assert.match(fn, /Nothing saved yet/, 'reply must state nothing is written yet');
+  assert.match(fn, /peak HR not visible in screenshot/, 'reply must surface a missing peak HR plainly');
+  // It must be called from the screenshot preview path.
+  assert.match(app, /renderCompleteWorkoutPreview\(result\);\s*\n\s*addAtlasEffortReply\(result\);/, 'screenshot path must narrate the reply');
+});
+
+test('screenshot: missing peak HR renders plainly in the preview table, not blank', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /effort\.peakHR == null \? 'not visible in screenshot'/, 'null peak HR must show explanatory text');
+});
+
+test('screenshot: the dry-run + approval gate is unchanged', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // Preview still asserts no-write proof before allowing approval.
+  assert.match(app, /hasCompleteWorkoutNoWriteProof\(result\)/, 'screenshot preview must still prove no-write');
+  // The narrator is read-only — it must not call any write endpoint.
+  const fn = app.slice(app.indexOf('function addAtlasEffortReply('), app.indexOf('function addAtlasEffortReply(') + 1200);
+  assert.doesNotMatch(fn, /api\(|fetch\(|complete-workout|log-workout/, 'narrator must not write');
+});
+
+test('screenshot: styles define the Atlas reply bubble', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.chat-bubble-atlas/, 'Atlas reply bubble must be styled');
+  assert.match(css, /\.atlas-reply-gate/, 'the "nothing saved" gate line must be styled');
+});
+
 // ── Trust loop card states (UI PR 4) ───────────────────────────────────────────
 
 test('trust cards: status card styles every write state row in the thread', () => {

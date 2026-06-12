@@ -1633,6 +1633,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         effortOnly
       };
       renderCompleteWorkoutPreview(result);
+      addAtlasEffortReply(result);
     } else if (effortOnly) {
       const result = await submitCompleteWorkout({ logRows, sessionId, date, location, notes, manualEffort, testMode: true });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
@@ -1815,13 +1816,44 @@ function renderCompleteWorkoutPreview(result) {
 
   previewContent.appendChild(el('h3', { text: data.effort_source === 'manual' ? 'Parsed effort (manual entry)' : 'Parsed effort (from screenshot)' }));
   const effort = data.parsed_effort || {};
+  // Peak HR is null when the screenshot has no Max/Peak HR label — say so plainly
+  // rather than rendering a blank cell the user might mistake for a parse error.
+  const peakHrCell = effort.peakHR == null ? 'not visible in screenshot' : effort.peakHR;
   previewContent.appendChild(renderTable(
     ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR', 'Type'],
-    [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, effort.peakHR, effort.workoutType]]
+    [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, peakHrCell, effort.workoutType]]
   ));
   previewContent.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 5` }));
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
+}
+
+// Narrate the parsed effort as a plain-language Atlas reply in the chat thread,
+// so a screenshot upload reads conversationally instead of as a cold table.
+// Read-only: this never writes; the approval gate in #preview-panel is unchanged.
+function addAtlasEffortReply(result) {
+  const thread = document.getElementById('thread-messages');
+  if (!thread) return;
+  const data = result?.data?.data || {};
+  const e = data.parsed_effort || {};
+  const parts = [];
+  if (e.duration) parts.push(String(e.duration));
+  if (e.activeCalories != null) parts.push(`${e.activeCalories} active cal`);
+  if (e.totalCalories != null) parts.push(`${e.totalCalories} total cal`);
+  if (e.averageHR != null) parts.push(`avg HR ${e.averageHR}`);
+  // Always state peak HR — including when the screenshot didn't show it.
+  parts.push(e.peakHR != null ? `peak HR ${e.peakHR}` : 'peak HR not visible in screenshot');
+
+  const summary = parts.length
+    ? `Parsed from screenshot: ${parts.join(' · ')}.`
+    : "I couldn't read clear effort metrics from that image — check it or switch to manual entry.";
+
+  const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas' }, [
+    el('div', { text: summary }),
+    el('div', { class: 'atlas-reply-gate', text: 'Nothing saved yet — review and approve below to write.' })
+  ]);
+  thread.appendChild(bubble);
+  bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 document.getElementById('cancel-preview-btn').addEventListener('click', invalidatePreview);
