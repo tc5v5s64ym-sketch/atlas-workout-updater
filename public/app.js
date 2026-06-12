@@ -1645,7 +1645,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         date: resolvedDate,
         location,
         notes,
-        effortOnly
+        effortOnly,
+        writeId: generateWriteId()
       };
       renderCompleteWorkoutPreview(result);
       addAtlasEffortReply(result);
@@ -1654,7 +1655,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true };
+      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId() };
       renderCompleteWorkoutPreview(result);
     } else {
       const effortRow = manualEffort;
@@ -1688,7 +1689,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   }
 });
 
-async function submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, manualEffort, testMode }) {
+async function submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, manualEffort, testMode, writeId }) {
   const form = new FormData();
   if (file) form.append('image', file);
   form.append('log_rows_json', JSON.stringify(logRows || []));
@@ -1698,6 +1699,9 @@ async function submitCompleteWorkout({ file, logRows, sessionId, date, location,
   if (notes) form.append('notes', notes);
   if (manualEffort) form.append('effort_json', JSON.stringify(manualEffort));
   if (testMode) form.append('test_mode', 'true');
+  // Only the live write carries the write_id; the server uses it to refuse a
+  // retried append. Dry-run previews never consume idempotency state.
+  if (writeId && !testMode) form.append('write_id', writeId);
   return api('/api/complete-workout', { method: 'POST', body: form });
 }
 
@@ -1923,14 +1927,22 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
       const writeResult = await submitCompleteWorkout({ ...pendingWrite, testMode: false });
       const writeData = writeResult?.data?.data || {};
-      if (writeData.effort_only === true) {
-        if (writeData.effort_written !== true || writeData.sheet_written !== true) {
-          throw new Error('Effort-only write did not confirm an Effort sheet write. Verify Sheets before approving again.');
-        }
-      } else {
-        const rowsWritten = writeData.log_rows_written;
-        if (!rowsWritten || rowsWritten === 0) {
-          throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+      // Server-side idempotency: a retried write_id is refused with proof the
+      // original write completed. Strict — accept only when the original itself
+      // confirmed a sheet write.
+      duplicateBlocked = writeData.duplicate_write === true &&
+        writeData.sheet_write === 'skipped_duplicate' &&
+        writeData.original_sheet_written === true;
+      if (!duplicateBlocked) {
+        if (writeData.effort_only === true) {
+          if (writeData.effort_written !== true || writeData.sheet_written !== true) {
+            throw new Error('Effort-only write did not confirm an Effort sheet write. Verify Sheets before approving again.');
+          }
+        } else {
+          const rowsWritten = writeData.log_rows_written;
+          if (!rowsWritten || rowsWritten === 0) {
+            throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
+          }
         }
       }
     } else {

@@ -445,6 +445,98 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
   }
 });
 
+test('api smoke: live complete-workout with write_id appends once and skips duplicate retry', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+
+  const buildForm = () => {
+    const form = new FormData();
+    form.append('session_id', 'COMPLETE-IDEMPOTENT-01');
+    form.append('date', '2026-06-11');
+    form.append('log_rows_json', JSON.stringify([]));
+    form.append('write_id', 'complete-write-idem-01');
+    form.append('effort_json', JSON.stringify({
+      duration: '42', activeCalories: 410, totalCalories: 520,
+      averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
+    }));
+    return form;
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const first = await requestMultipart('/api/complete-workout', buildForm());
+      const firstData = first.body.data.data;
+      assert.equal(first.response.status, 200, JSON.stringify(first.body));
+      assert.equal(firstData.sheet_written, true);
+      assert.equal(firstData.effort_written, true);
+      assert.equal(firstData.duplicate_write, false);
+      assert.equal(firstData.write_id, 'complete-write-idem-01');
+      assert.equal(firstData.idempotency_status, 'completed');
+      assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+      const duplicate = await requestMultipart('/api/complete-workout', buildForm());
+      const dupData = duplicate.body.data.data;
+      assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
+      assert.equal(dupData.duplicate_write, true);
+      assert.equal(dupData.write_id, 'complete-write-idem-01');
+      assert.equal(dupData.sheet_write, 'skipped_duplicate');
+      assert.equal(dupData.sheet_written, false);
+      assert.equal(dupData.original_sheet_written, true);
+      // Crucially, no second append fired.
+      assert.equal(fakeSheetsState.appendCalls.length, 1);
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: complete-workout dry-run with write_id does not consume idempotency state', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+
+  const effortJson = JSON.stringify({
+    duration: '42', activeCalories: 410, totalCalories: 520,
+    averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
+  });
+
+  await withMutedConsoleLog(async () => {
+    const previewForm = new FormData();
+    previewForm.append('session_id', 'COMPLETE-IDEMPOTENT-02');
+    previewForm.append('date', '2026-06-11');
+    previewForm.append('log_rows_json', JSON.stringify([]));
+    previewForm.append('write_id', 'complete-write-idem-02');
+    previewForm.append('test_mode', 'true');
+    previewForm.append('effort_json', effortJson);
+
+    const preview = await requestMultipart('/api/complete-workout', previewForm);
+    assert.equal(preview.response.status, 200, JSON.stringify(preview.body));
+    assert.equal(preview.body.data.data.test_mode, true);
+    assert.equal(preview.body.data.data.sheet_written, false);
+    assert.equal(preview.body.data.data.no_write_confirmed, true);
+    assert.equal(fakeSheetsState.appendCalls.length, 0);
+  });
+
+  fakeSheetsState.allowAppend = true;
+  try {
+    await withMutedConsoleLog(async () => {
+      // Same write_id is still spendable after a dry run — preview never consumed it.
+      const liveForm = new FormData();
+      liveForm.append('session_id', 'COMPLETE-IDEMPOTENT-02');
+      liveForm.append('date', '2026-06-11');
+      liveForm.append('log_rows_json', JSON.stringify([]));
+      liveForm.append('write_id', 'complete-write-idem-02');
+      liveForm.append('effort_json', effortJson);
+
+      const live = await requestMultipart('/api/complete-workout', liveForm);
+      assert.equal(live.response.status, 200, JSON.stringify(live.body));
+      assert.equal(live.body.data.data.sheet_written, true);
+      assert.equal(live.body.data.data.duplicate_write, false);
+      assert.equal(fakeSheetsState.appendCalls.length, 1);
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 test('api smoke: complete-workout still blocks blank workout text when no effort data exists', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const form = new FormData();
