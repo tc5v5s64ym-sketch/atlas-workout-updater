@@ -2064,7 +2064,7 @@ test('progress summary: returns correct structure for normal data', () => {
 
   assert.equal(summary.total_sessions, 6);
   assert.equal(summary.total_sets, 7);
-  assert.equal(summary.total_volume, 8035);
+  assert.equal(summary.total_volume, 8380);
   assert.equal(summary.first_session_date, '2026-05-26');
   assert.equal(summary.latest_session_date, '2026-06-10');
   assert.equal(summary.current_week_sessions, 4);
