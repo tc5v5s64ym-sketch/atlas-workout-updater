@@ -1163,7 +1163,7 @@ function rowsFromBackendParsedWorkout(parsed) {
   return parsed.sets.map((set, index) => ({
     exercise,
     set_number: String(index + 1),
-    weight: set.weight == null ? '' : String(set.weight),
+    weight: set.weight == null ? '0' : String(set.weight),
     reps: set.reps == null ? '' : String(set.reps),
     rir: set.rir == null ? '' : String(set.rir),
     notes: set.load_note ? set.load_note : ''

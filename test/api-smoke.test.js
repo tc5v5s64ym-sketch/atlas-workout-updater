@@ -465,3 +465,30 @@ test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns ro
   assert.equal(call.startIndex, 2);
   assert.equal(call.endIndex, 3);
 });
+
+test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', async () => {
+  // Regression: "Knee raises 20/2 20/2 13/2" produces weight:null from the parser.
+  // The frontend maps null → '0'. Backend must accept weight '0' (or 0) without
+  // throwing "Missing required log row field: weight".
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'BW-SMOKE-DRY-RUN',
+      date: '2026-06-12',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Hanging Knee Raises', set_number: 1, weight: 0, reps: 20, rir: 2, notes: '' },
+        { exercise: 'Hanging Knee Raises', set_number: 2, weight: 0, reps: 20, rir: 2, notes: '' },
+        { exercise: 'Hanging Knee Raises', set_number: 3, weight: 0, reps: 13, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200, `expected 200, got ${response.status}: ${JSON.stringify(body)}`);
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.log_rows_preview.length, 3);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
