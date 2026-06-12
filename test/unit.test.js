@@ -1582,6 +1582,45 @@ test('effort-only preview: submit handler allows empty workout rows when screens
   assert.match(submitSection, /mode: 'effort-only'/);
 });
 
+test('screenshot preview date resolution: screenshot mode does not hard-require a manual date', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('logger-form').addEventListener('submit'";
+  const submitSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf('async function submitCompleteWorkout(')
+  );
+
+  assert.match(submitSection, /const mode = effortMode\(\)/);
+  assert.match(submitSection, /if \(!date && mode !== 'screenshot'\)/);
+});
+
+test('screenshot preview date resolution: pendingWrite uses server-resolved date and session id', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('logger-form').addEventListener('submit'";
+  const submitSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf('async function submitCompleteWorkout(')
+  );
+
+  assert.match(submitSection, /const resolvedData = result\?\.data\?\.data \|\| \{\}/);
+  assert.match(submitSection, /const resolvedDate = resolvedData\.date \|\| date \|\| getLocalDateString\(\)/);
+  assert.match(submitSection, /const resolvedSessionId = resolvedData\.session_id \|\| sessionId \|\| generateSessionId\(resolvedDate\)/);
+  assert.match(submitSection, /document\.getElementById\('log-date'\)\.value = resolvedDate/);
+  assert.match(submitSection, /sessionIdInput\.value = resolvedSessionId/);
+  assert.match(submitSection, /pendingWrite = \{[\s\S]*mode: 'screenshot'[\s\S]*sessionId: resolvedSessionId,[\s\S]*date: resolvedDate/);
+});
+
+test('screenshot preview date resolution: multipart submit omits blank date and session id', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const submitFunction = appSource.slice(
+    appSource.indexOf('async function submitCompleteWorkout('),
+    appSource.indexOf('const LOG_PREVIEW_HEADERS')
+  );
+
+  assert.match(submitFunction, /if \(sessionId\) form\.append\('session_id', sessionId\)/);
+  assert.match(submitFunction, /if \(date\) form\.append\('date', date\)/);
+});
+
 test('effort-only preview: complete-workout preview shows no-workout copy and effort-only CTA', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const previewFn = appSource.slice(

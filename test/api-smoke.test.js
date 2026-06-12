@@ -27,6 +27,13 @@ const fakeSheetsState = {
   deleteCalls: []
 };
 
+function getLocalDateString(dateTime = new Date()) {
+  const year = dateTime.getFullYear();
+  const month = String(dateTime.getMonth() + 1).padStart(2, '0');
+  const day = String(dateTime.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     fakeSheetsState.appendCalls.push({ tabName, rows });
@@ -65,16 +72,19 @@ require.cache[sheetsPath] = {
   exports: fakeSheets
 };
 
+let fakeVisionParsedMetrics = {
+  date: null,
+  duration: '00:42:00',
+  activeCalories: 410,
+  totalCalories: 520,
+  averageHR: 148,
+  peakHR: 171,
+  workoutType: 'Traditional Strength Training'
+};
+
 const fakeVision = {
   parseWorkoutScreenshot: async () => ({
-    parsed_metrics: {
-      duration: '00:42:00',
-      activeCalories: 410,
-      totalCalories: 520,
-      averageHR: 148,
-      peakHR: 171,
-      workoutType: 'Traditional Strength Training'
-    }
+    parsed_metrics: { ...fakeVisionParsedMetrics }
   })
 };
 
@@ -262,6 +272,15 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
 
 test('api smoke: complete-workout allows effort-only screenshot preview with empty log rows', async () => {
   fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: null,
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
   const form = new FormData();
   form.append('session_id', 'EFFORT-SHOT-ONLY-01');
   form.append('date', '2026-06-11');
@@ -281,6 +300,86 @@ test('api smoke: complete-workout allows effort-only screenshot preview with emp
   assert.equal(data.effort_source, 'screenshot');
   assert.deepEqual(data.log_rows_preview, []);
   assert.deepEqual(data.rows_to_write, []);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: '2026-06-09',
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, '2026-06-09');
+  assert.equal(data.effort_row[0], '2026-06-09');
+  assert.match(data.session_id, /^20260609-(AM|PM)-01$/);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: complete-workout screenshot preview falls back to local today when no date is provided anywhere', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: null,
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  const today = getLocalDateString();
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, today);
+  assert.equal(data.effort_row[0], today);
+  assert.match(data.session_id, new RegExp(`^${today.replace(/-/g, '')}-(AM|PM)-01$`));
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: complete-workout manual date overrides parsed screenshot date', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: '2026-06-09',
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, '2026-06-11');
+  assert.equal(data.effort_row[0], '2026-06-11');
+  assert.match(data.session_id, /^20260611-(AM|PM)-01$/);
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
@@ -337,6 +436,15 @@ test('api smoke: complete-workout still blocks blank workout text when no effort
 
 test('api smoke: complete-workout still previews workout rows alongside screenshot effort', async () => {
   fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: null,
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
   const form = new FormData();
   form.append('session_id', 'EFFORT-WITH-WORKOUT-01');
   form.append('date', '2026-06-11');

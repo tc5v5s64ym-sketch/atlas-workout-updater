@@ -309,9 +309,43 @@ function buildExerciseCatalogEntries(rows) {
   return entries;
 }
 
+function getLocalDateString(dateTime = new Date()) {
+  const year = dateTime.getFullYear();
+  const month = String(dateTime.getMonth() + 1).padStart(2, '0');
+  const day = String(dateTime.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeDateCandidate(value) {
+  if (value === undefined || value === null) return '';
+  const trimmed = String(value).trim();
+  if (!trimmed) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const slashMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (!slashMatch) {
+    return '';
+  }
+  const [, monthRaw, dayRaw, year] = slashMatch;
+  const month = String(Number(monthRaw)).padStart(2, '0');
+  const day = String(Number(dayRaw)).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function toDateOnly(value) {
-  if (!value) return new Date().toISOString().slice(0, 10);
-  return String(value);
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return getLocalDateString();
+  }
+  return normalizeDateCandidate(value) || String(value).trim();
+}
+
+function resolveWorkoutDate({ manualDate, screenshotDate } = {}) {
+  if (manualDate !== undefined && manualDate !== null && String(manualDate).trim() !== '') {
+    return toDateOnly(manualDate);
+  }
+  return normalizeDateCandidate(screenshotDate) ||
+    getLocalDateString();
 }
 
 function formatDateForSessionId(dateValue) {
@@ -342,7 +376,10 @@ function isTestModeEnabled(value) {
 }
 
 function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
-  const dateValue = toDateOnly(formFields.date);
+  const dateValue = resolveWorkoutDate({
+    manualDate: formFields.date,
+    screenshotDate: formFields.screenshot_date ?? parsedMetrics?.date
+  });
   const sessionId = formFields.session_id || generateSessionId(dateValue);
 
   // If notes not provided, use workoutType when available
@@ -1377,7 +1414,10 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
       }
 
       // Rebuild effort row from normalized metrics so what's written is normalized
-      ({ effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(normalizedMetrics, formFields));
+      ({ effortRow, sessionId, dateValue } = buildEffortRowFromParsedMetrics(normalizedMetrics, {
+        ...formFields,
+        screenshot_date: parsedForResponse.date
+      }));
 
       try {
         const existingEffortSessionIds = await getEffortSessionIds();
@@ -1474,7 +1514,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     }
 
     // 3) Determine session/date
-    const dateValue = toDateOnly(formFields.date);
+    const dateValue = resolveWorkoutDate({
+      manualDate: formFields.date,
+      screenshotDate: visionResult.parsed_metrics?.date
+    });
     const sessionId = formFields.session_id || generateSessionId(dateValue);
 
     // 4) Check duplicate session protection
@@ -1525,6 +1568,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     // 6) Build effort_row from normalized metrics
     const { effortRow } = buildEffortRowFromParsedMetrics(normalizedMetrics, {
       date: dateValue,
+      screenshot_date: visionResult.parsed_metrics?.date,
       session_id: sessionId,
       location: formFields.location,
       notes: formFields.notes
