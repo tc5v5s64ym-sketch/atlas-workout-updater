@@ -26,7 +26,10 @@ module.exports = defineConfig({
     },
     {
       name: 'mobile-chromium',
-      use: { ...devices['iPhone 13'] }
+      // iPhone 13 defaults to WebKit; force Chromium so a single browser
+      // install covers both projects (locally and in CI). Viewport, touch,
+      // and mobile UA are kept from the device descriptor.
+      use: { ...devices['iPhone 13'], browserName: 'chromium' }
     }
   ]
 });

@@ -236,7 +236,8 @@ test('Preview flow renders a no-write review card from mocked APIs', async ({ pa
   await runPreview(page);
 
   await expect(page.locator('#thread-messages')).toContainText('bench 225 5/2 x3');
-  await expect(page.locator('#preview-content')).toContainText('Workout rows to write (3)');
+  await expect(page.locator('#preview-content')).toContainText('3 sets to write');
+  await expect(page.locator('#preview-content')).toContainText('Bench Press ×3');
   await expect(page.locator('#preview-content')).toContainText('bench -> Bench Press');
   expect(capture.parseRequests).toHaveLength(1);
   expect(capture.parseRequests[0]).toMatchObject({ text: 'bench 225 5/2 x3', test_mode: true });
@@ -286,16 +287,19 @@ test('Mobile viewport keeps the Coach composer and preview usable', async ({ pag
   await expect(page.locator('#preview-panel')).toBeVisible();
 });
 
-test('Progress surface renders mocked dashboard data without crashing', async ({ page }) => {
+test('Progress surface renders the Today screen from mocked data without crashing', async ({ page }) => {
   await openApp(page);
 
   await page.locator('.surface-btn[data-surface="progress"]').click();
 
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
-  await expect(page.locator('#progress-snapshot-card')).toContainText('Training Snapshot');
+  // Above the fold: hero pick + readiness strip
+  await expect(page.locator('#todays-pick')).toContainText('Today: Push');
+  await expect(page.locator('#todays-pick')).toContainText('Bench is ready for clean repeat work.');
+  // Raw pattern names map through FRIENDLY_PATTERN_LABELS (Pressing → Push)
+  await expect(page.locator('#todays-read')).toContainText('Push');
+  await expect(page.locator('#todays-read')).toContainText('Ready');
+  // Below the fold: glance-card content is in the DOM even while collapsed
   await expect(page.locator('#progress-snapshot')).toContainText('42');
-  await expect(page.locator('#progress-snapshot')).toContainText('4-week streak');
-  await expect(page.locator('#todays-read-card')).toContainText("Today's Read");
-  await expect(page.locator('#todays-read')).toContainText("Today's pick: Push");
   await expect(page.locator('#intent-grid')).toContainText('Bench + OHP');
 });

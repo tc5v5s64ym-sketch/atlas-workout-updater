@@ -12,3 +12,7 @@ credentials*.json
 *.pem
 backups/
 .claude/
+
+# Playwright transient output (traces, screenshots on failure)
+test-results/
+playwright-report/
