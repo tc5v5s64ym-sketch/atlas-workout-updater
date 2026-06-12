@@ -70,7 +70,7 @@ function setRecord({ weight = null, reps = null, rir = null, rpe = null, set_typ
   return row;
 }
 
-function buildLogResult({ rawText, rawName, canonicalName, sets, warnings = [] }) {
+function buildLogResult({ rawText, rawName, canonicalName, sets, warnings = [], needsCatalogReview = false }) {
   return {
     intent: 'log_sets',
     raw_text: rawText,
@@ -79,6 +79,7 @@ function buildLogResult({ rawText, rawName, canonicalName, sets, warnings = [] }
     canonical_name: canonicalName,
     sets,
     warnings,
+    ...(needsCatalogReview ? { needs_catalog_review: true } : {}),
   };
 }
 
@@ -333,6 +334,8 @@ function parseLogSets(rawText, context = {}) {
         rest: rawText,
       });
     }
+    const unknownExercise = parseUnknownExercise(rawText);
+    if (unknownExercise) return unknownExercise;
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
@@ -398,12 +401,72 @@ function parseSetGroups(text) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return parseDumbbellList(cleaned)
+  return parseDumbbellSlashRepeats(cleaned)
+    || parseDumbbellList(cleaned)
     || parseSetsFirst(cleaned)
     || parseWeightRepsSets(cleaned)
     || parseNaturalSets(cleaned)
     || parseDaleShorthand(cleaned)
     || [];
+}
+
+function parseUnknownExercise(rawText) {
+  const unknown = extractUnknownExerciseLead(rawText);
+  if (!unknown) return null;
+
+  const parsedSets = parseSetGroups(unknown.rest);
+  const sets = parsedSets.length ? parsedSets : parseBodyweightReps(unknown.rest);
+  if (!sets.length) return null;
+
+  const canonicalName = titleCaseFallback(unknown.rawName);
+  return buildLogResult({
+    rawText,
+    rawName: canonicalName,
+    canonicalName,
+    sets,
+    warnings: ['unknown_exercise'],
+    needsCatalogReview: true,
+  });
+}
+
+function extractUnknownExerciseLead(rawText) {
+  const tokens = normalizeParserText(rawText).split(/\s+/).filter(Boolean);
+  const start = tokens.findIndex(token => looksLikeSetToken(token));
+  if (start <= 0) return null;
+
+  const rawName = tokens
+    .slice(0, start)
+    .join(' ')
+    .replace(/^\s*(today|i did|did|was|were|then|and)\s+/i, '')
+    .trim();
+  if (!rawName) return null;
+
+  return {
+    rawName,
+    rest: tokens.slice(start).join(' ').trim(),
+  };
+}
+
+function looksLikeSetToken(token) {
+  return /^x\d+$/i.test(token)
+    || /^\d+(?:\.\d+)?(?:lb|lbs|s)?$/i.test(token)
+    || /^\d+\/\d+(?:\.\d+)?$/i.test(token);
+}
+
+function parseDumbbellSlashRepeats(text) {
+  const match = text.match(/^(\d+(?:\.\d+)?)s\s+(\d+)\/(\d+(?:\.\d+)?)\s+x(\d+)$/i);
+  if (!match) return null;
+  const weight = Number(match[1]);
+  const reps = Number(match[2]);
+  const rir = Number(match[3]);
+  const count = Number(match[4]);
+  if (count > 10) return null;
+  return Array.from({ length: count }, () => setRecord({
+    weight,
+    reps,
+    rir,
+    load_note: 'per_hand',
+  }));
 }
 
 function parseDumbbellList(text) {
