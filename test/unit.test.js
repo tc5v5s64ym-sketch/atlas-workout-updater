@@ -1764,6 +1764,22 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   assert.match(approveSection, /\.catch\(/, 'write reaction must fail quietly');
 });
 
+test('approve success message: effortOnly is captured before invalidatePreview nulls pendingWrite', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const approveSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf(anchor) + 6000
+  );
+  const captureAt = approveSection.indexOf('const wasEffortOnly = pendingWrite.effortOnly');
+  const invalidateAt = approveSection.indexOf('invalidatePreview()');
+  assert.ok(captureAt > -1, 'must capture effortOnly into a local before the write');
+  assert.ok(invalidateAt > -1, 'approve path must still invalidate the preview');
+  assert.ok(captureAt < invalidateAt, 'capture must happen before invalidatePreview clears pendingWrite');
+  const afterInvalidate = approveSection.slice(invalidateAt);
+  assert.doesNotMatch(afterInvalidate, /pendingWrite\./, 'nothing may dereference pendingWrite after invalidatePreview');
+});
+
 test('effort-only approve: complete-workout path accepts Effort-only writes without log rows', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
