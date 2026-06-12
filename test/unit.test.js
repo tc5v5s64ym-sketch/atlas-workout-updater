@@ -2114,7 +2114,7 @@ test('session queue: Current Lift Targets heading in index.html', () => {
 
 test('session queue: loadTodaysPlan includes helper copy about targets', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /not a required workout/, 'must include helper copy about targets');
+  assert.match(appSource, /progression targets.*not a required order|not a required order/, 'must include helper copy about targets');
   assert.match(appSource, /Log a few sessions/, 'must include new-user message');
 });
 
@@ -2153,4 +2153,35 @@ test('mobile tap fix: startLift coach panel includes back-to-session button', ()
   const fnBlock = appSource.slice(fnStart, fnStart + 3000);
   assert.match(fnBlock, /Back to session/, 'coach panel must have Back to session button');
   assert.match(fnBlock, /tab-dashboard/, 'back button must switch to dashboard tab');
+});
+
+// ── Start Any Lift From Dashboard ─────────────────────────────────────────────
+
+test('start-any-lift: plan cards are tappable and call startLift', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  assert.match(planFn, /plan-card-startable/, 'card must have startable class');
+  assert.match(planFn, /card\.addEventListener.*click/, 'card must have click handler');
+  assert.match(planFn, /startLift\(exerciseName/, 'card click must call startLift with exercise name');
+  assert.match(planFn, /e\.target\.closest.*lift-link/, 'card click must skip lift-link clicks');
+});
+
+test('start-any-lift: plan card footer has Tap to start hint and View progress link', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  assert.match(planFn, /plan-card-footer/, 'must have plan-card-footer container');
+  assert.match(planFn, /plan-card-tap-hint/, 'must have tap hint element');
+  assert.match(planFn, /Tap to start/, 'must include Tap to start text');
+  assert.match(planFn, /View progress/, 'must retain View progress secondary link');
+});
+
+test('start-any-lift: plan-card-startable has :active state in CSS', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /plan-card-startable:active/, 'startable cards must have :active touch state');
+  assert.match(css, /cursor.*pointer/, 'startable cards must set cursor:pointer');
+});
+
+test('start-any-lift: helper text tells user to tap any card', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /Tap any card to start that lift/, 'helper copy must guide mobile users');
 });

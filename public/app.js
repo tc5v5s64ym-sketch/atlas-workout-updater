@@ -375,7 +375,7 @@ async function loadTodaysPlan() {
     const recs = res.data?.recommendations || [];
     box.innerHTML = '';
 
-    box.appendChild(el('p', { class: 'muted', style: 'font-size:0.8rem;margin:0 0 8px', text: 'These are next targets by exercise, not a required workout.' }));
+    box.appendChild(el('p', { class: 'muted', style: 'font-size:0.8rem;margin:0 0 8px', text: 'Tap any card to start that lift. These are progression targets, not a required order.' }));
 
     if (!recs.length) {
       box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas can start giving better suggestions.' }));
@@ -387,7 +387,7 @@ async function loadTodaysPlan() {
       const t = r.next_target;
       const confidenceClass = r.confidence === 'high' ? 'plan-card-high' : r.confidence === 'medium' ? 'plan-card-medium' : 'plan-card-low';
       const exerciseName = r.exercise_name || r.liftCode;
-      const card = el('div', { class: `plan-card ${confidenceClass}` }, [
+      const card = el('div', { class: `plan-card ${confidenceClass} plan-card-startable` }, [
         el('div', { class: 'plan-card-lift' }, [
           el('span', { class: 'plan-card-lift-name', text: exerciseName }),
           el('span', { class: 'plan-card-code muted', text: r.liftCode })
@@ -395,8 +395,15 @@ async function loadTodaysPlan() {
         el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
         el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),
         el('div', { class: 'plan-card-rec', text: r.recommendation }),
-        el('a', { class: 'lift-link plan-card-progress-link', href: '#', 'data-lift': r.liftCode, text: 'View progress →' })
+        el('div', { class: 'plan-card-footer' }, [
+          el('span', { class: 'plan-card-tap-hint', text: 'Tap to start' }),
+          el('a', { class: 'lift-link plan-card-progress-link', href: '#', 'data-lift': r.liftCode, text: 'View progress' })
+        ])
       ]);
+      card.addEventListener('click', e => {
+        if (e.target.closest('.lift-link')) return;
+        startLift(exerciseName, r.liftCode, t.weight, t.reps, t.sets);
+      });
       grid.appendChild(card);
     }
     box.appendChild(grid);
