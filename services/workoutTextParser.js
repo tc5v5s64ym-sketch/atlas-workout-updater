@@ -537,6 +537,8 @@ function parseDaleShorthand(text) {
 
 function parseBodyweightReps(text) {
   const cleaned = normalizeParserText(text);
+
+  // "15 x3" → 3 sets of 15 reps BW
   const repeatMatch = cleaned.match(/^(\d+)\s*x(\d+)$/i);
   if (repeatMatch) {
     const reps = Number(repeatMatch[1]);
@@ -544,6 +546,23 @@ function parseBodyweightReps(text) {
     if (count > 10) return [];
     return Array.from({ length: count }, () => setRecord({ weight: null, reps, rir: null, weight_unit: null }));
   }
+
+  // "15/1 x3" → 3 sets of 15 reps @ RIR 1 BW
+  const slashRepeatMatch = cleaned.match(/^(\d+)\/(\d+(?:\.\d+)?)\s*x(\d+)$/i);
+  if (slashRepeatMatch) {
+    const reps = Number(slashRepeatMatch[1]);
+    const rir = Number(slashRepeatMatch[2]);
+    const count = Number(slashRepeatMatch[3]);
+    if (count > 10) return [];
+    return Array.from({ length: count }, () => setRecord({ weight: null, reps, rir, weight_unit: null }));
+  }
+
+  // "15/1 12/2 10/3" → 3 varied BW sets with RIR
+  const slashPairs = [...cleaned.matchAll(/\b(\d+)\/(\d+(?:\.\d+)?)\b/g)];
+  if (slashPairs.length > 0) {
+    return slashPairs.map(m => setRecord({ weight: null, reps: Number(m[1]), rir: Number(m[2]), weight_unit: null }));
+  }
+
   return [];
 }
 

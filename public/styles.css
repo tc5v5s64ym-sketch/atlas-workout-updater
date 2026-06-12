@@ -301,14 +301,26 @@ a.lift-link:hover { text-decoration: underline; }
 .session-list { list-style: decimal; padding-left: 1.4rem; margin: 8px 0 10px; }
 .session-item { margin: 4px 0; }
 .session-start-btn {
-  background: none; border: none; cursor: pointer; padding: 6px 0;
-  text-align: left; width: 100%; border-radius: 4px;
-  font-family: inherit; font-size: 0.9rem;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  cursor: pointer;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  display: block;
+  -webkit-tap-highlight-color: rgba(37,99,235,0.15);
+  -webkit-appearance: none;
+  appearance: none;
 }
-.session-start-btn:hover, .session-start-btn:focus { background: #f0f9ff; }
-.session-exercise { font-weight: 600; color: var(--ink); }
-.session-target { color: var(--muted); }
-.session-tap-hint { font-size: 0.75rem; color: var(--muted); opacity: 0.7; }
+.session-start-btn:hover { background: #eff6ff; border-left-color: var(--accent); }
+.session-start-btn:active { background: #dbeafe; transform: scale(0.98); }
+.session-exercise { font-weight: 600; color: var(--ink); display: block; }
+.session-target { color: var(--muted); display: block; font-size: 0.85rem; margin-top: 1px; }
+.session-tap-hint { font-size: 0.75rem; color: var(--accent); font-weight: 600; display: block; margin-top: 4px; }
 .session-why { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; font-size: 0.8rem; font-style: italic; color: var(--muted); }
 
 /* ===== Coach panel ===== */
@@ -320,6 +332,17 @@ a.lift-link:hover { text-decoration: underline; }
 .coach-panel-target { font-size: 1.1rem; color: #1d4ed8; font-weight: 600; margin: 4px 0; }
 .coach-panel-last { font-size: 0.82rem; color: var(--muted); }
 .coach-panel-reason { font-size: 0.82rem; color: var(--muted); margin-top: 4px; font-style: italic; }
+.coach-panel-btn-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+.coach-back-btn {
+  background: none; border: none; padding: 0; color: var(--accent);
+  font-size: 0.82rem; cursor: pointer; font-family: inherit; font-weight: 600;
+}
+.coach-back-btn:hover { text-decoration: underline; }
+
+/* Plan card progress link */
+.plan-card-lift-name { font-size: 0.82rem; color: var(--ink); font-weight: 600; }
+.plan-card-progress-link { font-size: 0.72rem; color: var(--muted); display: block; margin-top: 5px; text-decoration: none; }
+.plan-card-progress-link:hover { text-decoration: underline; color: var(--accent); }
 
 /* ===== Progression engine ===== */
 .next-target-card {

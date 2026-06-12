@@ -530,15 +530,40 @@ test('clarification_leaves_text_unparsed', () => {
     appSource.indexOf('function effortMode()')
   );
   const backendPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)');
-  const localPopulate = rowsFunction.indexOf('populateSetRows(parsed.rows)', backendPopulate + 1);
+  const localPopulate = rowsFunction.indexOf('populateSetRows(localResult.rows)');
   const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;');
-  const markParsed = rowsFunction.indexOf('lastParsedWorkoutText = workoutText');
+  const markParsed = rowsFunction.lastIndexOf('lastParsedWorkoutText = workoutText');
 
-  assert.ok(backendPopulate >= 0);
-  assert.ok(localPopulate > backendPopulate);
+  assert.ok(backendPopulate >= 0, 'backend populateSetRows call missing');
+  assert.ok(localPopulate >= 0, 'local fallback populateSetRows call missing');
   assert.ok(markParsed > backendPopulate);
   assert.ok(markParsed > localPopulate);
   assert.ok(rethrowCheck < markParsed);
+});
+
+test('update_last_set_and_delete_last_set_are_wired_in_app', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const rowsFunction = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('function effortMode()')
+  );
+  assert.match(rowsFunction, /parsed\.intent === 'delete_last_set'/, 'delete_last_set dispatch missing');
+  assert.match(rowsFunction, /parsed\.intent === 'update_last_set'/, 'update_last_set dispatch missing');
+  assert.match(rowsFunction, /deleteLastSetRow\(\)/, 'deleteLastSetRow call missing');
+  assert.match(rowsFunction, /applyUpdateToLastRow\(parsed\.update\)/, 'applyUpdateToLastRow call missing');
+  assert.match(appSource, /function deleteLastSetRow\(\)/, 'deleteLastSetRow definition missing');
+  assert.match(appSource, /function applyUpdateToLastRow\(update\)/, 'applyUpdateToLastRow definition missing');
+});
+
+test('update_last_set_parser_returns_update_fields', () => {
+  const result = parseWorkoutText('rir was 2');
+  assert.equal(result.intent, 'update_last_set');
+  assert.equal(result.update.rir, 2);
+});
+
+test('delete_last_set_parser_returns_intent', () => {
+  const result = parseWorkoutText('delete last set');
+  assert.equal(result.intent, 'delete_last_set');
 });
 
 test('conversational logger backend parser success alone cannot enable save', () => {
@@ -754,6 +779,29 @@ test('kr_bodyweight_repeat_parses_three_sets', () => {
   assert.equal(result.sets.length, 3);
   assert.ok(result.sets.every(set => set.weight === null && set.weight_unit === null));
   assert.deepEqual(result.sets.map(set => [set.reps, set.rir]), [[15, null], [15, null], [15, null]]);
+});
+
+test('kr_bodyweight_slash_rir_varied_sets', () => {
+  const result = parseWorkoutText('Kr 15/1 12/2 10/3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(set => set.weight === null && set.weight_unit === null));
+  assert.deepEqual(result.sets.map(set => [set.reps, set.rir]), [[15, 1], [12, 2], [10, 3]]);
+});
+
+test('kr_bodyweight_slash_plus_repeat', () => {
+  const result = parseWorkoutText('Kr 15/1 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Hanging Knee Raises');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(set => set.weight === null && set.reps === 15 && set.rir === 1));
+});
+
+test('kr_bodyweight_slash_plus_x11_refuses', () => {
+  const result = parseWorkoutText('Kr 15/1 x11');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.equal(result.sets, undefined);
 });
 
 test('dale_repeat_x3_still_works', () => {
@@ -1129,7 +1177,7 @@ test("today's plan: /api/plan/today filters out numeric-only lift codes", () => 
 
 test("today's plan: app.js uses exercise_name field for card title, not liftCode directly", () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 1600);
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
   assert.match(planFn, /exercise_name/, 'must reference exercise_name field');
   assert.match(planFn, /plan-card-code/, 'must include secondary lift code span');
 });
@@ -2040,7 +2088,7 @@ test('session queue: startLift function exists and switches to logger tab', () =
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /function startLift\(/, 'startLift must exist');
   const fnStart = appSource.indexOf('function startLift(');
-  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  const fnBlock = appSource.slice(fnStart, fnStart + 3500);
   assert.match(fnBlock, /tab-logger/, 'must switch to logger tab');
   assert.match(fnBlock, /coach-panel/, 'must show coach panel');
   assert.match(fnBlock, /workout-text/, 'must reference workout textarea');
@@ -2068,4 +2116,41 @@ test('session queue: loadTodaysPlan includes helper copy about targets', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /not a required workout/, 'must include helper copy about targets');
   assert.match(appSource, /Log a few sessions/, 'must include new-user message');
+});
+
+// ── Mobile tap fix tests ──────────────────────────────────────────────────────
+
+test('mobile tap fix: plan-card exercise name is not a lift-link anchor', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const planFn = appSource.slice(appSource.indexOf('loadTodaysPlan'), appSource.indexOf('loadTodaysPlan') + 2000);
+  // exercise name must be a span, not an anchor with lift-link
+  assert.match(planFn, /plan-card-lift-name/, 'exercise name must use plan-card-lift-name span');
+  // a View progress link must exist as the navigation path
+  assert.match(planFn, /View progress/, 'must have explicit View progress link');
+  assert.match(planFn, /plan-card-progress-link/, 'must use plan-card-progress-link class');
+  // must not use lift-link class on the exercise name span
+  assert.doesNotMatch(planFn, /lift-link.*text: exerciseName/, 'exercise name must not use lift-link directly');
+});
+
+test('mobile tap fix: session-start-btn has active state in CSS', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /session-start-btn:active/, 'must have :active state for touch feedback');
+  assert.match(css, /border-left.*accent/, 'must have accent border for visual affordance');
+});
+
+test('mobile tap fix: coach panel uses conversational wording', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnStart = appSource.indexOf('function startLift(');
+  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  assert.match(fnBlock, /Ok,.*time\./, 'coach panel must open with conversational greeting');
+  assert.match(fnBlock, /aim for/, 'coach panel must use aim for in target text');
+  assert.match(fnBlock, /Last session:/, 'coach panel must label last set as Last session');
+});
+
+test('mobile tap fix: startLift coach panel includes back-to-session button', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnStart = appSource.indexOf('function startLift(');
+  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
+  assert.match(fnBlock, /Back to session/, 'coach panel must have Back to session button');
+  assert.match(fnBlock, /tab-dashboard/, 'back button must switch to dashboard tab');
 });

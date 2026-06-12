@@ -273,14 +273,31 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
     panel.hidden = false;
     panel.className = 'coach-panel';
     panel.innerHTML = '';
-    panel.appendChild(el('div', {}, [
-      el('p', { class: 'coach-panel-exercise', text: exercise }),
-      el('p', { class: 'coach-panel-target', text: `Today: ${targetWeight} × ${targetReps} — ${targetSets} sets` }),
-      el('p', { class: 'coach-panel-reason', text: 'Loading last session…' })
-    ]));
-    const dismissBtn = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'margin-top:8px;font-size:0.8rem' });
-    dismissBtn.addEventListener('click', () => { panel.hidden = true; });
-    panel.appendChild(dismissBtn);
+    const buildPanelContent = (lastText, reasoning) => {
+      const nodes = [
+        el('p', { class: 'coach-panel-exercise', text: `Ok, ${exercise} time.` }),
+        lastText ? el('p', { class: 'coach-panel-last', text: `Last session: ${lastText}.` }) : null,
+        el('p', { class: 'coach-panel-target', text: `Today: aim for ${targetWeight} × ${targetReps} for ${targetSets} sets.` }),
+        reasoning ? el('p', { class: 'coach-panel-reason', text: reasoning }) : null
+      ].filter(Boolean);
+      const row = el('div', { class: 'coach-panel-btn-row' });
+      const dismissBtn = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'font-size:0.8rem' });
+      dismissBtn.addEventListener('click', () => { panel.hidden = true; });
+      const backBtn = el('button', { type: 'button', class: 'coach-back-btn', text: '← Back to session' });
+      backBtn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-tab="dashboard"]').classList.add('active');
+        document.getElementById('tab-dashboard').classList.add('active');
+        document.getElementById('suggested-session')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      row.appendChild(backBtn);
+      row.appendChild(dismissBtn);
+      return [...nodes, row];
+    };
+
+    panel.innerHTML = '';
+    panel.appendChild(el('div', {}, buildPanelContent(null, 'Loading last session…')));
     // Enhance async with last working set
     if (getApiKey()) {
       fetchReaction(liftCode).then(rec => {
@@ -290,15 +307,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
           ? (last.rir != null ? `${last.weight} × ${last.reps} @${last.rir}` : `${last.weight} × ${last.reps}`)
           : null;
         panel.innerHTML = '';
-        panel.appendChild(el('div', {}, [
-          el('p', { class: 'coach-panel-exercise', text: exercise }),
-          lastText ? el('p', { class: 'coach-panel-last', text: `Last: ${lastText}` }) : null,
-          el('p', { class: 'coach-panel-target', text: `Today: ${targetWeight} × ${targetReps} — ${targetSets} sets` }),
-          rec.reasoning ? el('p', { class: 'coach-panel-reason', text: rec.reasoning }) : null
-        ].filter(Boolean)));
-        const db = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'margin-top:8px;font-size:0.8rem' });
-        db.addEventListener('click', () => { panel.hidden = true; });
-        panel.appendChild(db);
+        panel.appendChild(el('div', {}, buildPanelContent(lastText, rec.reasoning || null)));
       }).catch(() => {});
     }
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -380,12 +389,13 @@ async function loadTodaysPlan() {
       const exerciseName = r.exercise_name || r.liftCode;
       const card = el('div', { class: `plan-card ${confidenceClass}` }, [
         el('div', { class: 'plan-card-lift' }, [
-          el('a', { class: 'lift-link', href: '#', 'data-lift': r.liftCode, text: exerciseName }),
+          el('span', { class: 'plan-card-lift-name', text: exerciseName }),
           el('span', { class: 'plan-card-code muted', text: r.liftCode })
         ]),
         el('div', { class: 'plan-card-target', text: `${t.weight} × ${t.reps}` }),
         el('div', { class: 'plan-card-sets', text: `${t.sets} sets` }),
-        el('div', { class: 'plan-card-rec', text: r.recommendation })
+        el('div', { class: 'plan-card-rec', text: r.recommendation }),
+        el('a', { class: 'lift-link plan-card-progress-link', href: '#', 'data-lift': r.liftCode, text: 'View progress →' })
       ]);
       grid.appendChild(card);
     }
@@ -793,6 +803,7 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 let pendingWrite = null;
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
+let activeExercise = null;
 
 // Populated after a successful manual write so the undo button can fire.
 // Cleared when a new preview cycle starts (form input → invalidatePreview).
@@ -1012,7 +1023,7 @@ async function parseWorkoutTextWithBackend(workoutText) {
     body: JSON.stringify({
       text: workoutText,
       context: {
-        activeExercise: null,
+        activeExercise,
         activeSessionType: null,
         todayPlan: null
       },
@@ -1027,13 +1038,23 @@ async function parseWorkoutTextWithBackend(workoutText) {
     throw err;
   }
 
-  const rows = rowsFromBackendParsedWorkout(data.parsed);
+  const parsed = data.parsed;
+  const intent = parsed?.intent;
+
+  if (intent === 'delete_last_set') {
+    return { intent: 'delete_last_set', rows: null, warnings: data.warnings || [] };
+  }
+  if (intent === 'update_last_set') {
+    return { intent: 'update_last_set', rows: null, update: parsed.update, warnings: data.warnings || [] };
+  }
+
+  const rows = rowsFromBackendParsedWorkout(parsed);
   if (!rows.length) {
     const err = new Error('Backend parser did not produce any set rows.');
     err.noFallback = true;
     throw err;
   }
-  return { rows, warnings: data.warnings || [] };
+  return { intent: 'log_sets', rows, warnings: data.warnings || [] };
 }
 
 function populateSetRows(rows) {
@@ -1042,29 +1063,62 @@ function populateSetRows(rows) {
   parsedRowsEditor.hidden = rows.length === 0;
 }
 
+function deleteLastSetRow() {
+  const rows = Array.from(setsTableBody.children);
+  if (!rows.length) return;
+  rows[rows.length - 1].remove();
+  if (!setsTableBody.children.length) parsedRowsEditor.hidden = true;
+}
+
+function applyUpdateToLastRow(update) {
+  if (!update) return;
+  const rows = Array.from(setsTableBody.children);
+  if (!rows.length) return;
+  const lastRow = rows[rows.length - 1];
+  if (update.weight != null) lastRow.querySelector('.set-weight').value = String(update.weight);
+  if (update.reps != null) lastRow.querySelector('.set-reps').value = String(update.reps);
+  if (update.rir != null) lastRow.querySelector('.set-rir').value = String(update.rir);
+}
+
 async function rowsFromWorkoutInput() {
   const workoutText = workoutTextInput.value.trim();
-  if (workoutText && workoutText !== lastParsedWorkoutText) {
-    try {
-      const parsed = await parseWorkoutTextWithBackend(workoutText);
-      populateSetRows(parsed.rows);
-      lastParserStatus = { source: 'backend' };
-    } catch (backendError) {
-      if (!shouldUseLocalFallback(backendError)) throw backendError;
-      setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
-      const parsed = parseWorkoutText(workoutText);
-      if (parsed.errors.length > 0) {
-        throw new Error(parsed.errors.join(' | '));
-      }
-      if (!parsed.rows.length) {
-        throw new Error('Workout text did not produce any set rows.');
-      }
-      populateSetRows(parsed.rows);
-      lastParserStatus = { source: 'local' };
-    }
+  if (!workoutText || workoutText === lastParsedWorkoutText) return;
+
+  let parsed;
+  try {
+    parsed = await parseWorkoutTextWithBackend(workoutText);
+  } catch (backendError) {
+    if (!shouldUseLocalFallback(backendError)) throw backendError;
+    setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
+    const localResult = parseWorkoutText(workoutText);
+    if (localResult.errors.length > 0) throw new Error(localResult.errors.join(' | '));
+    if (!localResult.rows.length) throw new Error('Workout text did not produce any set rows.');
+    populateSetRows(localResult.rows);
+    lastParserStatus = { source: 'local' };
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = workoutText;
+    return;
   }
+
+  if (parsed.intent === 'delete_last_set') {
+    deleteLastSetRow();
+    setStatus(loggerStatus, 'Last set removed.', 'ok');
+    lastParsedWorkoutText = workoutText;
+    return;
+  }
+
+  if (parsed.intent === 'update_last_set') {
+    applyUpdateToLastRow(parsed.update);
+    setStatus(loggerStatus, 'Last set updated.', 'ok');
+    lastParsedWorkoutText = workoutText;
+    return;
+  }
+
+  populateSetRows(parsed.rows);
+  lastParserStatus = { source: 'backend' };
+  activeExercise = parsed.rows[0]?.exercise || null;
+  parsedRowsEditor.hidden = true;
+  lastParsedWorkoutText = workoutText;
 }
 
 function shouldUseLocalFallback(err) {
@@ -1530,6 +1584,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = '';
     lastParserStatus = null;
+    activeExercise = null;
     setDefaultDate();
     setStatus(loggerStatus, 'Workout written to Google Sheets. ✓', 'ok');
     if (pendingLastWrite) {
