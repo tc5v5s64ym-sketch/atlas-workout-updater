@@ -60,6 +60,23 @@
         <div id="load-session-status"></div>
       </details>
 
+      <!-- Conversation thread: user bubbles, Atlas preview card, write/status replies -->
+      <div id="coach-thread" class="coach-thread">
+        <div id="thread-messages" aria-live="polite"></div>
+
+        <div id="preview-panel" hidden>
+          <h3>Review before saving</h3>
+          <div id="preview-content"></div>
+          <div class="action-row">
+            <button id="approve-btn" class="approve" disabled>Write to Google Sheets</button>
+            <button id="cancel-preview-btn" class="secondary">Edit / Cancel</button>
+          </div>
+          <p class="preview-gate-note" id="preview-gate-note">Run a preview above to enable this button.</p>
+        </div>
+
+        <div id="logger-status"></div>
+      </div>
+
       <form id="logger-form">
         <label class="workout-text-label" for="workout-text">Workout text</label>
         <div class="composer">
@@ -69,13 +86,44 @@
             <button type="button" id="attach-manual">Manual effort entry</button>
           </div>
           <textarea id="workout-text" class="workout-text" rows="2" placeholder="Bench 135 10/4, 225 5/2 x3&#10;Squats 225 5/2 x3"></textarea>
+          <button type="submit" id="preview-btn" class="composer-send" title="Preview — no data saved">Preview — no data saved</button>
         </div>
 
-        <div class="form-row" style="margin-top:12px">
-          <label>Date <input type="date" id="log-date" required></label>
-          <label>Session ID <input type="text" id="log-session-id" placeholder="auto if blank"></label>
-          <label>Location <input type="text" id="log-location" placeholder="Gym"></label>
-        </div>
+        <p class="safety-note compact">Sending previews with <code>test_mode=true</code> — nothing is written until you review the dry-run and tap <em>Write to Google Sheets</em>.</p>
+
+        <details id="logger-details" class="logger-details">
+          <summary>Details <span class="muted">(date, session, effort, notes)</span></summary>
+
+          <div class="form-row" style="margin-top:12px">
+            <label>Date <input type="date" id="log-date" required></label>
+            <label>Session ID <input type="text" id="log-session-id" placeholder="auto if blank"></label>
+            <label>Location <input type="text" id="log-location" placeholder="Gym"></label>
+          </div>
+
+          <details id="effort-details">
+            <summary>Effort <span class="muted">(optional)</span></summary>
+            <div class="form-row" style="margin-top:10px">
+              <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>
+              <label class="radio"><input type="radio" name="effort-mode" value="screenshot"> Apple Watch screenshot</label>
+            </div>
+
+            <div id="effort-manual" class="form-row">
+              <label>Duration <input type="text" id="effort-duration" placeholder="hh:mm:ss or minutes"></label>
+              <label>Active cal <input type="number" id="effort-active-cal" min="1" max="3000"></label>
+              <label>Total cal <input type="number" id="effort-total-cal" min="1" max="4000"></label>
+              <label>Avg HR <input type="number" id="effort-avg-hr" min="40" max="220"></label>
+              <label>Peak HR <input type="number" id="effort-peak-hr" min="40" max="230"></label>
+            </div>
+
+            <div id="effort-screenshot" class="form-row" hidden>
+              <label>Screenshot <input type="file" id="effort-image" accept="image/png,image/jpeg,image/webp"></label>
+            </div>
+          </details>
+
+          <div class="form-row">
+            <label class="wide">Workout notes <input type="text" id="log-notes" placeholder="optional"></label>
+          </div>
+        </details>
 
         <div id="parsed-rows-editor" class="parsed-rows-editor" hidden>
           <h3>Edit parsed rows</h3>
@@ -91,49 +139,7 @@
           <button type="button" id="copy-last-session-btn" class="secondary">Copy last session's exercises</button>
           <div id="copy-last-session-status"></div>
         </div>
-
-        <details id="effort-details">
-          <summary>Effort <span class="muted">(optional)</span></summary>
-          <div class="form-row" style="margin-top:10px">
-            <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>
-            <label class="radio"><input type="radio" name="effort-mode" value="screenshot"> Apple Watch screenshot</label>
-          </div>
-
-          <div id="effort-manual" class="form-row">
-            <label>Duration <input type="text" id="effort-duration" placeholder="hh:mm:ss or minutes"></label>
-            <label>Active cal <input type="number" id="effort-active-cal" min="1" max="3000"></label>
-            <label>Total cal <input type="number" id="effort-total-cal" min="1" max="4000"></label>
-            <label>Avg HR <input type="number" id="effort-avg-hr" min="40" max="220"></label>
-            <label>Peak HR <input type="number" id="effort-peak-hr" min="40" max="230"></label>
-          </div>
-
-          <div id="effort-screenshot" class="form-row" hidden>
-            <label>Screenshot <input type="file" id="effort-image" accept="image/png,image/jpeg,image/webp"></label>
-          </div>
-        </details>
-
-        <div class="form-row">
-          <label class="wide">Workout notes <input type="text" id="log-notes" placeholder="optional"></label>
-        </div>
-
-        <p class="safety-note"><strong>Two-step write flow.</strong> Preview sends your data with <code>test_mode=true</code> — nothing is written. Only after you review the dry-run and tap <em>Write to Google Sheets</em> does any data leave this device.</p>
-
-        <div class="action-row">
-          <button type="submit" id="preview-btn">Preview — no data saved</button>
-        </div>
       </form>
-
-      <div id="preview-panel" hidden>
-        <h3>Review before saving</h3>
-        <div id="preview-content"></div>
-        <div class="action-row">
-          <button id="approve-btn" class="approve" disabled>Write to Google Sheets</button>
-          <button id="cancel-preview-btn" class="secondary">Edit / Cancel</button>
-        </div>
-        <p class="preview-gate-note" id="preview-gate-note">Run a preview above to enable this button.</p>
-      </div>
-
-      <div id="logger-status"></div>
     </section>
 
     <!-- ============ TODAY (dashboard, read-only) ============ -->
@@ -305,5 +311,6 @@
 
   <script src="app.js"></script>
   <script src="nav.js"></script>
+  <script src="chat.js"></script>
 </body>
 </html>
