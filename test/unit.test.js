@@ -2989,3 +2989,24 @@ test('chat: styles define the thread bubbles and in-thread preview card', () => 
   assert.match(css, /\.coach-thread #preview-panel/, 'preview panel must restyle as an in-thread card');
   assert.match(css, /\.composer-send/, 'must style the composer send button');
 });
+
+// ── Trust loop card states (UI PR 4) ───────────────────────────────────────────
+
+test('trust cards: status card styles every write state row in the thread', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.coach-thread #logger-status \{/, 'status box must restyle as an in-thread card');
+  assert.match(css, /\.coach-thread #logger-status \.status-msg\.ok/, 'Written state row must be styled');
+  assert.match(css, /\.coach-thread #logger-status \.undo-write-btn/, 'Undo state row must be styled');
+  assert.match(css, /\.coach-thread #logger-status \.parser-status/, 'Verified state row must be styled');
+  assert.match(css, /\.coach-thread #logger-status \.atlas-suggestion/, 'Verdict state row must be styled');
+});
+
+test('trust cards: the trust loop wiring in app.js is untouched', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /sheet_write !== 'success'/, 'live write must still require sheet_write success proof');
+  assert.match(app, /log_rows_written/, 'live write must still verify rows-written count');
+  assert.match(app, /undo-last/, 'undo endpoint must still be wired');
+  assert.match(app, /confirm_delete: true/, 'undo must still send explicit confirm_delete');
+  assert.match(app, /Verified in Sheet/, 'readback verification message must remain');
+  assert.match(app, /undo-write-btn/, 'undo button must still be appended after a write');
+});
