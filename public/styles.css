@@ -700,6 +700,25 @@ button.approve {
   padding-top: 2px;
 }
 
+/* Chip reply cards — Atlas inline answers in #thread-messages */
+.chip-loading { color: var(--muted); font-size: 0.88rem; }
+.chip-reply-title { font-weight: 650; margin-bottom: var(--s1); }
+.chip-reply-sub { font-size: 0.88rem; color: var(--muted); margin-bottom: var(--s2); }
+.chip-reply-row { font-size: 0.88rem; margin: 2px 0; }
+.chip-reply-list { margin: var(--s1) 0 var(--s2) var(--s3); padding: 0; font-size: 0.88rem; }
+.chip-reply-list li { margin-bottom: 2px; }
+.chip-reply-more { display: block; margin-top: var(--s2); font-size: 0.8rem; color: var(--accent); text-decoration: none; }
+.chip-reply-more:hover { text-decoration: underline; }
+.chip-dots { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin: var(--s2) 0; }
+.chip-dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.chip-dot-label { font-size: 0.75rem; color: var(--muted); margin-right: 4px; }
+
 /* Compact safety footnote under the composer */
 .safety-note.compact {
   background: none;
