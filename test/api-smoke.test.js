@@ -564,6 +564,44 @@ test('api smoke: progress-summary returns stable read shape', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: sessions-recent returns stable read shape through read layer', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/sessions/recent?limit=5');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.ok(Array.isArray(body.data.sessions));
+  assert.ok(body.data.sessions.length > 0);
+  assert.equal(body.data.sessions[0].session_id, 'SESSION-NEW');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: weekly-report returns stable read shape through read layer', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/report/weekly?days=7');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(typeof body.data.period_start, 'string');
+  assert.equal(typeof body.data.period_end, 'string');
+  assert.equal(typeof body.data.sessions_count, 'number');
+  assert.equal(typeof body.data.total_sets, 'number');
+  assert.ok(Array.isArray(body.data.top_exercises));
+  assert.ok(Array.isArray(body.data.stalls_or_watchouts));
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: exercise-detail returns stable read shape through read layer', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/exercises/BEN01/detail');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(body.data.lift_code, 'BEN01');
+  assert.ok(Array.isArray(body.data.last_sessions));
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 // Missing test_mode currently means live-write branch.
 // This test pins the current behavior: absent test_mode = real append to Log_Cleaned.
 // A future PR may add an explicit confirm_write gate, but this task does not change that contract.
