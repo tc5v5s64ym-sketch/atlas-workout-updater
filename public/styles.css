@@ -430,7 +430,16 @@ main {
 .composer-send::before { content: "\2191"; font-size: 1.15rem; font-weight: 700; }
 .composer-send:disabled::before { content: "\2026"; }
 
-.workout-text-label { display: none; }
+/* Visually hidden — keeps the label accessible to screen readers */
+.workout-text-label {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Attachment sheet (＋ menu) */
 .attach-menu {
@@ -732,7 +741,11 @@ button.approve {
   color: var(--muted);
 }
 
-#effort-details { margin-top: var(--s3); }
+/* Effort details: hidden from view — the + menu opens it via JS when needed.
+   We use display:none (not the hidden attribute) so app.js wiring is unaffected. */
+#effort-details { display: none; }
+/* When opened programmatically by the + menu, reveal it */
+#effort-details.effort-open { display: block; margin-top: var(--s3); }
 #effort-details > summary {
   cursor: pointer;
   font-size: 0.85rem;
@@ -1191,6 +1204,13 @@ a.lift-link:hover { text-decoration: underline; }
   font-size: 1rem; border-radius: var(--r); letter-spacing: 0.01em;
 }
 
+/* "Edited since preview" nudge message in #logger-status */
+.edited-since-preview {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--warn);
+}
+
 /* ============================================================================
    Mobile
    ============================================================================ */
@@ -1209,4 +1229,26 @@ a.lift-link:hover { text-decoration: underline; }
   .action-row { flex-direction: column; }
   .action-row button { width: 100%; }
   .coach-greeting { font-size: 1.4rem; }
+
+  /* Coach surface: pin composer to bottom within thumb reach on narrow screens.
+     The thread grows and scrolls above it. Composer buttons are already 40px
+     from .composer-attach / .composer-send; the 44px min-height on button
+     above handles the approve/cancel row. */
+  body[data-surface="coach"] main {
+    padding-bottom: 0;          /* composer's own safe-area padding handles the gap */
+  }
+
+  /* Ensure the thread itself can scroll when content grows past the viewport */
+  #coach-thread {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    /* Limit height so the form stays sticky — subtract header + some padding */
+    max-height: calc(100dvh - 200px);
+  }
+
+  .composer-attach,
+  .composer-send {
+    min-height: 44px;
+    width: 44px;
+  }
 }
