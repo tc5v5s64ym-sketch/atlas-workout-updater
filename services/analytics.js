@@ -578,6 +578,410 @@ function buildExerciseDetail(logRows, liftCode, { recentDays = 30, today = null 
   };
 }
 
+// ─── Movement pattern classification ─────────────────────────────────────────
+// Ordered: hinge before lower so 'Posterior Chain' → hinge, not lower.
+// pull before push so 'Rear Delts' → pull, not push.
+const PATTERN_REGEXES = [
+  ['hinge', /posterior chain|lower back/i],
+  ['lower', /leg|quad|hamstring|glute|calf|hip flexor|hip|adductor/i],
+  ['pull',  /back|lat|rear delt|bicep|trap|rhomboid|row/i],
+  ['push',  /chest|pec|shoulder|delt|tricep/i],
+  ['core',  /core|ab|oblique/i]
+];
+
+function classifyMuscleGroup(muscleGroup) {
+  const s = String(muscleGroup || '').trim();
+  for (const [pattern, regex] of PATTERN_REGEXES) {
+    if (regex.test(s)) return pattern;
+  }
+  return null;
+}
+
+// ─── Per-movement-pattern readiness ──────────────────────────────────────────
+function buildMuscleGroupReadiness(logRows, { today = null } = {}) {
+  const todayStr = today || new Date().toISOString().slice(0, 10);
+  const normalized = logRows.map(normalizeLogRow).filter(r => r.weight > 0 && r.date_clean);
+
+  // key = `${session_id}:${pattern}` → { date, volume, minRir }
+  const bySessionPattern = {};
+  for (const row of normalized) {
+    const pattern = classifyMuscleGroup(row.muscle_group);
+    if (!pattern) continue;
+    const key = `${row.session_id}:${pattern}`;
+    if (!bySessionPattern[key]) bySessionPattern[key] = { date: row.date_clean, volume: 0, minRir: null };
+    const d = bySessionPattern[key];
+    if (row.date_clean > d.date) d.date = row.date_clean;
+    d.volume += (row.weight || 0) * (row.reps || 0);
+    if (row.rir != null && Number.isFinite(row.rir)) {
+      d.minRir = d.minRir == null ? row.rir : Math.min(d.minRir, row.rir);
+    }
+  }
+
+  const LABELS = { lower: 'Lower body', push: 'Pressing', pull: 'Pulling', hinge: 'Hinge', core: 'Core' };
+
+  return ['lower', 'push', 'pull', 'hinge', 'core'].map(pattern => {
+    let best = null;
+    for (const [key, d] of Object.entries(bySessionPattern)) {
+      if (key.endsWith(`:${pattern}`) && (!best || d.date > best.date)) best = d;
+    }
+
+    let daysSince = null;
+    if (best) daysSince = Math.floor((new Date(todayStr) - new Date(best.date)) / 86400000);
+
+    let status = 'unknown';
+    if (daysSince === null) status = 'unknown';
+    else if (daysSince === 0) status = 'fatigued';
+    else if (daysSince === 1 && best.minRir != null && best.minRir <= 1) status = 'fatigued';
+    else if (daysSince <= 2) status = 'recovering';
+    else if (daysSince <= 4) status = 'ready';
+    else status = 'fresh';
+
+    const detail = daysSince === null ? 'No training data'
+      : daysSince === 0 ? 'Trained today'
+      : daysSince === 1 ? `Trained yesterday${best.minRir != null ? ` — last effort @${best.minRir} RIR` : ''}`
+      : `${daysSince} days since last session`;
+
+    return {
+      pattern,
+      label: LABELS[pattern],
+      status,
+      daysSince,
+      lastDate: best?.date || null,
+      lastSessionVolume: best?.volume || 0,
+      lastSessionMinRir: best?.minRir ?? null,
+      detail
+    };
+  });
+}
+
+// ─── Intent scoring engine ────────────────────────────────────────────────────
+function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
+  const todayStr = today || new Date().toISOString().slice(0, 10);
+  const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr });
+  const fatigue = computeFatigueStatus(logRows, new Date(todayStr + 'T12:00:00'));
+  const stalls = detectStalls(logRows);
+
+  const rm = Object.fromEntries(readiness.map(r => [r.pattern, r]));
+  const canTrain = (...ps) => ps.some(p => ['ready', 'fresh'].includes(rm[p]?.status));
+  const isFatigued = (...ps) => ps.some(p => rm[p]?.status === 'fatigued');
+  const isFresh = (...ps) => ps.some(p => rm[p]?.status === 'fresh');
+
+  // Collect all lift codes with muscle-group context
+  const validCode = c => c && /[a-zA-Z]/.test(c);
+  const normalized = logRows.map(normalizeLogRow).filter(r => validCode(r.lift_code) && r.weight > 0 && r.date_clean);
+
+  const liftInfo = new Map(); // liftCode → { pattern, lastDate }
+  for (const row of normalized) {
+    const existing = liftInfo.get(row.lift_code);
+    if (!existing || row.date_clean > existing.lastDate) {
+      liftInfo.set(row.lift_code, { pattern: classifyMuscleGroup(row.muscle_group), lastDate: row.date_clean });
+    }
+  }
+
+  // Get recommendations for each lift (only those with a next_target)
+  const allRecs = [];
+  for (const [liftCode, info] of liftInfo) {
+    const rec = recommendNextSet(logRows, liftCode);
+    if (rec.next_target && rec.sessions_analyzed > 0) {
+      allRecs.push({ ...rec, pattern: info.pattern });
+    }
+  }
+  // Sort by most recently trained so exercises are in recency order
+  allRecs.sort((a, b) => {
+    const da = a.last_working_sets?.length ? a.last_working_sets[a.last_working_sets.length - 1].date_clean : '';
+    const db = b.last_working_sets?.length ? b.last_working_sets[b.last_working_sets.length - 1].date_clean : '';
+    return db.localeCompare(da);
+  });
+
+  const upwardLifts = allRecs.filter(r => r.e1rm_trend === 'up');
+  const fatiguedPatterns = readiness.filter(r => r.status === 'fatigued');
+  const freshPatterns = readiness.filter(r => r.status === 'fresh');
+  const readyPatterns = readiness.filter(r => ['ready', 'fresh'].includes(r.status));
+
+  const lastDate = normalized.reduce((max, r) => r.date_clean > max ? r.date_clean : max, '');
+  const daysSinceLast = lastDate ? Math.floor((new Date(todayStr) - new Date(lastDate)) / 86400000) : null;
+
+  // Build exercise list filtered by allowed movement patterns
+  function exForPatterns(patterns, max = 6) {
+    return allRecs
+      .filter(r => patterns.includes(r.pattern))
+      .slice(0, max)
+      .map(r => ({
+        exercise: r.exercise_name,
+        lift_code: r.liftCode,
+        target_weight: r.next_target.weight,
+        target_reps: r.next_target.reps,
+        target_sets: r.next_target.sets,
+        reason: r.recommendation
+      }));
+  }
+
+  // Standard pivot rules for an exercise list
+  function pivotFor(exercises) {
+    return exercises.slice(0, 2).flatMap(ex => [
+      { exercise: ex.exercise, condition: 'Set 1 lands at @1 RIR', action: 'Hold weight — do not increase today' },
+      { exercise: ex.exercise, condition: 'Set 1 lands at @0 RIR', action: 'Drop 5–10 lbs, back-off sets only' }
+    ]);
+  }
+
+  const intents = [];
+
+  // ── Build Strength ───────────────────────────────────────────────
+  {
+    let score = 60;
+    const why = [];
+    const data = [];
+    const protects = [];
+
+    if (fatigue.status !== 'high') score += 20;
+    else { score -= 15; why.push('Weekly volume is elevated — monitor total load'); }
+    if (daysSinceLast === 0) score -= 15;
+    if (daysSinceLast >= 2) score += 10;
+    if (isFatigued('lower')) { score += 5; why.push('Lower body is recovering — upper strength is the smart target'); protects.push('Lower-body recovery'); }
+    if (isFatigued('push')) score -= 20;
+    if (canTrain('push', 'pull')) score += 15;
+    const upPush = upwardLifts.filter(r => r.pattern === 'push');
+    if (upPush.length) {
+      score += 10;
+      why.push(`${upPush[0].exercise_name} is trending up — good time to push strength`);
+      data.push({ label: upPush[0].exercise_name, value: `→ ${upPush[0].next_target.weight} × ${upPush[0].next_target.reps}`, context: 'trending up' });
+    }
+    if (isFresh('pull')) { why.push('Pulling work is overdue — important for shoulder balance'); protects.push('Shoulder health via pulling rotation'); }
+    if (rm.lower?.daysSince) data.push({ label: 'Lower body', value: `${rm.lower.daysSince}d since last session`, context: rm.lower.status });
+
+    const exercises = exForPatterns(['push', 'pull']);
+    const confReasons = [];
+    if (upPush.length) confReasons.push('Pressing trend is upward');
+    if (isFatigued('lower')) confReasons.push('Clear lower-body fatigue signal');
+    if (allRecs.filter(r => r.pattern === 'push').length) confReasons.push('Recent pressing data available');
+
+    intents.push({
+      id: 'build_strength',
+      label: 'Build Strength',
+      score,
+      focus: isFatigued('lower') ? 'Upper body — press + pull' : 'Heavy compound work',
+      confidence: score >= 75 ? 'high' : score >= 55 ? 'medium' : 'low',
+      confidence_reasons: confReasons.length ? confReasons : ['Training data available'],
+      why_today: why.length ? why : ['Good time for heavy compound work'],
+      data_points: data,
+      what_it_protects: protects.length ? protects : ['Strength trajectory'],
+      watch_for: ['Shoulder pain above 3/10', 'Warmups feeling unusually heavy'],
+      pivot_logic: pivotFor(exercises),
+      exercises
+    });
+  }
+
+  // ── Build Muscle ─────────────────────────────────────────────────
+  {
+    let score = 55;
+    const why = [];
+
+    if (fatigue.status === 'normal') { score += 15; why.push('Volume load is in a normal range — good conditions for hypertrophy work'); }
+    if (fatigue.status === 'high') score -= 15;
+    if (readyPatterns.length >= 2) { score += 10; why.push('Multiple muscle groups are recovered'); }
+    if (upwardLifts.length === 0) score += 8;
+    if (daysSinceLast === 0) score -= 10;
+
+    const exercises = exForPatterns(['push', 'pull', 'lower', 'core'], 6);
+    intents.push({
+      id: 'build_muscle',
+      label: 'Build Muscle',
+      score,
+      focus: 'Moderate load, 6–12 reps, higher volume',
+      confidence: score >= 65 ? 'medium' : 'low',
+      confidence_reasons: ['Volume-focused training available'],
+      why_today: why.length ? why : ['Build volume across recovered muscle groups'],
+      data_points: fatigue.ratio ? [{ label: 'Weekly load', value: `${fatigue.ratio}× baseline`, context: fatigue.status }] : [],
+      what_it_protects: ['Muscle tissue development', 'Volume accumulation'],
+      watch_for: ['Track RIR on high-rep sets', 'Avoid if feeling systemically fatigued'],
+      pivot_logic: pivotFor(exercises),
+      exercises
+    });
+  }
+
+  // ── Fix Blind Spots ──────────────────────────────────────────────
+  {
+    let score = 40;
+    const why = [];
+    const data = [];
+    const PLABEL = { lower: 'Lower body', push: 'Pressing', pull: 'Pulling', hinge: 'Hinge', core: 'Core' };
+
+    for (const p of freshPatterns) {
+      score += 20;
+      why.push(`${PLABEL[p.pattern]} has not been trained in ${p.daysSince} days — rotation overdue`);
+      data.push({ label: PLABEL[p.pattern], value: `${p.daysSince}d since last session`, context: 'overdue' });
+    }
+
+    const freshIds = freshPatterns.map(p => p.pattern);
+    const exercises = freshIds.length ? exForPatterns(freshIds) : exForPatterns(['pull', 'core']);
+    intents.push({
+      id: 'fix_blind_spots',
+      label: 'Fix Blind Spots',
+      score,
+      focus: freshIds.length ? freshPatterns.map(p => PLABEL[p.pattern]).join(' + ') : 'Neglected movements',
+      confidence: freshIds.length > 0 ? 'high' : 'low',
+      confidence_reasons: freshIds.length > 0 ? ['Specific underworked patterns identified from data'] : ['No clear gaps detected'],
+      why_today: why.length ? why : ['Check for any movements not done recently'],
+      data_points: data,
+      what_it_protects: ['Movement pattern balance', 'Injury prevention via balanced training'],
+      watch_for: ['Ease back into a rested pattern — do not max effort after a long gap'],
+      pivot_logic: [],
+      exercises
+    });
+  }
+
+  // ── Balanced Day ─────────────────────────────────────────────────
+  {
+    let score = 50;
+    const why = [];
+    const allModerate = readiness.every(r => ['recovering', 'ready', 'unknown'].includes(r.status));
+    if (allModerate) { score += 20; why.push('All movement patterns are in a moderate state'); }
+    if (fatiguedPatterns.length) score -= 15;
+    if (freshPatterns.length) score -= 10;
+    if (fatigue.status === 'normal') score += 10;
+
+    const exercises = exForPatterns(['push', 'pull', 'lower', 'hinge', 'core'], 6);
+    intents.push({
+      id: 'balanced',
+      label: 'Balanced Day',
+      score,
+      focus: 'One exercise per major movement pattern',
+      confidence: allModerate ? 'medium' : 'low',
+      confidence_reasons: allModerate ? ['Balanced readiness across patterns'] : ['Some patterns may not be ready'],
+      why_today: why.length ? why : ['A mix of movements when no single pattern stands out'],
+      data_points: [],
+      what_it_protects: ['Training consistency', 'Pattern balance'],
+      watch_for: ['Adjust volume if any pattern feels heavier than expected'],
+      pivot_logic: pivotFor(exercises),
+      exercises
+    });
+  }
+
+  // ── Recovery / Pump ──────────────────────────────────────────────
+  {
+    let score = 30;
+    const why = [];
+
+    if (fatigue.status === 'high') { score += 35; why.push('Weekly volume load is high — active recovery is the smart play'); }
+    if (fatiguedPatterns.length >= 2) { score += 20; why.push(`${fatiguedPatterns.length} muscle groups are still recovering`); }
+    if (daysSinceLast === 0) { score += 15; why.push('Already trained today — this is a light second session'); }
+    if (fatigue.status === 'low') score -= 20;
+
+    const baseExercises = exForPatterns(['push', 'pull', 'core'], 4);
+    const exercises = baseExercises.map(ex => ({
+      ...ex,
+      target_weight: Math.round(ex.target_weight * 0.75 / 5) * 5,
+      target_reps: Math.min(15, ex.target_reps + 4),
+      reason: 'Light pump — 70–75% load, 12–15 reps, 2 sets'
+    }));
+    intents.push({
+      id: 'recovery_pump',
+      label: 'Recovery / Pump',
+      score,
+      focus: 'Light loads, 12–15 reps, blood flow',
+      confidence: fatigue.status === 'high' ? 'high' : 'low',
+      confidence_reasons: fatigue.status === 'high' ? ['High weekly volume detected'] : ['Best reserved for genuine fatigue'],
+      why_today: why.length ? why : ['Use when you want to move but not add training stress'],
+      data_points: fatigue.ratio ? [{ label: 'Weekly fatigue', value: `${fatigue.ratio}× baseline`, context: fatigue.status }] : [],
+      what_it_protects: ['Recovery from accumulated load', 'Movement quality'],
+      watch_for: ['If warmups feel great, upgrade to Build Muscle instead'],
+      pivot_logic: [],
+      exercises
+    });
+  }
+
+  // ── Short Session ────────────────────────────────────────────────
+  {
+    let score = 45;
+    const why = [];
+
+    if (fatigue.status === 'high') { score += 15; why.push('Fatigue is elevated — a shorter session manages total stress'); }
+    if (daysSinceLast >= 3) { score += 10; why.push('Been a few days — a short session gets training back on track'); }
+
+    const exercises = exForPatterns(['push', 'pull'], 3).map(ex => ({ ...ex, target_sets: Math.min(ex.target_sets, 2) }));
+    intents.push({
+      id: 'short_session',
+      label: 'Short Session',
+      score,
+      focus: '2–3 compounds, 20–30 minutes',
+      confidence: 'medium',
+      confidence_reasons: ['Always viable — adapts to any situation'],
+      why_today: why.length ? why : ['Quick session when time or energy is limited'],
+      data_points: [],
+      what_it_protects: ['Training habit', 'Consistency without overloading'],
+      watch_for: ['If you start feeling good, extend to Build Strength or Build Muscle'],
+      pivot_logic: [],
+      exercises
+    });
+  }
+
+  // ── Test Progress ────────────────────────────────────────────────
+  {
+    let score = 35;
+    const why = [];
+    const data = [];
+
+    if (upwardLifts.length > 0) {
+      score += 30;
+      const best = upwardLifts[0];
+      why.push(`${best.exercise_name} is trending upward — conditions are right for a PR attempt`);
+      data.push({ label: best.exercise_name, value: `e1RM trending up`, context: `target ${best.next_target.weight} × ${best.next_target.reps}` });
+    }
+    if (daysSinceLast >= 3) score += 20;
+    if (fatigue.status === 'high') score -= 25;
+    if (daysSinceLast != null && daysSinceLast <= 1) score -= 20;
+    if (fatiguedPatterns.length >= 2) score -= 15;
+
+    const exercises = upwardLifts.slice(0, 3).map(r => ({
+      exercise: r.exercise_name,
+      lift_code: r.liftCode,
+      target_weight: r.next_target.weight,
+      target_reps: r.next_target.reps,
+      target_sets: 1,
+      reason: `PR attempt — ${r.recommendation}`
+    }));
+    intents.push({
+      id: 'test_progress',
+      label: 'Test Progress',
+      score,
+      focus: 'PR attempts on strongest trending lifts',
+      confidence: upwardLifts.length > 0 && fatigue.status !== 'high' ? 'high' : 'low',
+      confidence_reasons: upwardLifts.length > 0 ? ['Upward e1RM trend detected'] : ['No clear upward trend found'],
+      why_today: why.length ? why : ['Best when a lift has trended up for 3+ sessions and fatigue is low'],
+      data_points: data,
+      what_it_protects: [],
+      watch_for: ['Warmup must feel smooth before going heavy', 'Abort PR attempt if set 1 is harder than expected', 'Do not test when overall fatigue is high'],
+      pivot_logic: upwardLifts.slice(0, 1).map(r => ({ exercise: r.exercise_name, condition: 'Warmup feels heavy', action: 'Abort PR — switch to a regular strength session' })),
+      exercises
+    });
+  }
+
+  // ── Custom (always available, never starred) ─────────────────────
+  intents.push({
+    id: 'custom', label: 'Custom', score: 50, focus: 'You decide',
+    confidence: null, confidence_reasons: [],
+    why_today: ['Define your own intent for today'],
+    data_points: [], what_it_protects: [], watch_for: [], pivot_logic: [], exercises: []
+  });
+
+  // Sort, mark the top non-custom intent as recommended
+  intents.sort((a, b) => b.score - a.score);
+  const top = intents.find(i => i.id !== 'custom');
+  for (const i of intents) i.recommended = (i === top);
+
+  return {
+    today: todayStr,
+    todays_read: {
+      patterns: readiness,
+      recommended_intent_id: top?.id ?? null,
+      recommended_label: top?.label ?? null,
+      recommended_reason: top?.focus ?? null
+    },
+    intents
+  };
+}
+
+
 function buildSuggestedSession(logRows, { today = null } = {}) {
   const ANCHOR_TYPES = {
     squat: ['SQ01', 'SQ'],
@@ -889,5 +1293,8 @@ module.exports = {
   buildWeeklyReport,
   buildExerciseDetail,
   buildRecentSessions,
-  buildSuggestedSession
+  buildSuggestedSession,
+  classifyMuscleGroup,
+  buildMuscleGroupReadiness,
+  scoreIntents
 };

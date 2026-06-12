@@ -35,7 +35,9 @@ const {
   buildWeeklyReport,
   buildExerciseDetail,
   buildRecentSessions,
-  buildSuggestedSession
+  buildSuggestedSession,
+  buildMuscleGroupReadiness,
+  scoreIntents
 } = require('./services/analytics');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
 const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
@@ -972,6 +974,20 @@ app.get('/api/plan/suggested-session', async (req, res) => {
     return standardSuccess(req, res, 'Suggested session', session);
   } catch (error) {
     return standardError(req, res, 'Failed to build suggested session', error.message, 500);
+  }
+});
+
+// GET /api/plan/intent-recommendation
+app.get('/api/plan/intent-recommendation', async (req, res) => {
+  try {
+    const [allLog, allEffort] = await Promise.all([
+      getSheetRows(logSheetName),
+      getSheetRows(effortSheetName)
+    ]);
+    const result = scoreIntents(allLog, allEffort);
+    return standardSuccess(req, res, 'Intent recommendation', result);
+  } catch (error) {
+    return standardError(req, res, 'Failed to build intent recommendation', error.message, 500);
   }
 });
 
