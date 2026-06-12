@@ -773,6 +773,12 @@ button.approve {
   background: var(--warn-soft); border: 1px solid var(--warn-border);
   border-radius: var(--r); padding: 12px 14px; margin: var(--s3) 0; font-size: 0.85rem;
 }
+.effort-missing-chip {
+  background: var(--warn-soft); border: 1px solid var(--warn-border);
+  border-radius: var(--r); padding: 10px 12px; margin: var(--s2) 0; font-size: 0.85rem;
+}
+.effort-fix-link { display: block; margin: var(--s1) 0 var(--s2); font-size: 0.82rem; color: var(--accent); text-decoration: none; }
+.effort-fix-link:hover { text-decoration: underline; }
 .preview-ok {
   background: var(--ok-soft); border: 1px solid var(--ok-border);
   border-radius: var(--r); padding: 12px 14px; margin: var(--s3) 0; font-size: 0.85rem;
