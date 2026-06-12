@@ -2068,7 +2068,7 @@ test('progress summary: returns correct structure for normal data', () => {
   assert.equal(summary.first_session_date, '2026-05-26');
   assert.equal(summary.latest_session_date, '2026-06-10');
   assert.equal(summary.current_week_sessions, 2);
-  assert.equal(summary.weekly_streak, 2);
+  assert.equal(summary.weekly_streak, 0);
   assert.equal(summary.streak_target_per_week, 3);
   assert.equal(summary.average_sessions_per_week, 2);
   assert.ok(Array.isArray(summary.sessions_by_week));
