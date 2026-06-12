@@ -3093,3 +3093,38 @@ test('write_id: blocked duplicate reports honestly instead of pretending to writ
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(app, /Duplicate tap blocked — this workout was already written/, 'duplicate status message must exist');
 });
+
+// ── Coach declutter + shell cache bump ─────────────────────────────────────────
+
+test('declutter: load-session corrector lives inside the Details fold, off the main screen', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const foldBlock = html.slice(html.indexOf('id="logger-details"'), html.indexOf('id="parsed-rows-editor"'));
+  assert.match(foldBlock, /id="load-session-btn"/, 'session corrector must be inside the Details fold');
+  // It must not appear before the thread anymore
+  const beforeThread = html.slice(html.indexOf('id="tab-logger"'), html.indexOf('id="coach-thread"'));
+  assert.doesNotMatch(beforeThread, /load-session-details/, 'corrector must not clutter the greeting area');
+});
+
+test('declutter: composer form docks to the bottom of the Coach surface', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /#tab-logger\.active\s*\{[^}]*flex-direction:\s*column/, 'Coach surface must be a column');
+  assert.match(css, /#logger-form\s*\{[^}]*position:\s*sticky/, 'composer form must be sticky');
+  assert.match(css, /#logger-form\s*\{[^}]*margin-top:\s*auto/, 'composer must push to the bottom when thread is short');
+});
+
+test('declutter: safety note still proves test_mode and stays compact', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /safety-note compact/, 'safety note must use the compact style');
+  assert.match(html, /test_mode=true/, 'the no-write promise must remain visible');
+});
+
+test('shell cache: service worker version bumped and all shell scripts precached', () => {
+  const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
+  assert.match(sw, /atlas-shell-v2/, 'cache name must be bumped so stale styles are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v1/, 'old cache name must be gone');
+  for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/chat.js']) {
+    assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
+  }
+  // The API must still never be intercepted
+  assert.match(sw, /startsWith\('\/api'\)/, 'API traffic must stay uncached');
+});
