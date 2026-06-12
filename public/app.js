@@ -455,20 +455,47 @@ async function loadSuggestedSession() {
 
 async function loadDashboard() {
   if (!getApiKey()) {
-    for (const id of ['progress-snapshot', 'todays-read', 'intent-grid', 'todays-plan', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    const pickBox = document.getElementById('todays-pick');
+    if (pickBox) pickBox.innerHTML = '<span class="muted">Set your API key in Settings to see today\'s plan.</span>';
+    for (const id of ['progress-snapshot', 'intent-grid', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
       const target = document.getElementById(id);
       if (target) target.innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
     }
-    const readCard = document.getElementById('todays-read-card');
-    const gridCard = document.getElementById('intent-grid-card');
-    if (readCard) readCard.hidden = false;
-    if (gridCard) gridCard.hidden = false;
     return;
   }
 
-  loadProgressSnapshot();
-  loadIntentDashboard();
-  loadTodaysPlan();
+  // Fire intent-recommendation + progress/summary first — they feed the above-fold region.
+  const [intentResult, summaryResult] = await Promise.allSettled([
+    api('/api/plan/intent-recommendation'),
+    api('/api/progress/summary')
+  ]);
+
+  const intentData = intentResult.status === 'fulfilled' ? (intentResult.value.data || {}) : null;
+  const summaryData = summaryResult.status === 'fulfilled' ? (summaryResult.value.data || {}) : null;
+
+  if (intentData) {
+    renderTodaysRead(intentData);
+    renderCoachReadStrip(intentData);
+    renderTodaysPick(intentData);
+    renderIntentGrid(intentData);
+    setOtherTrainingHint(intentData);
+  } else {
+    const pickBox = document.getElementById('todays-pick');
+    if (pickBox) pickBox.innerHTML = '<span class="muted">Could not load today\'s pick.</span>';
+  }
+
+  if (summaryData) {
+    renderConsistencyLine(summaryData);
+    renderProgressSnapshot(summaryData);
+    setGlanceHint('this-week-hint', buildConsistencyText(summaryData));
+  } else {
+    const line = document.getElementById('consistency-line');
+    if (line) line.innerHTML = '<span class="muted">Could not load.</span>';
+  }
+
+  wireStartSessionBtn(intentData);
+
+  // Below-fold sources load independently; each fills its own glance card.
   loadCoaching();
   loadWeeklySummary();
   loadRecentHistory();
@@ -476,19 +503,7 @@ async function loadDashboard() {
   loadStalls();
 }
 
-/* ===== Training Snapshot (read-only — GET /api/progress/summary) ===== */
-
-async function loadProgressSnapshot() {
-  const box = document.getElementById('progress-snapshot');
-  if (!box) return;
-  try {
-    const res = await api('/api/progress/summary');
-    renderProgressSnapshot(res.data || {});
-  } catch (err) {
-    box.innerHTML = '';
-    box.appendChild(el('span', { class: 'muted', text: `Could not load snapshot: ${err.message}` }));
-  }
-}
+/* ===== Training Snapshot (read-only — rendered from loadDashboard's progress/summary fetch) ===== */
 
 function renderProgressSnapshot(s) {
   const box = document.getElementById('progress-snapshot');
@@ -540,26 +555,7 @@ function renderProgressSnapshot(s) {
   }
 }
 
-/* ===== Intent Dashboard ===== */
-
-async function loadIntentDashboard() {
-  const readCard = document.getElementById('todays-read-card');
-  const gridCard = document.getElementById('intent-grid-card');
-  try {
-    const res = await api('/api/plan/intent-recommendation');
-    const data = res.data || {};
-    renderTodaysRead(data);
-    renderCoachReadStrip(data);
-    renderIntentGrid(data);
-    if (readCard) readCard.hidden = false;
-    if (gridCard) gridCard.hidden = false;
-  } catch (err) {
-    const readBox = document.getElementById('todays-read');
-    if (readBox) readBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
-    if (readCard) readCard.hidden = false;
-    if (gridCard) gridCard.hidden = true;
-  }
-}
+/* ===== Intent Dashboard — rendering handled by loadDashboard ===== */
 
 // Plain-language overrides so the glance layer never needs gym jargon.
 const FRIENDLY_PATTERN_LABELS = { Hinge: 'Hips & back', Pressing: 'Push', Pulling: 'Pull', 'Lower body': 'Legs' };
@@ -599,12 +595,9 @@ function renderTodaysRead(data) {
   }
   box.appendChild(dotRow);
 
-  if (todaysRead.recommended_label) {
-    box.appendChild(el('p', { class: 'todays-read-rec', text: `Today's pick: ${todaysRead.recommended_label}` }));
-  }
-  if (todaysRead.recommended_reason) {
-    box.appendChild(el('p', { class: 'todays-read-reason', text: todaysRead.recommended_reason }));
-  }
+  // recommended_label and reason now live in #todays-pick via renderTodaysPick
+  if (!patterns.length) box.hidden = true;
+  else box.hidden = false;
 }
 
 function renderCoachReadStrip(data) {
@@ -652,6 +645,79 @@ function renderIntentGrid(data) {
   }
   box.appendChild(grid);
   box.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;margin-top:6px', text: 'Tap any tile to see the coaching brief and start a session.' }));
+}
+
+/* ===== Today — hero card, consistency line, start-session wiring ===== */
+
+function renderTodaysPick(data) {
+  const box = document.getElementById('todays-pick');
+  if (!box) return;
+  box.innerHTML = '';
+  const todaysRead = data.todays_read || {};
+  const intents = data.intents || [];
+  const recommended = intents.find(i => i.recommended);
+
+  if (!todaysRead.recommended_label) {
+    box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas can start suggesting what to train.' }));
+    return;
+  }
+
+  box.appendChild(el('div', { class: 'today-pick-headline', text: `Today: ${todaysRead.recommended_label}` }));
+
+  const whyLines = recommended?.why_today?.slice(0, 2) || [];
+  const reason = whyLines.length
+    ? whyLines[0]
+    : todaysRead.recommended_reason || recommended?.focus || '';
+  if (reason) {
+    box.appendChild(el('p', { class: 'today-pick-reason', text: reason }));
+  }
+  if (whyLines.length > 1) {
+    box.appendChild(el('p', { class: 'today-pick-reason muted', text: whyLines[1] }));
+  }
+}
+
+function buildConsistencyText(s) {
+  const target = Number(s.streak_target_per_week || 3);
+  const streak = Number(s.weekly_streak || 0);
+  const current = Number(s.current_week_sessions || 0);
+  if (streak > 0) {
+    return `\u{1F525} ${streak}-week streak · ${current}/${target} this week`;
+  }
+  const remaining = Math.max(0, target - current);
+  return `${current}/${target} sessions this week · ${remaining} more to restart your streak`;
+}
+
+function renderConsistencyLine(s) {
+  const box = document.getElementById('consistency-line');
+  if (!box) return;
+  box.textContent = buildConsistencyText(s);
+}
+
+function setOtherTrainingHint(data) {
+  const intents = data.intents || [];
+  const others = intents.filter(i => !i.recommended);
+  setGlanceHint('other-training-hint', others.length ? `${others.length} other option${others.length === 1 ? '' : 's'}` : 'See all options');
+}
+
+function wireStartSessionBtn(data) {
+  const btn = document.getElementById('start-session-btn');
+  if (!btn) return;
+  if (!data) { btn.hidden = true; return; }
+  const recommended = (data.intents || []).find(i => i.recommended);
+  const firstEx = recommended?.exercises?.[0];
+  const target = firstEx?.next_target;
+
+  if (firstEx && target) {
+    btn.textContent = 'START SESSION';
+    btn.hidden = false;
+    btn.onclick = () => startLift(firstEx.exercise || firstEx.liftCode, firstEx.liftCode, target.weight, target.reps, target.sets || 3);
+  } else if (recommended) {
+    btn.textContent = 'See options';
+    btn.hidden = false;
+    btn.onclick = () => openIntentDrawer(recommended);
+  } else {
+    btn.hidden = true;
+  }
 }
 
 function openIntentDrawer(intent) {

@@ -2464,9 +2464,14 @@ test('session queue: coach-panel element exists in index.html logger section', (
   assert.match(loggerSection, /id="coach-panel"/, 'coach-panel must be in logger section');
 });
 
-test('session queue: Current Lift Targets heading in index.html', () => {
+test('today-screen: above-fold elements exist in index.html', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  assert.match(html, /Current Lift Targets/, 'heading must say Current Lift Targets');
+  const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
+  assert.match(dashSection, /id="todays-pick"/, 'today\'s pick hero card must exist');
+  assert.match(dashSection, /id="start-session-btn"/, 'START SESSION button must exist');
+  assert.match(dashSection, /id="consistency-line"/, 'consistency line must exist');
+  // Intent grid stays — now in a glance-card
+  assert.match(dashSection, /id="intent-grid"/, 'intent-grid must remain');
 });
 
 test('dashboard simplification: Suggested Session card removed from dashboard HTML', () => {
@@ -2474,19 +2479,18 @@ test('dashboard simplification: Suggested Session card removed from dashboard HT
   const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
   assert.doesNotMatch(dashSection, /id="suggested-session"/, 'suggested-session element must not be in dashboard');
   assert.doesNotMatch(dashSection, /<h2>Suggested Session<\/h2>/, 'Suggested Session heading must not be in dashboard');
-  assert.match(dashSection, /intent-grid-card/, 'What to train today tiles must remain');
-  assert.match(dashSection, /todays-plan/, 'Current Lift Targets must remain');
+  assert.match(dashSection, /id="intent-grid"/, 'intent-grid tiles must remain');
 });
 
 test('dashboard simplification: loadDashboard does not call loadSuggestedSession', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const dashFn = appSource.slice(
     appSource.indexOf('async function loadDashboard('),
-    appSource.indexOf('async function loadDashboard(') + 700
+    appSource.indexOf('async function loadDashboard(') + 1200
   );
   assert.doesNotMatch(dashFn, /loadSuggestedSession/, 'loadDashboard must not call loadSuggestedSession');
-  assert.match(dashFn, /loadIntentDashboard/, 'loadDashboard must still call loadIntentDashboard');
-  assert.match(dashFn, /loadTodaysPlan/, 'loadDashboard must still call loadTodaysPlan');
+  assert.match(dashFn, /intent-recommendation/, 'loadDashboard must call the intent-recommendation endpoint');
+  assert.match(dashFn, /progress\/summary/, 'loadDashboard must call progress/summary');
 });
 
 test('dashboard simplification: loadSuggestedSession guards against missing DOM element', () => {
@@ -2973,35 +2977,30 @@ test('scoreIntents: intent-recommendation route is GET and read-only', () => {
 
 // ── Intent Dashboard Frontend ──────────────────────────────────────────────────
 
-test('intent dashboard: loadIntentDashboard exists and calls intent-recommendation endpoint', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /async function loadIntentDashboard\(/, 'loadIntentDashboard must exist');
-  const fn = appSource.slice(
-    appSource.indexOf('async function loadIntentDashboard('),
-    appSource.indexOf('async function loadIntentDashboard(') + 500
-  );
-  assert.match(fn, /\/api\/plan\/intent-recommendation/, 'must call intent-recommendation endpoint');
-  assert.match(fn, /renderTodaysRead/, 'must call renderTodaysRead');
-  assert.match(fn, /renderIntentGrid/, 'must call renderIntentGrid');
-});
-
-test('intent dashboard: loadDashboard calls loadIntentDashboard', () => {
+test('intent dashboard: loadDashboard calls intent-recommendation and renders results', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const dashFn = appSource.slice(
     appSource.indexOf('async function loadDashboard('),
-    appSource.indexOf('async function loadDashboard(') + 900
+    appSource.indexOf('async function loadDashboard(') + 1400
   );
-  assert.match(dashFn, /loadIntentDashboard\(\)/, 'loadDashboard must call loadIntentDashboard');
+  assert.match(dashFn, /\/api\/plan\/intent-recommendation/, 'must call intent-recommendation endpoint');
+  assert.match(dashFn, /renderTodaysRead/, 'must call renderTodaysRead');
+  assert.match(dashFn, /renderIntentGrid/, 'must call renderIntentGrid');
+  assert.match(dashFn, /renderTodaysPick/, 'must call renderTodaysPick (hero card)');
+});
+
+test('intent dashboard: readiness strip and intent-grid containers exist in index.html', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="todays-read"/, 'todays-read container must exist in HTML');
+  assert.match(html, /id="intent-grid"/, 'intent-grid container must exist in HTML');
 });
 
 test('intent dashboard: Todays Read and Intent Grid cards exist in index.html', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  assert.match(html, /id="todays-read-card"/, 'todays-read-card must exist in HTML');
   assert.match(html, /id="todays-read"/, 'todays-read container must exist in HTML');
-  assert.match(html, /id="intent-grid-card"/, 'intent-grid-card must exist in HTML');
+  assert.match(html, /id="todays-pick"/, 'todays-pick hero card must exist in HTML');
   assert.match(html, /id="intent-grid"/, 'intent-grid container must exist in HTML');
-  assert.match(html, /Today's Read/, 'must have Today\'s Read heading');
-  assert.match(html, /What to train today/, 'must have What to train today heading');
+  assert.match(html, /id="start-session-btn"/, 'START SESSION button must exist in HTML');
 });
 
 test('intent dashboard: Intent Drawer overlay exists in index.html', () => {
@@ -3024,7 +3023,6 @@ test('intent dashboard: renderTodaysRead and renderIntentGrid render correct con
   );
   assert.match(readFn, /pattern-dots/, 'renderTodaysRead must render pattern-dots container');
   assert.match(readFn, /pattern-dot-/, 'must apply per-status CSS class to dots');
-  assert.match(readFn, /todays-read-rec/, 'must render recommendation label');
 
   const gridFn = appSource.slice(
     appSource.indexOf('function renderIntentGrid('),
@@ -3359,23 +3357,25 @@ test('trust cards: the trust loop wiring in app.js is untouched', () => {
 
 // ── Progress surface v1: Training Snapshot (UI PR 5) ───────────────────────────
 
-test('snapshot: Training Snapshot card leads the Today dashboard', () => {
+test('today-screen: above-fold leads with pick hero, not snapshot grid', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
-  assert.match(dashSection, /id="progress-snapshot-card"/, 'snapshot card must be on the dashboard');
-  assert.match(dashSection, /Training Snapshot/, 'snapshot heading must be present');
-  const snapIdx = dashSection.indexOf('progress-snapshot-card');
-  const readIdx = dashSection.indexOf('todays-read-card');
-  assert.ok(snapIdx < readIdx, 'snapshot must lead the dashboard, above Today\'s Read');
+  assert.match(dashSection, /id="todays-pick"/, 'today\'s pick hero must be in dashboard');
+  assert.match(dashSection, /id="consistency-line"/, 'consistency line must be in dashboard');
+  // snapshot moves to a glance-card, not above the fold
+  assert.match(dashSection, /id="progress-snapshot"/, 'snapshot data container must still exist (inside glance)');
+  const pickIdx = dashSection.indexOf('todays-pick');
+  const snapIdx = dashSection.indexOf('progress-snapshot');
+  assert.ok(pickIdx < snapIdx, 'pick hero must appear before the snapshot glance card');
 });
 
-test('snapshot: loadProgressSnapshot reads the summary endpoint and renders metrics', () => {
+test('snapshot: progress/summary data is fetched and rendered by loadDashboard', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(app, /async function loadProgressSnapshot/, 'loader must exist');
   assert.match(app, /\/api\/progress\/summary/, 'must read the progress summary endpoint');
   assert.match(app, /function renderProgressSnapshot/, 'renderer must exist');
   assert.match(app, /metric-grid/, 'must render the metric grid');
-  assert.match(app, /loadProgressSnapshot\(\);/, 'loadDashboard must call the snapshot loader');
+  assert.match(app, /function renderConsistencyLine/, 'consistency line renderer must exist');
+  assert.match(app, /function buildConsistencyText/, 'consistency text builder must exist');
 });
 
 test('snapshot: streak copy rewards consistency and explains the restart', () => {
@@ -3395,13 +3395,13 @@ test('snapshot: styles define the metric grid, streak and consistency strip', ()
   assert.match(css, /\.week-bar-hit/, 'streak-hit week bar style must exist');
 });
 
-test('snapshot: snapshot loader is read-only — no write calls added', () => {
+test('snapshot: renderProgressSnapshot is read-only — no write calls', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fnStart = app.indexOf('async function loadProgressSnapshot');
-  const fnEnd = app.indexOf('async function loadTodaysPlan');
+  const fnStart = app.indexOf('function renderProgressSnapshot(');
+  const fnEnd = app.indexOf('function renderProgressSnapshot(') + 1800;
   const snapshotBlock = app.slice(fnStart, fnEnd);
-  assert.ok(snapshotBlock.length > 0, 'snapshot block must exist before loadTodaysPlan');
-  assert.doesNotMatch(snapshotBlock, /POST|log-workout|complete-workout|undo|confirm_delete/, 'snapshot code must be read-only');
+  assert.ok(snapshotBlock.length > 10, 'renderProgressSnapshot block must exist');
+  assert.doesNotMatch(snapshotBlock, /POST|log-workout|complete-workout|undo|confirm_delete/, 'snapshot renderer must be read-only');
 });
 
 // ── Frontend write_id idempotency wiring ───────────────────────────────────────
@@ -3503,7 +3503,8 @@ test('shell cache: service worker version bumped and all shell scripts precached
 test('glance: data-heavy dashboard cards collapse to one friendly line each', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const dashSection = html.slice(html.indexOf('tab-dashboard'), html.indexOf('tab-progress'));
-  for (const hint of ['recent-prs-hint', 'stalls-hint', 'weekly-summary-hint', 'recent-history-hint', 'coaching-hint']) {
+  // coaching-hint is merged into the weekly card; weekly-summary-hint serves both
+  for (const hint of ['recent-prs-hint', 'stalls-hint', 'weekly-summary-hint', 'recent-history-hint']) {
     assert.match(dashSection, new RegExp(`id="${hint}"`), `${hint} glance line must exist`);
   }
   // The full data containers survive — same information, one tap deeper
@@ -3599,10 +3600,10 @@ test('polish: renderCoachReadStrip renders compact dots and pick text', () => {
   assert.match(fn, /FRIENDLY_PATTERN_LABELS/, 'must use friendly labels for dot titles');
 });
 
-test('polish: loadIntentDashboard calls renderCoachReadStrip', () => {
+test('polish: loadDashboard calls renderCoachReadStrip', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = appSource.slice(appSource.indexOf('async function loadIntentDashboard('), appSource.indexOf('async function loadIntentDashboard(') + 600);
-  assert.match(fn, /renderCoachReadStrip/, 'loadIntentDashboard must call renderCoachReadStrip');
+  const fn = appSource.slice(appSource.indexOf('async function loadDashboard('), appSource.indexOf('async function loadDashboard(') + 1400);
+  assert.match(fn, /renderCoachReadStrip/, 'loadDashboard must call renderCoachReadStrip');
 });
 
 test('polish: coach-read-strip and strip-dot styled in CSS', () => {
