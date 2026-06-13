@@ -154,7 +154,7 @@ function historicalBestByLift(allRows, currentSessionId, sessionDate) {
   const normId   = String(currentSessionId || '').trim().toLowerCase();
   const beforeDate = sessionDate || '';
   const best = {};
-  for (const row of allRows.map(normalizeLogRow)) {
+  for (const row of asArray(allRows).map(normalizeLogRow)) {
     if (row.session_id.toLowerCase() === normId) continue;
     if (beforeDate && row.date_clean >= beforeDate) continue;
     if (!row.lift_code || row.lift_code === 'UNKNOWN' || !row.weight || row.weight <= 0) continue;
