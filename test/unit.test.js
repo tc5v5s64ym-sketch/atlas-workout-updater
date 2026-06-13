@@ -1757,7 +1757,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6000
+    appSource.indexOf(anchor) + 6500
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -1813,7 +1813,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6000
+    appSource.indexOf(anchor) + 6500
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -2390,12 +2390,18 @@ test('session history: /api/sessions/recent registered BEFORE /:sessionId in ind
   assert.ok(recentIdx < paramIdx, '/api/sessions/recent must be registered before /:sessionId');
 });
 
-test('session history: load-sessions-btn wired in app.js and calls correct endpoint', () => {
+test('session history: auto-load wired in app.js and calls correct endpoint', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /load-sessions-btn/, 'load-sessions-btn must be referenced');
   assert.match(appSource, /\/api\/sessions\/recent/, 'must call /api/sessions/recent');
   assert.match(appSource, /loadHistory/, 'loadHistory function must exist');
   assert.match(appSource, /sessions-result/, 'sessions-result container must be used');
+  assert.match(appSource, /atlasRefreshSessions/, 'refresh bridge for nav.js must exist');
+  const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.doesNotMatch(htmlSource, /load-sessions-btn/, 'manual load button must stay removed — list auto-loads');
+  // With no manual refresh button, writes and undos must invalidate the cache
+  // (declaration + write success + undo success = at least 3 assignments).
+  const invalidations = (appSource.match(/historyLoaded = false/g) || []).length;
+  assert.ok(invalidations >= 3, 'successful write and undo must reset historyLoaded so History re-fetches');
 });
 
 // ── Session Queue UX ──────────────────────────────────────────────────────────

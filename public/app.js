@@ -175,9 +175,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 async function loadSessions() {
   const result = document.getElementById('sessions-result');
-  const btn = document.getElementById('load-sessions-btn');
   result.textContent = 'Loading…';
-  if (btn) btn.disabled = true;
   try {
     const res = await api('/api/sessions/recent');
     const sessions = res?.data?.sessions || [];
@@ -224,8 +222,6 @@ async function loadSessions() {
     result.appendChild(frag);
   } catch (err) {
     result.textContent = err.message || 'Failed to load sessions.';
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -269,10 +265,12 @@ function loadHistory() {
   loadSessions();
 }
 
-document.getElementById('load-sessions-btn')?.addEventListener('click', () => {
-  historyLoaded = false;
+// The list auto-loads on first History visit (loadHistory above). nav.js calls
+// this to force a fresh fetch when jumping here from a chat reply.
+window.atlasRefreshSessions = () => {
+  historyLoaded = true;
   loadSessions();
-});
+};
 
 /* ===== Connection check ===== */
 
@@ -2272,6 +2270,7 @@ async function handleUndoLastWrite() {
       })
     });
     lastWrite = null;
+    historyLoaded = false; // sheet changed — History re-fetches on next visit
     setStatus(loggerStatus, 'Last write undone.', 'ok');
   } catch (err) {
     setStatus(loggerStatus, `Undo failed: ${err.message}`, 'error');
@@ -2364,6 +2363,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
     }
     invalidatePreview();
+    historyLoaded = false; // sheet changed — History re-fetches on next visit
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;
