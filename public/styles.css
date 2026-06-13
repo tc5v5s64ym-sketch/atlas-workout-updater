@@ -1502,18 +1502,16 @@ a.lift-link:hover { text-decoration: underline; }
   display: none;
 }
 
-/* Quiet Undo link inside the typed post-write bubble */
-.coach-undo-link {
-  display: inline-block;
-  margin-top: var(--s2);
-  padding: 0;
-  background: none;
-  border: none;
-  font-family: inherit;
-  font-size: 0.8rem;
-  color: var(--muted);
-  text-decoration: underline;
+/* Collapsible "Edit rows" panel — there if you want to correct a parsed row,
+   out of the way if you don't. */
+.parsed-rows-editor > .parsed-rows-summary {
   cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  list-style: none;
+  padding: var(--s2) 0;
 }
-.coach-undo-link:hover { color: var(--ink); }
-.coach-undo-link:disabled { color: var(--faint); text-decoration: none; cursor: default; }
+.parsed-rows-editor > .parsed-rows-summary::-webkit-details-marker { display: none; }
+.parsed-rows-editor > .parsed-rows-summary::before { content: "\25B8 "; }
+.parsed-rows-editor[open] > .parsed-rows-summary::before { content: "\25BE "; }

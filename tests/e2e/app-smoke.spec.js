@@ -309,7 +309,7 @@ test('Approve flow sends write_id only after preview and shows success', async (
   expect(capture.writeRequests[0].test_mode).toBeUndefined();
 });
 
-test('After save: proof card hidden, inline Saved + Undo is the single confirmation', async ({ page }) => {
+test('After save: proof card hidden, inline Saved is the single confirmation', async ({ page }) => {
   await openApp(page);
   await runPreview(page);
   const saveBtn = page.locator('.save-inline-btn');
@@ -318,11 +318,21 @@ test('After save: proof card hidden, inline Saved + Undo is the single confirmat
   // The verbose "Workout written ✓ / Undo / Verified" card collapses (kept in
   // the DOM for the proof + signal, but not shown).
   await expect(page.locator('#logger-status')).toBeHidden();
-  // The inline button is the single confirmation — no second verdict bubble.
+  // The inline button is the single confirmation — no second bubble, no Undo.
   await expect(saveBtn).toHaveText('Saved ✓');
   await expect(page.locator('#thread-messages .chat-bubble-atlas')).toHaveCount(1);
-  // Undo survives as a quiet link beside Saved.
-  await expect(page.locator('.coach-undo-link')).toBeVisible();
+  await expect(page.locator('.coach-undo-link')).toHaveCount(0);
+});
+
+test('Parsed-rows editor is a collapsed "Edit rows" panel, open on demand', async ({ page }) => {
+  await openApp(page);
+  await runPreview(page);
+  const editor = page.locator('#parsed-rows-editor');
+  await expect(editor).toBeVisible();                        // present after preview…
+  await expect(editor.locator('.parsed-rows-summary')).toHaveText('Edit rows');
+  await expect(editor.locator('#sets-table')).toBeHidden();  // …but collapsed by default
+  await editor.locator('.parsed-rows-summary').click();
+  await expect(editor.locator('#sets-table')).toBeVisible(); // expands on tap
 });
 
 test('Editing after preview invalidates stale write approval', async ({ page }) => {
