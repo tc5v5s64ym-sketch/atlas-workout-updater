@@ -342,6 +342,24 @@ main {
 .strip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); display: inline-block; }
 .strip-rec { font-size: 0.78rem; color: var(--muted); }
 
+/* Read-only coaching card on the Coach surface */
+.coach-plan-card { margin-bottom: var(--s5); }
+.coach-plan-card[hidden] { display: none; }
+.coach-plan-kicker {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: var(--s2);
+}
+.coach-plan-focus { font-size: 1.05rem; font-weight: 650; letter-spacing: -0.01em; }
+.coach-plan-reason { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+.coach-plan-lift { font-size: 0.95rem; font-weight: 600; margin-top: var(--s3); }
+.coach-plan-last { font-size: 0.88rem; color: var(--muted); margin-top: 2px; }
+.coach-plan-target { font-size: 0.88rem; color: var(--ink); margin-top: 2px; }
+.coach-plan-suggestion { font-size: 0.9rem; margin: var(--s2) 0 0; }
+
 .suggestion-chips {
   display: flex;
   flex-wrap: wrap;
