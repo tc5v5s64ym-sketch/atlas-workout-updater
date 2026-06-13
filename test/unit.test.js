@@ -484,8 +484,12 @@ test('two-way chat: coach-conversation handles the chat event read-only via /api
   // In-session history, bounded; falls back when the voice is unavailable.
   assert.match(convSource, /chatTurns/);
   assert.match(convSource, /function chatFallback/);
-  // The chat path must never touch the write/approve machinery.
+  // History sent must be PRIOR turns only — captured before the current message
+  // is recorded, so the backend never sees the current turn twice.
   const chatBlock = convSource.slice(convSource.indexOf('Free-form chat'));
+  assert.match(chatBlock, /const priorTurns = chatTurns\.slice\(-8\)/);
+  assert.match(chatBlock, /chatTurns\.push\(\{ role: 'user', text \}, \{ role: 'atlas', text: reply \}\)/);
+  // The chat path must never touch the write/approve machinery.
   assert.doesNotMatch(chatBlock, /approveBtn\.click|\/api\/log-workout|\/api\/complete-workout/);
 });
 
