@@ -405,3 +405,39 @@ test('History groups sessions under Today / Past with clean cards', async ({ pag
   await expect(todayCard.locator('.session-stats')).toContainText('12 sets');
   await expect(todayCard.locator('.session-exercises')).toContainText('+1 more');
 });
+
+test('Tapping a session expands to exactly what was logged, grouped by exercise', async ({ page }) => {
+  await openApp(page);
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const sid = today.replace(/-/g, '') + '-AM-01';
+  await page.route('**/api/sessions/recent', route => route.fulfill(json({
+    status: 'success',
+    data: { sessions: [{ date: today, session_id: sid, exercises: ['Bench Press', 'Lat Pulldown'], sets_count: 4, total_volume: 5000 }] }
+  })));
+  await page.route('**/api/session/**/summary', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      quality_score: 4,
+      sets: [
+        { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 4, notes: '' },
+        { exercise: 'Bench Press', set_number: 2, weight: 225, reps: 5, rir: 2, notes: 'felt heavy' },
+        { exercise: 'Lat Pulldown', set_number: 1, weight: 170, reps: 8, rir: 2, notes: '' }
+      ],
+      effort: { duration: '47:00', active_calories: 410, average_hr: 142, peak_hr: 168 }
+    }
+  })));
+
+  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('[data-tab="history"]').click();
+  await page.locator('.session-item').first().locator('.session-summary').click();
+
+  // Grouped by exercise, each set in the coach shorthand, notes inline.
+  await expect(page.locator('.session-ex-name').first()).toHaveText('Bench Press');
+  await expect(page.locator('.session-ex-set').first()).toHaveText('135 × 10 @4');
+  await expect(page.locator('.session-ex-set').nth(1)).toContainText('225 × 5 @2 · felt heavy');
+  await expect(page.locator('.session-ex-name').nth(1)).toHaveText('Lat Pulldown');
+  // No 6-column table anymore.
+  await expect(page.locator('.session-detail-slot table')).toHaveCount(0);
+  await expect(page.locator('.session-effort-detail')).toContainText('avg HR 142');
+});
