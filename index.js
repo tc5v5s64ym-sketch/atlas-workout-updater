@@ -45,7 +45,12 @@ const {
   failWrite
 } = require('./services/idempotency');
 const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
-const { createRequestContext, requireApiKey: requireApiKeyMiddleware } = require('./middleware');
+const {
+  createCorsMiddleware,
+  createRateLimiter,
+  createRequestContext,
+  requireApiKey: requireApiKeyMiddleware
+} = require('./middleware');
 const { success: standardSuccess, error: standardError } = require('./response');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
@@ -97,16 +102,11 @@ const upload = multer({
 });
 
 const app = express();
+app.set('trust proxy', 1);
 
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-atlas-api-key');
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  return next();
-});
+app.use(createCorsMiddleware());
 
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '1mb' }));
 app.use(createRequestContext);
 
 function requestLogger(req, res, next) {
@@ -130,7 +130,22 @@ app.use(requestLogger);
 // Read-only + approve-before-save web UI. Static assets are public; every
 // data call the UI makes still goes through /api and requires the API key.
 app.use('/app', express.static(path.join(__dirname, 'public')));
+app.use('/api', createRateLimiter({
+  name: 'api',
+  windowMs: Number(process.env.ATLAS_API_RATE_LIMIT_WINDOW_MS || 60 * 1000),
+  max: Number(process.env.ATLAS_API_RATE_LIMIT_MAX || 300)
+}));
 app.use('/api', requireApiKeyMiddleware(atlasApiKey, { publicPaths: [] }));
+app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter({
+  name: 'vision_upload',
+  windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+  max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
+}));
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last'], createRateLimiter({
+  name: 'write',
+  windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+  max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
+}));
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
@@ -1832,15 +1847,41 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   try {
-    console.log('📝 Appending formatted log_rows to', logSheetName, 'tab:', formattedLogRows);
+    console.log(JSON.stringify({
+      event: 'append_log_rows',
+      tab: logSheetName,
+      row_count: formattedLogRows.length,
+      session_id,
+      requestId: req.requestId
+    }));
     const logResponse = await appendRows(logSheetName, formattedLogRows);
-    console.log('✅ Log rows appended successfully. Range:', logResponse.data.updates?.updatedRange);
+    console.log(JSON.stringify({
+      event: 'append_log_rows_success',
+      tab: logSheetName,
+      row_count: Number(logResponse.data.updates?.updatedRows || 0),
+      range: logResponse.data.updates?.updatedRange,
+      session_id,
+      requestId: req.requestId
+    }));
 
     let effortResponse = null;
     if (formattedEffortRow) {
-      console.log('\n📝 Appending formatted effort_row to', effortSheetName, 'tab:', [formattedEffortRow]);
+      console.log(JSON.stringify({
+        event: 'append_effort_row',
+        tab: effortSheetName,
+        row_count: 1,
+        session_id,
+        requestId: req.requestId
+      }));
       effortResponse = await appendRows(effortSheetName, [formattedEffortRow]);
-      console.log('✅ Effort row appended successfully. Range:', effortResponse.data.updates?.updatedRange);
+      console.log(JSON.stringify({
+        event: 'append_effort_row_success',
+        tab: effortSheetName,
+        row_count: Number(effortResponse.data.updates?.updatedRows || 0),
+        range: effortResponse.data.updates?.updatedRange,
+        session_id,
+        requestId: req.requestId
+      }));
     }
     invalidateSheetRowsCache();
 
