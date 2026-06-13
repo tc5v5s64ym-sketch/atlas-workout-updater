@@ -1213,8 +1213,14 @@ async function loadCoaching() {
     if (deloads.length) {
       box.appendChild(el('h3', { text: 'Deload suggestions' }));
       box.appendChild(el('ul', {}, deloads.map(d => {
+        // Show the exercise name to the lifter; the lift code stays in data-lift
+        // purely as the click-through target (it's for data sorting, not display).
+        // Exception: code-less log rows group under the synthetic 'UNKNOWN' code,
+        // whose progress view is empty — keep the code visible there rather than
+        // label it with a name the link can't actually navigate to.
+        const label = (d.liftCode === 'UNKNOWN') ? d.liftCode : (d.exercise || d.liftCode);
         const li = el('li', {}, [
-          el('a', { class: 'lift-link', href: '#', 'data-lift': d.liftCode, text: d.liftCode }),
+          el('a', { class: 'lift-link', href: '#', 'data-lift': d.liftCode, text: label }),
           document.createTextNode(`: ${d.suggestion}`)
         ]);
         return li;

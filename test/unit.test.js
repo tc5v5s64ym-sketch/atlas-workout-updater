@@ -1650,6 +1650,8 @@ test('suggestDeloads recommends a 10% reduction for persistent stalls', () => {
   const suggestions = suggestDeloads(rows, 4);
   assert.equal(suggestions.length, 1);
   assert.equal(suggestions[0].liftCode, 'BP');
+  // The exercise name rides along so the UI can show it instead of the code.
+  assert.equal(suggestions[0].exercise, 'Bench Press');
   assert.equal(suggestions[0].suggested_deload_weight, 180);
   assert.match(suggestions[0].suggestion, /Deload/);
 });
@@ -1662,6 +1664,20 @@ test('suggestDeloads returns nothing for progressing lifts', () => {
     ['2026-04-15', 'S4', 'Squat', 'Squat', 'Legs', 'SQ', '1', '255', '5', '2', '']
   ];
   assert.equal(suggestDeloads(rows, 4).length, 0);
+});
+
+test('deload suggestions render the exercise name, not the lift code, as the label', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const start = appSource.indexOf('const deloads = data.deload_suggestions');
+  assert.ok(start !== -1, 'deload rendering block must exist');
+  const block = appSource.slice(start, start + 1000);
+  // Visible label prefers the exercise name; lift code is only the click target.
+  assert.match(block, /d\.exercise \|\| d\.liftCode/, 'label must prefer exercise name over lift code');
+  assert.match(block, /'data-lift': d\.liftCode/, 'lift code must remain the data-lift navigation target');
+  assert.doesNotMatch(block, /text: d\.liftCode/, 'lift code must not be the visible link text');
+  // UNKNOWN groups code-less rows whose progress view is empty — the label must
+  // not claim a specific exercise the link can't navigate to.
+  assert.match(block, /d\.liftCode === 'UNKNOWN'/, 'UNKNOWN code must keep the code as its visible label');
 });
 
 test('computeFatigueStatus flags high recent volume against baseline', () => {
