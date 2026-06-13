@@ -166,6 +166,25 @@
     return intents.find(i => i.recommended) || intents[0] || null;
   }
 
+  // Format one set as "{weight}lbs {reps}/{rir}", omitting "/{rir}" when null.
+  function formatSetLine(s) {
+    const weight = s.weight != null ? `${s.weight}lbs` : '?lbs';
+    const reps = s.reps != null ? `${s.reps}` : '?';
+    const rir = (s.rir != null && Number.isFinite(Number(s.rir))) ? `/${s.rir}` : '';
+    return `${weight} ${reps}${rir}`;
+  }
+
+  // Group consecutive identical set lines — e.g. three "225lbs 5/2" → "225lbs 5/2 x3".
+  function groupSets(sets) {
+    const groups = [];
+    for (const s of sets) {
+      const line = formatSetLine(s);
+      const last = groups[groups.length - 1];
+      if (last && last.line === line) { last.count += 1; } else { groups.push({ line, count: 1 }); }
+    }
+    return groups.map(g => g.count > 1 ? `${g.line} x${g.count}` : g.line);
+  }
+
   // The exercise list + closing line, shared by the templated and LLM-voiced
   // suggested-workout messages (the app always shows the exercises; only the
   // "why" prose above them changes).
@@ -177,9 +196,11 @@
       const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
       if (!ex || !ex.name) continue;
       if (!any) { lines.push(''); any = true; }
-      const hasTarget = ex.weight != null && ex.reps != null;
-      const target = hasTarget ? ` — ${ex.weight} × ${ex.reps}${ex.sets ? ` × ${ex.sets}` : ''}` : '';
-      lines.push(`* ${ex.name}${target}`);
+      lines.push(ex.name);
+      if (ex.weight != null && ex.reps != null) {
+        const setStr = (ex.sets > 1) ? ` x${ex.sets}` : '';
+        lines.push(`${ex.weight}lbs ${ex.reps}${setStr}`);
+      }
     }
     if (any) {
       lines.push('');
@@ -201,10 +222,17 @@
         "I don't have enough history yet to tailor your session.",
         '',
         "Start light and establish baselines — something like:",
-        '* Squat or Leg Press — 3 × 8–10 @ RIR 3',
-        '* Bench Press — 3 × 8–10 @ RIR 3',
-        '* Row — 3 × 10–12 @ RIR 2–3',
-        '* Lat Pulldown — 2–3 × 10–12 @ RIR 2–3',
+        'Squat or Leg Press',
+        '3 × 8–10 @ RIR 3',
+        '',
+        'Bench Press',
+        '3 × 8–10 @ RIR 3',
+        '',
+        'Row',
+        '3 × 10–12 @ RIR 2–3',
+        '',
+        'Lat Pulldown',
+        '2–3 × 10–12 @ RIR 2–3',
         '',
         "Log a few sessions and I'll start calling the shots from your own numbers."
       ].join('\n');
@@ -382,10 +410,7 @@
     lines.push(coachOpener(todaySets, rec));
     lines.push('');
     lines.push(exerciseName);
-    for (const s of todaySets) {
-      const rir = (s.rir != null && Number.isFinite(s.rir)) ? ` @${s.rir}` : '';
-      lines.push(`* ${s.weight} × ${s.reps}${rir}`);
-    }
+    for (const line of groupSets(todaySets)) lines.push(line);
     const next = coachNext(rec);
     if (next) { lines.push(''); lines.push(next); }
     return lines.join('\n');
