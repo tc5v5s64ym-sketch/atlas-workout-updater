@@ -1924,6 +1924,72 @@ function renderAtlasSuggestion(rec) {
   ]);
 }
 
+// Pull the previewed sets for one lift code out of the 12-column preview rows.
+// Columns: 5 lift_code · 7 weight · 8 reps · 9 rir.
+function previewSetsForLift(rows, liftCode) {
+  const code = String(liftCode).toUpperCase();
+  return (rows || [])
+    .filter(r => String(r[5] || '').toUpperCase() === code)
+    .map(r => ({
+      weight: Number(r[7]),
+      reps: Number(r[8]),
+      rir: r[9] === '' || r[9] == null ? null : Number(r[9])
+    }));
+}
+
+// Deterministic "are these previewed sets progress?" hint, comparing today's
+// top set to last session's top set and the recommended next target.
+function previewProgressHint(todayTopWeight, lastSet, target) {
+  if (!lastSet || !Number.isFinite(lastSet.weight)) {
+    return 'first time logging this — sets your baseline';
+  }
+  if (!Number.isFinite(todayTopWeight) || todayTopWeight <= 0) return null;
+  const diff = Math.round((todayTopWeight - lastSet.weight) * 10) / 10;
+  if (diff > 0) return `above last session (+${diff} lb)`;
+  if (diff === 0) {
+    return target && Number.isFinite(target.weight) && target.weight > todayTopWeight
+      ? 'matching last top set — clear your reps/RIR to earn the next jump'
+      : 'matching last top set';
+  }
+  return `below last top set (${lastSet.weight} lb)`;
+}
+
+// One compact per-exercise coaching card for the preview: last session's top
+// set + target, today's previewed sets, and an on-track hint. Read-only.
+function renderPreviewCoachCard(rec, liftCode, todaySets) {
+  if (!todaySets || !todaySets.length) return null;
+  const name = (rec && rec.exercise_name) || liftCode;
+  const lastSets = (rec && rec.last_working_sets) || [];
+  const lastSet = lastSets.length ? lastSets[lastSets.length - 1] : null;
+  const target = rec && rec.next_target;
+
+  const todayBits = todaySets
+    .filter(s => Number.isFinite(s.weight) && Number.isFinite(s.reps))
+    .map(s => `${s.weight}×${s.reps}${s.rir != null && Number.isFinite(s.rir) ? ` @RIR${s.rir}` : ''}`)
+    .join(', ');
+  const todayTop = Math.max(0, ...todaySets.map(s => (Number.isFinite(s.weight) ? s.weight : 0)));
+
+  const rows = [];
+  if (lastSet && Number.isFinite(lastSet.weight)) {
+    const lastLabel = `${lastSet.weight} × ${lastSet.reps}${lastSet.rir != null ? ` @RIR${lastSet.rir}` : ''}`;
+    rows.push(['Last', target && Number.isFinite(target.weight)
+      ? `${lastLabel} · target ${target.weight} × ${target.reps}`
+      : lastLabel]);
+  }
+  if (todayBits) rows.push(['Today', todayBits]);
+  const hint = previewProgressHint(todayTop, lastSet, target);
+  if (hint) rows.push(['On track', hint]);
+
+  if (!rows.length) return null;
+  return el('div', { class: 'atlas-suggestion' }, [
+    el('div', { class: 'suggestion-header', text: name }),
+    ...rows.map(([label, value]) => el('div', { class: 'suggestion-row' }, [
+      el('span', { class: 'suggestion-label', text: label }),
+      el('span', { text: value }),
+    ])),
+  ]);
+}
+
 // Deterministic post-write coach verdict. Priority: PR in the just-saved
 // session, then a stall/watchout, then the e1RM/top-set trend, then a plain
 // fallback. PR + stall context ride on the rec object (rec.prLabel / rec.stall)
@@ -2309,12 +2375,20 @@ function renderLogWorkoutPreview(result, effortRow) {
   const liftCodes = extractLiftCodes(data.log_rows_preview);
   if (pendingWrite) pendingWrite.liftCodes = liftCodes;
   if (liftCodes.length && getApiKey()) {
-    const suggestionSlot = el('div', {});
-    previewContent.appendChild(suggestionSlot);
-    fetchReaction(liftCodes[0]).then(rec => {
-      const node = renderAtlasSuggestion(rec);
-      if (node) suggestionSlot.replaceWith(node);
-    }).catch(() => {});
+    // Per-exercise in-preview coaching: last session vs the sets you're about to
+    // save, plus an on-track hint. Read-only and best-effort — a failed lookup
+    // for one lift just drops its card and never blocks the preview or the save.
+    const coachBox = el('div', {}, [el('div', { class: 'muted small', text: 'Last time vs today' })]);
+    previewContent.appendChild(coachBox);
+    for (const code of liftCodes) {
+      const slot = el('div', {});
+      coachBox.appendChild(slot);
+      const todaySets = previewSetsForLift(data.log_rows_preview, code);
+      fetchReaction(code).then(rec => {
+        const node = renderPreviewCoachCard(rec, code, todaySets);
+        if (node) slot.replaceWith(node);
+      }).catch(() => {});
+    }
   }
 }
 
