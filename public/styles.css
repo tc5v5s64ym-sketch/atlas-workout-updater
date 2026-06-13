@@ -1090,9 +1090,17 @@ a.lift-link:hover { text-decoration: underline; }
 .session-detail-slot { margin: 0 var(--s3) var(--s3); padding-top: var(--s2); border-top: 1px solid var(--border); }
 
 /* Expanded session — exactly what was logged, grouped by exercise */
-.session-ex { margin-top: var(--s2); }
+.session-ex { margin-top: var(--s3); }
 .session-ex:first-child { margin-top: 0; }
-.session-ex-name { font-weight: 650; font-size: 0.9rem; margin-bottom: 2px; }
+.session-ex-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s2);
+  margin-bottom: 2px;
+}
+.session-ex-name { font-weight: 650; font-size: 0.9rem; }
+.session-ex-vol { font-size: 0.78rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .session-ex-set {
   font-size: 0.88rem;
   color: var(--ink);

@@ -379,6 +379,17 @@ test('api smoke: last-session reaches literal handler', async () => {
   ]);
 });
 
+test('api smoke: session summary returns the per-set detail History expands', async () => {
+  const { response, body } = await requestJson('/api/session/SESSION-NEW/summary');
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(body.data.sets), 'summary must carry a sets array');
+  assert.equal(body.data.sets.length, 3, 'SESSION-NEW has three logged sets');
+  const first = body.data.sets[0];
+  assert.equal(Number(first.weight), 225);
+  assert.equal(Number(first.reps), 5);
+  assert.equal(first.exercise || first.canonical_exercise, 'Bench Press');
+});
+
 test('api smoke: parse-workout-text dry-run proves no write', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/parse-workout-text', {
