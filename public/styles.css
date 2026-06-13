@@ -815,6 +815,46 @@ button.approve {
 }
 .effort-fix-link { display: block; margin: var(--s1) 0 var(--s2); font-size: 0.82rem; color: var(--accent); text-decoration: none; }
 .effort-fix-link:hover { text-decoration: underline; }
+
+/* Collapsed technical details in preview panel */
+.preview-technical-details {
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 0 var(--s3);
+  margin: var(--s2) 0;
+}
+.preview-technical-details summary {
+  cursor: pointer;
+  padding: var(--s2) 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  user-select: none;
+  list-style: none;
+}
+.preview-technical-details summary::before { content: '▶ '; font-size: 0.65em; }
+.preview-technical-details[open] summary::before { content: '▼ '; }
+
+/* Screenshot effort reply card in chat thread */
+.effort-reply-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px var(--s4);
+  font-size: 0.9rem;
+  margin-bottom: var(--s3);
+}
+.effort-reply-label { color: var(--muted); white-space: nowrap; }
+.effort-reply-value { font-weight: 500; }
+.effort-reply-actions { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
+.effort-reply-actions button { font-size: 0.85rem; }
+
+/* A superseded effort card: a newer preview replaced it, so its Save is locked. */
+.effort-reply-stale { opacity: 0.55; }
+.effort-reply-stale .effort-reply-actions { display: none; }
+
+/* Correction prompt dialog in chat */
+.correction-actions { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
+.correction-actions button { font-size: 0.85rem; }
+
 .preview-ok {
   background: var(--ok-soft); border: 1px solid var(--ok-border);
   border-radius: var(--r); padding: 12px 14px; margin: var(--s3) 0; font-size: 0.85rem;
