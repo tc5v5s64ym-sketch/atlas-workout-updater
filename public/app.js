@@ -1542,6 +1542,14 @@ const lastTimeCache = new Map();
 // Cache the per-lift recommendations (keyed by canonical exercise name) so the
 // live "Next" hint costs at most one /api/plan/today fetch per session.
 let planTodayByNameCache = null;
+
+// Drop the live-hint caches after a write so the next "Last"/"Next" hint
+// reflects the freshly logged sets rather than pre-write data.
+function clearLiveHintCaches() {
+  lastTimeCache.clear();
+  planTodayByNameCache = null;
+}
+
 async function getPlanTodayByName() {
   if (planTodayByNameCache) return planTodayByNameCache;
   const map = new Map();
@@ -2711,7 +2719,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
     }
     invalidatePreview();
-    historyLoaded = false; // sheet changed — History re-fetches on next visit
+    historyLoaded = false; clearLiveHintCaches(); // sheet changed
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;
