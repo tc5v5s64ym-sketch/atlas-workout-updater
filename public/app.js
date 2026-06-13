@@ -280,32 +280,51 @@ async function loadSessions() {
 }
 
 async function loadSessionDetail(sessionId, slot) {
-  slot.innerHTML = '<span class="muted">Loading detail…</span>';
+  slot.innerHTML = '<span class="muted">Loading…</span>';
   try {
     const res = await api(`/api/session/${encodeURIComponent(sessionId)}/summary`);
     const d = res.data || {};
     slot.innerHTML = '';
 
-    if (d.quality_score != null) {
-      slot.appendChild(el('div', { class: 'session-quality', text: `Quality score: ${d.quality_score} / 5` }));
-    }
-
+    // Exactly what was logged, grouped by exercise — each set on its own line in
+    // the same "weight × reps @rir" shorthand the coach uses, instead of a
+    // cramped 6-column table.
     const sets = d.sets || d.rows || [];
     if (sets.length) {
-      slot.appendChild(el('h4', { class: 'session-detail-heading', text: 'Sets' }));
-      slot.appendChild(renderTable(
-        ['Exercise', 'Set', 'Weight', 'Reps', 'RIR', 'Notes'],
-        sets.map(r => [r.exercise || r.canonical_exercise, r.set_number, r.weight, r.reps, r.rir ?? '—', r.notes || ''])
-      ));
+      const order = [];
+      const byExercise = new Map();
+      for (const r of sets) {
+        const name = r.exercise || r.canonical_exercise || 'Exercise';
+        if (!byExercise.has(name)) { byExercise.set(name, []); order.push(name); }
+        byExercise.get(name).push(r);
+      }
+      for (const name of order) {
+        const block = el('div', { class: 'session-ex' });
+        block.appendChild(el('div', { class: 'session-ex-name', text: name }));
+        for (const r of byExercise.get(name)) {
+          const rir = (r.rir === '' || r.rir == null) ? '' : ` @${r.rir}`;
+          const note = r.notes ? ` · ${r.notes}` : '';
+          block.appendChild(el('div', { class: 'session-ex-set', text: `${r.weight} × ${r.reps}${rir}${note}` }));
+        }
+        slot.appendChild(block);
+      }
+    } else {
+      slot.appendChild(el('p', { class: 'muted', text: 'No set detail recorded for this session.' }));
     }
 
     if (d.effort) {
       const e = d.effort;
-      slot.appendChild(el('h4', { class: 'session-detail-heading', text: 'Effort' }));
-      slot.appendChild(renderTable(
-        ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR'],
-        [[e.duration, e.active_calories, e.total_calories, e.average_hr, e.peak_hr ?? '—']]
-      ));
+      const parts = [
+        e.duration,
+        e.active_calories != null && `${e.active_calories} active cal`,
+        e.average_hr != null && `avg HR ${e.average_hr}`,
+        e.peak_hr != null && `peak HR ${e.peak_hr}`
+      ].filter(Boolean);
+      if (parts.length) slot.appendChild(el('div', { class: 'session-effort-detail', text: parts.join(' · ') }));
+    }
+
+    if (d.quality_score != null) {
+      slot.appendChild(el('div', { class: 'session-quality', text: `Session quality: ${d.quality_score} / 5` }));
     }
   } catch (err) {
     slot.innerHTML = `<span class="muted">Could not load detail: ${err.message}</span>`;

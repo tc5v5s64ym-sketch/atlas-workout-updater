@@ -1088,6 +1088,23 @@ a.lift-link:hover { text-decoration: underline; }
 
 .session-effort-line { margin: 0 var(--s3) var(--s2); font-size: 0.85rem; }
 .session-detail-slot { margin: 0 var(--s3) var(--s3); padding-top: var(--s2); border-top: 1px solid var(--border); }
+
+/* Expanded session — exactly what was logged, grouped by exercise */
+.session-ex { margin-top: var(--s2); }
+.session-ex:first-child { margin-top: 0; }
+.session-ex-name { font-weight: 650; font-size: 0.9rem; margin-bottom: 2px; }
+.session-ex-set {
+  font-size: 0.88rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 0 1px var(--s2);
+}
+.session-effort-detail {
+  margin-top: var(--s3);
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.session-quality { font-size: 0.82rem; color: var(--muted); margin-top: var(--s1); }
 .session-detail-heading { margin: var(--s2) 0 var(--s1); font-size: 0.88rem; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .session-quality { font-size: 0.88rem; color: var(--muted); margin-bottom: var(--s2); }
 .session-start-btn {
