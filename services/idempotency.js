@@ -27,11 +27,18 @@ function beginWrite(writeId, metadata = {}, options = {}) {
 
   const existing = writeRecords.get(normalizedWriteId);
   if (existing) {
+    // Return a record isolated from the store: { ...existing } is only a shallow
+    // copy, so clone the mutable nested fields too. Otherwise a caller mutating
+    // the replayed response/metadata would corrupt the stored record.
     return {
       enabled: true,
       duplicate: true,
       write_id: normalizedWriteId,
-      record: { ...existing }
+      record: {
+        ...existing,
+        metadata: { ...existing.metadata },
+        ...(existing.response ? { response: { ...existing.response } } : {})
+      }
     };
   }
 
