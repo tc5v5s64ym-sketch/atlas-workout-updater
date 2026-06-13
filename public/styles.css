@@ -1226,11 +1226,26 @@ a.lift-link:hover { text-decoration: underline; }
 }
 .drawer-exercise-name { font-weight: 600; color: var(--ink); }
 .drawer-exercise-target { font-size: 0.82rem; color: var(--muted); }
+.drawer-exercise-reason { font-size: 0.78rem; color: var(--faint); padding: 0 0 6px; }
 
+.drawer-action-row { display: flex; gap: var(--s2); margin-top: var(--s5); }
 .intent-start-btn {
-  width: 100%; margin-top: var(--s5); padding: 15px;
+  flex: 2; padding: 15px;
   font-size: 1rem; border-radius: var(--r); letter-spacing: 0.01em;
 }
+.intent-modify-btn { flex: 1; padding: 15px; font-size: 0.9rem; border-radius: var(--r); }
+
+/* Active "Recommended session" banner on the Coach surface */
+.active-session-banner {
+  background: var(--card); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); border-radius: var(--r-sm);
+  padding: var(--s3); margin-bottom: var(--s3);
+}
+.active-session-banner[hidden] { display: none; }
+.active-session-title { font-weight: 650; font-size: 0.9rem; }
+.active-session-step { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+.active-session-actions { display: flex; gap: var(--s2); margin-top: var(--s2); }
+.active-session-actions button { font-size: 0.8rem; padding: 6px 10px; }
 
 /* "Edited since preview" nudge message in #logger-status */
 .edited-since-preview {

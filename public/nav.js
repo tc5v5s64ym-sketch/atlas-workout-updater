@@ -176,10 +176,11 @@
       const more = document.createElement('a');
       more.href = '#';
       more.className = 'chip-reply-more';
-      more.textContent = 'See full Today tab →';
+      more.textContent = 'Open today’s session →';
       more.addEventListener('click', ev => {
         ev.preventDefault();
-        go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        if (typeof openTodaySessionPlan === 'function') openTodaySessionPlan();
+        else go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
       });
       wrap.appendChild(more);
     }).catch(err => {
