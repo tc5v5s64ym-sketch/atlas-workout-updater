@@ -92,11 +92,6 @@
   /* ===== Inline "Save to Sheets" (mirrors the existing #approve-btn) ===== */
 
   let currentSaveBtn = null;
-  // Stashed from the latest preview so the post-write coaching can name the lift
-  // and detect PRs without touching app.js's approve handler.
-  let lastWriteLiftCode = null;
-  let lastWriteSessionId = null;
-  let postWriteInFlight = false;
   const approveBtn = document.getElementById('approve-btn');
 
   // The approval gate lives in app.js: #approve-btn is only enabled once a
@@ -132,10 +127,18 @@
 
   function markSaved() {
     if (!currentSaveBtn) return;
+    const bubble = currentSaveBtn.parentElement; // the coaching bubble
     currentSaveBtn.textContent = 'Saved ✓';
     currentSaveBtn.disabled = true;
     currentSaveBtn.dataset.done = '1';
     currentSaveBtn = null;
+    if (bubble) {
+      // The "nothing saved yet" gate note is now stale; drop it and add a quiet
+      // Undo link. "Saved ✓ · Undo" is the single post-write confirmation — no
+      // separate verdict bubble and no verbose written/verified card.
+      bubble.querySelector('.atlas-reply-gate')?.remove();
+      appendUndoLink(bubble);
+    }
   }
 
   function resetSaveAfterError() {
@@ -152,52 +155,16 @@
     new MutationObserver(() => {
       if (!currentSaveBtn || currentSaveBtn.dataset.done) return;
       if (loggerStatusEl.querySelector('.status-msg.ok')) {
-        markSaved();             // nulls currentSaveBtn → this branch runs once
-        showPostWriteCoaching(); // type the verdict conversationally
+        markSaved();             // flips inline Save → "Saved ✓" + adds Undo link
       } else if (loggerStatusEl.querySelector('.status-msg.error')) {
         resetSaveAfterError();
       }
     }).observe(loggerStatusEl, { childList: true, subtree: true });
   }
 
-  // After a confirmed write, app.js's verbose proof card (#logger-status) is
-  // hidden by CSS; the inline "Saved ✓" already confirmed it. Here we type the
-  // deterministic verdict + next-step into a chat bubble so it reads like the
-  // coach talking, and re-expose Undo as a quiet link. Read-only; reuses app.js's
-  // own fetchReaction / attachVerdictContext / buildVerdict.
-  async function showPostWriteCoaching() {
-    if (postWriteInFlight) return;
-    const code = lastWriteLiftCode;
-    const sessionId = lastWriteSessionId;
-    if (!code || (typeof getApiKey === 'function' && !getApiKey())) return;
-    postWriteInFlight = true;
-    let rec = null;
-    try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code); } catch { /* best effort */ }
-    if (rec) {
-      try { if (typeof attachVerdictContext === 'function') await attachVerdictContext(rec, code, sessionId); } catch { /* best effort */ }
-    }
-    postWriteInFlight = false;
-    if (!rec) return;
-
-    const verdict = (typeof buildVerdict === 'function') ? buildVerdict(rec) : null;
-    const name = rec.exercise_name || code;
-    const lines = [`Logged ${name} ✓`];
-    if (verdict) lines.push(capitalizeFirst(verdict) + '.');
-    if (rec.recommendation) lines.push(`Next time: ${rec.recommendation}`);
-
-    const handle = appendAtlasBubble();
-    if (!handle) return;
-    await typeOut(handle.body, lines.join('\n'));
-    appendUndoLink(handle.bubble);
-  }
-
-  function capitalizeFirst(s) {
-    const t = String(s || '').trim();
-    return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
-  }
-
   // Quiet "Undo last write" link that proxies app.js's (now CSS-hidden) undo
-  // button, so the safety net survives the decluttered card.
+  // button, so the safety net survives the decluttered card. No-op when there's
+  // no undo button (e.g. effort-only writes), where the original card still shows.
   function appendUndoLink(bubble) {
     const undoBtn = loggerStatusEl && loggerStatusEl.querySelector('.undo-write-btn');
     if (!undoBtn) return;
@@ -472,9 +439,6 @@
     const code = liftCodes[0];
     const todaySets = (typeof previewSetsForLift === 'function') ? previewSetsForLift(rows, code) : [];
     if (!todaySets.length) return;
-    // Stash for the post-write coaching bubble (session_id is column 1 of a row).
-    lastWriteLiftCode = code;
-    lastWriteSessionId = (rows[0] && rows[0][1]) || null;
 
     const handle = appendAtlasBubble();
     if (!handle) return;

@@ -309,18 +309,19 @@ test('Approve flow sends write_id only after preview and shows success', async (
   expect(capture.writeRequests[0].test_mode).toBeUndefined();
 });
 
-test('After save the verbose proof card is hidden and the verdict types out conversationally', async ({ page }) => {
+test('After save: proof card hidden, inline Saved + Undo is the single confirmation', async ({ page }) => {
   await openApp(page);
   await runPreview(page);
-  await page.locator('.save-inline-btn').click();
+  const saveBtn = page.locator('.save-inline-btn');
+  await saveBtn.click();
 
-  // The "Workout written ✓ / Undo / Verified" card collapses (kept in the DOM
-  // for the proof + signal, but not shown).
+  // The verbose "Workout written ✓ / Undo / Verified" card collapses (kept in
+  // the DOM for the proof + signal, but not shown).
   await expect(page.locator('#logger-status')).toBeHidden();
-  // The verdict + next-step is re-typed as a chat bubble instead.
-  await expect(page.locator('#thread-messages')).toContainText('Logged');
-  await expect(page.locator('#thread-messages')).toContainText('Next time:');
-  // Undo survives as a quiet link inside the bubble.
+  // The inline button is the single confirmation — no second verdict bubble.
+  await expect(saveBtn).toHaveText('Saved ✓');
+  await expect(page.locator('#thread-messages .chat-bubble-atlas')).toHaveCount(1);
+  // Undo survives as a quiet link beside Saved.
   await expect(page.locator('.coach-undo-link')).toBeVisible();
 });
 
