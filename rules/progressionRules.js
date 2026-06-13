@@ -30,12 +30,22 @@ function isLowerBodyGroup(muscleGroup) {
 // hold_until_clean: hold the current load until N sessions where every working
 // set at that load hits target reps with RIR ≥ threshold. Then load.
 // The "current load" is the heaviest weight used in the most recent session.
+// Degrades safely on bad input (non-array, empty, malformed rows).
 function holdUntilClean(historyRows, liftCode, config = {}) {
+  if (!Array.isArray(historyRows) || historyRows.length === 0) {
+    return decision({
+      decision: 'no_data',
+      rule_id: 'hold_until_clean',
+      reasoning: 'No working-set history for this lift.',
+      lift_code: String(liftCode || '').trim().toUpperCase(),
+    });
+  }
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const code = String(liftCode || '').trim().toUpperCase();
-  const rows = historyRows.filter(r =>
-    String(r.lift_code || '').toUpperCase() === code && num(r.weight) > 0 && num(r.reps) > 0
-  );
+  const rows = historyRows.filter(r => {
+    if (!r || typeof r !== 'object') return false;
+    return String(r.lift_code || '').toUpperCase() === code && num(r.weight) > 0 && num(r.reps) > 0;
+  });
 
   if (!rows.length) {
     return decision({
@@ -47,10 +57,18 @@ function holdUntilClean(historyRows, liftCode, config = {}) {
   }
 
   const sessions = groupBySession(rows);
+  if (!sessions.length) {
+    return decision({
+      decision: 'no_data',
+      rule_id: 'hold_until_clean',
+      reasoning: 'No working-set history for this lift.',
+      lift_code: code,
+    });
+  }
   const lastSession = sessions[sessions.length - 1];
-  const load = Math.max(...lastSession.rows.map(r => num(r.weight) || 0));
+  const load = Math.max(...lastSession.rows.map(r => num(r.weight) || 0).filter(v => v > 0));
 
-  const muscleGroup = lastSession.rows[0].muscle_group || '';
+  const muscleGroup = (lastSession.rows[0] && lastSession.rows[0].muscle_group) || '';
   const increment = isLowerBodyGroup(muscleGroup) ? cfg.load_increment_lower : cfg.load_increment_upper;
 
   // A session is clean when every set at the load hits target reps, and every
@@ -58,7 +76,8 @@ function holdUntilClean(historyRows, liftCode, config = {}) {
   let cleanCount = 0;
   let sessionsAtLoad = 0;
   for (const session of sessions) {
-    const atLoad = session.rows.filter(r => num(r.weight) === load);
+    if (!session || !Array.isArray(session.rows)) continue;
+    const atLoad = session.rows.filter(r => r && typeof r === 'object' && num(r.weight) === load);
     if (!atLoad.length) continue;
     sessionsAtLoad += 1;
     const allReps = atLoad.every(r => num(r.reps) >= cfg.target_reps);
