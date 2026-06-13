@@ -590,6 +590,7 @@ async function loadDashboard() {
     renderCoachReadStrip(intentData);
     renderTodaysPick(intentData);
     renderIntentGrid(intentData);
+    renderPatternBoard(intentData);
     setOtherTrainingHint(intentData);
   } else {
     const pickBox = document.getElementById('todays-pick');
@@ -895,6 +896,69 @@ function renderIntentGrid(data) {
   }
   box.appendChild(grid);
   box.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;margin-top:6px', text: 'Tap any tile to see the coaching brief and start a session.' }));
+}
+
+// Per-movement-pattern recovery board. The backend already returns `patterns`
+// (Pressing / Pulling / Lower body / Hinge / Core) on the intent-recommendation
+// response, each with a readiness status and a plain-language detail line. This
+// surfaces them as tiles sorted so the most-recovered / overdue patterns lead —
+// a glance at what's ready to train and what's still resting. Tapping a tile
+// asks the coach for a session focused on that pattern (read-only — no write).
+const PATTERN_STATUS_META = {
+  fresh:      { label: 'Fresh',      rank: 0 },
+  ready:      { label: 'Ready',      rank: 1 },
+  recovering: { label: 'Recovering', rank: 2 },
+  fatigued:   { label: 'Fatigued',   rank: 3 },
+  unknown:    { label: 'No data',    rank: 4 }
+};
+
+function renderPatternBoard(data) {
+  const box = document.getElementById('pattern-board');
+  if (!box) return;
+  box.innerHTML = '';
+  const patterns = ((data.todays_read && data.todays_read.patterns) || []).filter(p => p && p.label);
+  if (!patterns.length) {
+    box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas can track recovery per movement.' }));
+    setGlanceHint('pattern-board-hint', '');
+    return;
+  }
+
+  // Overdue / most-recovered first; never-trained patterns sink to the bottom.
+  const sorted = [...patterns].sort((a, b) => {
+    const ra = PATTERN_STATUS_META[a.status]?.rank ?? 9;
+    const rb = PATTERN_STATUS_META[b.status]?.rank ?? 9;
+    if (ra !== rb) return ra - rb;
+    return (b.daysSince ?? -1) - (a.daysSince ?? -1);
+  });
+
+  const grid = el('div', { class: 'pattern-board' });
+  for (const p of sorted) {
+    const status = PATTERN_STATUS_META[p.status] ? p.status : 'unknown';
+    const meta = PATTERN_STATUS_META[status];
+    // Rotation-overdue flag: a fully recovered pattern untouched for a while is
+    // the clearest coverage gap — mirror the intent engine's "fresh" rotation cue.
+    const overdue = (status === 'fresh' || status === 'unknown') && (p.daysSince == null || p.daysSince >= 5);
+
+    const tile = el('button', { type: 'button', class: `pattern-tile pattern-${status}` });
+    const top = el('div', { class: 'pattern-tile-top' }, [
+      el('span', { class: 'pattern-tile-label', text: p.label }),
+      el('span', { class: `pattern-pill pattern-pill-${status}`, text: meta.label })
+    ]);
+    if (overdue) top.appendChild(el('span', { class: 'pattern-overdue', text: 'overdue' }));
+    tile.appendChild(top);
+    if (p.detail) tile.appendChild(el('span', { class: 'pattern-tile-detail', text: p.detail }));
+    tile.addEventListener('click', () => routeMessageToCoach(`What should I train for ${p.label.toLowerCase()} today?`));
+    grid.appendChild(tile);
+  }
+  box.appendChild(grid);
+  box.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;margin-top:6px', text: 'Tap a movement to ask Atlas for a session focused on it.' }));
+
+  const ready = patterns.filter(p => p.status === 'fresh' || p.status === 'ready').length;
+  const resting = patterns.filter(p => p.status === 'fatigued').length;
+  const parts = [];
+  if (ready) parts.push(`${ready} ready`);
+  if (resting) parts.push(`${resting} resting`);
+  setGlanceHint('pattern-board-hint', parts.join(' · ') || 'Recovery tracked');
 }
 
 /* ===== Today — hero card, consistency line, start-session wiring ===== */
