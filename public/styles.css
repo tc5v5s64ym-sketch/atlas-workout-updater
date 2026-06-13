@@ -1381,9 +1381,12 @@ a.lift-link:hover { text-decoration: underline; }
 
 /* ===== Conversation-first Coach home ===== */
 
-/* Legacy coach cards are superseded by the Suggested Workout tile + chat. */
+/* Legacy coach chrome is superseded by the Suggested Workout tile + chat.
+   Kept in the DOM (renderers/handlers still target them) but not surfaced. */
 #coach-plan-card,
-#weekly-coach-card { display: none; }
+#weekly-coach-card,
+#coach-read-strip,
+#suggestion-chips { display: none; }
 
 /* Empty-state hero (Grok/Gemini style) — fills the middle until the chat starts */
 .coach-empty {

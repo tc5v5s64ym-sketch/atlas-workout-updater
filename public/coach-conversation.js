@@ -16,8 +16,8 @@
  * its body for an LLM call without changing a single caller (see the comment on
  * the function). The engine owns the numbers; the voice never invents them.
  *
- * Reuses app.js globals (top-level fns): el, api, getApiKey, fetchReaction,
- * previewSetsForLift, buildVerdict, attachVerdictContext, normalizePlanExercise.
+ * Reuses app.js globals (top-level fns): api, getApiKey, fetchReaction,
+ * previewSetsForLift, normalizePlanExercise.
  * Reuses nav.js: window.atlasChipAnswerLast.
  */
 
@@ -131,6 +131,24 @@
     currentSaveBtn.disabled = true;
     currentSaveBtn.dataset.done = '1';
     currentSaveBtn = null;
+  }
+
+  function resetSaveAfterError() {
+    if (!currentSaveBtn || currentSaveBtn.dataset.done) return;
+    currentSaveBtn.textContent = 'Save to Sheets';
+    currentSaveBtn.disabled = approveBtn ? approveBtn.disabled : false;
+  }
+
+  // app.js writes the result into #logger-status: a `.status-msg.ok` card on a
+  // successful write, `.status-msg.error` on failure. Mirror that onto the
+  // inline Save button — no event plumbing, no change to the approve handler.
+  const loggerStatusEl = document.getElementById('logger-status');
+  if (loggerStatusEl) {
+    new MutationObserver(() => {
+      if (!currentSaveBtn || currentSaveBtn.dataset.done) return;
+      if (loggerStatusEl.querySelector('.status-msg.ok')) markSaved();
+      else if (loggerStatusEl.querySelector('.status-msg.error')) resetSaveAfterError();
+    }).observe(loggerStatusEl, { childList: true, subtree: true });
   }
 
   /* ===== Suggested-workout message (templated) ===== */
@@ -284,27 +302,6 @@
     appendInlineSave(bubble);
   }
 
-  async function handleWriteSuccess(detail) {
-    markSaved();
-    const { liftCodes = [], sessionId } = detail || {};
-    if (!liftCodes.length || (typeof getApiKey === 'function' && !getApiKey())) return;
-    const code = liftCodes[0];
-
-    let rec = null;
-    try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code); } catch { /* best effort */ }
-    if (!rec) return;
-    try { if (typeof attachVerdictContext === 'function') await attachVerdictContext(rec, code, sessionId); } catch { /* best effort */ }
-
-    const verdict = (typeof buildVerdict === 'function') ? buildVerdict(rec) : null;
-    const name = rec.exercise_name || code;
-    const lines = [`Saved ${name}. ✓`];
-    if (verdict) lines.push(`That's ${verdict}.`);
-    if (rec.recommendation) { lines.push(''); lines.push(`Next time: ${rec.recommendation}`); }
-
-    const handle = appendAtlasBubble();
-    if (handle) await typeOut(handle.body, lines.join('\n'));
-  }
-
   /* ===== Tiles + listeners ===== */
 
   document.getElementById('suggested-tiles')?.addEventListener('click', e => {
@@ -319,7 +316,6 @@
   });
 
   document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
-  document.addEventListener('atlas:write-success', e => { handleWriteSuccess(e.detail).catch(() => {}); });
 
   // Logging directly (without tapping a tile) also leaves the empty home: the
   // first message of any kind collapses the hero + tiles.

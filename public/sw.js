@@ -17,6 +17,7 @@ const SHELL_ASSETS = [
   '/app/app.js',
   '/app/nav.js',
   '/app/chat.js',
+  '/app/coach-conversation.js',
   '/app/manifest.json',
   '/app/icons/icon-192.png',
   '/app/icons/icon-512.png'

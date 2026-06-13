@@ -2879,12 +2879,28 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           : 'Write succeeded, but readback verification unavailable' }));
       });
     }
-    // Post-write coaching is narrated conversationally by coach-conversation.js,
-    // which types the verdict + next-step as an Atlas bubble. It reuses the same
-    // read-only fetchReaction / attachVerdictContext / buildVerdict helpers.
-    document.dispatchEvent(new CustomEvent('atlas:write-success', {
-      detail: { liftCodes: reactionLiftCodes, sessionId: pendingLastWrite?.session_id || null }
-    }));
+    if (reactionLiftCodes.length) {
+      fetchReaction(reactionLiftCodes[0]).then(async rec => {
+        if (!rec) return;
+        await attachVerdictContext(rec, reactionLiftCodes[0], pendingLastWrite?.session_id);
+        const verdict = buildVerdict(rec);
+        const lines = [];
+        if (verdict) {
+          lines.push(el('div', { class: 'suggestion-row' }, [
+            el('span', { class: 'suggestion-label', text: 'Logged' }),
+            el('span', { text: verdict }),
+          ]));
+        }
+        if (rec.recommendation && rec.next_target) {
+          lines.push(el('div', { class: 'suggestion-row' }, [
+            el('span', { class: 'suggestion-label', text: 'Next' }),
+            el('span', { text: rec.recommendation }),
+          ]));
+        }
+        if (!lines.length) return;
+        loggerStatus.appendChild(el('div', { class: 'atlas-suggestion' }, lines));
+      }).catch(() => {});
+    }
     loadDashboard();
     approveBtn.textContent = 'Written ✓';
   } catch (err) {
