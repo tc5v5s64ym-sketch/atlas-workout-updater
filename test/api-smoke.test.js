@@ -73,7 +73,7 @@ const fakeSheets = {
     if (tabName === 'Effort') return [];
     return [];
   },
-  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary'],
+  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight'],
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort'
 };
@@ -466,6 +466,7 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
       assert.equal(body.status, 'ok');
       assert.equal(data.effort_only, true);
       assert.equal(data.sheet_written, true);
+      assert.equal(data.sheet_write, 'success');
       assert.equal(data.effort_written, true);
       assert.equal(data.log_rows_written, 0);
       assert.equal(fakeSheetsState.appendCalls.length, 1);
@@ -500,6 +501,7 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
       const firstData = first.body.data.data;
       assert.equal(first.response.status, 200, JSON.stringify(first.body));
       assert.equal(firstData.sheet_written, true);
+      assert.equal(firstData.sheet_write, 'success');
       assert.equal(firstData.effort_written, true);
       assert.equal(firstData.duplicate_write, false);
       assert.equal(firstData.write_id, 'complete-write-idem-01');
@@ -1152,6 +1154,97 @@ test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns ro
   assert.equal(call.tabName, 'Log_Cleaned');
   assert.equal(call.startIndex, 2);
   assert.equal(call.endIndex, 3);
+});
+
+test('api smoke: undo-last with write_id deletes once and skips duplicate retry', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+
+  const payload = {
+    log_appended_range: 'Log_Cleaned!A3:L3',
+    session_id: 'SESSION-NEW',
+    rows_to_delete: 1,
+    confirm_delete: true,
+    write_id: 'undo-write-idem-01'
+  };
+
+  const first = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  assert.equal(first.response.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.data.sheet_write, 'success');
+  assert.equal(first.body.data.sheet_written, true);
+  assert.equal(first.body.data.duplicate_write, false);
+  assert.equal(fakeSheetsState.deleteCalls.length, 1);
+
+  const duplicate = await requestJson('/api/log-workout/undo-last', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
+  assert.equal(duplicate.body.data.duplicate_write, true);
+  assert.equal(duplicate.body.data.sheet_write, 'skipped_duplicate');
+  assert.equal(duplicate.body.data.sheet_written, false);
+  assert.equal(duplicate.body.data.rows_deleted, 0);
+  assert.equal(duplicate.body.data.original_rows_deleted, 1);
+  assert.equal(fakeSheetsState.deleteCalls.length, 1);
+});
+
+test('api smoke: bodyweight dry-run returns no-write proof', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/bodyweight', {
+    method: 'POST',
+    body: JSON.stringify({
+      date: '2026-06-12',
+      weight: 183.4,
+      notes: 'morning',
+      test_mode: true,
+      write_id: 'bodyweight-dry-run-01'
+    })
+  });
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_write, 'skipped');
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(fakeSheetsState.appendCalls.length, 0);
+});
+
+test('api smoke: bodyweight live write with write_id appends once and skips duplicate retry', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  const payload = {
+    date: '2026-06-12',
+    weight: 183.4,
+    notes: 'morning',
+    write_id: 'bodyweight-write-idem-01'
+  };
+
+  try {
+    const first = await requestJson('/api/bodyweight', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    assert.equal(first.response.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.data.sheet_write, 'success');
+    assert.equal(first.body.data.sheet_written, true);
+    assert.equal(first.body.data.duplicate_write, false);
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    const duplicate = await requestJson('/api/bodyweight', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    assert.equal(duplicate.response.status, 200, JSON.stringify(duplicate.body));
+    assert.equal(duplicate.body.data.duplicate_write, true);
+    assert.equal(duplicate.body.data.sheet_write, 'skipped_duplicate');
+    assert.equal(duplicate.body.data.sheet_written, false);
+    assert.equal(duplicate.body.data.original_sheet_write, 'success');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
 });
 
 test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', async () => {
