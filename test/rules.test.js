@@ -366,6 +366,15 @@ test('isLowerBodyGroup classifies muscle groups', () => {
   assert.ok(ids.includes('pain_flag'));
 });
 
+test('evaluateSessionSafety still surfaces a notes-only pain flag when there are no rows', () => {
+  // Regression guard: the empty-rows fast path must not skip the workoutNotes pain check.
+  const flags = evaluateSessionSafety([], 'sharp shoulder pain after the session');
+  assert.ok(flags.map(f => f.rule_id).includes('pain_flag'));
+  // ...but genuinely empty input (no rows, no notes) still degrades to [].
+  assert.deepEqual(evaluateSessionSafety([], ''), []);
+  assert.deepEqual(evaluateSessionSafety(null, ''), []);
+});
+
 /* ===== wiring: rules engine is connected to the write path ===== */
 
 const fsRules = require('node:fs');

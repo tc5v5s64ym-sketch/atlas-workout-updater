@@ -151,14 +151,16 @@ function rirDrift(historyRows, liftCode, config = {}) {
 // workoutNotes: top-level notes string, if any.
 // Returns an array of decision objects (possibly empty), ready to surface as
 // rule_flags in a preview response.
-// Degrades safely on bad input.
+// Degrades safely on bad input. Malformed rows coerce to an empty array, but the
+// checks still run: painFlag reads top-level workoutNotes, so a notes-only session
+// (no rows) must still surface a pain warning. Each check tolerates empty rows.
 function evaluateSessionSafety(newRows, workoutNotes = '') {
-  if (!Array.isArray(newRows) || newRows.length === 0) return [];
+  const rows = Array.isArray(newRows) ? newRows : [];
   const flags = [];
   const checks = [
-    rirCaution(newRows),
-    junkRepGuard(newRows),
-    painFlag(newRows, workoutNotes),
+    rirCaution(rows),
+    junkRepGuard(rows),
+    painFlag(rows, workoutNotes),
   ];
   for (const f of checks) {
     if (f) flags.push(f);
