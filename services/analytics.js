@@ -457,8 +457,10 @@ function detectStalls(logRows, minSessions = 3) {
     const firstWeight = lastN[0].best_weight;
 
     if (maxWeight <= firstWeight) {
+      const lastNamed = [...sorted].reverse().find(r => r.canonical_exercise || r.exercise);
       stalls.push({
         liftCode,
+        exercise: lastNamed ? (lastNamed.canonical_exercise || lastNamed.exercise) : '',
         sessions_stalled: lastN.length,
         last_best_weight: lastN[lastN.length - 1].best_weight,
         first_session_date: lastN[0].date,
@@ -1499,7 +1501,7 @@ function buildWeeklyReport(logRows, { days = 7, today = null } = {}) {
       lines.push(`Improvements: ${prs.map(p => `${p.exercise || p.lift_code} ${p.prev_best} → ${p.this_week_best} lb`).join(', ')}`);
     }
     if (stalls_or_watchouts.length) {
-      lines.push(`Watchouts: ${stalls_or_watchouts.map(s => `${s.liftCode} stalled at ${s.last_best_weight} lb (${s.sessions_stalled} sessions)`).join(', ')}`);
+      lines.push(`Watchouts: ${stalls_or_watchouts.map(s => `${s.exercise || s.liftCode} stalled at ${s.last_best_weight} lb (${s.sessions_stalled} sessions)`).join(', ')}`);
     }
     const recLines = recommendations.filter(r => r.recommendation).map(r => `${r.lift_code}: ${r.recommendation}`);
     if (recLines.length) lines.push(`Next focus: ${recLines.join(' · ')}`);

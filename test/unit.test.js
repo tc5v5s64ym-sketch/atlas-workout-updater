@@ -2018,7 +2018,10 @@ test('weekly report: buildWeeklyReport surfaces stalls from history for this wee
   ];
   const report = buildWeeklyReport(rows, { today });
   assert.equal(report.sessions_count, 1, 'only this week counted');
-  assert.ok(report.stalls_or_watchouts.some(s => s.liftCode === 'SQ'), 'SQ must be flagged as stalled');
+  const stall = report.stalls_or_watchouts.find(s => s.liftCode === 'SQ');
+  assert.ok(stall, 'SQ must be flagged as stalled');
+  assert.equal(stall.exercise, 'Back Squat', 'stall must carry the exercise name for display');
+  assert.match(report.summary_markdown, /Watchouts: Back Squat stalled/, 'markdown shows the name, not the code');
 });
 
 test('weekly report: endpoint registered as GET and read-only', () => {
