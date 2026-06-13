@@ -8,7 +8,7 @@ test('coach system prompt carries the hard guardrails', () => {
   assert.match(prompt, /ONLY the weights, reps, and RIR present in the facts/i);
   assert.match(prompt, /"Next:"/i, 'must require a single Next: line');
   assert.match(prompt, /never write to any database or sheet/i, 'must forbid writes');
-  assert.match(prompt, /\{weight\} × \{reps\}/, 'must specify the set bullet format');
+  assert.match(prompt, /\{weight\}lbs \{reps\}/, 'must specify the set format');
   assert.match(prompt, /plain text only/i, 'must forbid markdown');
 });
 

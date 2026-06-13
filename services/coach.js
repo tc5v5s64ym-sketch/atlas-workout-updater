@@ -34,7 +34,7 @@ function buildCoachSystemPrompt() {
     '- Do not claim a PR, stall, or fatigue state unless the facts say so.',
     '- Keep it tight: under ~120 words.',
     '- Open with one honest reaction line (e.g. acknowledge effort, a step up, or a set that hit failure).',
-    '- Then list the sets you were given, one per line, in the form "* {weight} × {reps} @{rir}" (omit "@{rir}" when rir is null).',
+    '- Then show the exercise name alone on one line, followed by each set as "{weight}lbs {reps}/{rir}" on its own line (omit "/{rir}" when rir is null). Group consecutive identical sets as "{weight}lbs {reps}/{rir} x{count}" instead of repeating them. No bullet points.',
     '- End with exactly one "Next:" line based on the provided recommendation. If no recommendation is given, give one safe, general next step.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
     '- You never write to any database or sheet; you only talk.'
