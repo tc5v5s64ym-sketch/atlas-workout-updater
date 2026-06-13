@@ -507,13 +507,24 @@
   // trust loop (preview → approve → write) is never skipped.
   function applyProposedEdit(edit) {
     const table = (typeof setsTableBody !== 'undefined') ? setsTableBody : null;
-    const rows = table ? Array.from(table.children) : [];
+    if (!table) return false;
+    const allRows = Array.from(table.children);
+    // The model's index is relative to the same filtered rows currentPreviewRowsForChat
+    // sent as context — rows where weight or reps has a value. Blank placeholder rows
+    // are excluded from both the snapshot and the edit target, so the indices align.
+    const rows = allRows.filter(tr => {
+      const w = tr.querySelector('.set-weight')?.value;
+      const r = tr.querySelector('.set-reps')?.value;
+      return w || r;
+    });
     if (!validateProposedEdit(edit, rows.length)) return false;
 
     if (edit.action === 'delete_set') {
       rows[edit.index].remove();
-      const editor = document.getElementById('parsed-rows-editor');
-      if (editor && table && !table.children.length) editor.hidden = true;
+      if (!table.children.length) {
+        const editor = document.getElementById('parsed-rows-editor');
+        if (editor) editor.hidden = true;
+      }
     } else if (edit.action === 'update_set') {
       const row = rows[edit.index];
       if (edit.weight != null) row.querySelector('.set-weight').value = String(edit.weight);
@@ -521,7 +532,7 @@
       if (edit.rir != null) row.querySelector('.set-rir').value = String(edit.rir);
     } else if (edit.action === 'add_set') {
       if (typeof addSetRow !== 'function') return false;
-      const lastRow = rows[rows.length - 1];
+      const lastRow = allRows[allRows.length - 1];
       const exercise = lastRow ? (lastRow.querySelector('.set-exercise')?.value || null) : null;
       addSetRow({ exercise, weight: edit.weight, reps: edit.reps, rir: edit.rir });
     }
