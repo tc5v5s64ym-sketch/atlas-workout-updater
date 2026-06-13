@@ -46,10 +46,6 @@
            Shows the current planned step; cleared when the session ends. -->
       <div id="active-session-banner" class="active-session-banner" hidden></div>
 
-      <h2 class="coach-greeting" id="coach-greeting">Ready when you are.</h2>
-      <p class="coach-subtitle">Log a workout, or just ask.</p>
-      <div id="coach-read-strip" class="coach-read-strip"></div>
-
       <!-- Read-only coaching card: today's focus, the lift to pick back up,
            its last working set, and the next-set suggestion. Hidden until it
            has something useful; a failed fetch leaves it hidden so logging is
@@ -61,32 +57,50 @@
            failed fetch leaves it hidden so logging is never blocked. -->
       <div id="weekly-coach-card" class="card coach-plan-card" hidden></div>
 
-      <div class="suggestion-chips" id="suggestion-chips">
-        <button type="button" class="chip" data-chip="example">Bench 135 10/4, 225 5/2 x3</button>
-        <button type="button" class="chip" data-chip="train">What should I train?</button>
-        <button type="button" class="chip" data-chip="last">Show my last session</button>
-        <button type="button" class="chip" data-chip="report">Weekly report</button>
+      <!-- Empty-state hero (Grok/Gemini style): shown until the conversation
+           starts, then collapsed by coach-conversation.js. -->
+      <div id="coach-empty" class="coach-empty">
+        <img class="coach-empty-glyph" src="icons/icon-512.png" alt="" aria-hidden="true">
+        <p class="coach-empty-tagline">Log a workout, or just ask.</p>
       </div>
 
-      <!-- Conversation thread: user bubbles, Atlas preview card, write/status replies -->
+      <!-- Conversation thread: user bubbles, Atlas coaching bubbles, the dry-run
+           review panel, and write/status replies. -->
       <div id="coach-thread" class="coach-thread">
         <div id="thread-messages" aria-live="polite"></div>
 
-        <div id="preview-panel" hidden>
-          <h3>Review before saving</h3>
+        <!-- The full dry-run proof + approval gate. Collapsed by default so the
+             conversation stays clean; the inline "Save to Sheets" button in the
+             coaching bubble drives this same #approve-btn. Open it to review the
+             proof, edit rows, or save manually. -->
+        <details id="preview-panel" class="preview-details" hidden>
+          <summary class="preview-summary">Dry-run details — review &amp; save manually</summary>
           <div id="preview-content"></div>
           <div class="action-row">
             <button id="approve-btn" class="approve" disabled>Write to Google Sheets</button>
             <button id="cancel-preview-btn" class="secondary">Edit / Cancel</button>
           </div>
           <p class="preview-gate-note" id="preview-gate-note">Run a preview above to enable this button.</p>
-        </div>
+        </details>
 
         <div id="logger-status"></div>
       </div>
 
+      <!-- Quick-start tiles, just above the composer. Hidden once the
+           conversation starts (coach-conversation.js). -->
+      <div id="suggested-tiles" class="suggested-tiles">
+        <button type="button" class="suggest-tile" data-suggest="workout">
+          <span class="suggest-tile-icon" aria-hidden="true">&#127947;</span>
+          <span class="suggest-tile-label">Suggested Workout</span>
+        </button>
+        <button type="button" class="suggest-tile" data-suggest="last">
+          <span class="suggest-tile-icon" aria-hidden="true">&#128203;</span>
+          <span class="suggest-tile-label">Last Session</span>
+        </button>
+      </div>
+
       <form id="logger-form">
-        <label class="workout-text-label" for="workout-text">Workout text</label>
+        <label class="workout-text-label" for="workout-text">Ask anything, or log a set</label>
         <div class="composer">
           <button type="button" class="composer-attach" id="composer-attach" aria-label="Add attachment" aria-haspopup="true" aria-expanded="false">+</button>
           <div class="attach-menu" id="attach-menu" hidden>
@@ -94,7 +108,7 @@
             <button type="button" id="attach-manual">Manual effort entry</button>
             <button type="button" id="attach-fix-session">Fix a past session</button>
           </div>
-          <textarea id="workout-text" class="workout-text" rows="2" placeholder="Bench 135 10/4, 225 5/2 x3&#10;Squats 225 5/2 x3"></textarea>
+          <textarea id="workout-text" class="workout-text" rows="2" placeholder="Ask anything, or log a set — Bench 135 10/4, 225 5/2 x3"></textarea>
           <button type="submit" id="preview-btn" class="composer-send" title="Preview — no data saved">Preview — no data saved</button>
         </div>
 
@@ -394,5 +408,6 @@
   <script src="app.js"></script>
   <script src="nav.js"></script>
   <script src="chat.js"></script>
+  <script src="coach-conversation.js"></script>
 </body>
 </html>

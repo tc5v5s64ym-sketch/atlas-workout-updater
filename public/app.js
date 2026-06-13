@@ -2059,6 +2059,18 @@ function extractLiftCodes(logRowsPreview) {
   return codes;
 }
 
+// Hand the just-previewed sets to the conversation layer (coach-conversation.js)
+// so it can type a coaching note with an inline Save. Read-only narration: it
+// never writes — Save just clicks #approve-btn, which stays gated by the dry-run
+// proof. Best-effort; a missing listener is a no-op.
+function emitCoachPreview(rows, liftCodes, effortOnly) {
+  try {
+    document.dispatchEvent(new CustomEvent('atlas:preview-ready', {
+      detail: { rows: rows || [], liftCodes: liftCodes || [], effortOnly: Boolean(effortOnly) }
+    }));
+  } catch { /* narration is optional */ }
+}
+
 async function fetchReaction(liftCode) {
   if (!liftCode || !getApiKey()) return null;
   try {
@@ -2619,6 +2631,7 @@ function renderLogWorkoutPreview(result, effortRow) {
       }).catch(() => {});
     }
   }
+  emitCoachPreview(data.log_rows_preview, liftCodes, false);
 }
 
 function renderCompleteWorkoutPreview(result) {
@@ -2652,6 +2665,7 @@ function renderCompleteWorkoutPreview(result) {
   }
   const completeLiftCodes = extractLiftCodes(data.rows_to_write);
   if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;
+  emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly);
   if (completeLiftCodes.length && getApiKey()) {
     const suggestionSlot = el('div', {});
     previewContent.appendChild(suggestionSlot);
@@ -2865,28 +2879,12 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           : 'Write succeeded, but readback verification unavailable' }));
       });
     }
-    if (reactionLiftCodes.length) {
-      fetchReaction(reactionLiftCodes[0]).then(async rec => {
-        if (!rec) return;
-        await attachVerdictContext(rec, reactionLiftCodes[0], pendingLastWrite?.session_id);
-        const verdict = buildVerdict(rec);
-        const lines = [];
-        if (verdict) {
-          lines.push(el('div', { class: 'suggestion-row' }, [
-            el('span', { class: 'suggestion-label', text: 'Logged' }),
-            el('span', { text: verdict }),
-          ]));
-        }
-        if (rec.recommendation && rec.next_target) {
-          lines.push(el('div', { class: 'suggestion-row' }, [
-            el('span', { class: 'suggestion-label', text: 'Next' }),
-            el('span', { text: rec.recommendation }),
-          ]));
-        }
-        if (!lines.length) return;
-        loggerStatus.appendChild(el('div', { class: 'atlas-suggestion' }, lines));
-      }).catch(() => {});
-    }
+    // Post-write coaching is narrated conversationally by coach-conversation.js,
+    // which types the verdict + next-step as an Atlas bubble. It reuses the same
+    // read-only fetchReaction / attachVerdictContext / buildVerdict helpers.
+    document.dispatchEvent(new CustomEvent('atlas:write-success', {
+      detail: { liftCodes: reactionLiftCodes, sessionId: pendingLastWrite?.session_id || null }
+    }));
     loadDashboard();
     approveBtn.textContent = 'Written ✓';
   } catch (err) {

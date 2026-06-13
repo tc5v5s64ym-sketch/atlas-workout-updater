@@ -287,6 +287,9 @@
     });
   }
 
+  // Reused by the "Last Session" home tile (coach-conversation.js).
+  window.atlasChipAnswerLast = chipAnswerLast;
+
   /* ===== Composer "+" attachment menu ===== */
 
   const attachBtn = document.getElementById('composer-attach');
