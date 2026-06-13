@@ -947,7 +947,12 @@ function renderPatternBoard(data) {
     if (overdue) top.appendChild(el('span', { class: 'pattern-overdue', text: 'overdue' }));
     tile.appendChild(top);
     if (p.detail) tile.appendChild(el('span', { class: 'pattern-tile-detail', text: p.detail }));
-    tile.addEventListener('click', () => routeMessageToCoach(`What should I train for ${p.label.toLowerCase()} today?`));
+    tile.addEventListener('click', () => {
+      // The board lives on the Today surface but the coach reply lands in the
+      // Coach thread — switch there first so the answer is visible, not orphaned.
+      document.getElementById('surface-coach')?.click();
+      routeMessageToCoach(`What should I train for ${p.label.toLowerCase()} today?`);
+    });
     grid.appendChild(tile);
   }
   box.appendChild(grid);

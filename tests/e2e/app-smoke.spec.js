@@ -639,5 +639,11 @@ test('Recovery board: per-pattern tiles sorted most-recovered first, tap asks th
   await board.locator('.pattern-tile').first().click();
 
   await expect.poll(() => chatBody && chatBody.message).toContain('pulling');
+
+  // The tap must switch to the Coach surface so the reply is visible, not
+  // orphaned under a hidden thread, and the reply lands in the thread.
+  await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Pull day it is.');
+
   expect(capture.writeRequests).toHaveLength(0);
 });
