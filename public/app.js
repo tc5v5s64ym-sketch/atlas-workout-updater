@@ -799,7 +799,7 @@ function renderProgressSnapshot(s) {
       strip.appendChild(bar);
     }
     box.appendChild(strip);
-    box.appendChild(el('p', { class: 'muted small', text: `Last ${weeks.length} weeks · ${target}+ sessions lights a streak week` }));
+    box.appendChild(el('p', { class: 'muted small', text: `Each bar = 1 week · ${target}+ sessions lights a streak week · last ${weeks.length} weeks` }));
   }
 }
 
@@ -1293,7 +1293,7 @@ async function loadRecentPrs() {
     box.appendChild(renderTable(
       ['Lift', 'Best weight', 'Best reps', 'Best est. 1RM'],
       prs.map(pr => [
-        pr.liftCode,
+        pr.exercise || pr.liftCode,
         pr.bestWeightSet ? `${pr.bestWeightSet.weight} × ${pr.bestWeightSet.reps} (${pr.bestWeightSet.date_clean})` : '—',
         pr.bestRepSet ? `${pr.bestRepSet.weight} × ${pr.bestRepSet.reps} (${pr.bestRepSet.date_clean})` : '—',
         pr.bestEstimated1RMSet ? `${pr.bestEstimated1RMSet.estimated_1rm} (${pr.bestEstimated1RMSet.date_clean})` : '—'
@@ -1457,11 +1457,17 @@ function renderLiftList(recs, box) {
   const list = el('div', { class: 'lift-list' });
   for (const r of recs) {
     const name = r.exercise_name || r.liftCode;
-    const target = r.next_target;
-    const targetText = target ? `${target.weight} × ${target.reps}` : '';
+    // Show progress % if we have first and best weight; fall back to next target.
+    let badgeText = '';
+    if (r.first_weight > 0 && r.best_weight > 0 && r.best_weight > r.first_weight) {
+      const pct = Math.round(((r.best_weight - r.first_weight) / r.first_weight) * 100);
+      badgeText = `↑ ${pct}%`;
+    } else if (r.next_target) {
+      badgeText = `${r.next_target.weight} × ${r.next_target.reps}`;
+    }
     const item = el('button', { type: 'button', class: 'lift-list-item' }, [
       el('span', { class: 'lift-list-name', text: name }),
-      targetText ? el('span', { class: 'lift-list-target', text: targetText }) : null
+      badgeText ? el('span', { class: 'lift-list-target', text: badgeText }) : null
     ].filter(Boolean));
     item.addEventListener('click', () => openLiftDrillDown(name, r.liftCode));
     list.appendChild(item);
@@ -1515,26 +1521,7 @@ async function openLiftDrillDown(exerciseName, liftCode) {
     contentEl.appendChild(el('p', { class: 'muted small', text: 'Could not load recommendation.' }));
   }
 
-  // ── Detail (last sessions + best recent set) ──
-  if (detailResult.status === 'fulfilled') {
-    const d = detailResult.value.data || {};
-    if (d.sessions_count) {
-      if (d.best_recent_set) {
-        const s = d.best_recent_set;
-        const setText = s.rir != null ? `${s.weight} × ${s.reps} @${s.rir}` : `${s.weight} × ${s.reps}`;
-        contentEl.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
-      }
-      if (d.last_sessions && d.last_sessions.length) {
-        contentEl.appendChild(el('h3', { text: 'Last sessions' }));
-        contentEl.appendChild(renderTable(
-          ['Date', 'Best weight', 'Est. 1RM', 'Volume', 'Sets'],
-          d.last_sessions.map(s => [s.date, s.best_weight ?? '—', s.estimated_1rm ?? '—', s.volume ?? '—', s.sets])
-        ));
-      }
-    }
-  }
-
-  // ── Progress chart (weight over time) ──
+  // ── Progress chart first (so you see the trend before the raw numbers) ──
   if (progressResult.status === 'fulfilled') {
     const p = progressResult.value.data || {};
     const weights = p.best_weight_over_time || [];
@@ -1550,6 +1537,25 @@ async function openLiftDrillDown(exerciseName, liftCode) {
         contentEl.appendChild(svgLineChart(
           oneRms.map(r => ({ x: r.date, y: r.estimated_1rm })),
           { color: '#16a34a', label: 'Estimated 1RM over time' }
+        ));
+      }
+    }
+  }
+
+  // ── Detail (last sessions table below the chart for context) ──
+  if (detailResult.status === 'fulfilled') {
+    const d = detailResult.value.data || {};
+    if (d.sessions_count) {
+      if (d.best_recent_set) {
+        const s = d.best_recent_set;
+        const setText = s.rir != null ? `${s.weight} × ${s.reps} @${s.rir}` : `${s.weight} × ${s.reps}`;
+        contentEl.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
+      }
+      if (d.last_sessions && d.last_sessions.length) {
+        contentEl.appendChild(el('h3', { text: 'Last sessions' }));
+        contentEl.appendChild(renderTable(
+          ['Date', 'Best weight', 'Est. 1RM', 'Sets'],
+          d.last_sessions.map(s => [s.date, s.best_weight ?? '—', s.estimated_1rm ?? '—', s.sets])
         ));
       }
     }
@@ -2785,11 +2791,6 @@ function renderLogWorkoutPreview(result, effortRow) {
   previewContent.innerHTML = '';
   const parseStatus = parserStatusNode(lastParserStatus);
   if (parseStatus) previewContent.appendChild(parseStatus);
-  const proof = el('div', { class: 'no-write-proof' }, [
-    el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
-    el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}  ·  sheet_write: ${data.sheet_write}` })
-  ]);
-  previewContent.appendChild(proof);
   const logAutoMatches = renderAutoMatches(data.auto_matches);
   if (logAutoMatches) previewContent.appendChild(logAutoMatches);
   previewContent.appendChild(renderWarnings(data.warnings));
@@ -2834,11 +2835,6 @@ function renderCompleteWorkoutPreview(result) {
   previewContent.innerHTML = '';
   const parseStatus = parserStatusNode(lastParserStatus);
   if (parseStatus) previewContent.appendChild(parseStatus);
-  const proof = el('div', { class: 'no-write-proof' }, [
-    el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
-    el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
-  ]);
-  previewContent.appendChild(proof);
   const completeAutoMatches = renderAutoMatches(outer.auto_matches);
   if (completeAutoMatches) previewContent.appendChild(completeAutoMatches);
   previewContent.appendChild(renderWarnings(outer.warnings));

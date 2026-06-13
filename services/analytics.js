@@ -258,10 +258,15 @@ function detectRecentPrs(logRows) {
     const code = row.lift_code || 'UNKNOWN';
     const existing = byLiftCode.get(code) || {
       liftCode: code,
+      exercise: row.canonical_exercise || row.exercise || '',
       bestWeightSet: null,
       bestRepSet: null,
       bestEstimated1RMSet: null
     };
+    // Keep the most-recently-seen exercise name in case earlier rows were blank.
+    if (!existing.exercise && (row.canonical_exercise || row.exercise)) {
+      existing.exercise = row.canonical_exercise || row.exercise;
+    }
 
     const estimated1RM = row.weight * (1 + (row.reps || 0) / 30);
     const rowSet = formatSet(row);
@@ -385,6 +390,10 @@ function recommendNextSet(logRows, liftCode, { today = null } = {}) {
     reasoning = `${reasoning} Based on your last session, ${daysSinceLastSession} days ago.`;
   }
 
+  const allWeights = rows.map(r => r.weight).filter(w => w > 0);
+  const first_weight = allWeights.length ? allWeights[0] : null;
+  const best_weight = allWeights.length ? Math.max(...allWeights) : null;
+
   return {
     liftCode: normalizedCode,
     exercise_name,
@@ -395,7 +404,9 @@ function recommendNextSet(logRows, liftCode, { today = null } = {}) {
     e1rm_trend: e1rmTrend,
     sessions_analyzed: sessions.length,
     confidence,
-    days_since_last_session: daysSinceLastSession
+    days_since_last_session: daysSinceLastSession,
+    first_weight,
+    best_weight
   };
 }
 
