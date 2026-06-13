@@ -1057,6 +1057,7 @@ a.lift-link:hover { text-decoration: underline; }
   border-radius: var(--r);
   margin-bottom: var(--s2);
   box-shadow: var(--shadow-sm);
+  overflow: hidden;           /* clip expanded content to card bounds */
 }
 .session-summary {
   cursor: pointer;
@@ -1082,12 +1083,15 @@ a.lift-link:hover { text-decoration: underline; }
   gap: var(--s2);
   padding-right: var(--s4);        /* leave room for the chevron */
 }
-.session-when { font-weight: 650; font-size: 0.95rem; letter-spacing: -0.01em; }
+.session-when { font-weight: 650; font-size: 0.95rem; letter-spacing: -0.01em; white-space: nowrap; }
 .session-stats { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
 .session-exercises { font-size: 0.85rem; color: var(--muted); margin-top: 3px; line-height: 1.35; }
 
 .session-effort-line { margin: 0 var(--s3) var(--s2); font-size: 0.85rem; }
 .session-detail-slot { margin: 0 var(--s3) var(--s3); padding-top: var(--s2); border-top: 1px solid var(--border); }
+
+/* Keep date column in the lift drill-down "Last sessions" table on one line */
+#lift-drilldown-content table td:first-child { white-space: nowrap; }
 
 /* Expanded session — exactly what was logged, grouped by exercise */
 .session-ex { margin-top: var(--s3); }
