@@ -1,13 +1,11 @@
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 
-const range = process.argv[2] || "origin/main...HEAD";
-
 function git(args) {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-function changedFiles() {
+function changedFiles(range) {
   let output = "";
   try {
     output = git(["diff", "--name-only", "--diff-filter=ACMR", range]);
@@ -19,6 +17,12 @@ function changedFiles() {
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((file) => fs.existsSync(file) && !file.endsWith(".env"));
+}
+
+function isAllowedExampleValue(line, file) {
+  if (file !== ".env.example") return false;
+  const value = line.split("=").slice(1).join("=").trim().replace(/^["']|["']$/g, "");
+  return value === "" || value === "replace_me" || value === "example";
 }
 
 const rules = [
@@ -44,35 +48,52 @@ const rules = [
       return matches.some((line) => !isAllowedExampleValue(line, file));
     },
   },
+  {
+    name: "gemini-api-key-assignment",
+    test: (text, file) => {
+      const matches = text.match(/^GEMINI_API_KEY\s*=\s*(.+)$/gm) || [];
+      return matches.some((line) => !isAllowedExampleValue(line, file));
+    },
+  },
+  {
+    // Google AI / Gemini API keys are "AIza" + 35 url-safe chars. Catch the raw
+    // token anywhere, so a leaked key is flagged even under a different var name.
+    name: "google-ai-api-key",
+    test: (text) => /AIza[0-9A-Za-z_-]{35}/.test(text),
+  },
 ];
 
-function isAllowedExampleValue(line, file) {
-  if (file !== ".env.example") return false;
-  const value = line.split("=").slice(1).join("=").trim().replace(/^["']|["']$/g, "");
-  return value === "" || value === "replace_me" || value === "example";
-}
-
-const failures = [];
-
-for (const file of changedFiles()) {
-  let text = "";
-  try {
-    text = fs.readFileSync(file, "utf8");
-  } catch {
-    continue;
-  }
-  for (const rule of rules) {
-    if (rule.test(text, file)) {
-      failures.push({ file, rule: rule.name });
+function scan(files) {
+  const failures = [];
+  for (const file of files) {
+    let text = "";
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const rule of rules) {
+      if (rule.test(text, file)) {
+        failures.push({ file, rule: rule.name });
+      }
     }
   }
+  return failures;
 }
 
-if (failures.length) {
-  for (const failure of failures) {
-    console.error(`${failure.file}: possible secret matched ${failure.rule}`);
+function run(range = "origin/main...HEAD") {
+  const failures = scan(changedFiles(range));
+  if (failures.length) {
+    for (const failure of failures) {
+      console.error(`${failure.file}: possible secret matched ${failure.rule}`);
+    }
+    process.exit(1);
   }
-  process.exit(1);
+  console.log("Changed-file secret scan OK");
 }
 
-console.log("Changed-file secret scan OK");
+module.exports = { rules, isAllowedExampleValue, scan };
+
+if (require.main === module) {
+  run(process.argv[2]);
+}
