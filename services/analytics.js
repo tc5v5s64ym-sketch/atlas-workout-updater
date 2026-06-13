@@ -94,12 +94,16 @@ function sessionBestByLift(rows) {
   return best;
 }
 
-// Best weight per lift code across all historical rows, excluding the current session.
-function historicalBestByLift(allRows, currentSessionId) {
-  const normId = String(currentSessionId || '').trim().toLowerCase();
+// Best weight per lift code across rows strictly before sessionDate (exclusive),
+// excluding the current session. Using date < sessionDate prevents future
+// sessions from inflating the baseline when scoring historical sessions.
+function historicalBestByLift(allRows, currentSessionId, sessionDate) {
+  const normId   = String(currentSessionId || '').trim().toLowerCase();
+  const beforeDate = sessionDate || '';
   const best = {};
   for (const row of allRows.map(normalizeLogRow)) {
     if (row.session_id.toLowerCase() === normId) continue;
+    if (beforeDate && row.date_clean >= beforeDate) continue;
     if (!row.lift_code || row.lift_code === 'UNKNOWN' || !row.weight || row.weight <= 0) continue;
     if (!best[row.lift_code] || row.weight > best[row.lift_code]) {
       best[row.lift_code] = row.weight;
@@ -147,7 +151,7 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
     validationWarnings,
     setsWithRir: sessionLogRows.map(r => r.rir).filter(v => v !== null && Number.isFinite(v)),
     sessionBestByLift: sessionBestByLift(sessionLogRows),
-    historicalBestByLift: historicalBestByLift(logRows, sessionId)
+    historicalBestByLift: historicalBestByLift(logRows, sessionId, effortRow?.date || sessionLogRows[0]?.date_clean || '')
   };
   const quality_score = calculateQualityScore(qualityMetrics);
   const quality_breakdown = qualityScoreBreakdown(qualityMetrics);

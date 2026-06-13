@@ -44,7 +44,7 @@ const {
   completeWrite,
   failWrite
 } = require('./services/idempotency');
-const { normalizeDate, parseNumber, calculateQualityScore } = require('./services/validation');
+const { normalizeDate, parseNumber, calculateQualityScore, qualityScoreBreakdown } = require('./services/validation');
 const {
   createCorsMiddleware,
   createRateLimiter,
@@ -1799,13 +1799,30 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     const duplicateWarnings = skippedDuplicates.length > 0 ? [`${skippedDuplicates.length} log row(s) skipped due to duplicate session_id+exercise+set_number`] : [];
     const combinedWarnings = [...new Set([...(metricWarnings || []), ...(enrichWarnings || []), ...duplicateWarnings])];
 
-    const qualityScore = calculateQualityScore({
+    // logCleanedColumns order: date[0] session[1] exercise[2] canonical[3]
+    // muscle[4] lift_code[5] set_number[6] weight[7] reps[8] rir[9] notes[10]
+    const completeSessionBest = {};
+    for (const row of formattedLogRows) {
+      const lc = String(row[5] || '').trim().toUpperCase();
+      const w  = parseNumber(row[7]);
+      if (!lc || lc === 'UNKNOWN' || !w || w <= 0) continue;
+      if (!completeSessionBest[lc] || w > completeSessionBest[lc].weight) {
+        completeSessionBest[lc] = { weight: w, exercise: String(row[3] || row[2] || lc) };
+      }
+    }
+    const completeQualityMetrics = {
       totalSets: formattedLogRows.length,
       effortDuration: normalizedMetrics.duration,
       averageHR: normalizedMetrics.averageHR,
+      activeCalories: normalizedMetrics.activeCalories,
       uniqueExercisesCount: new Set(formattedLogRows.map(r => String(r[2] || '').toLowerCase())).size,
-      validationWarnings: combinedWarnings
-    });
+      validationWarnings: combinedWarnings,
+      setsWithRir: formattedLogRows.map(r => parseNumber(r[9])).filter(v => v !== null && Number.isFinite(v)),
+      sessionBestByLift: completeSessionBest,
+      historicalBestByLift: {}
+    };
+    const qualityScore = calculateQualityScore(completeQualityMetrics);
+    const qualityBreakdown = qualityScoreBreakdown(completeQualityMetrics);
 
     const responseBody = {
       status: 'ok',
@@ -1825,7 +1842,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         },
         effort_source: req.file ? 'screenshot' : 'manual',
         parsed_effort: normalizedMetrics,
-        quality_score: qualityScore
+        quality_score: qualityScore,
+        quality_breakdown: qualityBreakdown
       }
     };
 
