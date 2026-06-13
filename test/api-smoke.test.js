@@ -1460,3 +1460,33 @@ test('api smoke: log-workout log-append failure releases write_id so a clean ret
     fakeSheetsState.failAppendForTab = null;
   }
 });
+
+test('api smoke: log-workout rejects implausible effort_row values (finding 13 — bounds unification)', async () => {
+  const logRows = [{ exercise: 'Squat', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }];
+
+  const badCases = [
+    { field: 'average_hr', value: 5000, desc: 'HR 5000' },
+    { field: 'active_calories', value: 0, desc: 'active_calories 0 (below min)' },
+    { field: 'total_calories', value: 99999, desc: 'total_calories 99999 (above max)' },
+    { field: 'peak_hr', value: 10, desc: 'peak_hr 10 (below min)' }
+  ];
+
+  for (const { field, value, desc } of badCases) {
+    const effort_row = {
+      date: '2026-06-12',
+      session_id: 'BOUNDS-TEST-01',
+      duration: '00:45:00',
+      active_calories: 400,
+      total_calories: 500,
+      average_hr: 140,
+      peak_hr: 165,
+      location: 'Gym'
+    };
+    effort_row[field] = value;
+    const { response } = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: 'BOUNDS-TEST-01', date: '2026-06-12', test_mode: true, log_rows: logRows, effort_row })
+    }));
+    assert.equal(response.status, 400, `expected 400 for ${desc}`);
+  }
+});
