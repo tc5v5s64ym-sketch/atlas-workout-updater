@@ -485,8 +485,12 @@
     const text = (detail && detail.text || '').trim();
     if (!text) return;
     // chat.js already painted the lifter's bubble on submit; we add Atlas's reply.
-    // Capture prior turns BEFORE recording this message so it isn't sent twice.
+    // Capture prior turns, then record THIS turn immediately — so a second message
+    // submitted while this request is still in flight sees it in context and turns
+    // stay in submission order. Only priorTurns goes to getChatReply (the current
+    // message is sent separately as `message`), which avoids the double-send.
     const priorTurns = chatTurns.slice(-8);
+    chatTurns.push({ role: 'user', text });
 
     const handle = appendAtlasBubble();
     if (!handle) return;
@@ -499,7 +503,7 @@
 
     body.textContent = '';
     await typeOut(body, reply);
-    chatTurns.push({ role: 'user', text }, { role: 'atlas', text: reply });
+    chatTurns.push({ role: 'atlas', text: reply });
   }
 
   document.addEventListener('atlas:chat-message', e => { handleChatMessage(e.detail).catch(() => {}); });
