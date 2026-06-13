@@ -54,6 +54,7 @@ const {
 const { success: standardSuccess, error: standardError } = require('./response');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
+const coach = require('./services/coach');
 const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
@@ -929,6 +930,40 @@ app.get('/api/health/sheets', async (req, res) => {
 // GET /api/health/openai
 app.get('/api/health/openai', (req, res) => {
   return standardSuccess(req, res, 'OpenAI health check', { configured: Boolean(process.env.OPENAI_API_KEY) });
+});
+
+// GET /api/health/gemini
+app.get('/api/health/gemini', (req, res) => {
+  return standardSuccess(req, res, 'Gemini health check', {
+    configured: coach.isConfigured(),
+    model: coach.coachModel()
+  });
+});
+
+// POST /api/coach/message — turn the deterministic workout facts into coach
+// prose via Gemini. READ-ONLY: this endpoint never touches Google Sheets. When
+// Gemini is unconfigured or fails, it returns message:null so the client falls
+// back to its templated coaching — the conversation is never blocked.
+app.post('/api/coach/message', async (req, res) => {
+  const facts = req.body && req.body.facts;
+  if (!facts || typeof facts !== 'object') {
+    return standardError(req, res, 'facts object is required', null, 400);
+  }
+  if (!coach.isConfigured()) {
+    return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
+      message: null, configured: false, model: coach.coachModel()
+    });
+  }
+  try {
+    const message = await coach.generateCoachMessage(facts);
+    return standardSuccess(req, res, 'Coach message', { message, configured: true, model: coach.coachModel(), source: 'gemini' });
+  } catch (error) {
+    // Degrade gracefully: tell the client to use its templated fallback rather
+    // than surfacing an error in the chat.
+    return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
+      message: null, configured: true, model: coach.coachModel(), error: error.message
+    });
+  }
 });
 
 // GET /api/debug/config

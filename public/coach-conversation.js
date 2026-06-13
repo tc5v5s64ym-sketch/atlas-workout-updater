@@ -7,14 +7,14 @@
  * THE TRUST LOOP IS NEVER TOUCHED. This file only narrates. It never writes:
  *   - "Save to Sheets" just clicks the existing #approve-btn (app.js owns the
  *     dry-run preview + approval gate + write, unchanged).
- *   - It reacts to two read-only events app.js dispatches:
+ *   - It reacts to the read-only atlas:preview-ready event app.js dispatches
  *       atlas:preview-ready  { rows, liftCodes, effortOnly }   (after a preview)
- *       atlas:write-success  { liftCodes, sessionId }          (after a write)
+ *     and mirrors #logger-status (the post-write card) onto the inline Save btn.
  *
  * Coaching voice seam: getCoachingMessage(facts) turns Atlas's deterministic
- * *facts* into the coach's *voice*. Today it's templated; a later PR can swap
- * its body for an LLM call without changing a single caller (see the comment on
- * the function). The engine owns the numbers; the voice never invents them.
+ * *facts* into the coach's *voice* via /api/coach/message (Gemini), falling back
+ * to a deterministic templated note whenever the LLM is unconfigured, slow, or
+ * errors. The engine owns the numbers; the voice only words them.
  *
  * Reuses app.js globals (top-level fns): api, getApiKey, fetchReaction,
  * previewSetsForLift, normalizePlanExercise.
@@ -228,18 +228,31 @@
   // ── SEAM ──────────────────────────────────────────────────────────────────
   // Atlas's engine produced the facts above (logged sets + the deterministic
   // next-set recommendation). This function turns facts into the coach's voice.
-  // Today it's templated. A later PR can replace the body with an LLM call:
   //
-  //     const r = await api('/api/coach/message', {
-  //       method: 'POST', headers: { 'Content-Type': 'application/json' },
-  //       body: JSON.stringify({ facts }) });
-  //     return r.data.message;
+  // Primary path: POST the facts to /api/coach/message, which asks Gemini to
+  // phrase them. The engine still owns every number; the LLM only words them,
+  // and the endpoint never writes. If Gemini is unconfigured, slow, or errors,
+  // the endpoint returns message:null (or we time out / throw) and we fall back
+  // to the deterministic templated note — the conversation is never blocked.
   //
-  // …with no change to any caller. Contract: input = facts; output = a plain
-  // string (newlines + "* " bullets render as-is in the pre-wrap bubble). The
-  // voice must NEVER invent numbers — it only phrases what the engine computed.
+  // Contract: input = facts; output = a plain string (newlines + "* " bullets
+  // render as-is in the pre-wrap bubble).
+  const COACH_LLM_TIMEOUT_MS = 9000;
+
   async function getCoachingMessage(facts) {
-    return buildTemplatedCoaching(facts);
+    const llm = await getLlmCoachingMessage(facts).catch(() => null);
+    return (llm && llm.trim()) ? llm : buildTemplatedCoaching(facts);
+  }
+
+  async function getLlmCoachingMessage(facts) {
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
+    const request = api('/api/coach/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ facts })
+    }).then(res => (res && res.data && res.data.message) || null);
+    return Promise.race([request, timeout]);
   }
 
   function buildTemplatedCoaching(facts) {
