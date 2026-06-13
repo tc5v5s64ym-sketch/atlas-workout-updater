@@ -309,6 +309,21 @@ test('Approve flow sends write_id only after preview and shows success', async (
   expect(capture.writeRequests[0].test_mode).toBeUndefined();
 });
 
+test('After save the verbose proof card is hidden and the verdict types out conversationally', async ({ page }) => {
+  await openApp(page);
+  await runPreview(page);
+  await page.locator('.save-inline-btn').click();
+
+  // The "Workout written ✓ / Undo / Verified" card collapses (kept in the DOM
+  // for the proof + signal, but not shown).
+  await expect(page.locator('#logger-status')).toBeHidden();
+  // The verdict + next-step is re-typed as a chat bubble instead.
+  await expect(page.locator('#thread-messages')).toContainText('Logged');
+  await expect(page.locator('#thread-messages')).toContainText('Next time:');
+  // Undo survives as a quiet link inside the bubble.
+  await expect(page.locator('.coach-undo-link')).toBeVisible();
+});
+
 test('Editing after preview invalidates stale write approval', async ({ page }) => {
   await openApp(page);
   await runPreview(page);
