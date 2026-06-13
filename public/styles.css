@@ -593,8 +593,9 @@ button.approve {
 
 .last-time-hint {
   font-size: 0.72rem; color: var(--muted); margin-top: 2px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
+  max-width: 240px; white-space: normal; overflow-wrap: anywhere;
 }
+.last-time-hint .next-target-hint { color: var(--accent); margin-top: 2px; }
 
 /* ============================================================================
    Notices, proof, status

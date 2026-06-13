@@ -1469,9 +1469,40 @@ let writeInFlight = false;
 // Cache last-time lookups to avoid redundant API calls within a session.
 const lastTimeCache = new Map();
 
+// Cache the per-lift recommendations (keyed by canonical exercise name) so the
+// live "Next" hint costs at most one /api/plan/today fetch per session.
+let planTodayByNameCache = null;
+async function getPlanTodayByName() {
+  if (planTodayByNameCache) return planTodayByNameCache;
+  const map = new Map();
+  try {
+    const res = await api('/api/plan/today');
+    for (const r of (res.data?.recommendations || [])) {
+      if (r.exercise_name) map.set(String(r.exercise_name).toLowerCase(), r);
+    }
+  } catch {
+    // best-effort — leave the map empty so the Next hint just doesn't show
+  }
+  planTodayByNameCache = map;
+  return map;
+}
+
+// Resolve a recommendation for a typed exercise name: exact canonical match
+// first, then a loose contains match ("bench" ↔ "Bench Press").
+async function lookupNextTarget(name) {
+  const map = await getPlanTodayByName();
+  const key = name.toLowerCase();
+  if (map.has(key)) return map.get(key);
+  for (const [exName, rec] of map) {
+    if (exName.includes(key) || key.includes(exName)) return rec;
+  }
+  return null;
+}
+
 async function showLastTimeHint(exerciseInput, hintEl) {
   const exercise = exerciseInput.value.trim();
   if (!exercise || !getApiKey()) { hintEl.textContent = ''; return; }
+  const stillCurrent = () => exerciseInput.value.trim().toLowerCase() === exercise.toLowerCase();
 
   let data = lastTimeCache.get(exercise.toLowerCase());
   if (!data) {
@@ -1485,9 +1516,21 @@ async function showLastTimeHint(exerciseInput, hintEl) {
     }
   }
 
-  if (!data.sets || !data.sets.length) { hintEl.textContent = ''; return; }
-  const summary = data.sets.map(s => `${s.weight}×${s.reps}`).join('  ');
-  hintEl.textContent = `Last (${data.date}): ${summary}`;
+  if (!stillCurrent()) return;
+  hintEl.textContent = '';
+  if (data.sets && data.sets.length) {
+    const summary = data.sets.map(s => `${s.weight}×${s.reps}`).join('  ');
+    hintEl.appendChild(el('div', { text: `Last (${data.date}): ${summary}` }));
+  }
+
+  // Live next-set coaching: the recommended target/cue for this lift, if any.
+  const rec = await lookupNextTarget(exercise);
+  if (!stillCurrent()) return;
+  if (rec && rec.next_target) {
+    const t = rec.next_target;
+    const tip = rec.recommendation || `${t.weight} × ${t.reps}`;
+    hintEl.appendChild(el('div', { class: 'next-target-hint', text: `Next: ${tip}` }));
+  }
 }
 
 function addSetRow(values = {}) {
