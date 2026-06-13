@@ -149,6 +149,8 @@ app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last'], c
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
+let gitVersion = 'unknown';
+try { gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim(); } catch (_) { /* not a git repo or no tags */ }
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
 // TODO(persistence-layer): replace in-memory pending exercises/cache with durable storage.
@@ -586,24 +588,11 @@ app.get('/health', (req, res) => {
   return standardSuccess(req, res, 'Health check passed', { service: 'atlas-workout-updater' });
 });
 
-const routeRegistry = [];
-function registerRoute(method, path, handler, meta = {}) {
-  routeRegistry.push({ path, methods: [method.toUpperCase()], ...meta });
-  return app[method](path, handler);
-}
-
 app.get('/routes', (req, res) => {
   return standardSuccess(req, res, 'Available routes', { routes: routeDefinitions });
 });
 
 app.get('/version', (req, res) => {
-  let gitVersion = 'unknown';
-  try {
-    gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim();
-  } catch (err) {
-    // ignore
-  }
-
   return standardSuccess(req, res, 'Service version', {
     version: gitVersion,
     deployed_at: deploymentTimestamp,
@@ -612,7 +601,7 @@ app.get('/version', (req, res) => {
 });
 
 // GET /api/history/recent
-registerRoute('get', '/api/history/recent', async (req, res) => {
+app.get('/api/history/recent', async (req, res) => {
 
   const limit = Number(req.query.limit) || 5;
   const exerciseFilter = req.query.exercise ? String(req.query.exercise).toLowerCase() : null;
@@ -861,7 +850,7 @@ app.get('/api/search/sessions', async (req, res) => {
 });
 
 // GET /api/catalog/exercises
-registerRoute('get', '/api/catalog/exercises', async (req, res) => {
+app.get('/api/catalog/exercises', async (req, res) => {
 
   try {
     const cached = catalogCache.get('catalog:rows');
@@ -1717,7 +1706,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         date: dateValue,
         test_mode: testMode,
         effort_only: effortOnly,
-        would_write: rowsToWrite.length > 0 || !duplicateSession,
         sheet_written: !testMode && effortWritten,
         sheet_write: testMode ? 'skipped' : 'success',
         log_rows_written: testMode ? 0 : logAppendCount,

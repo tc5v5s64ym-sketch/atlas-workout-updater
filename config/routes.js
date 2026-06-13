@@ -27,7 +27,7 @@ const routeDefinitions = [
   { path: '/api/plan/today', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/plan/intent-recommendation', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/parse-workout-text', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/parse-workout-image', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/parse-workout-image', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/complete-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/log-workout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/log-workout/undo-last', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
