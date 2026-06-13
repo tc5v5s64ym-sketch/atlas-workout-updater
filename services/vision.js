@@ -1,6 +1,9 @@
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 
 function buildWorkoutScreenshotPrompt() {
   return [
@@ -26,21 +29,66 @@ function buildWorkoutScreenshotPrompt() {
   ].join('\n');
 }
 
-async function parseWorkoutScreenshot(imagePath) {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY is required for workout image parsing.');
+// Returns provider config or throws a clear config error.
+// Exported for testing.
+function getProviderConfig() {
+  const provider = (process.env.ATLAS_LLM_PROVIDER || 'openai').toLowerCase().trim();
+
+  if (provider === 'gemini') {
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error(
+        'ATLAS_LLM_PROVIDER=gemini but GEMINI_API_KEY is not set. ' +
+        'Set GEMINI_API_KEY or unset ATLAS_LLM_PROVIDER to use OpenAI.'
+      );
+    }
+    return {
+      provider: 'gemini',
+      model: (process.env.ATLAS_LLM_MODEL || 'gemini-2.5-flash-lite').trim(),
+      apiKey: process.env.GEMINI_API_KEY
+    };
   }
 
-  if (!imagePath) {
-    throw new Error('imagePath is required');
+  if (provider === 'openai') {
+    if (!process.env.OPENAI_API_KEY) {
+      throw new Error('OPENAI_API_KEY is required for workout image parsing.');
+    }
+    return { provider: 'openai', apiKey: process.env.OPENAI_API_KEY };
   }
 
-  const absolutePath = path.resolve(imagePath);
-  const imageBuffer = fs.readFileSync(absolutePath);
-  const mimeType = getMimeTypeFromPath(absolutePath);
+  throw new Error(
+    `Unknown ATLAS_LLM_PROVIDER value: "${process.env.ATLAS_LLM_PROVIDER}". Supported values: openai, gemini`
+  );
+}
+
+// Normalizes a raw parsed object to the output contract.
+// Throws on non-object input (array, string, null) — never returns partial data.
+// Exported for testing.
+function normalizeParsedMetrics(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    const got = Array.isArray(parsed) ? 'array' : typeof parsed;
+    throw new Error(
+      `Vision model returned an unexpected response shape: expected a JSON object, got ${got}.`
+    );
+  }
+  return {
+    date: parsed.date ?? null,
+    duration: parsed.duration ?? null,
+    activeCalories: parsed.activeCalories ?? null,
+    totalCalories: parsed.totalCalories ?? null,
+    averageHR: parsed.averageHR ?? null,
+    peakHR: parsed.peakHR ?? null,
+    workoutType: parsed.workoutType ?? null
+  };
+}
+
+// Strips leading/trailing markdown code fences that some models add despite instructions.
+function stripJsonFences(text) {
+  return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+}
+
+async function parseWithOpenAI(imageBuffer, mimeType, config) {
   const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
-
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: config.apiKey });
 
   const response = await client.responses.create({
     model: 'gpt-4.1-mini',
@@ -48,14 +96,8 @@ async function parseWorkoutScreenshot(imagePath) {
       {
         role: 'user',
         content: [
-          {
-            type: 'input_text',
-            text: buildWorkoutScreenshotPrompt()
-          },
-          {
-            type: 'input_image',
-            image_url: dataUrl
-          }
+          { type: 'input_text', text: buildWorkoutScreenshotPrompt() },
+          { type: 'input_image', image_url: dataUrl }
         ]
       }
     ]
@@ -69,22 +111,54 @@ async function parseWorkoutScreenshot(imagePath) {
   let parsed;
   try {
     parsed = JSON.parse(textOutput);
-  } catch (error) {
-    throw new Error(`Vision response was not valid JSON: ${error.message}`);
+  } catch (err) {
+    throw new Error(`Vision response was not valid JSON: ${err.message}`);
   }
 
-  return {
-    status: 'image received',
-    parsed_metrics: {
-      date: parsed.date ?? null,
-      duration: parsed.duration ?? null,
-      activeCalories: parsed.activeCalories ?? null,
-      totalCalories: parsed.totalCalories ?? null,
-      averageHR: parsed.averageHR ?? null,
-      peakHR: parsed.peakHR ?? null,
-      workoutType: parsed.workoutType ?? null
-    }
-  };
+  return normalizeParsedMetrics(parsed);
+}
+
+async function parseWithGemini(imageBuffer, mimeType, config) {
+  const ai = new GoogleGenAI({ apiKey: config.apiKey });
+
+  const response = await ai.models.generateContent({
+    model: config.model,
+    contents: [
+      { inlineData: { mimeType, data: imageBuffer.toString('base64') } },
+      { text: buildWorkoutScreenshotPrompt() }
+    ]
+  });
+
+  const textOutput = stripJsonFences(response.text?.trim() || '');
+  if (!textOutput) {
+    throw new Error('Gemini returned no text output.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(textOutput);
+  } catch (err) {
+    throw new Error(`Gemini response was not valid JSON: ${err.message}`);
+  }
+
+  return normalizeParsedMetrics(parsed);
+}
+
+async function parseWorkoutScreenshot(imagePath) {
+  if (!imagePath) {
+    throw new Error('imagePath is required');
+  }
+
+  const config = getProviderConfig();
+  const absolutePath = path.resolve(imagePath);
+  const imageBuffer = fs.readFileSync(absolutePath);
+  const mimeType = getMimeTypeFromPath(absolutePath);
+
+  const metrics = config.provider === 'gemini'
+    ? await parseWithGemini(imageBuffer, mimeType, config)
+    : await parseWithOpenAI(imageBuffer, mimeType, config);
+
+  return { status: 'image received', parsed_metrics: metrics };
 }
 
 function extractTextOutput(response) {
@@ -114,5 +188,7 @@ function getMimeTypeFromPath(filePath) {
 
 module.exports = {
   buildWorkoutScreenshotPrompt,
-  parseWorkoutScreenshot
+  parseWorkoutScreenshot,
+  getProviderConfig,
+  normalizeParsedMetrics
 };
