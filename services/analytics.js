@@ -1,6 +1,45 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
 
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function isPositiveFinite(value) {
+  return Number.isFinite(value) && value > 0;
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function safeDateString(value, fallback = todayIso()) {
+  const normalized = normalizeDate(value);
+  if (normalized) return normalized;
+  return fallback;
+}
+
+function safePositiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function normalizeLogRow(row) {
+  if (!row || typeof row !== 'object') {
+    return {
+      date_clean: '',
+      session_id: '',
+      exercise: '',
+      canonical_exercise: '',
+      muscle_group: '',
+      lift_code: '',
+      set_number: '',
+      weight: null,
+      reps: null,
+      rir: null,
+      notes: ''
+    };
+  }
+
   if (Array.isArray(row)) {
     return {
       date_clean: normalizeDate(row[0]),
@@ -33,6 +72,20 @@ function normalizeLogRow(row) {
 }
 
 function normalizeEffortRow(row) {
+  if (!row || typeof row !== 'object') {
+    return {
+      date: '',
+      session_id: '',
+      duration: '',
+      active_calories: null,
+      total_calories: null,
+      average_hr: null,
+      peak_hr: null,
+      location: '',
+      notes: ''
+    };
+  }
+
   if (Array.isArray(row)) {
     return {
       date: normalizeDate(row[0]),
@@ -73,17 +126,17 @@ function formatSet(row) {
     reps: row.reps,
     rir: row.rir,
     notes: row.notes,
-    volume: row.weight && row.reps ? row.weight * row.reps : 0
+    volume: isPositiveFinite(row.weight) && isPositiveFinite(row.reps) ? row.weight * row.reps : 0
   };
 }
 
 function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings = []) {
   const normalizedSessionId = String(sessionId || '').trim().toLowerCase();
-  const sessionLogRows = logRows
+  const sessionLogRows = asArray(logRows)
     .map(normalizeLogRow)
     .filter(row => row.session_id.toLowerCase() === normalizedSessionId);
 
-  const effortRow = effortRows
+  const effortRow = asArray(effortRows)
     .map(normalizeEffortRow)
     .find(row => row.session_id.toLowerCase() === normalizedSessionId) || null;
 
@@ -94,7 +147,7 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
   let topSet = null;
 
   for (const row of sessionLogRows) {
-    if (row.weight && row.reps) {
+    if (isPositiveFinite(row.weight) && isPositiveFinite(row.reps)) {
       const volume = row.weight * row.reps;
       totalVolume += volume;
       if (!topSet || volume > topSet.volume) {
@@ -136,9 +189,9 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
 
 function computeExerciseProgress(logRows, liftCode) {
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
-  const rows = logRows
+  const rows = asArray(logRows)
     .map(normalizeLogRow)
-    .filter(row => row.lift_code === normalizedCode && row.weight && row.reps);
+    .filter(row => row.lift_code === normalizedCode && isPositiveFinite(row.weight) && isPositiveFinite(row.reps));
 
   const sessionsByKey = new Map();
   const progressByDate = [];
@@ -187,17 +240,17 @@ function computeExerciseProgress(logRows, liftCode) {
 
 function computeMuscleGroupVolume(logRows, days = 14) {
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - Number(days));
+  cutoff.setDate(cutoff.getDate() - safePositiveNumber(days, 14));
   const cutoffIso = cutoff.toISOString().slice(0, 10);
 
   const summary = {};
 
-  logRows.map(normalizeLogRow).forEach(row => {
+  asArray(logRows).map(normalizeLogRow).forEach(row => {
     if (!row.date_clean || row.date_clean < cutoffIso) return;
 
     const muscleGroupKey = row.muscle_group || 'Unknown';
     const group = summary[muscleGroupKey] || { muscle_group: muscleGroupKey, volume: 0, set_count: 0 };
-    if (row.weight && row.weight > 0 && row.reps) {
+    if (isPositiveFinite(row.weight) && isPositiveFinite(row.reps)) {
       group.volume += row.weight * row.reps;
       group.set_count += 1;
     } else if (!row.weight && /bodyweight|core/i.test(muscleGroupKey)) {
@@ -216,8 +269,8 @@ function computeMuscleGroupVolume(logRows, days = 14) {
 }
 
 function searchSessions(logRows, filters) {
-  const normalizedRows = logRows.map(normalizeLogRow);
-  const { exercise, liftCode, dateFrom, dateTo, muscleGroup } = filters;
+  const normalizedRows = asArray(logRows).map(normalizeLogRow);
+  const { exercise, liftCode, dateFrom, dateTo, muscleGroup } = filters || {};
   const from = normalizeDate(dateFrom);
   const to = normalizeDate(dateTo);
 
@@ -251,7 +304,7 @@ function searchSessions(logRows, filters) {
 }
 
 function detectRecentPrs(logRows) {
-  const rows = logRows.map(normalizeLogRow).filter(row => row.weight && row.weight > 0 && row.reps);
+  const rows = asArray(logRows).map(normalizeLogRow).filter(row => isPositiveFinite(row.weight) && isPositiveFinite(row.reps));
   const byLiftCode = new Map();
 
   rows.forEach(row => {
@@ -293,11 +346,12 @@ function isLowerBodyGroup(muscleGroup) {
   return /leg|quad|hamstring|glute|calf|lower body|hip/i.test(muscleGroup || '');
 }
 
-function recommendNextSet(logRows, liftCode, { today = null } = {}) {
+function recommendNextSet(logRows, liftCode, options = {}) {
+  const { today = null } = options || {};
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
-  const rows = logRows
+  const rows = asArray(logRows)
     .map(normalizeLogRow)
-    .filter(row => row.lift_code === normalizedCode && row.weight && row.weight > 0)
+    .filter(row => row.lift_code === normalizedCode && isPositiveFinite(row.weight) && isPositiveFinite(row.reps))
     .sort((a, b) => (a.date_clean || '').localeCompare(b.date_clean || '') || (a.session_id || '').localeCompare(b.session_id || '') || (Number(a.set_number) || 0) - (Number(b.set_number) || 0));
 
   if (!rows.length) {
@@ -318,12 +372,10 @@ function recommendNextSet(logRows, liftCode, { today = null } = {}) {
   // How long since this lift was last trained. Progression assumes recent data;
   // after a layoff we repeat rather than add load (staleness guard below).
   const dayMs = 24 * 60 * 60 * 1000;
-  const refMs = today
-    ? new Date(today + 'T12:00:00Z').getTime()
-    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z').getTime();
+  const refMs = isoDateAtUtcNoon(safeDateString(today)).getTime();
   const lastDate = rows[rows.length - 1].date_clean;
   const daysSinceLastSession = lastDate
-    ? Math.max(0, Math.round((refMs - new Date(lastDate + 'T12:00:00Z').getTime()) / dayMs))
+    ? Math.max(0, Math.round((refMs - isoDateAtUtcNoon(lastDate).getTime()) / dayMs))
     : null;
 
   // Count distinct sessions for this lift
@@ -418,10 +470,10 @@ function recommendNextSet(logRows, liftCode, { today = null } = {}) {
 
 function buildBodyweightHistory(rows, days = 30) {
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - Number(days));
+  cutoff.setDate(cutoff.getDate() - safePositiveNumber(days, 30));
   const cutoffIso = cutoff.toISOString().slice(0, 10);
 
-  const entries = rows
+  const entries = asArray(rows)
     .map(row => {
       const date = normalizeDate(Array.isArray(row) ? row[0] : row.date);
       return {
@@ -430,7 +482,7 @@ function buildBodyweightHistory(rows, days = 30) {
         notes: String(Array.isArray(row) ? row[2] : row.notes || '').trim()
       };
     })
-    .filter(entry => entry.date && entry.weight !== null && entry.date >= cutoffIso)
+    .filter(entry => entry.date && isPositiveFinite(entry.weight) && entry.date >= cutoffIso)
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const latest = entries.length ? entries[entries.length - 1] : null;
@@ -447,7 +499,7 @@ function buildBodyweightHistory(rows, days = 30) {
 
 function detectStalls(logRows, minSessions = 3) {
   const count = Math.max(2, Number.isFinite(Number(minSessions)) ? Number(minSessions) : 3);
-  const rows = logRows.map(normalizeLogRow).filter(row => row.weight && row.weight > 0 && row.reps);
+  const rows = asArray(logRows).map(normalizeLogRow).filter(row => isPositiveFinite(row.weight) && isPositiveFinite(row.reps));
   const byLiftCode = new Map();
 
   rows.forEach(row => {
@@ -512,15 +564,16 @@ function suggestDeloads(logRows, minSessions = 4) {
 
 function computeFatigueStatus(logRows, referenceDate = new Date()) {
   const ref = new Date(referenceDate);
+  const safeRef = Number.isFinite(ref.getTime()) ? ref : isoDateAtUtcNoon(todayIso());
   const dayMs = 24 * 60 * 60 * 1000;
-  const recentCutoff = new Date(ref.getTime() - 7 * dayMs).toISOString().slice(0, 10);
-  const baselineCutoff = new Date(ref.getTime() - 28 * dayMs).toISOString().slice(0, 10);
+  const recentCutoff = new Date(safeRef.getTime() - 7 * dayMs).toISOString().slice(0, 10);
+  const baselineCutoff = new Date(safeRef.getTime() - 28 * dayMs).toISOString().slice(0, 10);
 
   let recentVolume = 0;
   let baselineVolume = 0;
 
-  logRows.map(normalizeLogRow).forEach(row => {
-    if (!row.date_clean || !row.weight || row.weight <= 0 || !row.reps) return;
+  asArray(logRows).map(normalizeLogRow).forEach(row => {
+    if (!row.date_clean || !isPositiveFinite(row.weight) || !isPositiveFinite(row.reps)) return;
     const volume = row.weight * row.reps;
     if (row.date_clean >= recentCutoff) {
       recentVolume += volume;
@@ -559,11 +612,11 @@ function computeFatigueStatus(logRows, referenceDate = new Date()) {
 }
 
 function previewTestRows(logRows, effortRows) {
-  const logCandidates = logRows
+  const logCandidates = asArray(logRows)
     .map(normalizeLogRow)
     .filter(row => /test/i.test(row.notes) || /test/i.test(row.session_id) || /session-2026/i.test(row.session_id));
 
-  const effortCandidates = effortRows
+  const effortCandidates = asArray(effortRows)
     .map(normalizeEffortRow)
     .filter(row => /test/i.test(row.notes) || /test/i.test(row.session_id) || /session-2026/i.test(row.session_id));
 
@@ -573,7 +626,8 @@ function previewTestRows(logRows, effortRows) {
   };
 }
 
-function buildExerciseDetail(logRows, liftCode, { recentDays = 30, today = null } = {}) {
+function buildExerciseDetail(logRows, liftCode, options = {}) {
+  const { recentDays = 30, today = null } = options || {};
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
   if (!normalizedCode) {
     return { lift_code: '', exercise_names: [], sessions_count: 0, last_sessions: [], best_recent_set: null, volume_trend: 'flat', recommendation: null };
@@ -591,14 +645,12 @@ function buildExerciseDetail(logRows, liftCode, { recentDays = 30, today = null 
     sets: s.total_sets
   }));
 
-  const normalRows = logRows.map(normalizeLogRow).filter(r => r.lift_code === normalizedCode && r.weight > 0);
+  const normalRows = asArray(logRows).map(normalizeLogRow).filter(r => r.lift_code === normalizedCode && isPositiveFinite(r.weight) && isPositiveFinite(r.reps));
   const exercise_names = [...new Set(normalRows.map(r => r.canonical_exercise || r.exercise).filter(Boolean))];
 
   const dayMs = 24 * 60 * 60 * 1000;
-  const refMs = today
-    ? new Date(today + 'T12:00:00Z').getTime()
-    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z').getTime();
-  const cutoffDate = new Date(refMs - recentDays * dayMs).toISOString().slice(0, 10);
+  const refMs = isoDateAtUtcNoon(safeDateString(today)).getTime();
+  const cutoffDate = new Date(refMs - safePositiveNumber(recentDays, 30) * dayMs).toISOString().slice(0, 10);
   const recentRows = normalRows.filter(r => r.date_clean >= cutoffDate);
   let best_recent_set = null;
   if (recentRows.length > 0) {
@@ -669,15 +721,17 @@ function recoveryTau(minRir) {
 // tauMultiplier stretches (>1) or compresses (<1) recovery based on how systemically
 // hard the session was, derived from Apple Watch effort (see effortTauMultiplier).
 function recoveryFraction(daysSince, minRir, tauMultiplier = 1) {
-  if (daysSince == null || daysSince < 0) return null;
-  return 1 - Math.exp(-daysSince / (recoveryTau(minRir) * tauMultiplier));
+  if (daysSince == null || !Number.isFinite(Number(daysSince)) || Number(daysSince) < 0) return null;
+  const multiplier = Number.isFinite(Number(tauMultiplier)) && Number(tauMultiplier) > 0 ? Number(tauMultiplier) : 1;
+  const recovery = 1 - Math.exp(-Number(daysSince) / (recoveryTau(minRir) * multiplier));
+  return Number.isFinite(recovery) ? recovery : null;
 }
 
 // Per-session systemic effort intensity in [0,1], normalised against the owner's
 // own effort history (Apple Watch avg HR, active calories, duration). Returns an
 // empty map when there isn't enough spread to normalise, keeping recovery neutral.
 function effortIntensityBySession(effortRows = []) {
-  const rows = (effortRows || []).map(normalizeEffortRow).filter(e => e.session_id);
+  const rows = asArray(effortRows).map(normalizeEffortRow).filter(e => e.session_id);
   if (rows.length < 2) return new Map();
 
   const SIGNALS = ['average_hr', 'active_calories', 'duration_min'];
@@ -718,8 +772,8 @@ function effortIntensityBySession(effortRows = []) {
 // Neutral (1.0) at median effort or when effort data is absent; a brutal session
 // stretches recovery, an easy one shortens it. Bounded to ±30%.
 function effortTauMultiplier(intensity) {
-  if (intensity == null) return 1;
-  return 1 + (intensity - 0.5) * 0.6; // 0 → 0.7, 0.5 → 1.0, 1 → 1.3
+  if (intensity == null || !Number.isFinite(Number(intensity))) return 1;
+  return 1 + (Number(intensity) - 0.5) * 0.6; // 0 → 0.7, 0.5 → 1.0, 1 → 1.3
 }
 
 // Map a recovery fraction to the discrete readiness label the UI and intent
@@ -727,7 +781,7 @@ function effortTauMultiplier(intensity) {
 // the original day bins (0→fatigued, 1–2→recovering, 3–4→ready, 5+→fresh),
 // while harder or easier sessions now shift the curve earlier or later.
 function readinessStatus(recovery) {
-  if (recovery == null) return 'unknown';
+  if (recovery == null || !Number.isFinite(Number(recovery))) return 'unknown';
   if (recovery < 0.36) return 'fatigued';
   if (recovery < 0.70) return 'recovering';
   if (recovery < 0.89) return 'ready';
@@ -735,9 +789,10 @@ function readinessStatus(recovery) {
 }
 
 // ─── Per-movement-pattern readiness ──────────────────────────────────────────
-function buildMuscleGroupReadiness(logRows, { today = null, effortRows = [] } = {}) {
-  const todayStr = today || new Date().toISOString().slice(0, 10);
-  const normalized = logRows.map(normalizeLogRow).filter(r => r.weight > 0 && r.date_clean);
+function buildMuscleGroupReadiness(logRows, options = {}) {
+  const { today = null, effortRows = [] } = options || {};
+  const todayStr = safeDateString(today);
+  const normalized = asArray(logRows).map(normalizeLogRow).filter(r => isPositiveFinite(r.weight) && isPositiveFinite(r.reps) && r.date_clean);
   const effortIntensity = effortIntensityBySession(effortRows);
 
   // key = `${session_id}:${pattern}` → { session_id, date, volume, minRir }
@@ -764,7 +819,10 @@ function buildMuscleGroupReadiness(logRows, { today = null, effortRows = [] } = 
     }
 
     let daysSince = null;
-    if (best) daysSince = Math.floor((new Date(todayStr) - new Date(best.date)) / 86400000);
+    if (best) {
+      const delta = isoDateAtUtcNoon(todayStr).getTime() - isoDateAtUtcNoon(best.date).getTime();
+      daysSince = Number.isFinite(delta) ? Math.max(0, Math.floor(delta / 86400000)) : null;
+    }
 
     const minRir = best?.minRir ?? null;
     const intensity = best ? (effortIntensity.get(best.session_id) ?? null) : null;
@@ -792,8 +850,9 @@ function buildMuscleGroupReadiness(logRows, { today = null, effortRows = [] } = 
 }
 
 // ─── Intent scoring engine ────────────────────────────────────────────────────
-function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
-  const todayStr = today || new Date().toISOString().slice(0, 10);
+function scoreIntents(logRows, effortRows = [], options = {}) {
+  const { today = null } = options || {};
+  const todayStr = safeDateString(today);
   const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr, effortRows });
   const fatigue = computeFatigueStatus(logRows, new Date(todayStr + 'T12:00:00'));
   const stalls = detectStalls(logRows);
@@ -808,7 +867,7 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
 
   // Collect all lift codes with muscle-group context
   const validCode = c => c && /[a-zA-Z]/.test(c);
-  const normalized = logRows.map(normalizeLogRow).filter(r => validCode(r.lift_code) && r.weight > 0 && r.date_clean);
+  const normalized = asArray(logRows).map(normalizeLogRow).filter(r => validCode(r.lift_code) && isPositiveFinite(r.weight) && isPositiveFinite(r.reps) && r.date_clean);
 
   const liftInfo = new Map(); // liftCode → { pattern, lastDate }
   for (const row of normalized) {
@@ -843,7 +902,7 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
   const readyPatterns = readiness.filter(r => ['ready', 'fresh'].includes(r.status));
 
   const lastDate = normalized.reduce((max, r) => r.date_clean > max ? r.date_clean : max, '');
-  const daysSinceLast = lastDate ? Math.floor((new Date(todayStr) - new Date(lastDate)) / 86400000) : null;
+  const daysSinceLast = lastDate ? Math.floor((isoDateAtUtcNoon(todayStr).getTime() - isoDateAtUtcNoon(lastDate).getTime()) / 86400000) : null;
 
   // Build exercise list filtered by allowed movement patterns
   function exForPatterns(patterns, max = 6) {
@@ -1183,11 +1242,12 @@ function scoreIntents(logRows, effortRows = [], { today = null } = {}) {
 }
 
 
-function buildRecentSessions(logRows, effortRows, { limit = 15 } = {}) {
+function buildRecentSessions(logRows, effortRows, options = {}) {
+  const { limit = 15 } = options || {};
   const safeLimit = Math.min(Math.max(1, Number(limit) || 15), 50);
 
-  const normalizedLog = logRows.map(normalizeLogRow).filter(r => r.session_id);
-  const normalizedEffort = (effortRows || []).map(normalizeEffortRow);
+  const normalizedLog = asArray(logRows).map(normalizeLogRow).filter(r => r.session_id);
+  const normalizedEffort = asArray(effortRows).map(normalizeEffortRow);
 
   const effortBySession = new Map();
   normalizedEffort.forEach(e => { if (e.session_id) effortBySession.set(e.session_id, e); });
@@ -1206,7 +1266,7 @@ function buildRecentSessions(logRows, effortRows, { limit = 15 } = {}) {
     const s = sessionMap.get(r.session_id);
     if (r.date_clean > s.date) s.date = r.date_clean;
     if (r.canonical_exercise || r.exercise) s.exercises.add(r.canonical_exercise || r.exercise);
-    if (r.weight > 0) {
+    if (isPositiveFinite(r.weight) && isPositiveFinite(r.reps)) {
       s.sets_count++;
       s.total_volume += r.weight * r.reps;
     }
@@ -1228,7 +1288,9 @@ function buildRecentSessions(logRows, effortRows, { limit = 15 } = {}) {
 }
 
 function isoDateAtUtcNoon(dateStr) {
-  return new Date(`${dateStr}T12:00:00Z`);
+  const normalized = normalizeDate(dateStr) || todayIso();
+  const date = new Date(`${normalized}T12:00:00Z`);
+  return Number.isFinite(date.getTime()) ? date : new Date(`${todayIso()}T12:00:00Z`);
 }
 
 function getWeekStartIso(dateStr) {
@@ -1241,7 +1303,8 @@ function getWeekStartIso(dateStr) {
 
 function addDaysIso(dateStr, days) {
   const date = isoDateAtUtcNoon(dateStr);
-  date.setUTCDate(date.getUTCDate() + days);
+  const safeDays = Number.isFinite(Number(days)) ? Number(days) : 0;
+  date.setUTCDate(date.getUTCDate() + safeDays);
   return date.toISOString().slice(0, 10);
 }
 
@@ -1249,17 +1312,19 @@ function weeksBetweenInclusive(startWeek, endWeek) {
   const startMs = isoDateAtUtcNoon(startWeek).getTime();
   const endMs = isoDateAtUtcNoon(endWeek).getTime();
   const weekMs = 7 * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return 1;
   return Math.floor((endMs - startMs) / weekMs) + 1;
 }
 
-function buildProgressSummary(logRows, { today = null, streakTargetPerWeek = 3, weeks = 12 } = {}) {
-  const normalizedRows = (logRows || [])
+function buildProgressSummary(logRows, options = {}) {
+  const { today = null, streakTargetPerWeek = 3, weeks = 12 } = options || {};
+  const normalizedRows = asArray(logRows)
     .map(normalizeLogRow)
     .filter(row => row.session_id && row.date_clean);
 
   const safeWeeks = Math.min(Math.max(8, Number(weeks) || 12), 12);
   const target = Math.max(1, Number(streakTargetPerWeek) || 3);
-  const todayStr = today || new Date().toISOString().slice(0, 10);
+  const todayStr = safeDateString(today);
   const currentWeekStart = getWeekStartIso(todayStr);
 
   if (!normalizedRows.length) {
@@ -1303,7 +1368,7 @@ function buildProgressSummary(logRows, { today = null, streakTargetPerWeek = 3, 
     sessionMap.set(row.session_id, session);
 
     totalSets += 1;
-    const volume = row.weight && row.reps ? row.weight * row.reps : 0;
+    const volume = isPositiveFinite(row.weight) && isPositiveFinite(row.reps) ? row.weight * row.reps : 0;
     totalVolume += volume;
 
     const exerciseKey = row.lift_code || row.canonical_exercise || row.exercise;
@@ -1346,7 +1411,7 @@ function buildProgressSummary(logRows, { today = null, streakTargetPerWeek = 3, 
   normalizedRows.forEach(row => {
     const weekStart = getWeekStartIso(row.date_clean);
     const current = volumePerWeek.get(weekStart) || { total_volume: 0, total_sets: 0 };
-    current.total_volume += row.weight && row.reps ? row.weight * row.reps : 0;
+    current.total_volume += isPositiveFinite(row.weight) && isPositiveFinite(row.reps) ? row.weight * row.reps : 0;
     current.total_sets += 1;
     volumePerWeek.set(weekStart, current);
   });
@@ -1410,23 +1475,23 @@ function buildProgressSummary(logRows, { today = null, streakTargetPerWeek = 3, 
   };
 }
 
-function buildWeeklyReport(logRows, { days = 7, today = null } = {}) {
+function buildWeeklyReport(logRows, options = {}) {
+  const { days = 7, today = null } = options || {};
   const dayMs = 24 * 60 * 60 * 1000;
-  const refDate = today
-    ? new Date(today + 'T12:00:00Z')
-    : new Date(new Date().toISOString().slice(0, 10) + 'T12:00:00Z');
+  const safeDays = safePositiveNumber(days, 7);
+  const refDate = isoDateAtUtcNoon(safeDateString(today));
   const periodEnd = refDate.toISOString().slice(0, 10);
-  const periodStart = new Date(refDate.getTime() - (days - 1) * dayMs).toISOString().slice(0, 10);
-  const priorEnd = new Date(refDate.getTime() - days * dayMs).toISOString().slice(0, 10);
-  const priorStart = new Date(refDate.getTime() - (2 * days - 1) * dayMs).toISOString().slice(0, 10);
+  const periodStart = new Date(refDate.getTime() - (safeDays - 1) * dayMs).toISOString().slice(0, 10);
+  const priorEnd = new Date(refDate.getTime() - safeDays * dayMs).toISOString().slice(0, 10);
+  const priorStart = new Date(refDate.getTime() - (2 * safeDays - 1) * dayMs).toISOString().slice(0, 10);
 
-  const weekRows = logRows.filter(row => {
-    const d = String(row[0] || '').slice(0, 10);
-    return d >= periodStart && d <= periodEnd && Number(row[7]) > 0;
+  const weekRows = asArray(logRows).filter(row => {
+    const d = normalizeDate(Array.isArray(row) ? row[0] : row?.date_clean || row?.date);
+    return d >= periodStart && d <= periodEnd && isPositiveFinite(Number(Array.isArray(row) ? row[7] : row?.weight)) && isPositiveFinite(Number(Array.isArray(row) ? row[8] : row?.reps));
   });
-  const priorRows = logRows.filter(row => {
-    const d = String(row[0] || '').slice(0, 10);
-    return d >= priorStart && d <= priorEnd && Number(row[7]) > 0;
+  const priorRows = asArray(logRows).filter(row => {
+    const d = normalizeDate(Array.isArray(row) ? row[0] : row?.date_clean || row?.date);
+    return d >= priorStart && d <= priorEnd && isPositiveFinite(Number(Array.isArray(row) ? row[7] : row?.weight)) && isPositiveFinite(Number(Array.isArray(row) ? row[8] : row?.reps));
   });
 
   const sessions_count = new Set(
@@ -1566,5 +1631,7 @@ module.exports = {
   buildRecentSessions,
   classifyMuscleGroup,
   buildMuscleGroupReadiness,
-  scoreIntents
+  scoreIntents,
+  recoveryFraction,
+  effortIntensityBySession
 };
