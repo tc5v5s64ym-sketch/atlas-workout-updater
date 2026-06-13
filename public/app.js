@@ -1998,30 +1998,24 @@ function previewProgressHint(todayTopWeight, lastSet, target) {
 }
 
 // One compact per-exercise coaching card for the preview: last session's top
-// set + target, today's previewed sets, and an on-track hint. Read-only.
+// set and a plain-English coaching hint. Read-only.
 function renderPreviewCoachCard(rec, liftCode, todaySets) {
   if (!todaySets || !todaySets.length) return null;
   const name = (rec && rec.exercise_name) || liftCode;
   const lastSets = (rec && rec.last_working_sets) || [];
   const lastSet = lastSets.length ? lastSets[lastSets.length - 1] : null;
   const target = rec && rec.next_target;
-
-  const todayBits = todaySets
-    .filter(s => Number.isFinite(s.weight) && Number.isFinite(s.reps))
-    .map(s => `${s.weight}×${s.reps}${s.rir != null && Number.isFinite(s.rir) ? ` @RIR${s.rir}` : ''}`)
-    .join(', ');
   const todayTop = Math.max(0, ...todaySets.map(s => (Number.isFinite(s.weight) ? s.weight : 0)));
 
   const rows = [];
   if (lastSet && Number.isFinite(lastSet.weight)) {
-    const lastLabel = `${lastSet.weight} × ${lastSet.reps}${lastSet.rir != null ? ` @RIR${lastSet.rir}` : ''}`;
-    rows.push(['Last', target && Number.isFinite(target.weight)
-      ? `${lastLabel} · target ${target.weight} × ${target.reps}`
-      : lastLabel]);
+    const rir = lastSet.rir != null ? ` @ RIR${lastSet.rir}` : '';
+    rows.push(['Last', `${lastSet.weight} × ${lastSet.reps}${rir}`]);
   }
-  if (todayBits) rows.push(['Today', todayBits]);
-  const hint = previewProgressHint(todayTop, lastSet, target);
-  if (hint) rows.push(['On track', hint]);
+  // Hint prefers the plain-English recommendation; falls back to the progress
+  // comparison so a card always carries a usable cue.
+  const hint = (rec && rec.recommendation) || previewProgressHint(todayTop, lastSet, target);
+  if (hint) rows.push(['Hint', hint]);
 
   if (!rows.length) return null;
   return el('div', { class: 'atlas-suggestion' }, [
