@@ -31,6 +31,7 @@ function checkBound(field, value) {
 // weight of 0 is allowed (bodyweight exercises); blank rir is allowed
 // (absence of RIR is signal, not an error).
 function validateLogRowBounds(row) {
+  if (!row || typeof row !== 'object') return [];
   const errors = [];
 
   if (row.weight !== undefined && row.weight !== null && row.weight !== '') {
@@ -50,7 +51,9 @@ function validateLogRowBounds(row) {
 }
 
 // Validate every row in a batch; returns [{ row_index, field, error }] flat list.
+// Degrades safely on malformed input (non-array, null, etc).
 function validateLogRowsBounds(rows) {
+  if (!Array.isArray(rows)) return [];
   const all = [];
   rows.forEach((row, i) => {
     for (const e of validateLogRowBounds(row)) {

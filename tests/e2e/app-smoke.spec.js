@@ -516,7 +516,7 @@ test('Tapping a session expands to exactly what was logged, grouped by exercise'
   await page.route('**/api/session/**/summary', route => route.fulfill(json({
     status: 'success',
     data: {
-      quality_score: 4,
+      quality_score: 72,
       sets: [
         { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 4, notes: '' },
         { exercise: 'Bench Press', set_number: 2, weight: 225, reps: 5, rir: 2, notes: 'felt heavy' },
@@ -552,16 +552,16 @@ test('Session quality info button reveals the score breakdown popover', async ({
   await page.route('**/api/session/**/summary', route => route.fulfill(json({
     status: 'success',
     data: {
-      quality_score: 4,
+      quality_score: 75,
       quality_breakdown: [
-        { label: '10 or more sets', met: true },
-        { label: '30 or more minutes', met: false },
-        { label: 'Average heart rate 100+', met: true },
-        { label: '3 or more exercises', met: true },
-        { label: 'No data warnings', met: true }
+        { id: 'volume',      label: 'Volume',      points: 22, maxPoints: 30, description: '9 sets — good output' },
+        { id: 'intensity',   label: 'Intensity',   points: 20, maxPoints: 25, description: 'Avg 1.5 RIR — leaving little in reserve' },
+        { id: 'effort',      label: 'Effort',      points: 16, maxPoints: 25, description: '42 min · 118 bpm avg · 390 cal' },
+        { id: 'balance',     label: 'Balance',     points: 7,  maxPoints: 10, description: '3 exercises — good variety' },
+        { id: 'progression', label: 'Progression', points: 10, maxPoints: 10, description: 'New best on Bench Press' }
       ],
       sets: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 4, notes: '' }],
-      effort: { duration: '20:00', average_hr: 142 }
+      effort: { duration: '42:00', average_hr: 118 }
     }
   })));
 
@@ -569,7 +569,7 @@ test('Session quality info button reveals the score breakdown popover', async ({
   await page.locator('[data-tab="history"]').click();
   await page.locator('.session-item').first().locator('.session-summary').click();
 
-  await expect(page.locator('.session-quality')).toContainText('Session quality: 4 / 5');
+  await expect(page.locator('.session-quality')).toContainText('Session quality: 75 / 100');
   const info = page.locator('.quality-info-btn');
   await expect(info).toBeVisible();
 
@@ -580,9 +580,13 @@ test('Session quality info button reveals the score breakdown popover', async ({
   await info.click();
   await expect(popover).toBeVisible();
   await expect(popover).toContainText('How we scored this');
-  // The one unmet criterion is rendered with the unmet modifier.
-  await expect(page.locator('.quality-criterion.unmet')).toHaveText(/30 or more minutes/);
-  await expect(page.locator('.quality-criterion.met')).toHaveCount(4);
+  // Each criterion shows its label and points.
+  await expect(page.locator('.quality-criterion')).toHaveCount(5);
+  await expect(popover).toContainText('Volume');
+  await expect(popover).toContainText('22 / 30');
+  await expect(popover).toContainText('New best on Bench Press');
+  // Full-score criteria get the "full" class.
+  await expect(page.locator('.quality-criterion.full')).toHaveCount(1); // Progression = 10/10
 
   // Tapping outside closes it.
   await page.locator('body').click({ position: { x: 5, y: 5 } });

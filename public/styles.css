@@ -17,7 +17,7 @@
   --ink: #111114;
   --fg: #111114;            /* legacy alias */
   --muted: #6b6b70;
-  --faint: #9a9aa2;
+  --faint: #84848d;         /* darkened from #9a9aa2 for better contrast */
 
   /* Brand + semantics (one accent, used sparingly) */
   --accent: #0a84ff;
@@ -1239,22 +1239,25 @@ a.lift-link:hover { text-decoration: underline; }
   margin-bottom: var(--s2);
 }
 .quality-criterion {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 6rem 3.5rem 1fr;
+  align-items: baseline;
   gap: var(--s2);
   font-size: 0.84rem;
-  padding: 2px 0;
+  padding: 3px 0;
   color: var(--ink);
 }
-.quality-criterion-mark {
-  flex: 0 0 auto;
-  width: 16px;
-  text-align: center;
-  font-weight: 700;
+.quality-criterion-label { font-weight: 600; }
+.quality-criterion-pts {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: right;
 }
-.quality-criterion.met .quality-criterion-mark { color: var(--ok); }
-.quality-criterion.unmet .quality-criterion-mark { color: var(--danger); }
-.quality-criterion.unmet .quality-criterion-label { color: var(--muted); }
+.quality-criterion-desc { color: var(--muted); font-size: 0.81rem; }
+.quality-criterion.full .quality-criterion-label { color: var(--ok); }
+.quality-criterion.full .quality-criterion-pts  { color: var(--ok); }
+.quality-criterion.zero .quality-criterion-label { color: var(--muted); }
 .session-start-btn {
   background: var(--card);
   border: 1px solid var(--border);
@@ -1734,3 +1737,37 @@ a.lift-link:hover { text-decoration: underline; }
 .parsed-rows-editor > .parsed-rows-summary::-webkit-details-marker { display: none; }
 .parsed-rows-editor > .parsed-rows-summary::before { content: "\25B8 "; }
 .parsed-rows-editor[open] > .parsed-rows-summary::before { content: "\25BE "; }
+
+/* ============================================================
+   Accessibility: visible keyboard focus + reduced-motion
+   ============================================================ */
+
+/* Keyboard focus ring (mouse/touch interactions stay clean via :focus-visible). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.surface-btn:focus-visible,
+.tab-btn:focus-visible,
+.chip:focus-visible,
+.suggest-tile:focus-visible,
+.composer-attach:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[role="tab"]:focus-visible,
+[role="tabpanel"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* Respect the OS "reduce motion" setting: kill animation + transitions,
+   and stop CSS smooth-scroll. JS smooth-scroll is gated separately. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

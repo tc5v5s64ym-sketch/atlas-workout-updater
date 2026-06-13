@@ -20,6 +20,9 @@
 
   const MAX_BUBBLES = 12;
 
+  // Honor the OS "reduce motion" setting: jump instead of smooth-scroll.
+  const reduce = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   function addUserBubble(text) {
     // Don't repeat an identical consecutive bubble (double-tap preview).
     const last = thread.lastElementChild;
@@ -30,7 +33,7 @@
     bubble.textContent = text;
     thread.appendChild(bubble);
     while (thread.children.length > MAX_BUBBLES) thread.removeChild(thread.firstChild);
-    bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    bubble.scrollIntoView({ behavior: reduce() ? 'auto' : 'smooth', block: 'nearest' });
   }
 
   // app.js's submit handler runs preview; we only narrate the send.
@@ -51,7 +54,7 @@
   if (previewPanel) {
     new MutationObserver(() => {
       if (!previewPanel.hidden) {
-        previewPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        previewPanel.scrollIntoView({ behavior: reduce() ? 'auto' : 'smooth', block: 'nearest' });
       }
     }).observe(previewPanel, { attributes: true, attributeFilter: ['hidden'] });
   }
@@ -60,7 +63,7 @@
   if (loggerStatus) {
     new MutationObserver(() => {
       if (loggerStatus.childElementCount > 0) {
-        loggerStatus.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        loggerStatus.scrollIntoView({ behavior: reduce() ? 'auto' : 'smooth', block: 'nearest' });
       }
     }).observe(loggerStatus, { childList: true });
   }

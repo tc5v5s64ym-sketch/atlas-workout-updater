@@ -285,6 +285,96 @@ test('isLowerBodyGroup classifies muscle groups', () => {
   assert.ok(!isLowerBodyGroup(''));
 });
 
+/* ===== NEW COVERAGE: BOUNDS boundaries, e1RM cap, safety triggers, holdUntilClean transitions, e2e safety, malformed guards ===== */
+
+ test('validateLogRowBounds accepts exact BOUNDS boundaries (min/max pass)', () => {
+  assert.deepEqual(validateLogRowBounds({ weight: 0, reps: 5, rir: 2 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 1500, reps: 5, rir: 2 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 100, reps: 1, rir: 2 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 100, reps: 100, rir: 2 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 100, reps: 5, rir: 0 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 100, reps: 5, rir: 10 }), []);
+});
+
+ test('validateLogRowBounds rejects just outside BOUNDS boundaries', () => {
+  assert.equal(validateLogRowBounds({ weight: -0.1, reps: 5 })[0].field, 'weight');
+  assert.equal(validateLogRowBounds({ weight: 1500.1, reps: 5 })[0].field, 'weight');
+  assert.equal(validateLogRowBounds({ weight: 100, reps: 0 })[0].field, 'reps');
+  assert.equal(validateLogRowBounds({ weight: 100, reps: 101 })[0].field, 'reps');
+  assert.equal(validateLogRowBounds({ weight: 100, reps: 5, rir: -0.1 })[0].field, 'rir');
+  assert.equal(validateLogRowBounds({ weight: 100, reps: 5, rir: 10.1 })[0].field, 'rir');
+});
+
+ test('checkE1rmJump flags > E1RM_JUMP_MAX_PCT (strict) and allows <= cap', () => {
+  const over = checkE1rmJump(288, 250); // >15%
+  assert.ok(over);
+  assert.match(over.warning, /jumped 15\.[0-9]%/);
+  const atCap = checkE1rmJump(287.5, 250); // exactly 15% — not > so no flag (per current rule)
+  assert.equal(atCap, null);
+  const under = checkE1rmJump(287, 250);
+  assert.equal(under, null);
+});
+
+ test('rirDrift + safety rules across history window + degrade on malformed (no throw)', () => {
+  const history = [
+    { session_id: 'S1', date_clean: '2026-06-01', lift_code: 'BP01', weight: 205, reps: 6, rir: 3 },
+    { session_id: 'S2', date_clean: '2026-06-04', lift_code: 'BP01', weight: 205, reps: 6, rir: 2 },
+    { session_id: 'S3', date_clean: '2026-06-08', lift_code: 'BP01', weight: 205, reps: 5, rir: 1 },
+  ];
+  const flag = rirDrift(history, 'BP01', { window: 3 });
+  assert.ok(flag);
+  assert.equal(flag.rule_id, 'rir_drift');
+  // malformed degrade
+  assert.equal(rirCaution(null), null);
+  assert.deepEqual(evaluateSessionSafety([]), []);
+  assert.deepEqual(evaluateSessionSafety([null, { weight: 'bad' }]), []);
+});
+
+ test('holdUntilClean clean-count state progression (builds to load) + safe degrade', () => {
+  const clean = [[205, 6, 2], [205, 6, 2], [205, 6, 2]];
+  // S1 establishes the 205 load but is not clean (5 reps @ RIR 1).
+  let h = bpSession('S1', '2026-06-01', [[205, 5, 1]]);
+  let d = holdUntilClean(h, 'BP01');
+  assert.equal(d.decision, 'hold');
+  // required_sessions is 3 -> need three clean sessions at the load before loading.
+  h = h.concat(bpSession('S2', '2026-06-04', clean));
+  d = holdUntilClean(h, 'BP01');
+  assert.equal(d.decision, 'hold');
+  assert.match(d.criterion_progress, /1 of 3/);
+  h = h.concat(bpSession('S3', '2026-06-08', clean));
+  d = holdUntilClean(h, 'BP01');
+  assert.equal(d.decision, 'hold');
+  assert.match(d.criterion_progress, /2 of 3/);
+  h = h.concat(bpSession('S4', '2026-06-11', clean));
+  d = holdUntilClean(h, 'BP01');
+  assert.equal(d.decision, 'load');
+  // degrade
+  assert.equal(holdUntilClean(null, 'BP01').decision, 'no_data');
+  assert.equal(holdUntilClean([{bad: true}], 'BP01').decision, 'no_data');
+});
+
+ test('evaluateSessionSafety end-to-end representative (Log-style bench + notes)', () => {
+  const rep = [
+    { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 8, rir: 2, notes: '' },
+    { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 8, rir: 1, notes: 'shoulder pain' },
+    { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 6, rir: 0, notes: '' },
+  ];
+  const flags = evaluateSessionSafety(rep, 'shoulder note');
+  const ids = flags.map(f => f.rule_id);
+  assert.ok(ids.includes('rir_caution'));
+  assert.ok(ids.includes('junk_rep_guard'));
+  assert.ok(ids.includes('pain_flag'));
+});
+
+test('evaluateSessionSafety still surfaces a notes-only pain flag when there are no rows', () => {
+  // Regression guard: the empty-rows fast path must not skip the workoutNotes pain check.
+  const flags = evaluateSessionSafety([], 'sharp shoulder pain after the session');
+  assert.ok(flags.map(f => f.rule_id).includes('pain_flag'));
+  // ...but genuinely empty input (no rows, no notes) still degrades to [].
+  assert.deepEqual(evaluateSessionSafety([], ''), []);
+  assert.deepEqual(evaluateSessionSafety(null, ''), []);
+});
+
 /* ===== wiring: rules engine is connected to the write path ===== */
 
 const fsRules = require('node:fs');
