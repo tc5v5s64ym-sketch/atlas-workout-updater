@@ -1487,3 +1487,33 @@ a.lift-link:hover { text-decoration: underline; }
   .typing-cursor { animation: none; display: none; }
   .suggest-tile { transition: none; }
 }
+
+/* ===== Decluttered post-write state ===== */
+/* The inline "Saved ✓" in the coaching bubble already confirms the write, and
+   the verdict is re-typed as a chat bubble (coach-conversation.js). So hide the
+   verbose workout-write proof card — "Workout written ✓ / Undo / Verified ✓" —
+   while keeping it in the DOM (the write proof, the undo button the quiet link
+   proxies, and the inline-Save success signal all still live here).
+   Scoped to .undo-write-btn, which app.js appends ONLY for a log-workout success
+   that has a replacement bubble — so effort-only "Effort written ✓", the
+   "Last write undone ✓" confirmation, and any error (.status-msg.error) all stay
+   visible. */
+.coach-thread #logger-status:has(.undo-write-btn) {
+  display: none;
+}
+
+/* Quiet Undo link inside the typed post-write bubble */
+.coach-undo-link {
+  display: inline-block;
+  margin-top: var(--s2);
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.coach-undo-link:hover { color: var(--ink); }
+.coach-undo-link:disabled { color: var(--faint); text-decoration: none; cursor: default; }

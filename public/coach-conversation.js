@@ -127,10 +127,18 @@
 
   function markSaved() {
     if (!currentSaveBtn) return;
+    const bubble = currentSaveBtn.parentElement; // the coaching bubble
     currentSaveBtn.textContent = 'Saved ✓';
     currentSaveBtn.disabled = true;
     currentSaveBtn.dataset.done = '1';
     currentSaveBtn = null;
+    if (bubble) {
+      // The "nothing saved yet" gate note is now stale; drop it and add a quiet
+      // Undo link. "Saved ✓ · Undo" is the single post-write confirmation — no
+      // separate verdict bubble and no verbose written/verified card.
+      bubble.querySelector('.atlas-reply-gate')?.remove();
+      appendUndoLink(bubble);
+    }
   }
 
   function resetSaveAfterError() {
@@ -146,9 +154,30 @@
   if (loggerStatusEl) {
     new MutationObserver(() => {
       if (!currentSaveBtn || currentSaveBtn.dataset.done) return;
-      if (loggerStatusEl.querySelector('.status-msg.ok')) markSaved();
-      else if (loggerStatusEl.querySelector('.status-msg.error')) resetSaveAfterError();
+      if (loggerStatusEl.querySelector('.status-msg.ok')) {
+        markSaved();             // flips inline Save → "Saved ✓" + adds Undo link
+      } else if (loggerStatusEl.querySelector('.status-msg.error')) {
+        resetSaveAfterError();
+      }
     }).observe(loggerStatusEl, { childList: true, subtree: true });
+  }
+
+  // Quiet "Undo last write" link that proxies app.js's (now CSS-hidden) undo
+  // button, so the safety net survives the decluttered card. No-op when there's
+  // no undo button (e.g. effort-only writes), where the original card still shows.
+  function appendUndoLink(bubble) {
+    const undoBtn = loggerStatusEl && loggerStatusEl.querySelector('.undo-write-btn');
+    if (!undoBtn) return;
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'coach-undo-link';
+    link.textContent = 'Undo last write';
+    link.addEventListener('click', () => {
+      undoBtn.click();
+      link.textContent = 'Undoing…';
+      link.disabled = true;
+    });
+    bubble.appendChild(link);
   }
 
   /* ===== Suggested-workout message (templated) ===== */
