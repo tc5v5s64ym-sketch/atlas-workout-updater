@@ -34,7 +34,10 @@ const fakeSheetsState = {
   safetyReadCalls: { effortSessionIds: 0, logCompositeKeys: 0 },
   // Rows returned by the stubbed getRecentRows for the Effort tab, in sheet
   // order (oldest first). Tests that need effort history set this and restore [].
-  effortRecentRows: []
+  effortRecentRows: [],
+  // When set to a tab name, appendRows throws for that tab AFTER recording the
+  // call — simulates a partial-write failure between the two live appends.
+  failAppendForTab: null
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -49,6 +52,9 @@ const fakeSheets = {
     fakeSheetsState.appendCalls.push({ tabName, rows });
     if (!fakeSheetsState.allowAppend) {
       throw new Error('appendRows should not be called by endpoint smoke tests');
+    }
+    if (fakeSheetsState.failAppendForTab === tabName) {
+      throw new Error(`Simulated append failure for "${tabName}"`);
     }
     return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
   },
@@ -1349,5 +1355,108 @@ test('history/recent: recent_effort returns the NEWEST effort rows, tail of the 
     assert.equal(recentEffort[2].session_id, 'EFFORT-07');
   } finally {
     fakeSheetsState.effortRecentRows = [];
+  }
+});
+
+test('api smoke: log-workout effort failure after log append is partial, retry never re-appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failAppendForTab = 'Effort';
+
+  const payload = {
+    session_id: 'PARTIAL-WRITE-01',
+    date: '2026-06-12',
+    write_id: 'write-partial-retry-01',
+    log_rows: [
+      { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
+    ],
+    effort_row: {
+      date: '2026-06-12',
+      session_id: 'PARTIAL-WRITE-01',
+      duration: '00:45:00',
+      active_calories: 400,
+      total_calories: 500,
+      average_hr: 140,
+      peak_hr: 165,
+      location: 'Gym'
+    }
+  };
+
+  try {
+    const first = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }));
+
+    // Log rows landed, effort append failed → honest partial error, not a clean 500.
+    assert.equal(first.response.status, 500, JSON.stringify(first.body));
+    assert.equal(first.body.status, 'error');
+    assert.equal(first.body.details.sheet_write, 'partial');
+    assert.equal(first.body.details.sheet_written, true);
+    assert.equal(first.body.details.log_rows_written, 1);
+    assert.ok(first.body.details.logAppendedRange, 'partial response must carry the appended range for undo');
+    assert.equal(first.body.details.effortWritten, false);
+    assert.equal(first.body.details.write_id, 'write-partial-retry-01');
+    // One log append + one failed effort attempt.
+    assert.equal(fakeSheetsState.appendCalls.length, 2);
+
+    // Outage clears; the client retries the SAME write_id. The log rows must
+    // not be appended a second time — the recorded partial result replays.
+    fakeSheetsState.failAppendForTab = null;
+    const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }));
+
+    assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
+    assert.equal(retry.body.data.duplicate_write, true);
+    assert.equal(retry.body.data.sheet_write, 'skipped_duplicate');
+    assert.equal(retry.body.data.sheet_written, false);
+    assert.equal(retry.body.data.original_sheet_write, 'partial');
+    assert.equal(retry.body.data.logAppendedRange, first.body.details.logAppendedRange);
+    assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.failAppendForTab = null;
+  }
+});
+
+test('api smoke: log-workout log-append failure releases write_id so a clean retry can write', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failAppendForTab = 'Log_Cleaned';
+
+  const payload = {
+    session_id: 'CLEAN-RETRY-01',
+    date: '2026-06-12',
+    write_id: 'write-clean-retry-01',
+    log_rows: [
+      { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
+    ]
+  };
+
+  try {
+    const first = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }));
+    // Nothing was written — the write_id must be released, not poisoned.
+    assert.equal(first.response.status, 500, JSON.stringify(first.body));
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+
+    fakeSheetsState.failAppendForTab = null;
+    const retry = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    }));
+
+    assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
+    assert.equal(retry.body.data.sheet_write, 'success');
+    assert.equal(retry.body.data.duplicate_write, false);
+    assert.equal(retry.body.data.log_rows_written, 1);
+    assert.equal(fakeSheetsState.appendCalls.length, 2);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.failAppendForTab = null;
   }
 });
