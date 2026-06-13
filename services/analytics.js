@@ -484,6 +484,7 @@ function suggestDeloads(logRows, minSessions = 4) {
     const deloadWeight = Math.round(stall.last_best_weight * 0.9);
     return {
       liftCode: stall.liftCode,
+      exercise: stall.exercise || '',
       sessions_stalled: stall.sessions_stalled,
       last_best_weight: stall.last_best_weight,
       suggested_deload_weight: deloadWeight,
