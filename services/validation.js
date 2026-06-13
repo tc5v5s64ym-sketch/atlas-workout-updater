@@ -163,7 +163,7 @@ const QUALITY_CRITERIA = [
       const hr   = parseNumber(averageHR);
       const cal  = parseNumber(activeCalories);
       if (mins === 0 && hr === null) {
-        return { points: 10, description: 'No Apple Watch data this session' };
+        return { points: 10, description: 'No fitness device data this session' };
       }
       let pts = 0;
       if (mins >= 60)      pts += 12;
