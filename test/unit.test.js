@@ -2395,6 +2395,10 @@ test('session history: auto-load wired in app.js and calls correct endpoint', ()
   assert.match(appSource, /atlasRefreshSessions/, 'refresh bridge for nav.js must exist');
   const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   assert.doesNotMatch(htmlSource, /load-sessions-btn/, 'manual load button must stay removed — list auto-loads');
+  // With no manual refresh button, writes and undos must invalidate the cache
+  // (declaration + write success + undo success = at least 3 assignments).
+  const invalidations = (appSource.match(/historyLoaded = false/g) || []).length;
+  assert.ok(invalidations >= 3, 'successful write and undo must reset historyLoaded so History re-fetches');
 });
 
 // ── Session Queue UX ──────────────────────────────────────────────────────────

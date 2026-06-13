@@ -2270,6 +2270,7 @@ async function handleUndoLastWrite() {
       })
     });
     lastWrite = null;
+    historyLoaded = false; // sheet changed — History re-fetches on next visit
     setStatus(loggerStatus, 'Last write undone.', 'ok');
   } catch (err) {
     setStatus(loggerStatus, `Undo failed: ${err.message}`, 'error');
@@ -2362,6 +2363,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
     }
     invalidatePreview();
+    historyLoaded = false; // sheet changed — History re-fetches on next visit
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;
