@@ -311,17 +311,24 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 /* ===== Backend health / debug ===== */
 
+function setBoxSpan(box, className, text) {
+  const span = document.createElement('span');
+  span.className = className;
+  span.textContent = text;
+  box.replaceChildren(span);
+}
+
 async function runHealthCheck(endpoint, label, resultBox) {
-  resultBox.innerHTML = `<span class="muted">Checking ${label}…</span>`;
+  setBoxSpan(resultBox, 'muted', `Checking ${label}…`);
   try {
     const res = await api(endpoint);
     const data = res.data || res;
     const status = data.status || (res.status === 'ok' ? 'ok' : 'unknown');
     const ok = ['ok', 'connected', 'healthy'].includes(String(status).toLowerCase());
     const msg = data.message || data.detail || JSON.stringify(data);
-    resultBox.innerHTML = `<span class="${ok ? 'status-ok' : 'status-warn'}">${label}: ${msg || status}</span>`;
+    setBoxSpan(resultBox, ok ? 'status-ok' : 'status-warn', `${label}: ${msg || status}`);
   } catch (err) {
-    resultBox.innerHTML = `<span class="status-error">${label}: ${err.message}</span>`;
+    setBoxSpan(resultBox, 'status-error', `${label}: ${err.message}`);
   }
 }
 
@@ -335,24 +342,30 @@ document.getElementById('check-openai-btn')?.addEventListener('click', () => {
 
 document.getElementById('load-version-btn')?.addEventListener('click', async () => {
   const box = document.getElementById('debug-result');
-  box.innerHTML = '<span class="muted">Loading…</span>';
+  setBoxSpan(box, 'muted', 'Loading…');
   try {
     const res = await fetch('/version');
     const data = await res.json().catch(() => null);
-    box.innerHTML = `<pre class="debug-pre">${JSON.stringify(data, null, 2)}</pre>`;
+    const pre = document.createElement('pre');
+    pre.className = 'debug-pre';
+    pre.textContent = JSON.stringify(data, null, 2);
+    box.replaceChildren(pre);
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    setBoxSpan(box, 'muted', `Could not load: ${err.message}`);
   }
 });
 
 document.getElementById('load-debug-config-btn')?.addEventListener('click', async () => {
   const box = document.getElementById('debug-result');
-  box.innerHTML = '<span class="muted">Loading…</span>';
+  setBoxSpan(box, 'muted', 'Loading…');
   try {
     const res = await api('/api/debug/config');
-    box.innerHTML = `<pre class="debug-pre">${JSON.stringify(res.data || res, null, 2)}</pre>`;
+    const pre = document.createElement('pre');
+    pre.className = 'debug-pre';
+    pre.textContent = JSON.stringify(res.data || res, null, 2);
+    box.replaceChildren(pre);
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    setBoxSpan(box, 'muted', `Could not load: ${err.message}`);
   }
 });
 
