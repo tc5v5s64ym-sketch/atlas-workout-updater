@@ -150,7 +150,12 @@ async function mockAtlasApis(page, capture = {}) {
             ]
           },
           intents: [
-            { label: 'Push', focus: 'Bench + OHP', recommended: true },
+            {
+              label: 'Push', focus: 'Bench + OHP', recommended: true,
+              why_today: ['Pressing patterns are fresh', 'Last bench moved at RIR 2'],
+              data_points: [{ label: 'Weekly load', value: '1.1× baseline', context: 'moderate' }],
+              exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3 }]
+            },
             { label: 'Pull', focus: 'Rows + lats', recommended: false }
           ]
         }
@@ -237,6 +242,20 @@ test('Coach shell loads with guarded preview state', async ({ page }) => {
   await expect(page.locator('#approve-btn')).toBeDisabled();
 });
 
+test('Suggested Workout types out the why-today rationale', async ({ page }) => {
+  await openApp(page);
+
+  await page.locator('.suggest-tile[data-suggest="workout"]').click();
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
+  await expect(bubble).toContainText("Today's read: Push");
+  // The richer note surfaces the engine's reasoning, readiness, and numbers.
+  await expect(bubble).toContainText('Why today:');
+  await expect(bubble).toContainText('Pressing patterns are fresh');
+  await expect(bubble).toContainText('Readiness:');
+  await expect(bubble).toContainText('Weekly load: 1.1× baseline');
+  await expect(bubble).toContainText('Bench Press');
+});
+
 test('Preview flow renders a no-write review card from mocked APIs', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
@@ -307,7 +326,8 @@ test('Progress surface renders the Today screen from mocked data without crashin
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
   // Above the fold: hero pick + readiness strip
   await expect(page.locator('#todays-pick')).toContainText('Today: Push');
-  await expect(page.locator('#todays-pick')).toContainText('Bench is ready for clean repeat work.');
+  // renderTodaysPick prefers the intent's why_today reasons when present.
+  await expect(page.locator('#todays-pick')).toContainText('Pressing patterns are fresh');
   // Raw pattern names map through FRIENDLY_PATTERN_LABELS (Pressing → Push)
   await expect(page.locator('#todays-read')).toContainText('Push');
   await expect(page.locator('#todays-read')).toContainText('Ready');
