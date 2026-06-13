@@ -49,6 +49,64 @@ function setStatus(container, message, kind) {
   if (message) container.appendChild(el('div', { class: `status-msg ${kind}`, text: message }));
 }
 
+// "Session quality: X / 5" with a tappable circled-i that reveals how the
+// score was reached. Read-only — it explains the deterministic breakdown the
+// backend already computed (quality_breakdown), never recomputes it client-side.
+function buildQualityRow(score, breakdown) {
+  const wrap = el('div', { class: 'session-quality' });
+  wrap.appendChild(el('span', { text: `Session quality: ${score} / 5` }));
+
+  const criteria = Array.isArray(breakdown) ? breakdown : [];
+  if (!criteria.length) return wrap;
+
+  const info = el('button', {
+    class: 'quality-info-btn',
+    type: 'button',
+    'aria-label': 'How was this score calculated?',
+    'aria-expanded': 'false',
+    text: 'i'
+  });
+
+  const pop = el('div', { class: 'quality-popover', role: 'dialog', 'aria-label': 'Quality score breakdown' });
+  pop.appendChild(el('div', { class: 'quality-popover-title', text: 'How we scored this' }));
+  for (const c of criteria) {
+    pop.appendChild(el('div', { class: `quality-criterion ${c.met ? 'met' : 'unmet'}` }, [
+      el('span', { class: 'quality-criterion-mark', 'aria-hidden': 'true', text: c.met ? '✓' : '✕' }),
+      el('span', { class: 'quality-criterion-label', text: c.label })
+    ]));
+  }
+
+  const anchor = el('span', { class: 'quality-info-anchor' }, [info, pop]);
+
+  let open = false;
+  function close() {
+    if (!open) return;
+    open = false;
+    anchor.classList.remove('open');
+    info.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', onDocClick, true);
+    document.removeEventListener('keydown', onKeydown, true);
+  }
+  function onDocClick(e) {
+    if (!anchor.contains(e.target)) close();
+  }
+  function onKeydown(e) {
+    if (e.key === 'Escape') close();
+  }
+  info.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (open) { close(); return; }
+    open = true;
+    anchor.classList.add('open');
+    info.setAttribute('aria-expanded', 'true');
+    document.addEventListener('click', onDocClick, true);
+    document.addEventListener('keydown', onKeydown, true);
+  });
+
+  wrap.appendChild(anchor);
+  return wrap;
+}
+
 /* ===== Inline SVG charts (no dependencies) ===== */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -321,7 +379,7 @@ async function loadSessionDetail(sessionId, slot) {
     }
 
     if (d.quality_score != null) {
-      slot.appendChild(el('div', { class: 'session-quality', text: `Session quality: ${d.quality_score} / 5` }));
+      slot.appendChild(buildQualityRow(d.quality_score, d.quality_breakdown));
     }
   } catch (err) {
     slot.innerHTML = `<span class="muted">Could not load detail: ${err.message}</span>`;
