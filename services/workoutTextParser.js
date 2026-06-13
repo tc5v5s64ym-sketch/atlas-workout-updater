@@ -638,9 +638,20 @@ function extractNumbers(text) {
   return [...String(text || '').matchAll(/\b(\d+(?:\.\d+)?)\b/g)].map(match => Number(match[1]));
 }
 
+// Phrases that suggest the lifter wants to correct a previously saved workout
+// rather than log a new one. Used by the frontend correction guard so the user
+// is offered a choice (replace / log as new / cancel) instead of silently
+// appending a duplicate.
+const CORRECTION_PATTERNS = /\b(actually\s+i\s+was\s+wrong|correction|change\s+that\s+to|replace\s+that|i\s+meant|sorry\s+i\s+meant|wait\s+i\s+meant|no\s+i\s+meant|actually\s+it\s+was)\b/i;
+
+function looksLikeCorrection(text) {
+  return CORRECTION_PATTERNS.test(typeof text === 'string' ? text : '');
+}
+
 module.exports = {
   parseWorkoutText,
   buildWorkoutTextParseDryRunResponse,
   normalizeParserText,
   canonicalizeExerciseName: findExerciseInText,
+  looksLikeCorrection
 };

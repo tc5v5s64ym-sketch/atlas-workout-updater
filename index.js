@@ -981,15 +981,18 @@ function buildChatContext(logRows, effortRows, clientContext) {
   const stalls = detectStalls(logRows);
   const read = intents.todays_read || {};
   const cc = clientContext && typeof clientContext === 'object' ? clientContext : {};
+  const sessions = recent.sessions || [];
   return {
     recommended_label: read.recommended_label || null,
     recommended_focus: read.recommended_reason || null,
     readiness: (read.patterns || []).map(p => ({ pattern: p.label || p.pattern, status: p.status, detail: p.detail })),
-    recent_sessions: (recent.sessions || []).map(s => ({
+    recent_sessions: sessions.map(s => ({
       date: s.date, exercises: s.exercises, sets: s.sets_count, volume: s.total_volume
     })),
     stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
-    current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : []
+    current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
+    current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
+    session_count: sessions.length
   };
 }
 
