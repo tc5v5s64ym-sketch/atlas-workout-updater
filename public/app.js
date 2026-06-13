@@ -302,6 +302,7 @@ document.getElementById('settings-form').addEventListener('submit', e => {
   document.getElementById('api-key-input').value = '';
   setStatus(statusBox, 'API key saved to this browser.', 'ok');
   loadDashboard();
+  loadCoachPlan();
 });
 
 document.getElementById('clear-key-btn').addEventListener('click', () => {
@@ -481,6 +482,75 @@ async function loadDashboard() {
   loadRecentHistory();
   loadRecentPrs();
   loadStalls();
+}
+
+/* ===== Coach plan card (read-only, Coach surface) =====
+ * Surfaces today's focus, the lift to pick back up, its last working set, and
+ * the next-set suggestion — all from existing read endpoints. It never writes.
+ * A missing API key or a failed/empty fetch leaves the card hidden so the
+ * logger is never blocked. */
+async function loadCoachPlan() {
+  const card = document.getElementById('coach-plan-card');
+  if (!card) return;
+  if (!getApiKey()) { card.hidden = true; return; }
+
+  const [intentResult, planResult] = await Promise.allSettled([
+    api('/api/plan/intent-recommendation'),
+    api('/api/plan/today')
+  ]);
+
+  const todaysRead = intentResult.status === 'fulfilled'
+    ? (intentResult.value.data?.todays_read || {})
+    : {};
+  const recs = planResult.status === 'fulfilled'
+    ? (planResult.value.data?.recommendations || [])
+    : [];
+
+  const focusLabel = todaysRead.recommended_label || '';
+  const focusReason = todaysRead.recommended_reason || '';
+  const topRec = recs[0] || null;
+
+  // Nothing useful to show — stay quiet rather than render an empty shell.
+  if (!focusLabel && !topRec) { card.hidden = true; return; }
+
+  renderCoachPlan(card, { focusLabel, focusReason, topRec });
+  card.hidden = false;
+}
+
+function renderCoachPlan(card, { focusLabel, focusReason, topRec }) {
+  card.innerHTML = '';
+  card.appendChild(el('div', { class: 'coach-plan-kicker', text: 'Today’s plan' }));
+
+  // 1) Suggested focus for today.
+  if (focusLabel) {
+    card.appendChild(el('div', { class: 'coach-plan-focus', text: `Focus: ${focusLabel}` }));
+    if (focusReason) card.appendChild(el('div', { class: 'coach-plan-reason', text: focusReason }));
+  }
+
+  if (topRec) {
+    const name = topRec.exercise_name || topRec.liftCode;
+    card.appendChild(el('div', { class: 'coach-plan-lift', text: name }));
+
+    // 2) Last relevant session context.
+    const sets = topRec.last_working_sets || [];
+    const last = sets.length ? sets[sets.length - 1] : null;
+    if (last && (last.weight != null || last.reps != null)) {
+      const rir = last.rir == null ? '' : ` @ RIR ${last.rir}`;
+      const when = last.date_clean ? `Last (${last.date_clean})` : 'Last';
+      card.appendChild(el('div', { class: 'coach-plan-last', text: `${when}: ${last.weight} × ${last.reps}${rir}` }));
+    }
+
+    // 3) Recommended next lift / weight / reps.
+    const t = topRec.next_target;
+    if (t && (t.weight != null || t.reps != null)) {
+      card.appendChild(el('div', { class: 'coach-plan-target', text: `Next: ${t.weight} × ${t.reps} · ${t.sets} sets` }));
+    }
+
+    // 4) Short plain-English coaching sentence.
+    if (topRec.recommendation) {
+      card.appendChild(el('p', { class: 'coach-plan-suggestion', text: topRec.recommendation }));
+    }
+  }
 }
 
 /* ===== Training Snapshot (read-only — rendered from loadDashboard's progress/summary fetch) ===== */
@@ -2714,6 +2784,7 @@ function setDefaultDate() {
 setDefaultDate();
 checkConnection();
 loadDashboard();
+loadCoachPlan();
 loadExerciseDatalist();
 
 document.getElementById('intent-drawer-backdrop')?.addEventListener('click', closeIntentDrawer);

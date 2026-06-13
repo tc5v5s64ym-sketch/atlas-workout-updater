@@ -46,6 +46,12 @@
       <p class="coach-subtitle">Log a workout, or just ask.</p>
       <div id="coach-read-strip" class="coach-read-strip"></div>
 
+      <!-- Read-only coaching card: today's focus, the lift to pick back up,
+           its last working set, and the next-set suggestion. Hidden until it
+           has something useful; a failed fetch leaves it hidden so logging is
+           never blocked. -->
+      <div id="coach-plan-card" class="card coach-plan-card" hidden></div>
+
       <div class="suggestion-chips" id="suggestion-chips">
         <button type="button" class="chip" data-chip="example">Bench 135 10/4, 225 5/2 x3</button>
         <button type="button" class="chip" data-chip="train">What should I train?</button>
