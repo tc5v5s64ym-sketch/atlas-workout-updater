@@ -178,8 +178,26 @@
 
     const lines = [];
     lines.push(label ? `Today's read: ${label}.` : "Here's a solid session for today.");
-    const reason = read.recommended_reason || (rec && rec.why_today && rec.why_today[0]) || (rec && rec.focus);
-    if (reason) lines.push(reason);
+    const focus = read.recommended_reason || (rec && rec.focus);
+    if (focus) lines.push(focus);
+
+    // Why today — surface the engine's deterministic reasoning behind the pick:
+    // the plain-language reasons, current movement-pattern readiness, and the
+    // numbers that drove it. (When Gemini is connected this same data can be
+    // phrased more conversationally; the substance is already here.)
+    const whyReasons = (rec && Array.isArray(rec.why_today) ? rec.why_today : [])
+      .filter(Boolean)
+      .filter(w => w !== focus)
+      .slice(0, 2);
+    const readiness = patternReadinessLine(read.patterns);
+    const numbers = dataPointLines(rec && rec.data_points);
+    if (whyReasons.length || readiness || numbers.length) {
+      lines.push('');
+      lines.push('Why today:');
+      for (const w of whyReasons) lines.push(`* ${w}`);
+      if (readiness) lines.push(`* ${readiness}`);
+      for (const n of numbers) lines.push(`* ${n}`);
+    }
 
     if (exercises.length) {
       lines.push('');
@@ -194,6 +212,30 @@
       lines.push("Log your first sets when you're ready and I'll react as you go.");
     }
     return lines.join('\n');
+  }
+
+  // "Readiness: Push fresh · Legs recovering · Pull ready" from todays_read
+  // patterns, using app.js's friendly label/status maps when available.
+  function patternReadinessLine(patterns) {
+    if (!Array.isArray(patterns) || !patterns.length) return '';
+    const labels = (typeof FRIENDLY_PATTERN_LABELS !== 'undefined') ? FRIENDLY_PATTERN_LABELS : {};
+    const words = (typeof FRIENDLY_STATUS_WORDS !== 'undefined') ? FRIENDLY_STATUS_WORDS : {};
+    const parts = patterns.map(p => {
+      const label = labels[p.label || p.pattern] || p.label || p.pattern;
+      const status = words[p.status] || p.status;
+      return (label && status && status !== '—') ? `${label} ${String(status).toLowerCase()}` : null;
+    }).filter(Boolean);
+    return parts.length ? `Readiness: ${parts.join(' · ')}` : '';
+  }
+
+  // 1–2 "Weekly load: 1.4× baseline (high)" lines from the intent's data_points.
+  function dataPointLines(dataPoints) {
+    if (!Array.isArray(dataPoints) || !dataPoints.length) return [];
+    return dataPoints.slice(0, 2).map(d => {
+      if (!d || d.label == null || d.value == null) return null;
+      const ctx = d.context ? ` (${d.context})` : '';
+      return `${d.label}: ${d.value}${ctx}`;
+    }).filter(Boolean);
   }
 
   async function typeSuggestedWorkout() {
