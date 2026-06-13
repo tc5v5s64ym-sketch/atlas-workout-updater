@@ -1809,6 +1809,20 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 // Pending approval state. Set only after a successful dry-run preview;
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
+
+// In-thread effort cards mirror the global approve button. When a preview is
+// replaced or invalidated, an older card no longer matches the live pendingWrite,
+// so its Save must be permanently neutralised — otherwise clicking a stale card
+// would fire the newest preview's write. Each card registers a cleanup here;
+// invalidatePreview() runs them all.
+const effortCardCleanups = [];
+function registerEffortCardCleanup(fn) { effortCardCleanups.push(fn); }
+function runEffortCardCleanups() {
+  while (effortCardCleanups.length) {
+    const fn = effortCardCleanups.pop();
+    try { fn(); } catch { /* card already removed from the DOM */ }
+  }
+}
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
@@ -2457,6 +2471,7 @@ function buildVerdict(rec) {
 
 function invalidatePreview() {
   pendingWrite = null;
+  runEffortCardCleanups();
   lastParserStatus = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
@@ -2990,14 +3005,25 @@ function addAtlasEffortReply(result) {
   const approveMirror = document.getElementById('approve-btn');
   const actions = el('div', { class: 'effort-reply-actions' });
 
+  // Once the preview behind this card is invalidated, the card is stale: the
+  // live pendingWrite now belongs to a different preview, so this Save must not
+  // fire it. The cleanup disconnects the mirror and locks the button down.
+  let stale = false;
   const saveBtn = el('button', { type: 'button', class: 'approve effort-save-btn', text: 'Save to Sheets' });
   saveBtn.disabled = approveMirror ? approveMirror.disabled : true;
+  let obs = null;
   if (approveMirror) {
-    const obs = new MutationObserver(() => { saveBtn.disabled = approveMirror.disabled; });
+    obs = new MutationObserver(() => { if (!stale) saveBtn.disabled = approveMirror.disabled; });
     obs.observe(approveMirror, { attributes: true, attributeFilter: ['disabled'] });
   }
+  registerEffortCardCleanup(() => {
+    stale = true;
+    if (obs) obs.disconnect();
+    saveBtn.disabled = true;
+    bubble.classList.add('effort-reply-stale');
+  });
   saveBtn.addEventListener('click', () => {
-    if (!approveMirror || approveMirror.disabled) return;
+    if (stale || !approveMirror || approveMirror.disabled) return;
     saveBtn.textContent = 'Saving…';
     saveBtn.disabled = true;
     approveMirror.click();
@@ -3149,8 +3175,12 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
       'ok'
     );
+    // Always reflect the write that just happened. Screenshot / effort-only
+    // writes produce no undoable log range (pendingLastWrite stays null), so
+    // this clears any stale manual range — otherwise a correction after an
+    // effort save would Replace-via-undo the wrong (older) rows.
+    lastWrite = pendingLastWrite;
     if (pendingLastWrite) {
-      lastWrite = pendingLastWrite;
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);
       loggerStatus.appendChild(undoBtn);

@@ -1986,7 +1986,7 @@ test('trust loop: approve handler requires stored dry-run proof before writing',
   assert.match(appSource, /proof\.sheet_write !== 'skipped'/, 'proof must require skipped sheet_write marker');
 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
   assert.match(handler, /if \(!pendingWriteHasPreviewProof\(pendingWrite\)\)/, 'approve click must block missing or stale preview proof');
   assert.doesNotMatch(handler, /if \(!pendingWrite\)/, 'approve click must not rely on pendingWrite existence alone');
 });
@@ -1994,7 +1994,7 @@ test('trust loop: approve handler requires stored dry-run proof before writing',
 test('duplicate-write: finally block always clears writeInFlight', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
   assert.match(handler, /finally\s*\{/, 'handler must have a finally block');
   const finallyIdx = handler.indexOf('finally');
   const clearIdx = handler.indexOf('writeInFlight = false', finallyIdx);
@@ -2004,7 +2004,7 @@ test('duplicate-write: finally block always clears writeInFlight', () => {
 test('duplicate-write: successful write sets button text to Written ✓', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
   assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
   // Written ✓ must appear before the catch block
   const writtenIdx = handler.indexOf('Written');
@@ -2015,7 +2015,7 @@ test('duplicate-write: successful write sets button text to Written ✓', () => 
 test('duplicate-write: undo button is unaffected — still wired after success', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
@@ -2063,7 +2063,7 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
 test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
   assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
   assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
   assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
@@ -3504,7 +3504,7 @@ test('write_id: every previewed manual workout carries a fresh write_id', () => 
 test('write_id: duplicate acceptance is strict — all three proof fields required', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 6500);
+  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 9000);
   assert.match(handler, /duplicate_write === true/, 'must require duplicate_write flag');
   assert.match(handler, /sheet_write === 'skipped_duplicate'/, 'must require the skipped_duplicate marker');
   assert.match(handler, /original_sheet_write === 'success'/, 'must require the original write to have succeeded');
@@ -3513,7 +3513,7 @@ test('write_id: duplicate acceptance is strict — all three proof fields requir
 test('write_id: fresh-write proof is not weakened by the duplicate path', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 6500);
+  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 9000);
   // The success + rows-written checks must still guard every non-duplicate write
   const guardIdx = handler.indexOf('if (!duplicateBlocked)');
   const successIdx = handler.indexOf("sheet_write !== 'success'");

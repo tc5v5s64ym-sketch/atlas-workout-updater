@@ -847,6 +847,10 @@ button.approve {
 .effort-reply-actions { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
 .effort-reply-actions button { font-size: 0.85rem; }
 
+/* A superseded effort card: a newer preview replaced it, so its Save is locked. */
+.effort-reply-stale { opacity: 0.55; }
+.effort-reply-stale .effort-reply-actions { display: none; }
+
 /* Correction prompt dialog in chat */
 .correction-actions { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s3); }
 .correction-actions button { font-size: 0.85rem; }
