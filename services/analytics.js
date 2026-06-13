@@ -391,7 +391,13 @@ function recommendNextSet(logRows, liftCode, { today = null } = {}) {
   }
 
   const allWeights = rows.map(r => r.weight).filter(w => w > 0);
-  const first_weight = allWeights.length ? allWeights[0] : null;
+  // Use the first session's best weight (not first set) so warm-up sets on day
+  // one don't inflate the progress % badge (e.g. 45 lb warm-up → 400% is wrong).
+  const firstSessionId = rows.length ? rows[0].session_id : null;
+  const firstSessionBests = firstSessionId
+    ? rows.filter(r => r.session_id === firstSessionId).map(r => r.weight).filter(w => w > 0)
+    : [];
+  const first_weight = firstSessionBests.length ? Math.max(...firstSessionBests) : null;
   const best_weight = allWeights.length ? Math.max(...allWeights) : null;
 
   return {
