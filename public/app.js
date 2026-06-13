@@ -824,13 +824,12 @@ function wireStartSessionBtn(data) {
   if (!btn) return;
   if (!data) { btn.hidden = true; return; }
   const recommended = (data.intents || []).find(i => i.recommended);
-  const firstEx = recommended?.exercises?.[0];
-  const target = firstEx?.next_target;
+  const firstEx = recommended ? normalizePlanExercise(recommended.exercises?.[0]) : null;
 
-  if (firstEx && target) {
+  if (firstEx && firstEx.name) {
     btn.textContent = 'START SESSION';
     btn.hidden = false;
-    btn.onclick = () => startLift(firstEx.exercise || firstEx.liftCode, firstEx.liftCode, target.weight, target.reps, target.sets || 3);
+    btn.onclick = () => openIntentDrawer(recommended);
   } else if (recommended) {
     btn.textContent = 'See options';
     btn.hidden = false;
@@ -838,6 +837,101 @@ function wireStartSessionBtn(data) {
   } else {
     btn.hidden = true;
   }
+}
+
+// Normalize an intent's exercise entry to one shape. Intents emit
+// { exercise, lift_code, target_weight, target_reps, target_sets, reason };
+// also tolerate a next_target shape just in case.
+function normalizePlanExercise(raw) {
+  if (!raw) return { name: '', liftCode: '', weight: null, reps: null, sets: null, reason: '' };
+  const t = raw.next_target || {};
+  const pick = (a, b) => (a != null ? a : (b != null ? b : null));
+  return {
+    name: raw.exercise || raw.exercise_name || raw.lift_code || raw.liftCode || '',
+    liftCode: raw.lift_code || raw.liftCode || '',
+    weight: pick(raw.target_weight, t.weight),
+    reps: pick(raw.target_reps, t.reps),
+    sets: pick(raw.target_sets, t.sets),
+    reason: raw.reason || ''
+  };
+}
+
+/* ===== Active planned session (in-memory, Start Session) =====
+ * Slice 1: track the recommended workout as a queue with a cursor, show a
+ * banner with the current step, and open each item in the logger via startLift.
+ * No persistence; logging/preview/save stays exactly as it was. */
+let activePlannedSession = null;
+
+function startPlannedSession(intent) {
+  const exercises = (intent.exercises || []).map(normalizePlanExercise).filter(ex => ex.name);
+  if (!exercises.length) return;
+  activePlannedSession = {
+    label: intent.label || 'Recommended session',
+    exercises,
+    index: 0
+  };
+  renderActiveSessionBanner();
+  const first = exercises[0];
+  startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
+}
+
+function renderActiveSessionBanner() {
+  const banner = document.getElementById('active-session-banner');
+  if (!banner) return;
+  banner.innerHTML = '';
+  if (!activePlannedSession) { banner.hidden = true; return; }
+  const { label, exercises, index } = activePlannedSession;
+  const current = exercises[index];
+  banner.appendChild(el('div', { class: 'active-session-title', text: `▶ ${label}` }));
+  banner.appendChild(el('div', { class: 'active-session-step', text: `Step ${index + 1} of ${exercises.length}: ${current.name}` }));
+  const row = el('div', { class: 'active-session-actions' });
+  if (index < exercises.length - 1) {
+    const nextBtn = el('button', { type: 'button', class: 'secondary', text: 'Next exercise →' });
+    nextBtn.addEventListener('click', advancePlannedSession);
+    row.appendChild(nextBtn);
+  }
+  const endBtn = el('button', { type: 'button', class: 'secondary', text: 'End session' });
+  endBtn.addEventListener('click', endPlannedSession);
+  row.appendChild(endBtn);
+  banner.appendChild(row);
+  banner.hidden = false;
+}
+
+function advancePlannedSession() {
+  if (!activePlannedSession) return;
+  if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
+  activePlannedSession.index += 1;
+  renderActiveSessionBanner();
+  const ex = activePlannedSession.exercises[activePlannedSession.index];
+  startLift(ex.name, ex.liftCode, ex.weight, ex.reps, ex.sets || 3);
+}
+
+function endPlannedSession() {
+  activePlannedSession = null;
+  renderActiveSessionBanner();
+}
+
+// Open the recommended workout as a Today Session Plan (reuses the intent
+// drawer). Read-only fetch; failure is silent so logging is never blocked.
+async function openTodaySessionPlan() {
+  if (!getApiKey()) return;
+  try {
+    const res = await api('/api/plan/intent-recommendation');
+    const intents = res.data?.intents || [];
+    const recommended = intents.find(i => i.recommended) || intents.find(i => i.id !== 'custom') || intents[0];
+    if (recommended) openIntentDrawer(recommended);
+  } catch {
+    // best-effort — never block the logger
+  }
+}
+
+// Phrases that ask for the recommended workout rather than logging a set.
+// Workout shorthand always carries numbers, so any digit rules a phrase out —
+// this keeps "Bench 225 5/2 x3" on the normal parse/preview path.
+function looksLikeSessionRequest(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t || /\d/.test(t)) return false;
+  return /\b(recommended (workout|session)|what should i train|what are we doing|today'?s plan|what'?s the plan|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
 }
 
 function openIntentDrawer(intent) {
@@ -880,25 +974,35 @@ function openIntentDrawer(intent) {
   if (intent.exercises && intent.exercises.length) {
     content.appendChild(el('h3', { class: 'drawer-section-title', text: 'Exercises' }));
     const exList = el('div', { class: 'drawer-exercises' });
-    for (const ex of intent.exercises) {
-      const target = ex.next_target;
-      const nameEl = el('span', { class: 'drawer-exercise-name', text: ex.exercise || ex.liftCode });
-      const targetEl = target
-        ? el('span', { class: 'drawer-exercise-target', text: `${target.weight} × ${target.reps}` })
-        : null;
-      exList.appendChild(el('div', { class: 'drawer-exercise-row' }, targetEl ? [nameEl, targetEl] : [nameEl]));
+    for (const raw of intent.exercises) {
+      const ex = normalizePlanExercise(raw);
+      const nameEl = el('span', { class: 'drawer-exercise-name', text: ex.name });
+      const targetEl = ex.weight != null
+        ? el('span', { class: 'drawer-exercise-target', text: `${ex.weight} × ${ex.reps}${ex.sets ? ` × ${ex.sets}` : ''}` })
+        : el('span', { class: 'drawer-exercise-target muted', text: 'best effort' });
+      exList.appendChild(el('div', { class: 'drawer-exercise-row' }, [nameEl, targetEl]));
+      if (ex.reason) exList.appendChild(el('div', { class: 'drawer-exercise-reason', text: ex.reason }));
     }
     content.appendChild(exList);
 
-    const firstEx = intent.exercises[0];
-    if (firstEx && firstEx.next_target) {
-      const startBtn = el('button', { type: 'button', class: 'approve intent-start-btn', text: 'START SESSION' });
+    const firstEx = normalizePlanExercise(intent.exercises[0]);
+    if (firstEx.name) {
+      const actionRow = el('div', { class: 'drawer-action-row' });
+      // Start Session begins the guided in-memory session; Modify Plan just
+      // drops into the logger on the first lift (via startLift), editable.
+      const startBtn = el('button', { type: 'button', class: 'approve intent-start-btn', text: 'Start Session' });
       startBtn.addEventListener('click', () => {
         closeIntentDrawer();
-        const t = firstEx.next_target;
-        startLift(firstEx.exercise || firstEx.liftCode, firstEx.liftCode, t.weight, t.reps, t.sets || 3);
+        startPlannedSession(intent);
       });
-      content.appendChild(startBtn);
+      const modifyBtn = el('button', { type: 'button', class: 'secondary intent-modify-btn', text: 'Modify Plan' });
+      modifyBtn.addEventListener('click', () => {
+        closeIntentDrawer();
+        startLift(firstEx.name, firstEx.liftCode, firstEx.weight, firstEx.reps, firstEx.sets || 3);
+      });
+      actionRow.appendChild(startBtn);
+      actionRow.appendChild(modifyBtn);
+      content.appendChild(actionRow);
     }
   }
 
@@ -2218,6 +2322,16 @@ function pendingWriteHasPreviewProof(write) {
 
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
+
+  // Intent phrases ("what should I train", "let's do your recommended workout")
+  // open the Today Session Plan instead of being parsed as a workout log. The
+  // textarea is cleared on the next tick so chat.js still shows the question.
+  if (looksLikeSessionRequest(workoutTextInput.value)) {
+    setTimeout(() => { workoutTextInput.value = ''; }, 0);
+    openTodaySessionPlan();
+    return;
+  }
+
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();
 
