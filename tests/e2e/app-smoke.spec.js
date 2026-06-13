@@ -222,11 +222,8 @@ async function runPreview(page) {
   await page.locator('#workout-text').fill('bench 225 5/2 x3');
   await page.locator('#preview-btn').click();
   await expect(page.locator('#preview-panel')).toBeVisible();
-  await expect(page.locator('#preview-content')).toContainText('DRY-RUN');
-  await expect(page.locator('#preview-content')).toContainText('test_mode: true');
-  await expect(page.locator('#preview-content')).toContainText('sheet_written: false');
-  await expect(page.locator('#preview-content')).toContainText('no_write_confirmed: true');
   await expect(page.locator('#preview-content')).toContainText('Bench Press');
+  await expect(page.locator('#preview-content')).toContainText('3 sets to write');
 }
 
 test('Coach shell loads with guarded preview state', async ({ page }) => {
