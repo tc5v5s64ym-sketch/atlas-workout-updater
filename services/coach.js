@@ -352,6 +352,58 @@ function extractText(data) {
   return parts.map(p => (p && typeof p.text === 'string' ? p.text : '')).join('').trim();
 }
 
+// ── Session compilation: extract logged sets from conversation ────────────────
+// When the lifter says "log it" at the end of a conversational session, this
+// asks Gemini to extract all the workout sets they actually did — ignoring
+// Atlas's own suggestions and any sets discussed but not performed.
+function buildCompileSystemPrompt() {
+  return [
+    'You are Atlas, a workout logging assistant.',
+    'You are given a conversation between a lifter and Atlas (their coach).',
+    'Your job: extract ONLY the workout sets the lifter ACTUALLY LOGGED OR PERFORMED during this session.',
+    '',
+    'Output format — Atlas slash notation, one exercise per line:',
+    '  Bench Press 135 10 185 8/2 225 6/1',
+    '  Deadlift 135 10/4 185 10/2 225 8/2 245 6/2',
+    '',
+    'Set notation: {exercise} {weight} {reps}/{rir}',
+    '  - weight is in lbs (numbers only, no units in output)',
+    '  - reps is number of reps',
+    '  - rir is reps in reserve — omit the /rir if not mentioned',
+    '  - Chain multiple sets for the same exercise on one line',
+    '',
+    'Rules:',
+    '- ONLY include sets the lifter did. Ignore Atlas\'s recommendations, plans, and suggestions.',
+    '- If the lifter corrected a number ("actually that was 8 not 10"), use the corrected value.',
+    '- Preserve the order exercises were performed.',
+    '- Use the canonical exercise name when obvious (e.g. "bench" → "Bench Press"), or the lifter\'s exact phrasing otherwise.',
+    '- If no workout sets are found in the conversation, output exactly: NO_WORKOUT_FOUND',
+    '- Output ONLY the workout lines. No prose, no explanations, no headings, no commentary.'
+  ].join('\n');
+}
+
+async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (!Array.isArray(turns) || !turns.length) return { workout_text: null };
+
+  const sanitized = turns
+    .filter(t => t && (t.role === 'user' || t.role === 'atlas'))
+    .slice(-40)
+    .map(t => {
+      const role = t.role === 'atlas' ? 'Atlas' : 'Lifter';
+      const text = clampText(t.text, 800);
+      return text ? `${role}: ${text}` : null;
+    })
+    .filter(Boolean);
+
+  if (!sanitized.length) return { workout_text: null };
+
+  const userPrompt = `CONVERSATION:\n${sanitized.join('\n')}\n\nExtract the workout sets.`;
+  const raw = await callGemini(buildCompileSystemPrompt(), userPrompt, timeoutMs);
+  const result = raw.trim();
+  if (!result || result === 'NO_WORKOUT_FOUND') return { workout_text: null };
+  return { workout_text: result };
+}
+
 module.exports = {
   isConfigured,
   coachModel,
@@ -368,5 +420,7 @@ module.exports = {
   sanitizeChatHistory,
   generateChatReply,
   parseEditFromReply,
-  isValidEditSchema
+  isValidEditSchema,
+  buildCompileSystemPrompt,
+  compileSessionFromHistory
 };

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
-const { parseWorkoutText, buildWorkoutTextParseDryRunResponse, looksLikeCorrection } = require('../services/workoutTextParser');
+const { parseWorkoutText, buildWorkoutTextParseDryRunResponse, looksLikeCorrection, looksLikeLogIt } = require('../services/workoutTextParser');
 const { normalizeDurationString } = require('../services/duration');
 const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
@@ -3776,4 +3776,58 @@ test('looksLikeCorrection: handles edge cases gracefully', () => {
   assert.ok(!looksLikeCorrection(''),    'empty string is not a correction');
   assert.ok(!looksLikeCorrection(null),  'null is not a correction');
   assert.ok(!looksLikeCorrection(42),    'number is not a correction');
+});
+
+// ── End-of-session "log it" detection ─────────────────────────────────────────
+
+test('looksLikeLogIt: recognises end-of-session triggers', () => {
+  const yes = [
+    'log it',
+    'Log it',
+    'LOG IT',
+    'log it.',
+    'log it!',
+    'log that',
+    'log the session',
+    'log this session',
+    'log this workout',
+    'save the session',
+    'save it',
+    'ok log it',
+    'alright log it',
+    'compile session',
+    'compile the session',
+    'that\'s all',
+    'thats all',
+    "we're done",
+    'were done',
+    'done',
+    'done for today',
+    'finish session',
+    'end session',
+    'end the session',
+    'we\'re done logging',
+  ];
+  yes.forEach(p => assert.ok(looksLikeLogIt(p), `should detect log-it in: "${p}"`));
+});
+
+test('looksLikeLogIt: does not flag workout text or coach questions', () => {
+  const no = [
+    'Bench 225 5/2',
+    'log bench press 225',
+    'log set bench 135 10',
+    'What should I train today?',
+    'How is my bench progressing?',
+    'Squat 315 3/1 x3',
+    'I want to log a new session',
+    'log my morning session on friday',
+    '',
+  ];
+  no.forEach(p => assert.ok(!looksLikeLogIt(p), `should NOT detect log-it in: "${p}"`));
+});
+
+test('looksLikeLogIt: handles edge cases gracefully', () => {
+  assert.ok(!looksLikeLogIt(''),    'empty string is not log-it');
+  assert.ok(!looksLikeLogIt(null),  'null is not log-it');
+  assert.ok(!looksLikeLogIt(42),    'number is not log-it');
 });

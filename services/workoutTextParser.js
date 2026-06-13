@@ -648,10 +648,20 @@ function looksLikeCorrection(text) {
   return CORRECTION_PATTERNS.test(typeof text === 'string' ? text : '');
 }
 
+// Detects end-of-session "log it" triggers — phrases that mean the lifter is
+// done logging sets conversationally and wants Atlas to compile the session from
+// the chat history into a single preview.
+const LOG_IT_PATTERNS = /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i;
+
+function looksLikeLogIt(text) {
+  return LOG_IT_PATTERNS.test(typeof text === 'string' ? text : '');
+}
+
 module.exports = {
   parseWorkoutText,
   buildWorkoutTextParseDryRunResponse,
   normalizeParserText,
   canonicalizeExerciseName: findExerciseInText,
-  looksLikeCorrection
+  looksLikeCorrection,
+  looksLikeLogIt
 };

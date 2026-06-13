@@ -1140,6 +1140,12 @@ function looksLikeCorrection(text) {
   return /\b(actually[,. ]|i was wrong|that'?s wrong|correction[,: ]|meant to (say|log|write|do)\b|should have been|that was wrong|i meant\b|wrong (weight|reps|sets|exercise)|oops[,. ]|my mistake|i made a mistake)\b/.test(t);
 }
 
+// End-of-session compilation trigger: the lifter has been logging sets
+// conversationally and now wants Atlas to compile them into one preview.
+function looksLikeLogIt(text) {
+  return /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(String(text || ''));
+}
+
 function showCorrectionPrompt(capturedText) {
   const thread = document.getElementById('thread-messages');
   if (!thread) return;
@@ -2584,6 +2590,44 @@ function startOverWorkout() {
 
 document.getElementById('start-over-btn')?.addEventListener('click', startOverWorkout);
 
+// End-of-session compilation: take the in-memory chat history, ask the server
+// to extract the workout sets the lifter logged conversationally, then populate
+// the composer and trigger a normal parse → preview → approve flow.
+async function handleLogIt() {
+  const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+
+  if (!turns.length) {
+    setStatus(loggerStatus, "No conversation yet — log some sets in the chat first, then say 'log it'.", 'error');
+    return;
+  }
+
+  setStatus(loggerStatus, 'Compiling session from conversation…', 'ok');
+
+  let workoutText;
+  try {
+    const res = await api('/api/session/compile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history: turns })
+    });
+    workoutText = res.data?.workout_text || null;
+  } catch (err) {
+    setStatus(loggerStatus, `Could not compile session: ${err.message}`, 'error');
+    return;
+  }
+
+  if (!workoutText) {
+    setStatus(loggerStatus, "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", 'error');
+    return;
+  }
+
+  setStatus(loggerStatus, '', 'ok');
+  workoutTextInput.value = workoutText;
+  invalidatePreview();
+  // Re-submit the form so the normal parse → preview path runs with the compiled text.
+  document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+}
+
 // One write_id per previewed workout: if the live write is retried (double
 // tap, network blip), the backend recognises the id and refuses to append
 // twice, returning proof the original write completed instead.
@@ -2699,6 +2743,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     const planText = workoutTextInput.value.trim();
     setTimeout(() => { workoutTextInput.value = ''; }, 0);
     routeMessageToCoach(planText);
+    return;
+  }
+
+  // "Log it" / "done" — compile the full conversational session from chat
+  // history and run the normal parse → preview → approve flow on the result.
+  if (looksLikeLogIt(workoutTextInput.value)) {
+    workoutTextInput.value = '';
+    await handleLogIt();
     return;
   }
 

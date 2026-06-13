@@ -621,4 +621,8 @@
     new MutationObserver(() => { if (thread.children.length) hideHomeEmpty(); })
       .observe(thread, { childList: true });
   }
+
+  // Expose chat history so app.js can compile the session when "log it" fires.
+  // Returns a snapshot array — the IIFE retains the live reference.
+  window.getChatHistory = () => chatTurns.slice();
 })();

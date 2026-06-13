@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, parseEditFromReply, isValidEditSchema } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, parseEditFromReply, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -295,4 +295,39 @@ test('sanitizeChatContext accepts and coerces session_count', () => {
   assert.equal(sanitizeChatContext({ session_count: 0 }).session_count,    0,  'zero is preserved');
   assert.equal(sanitizeChatContext({}).session_count,                       null, 'missing → null');
   assert.equal(sanitizeChatContext({ session_count: 'nope' }).session_count, null, 'non-numeric → null');
+});
+
+// ── Session compilation ────────────────────────────────────────────────────────
+
+test('buildCompileSystemPrompt carries the no-invent and output-only rules', () => {
+  const prompt = buildCompileSystemPrompt();
+  assert.match(prompt, /ONLY.*the lifter.*ACTUALLY/i, 'must restrict to lifter-logged sets');
+  assert.match(prompt, /NO_WORKOUT_FOUND/,             'must specify the no-sets sentinel');
+  assert.match(prompt, /no prose.*no explanations/i,   'must forbid prose in output');
+  assert.match(prompt, /one exercise per line/i,        'must specify line format');
+});
+
+test('compileSessionFromHistory returns null for empty or missing turns', async () => {
+  const r1 = await compileSessionFromHistory([]);
+  assert.equal(r1.workout_text, null, 'empty array → null');
+
+  const r2 = await compileSessionFromHistory(null);
+  assert.equal(r2.workout_text, null, 'null → null');
+
+  const r3 = await compileSessionFromHistory(undefined);
+  assert.equal(r3.workout_text, null, 'undefined → null');
+});
+
+test('compileSessionFromHistory throws when Gemini is unconfigured (non-empty turns)', async () => {
+  const savedKey = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  try {
+    await assert.rejects(
+      () => compileSessionFromHistory([{ role: 'user', text: 'Bench 225 5/2' }]),
+      /GEMINI_API_KEY/i,
+      'should throw about missing key'
+    );
+  } finally {
+    if (savedKey !== undefined) process.env.GEMINI_API_KEY = savedKey;
+  }
 });
