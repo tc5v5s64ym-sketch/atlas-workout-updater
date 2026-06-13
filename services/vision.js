@@ -7,7 +7,7 @@ const { GoogleGenAI } = require('@google/genai');
 
 function buildWorkoutScreenshotPrompt() {
   return [
-    'Extract workout metrics visible in this Apple Watch workout screenshot.',
+    'Extract workout metrics visible in this fitness device screenshot (Apple Watch, Garmin, Fitbit, Polar, Whoop, Samsung, or any other wearable or fitness app).',
     'Return strict JSON only with this exact schema:',
     '{',
     '  "date": string|null,',
@@ -18,9 +18,14 @@ function buildWorkoutScreenshotPrompt() {
     '  "peakHR": number|null,',
     '  "workoutType": string|null',
     '}',
+    'Field extraction rules:',
+    '- duration: any elapsed or workout time field (e.g. "Duration", "Time", "Elapsed Time", "Workout Time").',
+    '- activeCalories: active or move energy (e.g. "Active Calories", "Active Cal", "Active Energy", "Move", "Move Cal", "Calories (Active)").',
+    '- totalCalories: total energy burned (e.g. "Total Calories", "Total Cal", "Total Energy", "Calories Burned", "Total Burned"). If only one calorie field is visible, put it in activeCalories and leave totalCalories null.',
+    '- workoutType: the activity label (e.g. "Outdoor Run", "Strength Training", "Cycling", "Activity Type", "Exercise Type").',
     'Heart rate rules:',
-    '- averageHR: use only the value next to labels like "Avg HR", "Average HR", or "Avg Heart Rate".',
-    '- peakHR: use only the value next to labels like "Max HR", "Maximum HR", "Peak HR", or "Peak Heart Rate", or the highest visible heart-rate value on the screenshot.',
+    '- averageHR: use only the value next to labels like "Avg HR", "Average HR", "Avg Heart Rate", "Average Heart Rate", "Mean HR", or "Mean Heart Rate".',
+    '- peakHR: use only the value next to labels like "Max HR", "Maximum HR", "Peak HR", "Peak Heart Rate", "Max Heart Rate", "Maximum Heart Rate", or the highest visible heart-rate value on the screenshot.',
     '- averageHR and peakHR are different metrics. Do not confuse them and do not copy one into the other.',
     '- If averageHR is visible but no peak/max heart-rate label or highest HR value is visible, return peakHR: null.',
     'If a workout date is visible and unambiguous, return it as YYYY-MM-DD.',
