@@ -377,3 +377,31 @@ test('Progress surface renders the Today screen from mocked data without crashin
   await expect(page.locator('#progress-snapshot')).toContainText('42');
   await expect(page.locator('#intent-grid')).toContainText('Bench + OHP');
 });
+
+test('History groups sessions under Today / Past with clean cards', async ({ page }) => {
+  await openApp(page);
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  await page.route('**/api/sessions/recent', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      sessions: [
+        { date: today, session_id: today.replace(/-/g, '') + '-AM-01', exercises: ['Bench Press', 'Incline DB Press', 'Lat Pulldown', 'Face Pull'], sets_count: 12, total_volume: 8420 },
+        { date: '2026-06-09', session_id: '20260609-PM-01', exercises: ['Deadlift', 'Row'], sets_count: 8, total_volume: 14270 }
+      ]
+    }
+  })));
+
+  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('[data-tab="history"]').click();
+
+  const headers = page.locator('.session-group-header');
+  await expect(headers.nth(0)).toHaveText('Today');
+  await expect(headers.nth(1)).toHaveText('Past sessions');
+
+  // Today card: friendly label, stats, and a truncated exercise summary.
+  const todayCard = page.locator('.session-item').first();
+  await expect(todayCard.locator('.session-when')).toHaveText('Morning session');
+  await expect(todayCard.locator('.session-stats')).toContainText('12 sets');
+  await expect(todayCard.locator('.session-exercises')).toContainText('+1 more');
+});

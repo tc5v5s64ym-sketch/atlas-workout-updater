@@ -173,6 +173,76 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 /* ===== History tab ===== */
 
+// 'YYYY-MM-DD' → "Today" / "Yesterday" / "Mon, Jun 9", parsed in local time.
+function formatSessionDate(dateStr) {
+  const parts = String(dateStr || '').split('-').map(Number);
+  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return dateStr || '';
+  const dt = new Date(parts[0], parts[1] - 1, parts[2]);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((today - dt) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+// "20260613-AM-01" → "AM" / "PM" / ''.
+function sessionTimeTag(sessionId) {
+  const m = String(sessionId || '').match(/-(AM|PM)\b/i);
+  return m ? m[1].toUpperCase() : '';
+}
+
+function summarizeExercises(exercises, max = 3) {
+  const ex = (exercises || []).filter(Boolean);
+  if (!ex.length) return 'No exercises recorded';
+  if (ex.length <= max) return ex.join(', ');
+  return `${ex.slice(0, max).join(', ')} +${ex.length - max} more`;
+}
+
+function sessionWhenLabel(s, inToday) {
+  const tag = sessionTimeTag(s.session_id);
+  if (inToday) {
+    if (tag === 'AM') return 'Morning session';
+    if (tag === 'PM') return 'Afternoon session';
+    return "Today's session";
+  }
+  const date = formatSessionDate(s.date);
+  return tag ? `${date} · ${tag}` : date;
+}
+
+// One clean, tappable session card: when + stats on top, exercises beneath.
+// Full set/effort detail lazy-loads on first expand (unchanged).
+function renderSessionCard(s, inToday) {
+  const details = el('details', { class: 'session-item' });
+  const sum = el('summary', { class: 'session-summary' }, [
+    el('div', { class: 'session-head' }, [
+      el('span', { class: 'session-when', text: sessionWhenLabel(s, inToday) }),
+      el('span', { class: 'session-stats', text: `${s.sets_count} sets · ${Number(s.total_volume || 0).toLocaleString()} lb` })
+    ]),
+    el('div', { class: 'session-exercises', text: summarizeExercises(s.exercises) })
+  ]);
+  details.appendChild(sum);
+
+  if (s.effort) {
+    const e = s.effort;
+    const line = [
+      e.duration && `Duration: ${e.duration}`,
+      e.active_calories && `Active cal: ${e.active_calories}`,
+      e.average_hr && `Avg HR: ${e.average_hr}`
+    ].filter(Boolean).join(' · ');
+    if (line) details.appendChild(el('p', { class: 'muted session-effort-line', text: line }));
+  }
+
+  const detailSlot = el('div', { class: 'session-detail-slot' });
+  details.appendChild(detailSlot);
+  let detailLoaded = false;
+  details.addEventListener('toggle', () => {
+    if (!details.open || detailLoaded) return;
+    detailLoaded = true;
+    loadSessionDetail(s.session_id, detailSlot);
+  });
+  return details;
+}
+
 async function loadSessions() {
   const result = document.getElementById('sessions-result');
   result.textContent = 'Loading…';
@@ -180,44 +250,28 @@ async function loadSessions() {
     const res = await api('/api/sessions/recent');
     const sessions = res?.data?.sessions || [];
     if (!sessions.length) {
-      result.innerHTML = '<p class="muted">No sessions found.</p>';
+      result.innerHTML = '<p class="muted">No sessions logged yet.</p>';
       return;
     }
+
+    // Today's sessions populate live (History re-fetches after each write);
+    // everything else falls under "Past sessions".
+    const today = getLocalDateString();
+    const todaySessions = sessions.filter(s => s.date === today);
+    const pastSessions = sessions.filter(s => s.date !== today);
+
     const frag = document.createDocumentFragment();
-    for (const s of sessions) {
-      const details = el('details', { class: 'session-item' });
-      const sum = el('summary', { class: 'session-summary' });
-      const meta = [
-        s.date,
-        s.session_id,
-        `${s.exercises.join(', ')} (${s.sets_count} sets, ${s.total_volume.toLocaleString()} lbs)`
-      ].join('  —  ');
-      sum.textContent = meta;
-      details.appendChild(sum);
-
-      if (s.effort) {
-        const e = s.effort;
-        const p = el('p', { class: 'muted session-effort-line' });
-        p.textContent = [
-          e.duration && `Duration: ${e.duration}`,
-          e.active_calories && `Active cal: ${e.active_calories}`,
-          e.average_hr && `Avg HR: ${e.average_hr}`
-        ].filter(Boolean).join(' · ');
-        details.appendChild(p);
-      }
-
-      // Lazy-load full session detail on first expand.
-      const detailSlot = el('div', { class: 'session-detail-slot' });
-      details.appendChild(detailSlot);
-      let detailLoaded = false;
-      details.addEventListener('toggle', () => {
-        if (!details.open || detailLoaded) return;
-        detailLoaded = true;
-        loadSessionDetail(s.session_id, detailSlot);
-      });
-
-      frag.appendChild(details);
+    frag.appendChild(el('div', { class: 'session-group-header', text: 'Today' }));
+    if (todaySessions.length) {
+      for (const s of todaySessions) frag.appendChild(renderSessionCard(s, true));
+    } else {
+      frag.appendChild(el('p', { class: 'muted session-empty', text: 'Nothing logged yet today.' }));
     }
+    if (pastSessions.length) {
+      frag.appendChild(el('div', { class: 'session-group-header', text: 'Past sessions' }));
+      for (const s of pastSessions) frag.appendChild(renderSessionCard(s, false));
+    }
+
     result.innerHTML = '';
     result.appendChild(frag);
   } catch (err) {
