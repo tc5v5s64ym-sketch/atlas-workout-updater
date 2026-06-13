@@ -331,6 +331,48 @@ test('Chat: a coach outage falls back to a deterministic reply, still no write',
   expect(capture.writeRequests).toHaveLength(0);
 });
 
+test('Chat: propose_edit updates the preview row and still requires approve to write', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Seed a row into the preview table via the global addSetRow function
+  await page.evaluate(() => addSetRow({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }));
+
+  // Parser returns no-sets → message goes to chat
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+    }
+  })));
+
+  // Coach returns prose + a structured edit
+  await page.route('**/api/coach/chat', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      message: 'Changed set 1 to 235 lbs — looks like a solid bump.',
+      propose_edit: { action: 'update_set', index: 0, weight: 235, reps: 5, rir: 2 },
+      configured: true,
+      source: 'gemini'
+    }
+  })));
+
+  await page.locator('#workout-text').fill('change set 1 to 235');
+  await page.locator('#preview-btn').click();
+
+  // Prose typed out in Atlas bubble
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('solid bump');
+  // Edit-applied note visible below the reply
+  await expect(page.locator('.edit-applied-note')).toBeVisible();
+  // Row 0 weight updated to 235
+  await expect(page.locator('.set-weight').first()).toHaveValue('235');
+  // Approve button still disabled — lifter must re-preview before saving
+  await expect(page.locator('#approve-btn')).toBeDisabled();
+  // Zero writes fired
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
 test('Preview flow renders a no-write review card from mocked APIs', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);

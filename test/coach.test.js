@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, parseEditFromReply, isValidEditSchema } = require('../services/coach');
 
 test('coach system prompt carries the hard guardrails', () => {
   const prompt = buildCoachSystemPrompt();
@@ -139,4 +139,52 @@ test('sanitizeChatHistory maps roles, bounds to the last 8 turns, and drops empt
   assert.ok(clean.every(t => t.role === 'user' || t.role === 'model'), 'atlas maps to model, everything else to user');
   assert.ok(clean.every(t => t.text && t.text.trim()), 'empty turns are dropped');
   assert.deepEqual(sanitizeChatHistory('nope'), [], 'non-array history yields no turns');
+});
+
+test('chat system prompt documents all three PROPOSE_EDIT actions', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /PROPOSE_EDIT/, 'must include the edit proposal token');
+  assert.match(prompt, /update_set/, 'must document update_set action');
+  assert.match(prompt, /delete_set/, 'must document delete_set action');
+  assert.match(prompt, /add_set/, 'must document add_set action');
+  assert.match(prompt, /0-based/, 'must clarify that index is 0-based');
+  assert.match(prompt, /VERY LAST LINE/i, 'must specify placement of the PROPOSE_EDIT line');
+});
+
+test('parseEditFromReply strips the PROPOSE_EDIT line and returns the edit object', () => {
+  const raw = 'Updated set 2 to 235 lbs.\nPROPOSE_EDIT: {"action":"update_set","index":1,"weight":235,"reps":5}';
+  const { reply, propose_edit } = parseEditFromReply(raw);
+  assert.equal(reply, 'Updated set 2 to 235 lbs.');
+  assert.deepEqual(propose_edit, { action: 'update_set', index: 1, weight: 235, reps: 5 });
+});
+
+test('parseEditFromReply returns null propose_edit for malformed JSON', () => {
+  const raw = 'Here is the reply.\nPROPOSE_EDIT: not-valid-json';
+  const { reply, propose_edit } = parseEditFromReply(raw);
+  assert.equal(reply, 'Here is the reply.');
+  assert.equal(propose_edit, null);
+});
+
+test('parseEditFromReply returns null when no PROPOSE_EDIT present', () => {
+  const { reply, propose_edit } = parseEditFromReply('Your bench is solid. Keep it up.');
+  assert.equal(reply, 'Your bench is solid. Keep it up.');
+  assert.equal(propose_edit, null);
+});
+
+test('parseEditFromReply handles trailing blank lines after PROPOSE_EDIT', () => {
+  const raw = 'Removed the last set.\nPROPOSE_EDIT: {"action":"delete_set","index":2}\n\n';
+  const { reply, propose_edit } = parseEditFromReply(raw);
+  assert.equal(reply, 'Removed the last set.');
+  assert.deepEqual(propose_edit, { action: 'delete_set', index: 2 });
+});
+
+test('isValidEditSchema accepts known actions and rejects unknown or negative index', () => {
+  assert.ok(isValidEditSchema({ action: 'update_set', index: 0 }));
+  assert.ok(isValidEditSchema({ action: 'delete_set', index: 2 }));
+  assert.ok(isValidEditSchema({ action: 'add_set' }));
+  assert.ok(!isValidEditSchema({ action: 'drop_table', index: 0 }), 'unknown action rejected');
+  assert.ok(!isValidEditSchema({ action: 'update_set', index: -1 }), 'negative index rejected');
+  assert.ok(!isValidEditSchema({ action: 'update_set' }), 'missing index rejected');
+  assert.ok(!isValidEditSchema(null), 'null rejected');
+  assert.ok(!isValidEditSchema([]), 'array rejected');
 });

@@ -510,6 +510,32 @@ test('conversational logger form edits invalidate stale previews before save', (
   assert.match(appSource, /Run a preview above to enable this button/);
 });
 
+test('proposed edit: validateProposedEdit checks rowCount bounds and field bounds', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(ccSource, /function validateProposedEdit\(edit, rowCount\)/);
+  // Index must be < rowCount
+  assert.match(ccSource, /edit\.index >= rowCount/);
+  // EDIT_BOUNDS must cover all three constrained fields with correct maxes
+  assert.match(ccSource, /weight.*1500/);
+  assert.match(ccSource, /reps.*100/);
+  assert.match(ccSource, /rir.*10/);
+  // All three actions must be allowed
+  assert.match(ccSource, /update_set.*delete_set.*add_set/);
+});
+
+test('proposed edit: applyProposedEdit always calls invalidatePreview and never touches the write path', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(ccSource, /function applyProposedEdit\(edit\)/);
+  const applyBlock = ccSource.slice(
+    ccSource.indexOf('function applyProposedEdit(edit)'),
+    ccSource.indexOf('function getChatReply')
+  );
+  assert.match(applyBlock, /invalidatePreview/,
+    'applyProposedEdit must call invalidatePreview so the lifter re-previews after edit');
+  assert.doesNotMatch(applyBlock, /approveBtn\.click|\/api\/log-workout|\/api\/complete-workout|appendRows/,
+    'applyProposedEdit must never touch any write path');
+});
+
 test('conversational logger renders textbox first and parsed rows as fallback editor', () => {
   const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

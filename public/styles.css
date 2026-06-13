@@ -1542,6 +1542,14 @@ a.lift-link:hover { text-decoration: underline; }
 .save-inline-btn:disabled { opacity: 0.5; cursor: default; }
 .save-inline-btn:not(:disabled):active { transform: scale(0.97); }
 
+/* Confirmation note shown after a coach-proposed edit is applied to the preview */
+.edit-applied-note {
+  margin-top: var(--s1);
+  font-size: 0.78rem;
+  color: var(--accent);
+  font-style: italic;
+}
+
 /* Collapsible dry-run review panel — keeps the full proof/edit UI one tap away */
 .preview-details > .preview-summary {
   cursor: pointer;
