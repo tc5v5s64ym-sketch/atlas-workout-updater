@@ -360,6 +360,10 @@ main {
 .coach-plan-target { font-size: 0.88rem; color: var(--ink); margin-top: 2px; }
 .coach-plan-suggestion { font-size: 0.9rem; margin: var(--s2) 0 0; }
 
+/* Weekly coach check-in card */
+.weekly-coach-summary { font-size: 0.95rem; }
+.weekly-coach-nudge { font-size: 0.9rem; margin: var(--s2) 0 0; }
+
 .suggestion-chips {
   display: flex;
   flex-wrap: wrap;

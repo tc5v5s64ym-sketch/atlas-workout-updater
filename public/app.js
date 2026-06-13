@@ -303,6 +303,7 @@ document.getElementById('settings-form').addEventListener('submit', e => {
   setStatus(statusBox, 'API key saved to this browser.', 'ok');
   loadDashboard();
   loadCoachPlan();
+  loadWeeklyCoach();
 });
 
 document.getElementById('clear-key-btn').addEventListener('click', () => {
@@ -551,6 +552,74 @@ function renderCoachPlan(card, { focusLabel, focusReason, topRec }) {
       card.appendChild(el('p', { class: 'coach-plan-suggestion', text: topRec.recommendation }));
     }
   }
+}
+
+/* ===== Weekly coach check-in card (read-only, Coach surface) =====
+ * A short "how's this week going" summary: sessions, volume trend, which lifts
+ * are progressing vs steady, and one nudge. Read-only; a missing key or a failed
+ * core fetch leaves the card hidden so the logger is never blocked. */
+async function loadWeeklyCoach() {
+  const card = document.getElementById('weekly-coach-card');
+  if (!card) return;
+  if (!getApiKey()) { card.hidden = true; return; }
+
+  const [reportResult, insightsResult] = await Promise.allSettled([
+    api('/api/report/weekly'),
+    api('/api/coaching/insights')
+  ]);
+
+  // report/weekly is the core source — without it there's nothing to show.
+  if (reportResult.status !== 'fulfilled') { card.hidden = true; return; }
+  const report = reportResult.value.data || {};
+  const fatigue = insightsResult.status === 'fulfilled'
+    ? (insightsResult.value.data?.fatigue || {})
+    : {};
+
+  renderWeeklyCoach(card, report, fatigue);
+  card.hidden = false;
+}
+
+function renderWeeklyCoach(card, report, fatigue) {
+  card.innerHTML = '';
+  card.appendChild(el('div', { class: 'coach-plan-kicker', text: 'This week' }));
+
+  const sessions = Number(report.sessions_count || 0);
+  if (!sessions) {
+    card.appendChild(el('div', { class: 'weekly-coach-summary', text: 'No training logged in the last 7 days yet.' }));
+    card.appendChild(el('p', { class: 'weekly-coach-nudge', text: 'Nudge: a short session restarts your momentum.' }));
+    return;
+  }
+
+  const clauses = [`${sessions} session${sessions === 1 ? '' : 's'}`];
+
+  // Volume trend vs recent average (fatigue ratio), expressed as a percentage.
+  if (fatigue && Number.isFinite(fatigue.ratio)) {
+    const pct = Math.round((fatigue.ratio - 1) * 100);
+    if (pct >= 3) clauses.push(`volume up ${pct}%`);
+    else if (pct <= -3) clauses.push(`volume down ${-pct}%`);
+    else clauses.push('volume steady');
+  }
+
+  const progressing = (report.prs || []).map(p => p.exercise || p.lift_code).filter(Boolean).slice(0, 2);
+  if (progressing.length) clauses.push(`${progressing.join(' & ')} progressing`);
+
+  const steady = (report.stalls_or_watchouts || []).map(s => s.exercise || s.liftCode).filter(Boolean).slice(0, 2);
+  if (steady.length) clauses.push(`${steady.join(' & ')} steady`);
+
+  card.appendChild(el('div', { class: 'weekly-coach-summary', text: `${clauses.join(', ')}.` }));
+
+  const nudge = pickWeeklyNudge(report);
+  if (nudge) card.appendChild(el('p', { class: 'weekly-coach-nudge', text: `Nudge: ${nudge}` }));
+}
+
+// Prefer a recommendation for a lift flagged as steady/stalled (where a nudge
+// helps most); otherwise fall back to the top lift's recommendation.
+function pickWeeklyNudge(report) {
+  const recs = (report.recommendations || []).filter(r => r.recommendation);
+  if (!recs.length) return '';
+  const watchoutCodes = new Set((report.stalls_or_watchouts || []).map(s => String(s.liftCode || '').toUpperCase()));
+  const watch = recs.find(r => watchoutCodes.has(String(r.lift_code || '').toUpperCase()));
+  return (watch || recs[0]).recommendation;
 }
 
 /* ===== Training Snapshot (read-only — rendered from loadDashboard's progress/summary fetch) ===== */
@@ -2957,6 +3026,7 @@ setDefaultDate();
 checkConnection();
 loadDashboard();
 loadCoachPlan();
+loadWeeklyCoach();
 loadExerciseDatalist();
 
 document.getElementById('intent-drawer-backdrop')?.addEventListener('click', closeIntentDrawer);
