@@ -2625,7 +2625,7 @@ document.getElementById('bw-approve-btn').addEventListener('click', async () => 
     }
     bwInvalidate();
     document.getElementById('bw-form').reset();
-    document.getElementById('bw-date').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('bw-date').value = getLocalDateString();
     setStatus(bwStatus, 'Bodyweight written to Google Sheets. ✓', 'ok');
     loadBwHistory();
   } catch (err) {
