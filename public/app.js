@@ -1062,6 +1062,47 @@ function looksLikeSessionRequest(text) {
   return /\b(recommended (workout|session)|what should i train|what are we doing|today'?s plan|what'?s the plan|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
 }
 
+function looksLikeCorrection(text) {
+  const t = String(text || '').trim().toLowerCase();
+  return /\b(actually[,. ]|i was wrong|that'?s wrong|correction[,: ]|meant to (say|log|write|do)\b|should have been|that was wrong|i meant\b|wrong (weight|reps|sets|exercise)|oops[,. ]|my mistake|i made a mistake)\b/.test(t);
+}
+
+function showCorrectionPrompt(capturedText) {
+  const thread = document.getElementById('thread-messages');
+  if (!thread) return;
+
+  const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas correction-prompt' });
+  bubble.appendChild(el('div', { text: "Looks like you’re correcting the last saved session. What would you like to do?" }));
+
+  const actions = el('div', { class: 'correction-actions' });
+
+  const replaceBtn = el('button', { class: 'approve correction-replace-btn', type: 'button', text: 'Replace last saved session' });
+  replaceBtn.addEventListener('click', async () => {
+    bubble.remove();
+    await handleUndoLastWrite();
+    workoutTextInput.value = capturedText;
+    workoutTextInput.focus();
+  });
+
+  const newBtn = el('button', { class: 'secondary correction-new-btn', type: 'button', text: 'Log as new session' });
+  newBtn.addEventListener('click', () => {
+    bubble.remove();
+    lastWrite = null;
+    workoutTextInput.value = capturedText;
+    document.getElementById('logger-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+
+  const cancelBtn = el('button', { class: 'secondary correction-cancel-btn', type: 'button', text: 'Cancel' });
+  cancelBtn.addEventListener('click', () => bubble.remove());
+
+  actions.appendChild(replaceBtn);
+  actions.appendChild(newBtn);
+  actions.appendChild(cancelBtn);
+  bubble.appendChild(actions);
+  thread.appendChild(bubble);
+  bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function openIntentDrawer(intent) {
   const drawer = document.getElementById('intent-drawer');
   const content = document.getElementById('intent-drawer-content');
@@ -1772,8 +1813,10 @@ let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
 
-// Populated after a successful manual write so the undo button can fire.
-// Cleared when a new preview cycle starts (form input → invalidatePreview).
+// Populated after a successful manual write. Cleared only after undo or when
+// the user explicitly picks "Log as new" in the correction dialog. NOT cleared
+// by invalidatePreview so the correction guard can fire even after the user
+// starts typing a correction in the same textarea.
 let lastWrite = null;
 
 // True while a live write request is in-flight. Guards against double-submit
@@ -2414,7 +2457,6 @@ function buildVerdict(rec) {
 
 function invalidatePreview() {
   pendingWrite = null;
-  lastWrite = null;
   lastParserStatus = null;
   previewPanel.hidden = true;
   previewContent.innerHTML = '';
@@ -2518,14 +2560,33 @@ function routeMessageToCoach(text) {
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
-  // Intent phrases ("what should I train", "let's do your recommended workout")
-  // open the Today Session Plan instead of being parsed as a workout log. The
-  // textarea is cleared on the next tick so chat.js still shows the question.
+  // Training-plan questions ("what should I train", "today's plan") are routed
+  // to the coach chat so Atlas replies naturally in the thread — no modal first.
   if (looksLikeSessionRequest(workoutTextInput.value)) {
+    const planText = workoutTextInput.value.trim();
     setTimeout(() => { workoutTextInput.value = ''; }, 0);
-    openTodaySessionPlan();
+    routeMessageToCoach(planText);
     return;
   }
+
+  // After a successful save, correction language triggers a "Replace / Log as
+  // new / Cancel" prompt rather than silently appending a second workout.
+  if (lastWrite) {
+    const correctionText = workoutTextInput.value.trim();
+    if (correctionText && looksLikeCorrection(correctionText)) {
+      setTimeout(() => { workoutTextInput.value = ''; }, 0);
+      showCorrectionPrompt(correctionText);
+      return;
+    }
+  }
+
+  // Capture text before the async clear fires — the catch block needs it to
+  // decide whether to route to the coach.
+  const pendingChatText = workoutTextInput.value.trim();
+
+  // Clear the composer immediately — chat.js already captured it for the user
+  // bubble, so this just empties the box while Atlas thinks.
+  setTimeout(() => { workoutTextInput.value = ''; }, 0);
 
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();
@@ -2548,9 +2609,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // Text that isn't a loggable workout, with no effort attached, is treated as
     // a question for the coach rather than a parse error — so "was that a good
     // session?" or just "Bench" gets a conversation instead of a red dead-end.
-    const chatText = workoutTextInput.value.trim();
-    if (chatText && !hasAnyEffortInput()) {
-      routeMessageToCoach(chatText);
+    if (pendingChatText && !hasAnyEffortInput()) {
+      routeMessageToCoach(pendingChatText);
       return;
     }
     setStatus(loggerStatus, err.displayMessage || `Could not parse workout text: ${err.message}`, 'error');
@@ -2863,58 +2923,97 @@ function renderCompleteWorkoutPreview(result) {
     }).catch(() => {});
   }
 
-  previewContent.appendChild(el('h3', { text: data.effort_source === 'manual' ? 'Parsed effort (manual entry)' : 'Parsed effort (from screenshot)' }));
+  // Effort details collapse behind "Review technical details" — the chat card
+  // (addAtlasEffortReply) is the primary view for screenshot results.
   const effort = data.parsed_effort || {};
-  // Peak HR is null when the screenshot has no Max/Peak HR label — say so plainly
-  // rather than rendering a blank cell the user might mistake for a parse error.
   const peakHrCell = effort.peakHR == null ? 'not visible in screenshot' : effort.peakHR;
-  previewContent.appendChild(renderTable(
-    ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR', 'Type'],
-    [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, peakHrCell, effort.workoutType]]
-  ));
-
+  const effortDetailsInner = el('div', {}, [
+    el('h3', { text: data.effort_source === 'manual' ? 'Parsed effort (manual entry)' : 'Parsed effort (from screenshot)' }),
+    renderTable(
+      ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR', 'Type'],
+      [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, peakHrCell, effort.workoutType]]
+    )
+  ]);
   if (effort.peakHR == null) {
     const chip = el('div', { class: 'effort-missing-chip' });
     chip.innerHTML = '&#9888;&#65039; Peak HR not captured — ';
     const fixLink = el('a', { href: '#', class: 'effort-fix-link', text: 'enter it manually' });
     fixLink.addEventListener('click', ev => { ev.preventDefault(); prefillEffortForm(effort); });
     chip.appendChild(fixLink);
-    previewContent.appendChild(chip);
+    effortDetailsInner.appendChild(chip);
   } else {
     const editLink = el('a', { href: '#', class: 'effort-fix-link', text: 'Edit effort values' });
     editLink.addEventListener('click', ev => { ev.preventDefault(); prefillEffortForm(effort); });
-    previewContent.appendChild(editLink);
+    effortDetailsInner.appendChild(editLink);
   }
-
-  previewContent.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 5` }));
+  effortDetailsInner.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 5` }));
+  previewContent.appendChild(el('details', { class: 'preview-technical-details' }, [
+    el('summary', { text: 'Review technical details' }),
+    effortDetailsInner
+  ]));
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
 }
 
-// Narrate the parsed effort as a plain-language Atlas reply in the chat thread,
-// so a screenshot upload reads conversationally instead of as a cold table.
-// Read-only: this never writes; the approval gate in #preview-panel is unchanged.
+// Clean effort summary card in the chat thread after a screenshot upload.
+// Shows all parsed metrics, clearly states "Nothing saved yet", and provides
+// inline Save/Edit buttons — so the screenshot flow reads as one conversation.
+// Read-only: Save clicks the existing #approve-btn; the trust loop is unchanged.
 function addAtlasEffortReply(result) {
   const thread = document.getElementById('thread-messages');
   if (!thread) return;
   const data = result?.data?.data || {};
   const e = data.parsed_effort || {};
-  const parts = [];
-  if (e.duration) parts.push(String(e.duration));
-  if (e.activeCalories != null) parts.push(`${e.activeCalories} active cal`);
-  if (e.totalCalories != null) parts.push(`${e.totalCalories} total cal`);
-  if (e.averageHR != null) parts.push(`avg HR ${e.averageHR}`);
-  // Always state peak HR — including when the screenshot didn't show it.
-  parts.push(e.peakHR != null ? `peak HR ${e.peakHR}` : 'peak HR not visible in screenshot');
 
-  const summary = parts.length
-    ? `Parsed from screenshot: ${parts.join(' · ')}.`
-    : "I couldn't read clear effort metrics from that image — check it or switch to manual entry.";
+  const rows = [];
+  if (e.duration)            rows.push(['Duration',    String(e.duration)]);
+  if (e.activeCalories != null) rows.push(['Active cal',  String(e.activeCalories)]);
+  if (e.totalCalories != null)  rows.push(['Total cal',   String(e.totalCalories)]);
+  if (e.averageHR != null)      rows.push(['Avg HR',      `${e.averageHR} bpm`]);
+  rows.push(['peak HR', e.peakHR != null ? `${e.peakHR} bpm` : 'peak HR not visible in screenshot']);
 
-  const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas' }, [
-    el('div', { text: summary }),
-    el('div', { class: 'atlas-reply-gate', text: 'Nothing saved yet — review and approve below to write.' })
-  ]);
+  const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas effort-reply-card' });
+
+  if (rows.length) {
+    const grid = el('div', { class: 'effort-reply-grid' });
+    for (const [label, value] of rows) {
+      grid.appendChild(el('span', { class: 'effort-reply-label', text: label }));
+      grid.appendChild(el('span', { class: 'effort-reply-value', text: value }));
+    }
+    bubble.appendChild(grid);
+  } else {
+    bubble.appendChild(el('div', { class: 'muted', text: "Couldn't read metrics from that image — try Edit to enter them manually." }));
+  }
+
+  bubble.appendChild(el('div', { class: 'atlas-reply-gate', text: 'Nothing saved yet.' }));
+
+  const approveMirror = document.getElementById('approve-btn');
+  const actions = el('div', { class: 'effort-reply-actions' });
+
+  const saveBtn = el('button', { type: 'button', class: 'approve effort-save-btn', text: 'Save to Sheets' });
+  saveBtn.disabled = approveMirror ? approveMirror.disabled : true;
+  if (approveMirror) {
+    const obs = new MutationObserver(() => { saveBtn.disabled = approveMirror.disabled; });
+    obs.observe(approveMirror, { attributes: true, attributeFilter: ['disabled'] });
+  }
+  saveBtn.addEventListener('click', () => {
+    if (!approveMirror || approveMirror.disabled) return;
+    saveBtn.textContent = 'Saving…';
+    saveBtn.disabled = true;
+    approveMirror.click();
+  });
+
+  const editBtn = el('button', { type: 'button', class: 'secondary effort-edit-btn', text: 'Edit' });
+  editBtn.addEventListener('click', () => prefillEffortForm(e));
+
+  const cancelBtn = el('button', { type: 'button', class: 'secondary effort-cancel-btn', text: 'Cancel' });
+  cancelBtn.addEventListener('click', () => { invalidatePreview(); bubble.remove(); });
+
+  actions.appendChild(saveBtn);
+  actions.appendChild(editBtn);
+  actions.appendChild(cancelBtn);
+  bubble.appendChild(actions);
+
   thread.appendChild(bubble);
   bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }

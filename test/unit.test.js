@@ -3374,7 +3374,9 @@ test('screenshot: chat.js drops the attachment bubble on file change, not on sub
 test('screenshot: Atlas replies in-thread with parsed effort and a "nothing saved" gate', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(app, /function addAtlasEffortReply\(/, 'effort reply narrator must exist');
-  const fn = app.slice(app.indexOf('function addAtlasEffortReply('), app.indexOf('function addAtlasEffortReply(') + 1200);
+  const start = app.indexOf('function addAtlasEffortReply(');
+  const end = app.indexOf('\nasync function handleUndoLastWrite', start);
+  const fn = app.slice(start, end > start ? end : start + 3500);
   assert.match(fn, /thread-messages/, 'reply must land in the chat thread');
   assert.match(fn, /chat-bubble-atlas/, 'reply must read as an Atlas bubble');
   assert.match(fn, /Nothing saved yet/, 'reply must state nothing is written yet');
@@ -3393,7 +3395,9 @@ test('screenshot: the dry-run + approval gate is unchanged', () => {
   // Preview still asserts no-write proof before allowing approval.
   assert.match(app, /hasCompleteWorkoutNoWriteProof\(result\)/, 'screenshot preview must still prove no-write');
   // The narrator is read-only — it must not call any write endpoint.
-  const fn = app.slice(app.indexOf('function addAtlasEffortReply('), app.indexOf('function addAtlasEffortReply(') + 1200);
+  const effortStart = app.indexOf('function addAtlasEffortReply(');
+  const effortEnd = app.indexOf('\nasync function handleUndoLastWrite', effortStart);
+  const fn = app.slice(effortStart, effortEnd > effortStart ? effortEnd : effortStart + 3500);
   assert.doesNotMatch(fn, /api\(|fetch\(|complete-workout|log-workout/, 'narrator must not write');
 });
 
