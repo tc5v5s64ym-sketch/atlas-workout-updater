@@ -123,6 +123,32 @@ require.cache[visionPath] = {
   exports: fakeVision
 };
 
+// Coach (Gemini) stub — no real network call ever fires in tests. Tests flip
+// `configured` / `message` / `throwError` to exercise each branch.
+const fakeCoachState = {
+  configured: false,
+  message: 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.',
+  throwError: null
+};
+const fakeCoach = {
+  isConfigured: () => fakeCoachState.configured,
+  coachModel: () => 'gemini-2.5-flash-lite',
+  generateCoachMessage: async () => {
+    if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
+    return fakeCoachState.message;
+  },
+  buildCoachSystemPrompt: () => 'stub-system',
+  buildCoachUserPrompt: () => 'stub-user',
+  sanitizeFacts: facts => facts
+};
+const coachPath = require.resolve('../services/coach');
+require.cache[coachPath] = {
+  id: coachPath,
+  filename: coachPath,
+  loaded: true,
+  exports: fakeCoach
+};
+
 const { app } = require('../index');
 
 let server;
@@ -213,6 +239,96 @@ test('api smoke: routes include key endpoints and write metadata', async () => {
   assert.equal(routeByPath.get('/api/log-workout').writeCapable, true);
   assert.equal(routeByPath.get('/api/complete-workout').readOnly, false);
   assert.equal(routeByPath.get('/api/complete-workout').writeCapable, true);
+});
+
+test('api smoke: coach/message + health/gemini are registered read-only', async () => {
+  const { body } = await requestJson('/routes');
+  const routeByPath = new Map(body.data.routes.map(route => [route.path, route]));
+  assert.ok(routeByPath.has('/api/coach/message'), 'coach route must be in the manifest');
+  assert.equal(routeByPath.get('/api/coach/message').writeCapable, false, 'coach endpoint must never be write-capable');
+  assert.equal(routeByPath.get('/api/coach/message').readOnly, true);
+  assert.ok(routeByPath.has('/api/health/gemini'));
+});
+
+test('api smoke: coach/message requires a facts object', async () => {
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({})
+  });
+  assert.equal(response.status, 400);
+  assert.equal(body.status, 'error');
+});
+
+test('api smoke: coach/message returns null message when Gemini is unconfigured (templated fallback)', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, false);
+  assert.equal(body.data.message, null, 'unconfigured must hand back null so the client uses its template');
+});
+
+test('api smoke: coach/message returns Gemini prose when configured', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.message = 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.';
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.configured, true);
+    assert.equal(body.data.source, 'gemini');
+    assert.equal(body.data.message, 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/message degrades to null when Gemini throws — never an error to the chat', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = 'Gemini request failed (503)';
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } })
+    });
+    assert.equal(response.status, 200, 'a model failure must not surface as an HTTP error');
+    assert.equal(body.data.message, null);
+    assert.match(body.data.error, /503/);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.throwError = null;
+  }
+});
+
+test('api smoke: coach/message never appends to a sheet', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  try {
+    await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } })
+    });
+  } finally {
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach endpoint must not write any rows');
+});
+
+test('api smoke: health/gemini reflects configured state', async () => {
+  fakeCoachState.configured = true;
+  try {
+    const { response, body } = await requestJson('/api/health/gemini');
+    assert.equal(response.status, 200);
+    assert.equal(body.data.configured, true);
+    assert.equal(body.data.model, 'gemini-2.5-flash-lite');
+  } finally {
+    fakeCoachState.configured = false;
+  }
 });
 
 test('api smoke: last-session reaches literal handler', async () => {
