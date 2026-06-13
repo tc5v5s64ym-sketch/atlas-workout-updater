@@ -507,25 +507,26 @@ async function loadCoachPlan() {
     ? (planResult.value.data?.recommendations || [])
     : [];
 
-  const focusLabel = todaysRead.recommended_label || '';
   const focusReason = todaysRead.recommended_reason || '';
   const topRec = recs[0] || null;
 
-  // Nothing useful to show — stay quiet rather than render an empty shell.
-  if (!focusLabel && !topRec) { card.hidden = true; return; }
+  // The focus headline already shows in the read-strip above, so this card adds
+  // only the supporting reason + the actionable next-lift detail. Nothing to
+  // add → stay quiet rather than render an empty shell.
+  if (!focusReason && !topRec) { card.hidden = true; return; }
 
-  renderCoachPlan(card, { focusLabel, focusReason, topRec });
+  renderCoachPlan(card, { focusReason, topRec });
   card.hidden = false;
 }
 
-function renderCoachPlan(card, { focusLabel, focusReason, topRec }) {
+function renderCoachPlan(card, { focusReason, topRec }) {
   card.innerHTML = '';
   card.appendChild(el('div', { class: 'coach-plan-kicker', text: 'Today’s plan' }));
 
-  // 1) Suggested focus for today.
-  if (focusLabel) {
-    card.appendChild(el('div', { class: 'coach-plan-focus', text: `Focus: ${focusLabel}` }));
-    if (focusReason) card.appendChild(el('div', { class: 'coach-plan-reason', text: focusReason }));
+  // 1) Supporting reason for today's focus (the label itself lives in the
+  //    read-strip above, so it isn't repeated here).
+  if (focusReason) {
+    card.appendChild(el('div', { class: 'coach-plan-reason', text: focusReason }));
   }
 
   if (topRec) {
@@ -2481,10 +2482,10 @@ function renderLogWorkoutPreview(result, effortRow) {
   const liftCodes = extractLiftCodes(data.log_rows_preview);
   if (pendingWrite) pendingWrite.liftCodes = liftCodes;
   if (liftCodes.length && getApiKey()) {
-    // Per-exercise in-preview coaching: last session vs the sets you're about to
-    // save, plus an on-track hint. Read-only and best-effort — a failed lookup
-    // for one lift just drops its card and never blocks the preview or the save.
-    const coachBox = el('div', {}, [el('div', { class: 'muted small', text: 'Last time vs today' })]);
+    // Per-exercise in-preview coaching: each lift's last set + a coaching hint.
+    // Read-only and best-effort — a failed lookup for one lift just drops its
+    // card and never blocks the preview or the save.
+    const coachBox = el('div', {}, [el('div', { class: 'muted small', text: 'Coaching' })]);
     previewContent.appendChild(coachBox);
     for (const code of liftCodes) {
       const slot = el('div', {});
