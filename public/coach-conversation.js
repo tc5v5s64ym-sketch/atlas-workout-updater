@@ -451,6 +451,55 @@
 
   document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
 
+  /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
+
+  // In-session conversation memory only — resets on reload (no persistence, per
+  // Atlas's no-database rule). We send the last few turns for context.
+  const chatTurns = []; // [{ role: 'user' | 'atlas', text }]
+
+  async function getChatReply(message, context) {
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
+    const request = api('/api/coach/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history: chatTurns.slice(-8), context: context || {} })
+    }).then(res => (res && res.data && res.data.message) || null);
+    return Promise.race([request, timeout]);
+  }
+
+  // Deterministic fallback when the coach voice is unconfigured, slow, or errors
+  // — the chat is never a dead end, and we never claim anything was saved.
+  function chatFallback(message) {
+    const t = String(message || '').toLowerCase();
+    if (/^\s*(hi|hey|hello|yo|sup|good (morning|evening))\b/.test(t)) {
+      return 'Hey — ready when you are. Log a set like "Bench 225 5/2 5/2", or ask me about your training.';
+    }
+    return "I can't reach my coaching voice right now. Log a set like \"Bench 225 5/2\" (225 lb × 5 reps @ 2 RIR), or ask me again in a moment.";
+  }
+
+  async function handleChatMessage(detail) {
+    const text = (detail && detail.text || '').trim();
+    if (!text) return;
+    // chat.js already painted the lifter's bubble on submit; we add Atlas's reply.
+    chatTurns.push({ role: 'user', text });
+
+    const handle = appendAtlasBubble();
+    if (!handle) return;
+    const { body } = handle;
+    body.textContent = 'Thinking…';
+
+    let reply = null;
+    try { reply = await getChatReply(text, detail && detail.context); } catch { reply = null; }
+    if (!reply || !reply.trim()) reply = chatFallback(text);
+
+    body.textContent = '';
+    await typeOut(body, reply);
+    chatTurns.push({ role: 'atlas', text: reply });
+  }
+
+  document.addEventListener('atlas:chat-message', e => { handleChatMessage(e.detail).catch(() => {}); });
+
   // Logging directly (without tapping a tile) also leaves the empty home: the
   // first message of any kind collapses the hero + tiles.
   const thread = document.getElementById('thread-messages');

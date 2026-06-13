@@ -82,6 +82,15 @@ function strOrNull(v) {
   return t ? t.slice(0, 80) : null;
 }
 
+// Like strOrNull but with a caller-chosen length cap — for chat turns and the
+// lifter's free-form message, which are longer than the short labels strOrNull
+// guards.
+function clampText(v, max) {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t ? t.slice(0, max) : null;
+}
+
 function buildCoachUserPrompt(facts) {
   return `STRUCTURED FACTS:\n${JSON.stringify(sanitizeFacts(facts), null, 2)}`;
 }
@@ -128,19 +137,20 @@ function buildPlanUserPrompt(facts) {
   return `STRUCTURED FACTS:\n${JSON.stringify(sanitizePlanFacts(facts), null, 2)}`;
 }
 
-// Single Gemini call shared by the set-coaching and plan voices. Throws when
-// unconfigured, on a non-OK response, on timeout, or on empty output — the route
-// turns any throw into a graceful "fall back to templated" response so the UI is
-// never blocked.
-async function callGemini(systemText, userText, timeoutMs) {
+// Single Gemini call shared by every voice (set-coaching, plan, chat). Accepts a
+// ready-made `contents` array so the chat voice can pass multi-turn history while
+// the one-shot voices pass a single user turn. Throws when unconfigured, on a
+// non-OK response, on timeout, or on empty output — the route turns any throw
+// into a graceful "fall back to templated" response so the UI is never blocked.
+async function callGeminiContents(systemText, contents, { timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputTokens = 320 } = {}) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
 
   const url = `${GEMINI_ENDPOINT}/${encodeURIComponent(coachModel())}:generateContent`;
   const body = {
     systemInstruction: { parts: [{ text: systemText }] },
-    contents: [{ role: 'user', parts: [{ text: userText }] }],
-    generationConfig: { temperature: 0.7, maxOutputTokens: 320, topP: 0.95 }
+    contents,
+    generationConfig: { temperature: 0.7, maxOutputTokens, topP: 0.95 }
   };
 
   const controller = new AbortController();
@@ -168,12 +178,104 @@ async function callGemini(systemText, userText, timeoutMs) {
   return text;
 }
 
+// Single-turn convenience wrapper — preserves the original set/plan call shape.
+async function callGemini(systemText, userText, timeoutMs) {
+  return callGeminiContents(systemText, [{ role: 'user', parts: [{ text: userText }] }], { timeoutMs });
+}
+
 async function generateCoachMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return callGemini(buildCoachSystemPrompt(), buildCoachUserPrompt(facts), timeoutMs);
 }
 
 async function generatePlanMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return callGemini(buildPlanSystemPrompt(), buildPlanUserPrompt(facts), timeoutMs);
+}
+
+// ── Conversational chat voice ────────────────────────────────────────────────
+// Free-form, two-way coaching chat. Unlike the set/plan voices, this forwards
+// the lifter's OWN message to the model — so the system prompt is the guardrail:
+// answer only from the read-only training snapshot, never invent numbers, and
+// NEVER claim to have written, logged, changed, or deleted anything. This module
+// performs no Google Sheets access; the route assembles the read-only snapshot.
+function buildChatSystemPrompt() {
+  return [
+    'You are Atlas, a sharp, encouraging strength coach having a conversation with the lifter.',
+    "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, and stalled lifts) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
+    '',
+    'Hard rules:',
+    '- Ground every specific in the SNAPSHOT. Never invent or change weights, reps, RIR, dates, PRs, trends, or session counts that are not in the snapshot.',
+    "- If the snapshot does not contain what you need, say you don't have that data yet — never guess a number.",
+    '- General training, form, and programming advice is fine, but tie any specifics back to the snapshot.',
+    '- You can only TALK and SUGGEST. You never write, save, log, edit, undo, or delete anything — that is impossible for you. Never say or imply that you saved, logged, changed, or removed something.',
+    '- To log a workout, the lifter types it into the composer and approves the preview. Atlas slash notation: "Bench 225 5/2 5/2" means Bench Press, 225 lb × 5 reps at 2 RIR, twice.',
+    '- If they name a lift with no sets (e.g. "Bench"), ask for the sets in that format rather than guessing.',
+    '- Keep it tight — usually 1–4 sentences. Plain text only: no markdown headings, no bold, no code fences.'
+  ].join('\n');
+}
+
+// Forward ONLY a known, bounded snapshot — never arbitrary client object keys.
+function sanitizeChatContext(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const recent_sessions = Array.isArray(c.recent_sessions) ? c.recent_sessions.slice(0, 6).map(s => ({
+    date: strOrNull(s && s.date),
+    exercises: Array.isArray(s && s.exercises) ? s.exercises.slice(0, 12).map(strOrNull).filter(Boolean) : [],
+    sets: numOrNull(s && s.sets),
+    volume: numOrNull(s && s.volume)
+  })) : [];
+  const readiness = Array.isArray(c.readiness) ? c.readiness.slice(0, 8).map(r => ({
+    pattern: strOrNull(r && r.pattern),
+    status: strOrNull(r && r.status),
+    detail: strOrNull(r && r.detail)
+  })).filter(r => r.pattern) : [];
+  const stalls = Array.isArray(c.stalls) ? c.stalls.slice(0, 8).map(s => ({
+    exercise: strOrNull(s && s.exercise),
+    weight: numOrNull(s && s.weight),
+    sessions_stalled: numOrNull(s && s.sessions_stalled)
+  })).filter(s => s.exercise) : [];
+  const current_preview = Array.isArray(c.current_preview) ? c.current_preview.slice(0, 16).map(s => ({
+    exercise: strOrNull(s && s.exercise),
+    weight: numOrNull(s && s.weight),
+    reps: numOrNull(s && s.reps),
+    rir: s && s.rir == null ? null : numOrNull(s.rir)
+  })).filter(s => s.exercise) : [];
+  return {
+    recommended_label: strOrNull(c.recommended_label),
+    recommended_focus: strOrNull(c.recommended_focus),
+    readiness,
+    recent_sessions,
+    stalls,
+    current_preview
+  };
+}
+
+// Bound the conversation to the last few turns; only role + text survive. The
+// caller passes PRIOR turns here and the current message separately.
+function sanitizeChatHistory(history) {
+  if (!Array.isArray(history)) return [];
+  return history.slice(-8).map(turn => {
+    const role = (turn && turn.role === 'atlas') ? 'model' : 'user';
+    const text = clampText(turn && turn.text, 2000);
+    return text ? { role, text } : null;
+  }).filter(Boolean);
+}
+
+async function generateChatReply({ message, context, history } = {}, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  const userMessage = clampText(message, 2000);
+  if (!userMessage) throw new Error('chat message is required');
+
+  const snapshot = sanitizeChatContext(context);
+  const turns = sanitizeChatHistory(history);
+
+  // Prime with the snapshot as the first exchange so the model treats it as
+  // grounding, then replay prior turns, then the lifter's current message.
+  const contents = [
+    { role: 'user', parts: [{ text: `TRAINING SNAPSHOT (read-only facts):\n${JSON.stringify(snapshot, null, 2)}` }] },
+    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts and never claim to save anything." }] }
+  ];
+  for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
+  contents.push({ role: 'user', parts: [{ text: userMessage }] });
+
+  return callGeminiContents(buildChatSystemPrompt(), contents, { timeoutMs, maxOutputTokens: 400 });
 }
 
 function extractText(data) {
@@ -192,5 +294,9 @@ module.exports = {
   buildPlanUserPrompt,
   sanitizePlanFacts,
   generateCoachMessage,
-  generatePlanMessage
+  generatePlanMessage,
+  buildChatSystemPrompt,
+  sanitizeChatContext,
+  sanitizeChatHistory,
+  generateChatReply
 };

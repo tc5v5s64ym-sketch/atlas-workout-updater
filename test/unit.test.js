@@ -454,6 +454,41 @@ test('conversational logger keeps preview no-write proof required before enablin
   assert.match(appSource, /document\.getElementById\('approve-btn'\)\.disabled = !pendingWrite/);
 });
 
+test('two-way chat: non-loggable text routes to the coach instead of erroring', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // The helper exists and dispatches the read-only chat event (never a write).
+  assert.match(appSource, /function routeMessageToCoach/);
+  assert.match(appSource, /new CustomEvent\('atlas:chat-message'/);
+  // It is reached from the parse-failure path and the empty-rows path.
+  const submitBlock = appSource.slice(
+    appSource.indexOf("getElementById('logger-form').addEventListener('submit'"),
+    appSource.indexOf("getElementById('cancel-preview-btn')")
+  );
+  assert.match(submitBlock, /routeMessageToCoach\(chatText\)/);
+  assert.match(submitBlock, /hasAnyEffortInput\(\)/, 'must not hijack a real effort/screenshot attempt');
+  // Routing must not write — it only dispatches and clears the box.
+  const routeBlock = appSource.slice(
+    appSource.indexOf('function routeMessageToCoach'),
+    appSource.indexOf('function routeMessageToCoach') + 600
+  );
+  assert.doesNotMatch(routeBlock, /\/api\/log-workout|\/api\/complete-workout|approve/);
+});
+
+test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
+  const convSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+
+  assert.match(convSource, /addEventListener\('atlas:chat-message'/);
+  assert.match(convSource, /'\/api\/coach\/chat'/);
+  assert.match(convSource, /method: 'POST'/);
+  // In-session history, bounded; falls back when the voice is unavailable.
+  assert.match(convSource, /chatTurns/);
+  assert.match(convSource, /function chatFallback/);
+  // The chat path must never touch the write/approve machinery.
+  const chatBlock = convSource.slice(convSource.indexOf('Free-form chat'));
+  assert.doesNotMatch(chatBlock, /approveBtn\.click|\/api\/log-workout|\/api\/complete-workout/);
+});
+
 test('conversational logger form edits invalidate stale previews before save', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 

@@ -129,6 +129,7 @@ const fakeCoachState = {
   configured: false,
   message: 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.',
   planMessage: "You're carrying a lot of fatigue, so today is about blood flow, not load.",
+  chatMessage: 'Your bench has been flat for a few sessions — try 5×5 at 225 this week.',
   throwError: null
 };
 const fakeCoach = {
@@ -141,6 +142,10 @@ const fakeCoach = {
   generatePlanMessage: async () => {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return fakeCoachState.planMessage;
+  },
+  generateChatReply: async () => {
+    if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
+    return fakeCoachState.chatMessage;
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -362,6 +367,80 @@ test('api smoke: coach/message kind=plan falls back to null when unconfigured', 
   assert.equal(response.status, 200);
   assert.equal(body.data.configured, false);
   assert.equal(body.data.message, null);
+});
+
+test('api smoke: coach/chat is registered read-only and never write-capable', async () => {
+  const { body } = await requestJson('/routes');
+  const routeByPath = new Map(body.data.routes.map(route => [route.path, route]));
+  assert.ok(routeByPath.has('/api/coach/chat'), 'coach chat route must be in the manifest');
+  assert.equal(routeByPath.get('/api/coach/chat').writeCapable, false, 'chat endpoint must never be write-capable');
+  assert.equal(routeByPath.get('/api/coach/chat').readOnly, true);
+});
+
+test('api smoke: coach/chat requires a non-empty message', async () => {
+  const blank = await requestJson('/api/coach/chat', { method: 'POST', body: JSON.stringify({ message: '   ' }) });
+  assert.equal(blank.response.status, 400);
+  assert.equal(blank.body.status, 'error');
+  const missing = await requestJson('/api/coach/chat', { method: 'POST', body: JSON.stringify({}) });
+  assert.equal(missing.response.status, 400);
+});
+
+test('api smoke: coach/chat returns null when Gemini is unconfigured (client falls back)', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'how is my bench trending?' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, false);
+  assert.equal(body.data.message, null, 'unconfigured hands back null so the client uses its fallback');
+});
+
+test('api smoke: coach/chat returns Gemini prose when configured', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my bench trending?', history: [{ role: 'user', text: 'hi' }] })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.configured, true);
+    assert.equal(body.data.source, 'gemini');
+    assert.equal(body.data.message, fakeCoachState.chatMessage);
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/chat degrades to null when the coach throws — never an error bubble', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = 'gemini exploded';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'what should I do today?' })
+    });
+    assert.equal(response.status, 200, 'a coach failure must not surface as an HTTP error');
+    assert.equal(body.data.message, null);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.throwError = null;
+  }
+});
+
+test('api smoke: coach/chat never appends to a sheet', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  try {
+    await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'should I deload?' })
+    });
+  } finally {
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'chat endpoint must not write any rows');
 });
 
 test('api smoke: last-session reaches literal handler', async () => {

@@ -970,6 +970,63 @@ app.post('/api/coach/message', async (req, res) => {
   }
 });
 
+// Assemble a compact, read-only training snapshot for the chat coach from the
+// deterministic engine — recent sessions, movement-pattern readiness, today's
+// recommended focus, and stalled lifts. Bounded here and bounded again in
+// coach.sanitizeChatContext. The lifter's current preview rows (if any) ride
+// along from the client so "is this set good?" can be answered in context.
+function buildChatContext(logRows, effortRows, clientContext) {
+  const intents = scoreIntents(logRows, effortRows);
+  const recent = buildRecentSessions(logRows, effortRows, { limit: 5 });
+  const stalls = detectStalls(logRows);
+  const read = intents.todays_read || {};
+  const cc = clientContext && typeof clientContext === 'object' ? clientContext : {};
+  return {
+    recommended_label: read.recommended_label || null,
+    recommended_focus: read.recommended_reason || null,
+    readiness: (read.patterns || []).map(p => ({ pattern: p.label || p.pattern, status: p.status, detail: p.detail })),
+    recent_sessions: (recent.sessions || []).map(s => ({
+      date: s.date, exercises: s.exercises, sets: s.sets_count, volume: s.total_volume
+    })),
+    stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
+    current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : []
+  };
+}
+
+// POST /api/coach/chat — free-form, two-way coaching chat. READ-ONLY: it reads
+// recent training to ground the reply and never writes to Google Sheets. Body:
+// { message: string, history?: [{role,text}], context?: { current_preview } }.
+// When Gemini is unconfigured or fails, returns message:null so the client shows
+// a deterministic fallback — the chat is never blocked by an LLM outage.
+app.post('/api/coach/chat', async (req, res) => {
+  const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
+  if (!message) {
+    return standardError(req, res, 'message string is required', null, 400);
+  }
+  if (!coach.isConfigured()) {
+    return standardSuccess(req, res, 'Coach chat unavailable — Gemini not configured', {
+      message: null, configured: false, model: coach.coachModel()
+    });
+  }
+  try {
+    const [allLog, allEffort] = await Promise.all([
+      getSheetRows(logSheetName),
+      getSheetRows(effortSheetName)
+    ]);
+    const context = buildChatContext(allLog, allEffort, req.body && req.body.context);
+    const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
+    const reply = await coach.generateChatReply({ message, context, history });
+    return standardSuccess(req, res, 'Coach chat reply', {
+      message: reply, configured: true, model: coach.coachModel(), source: 'gemini'
+    });
+  } catch (error) {
+    // Degrade gracefully — the client shows a templated fallback, never an error bubble.
+    return standardSuccess(req, res, 'Coach chat failed — use fallback', {
+      message: null, configured: true, model: coach.coachModel(), error: error.message
+    });
+  }
+});
+
 // GET /api/debug/config
 app.get('/api/debug/config', (req, res) => {
   return standardSuccess(req, res, 'Safe debug configuration', {
