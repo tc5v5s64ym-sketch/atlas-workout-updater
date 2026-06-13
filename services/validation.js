@@ -119,31 +119,45 @@ function getSimpleTrend(values) {
   return 'flat';
 }
 
-function calculateQualityScore({ totalSets, effortDuration, averageHR, uniqueExercisesCount, validationWarnings }) {
-  let score = 0;
-  if (Number.isFinite(totalSets) && totalSets >= 10) {
-    score += 1;
+// Single source of truth for the five quality criteria. Each label is the
+// human-readable line the "how we scored this" popover shows; each test maps
+// the same metric inputs calculateQualityScore has always used to a boolean.
+const QUALITY_CRITERIA = [
+  {
+    label: '10 or more sets',
+    test: ({ totalSets }) => Number.isFinite(totalSets) && totalSets >= 10
+  },
+  {
+    label: '30 or more minutes',
+    test: ({ effortDuration }) => parseDurationMinutes(effortDuration) >= 30
+  },
+  {
+    label: 'Average heart rate 100+',
+    test: ({ averageHR }) => {
+      const avgHR = parseNumber(averageHR);
+      return avgHR !== null && avgHR >= 100;
+    }
+  },
+  {
+    label: '3 or more exercises',
+    test: ({ uniqueExercisesCount }) =>
+      Number.isFinite(uniqueExercisesCount) && uniqueExercisesCount >= 3
+  },
+  {
+    label: 'No data warnings',
+    test: ({ validationWarnings }) =>
+      !Array.isArray(validationWarnings) || validationWarnings.length === 0
   }
+];
 
-  const durationMinutes = parseDurationMinutes(effortDuration);
-  if (durationMinutes >= 30) {
-    score += 1;
-  }
+// Per-criterion verdicts for the same inputs calculateQualityScore receives.
+// The frontend renders this as the tappable "how we arrived at the score" card.
+function qualityScoreBreakdown(metrics = {}) {
+  return QUALITY_CRITERIA.map(({ label, test }) => ({ label, met: test(metrics) }));
+}
 
-  const avgHR = parseNumber(averageHR);
-  if (avgHR !== null && avgHR >= 100) {
-    score += 1;
-  }
-
-  if (Number.isFinite(uniqueExercisesCount) && uniqueExercisesCount >= 3) {
-    score += 1;
-  }
-
-  if (!Array.isArray(validationWarnings) || validationWarnings.length === 0) {
-    score += 1;
-  }
-
-  return score;
+function calculateQualityScore(metrics) {
+  return qualityScoreBreakdown(metrics).reduce((score, { met }) => score + (met ? 1 : 0), 0);
 }
 
 module.exports = {
@@ -151,5 +165,6 @@ module.exports = {
   normalizeDate,
   parseDurationMinutes,
   getSimpleTrend,
-  calculateQualityScore
+  calculateQualityScore,
+  qualityScoreBreakdown
 };

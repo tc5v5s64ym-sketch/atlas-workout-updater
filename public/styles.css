@@ -1112,9 +1112,105 @@ a.lift-link:hover { text-decoration: underline; }
   font-size: 0.82rem;
   color: var(--muted);
 }
-.session-quality { font-size: 0.82rem; color: var(--muted); margin-top: var(--s1); }
 .session-detail-heading { margin: var(--s2) 0 var(--s1); font-size: 0.88rem; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.session-quality { font-size: 0.88rem; color: var(--muted); margin-bottom: var(--s2); }
+.session-quality {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin-top: var(--s1);
+  margin-bottom: var(--s2);
+}
+
+/* Tappable circled-i that reveals the score breakdown — iOS info.circle feel. */
+.quality-info-anchor { position: relative; display: inline-flex; }
+.quality-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, 'Times New Roman', serif;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.quality-info-btn:active { transform: scale(0.9); }
+.quality-info-anchor.open .quality-info-btn {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.quality-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  padding: var(--s3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.96) translateY(4px);
+  transform-origin: bottom right;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+}
+.quality-info-anchor.open .quality-popover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+}
+/* Caret pointing down to the info button. */
+.quality-popover::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 6px;
+  border: 6px solid transparent;
+  border-top-color: var(--card);
+  filter: drop-shadow(0 1px 0 var(--border));
+}
+.quality-popover-title {
+  font-size: 0.74rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: var(--s2);
+}
+.quality-criterion {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 0.84rem;
+  padding: 2px 0;
+  color: var(--ink);
+}
+.quality-criterion-mark {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+.quality-criterion.met .quality-criterion-mark { color: var(--ok); }
+.quality-criterion.unmet .quality-criterion-mark { color: var(--danger); }
+.quality-criterion.unmet .quality-criterion-label { color: var(--muted); }
 .session-start-btn {
   background: var(--card);
   border: 1px solid var(--border);

@@ -12,7 +12,7 @@ const {
   buildWeeklyReport, buildProgressSummary, buildExerciseDetail, buildRecentSessions,
   classifyMuscleGroup, buildMuscleGroupReadiness, scoreIntents
 } = require('../services/analytics');
-const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('../services/validation');
+const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
 const {
   requiredSheetTabs,
@@ -1408,6 +1408,32 @@ test('calculateQualityScore returns 5 for perfect session and 0 for minimal sess
     uniqueExercisesCount: 1,
     validationWarnings: ['some warning']
   }), 0);
+});
+
+test('qualityScoreBreakdown returns five labelled criteria whose met-count equals the score', () => {
+  const metrics = {
+    totalSets: 12,
+    effortDuration: '00:20:00',  // under 30 min → unmet
+    averageHR: 130,
+    uniqueExercisesCount: 5,
+    validationWarnings: []
+  };
+  const breakdown = qualityScoreBreakdown(metrics);
+  assert.equal(breakdown.length, 5);
+  // Every entry is a { label, met } pair.
+  for (const c of breakdown) {
+    assert.equal(typeof c.label, 'string');
+    assert.ok(c.label.length > 0);
+    assert.equal(typeof c.met, 'boolean');
+  }
+  // The duration criterion is the only failing one here.
+  const unmet = breakdown.filter(c => !c.met);
+  assert.equal(unmet.length, 1);
+  assert.match(unmet[0].label, /minute/i);
+  // Met-count is the single source of truth for the headline score.
+  const metCount = breakdown.filter(c => c.met).length;
+  assert.equal(metCount, calculateQualityScore(metrics));
+  assert.equal(metCount, 4);
 });
 
 // ── Analytics functions ───────────────────────────────────────────────────────

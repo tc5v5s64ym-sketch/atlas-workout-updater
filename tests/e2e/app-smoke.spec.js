@@ -542,3 +542,52 @@ test('Tapping a session expands to exactly what was logged, grouped by exercise'
   await expect(page.locator('.session-detail-slot table')).toHaveCount(0);
   await expect(page.locator('.session-effort-detail')).toContainText('avg HR 142');
 });
+
+test('Session quality info button reveals the score breakdown popover', async ({ page }) => {
+  await openApp(page);
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const sid = today.replace(/-/g, '') + '-AM-01';
+  await page.route('**/api/sessions/recent', route => route.fulfill(json({
+    status: 'success',
+    data: { sessions: [{ date: today, session_id: sid, exercises: ['Bench Press'], sets_count: 1, total_volume: 1350 }] }
+  })));
+  await page.route('**/api/session/**/summary', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      quality_score: 4,
+      quality_breakdown: [
+        { label: '10 or more sets', met: true },
+        { label: '30 or more minutes', met: false },
+        { label: 'Average heart rate 100+', met: true },
+        { label: '3 or more exercises', met: true },
+        { label: 'No data warnings', met: true }
+      ],
+      sets: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 4, notes: '' }],
+      effort: { duration: '20:00', average_hr: 142 }
+    }
+  })));
+
+  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('[data-tab="history"]').click();
+  await page.locator('.session-item').first().locator('.session-summary').click();
+
+  await expect(page.locator('.session-quality')).toContainText('Session quality: 4 / 5');
+  const info = page.locator('.quality-info-btn');
+  await expect(info).toBeVisible();
+
+  // Popover is hidden until tapped.
+  const popover = page.locator('.quality-popover');
+  await expect(popover).not.toBeVisible();
+
+  await info.click();
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText('How we scored this');
+  // The one unmet criterion is rendered with the unmet modifier.
+  await expect(page.locator('.quality-criterion.unmet')).toHaveText(/30 or more minutes/);
+  await expect(page.locator('.quality-criterion.met')).toHaveCount(4);
+
+  // Tapping outside closes it.
+  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await expect(popover).not.toBeVisible();
+});

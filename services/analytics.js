@@ -1,4 +1,4 @@
-const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore } = require('./validation');
+const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
 
 function normalizeLogRow(row) {
   if (Array.isArray(row)) {
@@ -107,13 +107,15 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
     ? `Session ${sessionId} on ${sessionLogRows[0].date_clean || effortRow?.date || 'unknown date'} includes ${totalSets} sets, ${uniqueExercises.length} exercises, and ${Math.round(totalVolume)} total volume.`
     : `No log rows found for session ${sessionId}.`;
 
-  const quality_score = calculateQualityScore({
+  const qualityMetrics = {
     totalSets,
     effortDuration: effortRow?.duration,
     averageHR: effortRow?.average_hr,
     uniqueExercisesCount: uniqueExercises.length,
     validationWarnings
-  });
+  };
+  const quality_score = calculateQualityScore(qualityMetrics);
+  const quality_breakdown = qualityScoreBreakdown(qualityMetrics);
 
   return {
     session_id: sessionId,
@@ -127,7 +129,8 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
     sets: sessionLogRows.map(formatSet),
     effort: effortRow,
     quick_summary: quickSummary,
-    quality_score
+    quality_score,
+    quality_breakdown
   };
 }
 
