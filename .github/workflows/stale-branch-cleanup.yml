@@ -1,0 +1,54 @@
+name: Stale Branch Cleanup
+
+# One-shot secret-hygiene cleanup: deletes stale AI branches (claude/*, codex/*)
+# listed in .github/stale-branches.txt. Their work is merged, abandoned, or
+# already in main, so old commits are no longer casually reachable via
+# abandoned refs. Secrets were already rotated by the owner.
+#
+# Triggered by push to the cleanup branch (the dev sandbox cannot push ref
+# deletions directly). Safe to re-run: missing branches are skipped.
+# Never touches main. Never force-pushes. Never prints secret values.
+
+on:
+  push:
+    branches:
+      - claude/what-now-vzu11h
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  delete-stale-branches:
+    name: Delete stale claude/* and codex/* branches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Delete stale remote branches
+        env:
+          RUNNING_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -u
+          deleted=0
+          skipped=0
+          guarded=0
+          while IFS= read -r b; do
+            [ -z "$b" ] && continue
+            case "$b" in \#*) continue ;; esac
+            if [ "$b" = "main" ] || [ "$b" = "$RUNNING_BRANCH" ]; then
+              echo "GUARD: refusing to delete protected branch '$b'"
+              guarded=$((guarded+1))
+              continue
+            fi
+            if git push origin --delete "$b"; then
+              echo "deleted: $b"
+              deleted=$((deleted+1))
+            else
+              echo "skipped (already gone or error): $b"
+              skipped=$((skipped+1))
+            fi
+          done < .github/stale-branches.txt
+          echo "----------------------------------------"
+          echo "Cleanup complete. Deleted=$deleted Skipped=$skipped Guarded=$guarded"
