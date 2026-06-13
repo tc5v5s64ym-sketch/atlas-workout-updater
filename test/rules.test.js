@@ -332,13 +332,20 @@ test('isLowerBodyGroup classifies muscle groups', () => {
 
  test('holdUntilClean clean-count state progression (builds to load) + safe degrade', () => {
   const clean = [[205, 6, 2], [205, 6, 2], [205, 6, 2]];
+  // S1 establishes the 205 load but is not clean (5 reps @ RIR 1).
   let h = bpSession('S1', '2026-06-01', [[205, 5, 1]]);
   let d = holdUntilClean(h, 'BP01');
   assert.equal(d.decision, 'hold');
+  // required_sessions is 3 -> need three clean sessions at the load before loading.
   h = h.concat(bpSession('S2', '2026-06-04', clean));
   d = holdUntilClean(h, 'BP01');
+  assert.equal(d.decision, 'hold');
   assert.match(d.criterion_progress, /1 of 3/);
   h = h.concat(bpSession('S3', '2026-06-08', clean));
+  d = holdUntilClean(h, 'BP01');
+  assert.equal(d.decision, 'hold');
+  assert.match(d.criterion_progress, /2 of 3/);
+  h = h.concat(bpSession('S4', '2026-06-11', clean));
   d = holdUntilClean(h, 'BP01');
   assert.equal(d.decision, 'load');
   // degrade
@@ -349,7 +356,7 @@ test('isLowerBodyGroup classifies muscle groups', () => {
  test('evaluateSessionSafety end-to-end representative (Log-style bench + notes)', () => {
   const rep = [
     { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 8, rir: 2, notes: '' },
-    { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 8, rir: 1, notes: 'shoulder tight' },
+    { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 8, rir: 1, notes: 'shoulder pain' },
     { session_id: 'S-2025-10-04', lift_code: 'BEN01', canonical_exercise: 'Bench Press', weight: 165, reps: 6, rir: 0, notes: '' },
   ];
   const flags = evaluateSessionSafety(rep, 'shoulder note');
