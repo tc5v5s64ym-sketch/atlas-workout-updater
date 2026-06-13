@@ -2035,7 +2035,10 @@ test('weekly report: buildWeeklyReport surfaces stalls from history for this wee
   ];
   const report = buildWeeklyReport(rows, { today });
   assert.equal(report.sessions_count, 1, 'only this week counted');
-  assert.ok(report.stalls_or_watchouts.some(s => s.liftCode === 'SQ'), 'SQ must be flagged as stalled');
+  const stall = report.stalls_or_watchouts.find(s => s.liftCode === 'SQ');
+  assert.ok(stall, 'SQ must be flagged as stalled');
+  assert.equal(stall.exercise, 'Back Squat', 'stall must carry the exercise name for display');
+  assert.match(report.summary_markdown, /Watchouts: Back Squat stalled/, 'markdown shows the name, not the code');
 });
 
 test('weekly report: endpoint registered as GET and read-only', () => {
@@ -2404,12 +2407,18 @@ test('session history: /api/sessions/recent registered BEFORE /:sessionId in ind
   assert.ok(recentIdx < paramIdx, '/api/sessions/recent must be registered before /:sessionId');
 });
 
-test('session history: load-sessions-btn wired in app.js and calls correct endpoint', () => {
+test('session history: auto-load wired in app.js and calls correct endpoint', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /load-sessions-btn/, 'load-sessions-btn must be referenced');
   assert.match(appSource, /\/api\/sessions\/recent/, 'must call /api/sessions/recent');
   assert.match(appSource, /loadHistory/, 'loadHistory function must exist');
   assert.match(appSource, /sessions-result/, 'sessions-result container must be used');
+  assert.match(appSource, /atlasRefreshSessions/, 'refresh bridge for nav.js must exist');
+  const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.doesNotMatch(htmlSource, /load-sessions-btn/, 'manual load button must stay removed — list auto-loads');
+  // With no manual refresh button, writes and undos must invalidate the cache
+  // (declaration + write success + undo success = at least 3 assignments).
+  const invalidations = (appSource.match(/historyLoaded = false/g) || []).length;
+  assert.ok(invalidations >= 3, 'successful write and undo must reset historyLoaded so History re-fetches');
 });
 
 // ── Session Queue UX ──────────────────────────────────────────────────────────

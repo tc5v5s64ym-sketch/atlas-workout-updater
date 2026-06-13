@@ -175,9 +175,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 async function loadSessions() {
   const result = document.getElementById('sessions-result');
-  const btn = document.getElementById('load-sessions-btn');
   result.textContent = 'Loading…';
-  if (btn) btn.disabled = true;
   try {
     const res = await api('/api/sessions/recent');
     const sessions = res?.data?.sessions || [];
@@ -224,8 +222,6 @@ async function loadSessions() {
     result.appendChild(frag);
   } catch (err) {
     result.textContent = err.message || 'Failed to load sessions.';
-  } finally {
-    if (btn) btn.disabled = false;
   }
 }
 
@@ -269,10 +265,12 @@ function loadHistory() {
   loadSessions();
 }
 
-document.getElementById('load-sessions-btn')?.addEventListener('click', () => {
-  historyLoaded = false;
+// The list auto-loads on first History visit (loadHistory above). nav.js calls
+// this to force a fresh fetch when jumping here from a chat reply.
+window.atlasRefreshSessions = () => {
+  historyLoaded = true;
   loadSessions();
-});
+};
 
 /* ===== Connection check ===== */
 
@@ -929,7 +927,7 @@ async function loadStalls() {
     const table = el('table', {});
     const thead = el('thead', {}, el('tr', {}, ['Lift', 'Sessions stalled', 'Last best weight', 'Since'].map(h => el('th', { text: h }))));
     const tbody = el('tbody', {}, stalls.map(s => el('tr', {}, [
-      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.liftCode })),
+      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.exercise || s.liftCode })),
       el('td', { text: String(s.sessions_stalled) }),
       el('td', { text: String(s.last_best_weight) }),
       el('td', { text: String(s.first_session_date) })
@@ -1014,8 +1012,8 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
     }
 
     const rd = data.rule_decision;
-    if (rd && rd.decision !== 'no_data') {
-      recBox.appendChild(el('p', { class: 'small muted', text: `Rule ${rd.rule_id}: ${rd.reasoning}` }));
+    if (rd && rd.decision !== 'no_data' && rd.reasoning) {
+      recBox.appendChild(el('p', { class: 'small muted', text: rd.reasoning }));
     }
   } catch (err) {
     recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
@@ -1115,8 +1113,8 @@ async function openLiftDrillDown(exerciseName, liftCode) {
       contentEl.appendChild(el('p', { text: rec.recommendation || '' }));
       contentEl.appendChild(el('p', { class: 'muted', text: rec.reasoning || '' }));
       const rd = rec.rule_decision;
-      if (rd && rd.decision !== 'no_data') {
-        contentEl.appendChild(el('p', { class: 'small muted', text: `Rule ${rd.rule_id}: ${rd.reasoning}` }));
+      if (rd && rd.decision !== 'no_data' && rd.reasoning) {
+        contentEl.appendChild(el('p', { class: 'small muted', text: rd.reasoning }));
       }
     } else if (rec.recommendation) {
       contentEl.appendChild(el('p', { text: rec.recommendation }));
@@ -1204,7 +1202,7 @@ document.getElementById('weekly-report-btn').addEventListener('click', async () 
       box.appendChild(el('h3', { text: 'Watchouts' }));
       box.appendChild(renderTable(
         ['Lift', 'Sessions stalled', 'Last best'],
-        data.stalls_or_watchouts.map(s => [s.liftCode, s.sessions_stalled, `${s.last_best_weight} lb`])
+        data.stalls_or_watchouts.map(s => [s.exercise || s.liftCode, s.sessions_stalled, `${s.last_best_weight} lb`])
       ));
     }
     if (!data.sessions_count) {
@@ -2295,6 +2293,7 @@ async function handleUndoLastWrite() {
       })
     });
     lastWrite = null;
+    historyLoaded = false; // sheet changed — History re-fetches on next visit
     setStatus(loggerStatus, 'Last write undone.', 'ok');
   } catch (err) {
     setStatus(loggerStatus, `Undo failed: ${err.message}`, 'error');
@@ -2388,6 +2387,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
     }
     invalidatePreview();
+    historyLoaded = false; // sheet changed — History re-fetches on next visit
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;
@@ -2637,8 +2637,9 @@ async function loadBwHistory() {
       box.appendChild(el('span', { class: 'muted', text: 'No bodyweight entries in the last 90 days.' }));
       return;
     }
-    const trendClass = data.trend === 'up' ? 'up' : data.trend === 'down' ? 'down' : '';
-    const trendPill = el('span', { class: `pill ${trendClass}`, text: `trend: ${data.trend}` });
+    // Bodyweight direction isn't inherently good or bad (down is the goal on a
+    // cut), so the pill stays neutral — no green/red judgment colors.
+    const trendPill = el('span', { class: 'pill', text: `trend: ${data.trend}` });
     const latest = data.latest;
     const summary = el('p', {}, [
       document.createTextNode(`Latest: ${latest?.weight ?? '—'}  ·  90-day avg: ${data.average ?? '—'}  `),

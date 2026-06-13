@@ -191,7 +191,7 @@
     const wrap = document.createElement('div');
     wrap.innerHTML = '<span class="chip-loading">Loading last session…</span>';
     const bubble = atlasReply(wrap);
-    if (!bubble) { go('history', () => document.getElementById('load-sessions-btn')?.click()); return; }
+    if (!bubble) { go('history', () => window.atlasRefreshSessions?.()); return; }
 
     api('/api/history/recent?limit=5&exclude_test=true').then(res => {
       const sets = res.data?.recent_sets || [];
@@ -235,7 +235,7 @@
       more.textContent = 'Full history →';
       more.addEventListener('click', ev => {
         ev.preventDefault();
-        go('history', () => document.getElementById('load-sessions-btn')?.click());
+        go('history', () => window.atlasRefreshSessions?.());
       });
       wrap.appendChild(more);
     }).catch(err => {
