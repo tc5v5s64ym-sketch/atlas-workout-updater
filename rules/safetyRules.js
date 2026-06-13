@@ -24,9 +24,12 @@ function e1rm(weight, reps) {
 }
 
 // Group flat rows into sessions ordered oldest → newest.
+// Safe on non-array / empty.
 function groupBySession(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return [];
   const map = new Map();
   for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
     const key = row.session_id || 'unknown';
     if (!map.has(key)) map.set(key, { session_id: key, date: row.date_clean || '', rows: [] });
     map.get(key).rows.push(row);
@@ -39,8 +42,10 @@ function groupBySession(rows) {
 // ── rir_caution: working sets at RIR ≤ threshold in the rows being logged ─────
 
 function rirCaution(rows, config = {}) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
   const { threshold = 1 } = config;
   const grinding = rows.filter(r => {
+    if (!r || typeof r !== 'object') return false;
     const rir = num(r.rir);
     return rir !== null && rir <= threshold;
   });
@@ -59,7 +64,11 @@ function rirCaution(rows, config = {}) {
 // ── junk_rep_guard: RIR 0 sets — record, don't celebrate ──────────────────────
 
 function junkRepGuard(rows) {
-  const rirZero = rows.filter(r => num(r.rir) === 0);
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const rirZero = rows.filter(r => {
+    if (!r || typeof r !== 'object') return false;
+    return num(r.rir) === 0;
+  });
   if (!rirZero.length) return null;
 
   return decision({
@@ -75,7 +84,8 @@ function junkRepGuard(rows) {
 const PAIN_WORDS = /\b(?:pain|painful|hurt|hurts|ache|aching|injur(?:y|ed)|tweak(?:ed)?|strain(?:ed)?|pinch(?:ed|ing)?|sharp)\b/i;
 
 function painFlag(rows, workoutNotes = '') {
-  const sources = rows.map(r => String(r.notes || '')).concat(String(workoutNotes || ''));
+  if (!Array.isArray(rows)) rows = [];
+  const sources = rows.map(r => r && typeof r === 'object' ? String(r.notes || '') : '').concat(String(workoutNotes || ''));
   const hits = sources.filter(s => PAIN_WORDS.test(s));
   if (!hits.length) return null;
 
@@ -90,9 +100,13 @@ function painFlag(rows, workoutNotes = '') {
 // ── rir_drift: RIR at the same load declining across recent sessions ──────────
 
 function rirDrift(historyRows, liftCode, config = {}) {
+  if (!Array.isArray(historyRows) || historyRows.length === 0) return null;
   const { window = 3 } = config;
   const code = String(liftCode || '').trim().toUpperCase();
-  const rows = historyRows.filter(r => String(r.lift_code || '').toUpperCase() === code && num(r.rir) !== null);
+  const rows = historyRows.filter(r => {
+    if (!r || typeof r !== 'object') return false;
+    return String(r.lift_code || '').toUpperCase() === code && num(r.rir) !== null;
+  });
   if (!rows.length) return null;
 
   const sessions = groupBySession(rows).slice(-window);
@@ -102,6 +116,7 @@ function rirDrift(historyRows, liftCode, config = {}) {
   const weightCounts = new Map();
   for (const s of sessions) {
     for (const r of s.rows) {
+      if (!r || typeof r !== 'object') continue;
       const w = num(r.weight);
       if (w) weightCounts.set(w, (weightCounts.get(w) || 0) + 1);
     }
@@ -110,7 +125,7 @@ function rirDrift(historyRows, liftCode, config = {}) {
   const modalWeight = [...weightCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
 
   const avgRirs = sessions.map(s => {
-    const at = s.rows.filter(r => num(r.weight) === modalWeight);
+    const at = s.rows.filter(r => r && typeof r === 'object' && num(r.weight) === modalWeight);
     if (!at.length) return null;
     return at.reduce((sum, r) => sum + num(r.rir), 0) / at.length;
   }).filter(v => v !== null);
@@ -136,12 +151,16 @@ function rirDrift(historyRows, liftCode, config = {}) {
 // workoutNotes: top-level notes string, if any.
 // Returns an array of decision objects (possibly empty), ready to surface as
 // rule_flags in a preview response.
+// Degrades safely on bad input. Malformed rows coerce to an empty array, but the
+// checks still run: painFlag reads top-level workoutNotes, so a notes-only session
+// (no rows) must still surface a pain warning. Each check tolerates empty rows.
 function evaluateSessionSafety(newRows, workoutNotes = '') {
+  const rows = Array.isArray(newRows) ? newRows : [];
   const flags = [];
   const checks = [
-    rirCaution(newRows),
-    junkRepGuard(newRows),
-    painFlag(newRows, workoutNotes),
+    rirCaution(rows),
+    junkRepGuard(rows),
+    painFlag(rows, workoutNotes),
   ];
   for (const f of checks) {
     if (f) flags.push(f);
