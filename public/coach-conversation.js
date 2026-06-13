@@ -457,13 +457,16 @@
   // Atlas's no-database rule). We send the last few turns for context.
   const chatTurns = []; // [{ role: 'user' | 'atlas', text }]
 
-  async function getChatReply(message, context) {
+  // `history` is the PRIOR turns only — the current message is sent separately as
+  // `message`, so the caller must not have appended it to chatTurns yet (else the
+  // backend would see the current turn twice).
+  async function getChatReply(message, history, context) {
     if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history: chatTurns.slice(-8), context: context || {} })
+      body: JSON.stringify({ message, history: history.slice(-8), context: context || {} })
     }).then(res => (res && res.data && res.data.message) || null);
     return Promise.race([request, timeout]);
   }
@@ -482,7 +485,8 @@
     const text = (detail && detail.text || '').trim();
     if (!text) return;
     // chat.js already painted the lifter's bubble on submit; we add Atlas's reply.
-    chatTurns.push({ role: 'user', text });
+    // Capture prior turns BEFORE recording this message so it isn't sent twice.
+    const priorTurns = chatTurns.slice(-8);
 
     const handle = appendAtlasBubble();
     if (!handle) return;
@@ -490,12 +494,12 @@
     body.textContent = 'Thinking…';
 
     let reply = null;
-    try { reply = await getChatReply(text, detail && detail.context); } catch { reply = null; }
+    try { reply = await getChatReply(text, priorTurns, detail && detail.context); } catch { reply = null; }
     if (!reply || !reply.trim()) reply = chatFallback(text);
 
     body.textContent = '';
     await typeOut(body, reply);
-    chatTurns.push({ role: 'atlas', text: reply });
+    chatTurns.push({ role: 'user', text }, { role: 'atlas', text: reply });
   }
 
   document.addEventListener('atlas:chat-message', e => { handleChatMessage(e.detail).catch(() => {}); });
