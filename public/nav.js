@@ -46,13 +46,18 @@
     body.setAttribute('data-surface', surface);
 
     for (const btn of surfaceButtons) {
-      btn.setAttribute('aria-selected', String(btn.dataset.surface === surface));
+      const selected = btn.dataset.surface === surface;
+      btn.setAttribute('aria-selected', String(selected));
+      btn.tabIndex = selected ? 0 : -1;            // roving tabindex
     }
 
     if (subnav) {
       for (const pill of subnav.querySelectorAll('.tab-btn')) {
         if (pill.hasAttribute('hidden')) continue;
-        pill.classList.toggle('active', pill.dataset.tab === tab);
+        const active = pill.dataset.tab === tab;
+        pill.classList.toggle('active', active);
+        pill.setAttribute('aria-selected', String(active));
+        pill.tabIndex = active ? 0 : -1;           // roving tabindex
       }
     }
   }
@@ -69,6 +74,34 @@
       }
       sync();
     });
+  }
+
+  // Roving keyboard navigation for the two tablists (surface switcher + Progress
+  // subnav). Arrow / Home / End move focus and activate via the existing click
+  // paths, so app.js's tab engine and the surface router stay the single source
+  // of truth — this layer only adds keyboard reach, it never writes.
+  function wireTablistKeys(tabs) {
+    tabs.forEach((tabEl, i) => {
+      tabEl.addEventListener('keydown', e => {
+        let next = -1;
+        switch (e.key) {
+          case 'ArrowRight': case 'ArrowDown': next = (i + 1) % tabs.length; break;
+          case 'ArrowLeft':  case 'ArrowUp':   next = (i - 1 + tabs.length) % tabs.length; break;
+          case 'Home': next = 0; break;
+          case 'End':  next = tabs.length - 1; break;
+          default: return;
+        }
+        e.preventDefault();
+        const target = tabs[next];
+        target.focus();
+        target.click();   // route through the surface router / app.js tab engine
+      });
+    });
+  }
+
+  wireTablistKeys(surfaceButtons);
+  if (subnav) {
+    wireTablistKeys(Array.from(subnav.querySelectorAll('.tab-btn')).filter(b => !b.hasAttribute('hidden')));
   }
 
   // Settings gear.

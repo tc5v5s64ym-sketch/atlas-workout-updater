@@ -19,19 +19,19 @@
     <span class="brand">Atlas</span>
     <h1 class="tagline">Atlas</h1>
     <div class="segmented" role="tablist" aria-label="Atlas mode">
-      <button type="button" class="surface-btn" data-surface="coach" aria-selected="true">Coach</button>
-      <button type="button" class="surface-btn" data-surface="progress" aria-selected="false">Progress</button>
+      <button type="button" class="surface-btn" id="surface-coach" role="tab" data-surface="coach" aria-selected="true" tabindex="0">Coach</button>
+      <button type="button" class="surface-btn" id="surface-progress" role="tab" data-surface="progress" aria-selected="false" tabindex="-1">Progress</button>
     </div>
     <button type="button" class="icon-btn" id="open-settings" aria-label="Settings">&#9881;</button>
     <span id="conn-status" class="conn-status" title="Backend connection">&#9679;</span>
   </header>
 
   <!-- Progress sub-navigation (visible only on the Progress surface) -->
-  <nav id="subnav" class="subnav">
-    <button data-tab="dashboard" class="tab-btn active">Today</button>
-    <button data-tab="progress" class="tab-btn">Trends</button>
-    <button data-tab="history" class="tab-btn">History</button>
-    <button data-tab="body" class="tab-btn">Body</button>
+  <nav id="subnav" class="subnav" role="tablist" aria-label="Progress sections">
+    <button data-tab="dashboard" id="nav-today" role="tab" class="tab-btn active" aria-selected="true" tabindex="0">Today</button>
+    <button data-tab="progress" id="nav-trends" role="tab" class="tab-btn" aria-selected="false" tabindex="-1">Trends</button>
+    <button data-tab="history" id="nav-history" role="tab" class="tab-btn" aria-selected="false" tabindex="-1">History</button>
+    <button data-tab="body" id="nav-body" role="tab" class="tab-btn" aria-selected="false" tabindex="-1">Body</button>
     <!-- Hidden controls kept so programmatic tab switches + the gear keep working -->
     <button data-tab="logger" class="tab-btn" hidden aria-hidden="true"></button>
     <button data-tab="settings" class="tab-btn" hidden aria-hidden="true"></button>
@@ -39,7 +39,7 @@
 
   <main>
     <!-- ============ COACH — chat-first logger (approve-before-save) ============ -->
-    <section id="tab-logger" class="tab active">
+    <section id="tab-logger" class="tab active" role="tabpanel" tabindex="-1" aria-labelledby="surface-coach">
       <div id="coach-panel" hidden></div>
 
       <!-- In-memory active "Recommended session" indicator (Start Session).
@@ -187,7 +187,7 @@
     </section>
 
     <!-- ============ TODAY (dashboard, read-only) ============ -->
-    <section id="tab-dashboard" class="tab">
+    <section id="tab-dashboard" class="tab" role="tabpanel" tabindex="-1" aria-labelledby="nav-today">
 
       <!-- Above fold: readiness · pick · action · consistency -->
       <div id="todays-read" class="readiness-strip"></div>
@@ -259,7 +259,7 @@
     </section>
 
     <!-- ============ TRENDS (progress, read-only) ============ -->
-    <section id="tab-progress" class="tab">
+    <section id="tab-progress" class="tab" role="tabpanel" tabindex="-1" aria-labelledby="nav-trends">
 
       <!-- Hidden legacy forms — IDs kept so existing app.js event handlers
            still bind. The .lift-link deep-link path populates #progress-lift-code
@@ -301,7 +301,7 @@
     </section>
 
     <!-- ============ HISTORY (recent sessions) ============ -->
-    <section id="tab-history" class="tab">
+    <section id="tab-history" class="tab" role="tabpanel" tabindex="-1" aria-labelledby="nav-history">
       <div class="card">
         <h2>Recent Sessions</h2>
         <div id="sessions-result"></div>
@@ -309,7 +309,7 @@
     </section>
 
     <!-- ============ BODY (bodyweight + pending exercises) ============ -->
-    <section id="tab-body" class="tab">
+    <section id="tab-body" class="tab" role="tabpanel" tabindex="-1" aria-labelledby="nav-body">
       <div class="card">
         <h2>Log Bodyweight</h2>
         <p class="safety-note"><strong>Two-step write flow.</strong> Preview first, then confirm to write.</p>
@@ -349,7 +349,7 @@
     </section>
 
     <!-- ============ SETTINGS ============ -->
-    <section id="tab-settings" class="tab">
+    <section id="tab-settings" class="tab" role="tabpanel" tabindex="-1">
       <div class="card">
         <h2>Settings</h2>
         <p>The API key is stored only in this browser (localStorage) and sent as the <code>x-atlas-api-key</code> header.</p>
