@@ -929,7 +929,7 @@ async function loadStalls() {
     const table = el('table', {});
     const thead = el('thead', {}, el('tr', {}, ['Lift', 'Sessions stalled', 'Last best weight', 'Since'].map(h => el('th', { text: h }))));
     const tbody = el('tbody', {}, stalls.map(s => el('tr', {}, [
-      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.liftCode })),
+      el('td', {}, el('a', { class: 'lift-link', href: '#', 'data-lift': s.liftCode, text: s.exercise || s.liftCode })),
       el('td', { text: String(s.sessions_stalled) }),
       el('td', { text: String(s.last_best_weight) }),
       el('td', { text: String(s.first_session_date) })
@@ -1204,7 +1204,7 @@ document.getElementById('weekly-report-btn').addEventListener('click', async () 
       box.appendChild(el('h3', { text: 'Watchouts' }));
       box.appendChild(renderTable(
         ['Lift', 'Sessions stalled', 'Last best'],
-        data.stalls_or_watchouts.map(s => [s.liftCode, s.sessions_stalled, `${s.last_best_weight} lb`])
+        data.stalls_or_watchouts.map(s => [s.exercise || s.liftCode, s.sessions_stalled, `${s.last_best_weight} lb`])
       ));
     }
     if (!data.sessions_count) {
