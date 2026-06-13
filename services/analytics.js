@@ -130,6 +130,41 @@ function formatSet(row) {
   };
 }
 
+// Best weight lifted per lift code in a set of rows, with the exercise name.
+// Used to detect new personal records when compared against historicalBestByLift.
+function sessionBestByLift(rows) {
+  const best = {};
+  for (const row of rows) {
+    if (!row.lift_code || row.lift_code === 'UNKNOWN' || !row.weight || row.weight <= 0) continue;
+    const existing = best[row.lift_code];
+    if (!existing || row.weight > existing.weight) {
+      best[row.lift_code] = {
+        weight: row.weight,
+        exercise: row.canonical_exercise || row.exercise || row.lift_code
+      };
+    }
+  }
+  return best;
+}
+
+// Best weight per lift code across rows strictly before sessionDate (exclusive),
+// excluding the current session. Using date < sessionDate prevents future
+// sessions from inflating the baseline when scoring historical sessions.
+function historicalBestByLift(allRows, currentSessionId, sessionDate) {
+  const normId   = String(currentSessionId || '').trim().toLowerCase();
+  const beforeDate = sessionDate || '';
+  const best = {};
+  for (const row of allRows.map(normalizeLogRow)) {
+    if (row.session_id.toLowerCase() === normId) continue;
+    if (beforeDate && row.date_clean >= beforeDate) continue;
+    if (!row.lift_code || row.lift_code === 'UNKNOWN' || !row.weight || row.weight <= 0) continue;
+    if (!best[row.lift_code] || row.weight > best[row.lift_code]) {
+      best[row.lift_code] = row.weight;
+    }
+  }
+  return best;
+}
+
 function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings = []) {
   const normalizedSessionId = String(sessionId || '').trim().toLowerCase();
   const sessionLogRows = asArray(logRows)
@@ -164,8 +199,12 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
     totalSets,
     effortDuration: effortRow?.duration,
     averageHR: effortRow?.average_hr,
+    activeCalories: effortRow?.active_calories,
     uniqueExercisesCount: uniqueExercises.length,
-    validationWarnings
+    validationWarnings,
+    setsWithRir: sessionLogRows.map(r => r.rir).filter(v => v !== null && Number.isFinite(v)),
+    sessionBestByLift: sessionBestByLift(sessionLogRows),
+    historicalBestByLift: historicalBestByLift(logRows, sessionId, effortRow?.date || sessionLogRows[0]?.date_clean || '')
   };
   const quality_score = calculateQualityScore(qualityMetrics);
   const quality_breakdown = qualityScoreBreakdown(qualityMetrics);

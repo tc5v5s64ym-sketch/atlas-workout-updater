@@ -1199,22 +1199,25 @@ a.lift-link:hover { text-decoration: underline; }
   margin-bottom: var(--s2);
 }
 .quality-criterion {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 6rem 3.5rem 1fr;
+  align-items: baseline;
   gap: var(--s2);
   font-size: 0.84rem;
-  padding: 2px 0;
+  padding: 3px 0;
   color: var(--ink);
 }
-.quality-criterion-mark {
-  flex: 0 0 auto;
-  width: 16px;
-  text-align: center;
-  font-weight: 700;
+.quality-criterion-label { font-weight: 600; }
+.quality-criterion-pts {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: right;
 }
-.quality-criterion.met .quality-criterion-mark { color: var(--ok); }
-.quality-criterion.unmet .quality-criterion-mark { color: var(--danger); }
-.quality-criterion.unmet .quality-criterion-label { color: var(--muted); }
+.quality-criterion-desc { color: var(--muted); font-size: 0.81rem; }
+.quality-criterion.full .quality-criterion-label { color: var(--ok); }
+.quality-criterion.full .quality-criterion-pts  { color: var(--ok); }
+.quality-criterion.zero .quality-criterion-label { color: var(--muted); }
 .session-start-btn {
   background: var(--card);
   border: 1px solid var(--border);

@@ -1393,47 +1393,79 @@ test('getSimpleTrend detects up, down, and flat', () => {
   assert.equal(getSimpleTrend([]), 'flat');
 });
 
-test('calculateQualityScore returns 5 for perfect session and 0 for minimal session', () => {
-  assert.equal(calculateQualityScore({
+test('calculateQualityScore returns 0–100 and sums criterion points', () => {
+  // Perfect-ish session: 12 sets, 60 min, 130 bpm avg, 450 cal, 4 exercises,
+  // all sets at RIR 1 (close to failure), one historical PR beaten.
+  const perfect = calculateQualityScore({
     totalSets: 12,
     effortDuration: '01:00:00',
     averageHR: 130,
+    activeCalories: 450,
     uniqueExercisesCount: 5,
-    validationWarnings: []
-  }), 5);
-  assert.equal(calculateQualityScore({
+    validationWarnings: [],
+    setsWithRir: [1, 1, 1, 1],
+    sessionBestByLift: { BEN01: { weight: 240, exercise: 'Bench Press' } },
+    historicalBestByLift: { BEN01: 235 }
+  });
+  // Volume 30 + Intensity 25 + Effort 25 (12 duration + 13 HR for 130 bpm) + Balance 10 + Progression 10 = 100
+  assert.equal(perfect, 100);
+
+  // Minimal session: 2 sets, 10 min, 80 bpm, 1 exercise, no RIR, no history
+  const minimal = calculateQualityScore({
     totalSets: 2,
     effortDuration: '00:10:00',
     averageHR: 80,
+    activeCalories: 0,
     uniqueExercisesCount: 1,
-    validationWarnings: ['some warning']
-  }), 0);
+    validationWarnings: ['some warning'],
+    setsWithRir: [],
+    sessionBestByLift: {},
+    historicalBestByLift: {}
+  });
+  // Volume 0 + Intensity 12 (no RIR data = neutral) + Effort 6 (0 min pts + 6 HR pts for 80 bpm)
+  // + Balance 0 + Progression 0 = 18
+  assert.equal(minimal, 18);
 });
 
-test('qualityScoreBreakdown returns five labelled criteria whose met-count equals the score', () => {
+test('qualityScoreBreakdown returns five criteria with id/label/points/maxPoints/description', () => {
   const metrics = {
-    totalSets: 12,
-    effortDuration: '00:20:00',  // under 30 min → unmet
-    averageHR: 130,
-    uniqueExercisesCount: 5,
-    validationWarnings: []
+    totalSets: 9,
+    effortDuration: '00:47:00',
+    averageHR: 118,
+    activeCalories: 390,
+    uniqueExercisesCount: 3,
+    validationWarnings: [],
+    setsWithRir: [1, 2, 1, 2],
+    sessionBestByLift: { BEN01: { weight: 225, exercise: 'Bench Press' } },
+    historicalBestByLift: { BEN01: 225 }
   };
   const breakdown = qualityScoreBreakdown(metrics);
   assert.equal(breakdown.length, 5);
-  // Every entry is a { label, met } pair.
   for (const c of breakdown) {
+    assert.equal(typeof c.id, 'string');
+    assert.ok(c.id.length > 0);
     assert.equal(typeof c.label, 'string');
     assert.ok(c.label.length > 0);
-    assert.equal(typeof c.met, 'boolean');
+    assert.ok(Number.isFinite(c.points) && c.points >= 0);
+    assert.ok(Number.isFinite(c.maxPoints) && c.maxPoints > 0);
+    assert.ok(c.points <= c.maxPoints);
+    assert.equal(typeof c.description, 'string');
+    assert.ok(c.description.length > 0);
   }
-  // The duration criterion is the only failing one here.
-  const unmet = breakdown.filter(c => !c.met);
-  assert.equal(unmet.length, 1);
-  assert.match(unmet[0].label, /minute/i);
-  // Met-count is the single source of truth for the headline score.
-  const metCount = breakdown.filter(c => c.met).length;
-  assert.equal(metCount, calculateQualityScore(metrics));
-  assert.equal(metCount, 4);
+  // Points sum equals the headline score.
+  const total = breakdown.reduce((s, c) => s + c.points, 0);
+  assert.equal(total, calculateQualityScore(metrics));
+  // Volume: 9 sets → 22 pts; Intensity: avg RIR 1.5 → 20 pts
+  const vol = breakdown.find(c => c.id === 'volume');
+  assert.equal(vol.points, 22);
+  assert.match(vol.description, /9 sets/);
+  const intensity = breakdown.find(c => c.id === 'intensity');
+  assert.equal(intensity.points, 20);
+  assert.match(intensity.description, /RIR/);
+  // No new PR (held at 225) → 3 pts (holding steady)
+  const prog = breakdown.find(c => c.id === 'progression');
+  assert.equal(prog.points, 3);
+  assert.match(prog.description, /Holding steady/);
 });
 
 // ── Analytics functions ───────────────────────────────────────────────────────
