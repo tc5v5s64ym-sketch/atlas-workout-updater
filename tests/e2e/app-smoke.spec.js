@@ -181,6 +181,12 @@ async function mockAtlasApis(page, capture = {}) {
       return route.fulfill(json({ status: 'success', data: { stalls: [] } }));
     }
 
+    if (path === '/api/coach/message') {
+      // Default deployment has no GEMINI_API_KEY, so the endpoint hands back
+      // message:null and the client renders its deterministic templated note.
+      return route.fulfill(json({ status: 'success', data: { message: null, configured: false } }));
+    }
+
     if (path.startsWith('/api/recommend/next/')) {
       return route.fulfill(json({
         status: 'success',
@@ -222,9 +228,11 @@ test('Coach shell loads with guarded preview state', async ({ page }) => {
   await openApp(page);
 
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
-  await expect(page.locator('#coach-greeting')).toContainText('Ready when you are');
+  // Minimal Grok/Gemini-style home: empty-state hero + Suggested Workout tiles.
+  await expect(page.locator('#coach-empty')).toBeVisible();
+  await expect(page.locator('.coach-empty-tagline')).toContainText('Log a workout, or just ask');
   await expect(page.locator('#workout-text')).toBeVisible();
-  await expect(page.locator('#suggestion-chips .chip')).toHaveCount(4);
+  await expect(page.locator('#suggested-tiles .suggest-tile')).toHaveCount(2);
   await expect(page.locator('#preview-panel')).toBeHidden();
   await expect(page.locator('#approve-btn')).toBeDisabled();
 });
@@ -253,7 +261,11 @@ test('Approve flow sends write_id only after preview and shows success', async (
 
   const previewWriteId = capture.previewRequests[0].write_id;
   await expect(page.locator('#approve-btn')).toBeEnabled();
-  await page.locator('#approve-btn').click();
+  // The coaching bubble's inline "Save to Sheets" is the primary write CTA in
+  // the redesigned home; it drives the same gated #approve-btn.
+  const saveBtn = page.locator('.save-inline-btn');
+  await expect(saveBtn).toBeEnabled();
+  await saveBtn.click();
 
   await expect(page.locator('#logger-status')).toContainText('Workout written to Google Sheets');
   await expect(page.locator('#logger-status')).toContainText('Verified in Sheet');
