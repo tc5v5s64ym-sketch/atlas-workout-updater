@@ -585,6 +585,8 @@ async function loadDashboard() {
   const intentData = intentResult.status === 'fulfilled' ? (intentResult.value.data || {}) : null;
   const summaryData = summaryResult.status === 'fulfilled' ? (summaryResult.value.data || {}) : null;
 
+  if (intentData) lastIntentData = intentData;
+
   if (intentData) {
     renderTodaysRead(intentData);
     renderCoachReadStrip(intentData);
@@ -1897,6 +1899,9 @@ function runEffortCardCleanups() {
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
+// Cached when the Today dashboard loads so routeMessageToCoach can include
+// the current plan order in coach context (for "why in this order?" questions).
+let lastIntentData = null;
 
 // Populated after a successful manual write. Cleared only after undo or when
 // the user explicitly picks "Log as new" in the correction dialog. NOT cleared
@@ -2655,13 +2660,31 @@ function currentPreviewRowsForChat() {
   return rows;
 }
 
+// Returns today's recommended exercises as {name, rationale} objects for the
+// coach context, so the model can answer "why in this order?" without claiming
+// it lacks the sequence. Falls back to [] when no plan has loaded.
+function currentPlanForChat() {
+  if (!lastIntentData) return [];
+  const intents = lastIntentData.intents || [];
+  const recommended = intents.find(i => i.recommended);
+  const exercises = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
+  return exercises.slice(0, 10).map(ex => ({
+    name: ex.canonical_exercise || ex.exercise || null,
+    rationale: ex.focus || null
+  })).filter(e => e.name);
+}
+
 // Hand a non-loggable message to the coach. Read-only narration: app.js only
 // dispatches; coach-conversation.js does the /api/coach/chat round-trip and
 // types the reply. This NEVER touches the trust loop or the write path.
 function routeMessageToCoach(text) {
   const preview = currentPreviewRowsForChat();
+  const plan = currentPlanForChat();
+  const context = {};
+  if (preview.length) context.current_preview = preview;
+  if (plan.length) context.current_plan = plan;
   document.dispatchEvent(new CustomEvent('atlas:chat-message', {
-    detail: { text, context: preview.length ? { current_preview: preview } : {} }
+    detail: { text, context }
   }));
   setTimeout(() => { workoutTextInput.value = ''; }, 0);
   invalidatePreview();

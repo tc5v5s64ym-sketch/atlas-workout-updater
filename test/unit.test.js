@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
-const { parseWorkoutText, buildWorkoutTextParseDryRunResponse } = require('../services/workoutTextParser');
+const { parseWorkoutText, buildWorkoutTextParseDryRunResponse, looksLikeCorrection } = require('../services/workoutTextParser');
 const { normalizeDurationString } = require('../services/duration');
 const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
@@ -3741,4 +3741,39 @@ test('polish: coach-read-strip and strip-dot styled in CSS', () => {
   assert.match(css, /\.coach-read-strip/, 'strip container must be styled');
   assert.match(css, /\.strip-dot/, 'compact dot must be styled');
   assert.match(css, /\.strip-rec/, 'pick text must be styled');
+});
+
+// ── Correction language detection ─────────────────────────────────────────────
+
+test('looksLikeCorrection: recognises common correction phrases', () => {
+  const yes = [
+    'Actually I was wrong, it was 225',
+    'correction: should be 185 not 195',
+    'change that to 3 sets not 4',
+    'replace that with bench not squat',
+    'I meant 225 not 235',
+    'sorry I meant 3 reps',
+    'wait I meant left leg',
+    'no I meant squat not deadlift',
+    'actually it was 185',
+  ];
+  yes.forEach(p => assert.ok(looksLikeCorrection(p), `should detect correction in: "${p}"`));
+});
+
+test('looksLikeCorrection: does not flag normal workout text or questions', () => {
+  const no = [
+    'Bench 225 5/2',
+    'I did 5 sets of bench at 225',
+    'Squat 315 3/1 x3',
+    'What should I train today?',
+    'How is my bench progressing?',
+    'Lateral Raise 30 12/3 x3',
+  ];
+  no.forEach(p => assert.ok(!looksLikeCorrection(p), `should NOT detect correction in: "${p}"`));
+});
+
+test('looksLikeCorrection: handles edge cases gracefully', () => {
+  assert.ok(!looksLikeCorrection(''),    'empty string is not a correction');
+  assert.ok(!looksLikeCorrection(null),  'null is not a correction');
+  assert.ok(!looksLikeCorrection(42),    'number is not a correction');
 });

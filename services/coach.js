@@ -10,6 +10,8 @@
  * writes anything. This module performs no Google Sheets access of any kind.
  */
 
+const coachBrain = require('./coachBrain');
+
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -197,10 +199,21 @@ async function generatePlanMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {
 // answer only from the read-only training snapshot, never invent numbers, and
 // NEVER claim to have written, logged, changed, or deleted anything. This module
 // performs no Google Sheets access; the route assembles the read-only snapshot.
-function buildChatSystemPrompt() {
+//
+// `context` is the sanitized snapshot (after sanitizeChatContext). It drives
+// cold-start vs. data-informed framing — pass undefined for the safe default
+// (cold-start, conservative).
+function buildChatSystemPrompt(context) {
+  const modeFragment = coachBrain.isColdStart(context || {})
+    ? coachBrain.buildColdStartFragment()
+    : coachBrain.buildDataInformedFragment();
   return [
     'You are Atlas, a sharp, encouraging strength coach having a conversation with the lifter.',
-    "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, and stalled lifts) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
+    "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, and stalled lifts) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
+    '',
+    coachBrain.buildPrinciplesFragment(),
+    '',
+    modeFragment,
     '',
     'Hard rules:',
     '- Ground every specific in the SNAPSHOT. Never invent or change weights, reps, RIR, dates, PRs, trends, or session counts that are not in the snapshot.',
@@ -285,13 +298,20 @@ function sanitizeChatContext(context) {
     reps: numOrNull(s && s.reps),
     rir: s && s.rir == null ? null : numOrNull(s.rir)
   })).filter(s => s.exercise) : [];
+  const current_plan = Array.isArray(c.current_plan) ? c.current_plan.slice(0, 10).map(e => ({
+    name: strOrNull(e && e.name),
+    rationale: strOrNull(e && e.rationale)
+  })).filter(e => e.name) : [];
+  const session_count = numOrNull(c.session_count);
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
     readiness,
     recent_sessions,
     stalls,
-    current_preview
+    current_preview,
+    current_plan,
+    session_count
   };
 }
 
@@ -322,7 +342,7 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
   for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
-  const raw = await callGeminiContents(buildChatSystemPrompt(), contents, { timeoutMs, maxOutputTokens: 450 });
+  const raw = await callGeminiContents(buildChatSystemPrompt(snapshot), contents, { timeoutMs, maxOutputTokens: 450 });
   return parseEditFromReply(raw);
 }
 
