@@ -1844,6 +1844,53 @@ async function fetchReaction(liftCode) {
   }
 }
 
+// Did the just-saved session set a PR for this lift? Reads the fresh PR list
+// (which already includes the rows we just wrote) and matches each best set's
+// session_id to the session we saved. Read-only and best-effort — any failure
+// just yields no PR label.
+async function fetchSessionPrLabel(liftCode, sessionId) {
+  if (!liftCode || !sessionId || !getApiKey()) return '';
+  try {
+    const res = await api('/api/prs/recent');
+    const prs = res.data?.prs || [];
+    const code = String(liftCode).toUpperCase();
+    const pr = prs.find(p => String(p.liftCode || '').toUpperCase() === code);
+    if (!pr) return '';
+    if (pr.bestWeightSet?.session_id === sessionId) return `weight PR at ${pr.bestWeightSet.weight} lb`;
+    if (pr.bestEstimated1RMSet?.session_id === sessionId) return 'estimated 1RM PR';
+    if (pr.bestRepSet?.session_id === sessionId) return `rep PR — ${pr.bestRepSet.reps} @ ${pr.bestRepSet.weight} lb`;
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+// Is this lift currently flagged as stalled? Read-only and best-effort.
+async function fetchStall(liftCode) {
+  if (!liftCode || !getApiKey()) return null;
+  try {
+    const res = await api('/api/stalls');
+    const stalls = res.data?.stalls || [];
+    const code = String(liftCode).toUpperCase();
+    return stalls.find(s => String(s.liftCode || '').toUpperCase() === code) || null;
+  } catch {
+    return null;
+  }
+}
+
+// Attach best-effort PR + stall context to a recommendation so buildVerdict can
+// rank them above the trend signals. Read-only; any failure simply leaves the
+// fields empty and the verdict falls back to the trend/fallback lines.
+async function attachVerdictContext(rec, liftCode, sessionId) {
+  const [prLabel, stall] = await Promise.all([
+    fetchSessionPrLabel(liftCode, sessionId),
+    fetchStall(liftCode)
+  ]);
+  rec.prLabel = prLabel;
+  rec.stall = stall;
+  return rec;
+}
+
 async function verifyWrittenRange(range, sessionId, expectedRows) {
   if (!range || !sessionId || !getApiKey()) return false;
   try {
@@ -1877,19 +1924,31 @@ function renderAtlasSuggestion(rec) {
   ]);
 }
 
+// Deterministic post-write coach verdict. Priority: PR in the just-saved
+// session, then a stall/watchout, then the e1RM/top-set trend, then a plain
+// fallback. PR + stall context ride on the rec object (rec.prLabel / rec.stall)
+// so the call site stays a single buildVerdict(rec).
 function buildVerdict(rec) {
   if (!rec || !rec.last_working_sets || !rec.last_working_sets.length) return null;
 
+  // PR in the session we just saved takes top billing.
+  if (rec.prLabel) return rec.prLabel;
+
+  // Stall / watchout: this lift hasn't progressed in N sessions.
+  if (rec.stall && rec.stall.sessions_stalled) {
+    return `no progression in ${rec.stall.sessions_stalled} sessions — consider a deload`;
+  }
+
   const rule = rec.rule_decision;
 
-  // holdUntilClean says criterion is met — green light to load
+  // holdUntilClean: criterion met → load
   if (rule?.decision === 'load') {
     return rule.criterion_progress
       ? `${rule.criterion_progress} — ready to load`
       : 'standard met — ready to load';
   }
 
-  // holdUntilClean says hold — show progress toward criterion
+  // holdUntilClean: hold → show progress
   if (rule?.decision === 'hold' && rule.criterion_progress) {
     return rule.criterion_progress;
   }
@@ -1912,7 +1971,8 @@ function buildVerdict(rec) {
     return 'e1RM trending up';
   }
 
-  return null;
+  // Fallback — nothing notable, but acknowledge the save.
+  return 'no major trend change detected yet';
 }
 
 function invalidatePreview() {
@@ -2503,8 +2563,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       });
     }
     if (reactionLiftCodes.length) {
-      fetchReaction(reactionLiftCodes[0]).then(rec => {
+      fetchReaction(reactionLiftCodes[0]).then(async rec => {
         if (!rec) return;
+        await attachVerdictContext(rec, reactionLiftCodes[0], pendingLastWrite?.session_id);
         const verdict = buildVerdict(rec);
         const lines = [];
         if (verdict) {
