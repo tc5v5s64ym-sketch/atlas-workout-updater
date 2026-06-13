@@ -38,11 +38,10 @@ async function appendRows(tabName, rows) {
   }
 
   console.log(`[sheets.js] Appending ${rows.length} row(s) to "${tabName}" tab`);
-  console.log(`[sheets.js] Row data:`, JSON.stringify(rows));
 
   const sheets = await getSheetsClient();
   const range = `${tabName}!A1`;
-  console.log(`[sheets.js] Using range: ${range} for spreadsheet ID: ${spreadsheetId}`);
+  console.log(`[sheets.js] Using range: ${range}`);
   
   const response = await sheets.spreadsheets.values.append({
     spreadsheetId,
@@ -54,9 +53,7 @@ async function appendRows(tabName, rows) {
     }
   });
 
-  console.log(`[sheets.js] API Response - Updated range: ${response.data.updates?.updatedRange}`);
-  console.log(`[sheets.js] API Response - Updated rows: ${response.data.updates?.updatedRows}`);
-  console.log(`[sheets.js] Successfully appended to "${tabName}". Full response:`, JSON.stringify(response.data));
+  console.log(`[sheets.js] Appended to "${tabName}": ${response.data.updates?.updatedRows} row(s) at ${response.data.updates?.updatedRange}`);
   return response;
 }
 
