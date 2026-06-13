@@ -654,7 +654,9 @@ registerRoute('get', '/api/history/recent', async (req, res) => {
       }
     }
     const recent_sessions = Array.from(sessionMap.values()).reverse().slice(-limit);
-    const recent_effort = filteredEffort.slice(0, limit).map(row => ({
+    // Like recent_sets above: the sheet appends downward, so the newest rows
+    // are at the END of the window — take the tail, keep sheet order.
+    const recent_effort = filteredEffort.slice(-limit).map(row => ({
       date: row[0],
       session_id: row[1],
       duration: row[2],

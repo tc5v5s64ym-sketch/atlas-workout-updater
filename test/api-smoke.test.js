@@ -31,7 +31,10 @@ const fakeSheetsState = {
   // Per-tab getSheetRows call counts (read-path cache tests reset and inspect these).
   reads: {},
   // Duplicate-protection reads, tracked to prove they are never served from the cache.
-  safetyReadCalls: { effortSessionIds: 0, logCompositeKeys: 0 }
+  safetyReadCalls: { effortSessionIds: 0, logCompositeKeys: 0 },
+  // Rows returned by the stubbed getRecentRows for the Effort tab, in sheet
+  // order (oldest first). Tests that need effort history set this and restore [].
+  effortRecentRows: []
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -62,9 +65,10 @@ const fakeSheets = {
     fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
     return [];
   },
-  getRecentRows: async tabName => {
+  getRecentRows: async (tabName, maxRows = 100) => {
     if (tabName === 'Log_Cleaned') return logRows;
-    if (tabName === 'Effort') return [];
+    // Mirror the real client: return the LAST maxRows in sheet order.
+    if (tabName === 'Effort') return fakeSheetsState.effortRecentRows.slice(-maxRows);
     return [];
   },
   getSheetRows: async tabName => {
@@ -1323,5 +1327,27 @@ test('read-path cache: duplicate-protection reads are never served from the cach
     assert.equal(fakeSheetsState.safetyReadCalls.effortSessionIds, 2);
   } finally {
     fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('history/recent: recent_effort returns the NEWEST effort rows, tail of the sheet window', async () => {
+  // 7 effort rows in sheet order (oldest first). With limit=3 the endpoint
+  // must return the last three (05, 06, 07) — not the head of the window.
+  fakeSheetsState.effortRecentRows = ['01', '02', '03', '04', '05', '06', '07'].map(d => [
+    `2026-06-${d}`, `EFFORT-${d}`, '00:45:00', '400', '500', '140', '165', 'Gym', ''
+  ]);
+  try {
+    const { response, body } = await requestJson('/api/history/recent?limit=3');
+    assert.equal(response.status, 200);
+    const recentEffort = body.data.recent_effort;
+    assert.equal(recentEffort.length, 3);
+    assert.deepEqual(
+      recentEffort.map(e => e.date),
+      ['2026-06-05', '2026-06-06', '2026-06-07'],
+      'recent_effort must be the newest rows in sheet order'
+    );
+    assert.equal(recentEffort[2].session_id, 'EFFORT-07');
+  } finally {
+    fakeSheetsState.effortRecentRows = [];
   }
 });
