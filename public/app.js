@@ -2402,6 +2402,49 @@ function pendingWriteHasPreviewProof(write) {
   return true;
 }
 
+// True when the lifter has attached effort (a screenshot, or any manual effort
+// field) — used to tell a genuine effort/log attempt apart from a plain chat
+// message so we only route to the coach when there's nothing to log.
+function hasAnyEffortInput() {
+  if (effortMode() === 'screenshot') {
+    return Boolean(document.getElementById('effort-image').files[0]);
+  }
+  return ['effort-duration', 'effort-active-cal', 'effort-total-cal', 'effort-avg-hr', 'effort-peak-hr']
+    .some(id => (document.getElementById(id).value || '').trim());
+}
+
+// The sets currently in the preview editor (unsaved), passed to the coach as
+// read-only context so "is this a good set?" can be answered. Empty when nothing
+// is in the editor. Never includes anything not already on screen.
+function currentPreviewRowsForChat() {
+  const rows = [];
+  for (const tr of Array.from(setsTableBody.children)) {
+    const weight = tr.querySelector('.set-weight')?.value;
+    const reps = tr.querySelector('.set-reps')?.value;
+    const rir = tr.querySelector('.set-rir')?.value;
+    if (!weight && !reps) continue;
+    rows.push({
+      exercise: activeExercise || null,
+      weight: weight === '' || weight == null ? null : Number(weight),
+      reps: reps === '' || reps == null ? null : Number(reps),
+      rir: rir === '' || rir == null ? null : Number(rir)
+    });
+  }
+  return rows;
+}
+
+// Hand a non-loggable message to the coach. Read-only narration: app.js only
+// dispatches; coach-conversation.js does the /api/coach/chat round-trip and
+// types the reply. This NEVER touches the trust loop or the write path.
+function routeMessageToCoach(text) {
+  const preview = currentPreviewRowsForChat();
+  document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+    detail: { text, context: preview.length ? { current_preview: preview } : {} }
+  }));
+  setTimeout(() => { workoutTextInput.value = ''; }, 0);
+  invalidatePreview();
+}
+
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
@@ -2432,6 +2475,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     await rowsFromWorkoutInput();
     logRows = collectLogRows(sessionId, date);
   } catch (err) {
+    // Text that isn't a loggable workout, with no effort attached, is treated as
+    // a question for the coach rather than a parse error — so "was that a good
+    // session?" or just "Bench" gets a conversation instead of a red dead-end.
+    const chatText = workoutTextInput.value.trim();
+    if (chatText && !hasAnyEffortInput()) {
+      routeMessageToCoach(chatText);
+      return;
+    }
     setStatus(loggerStatus, err.displayMessage || `Could not parse workout text: ${err.message}`, 'error');
     return;
   }
@@ -2454,6 +2505,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
   const effortOnly = !logRows.length && Boolean(file || manualEffort);
   if (!logRows.length && !effortOnly) {
+    // Pure text with nothing to log → route to the coach (same as the parse
+    // fallback above). Empty input still shows the gentle hint.
+    const chatText = workoutTextInput.value.trim();
+    if (chatText) {
+      routeMessageToCoach(chatText);
+      return;
+    }
     setStatus(loggerStatus, 'Enter workout text first, then preview. You can edit parsed rows after preview.', 'error');
     return;
   }
