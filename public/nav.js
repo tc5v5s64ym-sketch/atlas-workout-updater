@@ -354,11 +354,9 @@
       radio.checked = true;
       radio.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    // Reveal the effort block (hidden by CSS, not by the hidden attribute) and
-    // open the <details> so the fields are visible.
     const details = document.getElementById('effort-details');
     if (details) {
-      details.classList.add('effort-open');
+      details.hidden = false;
       details.open = true;
     }
   }

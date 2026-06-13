@@ -116,7 +116,7 @@ body {
 
 /* Numeric values everywhere read clean + aligned */
 .num, .metric-value, .plan-card-target, .next-target-weight,
-th, td, .proof-fields, code { font-variant-numeric: tabular-nums; }
+th, td, code { font-variant-numeric: tabular-nums; }
 
 /* ============================================================================
    Header — wordmark · segmented control · settings
@@ -777,19 +777,6 @@ button.approve {
 }
 #effort-details[open] > summary { margin-bottom: var(--s2); }
 
-.no-write-proof {
-  background: var(--ok-soft);
-  border: 1px solid var(--ok-border);
-  border-radius: var(--r);
-  padding: 12px 14px;
-  margin: var(--s3) 0;
-  font-size: 0.86rem;
-}
-.no-write-proof .proof-headline {
-  font-weight: 700; font-size: 0.8rem; color: var(--ok); display: block;
-  margin-bottom: var(--s1); text-transform: uppercase; letter-spacing: 0.04em;
-}
-.no-write-proof .proof-fields { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; color: var(--muted); }
 
 .parser-status {
   background: var(--card-sunken);
