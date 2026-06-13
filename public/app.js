@@ -222,16 +222,8 @@ function renderSessionCard(s, inToday) {
   ]);
   details.appendChild(sum);
 
-  if (s.effort) {
-    const e = s.effort;
-    const line = [
-      e.duration && `Duration: ${e.duration}`,
-      e.active_calories && `Active cal: ${e.active_calories}`,
-      e.average_hr && `Avg HR: ${e.average_hr}`
-    ].filter(Boolean).join(' · ');
-    if (line) details.appendChild(el('p', { class: 'muted session-effort-line', text: line }));
-  }
-
+  // Effort + per-set detail both render inside the expanded detail slot (below),
+  // so the card itself stays to two clean lines.
   const detailSlot = el('div', { class: 'session-detail-slot' });
   details.appendChild(detailSlot);
   let detailLoaded = false;
@@ -299,9 +291,14 @@ async function loadSessionDetail(sessionId, slot) {
         byExercise.get(name).push(r);
       }
       for (const name of order) {
+        const exSets = byExercise.get(name);
+        const vol = exSets.reduce((sum, r) => sum + (Number(r.volume) || (Number(r.weight) || 0) * (Number(r.reps) || 0)), 0);
         const block = el('div', { class: 'session-ex' });
-        block.appendChild(el('div', { class: 'session-ex-name', text: name }));
-        for (const r of byExercise.get(name)) {
+        block.appendChild(el('div', { class: 'session-ex-head' }, [
+          el('span', { class: 'session-ex-name', text: name }),
+          el('span', { class: 'session-ex-vol', text: `${exSets.length} ${exSets.length === 1 ? 'set' : 'sets'} · ${Math.round(vol).toLocaleString()} lb` })
+        ]));
+        for (const r of exSets) {
           const rir = (r.rir === '' || r.rir == null) ? '' : ` @${r.rir}`;
           const note = r.notes ? ` · ${r.notes}` : '';
           block.appendChild(el('div', { class: 'session-ex-set', text: `${r.weight} × ${r.reps}${rir}${note}` }));

@@ -122,6 +122,9 @@ function buildSessionSummary(logRows, effortRows, sessionId, validationWarnings 
     total_sets: totalSets,
     total_volume: totalVolume,
     top_set: topSet,
+    // Per-set detail so a session can show exactly what was logged (weight ×
+    // reps @rir, with notes), grouped by exercise on the client.
+    sets: sessionLogRows.map(formatSet),
     effort: effortRow,
     quick_summary: quickSummary,
     quality_score

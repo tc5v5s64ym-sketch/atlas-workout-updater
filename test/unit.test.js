@@ -1368,6 +1368,11 @@ test('buildSessionSummary returns correct totals for a known session', () => {
   assert.ok(summary.total_volume > 0);
   assert.ok(summary.effort !== null);
   assert.equal(summary.effort.duration, '01:10:00');
+  // Per-set detail must be present so the History detail can show exactly what
+  // was logged (weight × reps @rir).
+  assert.ok(Array.isArray(summary.sets), 'summary must include a sets array');
+  assert.equal(summary.sets.length, 3, 'one entry per logged set');
+  assert.ok(summary.sets[0].weight != null && summary.sets[0].reps != null, 'sets carry weight + reps');
 });
 
 test('buildSessionSummary returns empty result for unknown session', () => {
