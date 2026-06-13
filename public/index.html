@@ -81,16 +81,16 @@
       <div id="coach-thread" class="coach-thread">
         <div id="thread-messages" aria-live="polite"></div>
 
-        <!-- The full dry-run proof + approval gate. Collapsed by default so the
-             conversation stays clean; the inline "Save to Sheets" button in the
-             coaching bubble drives this same #approve-btn. Open it to review the
-             proof, edit rows, or save manually. -->
+        <!-- Preview gate. Collapsed by default so the conversation stays clean;
+             the inline "Save to Sheets" button in the coaching bubble drives
+             this same #approve-btn. Open to review rows, edit, or save. -->
         <details id="preview-panel" class="preview-details" hidden>
-          <summary class="preview-summary">Dry-run details — review &amp; save manually</summary>
+          <summary class="preview-summary">Review before saving</summary>
           <div id="preview-content"></div>
           <div class="action-row">
             <button id="approve-btn" class="approve" disabled>Write to Google Sheets</button>
-            <button id="cancel-preview-btn" class="secondary">Edit / Cancel</button>
+            <button id="cancel-preview-btn" class="secondary">Edit</button>
+            <button id="start-over-btn" class="secondary">Start over</button>
           </div>
           <p class="preview-gate-note" id="preview-gate-note">Run a preview above to enable this button.</p>
         </details>
@@ -126,8 +126,8 @@
 
         <p class="safety-note compact">Previews send <code>test_mode=true</code> — nothing is saved until you approve.</p>
 
-        <!-- Effort entry: opened via + → Manual effort entry or + → Apple Watch screenshot -->
-        <details id="effort-details">
+        <!-- Effort entry: opened via + → Manual effort entry or + → Fitness device screenshot -->
+        <details id="effort-details" hidden>
           <summary>Effort <span class="muted">(optional)</span></summary>
           <div class="form-row" style="margin-top:10px">
             <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>

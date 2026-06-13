@@ -2555,6 +2555,30 @@ function invalidatePreview() {
 
 document.getElementById('logger-form').addEventListener('input', invalidatePreview);
 
+function startOverWorkout() {
+  workoutTextInput.value = '';
+  lastParsedWorkoutText = '';
+  setsTableBody.innerHTML = '';
+  parsedRowsEditor.hidden = true;
+  const effortDetails = document.getElementById('effort-details');
+  if (effortDetails) {
+    effortDetails.hidden = true;
+    effortDetails.open = false;
+    ['effort-duration', 'effort-active-cal', 'effort-total-cal', 'effort-avg-hr', 'effort-peak-hr'].forEach(id => {
+      const inp = document.getElementById(id);
+      if (inp) inp.value = '';
+    });
+    const fileInp = document.getElementById('effort-image');
+    if (fileInp) fileInp.value = '';
+    const manualRadio = document.querySelector('input[name="effort-mode"][value="manual"]');
+    if (manualRadio) manualRadio.checked = true;
+  }
+  invalidatePreview();
+  workoutTextInput.focus();
+}
+
+document.getElementById('start-over-btn')?.addEventListener('click', startOverWorkout);
+
 // One write_id per previewed workout: if the live write is retried (double
 // tap, network blip), the backend recognises the id and refuses to append
 // twice, returning proof the original write completed instead.
@@ -2827,7 +2851,7 @@ function prefillEffortForm(effort) {
     radio.checked = true;
     radio.dispatchEvent(new Event('change', { bubbles: true }));
   }
-  if (details) details.open = true;
+  if (details) { details.hidden = false; details.open = true; }
   document.getElementById('effort-details')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   if (peak && effort.peakHR == null) peak.focus();
 }
@@ -3400,10 +3424,6 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     }
     const content = document.getElementById('bw-preview-content');
     content.innerHTML = '';
-    content.appendChild(el('div', { class: 'no-write-proof' }, [
-      el('span', { class: 'proof-headline', text: 'DRY-RUN — NOTHING WAS WRITTEN' }),
-      el('span', { class: 'proof-fields', text: `test_mode: ${data.test_mode}  ·  sheet_written: ${data.sheet_written}  ·  no_write_confirmed: ${data.no_write_confirmed}` })
-    ]));
     const entry = data.entry_preview || {};
     content.appendChild(renderTable(
       ['Date', 'Weight', 'Notes'],
