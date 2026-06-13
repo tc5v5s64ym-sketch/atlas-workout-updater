@@ -1757,7 +1757,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6000
+    appSource.indexOf(anchor) + 6500
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -1813,7 +1813,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6000
+    appSource.indexOf(anchor) + 6500
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
