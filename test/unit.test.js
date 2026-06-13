@@ -484,11 +484,17 @@ test('two-way chat: coach-conversation handles the chat event read-only via /api
   // In-session history, bounded; falls back when the voice is unavailable.
   assert.match(convSource, /chatTurns/);
   assert.match(convSource, /function chatFallback/);
-  // History sent must be PRIOR turns only — captured before the current message
-  // is recorded, so the backend never sees the current turn twice.
+  // History sent must be PRIOR turns only (no double-send), but the current user
+  // turn is recorded immediately after capture so an in-flight second message
+  // still sees it. Atlas's reply is appended after it arrives.
   const chatBlock = convSource.slice(convSource.indexOf('Free-form chat'));
-  assert.match(chatBlock, /const priorTurns = chatTurns\.slice\(-8\)/);
-  assert.match(chatBlock, /chatTurns\.push\(\{ role: 'user', text \}, \{ role: 'atlas', text: reply \}\)/);
+  const priorIdx = chatBlock.indexOf('const priorTurns = chatTurns.slice(-8)');
+  const userPushIdx = chatBlock.indexOf("chatTurns.push({ role: 'user', text })");
+  const replyIdx = chatBlock.indexOf("getChatReply(text, priorTurns");
+  assert.ok(priorIdx !== -1, 'must capture priorTurns');
+  assert.ok(userPushIdx > priorIdx, 'user turn recorded immediately after capturing priorTurns');
+  assert.ok(replyIdx > userPushIdx, 'getChatReply still receives priorTurns only (current msg sent as message)');
+  assert.match(chatBlock, /chatTurns\.push\(\{ role: 'atlas', text: reply \}\)/);
   // The chat path must never touch the write/approve machinery.
   assert.doesNotMatch(chatBlock, /approveBtn\.click|\/api\/log-workout|\/api\/complete-workout/);
 });
