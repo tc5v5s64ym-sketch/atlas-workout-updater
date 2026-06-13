@@ -153,10 +153,36 @@
 
   /* ===== Suggested-workout message (templated) ===== */
 
+  function recommendedIntent(data) {
+    const intents = (data && data.intents) || [];
+    return intents.find(i => i.recommended) || intents[0] || null;
+  }
+
+  // The exercise list + closing line, shared by the templated and LLM-voiced
+  // suggested-workout messages (the app always shows the exercises; only the
+  // "why" prose above them changes).
+  function suggestedExercisesBlock(rec) {
+    const exercises = (rec && rec.exercises) || [];
+    const lines = [];
+    let any = false;
+    for (const raw of exercises) {
+      const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
+      if (!ex || !ex.name) continue;
+      if (!any) { lines.push(''); any = true; }
+      const hasTarget = ex.weight != null && ex.reps != null;
+      const target = hasTarget ? ` — ${ex.weight} × ${ex.reps}${ex.sets ? ` × ${ex.sets}` : ''}` : '';
+      lines.push(`* ${ex.name}${target}`);
+    }
+    if (any) {
+      lines.push('');
+      lines.push("Log your first sets when you're ready and I'll react as you go.");
+    }
+    return lines;
+  }
+
   function getSuggestedWorkoutMessage(data) {
     const read = (data && data.todays_read) || {};
-    const intents = (data && data.intents) || [];
-    const rec = intents.find(i => i.recommended) || intents[0] || null;
+    const rec = recommendedIntent(data);
     const label = read.recommended_label || (rec && rec.label) || null;
     const exercises = (rec && rec.exercises) || [];
 
@@ -200,17 +226,55 @@
     }
 
     if (exercises.length) {
-      lines.push('');
-      for (const raw of exercises) {
-        const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
-        if (!ex || !ex.name) continue;
-        const hasTarget = ex.weight != null && ex.reps != null;
-        const target = hasTarget ? ` — ${ex.weight} × ${ex.reps}${ex.sets ? ` × ${ex.sets}` : ''}` : '';
-        lines.push(`* ${ex.name}${target}`);
-      }
-      lines.push('');
-      lines.push("Log your first sets when you're ready and I'll react as you go.");
+      for (const line of suggestedExercisesBlock(rec)) lines.push(line);
     }
+    return lines.join('\n');
+  }
+
+  // LLM path: send the deterministic plan facts to /api/coach/message (kind:plan)
+  // and compose the reply as headline + Gemini "why" prose + the exercise list.
+  // Returns null on no-key / empty facts / timeout / failure so the caller falls
+  // back to the templated getSuggestedWorkoutMessage. Never blocks the tile.
+  function buildPlanFacts(data) {
+    const read = (data && data.todays_read) || {};
+    const rec = recommendedIntent(data);
+    const labels = (typeof FRIENDLY_PATTERN_LABELS !== 'undefined') ? FRIENDLY_PATTERN_LABELS : {};
+    const words = (typeof FRIENDLY_STATUS_WORDS !== 'undefined') ? FRIENDLY_STATUS_WORDS : {};
+    const readiness = (read.patterns || []).map(p => ({
+      pattern: labels[p.label || p.pattern] || p.label || p.pattern,
+      status: words[p.status] || p.status
+    })).filter(r => r.pattern && r.status && r.status !== '—');
+    return {
+      label: read.recommended_label || (rec && rec.label) || null,
+      focus: read.recommended_reason || (rec && rec.focus) || null,
+      why_today: (rec && rec.why_today) || [],
+      readiness,
+      data_points: (rec && rec.data_points) || []
+    };
+  }
+
+  async function getLlmPlanMessage(data) {
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
+    const facts = buildPlanFacts(data);
+    if (!facts.label && !facts.why_today.length) return null; // nothing to explain (new user)
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
+    const request = api('/api/coach/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ facts, kind: 'plan' })
+    }).then(res => (res && res.data && res.data.message) || null);
+    return Promise.race([request, timeout]);
+  }
+
+  // Compose the Gemini "why" prose into the full suggested-workout note: the
+  // headline and the exercise list stay deterministic; only the reasoning is voiced.
+  function composeLlmPlanMessage(whyProse, data) {
+    const read = (data && data.todays_read) || {};
+    const rec = recommendedIntent(data);
+    const label = read.recommended_label || (rec && rec.label) || null;
+    const lines = [label ? `Today's read: ${label}.` : "Here's a solid session for today."];
+    if (whyProse && whyProse.trim()) { lines.push(''); lines.push(whyProse.trim()); }
+    for (const line of suggestedExercisesBlock(rec)) lines.push(line);
     return lines.join('\n');
   }
 
@@ -251,8 +315,15 @@
     body.textContent = 'Reading your recent training…';
     try {
       const res = await api('/api/plan/intent-recommendation');
+      const data = res.data || {};
+      // Prefer Gemini's voiced "why"; fall back to the templated note on
+      // no-key / slow / error so the tile always answers.
+      const whyProse = await getLlmPlanMessage(data).catch(() => null);
       body.textContent = '';
-      await typeOut(body, getSuggestedWorkoutMessage(res.data || {}));
+      const message = (whyProse && whyProse.trim())
+        ? composeLlmPlanMessage(whyProse, data)
+        : getSuggestedWorkoutMessage(data);
+      await typeOut(body, message);
     } catch {
       body.textContent = '';
       await typeOut(body, "I couldn't pull a suggestion just now — but start logging and I'll react as you go.");

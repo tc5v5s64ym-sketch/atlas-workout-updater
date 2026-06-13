@@ -256,6 +256,22 @@ test('Suggested Workout types out the why-today rationale', async ({ page }) => 
   await expect(bubble).toContainText('Bench Press');
 });
 
+test('Suggested Workout uses the Gemini plan voice when available', async ({ page }) => {
+  await openApp(page);
+  // Override just the coach endpoint to return a configured plan message.
+  await page.route('**/api/coach/message', route => route.fulfill(json({
+    status: 'success',
+    data: { message: "Heads up — you're at 1.5× your usual load, so today is blood flow, not max effort.", configured: true, kind: 'plan' }
+  })));
+
+  await page.locator('.suggest-tile[data-suggest="workout"]').click();
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
+  await expect(bubble).toContainText("Today's read: Push");
+  await expect(bubble).toContainText('today is blood flow, not max effort'); // Gemini prose
+  await expect(bubble).toContainText('Bench Press');                          // exercises still shown
+  await expect(bubble).not.toContainText('Why today:');                       // templated bullets replaced
+});
+
 test('Preview flow renders a no-write review card from mocked APIs', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
