@@ -63,7 +63,8 @@
   }
 
   function softScroll(node) {
-    try { node.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch { /* noop */ }
+    const behavior = prefersReducedMotion() ? 'auto' : 'smooth';
+    try { node.scrollIntoView({ behavior, block: 'nearest' }); } catch { /* noop */ }
   }
 
   /* ===== Bubbles + empty state ===== */
