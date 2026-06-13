@@ -299,8 +299,21 @@ function formatLogRows(logRows) {
   return logRows.map(normalizeLogRow);
 }
 
+function validateEffortRowBounds(row) {
+  // row is in effortColumns order: [date, session_id, duration, active_calories, total_calories, average_hr, peak_hr, location, notes]
+  // Matches the bounds already enforced by /api/complete-workout via normalizeAndValidateParsedMetrics.
+  validateNumberField('active_calories', row[3], 1, 3000);
+  validateNumberField('total_calories', row[4], 1, 4000);
+  validateNumberField('average_hr', row[5], 40, 220);
+  if (row[6] !== null && row[6] !== undefined && row[6] !== '') {
+    validateNumberField('peak_hr', row[6], 40, 230);
+  }
+}
+
 function formatEffortRow(effortRow) {
-  return normalizeEffortRow(effortRow);
+  const row = normalizeEffortRow(effortRow);
+  validateEffortRowBounds(row);
+  return row;
 }
 
 
