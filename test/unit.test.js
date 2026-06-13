@@ -1670,11 +1670,14 @@ test('deload suggestions render the exercise name, not the lift code, as the lab
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const start = appSource.indexOf('const deloads = data.deload_suggestions');
   assert.ok(start !== -1, 'deload rendering block must exist');
-  const block = appSource.slice(start, start + 800);
+  const block = appSource.slice(start, start + 1000);
   // Visible label prefers the exercise name; lift code is only the click target.
   assert.match(block, /d\.exercise \|\| d\.liftCode/, 'label must prefer exercise name over lift code');
   assert.match(block, /'data-lift': d\.liftCode/, 'lift code must remain the data-lift navigation target');
   assert.doesNotMatch(block, /text: d\.liftCode/, 'lift code must not be the visible link text');
+  // UNKNOWN groups code-less rows whose progress view is empty — the label must
+  // not claim a specific exercise the link can't navigate to.
+  assert.match(block, /d\.liftCode === 'UNKNOWN'/, 'UNKNOWN code must keep the code as its visible label');
 });
 
 test('computeFatigueStatus flags high recent volume against baseline', () => {
