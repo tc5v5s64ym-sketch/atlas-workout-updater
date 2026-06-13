@@ -1015,9 +1015,9 @@ app.post('/api/coach/chat', async (req, res) => {
     ]);
     const context = buildChatContext(allLog, allEffort, req.body && req.body.context);
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
-    const reply = await coach.generateChatReply({ message, context, history });
+    const { reply, propose_edit } = await coach.generateChatReply({ message, context, history });
     return standardSuccess(req, res, 'Coach chat reply', {
-      message: reply, configured: true, model: coach.coachModel(), source: 'gemini'
+      message: reply, propose_edit: propose_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
     });
   } catch (error) {
     // Degrade gracefully — the client shows a templated fallback, never an error bubble.

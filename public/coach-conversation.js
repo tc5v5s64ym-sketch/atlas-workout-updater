@@ -457,17 +457,70 @@
   // Atlas's no-database rule). We send the last few turns for context.
   const chatTurns = []; // [{ role: 'user' | 'atlas', text }]
 
+  // Bounds mirror rules/validationRules.js — validated here before touching the DOM.
+  const EDIT_BOUNDS = { weight: [0, 1500], reps: [1, 100], rir: [0, 10] };
+
+  function validateProposedEdit(edit, rowCount) {
+    if (!edit || typeof edit !== 'object') return false;
+    const { action } = edit;
+    if (!['update_set', 'delete_set', 'add_set'].includes(action)) return false;
+    if ((action === 'update_set' || action === 'delete_set') &&
+        (!Number.isInteger(edit.index) || edit.index < 0 || edit.index >= rowCount)) return false;
+    for (const [field, [min, max]] of Object.entries(EDIT_BOUNDS)) {
+      const v = edit[field];
+      if (v != null) {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n < min || n > max) return false;
+      }
+    }
+    return true;
+  }
+
+  // Apply a coach-proposed edit to the visible preview rows. Returns true when
+  // applied, false when the edit fails validation. Always calls invalidatePreview
+  // so the lifter must re-preview before the approve button re-enables — the
+  // trust loop (preview → approve → write) is never skipped.
+  function applyProposedEdit(edit) {
+    const table = (typeof setsTableBody !== 'undefined') ? setsTableBody : null;
+    const rows = table ? Array.from(table.children) : [];
+    if (!validateProposedEdit(edit, rows.length)) return false;
+
+    if (edit.action === 'delete_set') {
+      rows[edit.index].remove();
+      const editor = document.getElementById('parsed-rows-editor');
+      if (editor && table && !table.children.length) editor.hidden = true;
+    } else if (edit.action === 'update_set') {
+      const row = rows[edit.index];
+      if (edit.weight != null) row.querySelector('.set-weight').value = String(edit.weight);
+      if (edit.reps != null) row.querySelector('.set-reps').value = String(edit.reps);
+      if (edit.rir != null) row.querySelector('.set-rir').value = String(edit.rir);
+    } else if (edit.action === 'add_set') {
+      if (typeof addSetRow !== 'function') return false;
+      const lastRow = rows[rows.length - 1];
+      const exercise = lastRow ? (lastRow.querySelector('.set-exercise')?.value || null) : null;
+      addSetRow({ exercise, weight: edit.weight, reps: edit.reps, rir: edit.rir });
+    }
+
+    // Force re-preview: the edited rows are unreviewed until the lifter runs a
+    // new dry-run preview, which re-enables the approve button.
+    if (typeof invalidatePreview === 'function') invalidatePreview();
+    return true;
+  }
+
   // `history` is the PRIOR turns only — the current message is sent separately as
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
   async function getChatReply(message, history, context) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
-    const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null };
+    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null }), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, history: history.slice(-8), context: context || {} })
-    }).then(res => (res && res.data && res.data.message) || null);
+    }).then(res => ({
+      message: (res && res.data && res.data.message) || null,
+      propose_edit: (res && res.data && res.data.propose_edit) || null
+    }));
     return Promise.race([request, timeout]);
   }
 
@@ -494,15 +547,31 @@
 
     const handle = appendAtlasBubble();
     if (!handle) return;
-    const { body } = handle;
+    const { bubble, body } = handle;
     body.textContent = 'Thinking…';
 
-    let reply = null;
-    try { reply = await getChatReply(text, priorTurns, detail && detail.context); } catch { reply = null; }
+    let chatResult = { message: null, propose_edit: null };
+    try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
+
+    let reply = chatResult.message;
     if (!reply || !reply.trim()) reply = chatFallback(text);
 
     body.textContent = '';
     await typeOut(body, reply);
+
+    // Apply the structured edit (if any) after prose is typed — the lifter sees
+    // the explanation first, then the preview updates. The trust loop is intact:
+    // invalidatePreview() forces a new dry-run before approve re-enables.
+    if (chatResult.propose_edit) {
+      const applied = applyProposedEdit(chatResult.propose_edit);
+      if (applied) {
+        const note = document.createElement('div');
+        note.className = 'edit-applied-note';
+        note.textContent = 'Preview updated — review and tap Save when ready.';
+        bubble.appendChild(note);
+      }
+    }
+
     chatTurns.push({ role: 'atlas', text: reply });
   }
 

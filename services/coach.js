@@ -209,8 +209,55 @@ function buildChatSystemPrompt() {
     '- You can only TALK and SUGGEST. You never write, save, log, edit, undo, or delete anything — that is impossible for you. Never say or imply that you saved, logged, changed, or removed something.',
     '- To log a workout, the lifter types it into the composer and approves the preview. Atlas slash notation: "Bench 225 5/2 5/2" means Bench Press, 225 lb × 5 reps at 2 RIR, twice.',
     '- If they name a lift with no sets (e.g. "Bench"), ask for the sets in that format rather than guessing.',
-    '- Keep it tight — usually 1–4 sentences. Plain text only: no markdown headings, no bold, no code fences.'
+    '- Keep it tight — usually 1–4 sentences. Plain text only: no markdown headings, no bold, no code fences.',
+    '',
+    'PROPOSING EDITS TO THE CURRENT PREVIEW:',
+    '- When the lifter clearly asks to change, update, delete, or add a specific set in current_preview, you MAY propose an edit.',
+    '- Only propose an edit when: (a) current_preview is non-empty, (b) the intent is unambiguous.',
+    '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly:',
+    '  PROPOSE_EDIT: {"action":"update_set","index":0,"weight":235,"reps":5,"rir":2}',
+    '  or PROPOSE_EDIT: {"action":"delete_set","index":2}',
+    '  or PROPOSE_EDIT: {"action":"add_set","weight":225,"reps":5,"rir":2}',
+    '- index is 0-based. For update_set, omit weight/reps/rir fields you are not changing.',
+    '- The PROPOSE_EDIT line is stripped by the app and never shown to the lifter — write your prose as if it does not exist.',
+    '- If the intent is ambiguous or current_preview is empty, respond in prose only with no PROPOSE_EDIT line.'
   ].join('\n');
+}
+
+// Extract an optional PROPOSE_EDIT: {...} from the last non-blank line of a
+// Gemini reply. Returns { reply: proseText, propose_edit: objectOrNull }.
+// Malformed JSON or an unrecognised schema → propose_edit is null.
+function parseEditFromReply(text) {
+  if (typeof text !== 'string') return { reply: '', propose_edit: null };
+  const lines = text.split('\n');
+  // Walk backwards, skip blank lines, inspect the first non-empty line from end.
+  let editLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('PROPOSE_EDIT:')) editLineIdx = i;
+    break; // stop after finding the first non-blank line from the end
+  }
+  if (editLineIdx === -1) return { reply: text.trim(), propose_edit: null };
+  const jsonPart = lines[editLineIdx].trim().slice('PROPOSE_EDIT:'.length).trim();
+  const prose = lines.slice(0, editLineIdx).join('\n').trim();
+  let propose_edit = null;
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (isValidEditSchema(parsed)) propose_edit = parsed;
+  } catch { /* malformed JSON — no edit */ }
+  return { reply: prose || text.trim(), propose_edit };
+}
+
+// Structural schema check only — bounds are validated by the client against
+// the visible rows so the server never needs to know row count.
+function isValidEditSchema(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const { action } = obj;
+  if (action === 'update_set' || action === 'delete_set') {
+    return Number.isInteger(obj.index) && obj.index >= 0;
+  }
+  return action === 'add_set';
 }
 
 // Forward ONLY a known, bounded snapshot — never arbitrary client object keys.
@@ -275,7 +322,8 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
   for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
-  return callGeminiContents(buildChatSystemPrompt(), contents, { timeoutMs, maxOutputTokens: 400 });
+  const raw = await callGeminiContents(buildChatSystemPrompt(), contents, { timeoutMs, maxOutputTokens: 450 });
+  return parseEditFromReply(raw);
 }
 
 function extractText(data) {
@@ -298,5 +346,7 @@ module.exports = {
   buildChatSystemPrompt,
   sanitizeChatContext,
   sanitizeChatHistory,
-  generateChatReply
+  generateChatReply,
+  parseEditFromReply,
+  isValidEditSchema
 };

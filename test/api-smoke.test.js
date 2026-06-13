@@ -130,6 +130,7 @@ const fakeCoachState = {
   message: 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.',
   planMessage: "You're carrying a lot of fatigue, so today is about blood flow, not load.",
   chatMessage: 'Your bench has been flat for a few sessions — try 5×5 at 225 this week.',
+  chatEditProposal: null, // set to an edit object in tests that exercise the edit path
   throwError: null
 };
 const fakeCoach = {
@@ -145,7 +146,7 @@ const fakeCoach = {
   },
   generateChatReply: async () => {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
-    return fakeCoachState.chatMessage;
+    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal };
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -441,6 +442,38 @@ test('api smoke: coach/chat never appends to a sheet', async () => {
     fakeCoachState.configured = false;
   }
   assert.equal(fakeSheetsState.appendCalls.length, before, 'chat endpoint must not write any rows');
+});
+
+test('api smoke: coach/chat passes propose_edit through to the client', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.chatEditProposal = { action: 'update_set', index: 0, weight: 235, reps: 5 };
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'change set 1 to 235×5' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, fakeCoachState.chatMessage, 'prose reply unchanged');
+    assert.deepEqual(body.data.propose_edit, { action: 'update_set', index: 0, weight: 235, reps: 5 });
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatEditProposal = null;
+  }
+});
+
+test('api smoke: coach/chat returns null propose_edit when none proposed', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.chatEditProposal = null;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my bench trending?' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.propose_edit, null);
+  } finally {
+    fakeCoachState.configured = false;
+  }
 });
 
 test('api smoke: last-session reaches literal handler', async () => {
