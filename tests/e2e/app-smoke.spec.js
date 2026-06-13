@@ -272,6 +272,65 @@ test('Suggested Workout uses the Gemini plan voice when available', async ({ pag
   await expect(bubble).not.toContainText('Why today:');                       // templated bullets replaced
 });
 
+test('Chat: a non-loggable question gets a coach reply in-thread and never writes', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Make the parser report "no sets" so the message is treated as a question,
+  // not a workout to log. (Registered after openApp, so it wins.)
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+    }
+  })));
+
+  let chatBody = null;
+  await page.route('**/api/coach/chat', route => {
+    chatBody = route.request().postDataJSON();
+    return route.fulfill(json({
+      status: 'success',
+      data: { message: 'Your bench has been flat for 3 sessions — try 5×5 at 225 this week.', configured: true, source: 'gemini' }
+    }));
+  });
+
+  await page.locator('#workout-text').fill('how is my bench trending?');
+  await page.locator('#preview-btn').click();
+
+  // The question shows as the lifter's bubble; Atlas answers in-thread.
+  await expect(page.locator('#thread-messages')).toContainText('how is my bench trending?');
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('flat for 3 sessions');
+
+  // The chat request carried the message — and NOTHING was written or previewed.
+  expect(chatBody).toMatchObject({ message: 'how is my bench trending?' });
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
+test('Chat: a coach outage falls back to a deterministic reply, still no write', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+    }
+  })));
+  // Coach unconfigured / down → message:null. The chat must not dead-end.
+  await page.route('**/api/coach/chat', route => route.fulfill(json({
+    status: 'success', data: { message: null, configured: false }
+  })));
+
+  await page.locator('#workout-text').fill('hey');
+  await page.locator('#preview-btn').click();
+
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Log a set like');
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
 test('Preview flow renders a no-write review card from mocked APIs', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
