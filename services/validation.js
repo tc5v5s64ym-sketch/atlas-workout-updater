@@ -119,45 +119,120 @@ function getSimpleTrend(values) {
   return 'flat';
 }
 
-// Single source of truth for the five quality criteria. Each label is the
-// human-readable line the "how we scored this" popover shows; each test maps
-// the same metric inputs calculateQualityScore has always used to a boolean.
+// 0–100 quality score broken into five weighted criteria.
+// Each criterion's score() returns { points, description } where description
+// contains the actual session numbers (e.g. "14 sets — solid session").
+// qualityScoreBreakdown is the single source of truth; calculateQualityScore
+// sums the earned points.
 const QUALITY_CRITERIA = [
   {
-    label: '10 or more sets',
-    test: ({ totalSets }) => Number.isFinite(totalSets) && totalSets >= 10
-  },
-  {
-    label: '30 or more minutes',
-    test: ({ effortDuration }) => parseDurationMinutes(effortDuration) >= 30
-  },
-  {
-    label: 'Average heart rate 100+',
-    test: ({ averageHR }) => {
-      const avgHR = parseNumber(averageHR);
-      return avgHR !== null && avgHR >= 100;
+    id: 'volume',
+    label: 'Volume',
+    maxPoints: 30,
+    score({ totalSets }) {
+      const n = Number.isFinite(totalSets) ? totalSets : 0;
+      if (n >= 12) return { points: 30, description: `${n} sets — solid session` };
+      if (n >= 9)  return { points: 22, description: `${n} sets — good output` };
+      if (n >= 6)  return { points: 14, description: `${n} sets — moderate volume` };
+      if (n >= 3)  return { points: 6,  description: `${n} sets — light session` };
+      return { points: 0, description: `${n} set${n === 1 ? '' : 's'} logged` };
     }
   },
   {
-    label: '3 or more exercises',
-    test: ({ uniqueExercisesCount }) =>
-      Number.isFinite(uniqueExercisesCount) && uniqueExercisesCount >= 3
+    id: 'intensity',
+    label: 'Intensity',
+    maxPoints: 25,
+    score({ setsWithRir }) {
+      if (!Array.isArray(setsWithRir) || setsWithRir.length === 0) {
+        return { points: 12, description: 'No RIR tracked — add proximity to failure data' };
+      }
+      const avg = setsWithRir.reduce((s, v) => s + v, 0) / setsWithRir.length;
+      const str = avg.toFixed(1);
+      if (avg <= 1)  return { points: 25, description: `Avg ${str} RIR — working close to failure` };
+      if (avg <= 2)  return { points: 20, description: `Avg ${str} RIR — leaving little in reserve` };
+      if (avg <= 3)  return { points: 13, description: `Avg ${str} RIR — moderate effort` };
+      return { points: 5, description: `Avg ${str} RIR — room to push harder` };
+    }
   },
   {
-    label: 'No data warnings',
-    test: ({ validationWarnings }) =>
-      !Array.isArray(validationWarnings) || validationWarnings.length === 0
+    id: 'effort',
+    label: 'Effort',
+    maxPoints: 25,
+    score({ effortDuration, averageHR, activeCalories }) {
+      const mins = parseDurationMinutes(effortDuration);
+      const hr   = parseNumber(averageHR);
+      const cal  = parseNumber(activeCalories);
+      if (mins === 0 && hr === null) {
+        return { points: 10, description: 'No Apple Watch data this session' };
+      }
+      let pts = 0;
+      if (mins >= 60)      pts += 12;
+      else if (mins >= 45) pts += 10;
+      else if (mins >= 30) pts += 7;
+      else if (mins >= 20) pts += 4;
+      if (hr !== null) {
+        if (hr >= 120)      pts += 13;
+        else if (hr >= 100) pts += 10;
+        else if (hr >= 80)  pts += 6;
+        else                pts += 2;
+      }
+      const parts = [];
+      if (mins > 0) parts.push(`${Math.round(mins)} min`);
+      if (hr !== null) parts.push(`${Math.round(hr)} bpm avg`);
+      if (cal !== null && cal > 0) parts.push(`${Math.round(cal)} cal`);
+      return { points: Math.min(pts, 25), description: parts.join(' · ') || 'Effort recorded' };
+    }
+  },
+  {
+    id: 'balance',
+    label: 'Balance',
+    maxPoints: 10,
+    score({ uniqueExercisesCount }) {
+      const n = Number.isFinite(uniqueExercisesCount) ? uniqueExercisesCount : 0;
+      if (n >= 4) return { points: 10, description: `${n} exercises — well-rounded session` };
+      if (n >= 3) return { points: 7,  description: `${n} exercises — good variety` };
+      if (n >= 2) return { points: 4,  description: `${n} exercises` };
+      return { points: 0, description: `${n} exercise${n === 1 ? '' : 's'} — try adding variety` };
+    }
+  },
+  {
+    id: 'progression',
+    label: 'Progression',
+    maxPoints: 10,
+    score({ sessionBestByLift, historicalBestByLift }) {
+      const sessionLifts = sessionBestByLift || {};
+      const histLifts    = historicalBestByLift || {};
+      const liftCodes    = Object.keys(sessionLifts);
+      if (liftCodes.length === 0) return { points: 0, description: 'No weighted sets to track' };
+      const histKnown = liftCodes.filter(lc => lc in histLifts);
+      if (histKnown.length === 0) return { points: 5, description: 'Not enough history to compare yet' };
+      let prExercise = null;
+      let improving = 0;
+      for (const lc of histKnown) {
+        if (sessionLifts[lc].weight > histLifts[lc]) {
+          improving++;
+          if (!prExercise) prExercise = sessionLifts[lc].exercise || lc;
+        }
+      }
+      if (prExercise) return { points: 10, description: `New best on ${prExercise}` };
+      if (improving > 0) return { points: 7, description: `${improving} lift${improving === 1 ? '' : 's'} improving` };
+      return { points: 3, description: 'Holding steady — no new records this session' };
+    }
   }
 ];
 
-// Per-criterion verdicts for the same inputs calculateQualityScore receives.
-// The frontend renders this as the tappable "how we arrived at the score" card.
+// Returns per-criterion breakdown with earned points, max points, and a
+// session-specific description string. The frontend renders this as the
+// tappable "how we scored this" popover.
 function qualityScoreBreakdown(metrics = {}) {
-  return QUALITY_CRITERIA.map(({ label, test }) => ({ label, met: test(metrics) }));
+  return QUALITY_CRITERIA.map(({ id, label, maxPoints, score }) => {
+    const { points, description } = score(metrics);
+    return { id, label, points, maxPoints, description };
+  });
 }
 
 function calculateQualityScore(metrics) {
-  return qualityScoreBreakdown(metrics).reduce((score, { met }) => score + (met ? 1 : 0), 0);
+  return qualityScoreBreakdown(metrics).reduce((sum, c) => sum + c.points, 0);
 }
 
 module.exports = {

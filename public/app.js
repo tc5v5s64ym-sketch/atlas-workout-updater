@@ -49,12 +49,12 @@ function setStatus(container, message, kind) {
   if (message) container.appendChild(el('div', { class: `status-msg ${kind}`, text: message }));
 }
 
-// "Session quality: X / 5" with a tappable circled-i that reveals how the
-// score was reached. Read-only — it explains the deterministic breakdown the
-// backend already computed (quality_breakdown), never recomputes it client-side.
+// "Session quality: X / 100" with a tappable circled-i that reveals the
+// weighted breakdown. Each criterion shows earned / max points and a
+// session-specific description (e.g. "14 sets — solid session").
 function buildQualityRow(score, breakdown) {
   const wrap = el('div', { class: 'session-quality' });
-  wrap.appendChild(el('span', { text: `Session quality: ${score} / 5` }));
+  wrap.appendChild(el('span', { text: `Session quality: ${score} / 100` }));
 
   const criteria = Array.isArray(breakdown) ? breakdown : [];
   if (!criteria.length) return wrap;
@@ -70,9 +70,11 @@ function buildQualityRow(score, breakdown) {
   const pop = el('div', { class: 'quality-popover', role: 'dialog', 'aria-label': 'Quality score breakdown' });
   pop.appendChild(el('div', { class: 'quality-popover-title', text: 'How we scored this' }));
   for (const c of criteria) {
-    pop.appendChild(el('div', { class: `quality-criterion ${c.met ? 'met' : 'unmet'}` }, [
-      el('span', { class: 'quality-criterion-mark', 'aria-hidden': 'true', text: c.met ? '✓' : '✕' }),
-      el('span', { class: 'quality-criterion-label', text: c.label })
+    const tier = c.points === c.maxPoints ? 'full' : c.points > 0 ? 'partial' : 'zero';
+    pop.appendChild(el('div', { class: `quality-criterion ${tier}` }, [
+      el('span', { class: 'quality-criterion-label', text: c.label }),
+      el('span', { class: 'quality-criterion-pts', text: `${c.points} / ${c.maxPoints}` }),
+      el('span', { class: 'quality-criterion-desc', text: c.description || '' })
     ]));
   }
 
@@ -2890,7 +2892,7 @@ function renderCompleteWorkoutPreview(result) {
     previewContent.appendChild(editLink);
   }
 
-  previewContent.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 5` }));
+  previewContent.appendChild(el('p', { class: 'muted', text: `Session quality score: ${data.quality_score ?? '—'} / 100` }));
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
 }
