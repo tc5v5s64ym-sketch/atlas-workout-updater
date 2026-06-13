@@ -761,7 +761,7 @@ function renderProgressSnapshot(s) {
   const target = Number(s.streak_target_per_week || 3);
   const grid = el('div', { class: 'metric-grid' });
   const metrics = [
-    [s.total_sessions, 'Sessions'],
+    [s.total_sessions, 'Total sessions'],
     [s.average_sessions_per_week, 'Avg / week'],
     [s.total_sets, 'Total sets'],
     [`${s.current_week_sessions ?? 0}/${target}`, 'This week']
