@@ -2059,6 +2059,18 @@ function extractLiftCodes(logRowsPreview) {
   return codes;
 }
 
+// Hand the just-previewed sets to the conversation layer (coach-conversation.js)
+// so it can type a coaching note with an inline Save. Read-only narration: it
+// never writes — Save just clicks #approve-btn, which stays gated by the dry-run
+// proof. Best-effort; a missing listener is a no-op.
+function emitCoachPreview(rows, liftCodes, effortOnly) {
+  try {
+    document.dispatchEvent(new CustomEvent('atlas:preview-ready', {
+      detail: { rows: rows || [], liftCodes: liftCodes || [], effortOnly: Boolean(effortOnly) }
+    }));
+  } catch { /* narration is optional */ }
+}
+
 async function fetchReaction(liftCode) {
   if (!liftCode || !getApiKey()) return null;
   try {
@@ -2619,6 +2631,7 @@ function renderLogWorkoutPreview(result, effortRow) {
       }).catch(() => {});
     }
   }
+  emitCoachPreview(data.log_rows_preview, liftCodes, false);
 }
 
 function renderCompleteWorkoutPreview(result) {
@@ -2652,6 +2665,7 @@ function renderCompleteWorkoutPreview(result) {
   }
   const completeLiftCodes = extractLiftCodes(data.rows_to_write);
   if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;
+  emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly);
   if (completeLiftCodes.length && getApiKey()) {
     const suggestionSlot = el('div', {});
     previewContent.appendChild(suggestionSlot);
