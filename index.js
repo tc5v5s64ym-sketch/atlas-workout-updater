@@ -940,23 +940,27 @@ app.get('/api/health/gemini', (req, res) => {
   });
 });
 
-// POST /api/coach/message — turn the deterministic workout facts into coach
-// prose via Gemini. READ-ONLY: this endpoint never touches Google Sheets. When
-// Gemini is unconfigured or fails, it returns message:null so the client falls
-// back to its templated coaching — the conversation is never blocked.
+// POST /api/coach/message — turn deterministic facts into coach prose via
+// Gemini. body.kind selects the voice: "set" (default) reacts to a logged set;
+// "plan" explains why today's recommended session fits. READ-ONLY: this endpoint
+// never touches Google Sheets. When Gemini is unconfigured or fails, it returns
+// message:null so the client falls back to its templated copy — never blocked.
 app.post('/api/coach/message', async (req, res) => {
   const facts = req.body && req.body.facts;
   if (!facts || typeof facts !== 'object') {
     return standardError(req, res, 'facts object is required', null, 400);
   }
+  const kind = req.body.kind === 'plan' ? 'plan' : 'set';
   if (!coach.isConfigured()) {
     return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
       message: null, configured: false, model: coach.coachModel()
     });
   }
   try {
-    const message = await coach.generateCoachMessage(facts);
-    return standardSuccess(req, res, 'Coach message', { message, configured: true, model: coach.coachModel(), source: 'gemini' });
+    const message = kind === 'plan'
+      ? await coach.generatePlanMessage(facts)
+      : await coach.generateCoachMessage(facts);
+    return standardSuccess(req, res, 'Coach message', { message, configured: true, model: coach.coachModel(), source: 'gemini', kind });
   } catch (error) {
     // Degrade gracefully: tell the client to use its templated fallback rather
     // than surfacing an error in the chat.

@@ -86,18 +86,60 @@ function buildCoachUserPrompt(facts) {
   return `STRUCTURED FACTS:\n${JSON.stringify(sanitizeFacts(facts), null, 2)}`;
 }
 
-// Call Gemini and return the coaching prose. Throws when unconfigured, on a
-// non-OK response, on timeout, or when the model returns no text — the route
-// turns any throw into a graceful "fall back to templated" response so the UI
-// is never blocked.
-async function generateCoachMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+// ── Plan voice: "why this session, today" ─────────────────────────────────────
+// Phrases the deterministic intent-recommendation reasoning as a short coaching
+// line. The engine still owns the reasons/readiness/numbers; this only words them.
+function buildPlanSystemPrompt() {
+  return [
+    'You are Atlas, a sharp strength coach. The athlete just asked what to train today.',
+    "You are given STRUCTURED FACTS as JSON: today's recommended focus, the reasons behind it, current movement-pattern readiness, and supporting numbers.",
+    'Write 1–3 sentences, in a natural coaching voice, explaining WHY this focus fits today.',
+    '',
+    'Hard rules:',
+    '- Use ONLY the reasons, readiness, and numbers in the facts. Never invent data.',
+    '- Do not list the exercises — the app already shows them.',
+    '- Speak to the athlete ("you"). Be direct and encouraging, not a bulleted report.',
+    '- Under ~70 words. Plain text only — no markdown, no bullets, no headings.',
+    '- You never write to any database or sheet; you only explain.'
+  ].join('\n');
+}
+
+function sanitizePlanFacts(facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const valueStr = v => (v == null ? null : String(v).trim().slice(0, 40) || null);
+  return {
+    label: strOrNull(f.label),
+    focus: strOrNull(f.focus),
+    why_today: Array.isArray(f.why_today) ? f.why_today.map(strOrNull).filter(Boolean).slice(0, 4) : [],
+    readiness: Array.isArray(f.readiness)
+      ? f.readiness.slice(0, 6)
+          .map(r => ({ pattern: strOrNull(r && r.pattern), status: strOrNull(r && r.status) }))
+          .filter(r => r.pattern)
+      : [],
+    data_points: Array.isArray(f.data_points)
+      ? f.data_points.slice(0, 4)
+          .map(d => ({ label: strOrNull(d && d.label), value: valueStr(d && d.value), context: strOrNull(d && d.context) }))
+          .filter(d => d.label && d.value)
+      : []
+  };
+}
+
+function buildPlanUserPrompt(facts) {
+  return `STRUCTURED FACTS:\n${JSON.stringify(sanitizePlanFacts(facts), null, 2)}`;
+}
+
+// Single Gemini call shared by the set-coaching and plan voices. Throws when
+// unconfigured, on a non-OK response, on timeout, or on empty output — the route
+// turns any throw into a graceful "fall back to templated" response so the UI is
+// never blocked.
+async function callGemini(systemText, userText, timeoutMs) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY is not configured');
 
   const url = `${GEMINI_ENDPOINT}/${encodeURIComponent(coachModel())}:generateContent`;
   const body = {
-    systemInstruction: { parts: [{ text: buildCoachSystemPrompt() }] },
-    contents: [{ role: 'user', parts: [{ text: buildCoachUserPrompt(facts) }] }],
+    systemInstruction: { parts: [{ text: systemText }] },
+    contents: [{ role: 'user', parts: [{ text: userText }] }],
     generationConfig: { temperature: 0.7, maxOutputTokens: 320, topP: 0.95 }
   };
 
@@ -126,6 +168,14 @@ async function generateCoachMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = 
   return text;
 }
 
+async function generateCoachMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  return callGemini(buildCoachSystemPrompt(), buildCoachUserPrompt(facts), timeoutMs);
+}
+
+async function generatePlanMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  return callGemini(buildPlanSystemPrompt(), buildPlanUserPrompt(facts), timeoutMs);
+}
+
 function extractText(data) {
   const parts = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
   if (!Array.isArray(parts)) return '';
@@ -138,5 +188,9 @@ module.exports = {
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
   sanitizeFacts,
-  generateCoachMessage
+  buildPlanSystemPrompt,
+  buildPlanUserPrompt,
+  sanitizePlanFacts,
+  generateCoachMessage,
+  generatePlanMessage
 };

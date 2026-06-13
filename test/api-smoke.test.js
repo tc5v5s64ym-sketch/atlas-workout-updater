@@ -128,6 +128,7 @@ require.cache[visionPath] = {
 const fakeCoachState = {
   configured: false,
   message: 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.',
+  planMessage: "You're carrying a lot of fatigue, so today is about blood flow, not load.",
   throwError: null
 };
 const fakeCoach = {
@@ -136,6 +137,10 @@ const fakeCoach = {
   generateCoachMessage: async () => {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return fakeCoachState.message;
+  },
+  generatePlanMessage: async () => {
+    if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
+    return fakeCoachState.planMessage;
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -329,6 +334,34 @@ test('api smoke: health/gemini reflects configured state', async () => {
   } finally {
     fakeCoachState.configured = false;
   }
+});
+
+test('api smoke: coach/message kind=plan returns the plan voice when configured', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'plan', facts: { label: 'Recovery / Pump', why_today: ['high volume'] } })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.configured, true);
+    assert.equal(body.data.kind, 'plan');
+    assert.equal(body.data.message, fakeCoachState.planMessage);
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/message kind=plan falls back to null when unconfigured', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ kind: 'plan', facts: { label: 'Push' } })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, false);
+  assert.equal(body.data.message, null);
 });
 
 test('api smoke: last-session reaches literal handler', async () => {
