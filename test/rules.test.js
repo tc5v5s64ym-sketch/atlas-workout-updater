@@ -305,12 +305,12 @@ test('isLowerBodyGroup classifies muscle groups', () => {
   assert.equal(validateLogRowBounds({ weight: 100, reps: 5, rir: 10.1 })[0].field, 'rir');
 });
 
- test('checkE1rmJump flags exactly at E1RM_JUMP_MAX_PCT (15%) cap and above, allows just under', () => {
-  const atCap = checkE1rmJump(287.5, 250); // exactly 15%
-  assert.ok(atCap);
-  assert.match(atCap.warning, /jumped 15\.0%/);
-  const over = checkE1rmJump(288, 250);
+ test('checkE1rmJump flags > E1RM_JUMP_MAX_PCT (strict) and allows <= cap', () => {
+  const over = checkE1rmJump(288, 250); // >15%
   assert.ok(over);
+  assert.match(over.warning, /jumped 15\.[0-9]%/);
+  const atCap = checkE1rmJump(287.5, 250); // exactly 15% — not > so no flag (per current rule)
+  assert.equal(atCap, null);
   const under = checkE1rmJump(287, 250);
   assert.equal(under, null);
 });
