@@ -144,9 +144,12 @@ async function mockAtlasApis(page, capture = {}) {
           todays_read: {
             recommended_label: 'Push',
             recommended_reason: 'Bench is ready for clean repeat work.',
+            // Per scoreIntents: readiness lives under todays_read.patterns.
             patterns: [
-              { pattern: 'Pressing', label: 'Pressing', status: 'ready', detail: 'Ready' },
-              { pattern: 'Pulling', label: 'Pulling', status: 'fresh', detail: 'Fresh' }
+              { pattern: 'push', label: 'Pressing', status: 'ready', daysSince: 3, detail: '3 days since last session' },
+              { pattern: 'pull', label: 'Pulling', status: 'fresh', daysSince: 7, detail: '7 days since last session' },
+              { pattern: 'lower', label: 'Lower body', status: 'fatigued', daysSince: 1, detail: 'Trained yesterday — last effort @1 RIR' },
+              { pattern: 'core', label: 'Core', status: 'unknown', daysSince: null, detail: 'No training data' }
             ]
           },
           intents: [
@@ -591,4 +594,56 @@ test('Session quality info button reveals the score breakdown popover', async ({
   // Tapping outside closes it.
   await page.locator('body').click({ position: { x: 5, y: 5 } });
   await expect(popover).not.toBeVisible();
+});
+
+test('Recovery board: per-pattern tiles sorted most-recovered first, tap asks the coach (no write)', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // The recovery board lives on the Today (dashboard) surface.
+  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('#nav-today').click();
+
+  const board = page.locator('#pattern-board');
+  await expect(board.locator('.pattern-tile')).toHaveCount(4);
+
+  // Sorted by readiness rank (fresh → ready → recovering → fatigued → no-data),
+  // days-since as the tiebreak — most-recovered / overdue patterns lead.
+  const labels = board.locator('.pattern-tile-label');
+  await expect(labels.nth(0)).toHaveText('Pulling');     // fresh, 7d
+  await expect(labels.nth(1)).toHaveText('Pressing');    // ready, 3d
+  await expect(labels.nth(2)).toHaveText('Lower body');  // fatigued
+  await expect(labels.nth(3)).toHaveText('Core');        // no data
+
+  // Status pills read from the backend status.
+  await expect(board.locator('.pattern-tile').nth(0).locator('.pattern-pill')).toHaveText('Fresh');
+  await expect(board.locator('.pattern-tile').nth(2).locator('.pattern-pill')).toHaveText('Fatigued');
+  await expect(board.locator('.pattern-tile').nth(3).locator('.pattern-pill')).toHaveText('No data');
+
+  // Coverage-gap flag: fresh+7d Pulling and never-trained Core are overdue; the
+  // recently-trained ready/fatigued patterns are not.
+  await expect(board.locator('.pattern-tile').nth(0).locator('.pattern-overdue')).toHaveCount(1);
+  await expect(board.locator('.pattern-tile').nth(3).locator('.pattern-overdue')).toHaveCount(1);
+  await expect(board.locator('.pattern-tile').nth(1).locator('.pattern-overdue')).toHaveCount(0);
+
+  // Tapping a tile asks the coach for a session focused on that movement — a
+  // read-only chat round-trip, never a write.
+  let chatBody = null;
+  await page.route('**/api/coach/chat', route => {
+    chatBody = route.request().postDataJSON();
+    return route.fulfill(json({ status: 'success', data: { message: 'Pull day it is.', configured: true } }));
+  });
+
+  // Expand the collapsed card, then tap the lead tile.
+  await board.evaluate(el => { el.closest('details').open = true; });
+  await board.locator('.pattern-tile').first().click();
+
+  await expect.poll(() => chatBody && chatBody.message).toContain('pulling');
+
+  // The tap must switch to the Coach surface so the reply is visible, not
+  // orphaned under a hidden thread, and the reply lands in the thread.
+  await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Pull day it is.');
+
+  expect(capture.writeRequests).toHaveLength(0);
 });

@@ -1387,6 +1387,50 @@ a.lift-link:hover { text-decoration: underline; }
 .intent-tile-label { font-weight: 600; font-size: 0.88rem; color: var(--ink); display: block; }
 .intent-tile-focus { font-size: 0.72rem; color: var(--muted); display: block; }
 
+/* Recovery-by-movement board: per-pattern readiness tiles, most-recovered first. */
+.pattern-board { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); margin-top: var(--s1); }
+@media (min-width: 640px) { .pattern-board { grid-template-columns: repeat(3, 1fr); } }
+
+.pattern-tile {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink);
+  -webkit-tap-highlight-color: rgba(10, 132, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  transition: box-shadow 0.1s, transform 0.1s;
+}
+.pattern-tile:hover { box-shadow: var(--shadow); }
+.pattern-tile:active { transform: scale(0.97); opacity: 0.9; }
+.pattern-fresh, .pattern-ready { border-left-color: var(--ok); }
+.pattern-recovering { border-left-color: var(--warn); }
+.pattern-fatigued { border-left-color: var(--danger); }
+.pattern-unknown { border-left-color: var(--border); }
+
+.pattern-tile-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pattern-tile-label { font-weight: 600; font-size: 0.88rem; color: var(--ink); }
+.pattern-tile-detail { font-size: 0.72rem; color: var(--muted); }
+
+.pattern-pill {
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.pattern-pill-fresh, .pattern-pill-ready { color: var(--ok); background: var(--ok-soft); border-color: var(--ok-border); }
+.pattern-pill-recovering { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-border); }
+.pattern-pill-fatigued { color: var(--danger); background: var(--danger-soft); border-color: var(--danger-border); }
+.pattern-pill-unknown { color: var(--muted); background: var(--card-sunken); border-color: var(--border); }
+.pattern-overdue { font-size: 0.64rem; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.03em; }
+
 /* ============================================================================
    Intent drawer (slide-up)
    ============================================================================ */
