@@ -335,7 +335,9 @@ test('enrichLogRow: unknown exercise gets generated lift code, never blank', () 
   const result = enrichLogRow({ exercise: 'Cable Goblin Raises' }, map);
   assert.equal(result.enriched.lift_code, 'CGR01');
   assert.ok(result.enriched.lift_code.length > 0, 'lift_code must never be blank');
+  assert.equal(result.enriched.muscle_group, 'Unknown');
   assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
+  assert.ok(result.warnings.some(warning => warning.includes("Using 'Unknown'")));
 });
 
 test('enrichLogRow: row-provided lift code takes priority over generated fallback', () => {
@@ -1757,7 +1759,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6500
+    appSource.indexOf(anchor) + 9000
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -1769,10 +1771,10 @@ test('approve success message: effortOnly is captured before invalidatePreview n
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6000
+    appSource.indexOf(anchor) + 9000
   );
   const captureAt = approveSection.indexOf('const wasEffortOnly = pendingWrite.effortOnly');
-  const invalidateAt = approveSection.indexOf('invalidatePreview()');
+  const invalidateAt = approveSection.indexOf('invalidatePreview()', captureAt);
   assert.ok(captureAt > -1, 'must capture effortOnly into a local before the write');
   assert.ok(invalidateAt > -1, 'approve path must still invalidate the preview');
   assert.ok(captureAt < invalidateAt, 'capture must happen before invalidatePreview clears pendingWrite');
@@ -1785,7 +1787,7 @@ test('effort-only approve: complete-workout path accepts Effort-only writes with
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6500
+    appSource.indexOf(anchor) + 9000
   );
 
   assert.match(approveSection, /pendingWrite\.mode === 'screenshot' \|\| pendingWrite\.mode === 'effort-only'/);
@@ -1813,7 +1815,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6500
+    appSource.indexOf(anchor) + 9000
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -1826,7 +1828,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 6500
+    appSource.indexOf(anchor) + 9000
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -1846,14 +1848,29 @@ test('duplicate-write: writeInFlight guard variable exists in app.js', () => {
 test('duplicate-write: approve handler checks guard and sets it before request', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
-  // Guard must be the first check (before pendingWrite check)
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
+  // Guard must be the first check before stored preview-proof validation.
   const guardIdx = handler.indexOf('if (writeInFlight) return');
-  const pendingIdx = handler.indexOf('if (!pendingWrite)');
+  const pendingIdx = handler.indexOf('if (!pendingWriteHasPreviewProof(pendingWrite))');
   assert.ok(guardIdx !== -1, 'writeInFlight guard must exist in handler');
-  assert.ok(guardIdx < pendingIdx, 'guard must come before pendingWrite check');
+  assert.ok(pendingIdx !== -1, 'approve handler must require stored preview proof');
+  assert.ok(guardIdx < pendingIdx, 'guard must come before preview-proof check');
   // Must set writeInFlight = true before the try block
   assert.match(handler, /writeInFlight = true/, 'must set writeInFlight = true');
+});
+
+test('trust loop: approve handler requires stored dry-run proof before writing', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function pendingWriteHasPreviewProof/, 'must centralize pending-write proof validation');
+  assert.match(appSource, /proof\.test_mode !== true/, 'proof must require test_mode true');
+  assert.match(appSource, /proof\.sheet_written !== false/, 'proof must require sheet_written false');
+  assert.match(appSource, /proof\.no_write_confirmed !== true/, 'proof must require no_write_confirmed true');
+  assert.match(appSource, /proof\.sheet_write !== 'skipped'/, 'proof must require skipped sheet_write marker');
+
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 6500);
+  assert.match(handler, /if \(!pendingWriteHasPreviewProof\(pendingWrite\)\)/, 'approve click must block missing or stale preview proof');
+  assert.doesNotMatch(handler, /if \(!pendingWrite\)/, 'approve click must not rely on pendingWrite existence alone');
 });
 
 test('duplicate-write: finally block always clears writeInFlight', () => {
@@ -3401,6 +3418,16 @@ test('write_id: screenshot and effort previews each stamp a write_id for the liv
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.ok((app.match(/writeId: generateWriteId\(\)/g) || []).length >= 2,
     'both the screenshot and effort-only pendingWrite objects must carry a write_id');
+});
+
+test('bodyweight: preview proof and write_id gate live bodyweight writes', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /function hasBodyweightNoWriteProof/, 'bodyweight preview must validate no-write proof');
+  assert.match(app, /function pendingBodyweightHasPreviewProof/, 'bodyweight approve must validate stored proof');
+  assert.match(app, /function hasBodyweightWriteProof/, 'bodyweight approve must validate live write proof');
+  assert.match(app, /original_sheet_write === 'success'/, 'bodyweight duplicate acceptance must require original success');
+  assert.match(app, /pendingBwWrite = \{[\s\S]*write_id: generateWriteId\(\)/, 'bodyweight live write must carry a write_id');
+  assert.match(app, /if \(!pendingBodyweightHasPreviewProof\(pendingBwWrite\)\)/, 'bodyweight approve must block stale or missing proof');
 });
 
 test('write_id: screenshot approve accepts a blocked duplicate from complete-workout', () => {

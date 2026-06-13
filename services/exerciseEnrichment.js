@@ -57,6 +57,11 @@ function resolveOrGenerateLiftCode(catalogCode, providedCode, exerciseName) {
   return { lift_code: generateLiftCode(exerciseName), generated: true };
 }
 
+function fallbackMuscleGroup(muscleGroup) {
+  const value = String(muscleGroup || '').trim();
+  return value || 'Unknown';
+}
+
 // Well-known gym abbreviations that substring matching cannot resolve on its own.
 // Maps normalized shorthand -> normalized catalog key to look up.
 const SHORTHAND_EXPANSIONS = {
@@ -213,9 +218,10 @@ function enrichLogRow(rowObj, catalogMap) {
     if (!preferredAlias.entry) {
       const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise);
       return {
-        enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: '', lift_code: resolved.lift_code },
+        enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: fallbackMuscleGroup(), lift_code: resolved.lift_code },
         warnings: [
           `Unknown exercise: ${rowObj.exercise}`,
+          `Missing catalog muscle group for '${rowObj.exercise}'. Using 'Unknown' until Exercise_Catalog is updated.`,
           ...(resolved.generated ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`] : [])
         ]
       };
@@ -223,14 +229,15 @@ function enrichLogRow(rowObj, catalogMap) {
     const resolved = resolveOrGenerateLiftCode(preferredAlias.entry.lift_code, providedLiftCode, preferredAlias.entry.canonical_exercise || rowObj.exercise);
     const enriched = { ...rowObj,
       canonical_exercise: preferredAlias.entry.canonical_exercise,
-      muscle_group: preferredAlias.entry.muscle_group,
+      muscle_group: fallbackMuscleGroup(preferredAlias.entry.muscle_group),
       lift_code: resolved.lift_code
     };
     const autoMatch = `"${rowObj.exercise}" -> "${preferredAlias.entry.canonical_exercise}"`;
-    const warnings = resolved.generated
-      ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`]
-      : null;
-    return { enriched, warnings, autoMatch };
+    const warnings = [
+      ...(preferredAlias.entry.muscle_group ? [] : [`Missing catalog muscle group for '${preferredAlias.entry.canonical_exercise}'. Using 'Unknown' until Exercise_Catalog is updated.`]),
+      ...(resolved.generated ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`] : [])
+    ];
+    return { enriched, warnings: warnings.length ? warnings : null, autoMatch };
   }
 
   // Exact match (includes any variants already indexed in the map)
@@ -239,13 +246,14 @@ function enrichLogRow(rowObj, catalogMap) {
     const resolved = resolveOrGenerateLiftCode(exactMatch.lift_code, providedLiftCode, exactMatch.canonical_exercise || rowObj.exercise);
     const enriched = { ...rowObj,
       canonical_exercise: exactMatch.canonical_exercise,
-      muscle_group: exactMatch.muscle_group,
+      muscle_group: fallbackMuscleGroup(exactMatch.muscle_group),
       lift_code: resolved.lift_code
     };
-    const warnings = resolved.generated
-      ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`]
-      : null;
-    return { enriched, warnings };
+    const warnings = [
+      ...(exactMatch.muscle_group ? [] : [`Missing catalog muscle group for '${exactMatch.canonical_exercise}'. Using 'Unknown' until Exercise_Catalog is updated.`]),
+      ...(resolved.generated ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`] : [])
+    ];
+    return { enriched, warnings: warnings.length ? warnings : null };
   }
 
   // Fuzzy fallback: plural, abbreviation, substring
@@ -254,9 +262,10 @@ function enrichLogRow(rowObj, catalogMap) {
     if (!fuzzy.entry) {
       const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise);
       return {
-        enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: '', lift_code: resolved.lift_code },
+        enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: fallbackMuscleGroup(), lift_code: resolved.lift_code },
         warnings: [
           `Ambiguous exercise match: ${rowObj.exercise} could be ${fuzzy.alternatives.join(', ')}`,
+          `Missing catalog muscle group for '${rowObj.exercise}'. Using 'Unknown' until Exercise_Catalog is updated.`,
           ...(resolved.generated ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`] : [])
         ]
       };
@@ -264,22 +273,24 @@ function enrichLogRow(rowObj, catalogMap) {
     const resolved = resolveOrGenerateLiftCode(fuzzy.entry.lift_code, providedLiftCode, fuzzy.entry.canonical_exercise || rowObj.exercise);
     const enriched = { ...rowObj,
       canonical_exercise: fuzzy.entry.canonical_exercise,
-      muscle_group: fuzzy.entry.muscle_group,
+      muscle_group: fallbackMuscleGroup(fuzzy.entry.muscle_group),
       lift_code: resolved.lift_code
     };
     const autoMatch = `"${rowObj.exercise}" -> "${fuzzy.entry.canonical_exercise}"`;
-    const warnings = resolved.generated
-      ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`]
-      : null;
-    return { enriched, warnings, autoMatch };
+    const warnings = [
+      ...(fuzzy.entry.muscle_group ? [] : [`Missing catalog muscle group for '${fuzzy.entry.canonical_exercise}'. Using 'Unknown' until Exercise_Catalog is updated.`]),
+      ...(resolved.generated ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`] : [])
+    ];
+    return { enriched, warnings: warnings.length ? warnings : null, autoMatch };
   }
 
   // No match at all -- generate a lift code so the field is never blank.
   const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise);
   return {
-    enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: '', lift_code: resolved.lift_code },
+    enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: fallbackMuscleGroup(), lift_code: resolved.lift_code },
     warnings: [
       `Unknown exercise: ${rowObj.exercise}`,
+      `Missing catalog muscle group for '${rowObj.exercise}'. Using 'Unknown' until Exercise_Catalog is updated.`,
       ...(resolved.generated ? [`Generated lift code '${resolved.lift_code}' for exercise '${rowObj.exercise}'. Add it to Exercise_Catalog to lock it.`] : [])
     ]
   };

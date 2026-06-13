@@ -1270,6 +1270,7 @@ app.post('/api/bodyweight', async (req, res) => {
 
   const { date, weight, notes } = req.body || {};
   const testMode = isTestModeEnabled(req.body?.test_mode);
+  const writeId = req.body?.write_id;
   if (!date) {
     return standardError(req, res, 'date is required', null, 400);
   }
@@ -1293,13 +1294,57 @@ app.post('/api/bodyweight', async (req, res) => {
     if (testMode) {
       return standardSuccess(req, res, 'Bodyweight dry-run', {
         test_mode: true,
+        sheet_write: 'skipped',
         sheet_written: false,
         no_write_confirmed: true,
         entry_preview: entry
       });
     }
-    await appendRows('Bodyweight', [[normalizedDate, weightValue, notes || '']]);
-    return standardSuccess(req, res, 'Bodyweight entry appended', { entry });
+
+    const idempotency = beginWrite(writeId, {
+      endpoint: '/api/bodyweight',
+      date: normalizedDate,
+      weight: weightValue
+    });
+
+    if (idempotency.duplicate) {
+      const record = idempotency.record || {};
+      const original = record.response || {};
+      const duplicateBody = {
+        ...original,
+        duplicate_write: true,
+        write_id: idempotency.write_id,
+        idempotency_status: record.status || 'unknown',
+        sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+        sheet_written: false,
+        original_sheet_write: original.sheet_write || null,
+        original_completed_at: record.completed_at || null
+      };
+      const message = record.status === 'completed'
+        ? 'Duplicate write_id; original bodyweight entry was already processed.'
+        : 'Duplicate write_id; original bodyweight entry is already in progress.';
+      return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
+    }
+
+    try {
+      await appendRows('Bodyweight', [[normalizedDate, weightValue, notes || '']]);
+      const responseBody = {
+        entry,
+        test_mode: false,
+        sheet_write: 'success',
+        sheet_written: true
+      };
+      if (idempotency.enabled) {
+        responseBody.write_id = idempotency.write_id;
+        responseBody.duplicate_write = false;
+        responseBody.idempotency_status = 'completed';
+        completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      }
+      return standardSuccess(req, res, 'Bodyweight entry appended', responseBody);
+    } catch (error) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      throw error;
+    }
   } catch (error) {
     return standardError(req, res, 'Failed to append bodyweight entry', error.message, 500);
   }
@@ -1467,6 +1512,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   const testMode = isTestModeEnabled(formFields.test_mode);
   const writeId = formFields.write_id;
   const hasManualEffortMetrics = Boolean(formFields.effort_json || formFields.effort || formFields.duration);
+  let idempotency = { enabled: false, write_id: null, token: null };
 
   if (!req.file && !hasManualEffortMetrics) {
     return standardError(req, res, 'image file or manual effort metrics are required for complete-workout preview/write', null, 400);
@@ -1603,7 +1649,6 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     let logAppendCount = rowsToWrite.length;
     let effortWritten = false;
-    let idempotency = { enabled: false, write_id: null };
     if (!testMode) {
       // Idempotency guard: a retried write_id must never append a second time.
       // Mirrors the /api/log-workout contract (beginWrite → completeWrite/failWrite).
@@ -1672,6 +1717,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         effort_only: effortOnly,
         would_write: rowsToWrite.length > 0 || !duplicateSession,
         sheet_written: !testMode && effortWritten,
+        sheet_write: testMode ? 'skipped' : 'success',
         log_rows_written: testMode ? 0 : logAppendCount,
         effort_written: effortWritten,
         duplicate_check: {
@@ -1690,6 +1736,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     if (testMode) {
       responseBody.test_mode = true;
       responseBody.data.no_write_confirmed = true;
+      responseBody.data.sheet_write = 'skipped';
       responseBody.data.effort_row = effortRow;
       responseBody.data.log_rows_preview = formattedLogRows;
       responseBody.data.rows_to_write = rowsToWrite;
@@ -1717,6 +1764,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
   } finally {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
@@ -1929,7 +1977,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     return standardError(req, res, 'Invalid JSON payload.', null, 400);
   }
 
-  const { log_appended_range, session_id, rows_to_delete, confirm_delete } = payload;
+  const { log_appended_range, session_id, rows_to_delete, confirm_delete, write_id } = payload;
 
   if (confirm_delete !== true) {
     return standardError(req, res, 'confirm_delete must be true to proceed with deletion.', null, 400);
@@ -1962,12 +2010,40 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
   }
 
+  const idempotency = beginWrite(write_id, {
+    endpoint: '/api/log-workout/undo-last',
+    session_id,
+    log_appended_range,
+    rows_to_delete: rowSpan
+  });
+
+  if (idempotency.duplicate) {
+    const record = idempotency.record || {};
+    const original = record.response || {};
+    const duplicateBody = {
+      duplicate_write: true,
+      write_id: idempotency.write_id,
+      idempotency_status: record.status || 'unknown',
+      sheet_write: record.status === 'completed' ? 'skipped_duplicate' : 'skipped_duplicate_in_progress',
+      sheet_written: false,
+      rows_deleted: 0,
+      original_deleted_range: original.deleted_range || null,
+      original_rows_deleted: original.rows_deleted ?? null,
+      original_completed_at: record.completed_at || null
+    };
+    const message = record.status === 'completed'
+      ? 'Duplicate write_id; original undo was already processed.'
+      : 'Duplicate write_id; original undo is already in progress.';
+    return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
+  }
+
   // Read back rows before deleting to verify session_id ownership. This is a
   // safety read — it must reflect the live sheet, never a cached snapshot.
   let allRows;
   try {
     allRows = await getSheetRowsRaw(logSheetName);
   } catch (error) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to read sheet rows for verification.', null, 500);
   }
 
@@ -1977,6 +2053,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     const dataIndex = r - 2;
     const row = allRows[dataIndex];
     if (!row || row.every(cell => String(cell) === '')) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(
         req, res,
         `Target sheet row ${r} is missing or empty — cannot verify session_id ownership. Undo aborted — no rows were deleted.`,
@@ -1985,6 +2062,7 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     }
     const rowSessionId = String(row[1] || '').trim();
     if (rowSessionId.toLowerCase() !== normalizedExpected) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(
         req, res,
         `session_id mismatch at sheet row ${r}: expected "${session_id}", found "${rowSessionId}". Undo aborted — no rows were deleted.`,
@@ -2000,13 +2078,24 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
     await deleteRowsByRange(logSheetName, startIndex, endIndex);
     invalidateSheetRowsCache();
   } catch (error) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to delete rows from sheet.', null, 500);
   }
 
-  return standardSuccess(req, res, 'Rows deleted', {
+  const responseBody = {
     deleted_range: log_appended_range,
-    rows_deleted: rowSpan
-  });
+    rows_deleted: rowSpan,
+    sheet_write: 'success',
+    sheet_written: true
+  };
+  if (idempotency.enabled) {
+    responseBody.write_id = idempotency.write_id;
+    responseBody.duplicate_write = false;
+    responseBody.idempotency_status = 'completed';
+    completeWrite(idempotency.write_id, idempotency.token, responseBody);
+  }
+
+  return standardSuccess(req, res, 'Rows deleted', responseBody);
 });
 
 // GET /api/log-workout/verify-range

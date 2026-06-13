@@ -1866,8 +1866,30 @@ function hasLogWorkoutNoWriteProof(result) {
 function hasCompleteWorkoutNoWriteProof(result) {
   const data = result?.data?.data || {};
   return data.test_mode === true &&
+    data.sheet_write === 'skipped' &&
     data.sheet_written === false &&
     data.no_write_confirmed === true;
+}
+
+function previewProofFromResult(result, mode) {
+  const data = mode === 'manual' ? (result?.data || {}) : (result?.data?.data || {});
+  return {
+    mode,
+    test_mode: data.test_mode,
+    sheet_write: data.sheet_write,
+    sheet_written: data.sheet_written,
+    no_write_confirmed: data.no_write_confirmed,
+    created_at_ms: Date.now()
+  };
+}
+
+function pendingWriteHasPreviewProof(write) {
+  if (!write || !write.previewProof) return false;
+  const proof = write.previewProof;
+  if (proof.test_mode !== true || proof.sheet_written !== false || proof.no_write_confirmed !== true) return false;
+  if (proof.mode === 'manual' && proof.sheet_write !== 'skipped') return false;
+  if ((proof.mode === 'screenshot' || proof.mode === 'effort-only') && proof.sheet_write !== 'skipped') return false;
+  return true;
 }
 
 document.getElementById('logger-form').addEventListener('submit', async e => {
@@ -1946,7 +1968,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         // The effort metrics the owner is reviewing. On approval we write THESE,
         // not a second vision parse of the same image — so what gets saved is
         // exactly what was shown. See the approve handler's screenshot branch.
-        parsedEffort: resolvedData.parsed_effort || null
+        parsedEffort: resolvedData.parsed_effort || null,
+        previewProof: previewProofFromResult(result, 'screenshot')
       };
       renderCompleteWorkoutPreview(result);
       addAtlasEffortReply(result);
@@ -1955,7 +1978,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId() };
+      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(), previewProof: previewProofFromResult(result, 'effort-only') };
       renderCompleteWorkoutPreview(result);
     } else {
       const effortRow = manualEffort;
@@ -1971,12 +1994,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasLogWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'manual', payload };
+      pendingWrite = { mode: 'manual', payload, previewProof: previewProofFromResult(result, 'manual') };
       renderLogWorkoutPreview(result, effortRow);
     }
     previewPanel.hidden = false;
     parsedRowsEditor.hidden = false;
-    document.getElementById('approve-btn').disabled = !pendingWrite;
+    document.getElementById('approve-btn').disabled = !pendingWriteHasPreviewProof(pendingWrite);
     const gateNote = document.getElementById('preview-gate-note');
     if (gateNote) gateNote.textContent = effortOnly
       ? 'Review the dry-run above, then click to write Effort only.'
@@ -2284,8 +2307,9 @@ async function handleUndoLastWrite() {
 
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (writeInFlight) return;
-  if (!pendingWrite) {
+  if (!pendingWriteHasPreviewProof(pendingWrite)) {
     setStatus(loggerStatus, 'No previewed workout to approve. Run a preview first.', 'error');
+    invalidatePreview();
     return;
   }
 
@@ -2465,6 +2489,29 @@ document.getElementById('load-session-btn').addEventListener('click', async () =
 
 let pendingBwWrite = null;
 
+function hasBodyweightNoWriteProof(result) {
+  const data = result?.data || {};
+  return data.test_mode === true &&
+    data.sheet_write === 'skipped' &&
+    data.sheet_written === false &&
+    data.no_write_confirmed === true;
+}
+
+function pendingBodyweightHasPreviewProof(write) {
+  return write?.previewProof?.test_mode === true &&
+    write.previewProof.sheet_write === 'skipped' &&
+    write.previewProof.sheet_written === false &&
+    write.previewProof.no_write_confirmed === true;
+}
+
+function hasBodyweightWriteProof(result) {
+  const data = result?.data || {};
+  const duplicateBlocked = data.duplicate_write === true &&
+    data.sheet_write === 'skipped_duplicate' &&
+    data.original_sheet_write === 'success';
+  return duplicateBlocked || (data.sheet_write === 'success' && data.sheet_written === true);
+}
+
 function bwInvalidate() {
   pendingBwWrite = null;
   document.getElementById('bw-preview-panel').hidden = true;
@@ -2499,6 +2546,9 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
       body: JSON.stringify({ date, weight: Number(weight), notes, test_mode: 'true' })
     });
     const data = result.data || {};
+    if (!hasBodyweightNoWriteProof(result)) {
+      throw new Error('Preview did not prove no-write safety. Nothing can be written.');
+    }
     const content = document.getElementById('bw-preview-content');
     content.innerHTML = '';
     content.appendChild(el('div', { class: 'no-write-proof' }, [
@@ -2511,9 +2561,20 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
       [[entry.date, entry.weight, entry.notes]]
     ));
 
-    pendingBwWrite = { date, weight: Number(weight), notes };
+    pendingBwWrite = {
+      date,
+      weight: Number(weight),
+      notes,
+      write_id: generateWriteId(),
+      previewProof: {
+        test_mode: data.test_mode,
+        sheet_write: data.sheet_write,
+        sheet_written: data.sheet_written,
+        no_write_confirmed: data.no_write_confirmed
+      }
+    };
     document.getElementById('bw-preview-panel').hidden = false;
-    document.getElementById('bw-approve-btn').disabled = false;
+    document.getElementById('bw-approve-btn').disabled = !pendingBodyweightHasPreviewProof(pendingBwWrite);
     const gateNote = document.getElementById('bw-gate-note');
     if (gateNote) gateNote.textContent = 'Review above, then click to write.';
   } catch (err) {
@@ -2527,17 +2588,28 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
 document.getElementById('bw-cancel-btn').addEventListener('click', bwInvalidate);
 
 document.getElementById('bw-approve-btn').addEventListener('click', async () => {
-  if (!pendingBwWrite) return;
+  if (!pendingBodyweightHasPreviewProof(pendingBwWrite)) {
+    bwInvalidate();
+    return;
+  }
   const approveBtn = document.getElementById('bw-approve-btn');
   const bwStatus = document.getElementById('bw-status');
   approveBtn.disabled = true;
   approveBtn.textContent = 'Writing to Sheets…';
   try {
-    await api('/api/bodyweight', {
+    const result = await api('/api/bodyweight', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pendingBwWrite)
+      body: JSON.stringify({
+        date: pendingBwWrite.date,
+        weight: pendingBwWrite.weight,
+        notes: pendingBwWrite.notes,
+        write_id: pendingBwWrite.write_id
+      })
     });
+    if (!hasBodyweightWriteProof(result)) {
+      throw new Error('Bodyweight write did not return success proof. Verify Sheets before approving again.');
+    }
     bwInvalidate();
     document.getElementById('bw-form').reset();
     document.getElementById('bw-date').value = new Date().toISOString().slice(0, 10);
