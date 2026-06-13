@@ -1896,6 +1896,13 @@ app.post('/api/log-workout', async (req, res) => {
     }
   }
 
+  // The two appends are split so a failure between them cannot release the
+  // idempotency record while rows are already on the sheet. Log append fails
+  // → nothing was written, failWrite is safe, a retry starts clean. Effort
+  // append fails AFTER the log append → the write_id is recorded as completed
+  // with a partial result, so a retried write_id replays that honest partial
+  // response instead of appending the log rows a second time.
+  let logResponse;
   try {
     console.log(JSON.stringify({
       event: 'append_log_rows',
@@ -1904,7 +1911,7 @@ app.post('/api/log-workout', async (req, res) => {
       session_id,
       requestId: req.requestId
     }));
-    const logResponse = await appendRows(logSheetName, formattedLogRows);
+    logResponse = await appendRows(logSheetName, formattedLogRows);
     console.log(JSON.stringify({
       event: 'append_log_rows_success',
       tab: logSheetName,
@@ -1913,9 +1920,15 @@ app.post('/api/log-workout', async (req, res) => {
       session_id,
       requestId: req.requestId
     }));
+  } catch (error) {
+    console.error('❌ Failed to append workout data:', error);
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+  }
 
-    let effortResponse = null;
-    if (formattedEffortRow) {
+  let effortResponse = null;
+  if (formattedEffortRow) {
+    try {
       console.log(JSON.stringify({
         event: 'append_effort_row',
         tab: effortSheetName,
@@ -1932,7 +1945,29 @@ app.post('/api/log-workout', async (req, res) => {
         session_id,
         requestId: req.requestId
       }));
+    } catch (error) {
+      console.error('❌ Effort append failed after log rows were written:', error);
+      invalidateSheetRowsCache();
+      const partialBody = {
+        message: 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.',
+        logAppendedRange: logResponse.data.updates?.updatedRange,
+        log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+        effortWritten: false,
+        test_mode: false,
+        sheet_write: 'partial',
+        sheet_written: true
+      };
+      if (idempotency.enabled) {
+        partialBody.write_id = idempotency.write_id;
+        partialBody.duplicate_write = false;
+        partialBody.idempotency_status = 'completed';
+        completeWrite(idempotency.write_id, idempotency.token, partialBody);
+      }
+      return standardError(req, res, 'Effort row append failed after log rows were written.', partialBody, 500);
     }
+  }
+
+  try {
     invalidateSheetRowsCache();
 
     const responseBody = {
