@@ -3,13 +3,19 @@ name: Claude Code Review
 # Automatically reviews every pull request with Claude.
 # Replaces the previous OpenAI Codex auto-review.
 #
+# Auth: uses a Claude subscription (Max/Pro) via an OAuth token.
 # Setup required (one-time, by the repo owner):
-#   1. Install the Claude GitHub App OR just add the API key below.
-#   2. Add a repository secret named ANTHROPIC_API_KEY
+#   1. Locally, with the Claude Code CLI logged in to your Max account, run:
+#        claude setup-token
+#      Copy the token it prints (starts with `sk-ant-oat...`).
+#   2. Add it as a repository secret named CLAUDE_CODE_OAUTH_TOKEN
 #      (Settings -> Secrets and variables -> Actions -> New repository secret).
-#   To switch to a Claude subscription instead of an API key, replace the
-#   `anthropic_api_key` line with:
-#       claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+#   The token expires periodically; re-run `claude setup-token` and update the
+#   secret when reviews start failing auth.
+#
+#   To use a pay-as-you-go Anthropic API key instead, replace the
+#   `claude_code_oauth_token` line with:
+#       anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
 on:
   pull_request:
@@ -30,9 +36,10 @@ jobs:
           fetch-depth: 1
 
       - name: Claude Code Review
+        id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -73,3 +80,23 @@ jobs:
           claude_args: |
             --model claude-opus-4-8
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+
+      # Fail the check if Claude never actually ran (bad/expired token, no
+      # execution file, or an errored run). A green check then guarantees a
+      # real review happened rather than a silent no-op.
+      - name: Ensure the review actually ran
+        if: always()
+        run: |
+          f="${{ steps.claude.outputs.execution_file }}"
+          if [ -z "$f" ] || [ ! -f "$f" ]; then
+            echo "::error::Claude produced no execution file - the review did not run. Check the CLAUDE_CODE_OAUTH_TOKEN secret."
+            exit 1
+          fi
+          # execution_file may be a JSON array or newline-delimited JSON; grab
+          # the last "result" event either way and check its is_error flag.
+          is_error=$(jq -r 'if type=="array" then .[] else . end | select(.type=="result") | .is_error' "$f" 2>/dev/null | tail -n1)
+          if [ "$is_error" != "false" ]; then
+            echo "::error::Claude review did not complete (is_error=${is_error:-unknown}). Verify the Max OAuth token and see the logs above."
+            exit 1
+          fi
+          echo "Claude review completed successfully."
