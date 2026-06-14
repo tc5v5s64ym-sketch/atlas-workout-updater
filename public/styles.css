@@ -1541,6 +1541,45 @@ a.lift-link:hover { text-decoration: underline; }
 .session-group-header:first-child { margin-top: 0; }
 .session-empty { font-size: 0.88rem; margin: 0 0 var(--s2); }
 
+/* History: cadence strip + week-grouped headers */
+.cadence {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 15px 16px 13px;
+  margin-bottom: var(--s3);
+  box-shadow: var(--shadow-sm);
+}
+.cadence-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.cadence-big { font-family: var(--disp); font-weight: 600; font-size: 1.25rem; }
+.cadence-big small { font-family: var(--body); font-weight: 400; font-size: 0.8rem; color: var(--muted); margin-left: 4px; }
+.cadence-sub { font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.06em; color: var(--faint); }
+.cadence-bars { display: flex; align-items: flex-end; gap: 8px; height: 40px; }
+.cadence-bar { flex: 1; background: var(--border-strong); border-radius: 3px; min-height: 4px; }
+.cadence-bar.cur { background: var(--accent); }
+
+.session-week-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: var(--s5) 0 var(--s2);
+}
+.session-week-header h2 {
+  margin: 0;
+  font-family: var(--disp);
+  font-weight: 500;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.week-tot { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+
 .session-item {
   background: var(--card);
   border: 1px solid var(--border);
