@@ -286,6 +286,14 @@ test('sanitizeChatContext accepts current_plan and bounds it to 10 entries', () 
   assert.ok(!('injected' in dirty.current_plan[0]), 'unknown keys are dropped from plan entries');
 });
 
+test('sanitizeChatContext passes through recommended rir on current_plan entries', () => {
+  const clean = sanitizeChatContext({ current_plan: [{ name: 'Face Pull', weight: 50, reps: 15, sets: 3, rir: 2 }] });
+  assert.equal(clean.current_plan[0].rir, 2);
+  // null rir stays null (no RIR recommended yet), not coerced to a number
+  const noRir = sanitizeChatContext({ current_plan: [{ name: 'Bench', weight: 185, reps: 5, sets: 3 }] });
+  assert.equal(noRir.current_plan[0].rir, null);
+});
+
 test('sanitizeChatContext drops plan entries with no name', () => {
   const clean = sanitizeChatContext({ current_plan: [{ name: null }, { name: 'Squat', rationale: 'lower body' }] });
   assert.equal(clean.current_plan.length, 1, 'nameless entries are dropped');

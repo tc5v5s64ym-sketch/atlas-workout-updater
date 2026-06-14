@@ -99,6 +99,32 @@ function guardAccessoryReps(ex) {
   return ex;
 }
 
+// Recommended reps-in-reserve for a planned exercise, by training intent + lift role.
+// The engine already backs OFF LOAD near failure; this is the target effort to aim for:
+// recovery/reduced-stress days leave more in the tank, heavy strength work leaves less,
+// and hypertrophy/accessory work sits at a moderate ~2.
+function recommendedTargetRir(ex, intentId) {
+  const isMain = isMainCompound(exerciseName(ex), ex && ex.muscle_group);
+  switch (intentId) {
+    case 'build_strength':
+    case 'test_progress':
+      return isMain ? 1 : 2;       // heavier work — leave less in reserve
+    case 'deload_reset':
+    case 'recovery_pump':
+    case 'short_session':
+      return isMain ? 2 : 3;       // reduced stress — leave more in reserve
+    default:
+      return 2;                    // hypertrophy / balanced / accessory work
+  }
+}
+
+// Attach a recommended target_rir to a planned exercise (respecting an explicit value if present).
+function withTargetRir(ex, intentId) {
+  if (!ex || typeof ex !== 'object') return ex;
+  if (ex.target_rir != null) return ex;
+  return { ...ex, target_rir: recommendedTargetRir(ex, intentId) };
+}
+
 // Post-process a scoreIntents() result:
 //   1. An accessory-ONLY deload is reframed as "Recovery Pull / Accessory" (never "Deload").
 //   2. Any accessory in any intent that got a sub-8-rep scheme is bumped into its range.
@@ -138,7 +164,7 @@ function applyLiftRoleGuards(result) {
     }
 
     if (next && Array.isArray(next.exercises)) {
-      next = { ...next, exercises: next.exercises.map(guardAccessoryReps) };
+      next = { ...next, exercises: next.exercises.map(ex => withTargetRir(guardAccessoryReps(ex), next.id)) };
     }
     return next;
   });
@@ -164,6 +190,7 @@ module.exports = {
   isMainCompound,
   accessoryRepTarget,
   guardAccessoryReps,
+  recommendedTargetRir,
   applyLiftRoleGuards,
   ACCESSORY_REP_FLOOR,
   ACCESSORY_RESET_LABEL,
