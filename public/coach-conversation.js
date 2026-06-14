@@ -105,6 +105,14 @@
   }
 
   function appendInlineSave(bubble) {
+    // Only one "Save to Sheets" prompt at a time — remove the one from the
+    // previous set reaction so the thread doesn't accumulate them.
+    if (currentSaveBtn) {
+      currentSaveBtn.parentElement?.querySelector('.atlas-reply-gate')?.remove();
+      currentSaveBtn.remove();
+      currentSaveBtn = null;
+    }
+
     const note = document.createElement('div');
     note.className = 'atlas-reply-gate';
     note.textContent = 'Nothing saved yet — this only writes to Google Sheets when you tap Save.';

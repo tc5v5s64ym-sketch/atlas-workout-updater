@@ -3607,6 +3607,9 @@ test('declutter: load-session corrector lives inside the Details fold, off the m
 
 test('declutter: composer form docks to the bottom of the Coach surface', () => {
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  // body[data-surface="coach"] locks the viewport so only the thread scrolls
+  assert.match(css, /body\[data-surface="coach"\]\s*\{[^}]*overflow:\s*hidden/, 'coach body must block page scroll');
+  assert.match(css, /body\[data-surface="coach"\]\s*\{[^}]*height:\s*100dvh/, 'coach body must fill the viewport');
   assert.match(css, /#tab-logger\.active\s*\{[^}]*flex-direction:\s*column/, 'Coach surface must be a column');
   assert.match(css, /#tab-logger\.active\s*\{[^}]*overflow:\s*hidden/, 'Coach surface must clip so inner thread scrolls');
   assert.match(css, /#coach-thread\s*\{[^}]*overflow-y:\s*auto/, 'thread must be the scroll container');
