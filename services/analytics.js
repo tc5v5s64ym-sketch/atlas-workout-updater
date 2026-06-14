@@ -423,7 +423,13 @@ function recommendNextSet(logRows, liftCode, options = {}) {
 
   const lastSets = rows.slice(-5).map(formatSet);
   const lastSet = lastSets[lastSets.length - 1];
-  const priorSet = lastSets.length >= 2 ? lastSets[lastSets.length - 2] : null;
+  // Compare against the previous DISTINCT session's last working set — not merely
+  // the prior set, which is usually in the same session. This makes the
+  // "stable reps across two sessions" progression check a true session-over-session
+  // signal, so a single session of equal-rep sets no longer triggers a load bump.
+  const lastSessionId = lastSet ? lastSet.session_id : null;
+  const priorSessionRows = rows.filter(row => row.session_id !== lastSessionId);
+  const priorSet = priorSessionRows.length ? formatSet(priorSessionRows[priorSessionRows.length - 1]) : null;
   const muscleGroup = lastSet.muscle_group || '';
   const lowerBody = isLowerBodyGroup(muscleGroup);
   const increaseAmount = lowerBody ? 10 : 5;

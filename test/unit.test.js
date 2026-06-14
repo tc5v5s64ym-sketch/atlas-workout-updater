@@ -1347,6 +1347,36 @@ test('recommendNextSet returns progression recommendation', () => {
   assert.match(rec.recommendation, /Increase to/);
 });
 
+test('recommendNextSet: equal-rep sets within ONE session do not trigger a load bump', () => {
+  // A single session of three equal-rep sets at RIR 2 used to be mistaken for
+  // "stable reps over two sessions" and bumped the load. Progression must require
+  // a genuine prior session, so this holds at the same weight and adds a rep.
+  const rows = [
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '225', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '3', '225', '5', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-13' });
+  assert.doesNotMatch(rec.recommendation, /Increase to/, 'one session must not progress load');
+  assert.equal(rec.next_target.weight, 225, 'weight held, not bumped');
+  assert.equal(rec.sessions_analyzed, 1);
+});
+
+test('recommendNextSet: stable reps ACROSS two sessions (multi-set) still progresses', () => {
+  // Two distinct sessions, each multiple sets at 225x5 RIR 2 — a real
+  // session-over-session plateau at a sub-maximal RIR, so we add load.
+  const rows = [
+    ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-10', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '225', '5', '2', ''],
+    ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-12', 'S2', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '225', '5', '2', '']
+  ];
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-13' });
+  assert.match(rec.recommendation, /Increase to/, 'two sessions of stable reps progresses');
+  assert.equal(rec.next_target.weight, 235, 'lower body adds 10 lb');
+  assert.equal(rec.sessions_analyzed, 2);
+});
+
 // ── Recommendation staleness guard ────────────────────────────────────────────
 
 test('recommendNextSet: fresh data (3 days) still progresses, no age tacked on', () => {
