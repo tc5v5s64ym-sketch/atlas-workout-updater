@@ -25,7 +25,7 @@ None of the above will be built unless the owner explicitly requests it.
 
 ## The Magic Moment
 
-> Athlete types `225 5/2 bench` between sets → Atlas previews the row → owner approves → sheet is written → confirmation shows with an undo button.
+> Between sets, the athlete types `225 5/2 bench` and Atlas reacts instantly — a readback and coaching — writing nothing. At the end of the session ("done", an Apple Watch screenshot, or manual effort) Atlas compiles the whole conversation into one review → owner approves → the session is written → confirmation shows with an undo button.
 
 Everything in the codebase exists to make that loop **fast, correct, and trustworthy**. Any change that slows the loop, introduces ambiguity, or risks a silent incorrect write is wrong regardless of how well-intentioned it is.
 
@@ -39,13 +39,14 @@ Everything in the codebase exists to make that loop **fast, correct, and trustwo
 
 ## Logging Heartbeat
 
-Every manual log-workout cycle must follow this sequence:
+Logging is **session-level, not per-set**. During a workout, Atlas coaches each logged set in the conversation — a readback and guidance — and writes nothing. The session is committed **once**, on an explicit end trigger ("done"/"log it", an Apple Watch screenshot, or manual effort), through a single trust-loop cycle:
 
 ```
-chat input → parse → dry-run preview (test_mode=true) → owner approves → live write → read-back proof → undo available
+conversation (sets coached, nothing written) → end trigger → compile the session
+  → dry-run preview (test_mode=true) → owner approves → live write → read-back proof → undo available
 ```
 
-Steps may not be reordered, skipped, or merged. The dry-run must never touch the sheet. The live write must be provable via `sheet_written` and `log_rows_written` fields in the response.
+The safety law is unchanged: no blind writes, the dry-run never touches the sheet, the owner approves before any write, the live write is provable via `sheet_written` and `log_rows_written`, and undo is available. Only the **cadence** moved — from a write per set to one write per session. There must be **no per-set save prompts** during the workout; coaching during, one save at the end.
 
 ## Source of Truth
 
