@@ -352,6 +352,13 @@ main {
 
 .loading, .muted { color: var(--muted); }
 .small { font-size: 0.8rem; }
+/* CSP-safe utility classes — the strict CSP has no style-src 'unsafe-inline',
+   so inline style="" attributes are blocked. These replace former inline styles. */
+.hint { font-size: 0.75rem; margin-top: 6px; }
+.mb-8 { margin: 0 0 8px; }
+.mt-8 { margin-top: 8px; }
+.mt-10 { margin-top: 10px; }
+.summary-pre { white-space: pre-wrap; font-family: inherit; font-size: 0.9rem; line-height: 1.6; margin: 0; }
 .status-ok { color: var(--ok); font-size: 0.92rem; }
 .status-warn { color: var(--warn); font-size: 0.92rem; }
 .status-error { color: var(--danger); font-size: 0.92rem; }

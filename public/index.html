@@ -137,7 +137,7 @@
         <!-- Effort entry: opened via + → Manual effort entry or + → Fitness device screenshot -->
         <details id="effort-details" hidden>
           <summary>Effort <span class="muted">(optional)</span></summary>
-          <div class="form-row" style="margin-top:10px">
+          <div class="form-row mt-10">
             <label class="radio"><input type="radio" name="effort-mode" value="manual" checked> Manual entry</label>
             <label class="radio"><input type="radio" name="effort-mode" value="screenshot"> Fitness device screenshot</label>
           </div>
@@ -169,7 +169,7 @@
 
           <details class="load-session-details">
             <summary>Load existing session to correct</summary>
-            <div class="inline-form" style="margin-top:10px">
+            <div class="inline-form mt-10">
               <input type="text" id="load-session-id" placeholder="Session ID (e.g. 20260610-PM-01)">
               <button type="button" id="load-session-btn" class="secondary">Load</button>
             </div>
@@ -281,7 +281,7 @@
       <!-- Hidden legacy forms — IDs kept so existing app.js event handlers
            still bind. The .lift-link deep-link path populates #progress-lift-code
            and dispatches submit to trigger the drill-down. -->
-      <div style="display:none" aria-hidden="true">
+      <div hidden aria-hidden="true">
         <form id="progress-form">
           <input type="text" id="progress-lift-code" list="exercise-catalog">
         </form>

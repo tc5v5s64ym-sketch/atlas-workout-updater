@@ -526,7 +526,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
         reasoning ? el('p', { class: 'coach-panel-reason', text: reasoning }) : null
       ].filter(Boolean);
       const row = el('div', { class: 'coach-panel-btn-row' });
-      const dismissBtn = el('button', { type: 'button', class: 'secondary', text: 'Dismiss', style: 'font-size:0.8rem' });
+      const dismissBtn = el('button', { type: 'button', class: 'secondary small', text: 'Dismiss' });
       dismissBtn.addEventListener('click', () => { panel.hidden = true; });
       const backBtn = el('button', { type: 'button', class: 'coach-back-btn', text: '← Back to session' });
       backBtn.addEventListener('click', () => {
@@ -835,9 +835,10 @@ function renderTodaysRead(data) {
     const status = p.status || 'unknown';
     const rawLabel = p.label || p.pattern;
     const pct = p.recovery == null ? 0 : Math.round(p.recovery * 100);
-    const recoveryBar = el('div', { class: 'pattern-recovery', title: readinessTitle(p) }, [
-      el('div', { class: `pattern-recovery-fill pattern-dot-${status}`, style: `width:${pct}%` })
-    ]);
+    const recoveryFill = el('div', { class: `pattern-recovery-fill pattern-dot-${status}` });
+    // Dynamic width set via CSSOM (allowed under CSP), not an inline style attr.
+    recoveryFill.style.width = `${pct}%`;
+    const recoveryBar = el('div', { class: 'pattern-recovery', title: readinessTitle(p) }, [recoveryFill]);
     const wrap = el('div', { class: 'pattern-dot-wrap' }, [
       el('div', { class: `pattern-dot pattern-dot-${status}`, title: readinessTitle(p) }),
       el('div', { class: 'pattern-dot-label', text: FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel }),
@@ -897,7 +898,7 @@ function renderIntentGrid(data) {
     grid.appendChild(tile);
   }
   box.appendChild(grid);
-  box.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;margin-top:6px', text: 'Tap any tile to see the coaching brief and start a session.' }));
+  box.appendChild(el('p', { class: 'muted hint', text: 'Tap any tile to see the coaching brief and start a session.' }));
 }
 
 // Per-movement-pattern recovery board. The backend already returns `patterns`
@@ -958,7 +959,7 @@ function renderPatternBoard(data) {
     grid.appendChild(tile);
   }
   box.appendChild(grid);
-  box.appendChild(el('p', { class: 'muted', style: 'font-size:0.75rem;margin-top:6px', text: 'Tap a movement to ask Atlas for a session focused on it.' }));
+  box.appendChild(el('p', { class: 'muted hint', text: 'Tap a movement to ask Atlas for a session focused on it.' }));
 
   const ready = patterns.filter(p => p.status === 'fresh' || p.status === 'ready').length;
   const resting = patterns.filter(p => p.status === 'fatigued').length;
@@ -1273,7 +1274,7 @@ async function loadTodaysPlan() {
     const recs = res.data?.recommendations || [];
     box.innerHTML = '';
 
-    box.appendChild(el('p', { class: 'muted', style: 'font-size:0.8rem;margin:0 0 8px', text: 'Tap any card to start that lift. These are progression targets, not a required order.' }));
+    box.appendChild(el('p', { class: 'muted small mb-8', text: 'Tap any card to start that lift. These are progression targets, not a required order.' }));
 
     if (!recs.length) {
       box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas can start giving better suggestions.' }));
@@ -1595,7 +1596,7 @@ function renderLiftList(recs, box) {
     list.appendChild(item);
   }
   box.appendChild(list);
-  box.appendChild(el('p', { class: 'muted small', style: 'margin-top:8px', text: 'Tap any lift to see progress, last sessions, and your next target.' }));
+  box.appendChild(el('p', { class: 'muted small mt-8', text: 'Tap any lift to see progress, last sessions, and your next target.' }));
 }
 
 async function openLiftDrillDown(exerciseName, liftCode) {
@@ -1708,7 +1709,7 @@ document.getElementById('weekly-report-btn').addEventListener('click', async () 
     const data = res.data || {};
     box.innerHTML = '';
     if (data.summary_markdown) {
-      box.appendChild(el('pre', { style: 'white-space:pre-wrap;font-family:inherit;font-size:0.9rem;line-height:1.6;margin:0' }, [data.summary_markdown]));
+      box.appendChild(el('pre', { class: 'summary-pre' }, [data.summary_markdown]));
     }
     if (data.prs && data.prs.length) {
       box.appendChild(el('h3', { text: 'Improvements this week' }));
