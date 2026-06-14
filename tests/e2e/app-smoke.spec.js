@@ -229,6 +229,15 @@ async function runPreview(page) {
   await expect(page.locator('#preview-content')).toContainText('3 sets to write');
 }
 
+// The Coach hamburger opens the side panel (drawer); navigation happens by
+// tapping a Views row there, which routes through the existing tab controls.
+async function openDrawerNav(page, tab) {
+  await page.locator('#coach-menu-btn').click();
+  await expect(page.locator('#coach-drawer')).toBeVisible();
+  await page.locator(`#coach-drawer .drawer-nav-row[data-tab="${tab}"]`).click();
+  await expect(page.locator('#coach-drawer')).toBeHidden();
+}
+
 test('Coach shell loads with guarded preview state', async ({ page }) => {
   await openApp(page);
 
@@ -494,7 +503,7 @@ test('Mobile viewport keeps the Coach composer and preview usable', async ({ pag
 test('Progress surface renders the Today screen from mocked data without crashing', async ({ page }) => {
   await openApp(page);
 
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
+  await openDrawerNav(page, 'dashboard'); // hamburger → drawer → Today
 
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
   // Above the fold: hero pick + readiness strip
@@ -523,8 +532,7 @@ test('History groups sessions under Today / Past with clean cards', async ({ pag
     }
   })));
 
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
-  await page.locator('[data-tab="history"]').click();
+  await openDrawerNav(page, 'history'); // hamburger → drawer → History
 
   const headers = page.locator('.session-group-header');
   await expect(headers.nth(0)).toHaveText('Today');
@@ -559,8 +567,7 @@ test('Tapping a session expands to exactly what was logged, grouped by exercise'
     }
   })));
 
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
-  await page.locator('[data-tab="history"]').click();
+  await openDrawerNav(page, 'history'); // hamburger → drawer → History
   await page.locator('.session-item').first().locator('.session-summary').click();
 
   // Grouped by exercise, each set in the coach shorthand, notes inline.
@@ -598,8 +605,7 @@ test('Session quality info button reveals the score breakdown popover', async ({
     }
   })));
 
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
-  await page.locator('[data-tab="history"]').click();
+  await openDrawerNav(page, 'history'); // hamburger → drawer → History
   await page.locator('.session-item').first().locator('.session-summary').click();
 
   await expect(page.locator('.session-quality')).toContainText('Session quality: 75 / 100');
@@ -631,8 +637,7 @@ test('Recovery board: per-pattern tiles sorted most-recovered first, tap asks th
   await openApp(page, capture);
 
   // The recovery board lives on the Today (dashboard) surface.
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
-  await page.locator('#nav-today').click();
+  await openDrawerNav(page, 'dashboard'); // hamburger → drawer → Today
 
   const board = page.locator('#pattern-board');
   await expect(board.locator('.pattern-tile')).toHaveCount(4);

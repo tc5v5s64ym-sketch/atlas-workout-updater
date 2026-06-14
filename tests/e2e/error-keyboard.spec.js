@@ -24,6 +24,14 @@ async function openApp(page) {
   await expect(page.locator('#workout-text')).toBeVisible();
 }
 
+// The Coach hamburger opens the side panel; a Views row routes to the surface.
+async function openDrawerNav(page, tab) {
+  await page.locator('#coach-menu-btn').click();
+  await expect(page.locator('#coach-drawer')).toBeVisible();
+  await page.locator(`#coach-drawer .drawer-nav-row[data-tab="${tab}"]`).click();
+  await expect(page.locator('#coach-drawer')).toBeHidden();
+}
+
 test('surface switcher and subnav expose ARIA tab semantics', async ({ page }) => {
   await openApp(page);
 
@@ -46,7 +54,7 @@ test('keyboard: arrow keys move and activate the Coach/Progress surfaces', async
   await openApp(page);
   // The segmented switcher is hidden on the coach surface (the hamburger is the
   // entry point there); reach Progress first so the switcher is visible.
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
+  await openDrawerNav(page, 'dashboard'); // hamburger → drawer → Progress (Today)
   await expect(page.locator('.segmented')).toBeVisible();
   await expect(page.locator('#subnav')).toBeVisible();
 
@@ -70,7 +78,7 @@ test('keyboard: arrow keys move and activate the Coach/Progress surfaces', async
 
 test('keyboard: arrow keys move and activate the Progress subnav', async ({ page }) => {
   await openApp(page);
-  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
+  await openDrawerNav(page, 'dashboard'); // hamburger → drawer → Progress (Today)
   await expect(page.locator('#tab-dashboard')).toBeVisible();
 
   const today = page.locator('#nav-today');

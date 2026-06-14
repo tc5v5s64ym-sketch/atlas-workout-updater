@@ -3735,9 +3735,9 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v3/, 'cache name must be bumped so stale styles are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v2/, 'old cache name must be gone');
-  for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/chat.js',
+  assert.match(sw, /atlas-shell-v4/, 'cache name must be bumped so stale styles are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v3/, 'old cache name must be gone');
+  for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }

@@ -595,11 +595,10 @@
     appendInlineSave(bubble);
   }
 
-  /* ===== Coach-nav wiring (hamburger → Progress, avatar → Settings) ===== */
+  /* ===== Coach-nav wiring (avatar → Settings) =====
+     The hamburger (#coach-menu-btn) is owned by drawer.js, which opens the
+     side panel; navigation there routes through the existing tab controls. */
 
-  document.getElementById('coach-menu-btn')?.addEventListener('click', () => {
-    document.getElementById('surface-progress')?.click();
-  });
   document.querySelector('.coach-avatar')?.addEventListener('click', () => {
     document.getElementById('open-settings')?.click();
   });
