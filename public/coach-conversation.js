@@ -204,11 +204,16 @@
     for (const raw of exercises) {
       const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
       if (!ex || !ex.name) continue;
-      if (!any) { lines.push(''); any = true; }
+      // Blank line before first exercise (header gap) and between exercises
+      lines.push('');
+      any = true;
       lines.push(ex.name);
       if (ex.weight != null && ex.reps != null) {
-        const setStr = (ex.sets > 1) ? ` x${ex.sets}` : '';
-        lines.push(`${ex.weight}lbs ${ex.reps}${setStr}`);
+        const rir = (ex.rir != null && Number.isFinite(Number(ex.rir))) ? `/${ex.rir}` : '';
+        const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
+        for (let i = 0; i < count; i++) {
+          lines.push(`${ex.weight}lbs ${ex.reps}${rir}`);
+        }
       }
     }
     if (any) {
@@ -518,12 +523,20 @@
     const tile = e.target.closest('.suggest-tile');
     if (!tile) return;
     hideHomeEmpty();
-    if (tile.dataset.suggest === 'last' && typeof window.atlasChipAnswerLast === 'function') {
-      window.atlasChipAnswerLast();
+    if (tile.dataset.suggest === 'freestyle') {
+      document.getElementById('workout-text')?.focus();
     } else {
       typeSuggestedWorkout();
     }
   });
+
+  (function setGreeting() {
+    const el = document.getElementById('coach-greeting');
+    if (!el) return;
+    const h = new Date().getHours();
+    const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+    el.textContent = `Good ${part}, Dale.`;
+  })();
 
   document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
 

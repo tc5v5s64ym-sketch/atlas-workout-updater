@@ -235,7 +235,7 @@ test('Coach shell loads with guarded preview state', async ({ page }) => {
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
   // Minimal Grok/Gemini-style home: empty-state hero + Suggested Workout tiles.
   await expect(page.locator('#coach-empty')).toBeVisible();
-  await expect(page.locator('.coach-empty-tagline')).toContainText('Log a workout, or just ask');
+  await expect(page.locator('.coach-empty-tagline')).toContainText("Let's get stronger");
   await expect(page.locator('#workout-text')).toBeVisible();
   await expect(page.locator('#suggested-tiles .suggest-tile')).toHaveCount(2);
   await expect(page.locator('#preview-panel')).toBeHidden();

@@ -292,10 +292,13 @@ main {
    ============================================================================ */
 
 /* Lock the coach surface to the viewport so only #coach-thread scrolls.
+   position:fixed + inset:0 is the only approach that reliably prevents
+   iOS Safari rubber-band scrolling on the body.
    body[data-surface="coach"] scopes these rules so Progress can still
    page-scroll normally. */
 body[data-surface="coach"] {
-  height: 100dvh;
+  position: fixed;
+  inset: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -416,11 +419,11 @@ body[data-surface="coach"] main {
 .composer {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: var(--s2);
   background: var(--card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-pill);
   padding: var(--s2);
   box-shadow: var(--shadow);
   transition: border-color 0.15s;
@@ -1641,33 +1644,36 @@ a.lift-link:hover { text-decoration: underline; }
 #coach-read-strip,
 #suggestion-chips { display: none; }
 
-/* Empty-state hero (Grok/Gemini style) — fills the middle until the chat starts */
+/* Empty-state hero — fills space above the tiles until the chat starts */
 .coach-empty {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--s3);
-  min-height: 40vh;
-  text-align: center;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--s1);
+  padding-bottom: var(--s4);
 }
 .coach-empty[hidden] { display: none; }
-.coach-empty-glyph {
-  width: 84px;
-  height: 84px;
-  opacity: 0.16;
-  filter: grayscale(1);
+
+.coach-greeting-line {
+  font-size: 0.95rem;
+  color: var(--muted);
+  margin: 0;
 }
 .coach-empty-tagline {
-  color: var(--faint);
-  font-size: 0.95rem;
+  font-size: 2.6rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--ink);
   margin: 0;
 }
 
 /* Quick-start tiles, just above the composer */
 .suggested-tiles {
   display: flex;
+  flex-direction: column;
   gap: var(--s2);
   margin-bottom: var(--s2);
 }

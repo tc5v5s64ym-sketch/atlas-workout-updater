@@ -69,11 +69,10 @@
         <button type="button" class="chip" data-chip="report">Weekly report</button>
       </div>
 
-      <!-- Empty-state hero (Grok/Gemini style): shown until the conversation
-           starts, then collapsed by coach-conversation.js. -->
+      <!-- Empty-state hero: shown until the conversation starts. -->
       <div id="coach-empty" class="coach-empty">
-        <img class="coach-empty-glyph" src="icons/icon-512.png" alt="" aria-hidden="true">
-        <p class="coach-empty-tagline">Log a workout, or just ask.</p>
+        <p id="coach-greeting" class="coach-greeting-line"></p>
+        <p class="coach-empty-tagline">Let's get stronger.</p>
       </div>
 
       <!-- Conversation thread: user bubbles, Atlas coaching bubbles, the dry-run
@@ -102,12 +101,12 @@
            conversation starts (coach-conversation.js). -->
       <div id="suggested-tiles" class="suggested-tiles">
         <button type="button" class="suggest-tile" data-suggest="workout">
-          <span class="suggest-tile-icon" aria-hidden="true">&#127947;</span>
-          <span class="suggest-tile-label">Suggested Workout</span>
+          <span class="suggest-tile-icon" aria-hidden="true">&#x1F9E0;</span>
+          <span class="suggest-tile-label">Coaches pick</span>
         </button>
-        <button type="button" class="suggest-tile" data-suggest="last">
-          <span class="suggest-tile-icon" aria-hidden="true">&#128203;</span>
-          <span class="suggest-tile-label">Last Session</span>
+        <button type="button" class="suggest-tile" data-suggest="freestyle">
+          <span class="suggest-tile-icon" aria-hidden="true">&#x26A1;</span>
+          <span class="suggest-tile-label">Freestyle</span>
         </button>
       </div>
 
@@ -120,7 +119,7 @@
             <button type="button" id="attach-manual">Manual effort entry</button>
             <button type="button" id="attach-fix-session">Fix a past session</button>
           </div>
-          <textarea id="workout-text" class="workout-text" rows="2" placeholder="Ask anything, or log a set — Bench 135 10/4, 225 5/2 x3"></textarea>
+          <textarea id="workout-text" class="workout-text" rows="2" placeholder="Log a set or ask anything…"></textarea>
           <button type="submit" id="preview-btn" class="composer-send" title="Preview — no data saved">Preview — no data saved</button>
         </div>
 
