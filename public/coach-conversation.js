@@ -268,6 +268,50 @@
     return lines.join('\n');
   }
 
+  // Build "Bench 185×6, Row 155×8…" placeholder from structured plan exercises.
+  function buildWorkoutPlaceholder(exercises) {
+    if (!exercises || !exercises.length) return null;
+    const items = exercises.slice(0, 4).map(raw => {
+      const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
+      if (!ex || !ex.name || ex.weight == null || ex.reps == null) return null;
+      const name = ex.name.split(' ').slice(0, 2).join(' ');
+      return `${name} ${ex.weight}×${ex.reps}`;
+    }).filter(Boolean);
+    return items.length ? items.join(', ') : null;
+  }
+
+  // Extract placeholder from a typed Atlas reply that contains exercise prescriptions.
+  // Handles two formats: the templated block ("Bench Press\n185lbs 6 x4") and
+  // LLM bullet format ("Bench Press: 185 lb × 6").  Returns null when no exercises found.
+  function extractPlaceholderFromText(text) {
+    if (!text) return null;
+    const items = [];
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length - 1 && items.length < 4; i++) {
+      const line = lines[i].trim();
+      const next = lines[i + 1].trim();
+      const m = /^(\d+)lbs\s+(\d+)/.exec(next);
+      if (m && line && !/^\d/.test(line) && !/lbs|×|Why|Log|today|read/i.test(line)) {
+        const name = line.replace(/^[*•\-]\s*/, '').split(' ').slice(0, 2).join(' ');
+        items.push(`${name} ${m[1]}×${m[2]}`);
+      }
+    }
+    if (!items.length) {
+      const re = /([A-Z][a-zA-Z\s]{2,25}?):\s*(\d+)\s*(?:lb[s]?\s*)?[×xX]\s*(\d+)/g;
+      let m;
+      while ((m = re.exec(text)) !== null && items.length < 4) {
+        const name = m[1].trim().split(' ').slice(0, 2).join(' ');
+        items.push(`${name} ${m[2]}×${m[3]}`);
+      }
+    }
+    return items.length ? items.join(', ') : null;
+  }
+
+  function setWorkoutPlaceholder(text) {
+    const ta = document.getElementById('workout-text');
+    if (ta && text) ta.placeholder = text;
+  }
+
   // LLM path: send the deterministic plan facts to /api/coach/message (kind:plan)
   // and compose the reply as headline + Gemini "why" prose + the exercise list.
   // Returns null on no-key / empty facts / timeout / failure so the caller falls
@@ -361,6 +405,7 @@
         ? composeLlmPlanMessage(whyProse, data)
         : getSuggestedWorkoutMessage(data);
       await typeOut(body, message);
+      setWorkoutPlaceholder(buildWorkoutPlaceholder((recommendedIntent(data) || {}).exercises));
     } catch {
       body.textContent = '';
       await typeOut(body, "I couldn't pull a suggestion just now — but start logging and I'll react as you go.");
@@ -650,6 +695,7 @@
 
     body.textContent = '';
     await typeOut(body, reply);
+    setWorkoutPlaceholder(extractPlaceholderFromText(reply));
 
     // Apply the structured edit (if any) after prose is typed — the lifter sees
     // the explanation first, then the preview updates. The trust loop is intact:

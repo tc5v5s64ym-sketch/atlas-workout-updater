@@ -3608,8 +3608,9 @@ test('declutter: load-session corrector lives inside the Details fold, off the m
 test('declutter: composer form docks to the bottom of the Coach surface', () => {
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
   assert.match(css, /#tab-logger\.active\s*\{[^}]*flex-direction:\s*column/, 'Coach surface must be a column');
-  assert.match(css, /#logger-form\s*\{[^}]*position:\s*sticky/, 'composer form must be sticky');
-  assert.match(css, /#logger-form\s*\{[^}]*margin-top:\s*auto/, 'composer must push to the bottom when thread is short');
+  assert.match(css, /#tab-logger\.active\s*\{[^}]*overflow:\s*hidden/, 'Coach surface must clip so inner thread scrolls');
+  assert.match(css, /#coach-thread\s*\{[^}]*overflow-y:\s*auto/, 'thread must be the scroll container');
+  assert.match(css, /#logger-form\s*\{[^}]*flex:\s*0 0 auto/, 'composer must be a pinned static flex child');
 });
 
 test('declutter: safety note still proves test_mode and stays compact', () => {
