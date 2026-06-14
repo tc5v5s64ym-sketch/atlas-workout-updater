@@ -39,6 +39,7 @@ const {
   buildMuscleGroupReadiness,
   scoreIntents
 } = require('./services/analytics');
+const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const {
   beginWrite,
   completeWrite,
@@ -1233,6 +1234,41 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
     return standardSuccess(req, res, 'Intent recommendation', result);
   } catch (error) {
     return standardError(req, res, 'Failed to build intent recommendation', error.message, 500);
+  }
+});
+
+// GET /api/recommendation/preview — READ-ONLY deterministic recommendation preview.
+// Runs intent → rule policy → lift history → recommendation → short (templated) explanation.
+// Returns only the public payload; never raw sheet rows / analytics internals, and never writes.
+app.get('/api/recommendation/preview', async (req, res) => {
+  try {
+    const [allLog, allEffort] = await Promise.all([
+      getSheetRows(logSheetName),
+      getSheetRows(effortSheetName)
+    ]);
+    const rec = buildRecommendation({
+      sessionText: req.query.text || req.query.sessionText,
+      explicitGoal: req.query.goal,
+      userProfileGoal: req.query.profileGoal,
+      liftCode: req.query.liftCode,
+      exerciseName: req.query.exercise,
+      logRows: allLog,
+      effortRows: allEffort,
+      constraints: parseRecommendationConstraints(req.query)
+    });
+    const payload = {
+      intent: rec.intent,
+      source: rec.source,
+      recommendation: rec.recommendation,
+      reasonCodes: rec.reasonCodes,
+      safetyFlags: rec.safetyFlags,
+      llmBrief: rec.llmBrief,
+      coachExplanation: rec.coachExplanation
+    };
+    if (rec.weightGuidance) payload.weightGuidance = rec.weightGuidance;
+    return standardSuccess(req, res, 'Recommendation preview', payload);
+  } catch (error) {
+    return standardError(req, res, 'Failed to build recommendation preview', error.message, 500);
   }
 });
 
