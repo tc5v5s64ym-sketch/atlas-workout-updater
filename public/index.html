@@ -304,9 +304,18 @@
         <div id="detail-result"></div>
       </div>
 
-      <!-- Lift list: tappable exercises, most-recently-trained first -->
+      <!-- Lift list: the Week/Month/YTD/All selector recomputes %, sparkline, and
+           the climbing/holding/to-fix counts client-side from the dated series
+           /api/exercises/:liftCode/progress already returns (no new API). -->
       <div class="card" id="lift-list-card">
-        <h2>Your Lifts</h2>
+        <div class="trends-glance" id="trends-glance"></div>
+        <div class="frame" id="trends-frame" role="tablist" aria-label="Timeframe">
+          <button type="button" class="frame-btn" data-frame="week" role="tab" aria-selected="false">Week</button>
+          <button type="button" class="frame-btn" data-frame="month" role="tab" aria-selected="false">Month</button>
+          <button type="button" class="frame-btn" data-frame="ytd" role="tab" aria-selected="false">YTD</button>
+          <button type="button" class="frame-btn active" data-frame="all" role="tab" aria-selected="true">All time</button>
+        </div>
+        <div class="trends-list-head"><h2>Your Lifts</h2><span class="trends-cap" id="trends-cap">vs all time</span></div>
         <div id="lift-list-result"><span class="muted">Loading your lifts…</span></div>
       </div>
 

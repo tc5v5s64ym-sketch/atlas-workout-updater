@@ -1998,6 +1998,99 @@ a.lift-link:hover { text-decoration: underline; }
 .lift-list-name { font-weight: 600; color: var(--ink); }
 .lift-list-target { font-size: 0.82rem; color: var(--muted); margin-left: auto; padding-left: var(--s3); white-space: nowrap; }
 
+/* ── Trends: timeframe selector + glance counts + lift rows ── */
+.trends-glance {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  margin-bottom: var(--s3);
+}
+.trends-glance:empty { display: none; }
+.trend-glance-item { display: flex; align-items: center; gap: 7px; font-size: 0.82rem; color: var(--muted); }
+.trend-glance-item b { font-family: var(--mono); font-weight: 600; color: var(--ink); font-size: 0.88rem; }
+.trend-pip { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.trend-pip-up { background: var(--ok); }
+.trend-pip-hold { background: var(--muted); }
+.trend-pip-stall { background: var(--accent); }
+
+.frame {
+  display: flex;
+  background: var(--card-sunken);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  padding: 3px;
+  gap: 2px;
+}
+.frame-btn {
+  flex: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  font-family: var(--disp);
+  font-weight: 500;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 8px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.frame-btn.active { background: var(--surface-2); color: var(--ink); }
+
+.trends-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: var(--s4) 0 2px;
+}
+.trends-list-head h2 {
+  margin: 0;
+  font-family: var(--disp);
+  font-weight: 500;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.trends-cap { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); }
+
+.trend-list { display: flex; flex-direction: column; }
+.trend-row {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 13px 0;
+  cursor: pointer;
+  color: var(--ink);
+}
+.trend-row:last-child { border-bottom: none; }
+.trend-row:hover .trend-name { color: var(--accent); }
+.trend-name { font-family: var(--disp); font-weight: 500; font-size: 1.05rem; color: var(--ink); }
+.trend-l2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin-top: 6px;
+}
+.trend-read { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+.trend-read b { color: var(--ink); font-weight: 500; }
+.trend-pct { font-weight: 500; }
+.trend-up { color: var(--ok); }
+.trend-hold { color: var(--muted); }
+.trend-stall { color: var(--accent); }
+.trend-spark { flex: 0 0 auto; line-height: 0; }
+.spark { display: block; }
+.spark-up { color: var(--ok); }
+.spark-hold { color: var(--muted); }
+.spark-stall { color: var(--accent); }
+
 /* Drill-down panel */
 .lift-drilldown-header {
   display: flex;
