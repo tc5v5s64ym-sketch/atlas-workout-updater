@@ -56,6 +56,7 @@ const { success: standardSuccess, error: standardError } = require('./response')
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const coach = require('./services/coach');
+const trainingSME = require('./services/trainingSME');
 const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
@@ -1017,6 +1018,25 @@ app.post('/api/coach/chat', async (req, res) => {
       message: null, configured: true, model: coach.coachModel(), error: error.message
     });
   }
+});
+
+// POST /api/coach/ask — on-demand training SME answer. Deterministic and LLM-FREE:
+// routes a training question to structured knowledge cards. READ-ONLY (no Sheets, no
+// writes). Logging-shaped input returns depth "log_only" with answer:null so the chat
+// stays quiet and practical during logging. Body: { message: string }.
+app.post('/api/coach/ask', (req, res) => {
+  const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
+  if (!message) {
+    return standardError(req, res, 'message string is required', null, 400);
+  }
+  const result = trainingSME.buildTrainingSMEAnswer({ question: message });
+  return standardSuccess(req, res, 'Training SME answer', {
+    depth: result.depth,
+    answer: result.answer,
+    cards: result.cards,
+    confidenceLevel: result.confidenceLevel,
+    source: 'training_sme'
+  });
 });
 
 // POST /api/session/compile — extract logged sets from conversation history.
