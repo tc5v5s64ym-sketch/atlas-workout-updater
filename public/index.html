@@ -342,44 +342,48 @@
       <div id="sessions-result"><span class="muted">Loading…</span></div>
     </section>
 
-    <!-- ============ BODY (bodyweight + pending exercises) ============ -->
+    <!-- ============ BODY (trend-first bodyweight) ============ -->
     <section id="tab-body" class="tab" role="tabpanel" tabindex="-1" aria-labelledby="nav-body">
-      <div class="card">
-        <h2>Log Bodyweight</h2>
-        <p class="safety-note"><strong>Two-step write flow.</strong> Preview first, then confirm to write.</p>
-        <form id="bw-form">
-          <div class="form-row">
-            <label>Date <input type="date" id="bw-date" required></label>
-            <label>Weight <input type="number" id="bw-weight" min="30" max="400" step="0.1" placeholder="75.5" required></label>
-            <label class="wide">Notes <input type="text" id="bw-notes" placeholder="optional"></label>
-          </div>
-          <div class="action-row">
-            <button type="submit" id="bw-preview-btn">Preview — no data saved</button>
-          </div>
-        </form>
+      <!-- Trend-first: current weight + 30-day change + line chart. -->
+      <div id="bw-glance" class="bw-glance"><span class="muted">Loading…</span></div>
 
-        <div id="bw-preview-panel" hidden>
-          <h3>Review before saving</h3>
-          <div id="bw-preview-content"></div>
-          <div class="action-row">
-            <button id="bw-approve-btn" class="approve" disabled>Write to Google Sheets</button>
-            <button id="bw-cancel-btn" class="secondary">Edit / Cancel</button>
+      <!-- Compact log: the existing two-step preview/approve write, revealed on tap. -->
+      <details id="bw-log-details" class="bw-log-details">
+        <summary class="bw-log-summary"><span class="bw-log-plus" aria-hidden="true">+</span> Log today&rsquo;s weight</summary>
+        <div class="bw-log-body">
+          <form id="bw-form">
+            <div class="form-row">
+              <label>Date <input type="date" id="bw-date" required></label>
+              <label>Weight <input type="number" id="bw-weight" min="30" max="400" step="0.1" placeholder="75.5" required></label>
+              <label class="wide">Notes <input type="text" id="bw-notes" placeholder="optional"></label>
+            </div>
+            <div class="action-row">
+              <button type="submit" id="bw-preview-btn">Preview — no data saved</button>
+            </div>
+          </form>
+
+          <div id="bw-preview-panel" hidden>
+            <h3>Review before saving</h3>
+            <div id="bw-preview-content"></div>
+            <div class="action-row">
+              <button id="bw-approve-btn" class="approve" disabled>Write to Google Sheets</button>
+              <button id="bw-cancel-btn" class="secondary">Edit / Cancel</button>
+            </div>
+            <p class="preview-gate-note" id="bw-gate-note">Run a preview above to enable this button.</p>
           </div>
-          <p class="preview-gate-note" id="bw-gate-note">Run a preview above to enable this button.</p>
+          <div id="bw-status"></div>
         </div>
-        <div id="bw-status"></div>
-      </div>
+      </details>
+      <p class="bw-safety">preview first &middot; nothing saved until you approve</p>
 
-      <div class="card">
-        <h2>Bodyweight History</h2>
+      <details class="card glance-card bw-history-card">
+        <summary>
+          <span class="glance-title">History</span>
+          <span class="glance-hint" id="bw-history-hint"></span>
+          <span class="glance-chevron">&#8250;</span>
+        </summary>
         <div id="bw-history" class="loading">Loading…</div>
-      </div>
-
-      <div class="card">
-        <h2>Unrecognised Exercises</h2>
-        <p class="muted">Exercises from recent sessions that didn't match the catalog. Add them to your <code>Exercise_Catalog</code> sheet to enrich future logs.</p>
-        <div id="pending-exercises">Loading…</div>
-      </div>
+      </details>
     </section>
 
     <!-- ============ SETTINGS ============ -->
@@ -414,6 +418,12 @@
       </div>
 
       <h3 class="settings-section-heading">Data</h3>
+
+      <div class="card">
+        <h2>Unrecognised Exercises</h2>
+        <p class="muted">Exercises from recent sessions that didn't match the catalog. Add them to your <code>Exercise_Catalog</code> sheet to enrich future logs.</p>
+        <div id="pending-exercises">Loading…</div>
+      </div>
 
       <div class="card">
         <h2>Catalog Lookup</h2>
