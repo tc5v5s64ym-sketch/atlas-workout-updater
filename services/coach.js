@@ -316,7 +316,8 @@ function sanitizeChatContext(context) {
     rationale: strOrNull(e && e.rationale),
     weight: numOrNull(e && e.weight),
     reps: numOrNull(e && e.reps),
-    sets: numOrNull(e && e.sets)
+    sets: numOrNull(e && e.sets),
+    rir: e && e.rir == null ? null : numOrNull(e.rir)
   })).filter(e => e.name) : [];
   const session_count = numOrNull(c.session_count);
   const coaching_notes = Array.isArray(c.coaching_notes)

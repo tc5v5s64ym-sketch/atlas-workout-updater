@@ -3,9 +3,52 @@ const assert = require('node:assert/strict');
 
 const {
   classifyLiftRole, isAccessory, isMainCompound,
-  accessoryRepTarget, guardAccessoryReps, applyLiftRoleGuards,
+  accessoryRepTarget, guardAccessoryReps, recommendedTargetRir, applyLiftRoleGuards,
   ACCESSORY_RESET_LABEL,
 } = require('../services/liftRole');
+
+/* ===== recommended target RIR (intent + role based) ===== */
+
+test('recommendedTargetRir is intent + role based', () => {
+  // Strength: heavy main leaves less in the tank than accessories.
+  assert.equal(recommendedTargetRir({ exercise: 'Back Squat', muscle_group: 'Quads' }, 'build_strength'), 1);
+  assert.equal(recommendedTargetRir({ exercise: 'Face Pull', muscle_group: 'Rear Delts' }, 'build_strength'), 2);
+  // Recovery / reduced stress: leave more in reserve.
+  assert.equal(recommendedTargetRir({ exercise: 'Back Squat', muscle_group: 'Quads' }, 'recovery_pump'), 2);
+  assert.equal(recommendedTargetRir({ exercise: 'Dumbbell Curl', muscle_group: 'Biceps' }, 'deload_reset'), 3);
+  // Default (hypertrophy / balanced): moderate.
+  assert.equal(recommendedTargetRir({ exercise: 'Incline Dumbbell Press', muscle_group: 'Chest' }, 'build_muscle'), 2);
+});
+
+test('applyLiftRoleGuards attaches a recommended target_rir to every planned exercise', () => {
+  const result = {
+    intents: [
+      { id: 'build_strength', label: 'Build Strength', exercises: [
+        { exercise: 'Back Squat', muscle_group: 'Quads', target_weight: 315, target_reps: 5, target_sets: 3 },
+        { exercise: 'Face Pull', muscle_group: 'Rear Delts', target_weight: 50, target_reps: 15, target_sets: 3 },
+      ] },
+      { id: 'recovery_pump', label: 'Recovery / Pump', exercises: [
+        { exercise: 'Dumbbell Curl', muscle_group: 'Biceps', target_weight: 30, target_reps: 12, target_sets: 3 },
+      ] },
+    ],
+    todays_read: {},
+  };
+  const guarded = applyLiftRoleGuards(result);
+  assert.equal(guarded.intents[0].exercises[0].target_rir, 1); // strength main
+  assert.equal(guarded.intents[0].exercises[1].target_rir, 2); // strength accessory
+  assert.equal(guarded.intents[1].exercises[0].target_rir, 3); // recovery accessory
+  // existing fields are preserved
+  assert.equal(guarded.intents[0].exercises[0].target_weight, 315);
+});
+
+test('applyLiftRoleGuards respects an explicit target_rir if already present', () => {
+  const result = {
+    intents: [{ id: 'build_muscle', exercises: [{ exercise: 'Bench Press', muscle_group: 'Chest', target_rir: 0 }] }],
+    todays_read: {},
+  };
+  const guarded = applyLiftRoleGuards(result);
+  assert.equal(guarded.intents[0].exercises[0].target_rir, 0);
+});
 
 /* ===== classifier ===== */
 

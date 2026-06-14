@@ -2726,7 +2726,8 @@ function currentPlanForChat() {
     rationale: ex.focus || ex.reason || null,
     weight: ex.target_weight ?? ex.weight ?? null,
     reps: ex.target_reps ?? ex.reps ?? null,
-    sets: ex.target_sets ?? ex.sets ?? null
+    sets: ex.target_sets ?? ex.sets ?? null,
+    rir: ex.target_rir ?? ex.rir ?? null
   })).filter(e => e.name);
 }
 
