@@ -501,8 +501,12 @@ body[data-surface="coach"] main {
 .composer:focus-within { border-color: var(--accent); }
 
 .composer .workout-text {
-  flex: 1;
-  min-height: 48px;
+  /* Stable height, NOT flex-distributed. With `flex: 1` the textarea's height
+     was whatever flexbox handed it, so re-layouts (hiding the home hero, the
+     thread filling as a coaching message types out) made it collapse for a
+     frame and then spring back — the composer visibly shrank then grew. A
+     fixed min-height keeps the box the same size through every reflow. */
+  min-height: 72px;
   max-height: 200px;
   border: none;
   background: transparent;
