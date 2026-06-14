@@ -2825,6 +2825,40 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     file = imageInput.files[0] || null;
   }
 
+  // Screenshot upload and manual effort form are end-of-session triggers.
+  // If the lifter logged sets conversationally (set table is empty because sets
+  // were routed to the coach), compile the session from chat history so one
+  // preview covers both the workout rows AND the effort data.
+  if (!logRows.length && (file || manualEffort)) {
+    const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+    if (turns.length) {
+      setStatus(loggerStatus, 'Compiling session…', 'ok');
+      try {
+        const compileRes = await api('/api/session/compile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ history: turns })
+        });
+        const compiledText = compileRes.data?.workout_text;
+        if (compiledText) {
+          const compileDate = date || getLocalDateString();
+          const compileSessionId = sessionId || generateSessionId(compileDate);
+          workoutTextInput.value = compiledText;
+          try {
+            await rowsFromWorkoutInput();
+            logRows = collectLogRows(compileSessionId, compileDate);
+          } finally {
+            workoutTextInput.value = '';
+            lastParsedWorkoutText = '';
+          }
+        }
+      } catch {
+        // Compilation failed or Gemini unavailable — fall through to effort-only preview
+      }
+      setStatus(loggerStatus, '', 'ok');
+    }
+  }
+
   const effortOnly = !logRows.length && Boolean(file || manualEffort);
   if (!logRows.length && !effortOnly) {
     // Pure text with nothing to log → route to the coach (same as the parse
@@ -2838,13 +2872,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
-  // Conversational session mode: parsed workout text (no effort attached) goes
-  // to the coach for acknowledgment instead of immediately showing a preview
-  // card. The chat IS the running log — the lifter sees what Atlas heard and
-  // corrects conversationally. The preview only fires when "log it" compiles the
-  // full session (signalled by sessionCompiledAwaitingPreview) or when the lifter
-  // explicitly attached effort data to this submission.
-  if (logRows.length && !effortOnly) {
+  // Conversational session mode: parsed workout text routes to the coach for
+  // acknowledgment, not a preview card. Exceptions:
+  //   (a) sessionCompiledAwaitingPreview — "log it" re-submission, go to preview
+  //   (b) file or manualEffort is set — effort submission always previews
+  if (logRows.length && !file && !manualEffort) {
     if (!sessionCompiledAwaitingPreview) {
       routeMessageToCoach(pendingChatText);
       return;
