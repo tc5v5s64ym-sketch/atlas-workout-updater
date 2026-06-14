@@ -25,6 +25,29 @@ test('same history produces different strength vs hypertrophy recommendations', 
   assert.notDeepEqual(strength.recommendation.targetRepRange, hypertrophy.recommendation.targetRepRange);
   assert.ok(strength.reasonCodes.includes('goal_strength'));
   assert.ok(hypertrophy.reasonCodes.includes('goal_hypertrophy'));
+  // Normal history (no NEW PR) must actually progress, not hold — strength adds load, hypertrophy adds reps.
+  assert.equal(strength.recommendation.progression, 'add_load');
+  assert.equal(hypertrophy.recommendation.progression, 'add_rep');
+});
+
+test('a lift with prior history but no new PR still progresses (does not falsely hold)', () => {
+  // Most recent session ties earlier work — NOT a new PR, so progression must proceed.
+  const rec = buildRecommendation({ explicitGoal: 'strength', liftCode: 'BEN01', exerciseName: 'Bench Press', logRows: benchRows });
+  assert.notEqual(rec.recommendation.progression, 'maintain');
+});
+
+test('a genuinely new PR last session holds (recentPR gates on the latest session)', () => {
+  const justPrd = buildRecommendation({
+    explicitGoal: 'strength',
+    liftCode: 'BEN01',
+    exerciseName: 'Bench Press',
+    logRows: [
+      row('2026-05-20', 'S1', 'Bench Press', 'Chest', 'BEN01', 185, 5, 2),
+      row('2026-05-27', 'S2', 'Bench Press', 'Chest', 'BEN01', 200, 5, 2), // new all-time best, most recent
+    ],
+  });
+  assert.equal(justPrd.recommendation.progression, 'maintain');
+  assert.ok(justPrd.reasonCodes.includes('fatigue_moderate_maintain_or_small_step'));
 });
 
 test('every recommendation includes reasonCodes, locked numbers, and a validated explanation', () => {

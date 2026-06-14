@@ -50,10 +50,22 @@ function buildLiftHistory(logRows, liftCode, { effortRows, today } = {}) {
   const fatigue = safe(() => computeFatigueStatus(rows, refDate), {}) || {};
 
   const sets = Array.isArray(rec.last_working_sets) ? rec.last_working_sets : [];
-  const lastSet = sets.length ? sets[sets.length - 1] : null;
+  // Most recent working set (by date), robust to ordering. ISO dates sort chronologically.
+  const lastSet = sets.length
+    ? sets.reduce((a, b) => (String(b && b.date_clean || '') >= String(a && a.date_clean || '') ? b : a))
+    : null;
+  const lastDate = lastSet ? lastSet.date_clean : null;
 
   const upper = code.toUpperCase();
-  const recentPR = prs.some((p) => String(p && p.liftCode || '').toUpperCase() === upper);
+  // detectRecentPrs returns each lift's best-ever sets (existence != recent). Only count it as a
+  // recent PR when one of those bests was set on the lift's MOST RECENT session — i.e. a new PR.
+  const prEntry = prs.find((p) => String(p && p.liftCode || '').toUpperCase() === upper);
+  const prDates = prEntry
+    ? [prEntry.bestWeightSet, prEntry.bestRepSet, prEntry.bestEstimated1RMSet]
+        .filter(Boolean)
+        .map((s) => s.date_clean)
+    : [];
+  const recentPR = Boolean(lastDate && prDates.includes(lastDate));
   const recentStall = stalls.some((s) => String(s && s.liftCode || '').toUpperCase() === upper);
   const performanceDrop = rec.e1rm_trend === 'down' || detail.volume_trend === 'down';
 
