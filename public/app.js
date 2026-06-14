@@ -1042,9 +1042,10 @@ function wireStartSessionBtn(data) {
 
 // Normalize an intent's exercise entry to one shape. Intents emit
 // { exercise, lift_code, target_weight, target_reps, target_sets, reason };
-// also tolerate a next_target shape just in case.
+// also tolerate a next_target shape just in case. `rir` is carried through so
+// the suggested-workout display can show it (and never silently drop it).
 function normalizePlanExercise(raw) {
-  if (!raw) return { name: '', liftCode: '', weight: null, reps: null, sets: null, reason: '' };
+  if (!raw) return { name: '', liftCode: '', weight: null, reps: null, sets: null, rir: null, reason: '' };
   const t = raw.next_target || {};
   const pick = (a, b) => (a != null ? a : (b != null ? b : null));
   return {
@@ -1053,6 +1054,7 @@ function normalizePlanExercise(raw) {
     weight: pick(raw.target_weight, t.weight),
     reps: pick(raw.target_reps, t.reps),
     sets: pick(raw.target_sets, t.sets),
+    rir: pick(raw.target_rir, t.rir),
     reason: raw.reason || ''
   };
 }

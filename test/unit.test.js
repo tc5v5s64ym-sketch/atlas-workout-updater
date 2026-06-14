@@ -537,6 +537,84 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
+// ── Suggested-workout display formatting (RIR must never be silently dropped) ──
+
+// Extract the pure formatPlanSetLine helper from the coach-conversation IIFE.
+function loadFormatPlanSetLine() {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const src = ccSource.slice(
+    ccSource.indexOf('function formatPlanSetLine(ex)'),
+    ccSource.indexOf('function suggestedExercisesBlock(rec)')
+  );
+  return new Function(`${src}; return formatPlanSetLine;`)();
+}
+
+// Extract normalizePlanExercise from app.js (carries rir through for display).
+function loadNormalizePlanExercise() {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const src = appSource.slice(
+    appSource.indexOf('function normalizePlanExercise(raw)'),
+    appSource.indexOf('/* ===== Active planned session')
+  );
+  return new Function(`${src}; return normalizePlanExercise;`)();
+}
+
+test('suggested workout set line: RIR present renders {weight}lbs {reps}/{rir}', () => {
+  const formatPlanSetLine = loadFormatPlanSetLine();
+  assert.equal(formatPlanSetLine({ weight: 50, reps: 15, rir: 3 }), '50lbs 15/3');
+  assert.equal(formatPlanSetLine({ weight: 225, reps: 5, rir: 2 }), '225lbs 5/2');
+  assert.equal(formatPlanSetLine({ weight: 30, reps: 8, rir: 0 }), '30lbs 8/0');
+});
+
+test('suggested workout set line: missing RIR renders {weight}lbs {reps}/?', () => {
+  const formatPlanSetLine = loadFormatPlanSetLine();
+  assert.equal(formatPlanSetLine({ weight: 50, reps: 15 }), '50lbs 15/?');
+  assert.equal(formatPlanSetLine({ weight: 50, reps: 15, rir: null }), '50lbs 15/?');
+  assert.equal(formatPlanSetLine({ weight: 50, reps: 15, rir: undefined }), '50lbs 15/?');
+});
+
+test('suggested workout set line: never renders bare {weight}lbs {reps} (RIR never dropped)', () => {
+  const formatPlanSetLine = loadFormatPlanSetLine();
+  for (const ex of [{ weight: 50, reps: 15, rir: 3 }, { weight: 50, reps: 15 }, { weight: 50, reps: 15, rir: null }]) {
+    const line = formatPlanSetLine(ex);
+    assert.ok(line.includes('/'), `set line must include a "/" RIR marker, got "${line}"`);
+    assert.notEqual(line, '50lbs 15', 'bare "{weight}lbs {reps}" with no RIR is forbidden');
+  }
+});
+
+test('normalizePlanExercise carries target_rir (and next_target.rir) through to display', () => {
+  const normalizePlanExercise = loadNormalizePlanExercise();
+  assert.equal(
+    normalizePlanExercise({ exercise: 'Face Pull', target_weight: 50, target_reps: 15, target_sets: 3, target_rir: 3 }).rir,
+    3
+  );
+  assert.equal(
+    normalizePlanExercise({ exercise: 'Bench Press', next_target: { weight: 225, reps: 5, rir: 2 } }).rir,
+    2
+  );
+  // Missing RIR → null (the display layer renders "/?" — it is never invented).
+  assert.equal(
+    normalizePlanExercise({ exercise: 'Shrugs', target_weight: 75, target_reps: 15, target_sets: 3 }).rir,
+    null
+  );
+});
+
+test('suggested workout renders a structured block: bold names via <strong>, no bullets', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = ccSource.slice(
+    ccSource.indexOf('function appendWorkoutPlan(container, rec)'),
+    ccSource.indexOf('function suggestedWorkoutProseLines')
+  );
+  // Exercise names are bold via a real <strong> element, not markdown asterisks.
+  assert.match(block, /createElement\('strong'\)/, 'exercise names must render as <strong>');
+  assert.match(block, /formatPlanSetLine\(ex\)/, 'set lines must use the RIR-safe formatter');
+  // No bullet characters injected into the workout block.
+  assert.doesNotMatch(block, /['"`][*•\-]\s/, 'workout block must not inject bullets');
+  // The structured path is actually wired into the tile handler.
+  assert.match(ccSource, /appendWorkoutPlan\(body, rec\)/,
+    'typeSuggestedWorkout must render the structured workout block');
+});
+
 test('conversational logger renders textbox first and parsed rows as fallback editor', () => {
   const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

@@ -157,7 +157,7 @@ async function mockAtlasApis(page, capture = {}) {
               label: 'Push', focus: 'Bench + OHP', recommended: true,
               why_today: ['Pressing patterns are fresh', 'Last bench moved at RIR 2'],
               data_points: [{ label: 'Weekly load', value: '1.1× baseline', context: 'moderate' }],
-              exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3 }]
+              exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 }]
             },
             { label: 'Pull', focus: 'Rows + lats', recommended: false }
           ]
@@ -253,7 +253,12 @@ test('Suggested Workout types out the why-today rationale', async ({ page }) => 
   await expect(bubble).toContainText('Pressing patterns are fresh');
   await expect(bubble).toContainText('Readiness:');
   await expect(bubble).toContainText('Weekly load: 1.1× baseline');
-  await expect(bubble).toContainText('Bench Press');
+
+  // Structured workout block: bold exercise name + RIR-safe compact set lines.
+  await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press');
+  const setLines = bubble.locator('.workout-plan-set');
+  await expect(setLines).toHaveCount(3);                 // target_sets: 3
+  await expect(setLines.first()).toHaveText('225lbs 5/2'); // {weight}lbs {reps}/{rir} — RIR never dropped
 });
 
 test('Suggested Workout uses the Gemini plan voice when available', async ({ page }) => {
@@ -268,8 +273,31 @@ test('Suggested Workout uses the Gemini plan voice when available', async ({ pag
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
   await expect(bubble).toContainText("Today's read: Push");
   await expect(bubble).toContainText('today is blood flow, not max effort'); // Gemini prose
-  await expect(bubble).toContainText('Bench Press');                          // exercises still shown
+  await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press'); // exercises still shown
   await expect(bubble).not.toContainText('Why today:');                       // templated bullets replaced
+});
+
+test('Suggested Workout shows /? when the engine gives no RIR — never a bare set line', async ({ page }) => {
+  await openApp(page);
+  // Override the plan endpoint with an exercise that has no target_rir.
+  // Registered after openApp, so this handler wins for this path.
+  await page.route('**/api/plan/intent-recommendation', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      todays_read: { recommended_label: 'Pull', recommended_reason: 'Clean pull work.' },
+      intents: [{
+        label: 'Pull', focus: 'Face pulls', recommended: true,
+        exercises: [{ exercise: 'Face Pull', lift_code: 'FAC01', target_weight: 50, target_reps: 15, target_sets: 3 }]
+      }]
+    }
+  })));
+
+  await page.locator('.suggest-tile[data-suggest="workout"]').click();
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
+  const setLines = bubble.locator('.workout-plan-set');
+  // Exact text match proves RIR is never dropped: "/?" when missing, never a bare "50lbs 15".
+  await expect(setLines).toHaveCount(3);
+  for (let i = 0; i < 3; i++) await expect(setLines.nth(i)).toHaveText('50lbs 15/?');
 });
 
 test('Chat: a non-loggable question gets a coach reply in-thread and never writes', async ({ page }) => {
@@ -466,7 +494,7 @@ test('Mobile viewport keeps the Coach composer and preview usable', async ({ pag
 test('Progress surface renders the Today screen from mocked data without crashing', async ({ page }) => {
   await openApp(page);
 
-  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
 
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
   // Above the fold: hero pick + readiness strip
@@ -495,7 +523,7 @@ test('History groups sessions under Today / Past with clean cards', async ({ pag
     }
   })));
 
-  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
   await page.locator('[data-tab="history"]').click();
 
   const headers = page.locator('.session-group-header');
@@ -531,7 +559,7 @@ test('Tapping a session expands to exactly what was logged, grouped by exercise'
     }
   })));
 
-  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
   await page.locator('[data-tab="history"]').click();
   await page.locator('.session-item').first().locator('.session-summary').click();
 
@@ -570,7 +598,7 @@ test('Session quality info button reveals the score breakdown popover', async ({
     }
   })));
 
-  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
   await page.locator('[data-tab="history"]').click();
   await page.locator('.session-item').first().locator('.session-summary').click();
 
@@ -603,7 +631,7 @@ test('Recovery board: per-pattern tiles sorted most-recovered first, tap asks th
   await openApp(page, capture);
 
   // The recovery board lives on the Today (dashboard) surface.
-  await page.locator('.surface-btn[data-surface="progress"]').click();
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
   await page.locator('#nav-today').click();
 
   const board = page.locator('#pattern-board');
