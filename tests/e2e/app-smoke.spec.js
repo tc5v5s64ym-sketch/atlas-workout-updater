@@ -726,3 +726,71 @@ test('Learn chip: a topic with no card stays quiet (no lecture), still no write'
   await expect(page.locator('#preview-panel')).toBeHidden();
   expect(capture.writeRequests).toHaveLength(0);
 });
+
+test('Composer: a training question is answered deterministically by the SME (no Gemini)', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Parser reports no sets → the message is treated as a question (routes to coach).
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: { test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' } }
+  })));
+
+  let askBody = null;
+  await page.route('**/api/coach/ask', route => {
+    askBody = route.request().postDataJSON();
+    return route.fulfill(json({ status: 'success', data: {
+      depth: 'explain',
+      answer: 'A deload is a planned easier week — reduce load, volume, or exercise stress to shed fatigue.',
+      cards: ['deloads'], confidenceLevel: 'high', source: 'training_sme'
+    } }));
+  });
+
+  // The Gemini coach must NOT run when the SME has a grounded answer.
+  let chatCalled = false;
+  await page.route('**/api/coach/chat', route => {
+    chatCalled = true;
+    return route.fulfill(json({ status: 'success', data: { message: '(gemini should not run)', configured: true } }));
+  });
+
+  await page.locator('#workout-text').fill('what is a deload?');
+  await page.locator('#preview-btn').click();
+
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('planned easier week');
+  await expect(page.locator('#thread-messages')).toContainText('Based on: deloads');
+  expect(askBody).toMatchObject({ message: 'what is a deload?' });
+  expect(chatCalled).toBe(false);
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
+test('Composer: a non-knowledge question falls through to the Gemini coach', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: { test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' } }
+  })));
+
+  // SME has no card for a data question → log_only, no answer.
+  await page.route('**/api/coach/ask', route => route.fulfill(json({
+    status: 'success', data: { depth: 'log_only', answer: null, cards: [], confidenceLevel: null, source: 'training_sme' }
+  })));
+
+  let chatCalled = false;
+  await page.route('**/api/coach/chat', route => {
+    chatCalled = true;
+    return route.fulfill(json({ status: 'success', data: { message: 'Your bench has been flat for 3 sessions.', configured: true } }));
+  });
+
+  await page.locator('#workout-text').fill('how is my bench trending?');
+  await page.locator('#preview-btn').click();
+
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('flat for 3 sessions');
+  expect(chatCalled).toBe(true);
+  expect(capture.writeRequests).toHaveLength(0);
+});
