@@ -16,6 +16,13 @@
 </head>
 <body data-surface="coach">
   <header>
+    <!-- Coach surface: minimal ATLAS nav bar (hamburger | wordmark | avatar) -->
+    <div id="coach-nav" class="coach-nav" aria-hidden="true">
+      <button type="button" class="coach-nav-btn" id="coach-menu-btn" aria-label="Menu">&#9776;</button>
+      <span class="coach-wordmark">A &nbsp; T &nbsp; L &nbsp; A &nbsp; S</span>
+      <div class="coach-avatar" aria-label="Dale — online">D</div>
+    </div>
+    <!-- Progress surface: standard segmented control (hidden on coach surface via CSS) -->
     <span class="brand">Atlas</span>
     <h1 class="tagline">Atlas</h1>
     <div class="segmented" role="tablist" aria-label="Atlas mode">
@@ -113,14 +120,16 @@
       <form id="logger-form">
         <label class="workout-text-label" for="workout-text">Ask anything, or log a set</label>
         <div class="composer">
-          <button type="button" class="composer-attach" id="composer-attach" aria-label="Add attachment" aria-haspopup="true" aria-expanded="false">+</button>
           <div class="attach-menu" id="attach-menu" hidden>
             <button type="button" id="attach-screenshot">Fitness device screenshot</button>
             <button type="button" id="attach-manual">Manual effort entry</button>
             <button type="button" id="attach-fix-session">Fix a past session</button>
           </div>
-          <textarea id="workout-text" class="workout-text" rows="2" placeholder="Log a set or ask anything…"></textarea>
-          <button type="submit" id="preview-btn" class="composer-send" title="Preview — no data saved">Preview — no data saved</button>
+          <textarea id="workout-text" class="workout-text" rows="3" placeholder="Log a set or ask anything…"></textarea>
+          <div class="composer-actions">
+            <button type="button" class="composer-attach" id="composer-attach" aria-label="Add attachment" aria-haspopup="true" aria-expanded="false">+</button>
+            <button type="submit" id="preview-btn" class="composer-send" title="Preview — no data saved">Preview — no data saved</button>
+          </div>
         </div>
 
         <p class="safety-note compact">Previews send <code>test_mode=true</code> — nothing is saved until you approve.</p>
