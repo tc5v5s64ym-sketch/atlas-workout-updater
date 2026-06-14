@@ -1,0 +1,92 @@
+{
+  "version": "1.0.0",
+  "purpose": "Goal-aware deterministic training recommendation policies for Atlas.",
+  "principle": "Rules decide prescription; LLM explains; LLM must not invent numbers.",
+  "canonical_goals": [
+    "strength",
+    "hypertrophy",
+    "power",
+    "conditioning_fat_loss",
+    "general_health",
+    "recovery",
+    "mixed"
+  ],
+  "global_rules": {
+    "one_lever_at_a_time": true,
+    "stimulus_not_exhaustion": true,
+    "progression_requires_recovery": true,
+    "form_quality_gates_load_progression": true,
+    "logging_required_for_progression": true,
+    "llm_must_not_invent_prescription_numbers": true
+  },
+  "goals": {
+    "strength": {
+      "rep_range": [1, 6],
+      "preferred_rep_range": [3, 5],
+      "load_percent_1rm": [80, 95],
+      "target_rir": [1, 3],
+      "rest_seconds_target": [150, 240],
+      "progression_priority": ["load", "reps", "sets", "technique"],
+      "failure_policy": "avoid_default_failure_on_compounds",
+      "reason_codes": ["goal_strength", "heavy_load_bias", "main_lift_first", "avoid_failure_default"]
+    },
+    "hypertrophy": {
+      "rep_range": [5, 30],
+      "preferred_rep_range": [8, 15],
+      "weekly_sets_per_muscle_target": [10, 20],
+      "target_rir": [0, 3],
+      "rest_seconds_target": [90, 180],
+      "progression_priority": ["reps", "sets", "load", "range_of_motion", "technique"],
+      "failure_policy": "near_failure_enough_select_failure_on_safe_later_sets",
+      "reason_codes": ["goal_hypertrophy", "volume_and_effort_bias", "rep_progression_first"]
+    },
+    "power": {
+      "rep_range": [1, 5],
+      "preferred_rep_range": [2, 4],
+      "load_percent_1rm": [30, 70],
+      "target_rir": [3, 6],
+      "rest_seconds_target": [120, 240],
+      "max_reps_times_sets": 24,
+      "progression_priority": ["speed", "quality", "load", "sets"],
+      "failure_policy": "never_chase_failure_for_power",
+      "reason_codes": ["goal_power", "speed_intent_bias", "avoid_grinding_reps"]
+    },
+    "conditioning_fat_loss": {
+      "rep_range": [8, 20],
+      "preferred_rep_range": [10, 15],
+      "target_rir": [1, 4],
+      "rest_seconds_target": [60, 120],
+      "progression_priority": ["density", "reps", "sets", "load"],
+      "failure_policy": "avoid_failure_when_recovery_or_calories_are_limited",
+      "reason_codes": ["goal_conditioning_fat_loss", "density_bias", "preserve_strength_bias"]
+    },
+    "general_health": {
+      "rep_range": [6, 15],
+      "preferred_rep_range": [8, 12],
+      "target_rir": [2, 4],
+      "rest_seconds_target": [90, 150],
+      "progression_priority": ["consistency", "technique", "reps", "load"],
+      "failure_policy": "do_not_require_failure",
+      "reason_codes": ["goal_general_health", "sustainable_progress_bias"]
+    },
+    "recovery": {
+      "rep_range": [6, 15],
+      "preferred_rep_range": [8, 12],
+      "load_percent_1rm": [40, 65],
+      "load_multiplier_from_recent_working_load": 0.6,
+      "volume_multiplier": 0.5,
+      "target_rir": [4, 6],
+      "progression_priority": ["movement_quality", "recovery", "consistency"],
+      "failure_policy": "no_failure",
+      "reason_codes": ["goal_recovery", "reduce_stress_bias", "no_PR_chasing"]
+    },
+    "mixed": {
+      "main_lift_rep_range": [3, 6],
+      "accessory_rep_range": [8, 15],
+      "target_rir": [1, 3],
+      "progression_priority": ["load_on_main_lift", "reps_on_accessories", "sets_if_recovery_good"],
+      "failure_policy": "avoid_failure_on_main_lift_selectively_allow_accessory_failure",
+      "reason_codes": ["goal_mixed", "main_lift_strength_accessory_hypertrophy"]
+    }
+  }
+}
