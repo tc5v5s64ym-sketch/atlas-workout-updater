@@ -90,80 +90,192 @@
     return { bubble, body };
   }
 
-  /* ===== Inline "Save to Sheets" (mirrors the existing #approve-btn) ===== */
+  /* ===== Set readback + next-prescription (in-workout coaching, no Save) ===== */
 
-  let currentSaveBtn = null;
+  function elc(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function exerciseNameFromRows(rows, code) {
+    const r = (rows || []).find(row => String(row[5] || '').toUpperCase() === String(code).toUpperCase());
+    return r ? (r[3] || r[2] || null) : null;
+  }
+
+  // "135×12 RIR 4 · 185×10 RIR 2 · 225×5 RIR 0" — RIR always in ember; RIR 0 /
+  // failure gets the brighter "max" treatment. Appends into `target`.
+  function appendSetReadout(target, sets) {
+    sets.forEach((s, i) => {
+      if (i) target.appendChild(document.createTextNode(' · '));
+      target.appendChild(document.createTextNode(`${s.weight}×${s.reps} `));
+      if (s.rir != null && Number.isFinite(Number(s.rir))) {
+        const failure = Number(s.rir) <= 0;
+        const rir = elc('span', failure ? 'rir rir-max' : 'rir', `RIR ${s.rir}`);
+        target.appendChild(rir);
+      }
+    });
+  }
+
+  function buildReadback(name, sets) {
+    const rb = elc('div', 'readback');
+    const h = elc('div', 'rb-h');
+    h.appendChild(elc('span', 'rb-ck', '✓'));
+    h.appendChild(document.createTextNode(' ' + name));
+    rb.appendChild(h);
+    const s = elc('div', 'rb-s');
+    appendSetReadout(s, sets);
+    rb.appendChild(s);
+    return rb;
+  }
+
+  function buildNextPrescription(rec) {
+    const wrap = elc('div', 'nextp');
+    wrap.appendChild(elc('div', 'nextp-h', '→ Next'));
+    wrap.appendChild(elc('div', 'nextp-s', rec.recommendation));
+    return wrap;
+  }
+
+  /* ===== End-of-session review card (reskins the existing approve/write/undo) ===== */
+
+  let currentReview = null;
   const approveBtn = document.getElementById('approve-btn');
+  const loggerStatusEl = document.getElementById('logger-status');
 
   // The approval gate lives in app.js: #approve-btn is only enabled once a
   // dry-run preview has proven no-write safety. Mirror its disabled state onto
-  // the inline button so Save can never write before the gate allows it.
+  // the review card's Save so it can never write before the gate allows it.
   if (approveBtn) {
     new MutationObserver(() => {
-      if (currentSaveBtn && !currentSaveBtn.dataset.done) currentSaveBtn.disabled = approveBtn.disabled;
+      if (currentReview && !currentReview.done) currentReview.saveBtn.disabled = approveBtn.disabled;
     }).observe(approveBtn, { attributes: true, attributeFilter: ['disabled'] });
   }
 
-  function appendInlineSave(bubble) {
-    // Only one "Save to Sheets" prompt at a time — remove the one from the
-    // previous set reaction so the thread doesn't accumulate them.
-    if (currentSaveBtn) {
-      currentSaveBtn.parentElement?.querySelector('.atlas-reply-gate')?.remove();
-      currentSaveBtn.remove();
-      currentSaveBtn = null;
+  // Group consecutive identical sets — "225 × 10 · RIR 2  ×3".
+  function buildReviewSetLine(sets) {
+    const span = elc('span', 'rv-es');
+    const groups = [];
+    for (const s of sets) {
+      const key = `${s.weight}|${s.reps}|${s.rir}`;
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.count += 1;
+      else groups.push({ key, set: s, count: 1 });
+    }
+    groups.forEach((g, i) => {
+      if (i) span.appendChild(document.createTextNode('  '));
+      span.appendChild(document.createTextNode(`${g.set.weight} × ${g.set.reps} `));
+      if (g.set.rir != null && Number.isFinite(Number(g.set.rir))) {
+        span.appendChild(elc('span', Number(g.set.rir) <= 0 ? 'rir rir-max' : 'rir', `RIR ${g.set.rir}`));
+      }
+      if (g.count > 1) span.appendChild(document.createTextNode(` ×${g.count}`));
+    });
+    return span;
+  }
+
+  function buildReviewCard(rows, liftCodes, effortOnly) {
+    const card = elc('div', 'review');
+
+    const head = elc('div', 'rv-h');
+    head.appendChild(elc('span', 'rv-t', "Today’s workout"));
+    head.appendChild(elc('span', 'rv-d', (rows[0] && rows[0][0]) ? String(rows[0][0]) : ''));
+    card.appendChild(head);
+
+    let exCount = 0, setCount = 0, volume = 0;
+    for (const code of liftCodes) {
+      const sets = (typeof previewSetsForLift === 'function') ? previewSetsForLift(rows, code) : [];
+      if (!sets.length) continue;
+      exCount += 1;
+      setCount += sets.length;
+      volume += sets.reduce((a, s) => a + (Number(s.weight) || 0) * (Number(s.reps) || 0), 0);
+      const ex = elc('div', 'rv-ex');
+      ex.appendChild(elc('span', 'rv-en', exerciseNameFromRows(rows, code) || code));
+      ex.appendChild(buildReviewSetLine(sets));
+      card.appendChild(ex);
     }
 
-    const note = document.createElement('div');
-    note.className = 'atlas-reply-gate';
-    note.textContent = 'Nothing saved yet — this only writes to Google Sheets when you tap Save.';
+    const tot = elc('div', 'rv-tot');
+    tot.appendChild(elc('span', null, `${exCount} exercise${exCount === 1 ? '' : 's'} · ${setCount} sets`));
+    tot.appendChild(elc('b', null, `${Math.round(volume).toLocaleString()} lb`));
+    card.appendChild(tot);
 
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'save-inline-btn';
-    btn.textContent = 'Save to Sheets';
-    btn.disabled = approveBtn ? approveBtn.disabled : true;
-    btn.addEventListener('click', () => {
+    card.appendChild(elc('div', 'rv-eff', effortOnly
+      ? 'Apple Watch effort attached'
+      : '+ add Apple Watch effort (duration, cals, HR)'));
+
+    const act = elc('div', 'rv-act');
+    const saveBtn = elc('button', 'btn rv-save', 'Save workout');
+    saveBtn.type = 'button';
+    saveBtn.disabled = approveBtn ? approveBtn.disabled : true;
+    saveBtn.addEventListener('click', () => {
       if (!approveBtn || approveBtn.disabled) return;
-      approveBtn.click();               // reuse the existing, unchanged write path
-      btn.textContent = 'Saving…';
-      btn.disabled = true;
+      approveBtn.click();              // reuse the existing, unchanged write path
+      saveBtn.textContent = 'Saving…';
+      saveBtn.disabled = true;
     });
+    const editBtn = elc('button', 'btn rv-edit', 'Edit');
+    editBtn.type = 'button';
+    editBtn.addEventListener('click', () => {
+      const editor = document.getElementById('parsed-rows-editor');
+      if (editor) {
+        editor.hidden = false;
+        editor.open = true;
+        requestAnimationFrame(() => editor.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+      }
+    });
+    act.appendChild(saveBtn);
+    act.appendChild(editBtn);
+    card.appendChild(act);
 
-    currentSaveBtn = btn;
-    bubble.appendChild(note);
-    bubble.appendChild(btn);
+    card.appendChild(elc('div', 'rv-note', 'Nothing’s saved yet · this is the only save'));
+
+    const saved = elc('div', 'rv-saved');
+    saved.appendChild(elc('span', 'rv-saved-txt', '✓ Saved to your sheet'));
+    const undo = elc('a', 'rv-undo', 'Undo');
+    undo.href = '#';
+    undo.addEventListener('click', e => {
+      e.preventDefault();
+      if (typeof window.atlasUndoLastWrite === 'function') {
+        window.atlasUndoLastWrite();   // reuse the existing /api/log-workout/undo-last path
+        undo.textContent = 'Undoing…';
+      }
+    });
+    saved.appendChild(undo);
+    card.appendChild(saved);
+
+    currentReview = { card, saveBtn, done: false };
+    return card;
   }
 
-  function markSaved() {
-    if (!currentSaveBtn) return;
-    const bubble = currentSaveBtn.parentElement; // the coaching bubble
-    currentSaveBtn.textContent = 'Saved ✓';
-    currentSaveBtn.disabled = true;
-    currentSaveBtn.dataset.done = '1';
-    currentSaveBtn = null;
-    // "Saved ✓" is the single post-write confirmation — no verdict bubble, no
-    // verbose written/verified card, no Undo button. The stale "nothing saved
-    // yet" gate note is dropped. (Undoing a write is a future chat/LLM action.)
-    bubble?.querySelector('.atlas-reply-gate')?.remove();
+  function markReviewSaved() {
+    if (!currentReview || currentReview.done) return;
+    currentReview.done = true;
+    currentReview.card.classList.add('done');
   }
 
-  function resetSaveAfterError() {
-    if (!currentSaveBtn || currentSaveBtn.dataset.done) return;
-    currentSaveBtn.textContent = 'Save to Sheets';
-    currentSaveBtn.disabled = approveBtn ? approveBtn.disabled : false;
+  function markReviewUndone() {
+    if (!currentReview) return;
+    const txt = currentReview.card.querySelector('.rv-saved-txt');
+    if (txt) txt.textContent = '↩ Undone · nothing saved';
+    const undo = currentReview.card.querySelector('.rv-undo');
+    if (undo) undo.remove();
   }
 
-  // app.js writes the result into #logger-status: a `.status-msg.ok` card on a
-  // successful write, `.status-msg.error` on failure. Mirror that onto the
-  // inline Save button — no event plumbing, no change to the approve handler.
-  const loggerStatusEl = document.getElementById('logger-status');
+  // app.js writes the result into #logger-status: `.status-msg.ok` on a write or
+  // an undo (text "undone"), `.status-msg.error` on failure. Reflect that onto
+  // the review card — no change to the approve/undo handlers.
   if (loggerStatusEl) {
     new MutationObserver(() => {
-      if (!currentSaveBtn || currentSaveBtn.dataset.done) return;
-      if (loggerStatusEl.querySelector('.status-msg.ok')) {
-        markSaved();             // flips inline Save → "Saved ✓" + adds Undo link
-      } else if (loggerStatusEl.querySelector('.status-msg.error')) {
-        resetSaveAfterError();
+      if (!currentReview) return;
+      const ok = loggerStatusEl.querySelector('.status-msg.ok');
+      const err = loggerStatusEl.querySelector('.status-msg.error');
+      if (ok && /undone/i.test(ok.textContent || '')) {
+        markReviewUndone();
+      } else if (ok && !currentReview.done) {
+        markReviewSaved();
+      } else if (err && !currentReview.done) {
+        currentReview.saveBtn.textContent = 'Save workout';
+        currentReview.saveBtn.disabled = approveBtn ? approveBtn.disabled : false;
       }
     }).observe(loggerStatusEl, { childList: true, subtree: true });
   }
@@ -527,6 +639,14 @@
     return (llm && llm.trim()) ? llm : buildTemplatedCoaching(facts);
   }
 
+  // In-workout note: conversational prose only. The structured readback already
+  // shows the sets and the .nextp card shows the prescription, so the templated
+  // fallback is just the one-line reaction (no set/next repetition).
+  async function getInWorkoutNote(facts) {
+    const llm = await getLlmCoachingMessage(facts).catch(() => null);
+    return (llm && llm.trim()) ? llm : coachOpener(facts.todaySets || [], facts.rec);
+  }
+
   async function getLlmCoachingMessage(facts) {
     if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
@@ -571,28 +691,70 @@
 
   /* ===== Event wiring (read-only narration of app.js's trust loop) ===== */
 
-  async function handlePreviewReady(detail) {
-    const { rows = [], liftCodes = [], effortOnly } = detail || {};
-    if (effortOnly || !liftCodes.length) return;       // effort-only previews have no sets to coach
-    const code = liftCodes[0];
-    const todaySets = (typeof previewSetsForLift === 'function') ? previewSetsForLift(rows, code) : [];
-    if (!todaySets.length) return;
+  // Resolve a lift code from the catalog datalist (value=name, label=code) so
+  // the next-prescription can be fetched without any dry-run/preview request.
+  function liftCodeForExercise(name) {
+    const dl = document.getElementById('exercise-catalog');
+    if (!dl || !name) return null;
+    const opt = Array.from(dl.options || []).find(o => (o.value || '').toLowerCase() === String(name).toLowerCase());
+    return opt ? (opt.label || null) : null;
+  }
+
+  // In-workout: a logged set → readback (RIR in ember) + coach note + adjusted-
+  // next prescription. NO Save/preview/approve — the only Save is the end-of-
+  // session review card below. Rendered purely from the client-parsed sets; the
+  // set text is recorded so the end-of-session compile can reconstruct the
+  // full workout.
+  async function handleSetLogged(detail) {
+    const { exercises = [], text = '' } = detail || {};
+    if (!exercises.length) return;
+    if (text) chatTurns.push({ role: 'user', text });
 
     const handle = appendAtlasBubble();
     if (!handle) return;
     const { bubble, body } = handle;
 
-    let rec = null;
-    try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code); } catch { /* best effort */ }
+    for (const ex of exercises) {
+      bubble.insertBefore(buildReadback(ex.exercise, ex.sets), body);
+    }
 
-    const facts = {
+    const primary = exercises[0];
+    const code = liftCodeForExercise(primary.exercise);
+    let rec = null;
+    if (code) {
+      try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code); } catch { /* best effort */ }
+    }
+
+    const note = await getInWorkoutNote({
       liftCode: code,
-      exerciseName: (rec && rec.exercise_name) || code,
-      todaySets,
+      exerciseName: primary.exercise,
+      todaySets: primary.sets,
       rec
-    };
-    await typeOut(body, await getCoachingMessage(facts));
-    appendInlineSave(bubble);
+    });
+    await typeOut(body, note);
+    chatTurns.push({ role: 'atlas', text: note });
+
+    if (rec && rec.recommendation) {
+      bubble.appendChild(buildNextPrescription(rec));
+    }
+  }
+
+  // End-of-session review: the ONE Save. atlas:preview-ready now fires only on an
+  // explicit end trigger (done/"log it", screenshot, or manual effort) — never
+  // from logging a set — so this renders the single review card. Its Save / Edit
+  // / Undo delegate to the existing #approve-btn / #parsed-rows-editor /
+  // window.atlasUndoLastWrite — the write path itself is unchanged.
+  async function handlePreviewReady(detail) {
+    const { rows = [], liftCodes = [], effortOnly } = detail || {};
+    if (!effortOnly && !liftCodes.length) return;       // nothing to review
+
+    const handle = appendAtlasBubble();
+    if (!handle) return;
+    const { bubble, body } = handle;
+    await typeOut(body, effortOnly
+      ? "Here's your effort for today — give it a look before it goes to your sheet:"
+      : "Solid session. Here's everything from our conversation — give it a look before it goes to your sheet:");
+    bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly));
   }
 
   /* ===== Coach-nav wiring (avatar → Settings) =====
@@ -643,6 +805,7 @@
   })();
 
   document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
 
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
 

@@ -200,6 +200,7 @@ async function mockAtlasApis(page, capture = {}) {
         status: 'success',
         data: {
           liftCode: 'BEN01',
+          exercise_name: 'Bench Press',
           recommendation: 'Hold 225 and build cleaner 5s.',
           last_working_sets: [{ weight: 225, reps: 5, rir: 2 }],
           next_target: { weight: 225, reps: 5, sets: 3 },
@@ -207,6 +208,11 @@ async function mockAtlasApis(page, capture = {}) {
           sessions_analyzed: 3
         }
       }));
+    }
+
+    // End-of-session compile: reconstruct the workout from the conversation.
+    if (path === '/api/session/compile') {
+      return route.fulfill(json({ status: 'success', data: { workout_text: 'bench 225 5/2 x3' } }));
     }
 
     return route.fulfill(json({ status: 'success', data: {} }));
@@ -221,12 +227,24 @@ async function openApp(page, capture = {}) {
   await page.goto('/app/');
 }
 
-async function runPreview(page) {
-  await page.locator('#workout-text').fill('bench 225 5/2 x3');
+// Session-level flow helpers. Logging a set coaches it in-thread (a readback)
+// with NO Save/preview/approve surface; the single review card appears only on
+// an explicit END trigger ("done").
+async function logSet(page, text = 'bench 225 5/2 x3') {
+  await page.locator('#workout-text').fill(text);
   await page.locator('#preview-btn').click();
-  await expect(page.locator('#preview-panel')).toBeVisible();
-  await expect(page.locator('#preview-content')).toContainText('Bench Press');
-  await expect(page.locator('#preview-content')).toContainText('3 sets to write');
+  await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+}
+
+async function endSession(page) {
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('.review')).toBeVisible();
+}
+
+async function runToReview(page, text = 'bench 225 5/2 x3') {
+  await logSet(page, text);
+  await endSession(page);
 }
 
 // The Coach hamburger opens the side panel (drawer); navigation happens by
@@ -412,33 +430,40 @@ test('Chat: propose_edit updates the preview row and still requires approve to w
   expect(capture.writeRequests).toHaveLength(0);
 });
 
-test('Preview flow renders a no-write review card from mocked APIs', async ({ page }) => {
+test('Session preview: logging then "done" renders a no-write review card from mocked APIs', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
-  await runPreview(page);
-
+  await logSet(page);
+  // Logging a set coaches it — no write, and no preview/Save surface at all.
   await expect(page.locator('#thread-messages')).toContainText('bench 225 5/2 x3');
-  await expect(page.locator('#preview-content')).toContainText('3 sets to write');
-  await expect(page.locator('#preview-content')).toContainText('Bench Press ×3');
-  await expect(page.locator('#preview-content')).toContainText('bench -> Bench Press');
-  expect(capture.parseRequests).toHaveLength(1);
-  expect(capture.parseRequests[0]).toMatchObject({ text: 'bench 225 5/2 x3', test_mode: true });
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  await expect(page.locator('.save-inline-btn')).toHaveCount(0);
+  expect(capture.writeRequests).toHaveLength(0);
+  expect(capture.previewRequests).toHaveLength(0);   // no dry-run during logging — client-side coaching
+
+  await endSession(page);
+  // The single review card lists the compiled workout. The dry-run proved
+  // no-write safety (test_mode + write_id) and still nothing is written.
+  const review = page.locator('.review');
+  await expect(review).toContainText('Bench Press');
+  await expect(review.locator('.rv-tot')).toContainText('3 sets');
+  expect(capture.parseRequests.some(r => r && r.text === 'bench 225 5/2 x3' && r.test_mode === true)).toBe(true);
   expect(capture.previewRequests).toHaveLength(1);
   expect(capture.previewRequests[0]).toMatchObject({ test_mode: 'true' });
   expect(capture.previewRequests[0].write_id).toBeTruthy();
+  expect(capture.writeRequests).toHaveLength(0);
 });
 
-test('Approve flow sends write_id only after preview and shows success', async ({ page }) => {
+test('Approve: the review card Save sends write_id only after the dry-run and shows success', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
-  await runPreview(page);
+  await runToReview(page);
 
   const previewWriteId = capture.previewRequests[0].write_id;
   await expect(page.locator('#approve-btn')).toBeEnabled();
-  // The coaching bubble's inline "Save to Sheets" is the primary write CTA in
-  // the redesigned home; it drives the same gated #approve-btn.
-  const saveBtn = page.locator('.save-inline-btn');
+  // The review card's Save is the write CTA; it drives the same gated #approve-btn.
+  const saveBtn = page.locator('.rv-save');
   await expect(saveBtn).toBeEnabled();
   await saveBtn.click();
 
@@ -449,55 +474,102 @@ test('Approve flow sends write_id only after preview and shows success', async (
   expect(capture.writeRequests[0].test_mode).toBeUndefined();
 });
 
-test('After save: proof card hidden, inline Saved is the single confirmation', async ({ page }) => {
+test('After save: the review card flips to Saved with an Undo, and is the single confirmation', async ({ page }) => {
   await openApp(page);
-  await runPreview(page);
-  const saveBtn = page.locator('.save-inline-btn');
-  await saveBtn.click();
+  await runToReview(page);
+  await page.locator('.rv-save').click();
 
-  // The verbose "Workout written ✓ / Undo / Verified" card collapses (kept in
-  // the DOM for the proof + signal, but not shown).
+  // The legacy proof card stays hidden; the review card itself confirms.
   await expect(page.locator('#logger-status')).toBeHidden();
-  // The inline button is the single confirmation — no second bubble, no Undo.
-  await expect(saveBtn).toHaveText('Saved ✓');
-  await expect(page.locator('#thread-messages .chat-bubble-atlas')).toHaveCount(1);
-  await expect(page.locator('.coach-undo-link')).toHaveCount(0);
+  const review = page.locator('.review');
+  await expect(review).toHaveClass(/done/);
+  await expect(review.locator('.rv-saved')).toBeVisible();
+  await expect(review.locator('.rv-saved')).toContainText('Saved to your sheet');
+  await expect(review.locator('.rv-undo')).toBeVisible();   // the single Undo affordance
+  await expect(page.locator('.save-inline-btn')).toHaveCount(0);
 });
 
-test('Parsed-rows editor is a collapsed "Edit rows" panel, open on demand', async ({ page }) => {
+test('Review card Edit opens the collapsed "Edit rows" panel', async ({ page }) => {
   await openApp(page);
-  await runPreview(page);
+  await runToReview(page);
   const editor = page.locator('#parsed-rows-editor');
-  await expect(editor).toBeVisible();                        // present after preview…
+  await expect(editor).toBeVisible();                        // present after the compile preview…
   await expect(editor.locator('.parsed-rows-summary')).toHaveText('Edit rows');
-  await expect(editor.locator('#sets-table')).toBeHidden();  // …but collapsed by default
-  await editor.locator('.parsed-rows-summary').click();
-  await expect(editor.locator('#sets-table')).toBeVisible(); // expands on tap
+  await expect(editor.locator('#sets-table')).toBeHidden();  // …collapsed by default
+  await page.locator('.rv-edit').click();                    // the review's Edit opens it
+  await expect(editor.locator('#sets-table')).toBeVisible();
 });
 
-test('Editing after preview invalidates stale write approval', async ({ page }) => {
+test('Editing after the review invalidates the stale write approval', async ({ page }) => {
   await openApp(page);
-  await runPreview(page);
+  await runToReview(page);
   await expect(page.locator('#approve-btn')).toBeEnabled();
+  await expect(page.locator('.rv-save')).toBeEnabled();
 
+  // Typing a new set invalidates the previewed write — the gate closes and the
+  // review's Save mirrors it, so a stale write can't fire.
   await page.locator('#workout-text').fill('bench 225 5/2 x3 plus laterals');
 
-  await expect(page.locator('#preview-panel')).toBeHidden();
   await expect(page.locator('#approve-btn')).toBeDisabled();
-  await expect(page.locator('#preview-gate-note')).toContainText('Run a preview above');
+  await expect(page.locator('.rv-save')).toBeDisabled();
 });
 
-test('Mobile viewport keeps the Coach composer and preview usable', async ({ page }) => {
+test('Mobile viewport keeps the Coach composer and review card usable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openApp(page);
 
   await expect(page.locator('#workout-text')).toBeVisible();
   await expect(page.locator('#preview-btn')).toBeVisible();
 
-  await runPreview(page);
+  await runToReview(page);
 
   await expect(page.locator('#coach-thread')).toBeVisible();
-  await expect(page.locator('#preview-panel')).toBeVisible();
+  await expect(page.locator('.review')).toBeVisible();
+});
+
+test('Guardrail: mid-workout sets coach with no Save/preview/approve and zero writes; one review + one write on done', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Set-by-set path: two logged messages.
+  await logSet(page, 'bench 225 5/2 x3');
+  await logSet(page, 'bench 225 5/2 x3');
+
+  // The whole mid-workout exchange exposes no write surface and writes nothing.
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(2);
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  await expect(page.locator('#approve-btn')).not.toBeVisible();
+  await expect(page.locator('.save-inline-btn')).toHaveCount(0);
+  await expect(page.locator('.review')).toHaveCount(0);
+  expect(capture.writeRequests).toHaveLength(0);
+  expect(capture.previewRequests).toHaveLength(0);
+
+  // The single review appears only on the explicit end trigger; then one write.
+  await endSession(page);
+  await expect(page.locator('.review')).toHaveCount(1);
+  await page.locator('.rv-save').click();
+  await expect(page.locator('.review.done')).toBeVisible();
+  expect(capture.writeRequests).toHaveLength(1);
+});
+
+test('Guardrail (bulk): a whole workout in one message writes nothing; one review + one write on done', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Bulk path: a single message carrying the workout, then "done".
+  await logSet(page, 'bench 225 5/2, 225 5/2, 225 5/2');
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(1);
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  await expect(page.locator('.save-inline-btn')).toHaveCount(0);
+  await expect(page.locator('.review')).toHaveCount(0);
+  expect(capture.writeRequests).toHaveLength(0);
+  expect(capture.previewRequests).toHaveLength(0);
+
+  await endSession(page);
+  await expect(page.locator('.review')).toHaveCount(1);
+  await page.locator('.rv-save').click();
+  await expect(page.locator('.review.done')).toBeVisible();
+  expect(capture.writeRequests).toHaveLength(1);
 });
 
 test('Progress surface renders the Today screen from mocked data without crashing', async ({ page }) => {
