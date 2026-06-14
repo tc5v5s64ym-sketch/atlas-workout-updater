@@ -5,6 +5,7 @@ const {
   normalizeTrainingGoal,
   REASON_CODES,
 } = require('./trainingKnowledge');
+const { applyConstraints } = require('./recommendationConstraints');
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -200,6 +201,15 @@ function applyProgression({ prescription, policy, previousPerformance = {}, rece
     return result;
   }
 
+  if (policy.id === 'muscular_endurance') {
+    if (completedWithRoom) {
+      result.progression = 'increase_density_or_reps';
+      result.adjustment = 'endurance_density_before_load';
+      result.reasonCodes.push(REASON_CODES.ENDURANCE_DENSITY_PROGRESS, REASON_CODES.DENSITY_PROGRESS_IF_RECOVERABLE);
+    }
+    return result;
+  }
+
   if (policy.id === 'mixed') {
     const type = (exerciseType && exerciseType !== 'unknown')
       ? exerciseType
@@ -234,10 +244,12 @@ function buildLLMBrief(prescription) {
       targetRIR: prescription.targetRIR,
       restSeconds: prescription.restSeconds,
       recommendedWeight: prescription.recommendedWeight,
+      weightGuidance: prescription.weightGuidance,
       progression: prescription.progression,
       adjustment: prescription.adjustment,
     },
     reasonCodes: prescription.reasonCodes,
+    safetyFlags: prescription.safetyFlags || [],
   };
 }
 
@@ -266,11 +278,28 @@ function recommendExercisePrescription(input = {}) {
     availableIncrement: input.availableIncrement,
   });
 
+  // Cold start: no real load anchor (no previous weight, no estimated 1RM). Never invent a number —
+  // hand back rep/set/RIR work plus an explicit weightGuidance string instead of a made-up weight.
+  if (!Number.isFinite(progressed.recommendedWeight)) {
+    progressed.recommendedWeight = undefined;
+    progressed.weightGuidance = `Choose a load that lands near your target RIR (${progressed.targetRIR.min}-${progressed.targetRIR.max}); log it so Atlas can anchor next time.`;
+    if (!progressed.reasonCodes.includes(REASON_CODES.COLD_START_NO_HISTORY)) {
+      progressed.reasonCodes.push(REASON_CODES.COLD_START_NO_HISTORY);
+    }
+  }
+
+  // Optional constraints (time, equipment, pain/injury, frequency, experience) nudge the plan when
+  // present. Pure pass-through — no profile system, no persistence, no extra I/O.
+  const constrained = applyConstraints(progressed, input.constraints, {
+    previousPerformance: input.previousPerformance || {},
+  });
+
   return {
-    ...progressed,
+    ...constrained,
     movementRegion,
     exerciseType,
-    llmBrief: buildLLMBrief(progressed),
+    safetyFlags: constrained.safetyFlags || [],
+    llmBrief: buildLLMBrief(constrained),
   };
 }
 
