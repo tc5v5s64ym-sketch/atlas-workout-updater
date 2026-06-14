@@ -93,6 +93,15 @@
             <span class="suggest-tile-label">Freestyle</span>
           </button>
         </div>
+
+        <!-- "Learn" chips: deterministic training answers from the SME layer
+             (POST /api/coach/ask). Read-only — renders a card-grounded answer in
+             the thread, never the write/preview/approve path. -->
+        <div id="learn-chips" class="learn-chips">
+          <button type="button" class="chip" data-chip="ask" data-ask="Explain strength vs hypertrophy">Strength vs size?</button>
+          <button type="button" class="chip" data-chip="ask" data-ask="What is a deload?">What's a deload?</button>
+          <button type="button" class="chip" data-chip="ask" data-ask="Explain reps in reserve">Reps in reserve?</button>
+        </div>
       </div>
 
       <!-- Conversation thread: user bubbles, Atlas coaching bubbles, the dry-run
