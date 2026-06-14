@@ -9,15 +9,16 @@ const {
 
 /* ===== recommended target RIR (intent + role based) ===== */
 
-test('recommendedTargetRir is intent + role based', () => {
-  // Strength: heavy main leaves less in the tank than accessories.
-  assert.equal(recommendedTargetRir({ exercise: 'Back Squat', muscle_group: 'Quads' }, 'build_strength'), 1);
+test('recommendedTargetRir is training-type (goal) + role aware', () => {
+  // Strength: avoid failure on heavy compounds → ~RIR 2.
+  assert.equal(recommendedTargetRir({ exercise: 'Back Squat', muscle_group: 'Quads' }, 'build_strength'), 2);
   assert.equal(recommendedTargetRir({ exercise: 'Face Pull', muscle_group: 'Rear Delts' }, 'build_strength'), 2);
-  // Recovery / reduced stress: leave more in reserve.
-  assert.equal(recommendedTargetRir({ exercise: 'Back Squat', muscle_group: 'Quads' }, 'recovery_pump'), 2);
-  assert.equal(recommendedTargetRir({ exercise: 'Dumbbell Curl', muscle_group: 'Biceps' }, 'deload_reset'), 3);
-  // Default (hypertrophy / balanced): moderate.
-  assert.equal(recommendedTargetRir({ exercise: 'Incline Dumbbell Press', muscle_group: 'Chest' }, 'build_muscle'), 2);
+  // Recovery: blood flow, no stress → high RIR.
+  assert.equal(recommendedTargetRir({ exercise: 'Back Squat', muscle_group: 'Quads' }, 'recovery_pump'), 5);
+  assert.equal(recommendedTargetRir({ exercise: 'Dumbbell Curl', muscle_group: 'Biceps' }, 'deload_reset'), 4);
+  // Hypertrophy: accessories sit closer to failure than the main compound.
+  assert.equal(recommendedTargetRir({ exercise: 'Bench Press', muscle_group: 'Chest' }, 'build_muscle'), 2);
+  assert.equal(recommendedTargetRir({ exercise: 'Dumbbell Curl', muscle_group: 'Biceps' }, 'build_muscle'), 1);
 });
 
 test('applyLiftRoleGuards attaches a recommended target_rir to every planned exercise', () => {
@@ -34,9 +35,9 @@ test('applyLiftRoleGuards attaches a recommended target_rir to every planned exe
     todays_read: {},
   };
   const guarded = applyLiftRoleGuards(result);
-  assert.equal(guarded.intents[0].exercises[0].target_rir, 1); // strength main
+  assert.equal(guarded.intents[0].exercises[0].target_rir, 2); // strength main
   assert.equal(guarded.intents[0].exercises[1].target_rir, 2); // strength accessory
-  assert.equal(guarded.intents[1].exercises[0].target_rir, 3); // recovery accessory
+  assert.equal(guarded.intents[1].exercises[0].target_rir, 4); // recovery accessory
   // existing fields are preserved
   assert.equal(guarded.intents[0].exercises[0].target_weight, 315);
 });

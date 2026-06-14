@@ -7,6 +7,8 @@
 // pull, shrug…) must never trigger a *systemic* "Deload" day, and accessories must
 // never be prescribed a low-rep strength scheme like 5×3.
 
+const { intentToGoal, recommendTargetRir } = require('./rirPolicy');
+
 // Isolation / low-fatigue movements — checked by NAME first so "leg curl" doesn't
 // get swept up by the "leg → lower" idea.
 const ACCESSORY_PATTERNS = [
@@ -100,22 +102,13 @@ function guardAccessoryReps(ex) {
 }
 
 // Recommended reps-in-reserve for a planned exercise, by training intent + lift role.
-// The engine already backs OFF LOAD near failure; this is the target effort to aim for:
-// recovery/reduced-stress days leave more in the tank, heavy strength work leaves less,
-// and hypertrophy/accessory work sits at a moderate ~2.
+// The actual numbers live in services/rirPolicy.js, sourced from trainingKnowledge's
+// per-goal RIR bands — so strength / hypertrophy / power / recovery each get a distinct,
+// evidence-aligned effort target. The engine already backs OFF LOAD near failure; this
+// is the target effort to aim for.
 function recommendedTargetRir(ex, intentId) {
-  const isMain = isMainCompound(exerciseName(ex), ex && ex.muscle_group);
-  switch (intentId) {
-    case 'build_strength':
-    case 'test_progress':
-      return isMain ? 1 : 2;       // heavier work — leave less in reserve
-    case 'deload_reset':
-    case 'recovery_pump':
-    case 'short_session':
-      return isMain ? 2 : 3;       // reduced stress — leave more in reserve
-    default:
-      return 2;                    // hypertrophy / balanced / accessory work
-  }
+  const role = isMainCompound(exerciseName(ex), ex && ex.muscle_group) ? 'main' : 'accessory';
+  return recommendTargetRir({ goal: intentToGoal(intentId), role });
 }
 
 // Attach a recommended target_rir to a planned exercise (respecting an explicit value if present).
