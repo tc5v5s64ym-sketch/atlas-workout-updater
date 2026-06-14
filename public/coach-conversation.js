@@ -548,17 +548,68 @@
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
   async function getChatReply(message, history, context) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null };
-    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null }), COACH_LLM_TIMEOUT_MS));
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null, propose_note: null };
+    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null }), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, history: history.slice(-8), context: context || {} })
     }).then(res => ({
       message: (res && res.data && res.data.message) || null,
-      propose_edit: (res && res.data && res.data.propose_edit) || null
+      propose_edit: (res && res.data && res.data.propose_edit) || null,
+      propose_note: (res && res.data && res.data.propose_note) || null
     }));
     return Promise.race([request, timeout]);
+  }
+
+  // Show a "Save this note?" prompt under Atlas's bubble. Calls POST /api/coaching-notes
+  // on approval; disappears on skip. Never blocks the conversation.
+  function showSaveNotePrompt(bubble, noteText) {
+    const wrap = document.createElement('div');
+    wrap.className = 'propose-note-wrap';
+
+    const label = document.createElement('p');
+    label.className = 'propose-note-label';
+    label.textContent = `Save note: "${noteText}"`;
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'propose-note-save-btn';
+    saveBtn.textContent = 'Save note';
+
+    const skipBtn = document.createElement('button');
+    skipBtn.type = 'button';
+    skipBtn.className = 'propose-note-skip-btn';
+    skipBtn.textContent = 'Skip';
+
+    wrap.appendChild(label);
+    wrap.appendChild(saveBtn);
+    wrap.appendChild(skipBtn);
+    bubble.appendChild(wrap);
+    softScroll(wrap);
+
+    skipBtn.addEventListener('click', () => { wrap.remove(); });
+
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      skipBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        const writeId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await api('/api/coaching-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ note: noteText, write_id: writeId })
+        });
+        label.textContent = 'Note saved.';
+        saveBtn.remove();
+        skipBtn.remove();
+      } catch {
+        saveBtn.textContent = 'Save note';
+        saveBtn.disabled = false;
+        skipBtn.disabled = false;
+      }
+    });
   }
 
   // Deterministic fallback when the coach voice is unconfigured, slow, or errors
@@ -587,7 +638,7 @@
     const { bubble, body } = handle;
     body.textContent = 'Thinking…';
 
-    let chatResult = { message: null, propose_edit: null };
+    let chatResult = { message: null, propose_edit: null, propose_note: null };
     try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
 
     let reply = chatResult.message;
@@ -607,6 +658,12 @@
         note.textContent = 'Preview updated — review and tap Save when ready.';
         bubble.appendChild(note);
       }
+    }
+
+    // Show "Save this note?" prompt if Atlas proposed a coaching note. Requires
+    // explicit lifter approval — never saves silently.
+    if (chatResult.propose_note && chatResult.propose_note.note) {
+      showSaveNotePrompt(bubble, chatResult.propose_note.note);
     }
 
     chatTurns.push({ role: 'atlas', text: reply });

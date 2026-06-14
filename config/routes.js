@@ -46,7 +46,9 @@ const routeDefinitions = [
   { path: '/api/admin/preview-test-rows', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/stalls', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/report/weekly', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/coaching/insights', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false }
+  { path: '/api/coaching/insights', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/coaching-notes', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/coaching-notes', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
 ];
 
 module.exports = { routeDefinitions };

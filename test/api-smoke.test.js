@@ -37,7 +37,9 @@ const fakeSheetsState = {
   effortRecentRows: [],
   // When set to a tab name, appendRows throws for that tab AFTER recording the
   // call — simulates a partial-write failure between the two live appends.
-  failAppendForTab: null
+  failAppendForTab: null,
+  // Rows returned by getSheetRows for Coaching_Notes. Tests may set this.
+  coachingNotesRows: []
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -81,6 +83,7 @@ const fakeSheets = {
     fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
     if (tabName === 'Log_Cleaned') return logRows;
     if (tabName === 'Effort') return [];
+    if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     return [];
   },
   getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight'],
@@ -131,6 +134,7 @@ const fakeCoachState = {
   planMessage: "You're carrying a lot of fatigue, so today is about blood flow, not load.",
   chatMessage: 'Your bench has been flat for a few sessions — try 5×5 at 225 this week.',
   chatEditProposal: null, // set to an edit object in tests that exercise the edit path
+  chatNoteProposal: null, // set to a note object in tests that exercise the note path
   throwError: null
 };
 const fakeCoach = {
@@ -146,7 +150,7 @@ const fakeCoach = {
   },
   generateChatReply: async () => {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
-    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal };
+    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal };
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -1761,4 +1765,91 @@ test('api smoke: log-workout rejects implausible effort_row values (finding 13 �
     }));
     assert.equal(response.status, 400, `expected 400 for ${desc}`);
   }
+});
+
+// ── Coaching notes ────────────────────────────────────────────────────────────
+
+test('api smoke: GET /api/coaching-notes returns empty array when tab has no rows', async () => {
+  fakeSheetsState.coachingNotesRows = [];
+  const { response, body } = await requestJson('/api/coaching-notes');
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.deepEqual(body.data.notes, []);
+});
+
+test('api smoke: GET /api/coaching-notes returns notes from the Coaching_Notes tab', async () => {
+  fakeSheetsState.coachingNotesRows = [
+    ['2026-06-01', 'Left shoulder impingement — avoid overhead pressing'],
+    ['2026-06-10', 'Running a 4-day upper/lower split']
+  ];
+  const { response, body } = await requestJson('/api/coaching-notes');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.notes.length, 2);
+  assert.equal(body.data.notes[0].note, 'Left shoulder impingement — avoid overhead pressing');
+  assert.equal(body.data.notes[1].date, '2026-06-10');
+  fakeSheetsState.coachingNotesRows = [];
+});
+
+test('api smoke: POST /api/coaching-notes requires note and write_id', async () => {
+  const { response: r1 } = await requestJson('/api/coaching-notes', { method: 'POST', body: JSON.stringify({ write_id: 'test-1' }) });
+  assert.equal(r1.status, 400, 'missing note → 400');
+
+  const { response: r2 } = await requestJson('/api/coaching-notes', { method: 'POST', body: JSON.stringify({ note: 'A note' }) });
+  assert.equal(r2.status, 400, 'missing write_id → 400');
+});
+
+test('api smoke: POST /api/coaching-notes writes to Coaching_Notes tab', async () => {
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  const { response, body } = await requestJson('/api/coaching-notes', {
+    method: 'POST',
+    body: JSON.stringify({ note: 'Goal: compete in a powerlifting meet by end of year', write_id: 'note-smoke-1' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(body.data.sheet_written, true);
+  assert.equal(body.data.note_written, true);
+  assert.ok(fakeSheetsState.appendCalls.some(c => c.tabName === 'Coaching_Notes'), 'must append to Coaching_Notes tab');
+  fakeSheetsState.allowAppend = false;
+  fakeSheetsState.appendCalls = [];
+});
+
+test('api smoke: POST /api/coaching-notes is idempotent for repeated write_id', async () => {
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  const payload = JSON.stringify({ note: 'Idempotency note', write_id: 'note-idem-1' });
+  await requestJson('/api/coaching-notes', { method: 'POST', body: payload });
+  const { response: r2, body: b2 } = await requestJson('/api/coaching-notes', { method: 'POST', body: payload });
+  assert.equal(r2.status, 200);
+  assert.equal(b2.data.duplicate_write, true, 'second call must be marked duplicate');
+  assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Coaching_Notes').length, 1, 'sheet must only be written once');
+  fakeSheetsState.allowAppend = false;
+  fakeSheetsState.appendCalls = [];
+});
+
+test('api smoke: coach/chat returns propose_note when coach proposes a note', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.chatNoteProposal = { note: 'Left shoulder impingement — avoid overhead pressing' };
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'My shoulder has been giving me trouble on pressing movements' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.propose_note, 'propose_note must be in the response');
+  assert.equal(body.data.propose_note.note, 'Left shoulder impingement — avoid overhead pressing');
+  fakeCoachState.configured = false;
+  fakeCoachState.chatNoteProposal = null;
+});
+
+test('api smoke: coaching-notes is registered in the route manifest with correct read/write flags', async () => {
+  const { body } = await requestJson('/routes');
+  const routes = body.data.routes;
+  const noteRoutes = routes.filter(r => r.path === '/api/coaching-notes');
+  const getRoute = noteRoutes.find(r => r.methods.includes('GET'));
+  const postRoute = noteRoutes.find(r => r.methods.includes('POST'));
+  assert.ok(getRoute, 'GET /api/coaching-notes must be registered');
+  assert.equal(getRoute.readOnly, true, 'GET must be read-only');
+  assert.equal(getRoute.writeCapable, false, 'GET must not be write-capable');
+  assert.ok(postRoute, 'POST /api/coaching-notes must be registered');
+  assert.equal(postRoute.writeCapable, true, 'POST must be write-capable');
 });

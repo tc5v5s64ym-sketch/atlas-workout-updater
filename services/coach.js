@@ -235,7 +235,17 @@ function buildChatSystemPrompt(context) {
     '  or PROPOSE_EDIT: {"action":"add_set","weight":225,"reps":5,"rir":2}',
     '- index is 0-based. For update_set, omit weight/reps/rir fields you are not changing.',
     '- The PROPOSE_EDIT line is stripped by the app and never shown to the lifter — write your prose as if it does not exist.',
-    '- If the intent is ambiguous or current_preview is empty, respond in prose only with no PROPOSE_EDIT line.'
+    '- If the intent is ambiguous or current_preview is empty, respond in prose only with no PROPOSE_EDIT line.',
+    '',
+    'PROPOSING A COACHING NOTE (persistent background memory):',
+    '- When the lifter reveals something durable and actionable — an injury, a mobility limit, a goal, a program change, an equipment constraint — you MAY propose saving it as a coaching note.',
+    '- Only propose a note for facts worth persisting across sessions. Session observations ("great set today") do not qualify.',
+    '- You can only ever propose ONE thing per reply — either a PROPOSE_EDIT or a PROPOSE_NOTE, never both.',
+    '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly:',
+    '  PROPOSE_NOTE: {"note": "..."}',
+    '- The note text must be concise (under 120 characters), factual, and third-person ("Left shoulder impingement — avoid overhead pressing"). No coaching advice in the note text itself.',
+    '- The PROPOSE_NOTE line is stripped by the app and shown to the lifter as "Save this note?". Write your prose as if it does not exist.',
+    '- If nothing worth persisting came up, respond in prose only with no PROPOSE_NOTE line.'
   ].join('\n');
 }
 
@@ -305,6 +315,12 @@ function sanitizeChatContext(context) {
     rationale: strOrNull(e && e.rationale)
   })).filter(e => e.name) : [];
   const session_count = numOrNull(c.session_count);
+  const coaching_notes = Array.isArray(c.coaching_notes)
+    ? c.coaching_notes.slice(0, 10).map(n => ({
+        date: strOrNull(n && n.date),
+        note: clampText(n && n.note, 200)
+      })).filter(n => n.note)
+    : [];
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -313,8 +329,64 @@ function sanitizeChatContext(context) {
     stalls,
     current_preview,
     current_plan,
-    session_count
+    session_count,
+    coaching_notes
   };
+}
+
+// Extract an optional PROPOSE_NOTE: {...} from the last non-blank line.
+// Returns { reply: proseText, propose_note: objectOrNull }.
+function parseNoteFromReply(text) {
+  if (typeof text !== 'string') return { reply: '', propose_note: null };
+  const lines = text.split('\n');
+  let noteLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('PROPOSE_NOTE:')) noteLineIdx = i;
+    break;
+  }
+  if (noteLineIdx === -1) return { reply: text.trim(), propose_note: null };
+  const jsonPart = lines[noteLineIdx].trim().slice('PROPOSE_NOTE:'.length).trim();
+  const prose = lines.slice(0, noteLineIdx).join('\n').trim();
+  let propose_note = null;
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (parsed && typeof parsed === 'object' && typeof parsed.note === 'string' && parsed.note.trim()) {
+      propose_note = { note: parsed.note.trim().slice(0, 200) };
+    }
+  } catch { /* malformed JSON — no note */ }
+  return { reply: prose || text.trim(), propose_note };
+}
+
+// Internal parser that handles both PROPOSE_EDIT and PROPOSE_NOTE in one pass —
+// the last non-blank line can carry at most one token per reply.
+function parseReplyWithProposals(text) {
+  if (typeof text !== 'string') return { reply: '', propose_edit: null, propose_note: null };
+  const lines = text.split('\n');
+  let tokenLineIdx = -1;
+  let tokenType = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('PROPOSE_EDIT:')) { tokenLineIdx = i; tokenType = 'edit'; }
+    else if (trimmed.startsWith('PROPOSE_NOTE:')) { tokenLineIdx = i; tokenType = 'note'; }
+    break;
+  }
+  if (tokenLineIdx === -1) return { reply: text.trim(), propose_edit: null, propose_note: null };
+  const prefix = tokenType === 'edit' ? 'PROPOSE_EDIT:' : 'PROPOSE_NOTE:';
+  const jsonPart = lines[tokenLineIdx].trim().slice(prefix.length).trim();
+  const prose = lines.slice(0, tokenLineIdx).join('\n').trim();
+  let propose_edit = null;
+  let propose_note = null;
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (tokenType === 'edit' && isValidEditSchema(parsed)) propose_edit = parsed;
+    else if (tokenType === 'note' && parsed && typeof parsed === 'object' && typeof parsed.note === 'string' && parsed.note.trim()) {
+      propose_note = { note: parsed.note.trim().slice(0, 200) };
+    }
+  } catch { /* malformed JSON — no proposal */ }
+  return { reply: prose || text.trim(), propose_edit, propose_note };
 }
 
 // Bound the conversation to the last few turns; only role + text survive. The
@@ -337,15 +409,18 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
 
   // Prime with the snapshot as the first exchange so the model treats it as
   // grounding, then replay prior turns, then the lifter's current message.
+  // coaching_notes arrive already inside `snapshot` (via sanitizeChatContext);
+  // they are included here without any extra instruction so the model treats them
+  // as silent background — not something to announce or repeat.
   const contents = [
     { role: 'user', parts: [{ text: `TRAINING SNAPSHOT (read-only facts):\n${JSON.stringify(snapshot, null, 2)}` }] },
-    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts and never claim to save anything." }] }
+    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts, use any coaching notes as silent background only, and never claim to save anything." }] }
   ];
   for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
   const raw = await callGeminiContents(buildChatSystemPrompt(snapshot), contents, { timeoutMs, maxOutputTokens: 450 });
-  return parseEditFromReply(raw);
+  return parseReplyWithProposals(raw);
 }
 
 function extractText(data) {
@@ -422,6 +497,7 @@ module.exports = {
   sanitizeChatHistory,
   generateChatReply,
   parseEditFromReply,
+  parseNoteFromReply,
   isValidEditSchema,
   buildCompileSystemPrompt,
   compileSessionFromHistory
