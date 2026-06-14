@@ -291,13 +291,32 @@ main {
    Coach (chat-first front door)
    ============================================================================ */
 
-/* Coach: fixed-height flex column — thread scrolls inside, composer pinned at bottom. */
+/* Lock the coach surface to the viewport so only #coach-thread scrolls.
+   body[data-surface="coach"] scopes these rules so Progress can still
+   page-scroll normally. */
+body[data-surface="coach"] {
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+body[data-surface="coach"] main {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;              /* no outer gutters — tab handles its own */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Coach tab: inherits its height from the body→main flex chain */
 #tab-logger.active {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 140px);
-  height: calc(100dvh - 140px);
+  flex: 1 1 0;
+  min-height: 0;
   overflow: hidden;
+  padding: 0 var(--s4);   /* restore the horizontal gutter main no longer provides */
 }
 
 /* Thread fills remaining vertical space and scrolls internally */
