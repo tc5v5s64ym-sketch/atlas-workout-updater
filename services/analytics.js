@@ -1,4 +1,5 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
+const { applyLiftRoleGuards } = require('./liftRole');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -1268,7 +1269,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const top = intents.find(i => i.id !== 'custom');
   for (const i of intents) i.recommended = (i === top);
 
-  return {
+  return applyLiftRoleGuards({
     today: todayStr,
     todays_read: {
       patterns: readiness,
@@ -1277,7 +1278,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       recommended_reason: top?.focus ?? null
     },
     intents
-  };
+  });
 }
 
 
