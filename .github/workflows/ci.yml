@@ -66,6 +66,25 @@ jobs:
       - name: Test
         run: npm test --silent
 
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need history so origin/main...HEAD resolves
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Scan changed files for secrets
+        run: |
+          git fetch --no-tags origin main
+          node scripts/check-changed-files-for-secrets.js origin/main...HEAD
+
   e2e-tests:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest

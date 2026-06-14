@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "lint": "node --check index.js && node --check sheets.js && node --check services/analytics.js && node --check services/validation.js && node --check services/vision.js && node --check services/coach.js && node --check middleware.js && node --check response.js && node --check services/cache.js && node --check services/exerciseEnrichment.js && node --check services/duration.js && node --check services/workoutTextParser.js && node --check services/idempotency.js && node --check services/trainingStore.js && node --check rules/ruleTypes.js && node --check rules/validationRules.js && node --check rules/safetyRules.js && node --check rules/progressionRules.js && node --check scripts/smoke-test-render.js && node --check scripts/check-changed-files-for-secrets.js && node --check scripts/export-sheets-backup.js",
+    "lint": "find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test --test-reporter=spec",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
