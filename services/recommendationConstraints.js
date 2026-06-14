@@ -39,9 +39,10 @@ function applyConstraints(prescription, constraints, { previousPerformance = {} 
     if (flag && !result.safetyFlags.includes(flag)) result.safetyFlags.push(flag);
   };
 
-  // Pain / injury: never push load into pain. Hold load instead of progressing it.
+  // Pain / injury: never push load into pain. Neutralize ANY load-increase variant — the explicit
+  // add_load progressions and the power "small load if speed is crisp" option — back to maintain.
   if (hasItems(constraints.painFlags) || hasItems(constraints.injuryConstraints)) {
-    if (result.progression === 'add_load') {
+    if (/add_load|small_load/.test(result.progression || '')) {
       result.progression = 'maintain';
       result.adjustment = 'constraint_pain_hold_load';
       if (Number.isFinite(previousPerformance.weight)) {

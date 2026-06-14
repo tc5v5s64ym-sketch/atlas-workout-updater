@@ -3,9 +3,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { getTrainingGoal, normalizeTrainingGoal } = require('../services/trainingKnowledge');
+const { getTrainingGoal, normalizeTrainingGoal, TRAINING_GOALS } = require('../services/trainingKnowledge');
 const { classifyTrainingGoalFromText } = require('../services/trainingGoalClassifier');
 const { recommendExercisePrescription } = require('../services/recommendationPolicy');
+const trainingKnowledgeData = require('../data/trainingKnowledge.v1.json');
 
 // ---- muscular_endurance is a distinct, first-class goal ----------------------------------------
 
@@ -106,6 +107,42 @@ test('pain/injury constraint blocks a load increase', () => {
   assert.equal(constrained.recommendedWeight, 190);          // held, not bumped to 195
   assert.ok(constrained.reasonCodes.includes('constraint_pain_no_load_increase'));
   assert.ok(constrained.safetyFlags.includes('respect_pain_or_injury'));
+});
+
+test('pain/injury constraint also neutralizes the power small-load option', () => {
+  // Power "completed with room" yields maintain_or_small_load_if_speed_crisp — still a load bump.
+  // Under pain/injury it must collapse to a plain maintain.
+  const constrained = recommendExercisePrescription({
+    goal: 'power',
+    exerciseName: 'Trap Bar Jump',
+    exerciseType: 'power',
+    previousPerformance: { weight: 135, reps: 3, sets: 5, rir: 5, completed: true },
+    recentTrends: { fatigueStatus: 'low' },
+    constraints: { injuryConstraints: ['low back'] },
+  });
+
+  assert.equal(constrained.progression, 'maintain');
+  assert.equal(constrained.recommendedWeight, 135);          // held, no small-load bump
+  assert.ok(constrained.reasonCodes.includes('constraint_pain_no_load_increase'));
+  assert.ok(constrained.safetyFlags.includes('respect_pain_or_injury'));
+});
+
+// ---- versioned JSON must not drift from the code-level goals -----------------------------------
+
+test('data/trainingKnowledge.v1.json stays in sync with code-level training goals', () => {
+  const codeGoals = Object.keys(TRAINING_GOALS).sort();
+  assert.ok(trainingKnowledgeData.canonical_goals.includes('muscular_endurance'));
+  assert.deepEqual([...trainingKnowledgeData.canonical_goals].sort(), codeGoals);
+  assert.deepEqual(Object.keys(trainingKnowledgeData.goals).sort(), codeGoals);
+
+  const me = trainingKnowledgeData.goals.muscular_endurance;
+  assert.deepEqual(me.rep_range, [12, 30]);
+  assert.deepEqual(me.preferred_rep_range, [15, 25]);
+  assert.deepEqual(me.target_rir, [1, 3]);
+  assert.deepEqual(me.rest_seconds_target, [30, 60]);
+  assert.deepEqual(me.progression_priority, ['density', 'reps', 'sets', 'load']);
+  assert.equal(me.failure_policy, 'near_failure_ok_on_safe_work');
+  assert.ok(me.reason_codes.includes('goal_muscular_endurance'));
 });
 
 // ---- recovery still avoids PR chasing ----------------------------------------------------------
