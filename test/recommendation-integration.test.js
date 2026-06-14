@@ -64,3 +64,31 @@ test('integration: main-lift stalls can still emit a true Deload', () => {
     assert.equal(ex.target_reps, 5);                        // main 5-rep deload singles preserved
   }
 });
+
+test('integration: an accessory reset programs a fuller session, not just the stalled lifts', () => {
+  const rows = [
+    ...flatStall('Dumbbell Curl', 'Biceps', 'DBC01', 30, 12),
+    ...flatStall('Barbell Shrug', 'Traps', 'SHR01', 135, 12),
+    ...flatStall('Face Pull', 'Rear Delts', 'FP01', 50, 15),
+    // progressing pull movements: stay out of the stall list, but in the pool
+    row('2026-06-01', 'SR-S1', 'Seated Cable Row', 'Back', 'SCR01', 150, 10),
+    row('2026-06-04', 'SR-S2', 'Seated Cable Row', 'Back', 'SCR01', 155, 10),
+    row('2026-06-07', 'SR-S3', 'Seated Cable Row', 'Back', 'SCR01', 160, 10),
+    row('2026-06-01', 'LP-S1', 'Lat Pulldown', 'Back', 'LPD01', 150, 10),
+    row('2026-06-04', 'LP-S2', 'Lat Pulldown', 'Back', 'LPD01', 155, 10),
+    row('2026-06-07', 'LP-S3', 'Lat Pulldown', 'Back', 'LPD01', 160, 10),
+  ];
+  const result = scoreIntents(rows, [], { today: TODAY });
+  const intent = result.intents.find(i => i.id === 'deload_reset');
+  assert.ok(intent);
+  assert.equal(intent.label, 'Recovery Pull / Accessory');
+
+  // The session is broader than the 3 stalled lifts — it pulls in the rested
+  // movements the owner actually trains.
+  assert.ok(intent.exercises.length > 3, `expected a fuller session, got ${intent.exercises.length}`);
+  const names = intent.exercises.map(e => e.exercise);
+  assert.ok(names.includes('Seated Cable Row'), 'session should include a non-stalled rested movement');
+  for (const ex of intent.exercises) {
+    assert.ok(ex.target_reps >= 8, `${ex.exercise} should not be a low-rep scheme (got ${ex.target_reps})`);
+  }
+});
