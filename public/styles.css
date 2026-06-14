@@ -685,6 +685,11 @@ body[data-surface="coach"] main {
   padding: 0;              /* no outer gutters — tab handles its own */
   display: flex;
   flex-direction: column;
+  /* width:100% makes main a DEFINITE width in the column-flex body. Without it,
+     the base `main { margin: 0 auto }` (auto cross-axis margins) disables
+     align-items:stretch, so main sized to content — narrow on an empty/loading
+     thread, then snapping to max-width once a wide bubble appeared. */
+  width: 100%;
 }
 
 /* Coach tab: inherits its height from the body→main flex chain */
@@ -694,6 +699,7 @@ body[data-surface="coach"] main {
   flex: 1 1 0;
   min-height: 0;
   overflow: hidden;
+  width: 100%;
   padding: 0 var(--s4);   /* restore the horizontal gutter main no longer provides */
 }
 
@@ -701,6 +707,7 @@ body[data-surface="coach"] main {
 #coach-thread {
   flex: 1 1 0;
   min-height: 0;
+  width: 100%;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -708,6 +715,7 @@ body[data-surface="coach"] main {
 /* Composer stays pinned as a static flex child below the thread */
 #logger-form {
   flex: 0 0 auto;
+  width: 100%;
   padding: var(--s2) 0 calc(var(--s2) + env(safe-area-inset-bottom, 0px));
   background: var(--bg);
   z-index: 20;
@@ -795,29 +803,30 @@ body[data-surface="coach"] main {
   position: relative;
   display: flex;
   flex-direction: column;
+  width: 100%;
   background: var(--card);
   border: 1px solid var(--border-strong);
   border-radius: 24px;
   padding: var(--s3) var(--s3) var(--s2);
   box-shadow: var(--shadow);
   transition: border-color 0.15s;
-  min-height: 96px;
 }
 .composer:focus-within { border-color: var(--accent); }
 
 .composer .workout-text {
-  /* Stable height, NOT flex-distributed. With `flex: 1` the textarea's height
-     was whatever flexbox handed it, so re-layouts (hiding the home hero, the
-     thread filling as a coaching message types out) made it collapse for a
-     frame and then spring back — the composer visibly shrank then grew. A
-     fixed min-height keeps the box the same size through every reflow. */
-  min-height: 72px;
+  /* One line at rest, then JS auto-grows the height to scrollHeight up to
+     max-height (nav.js growComposer). Height tracks CONTENT, not flex
+     distribution, so it stays stable when the hero hides, a coaching message
+     types out, or the thread fills — no shrink/grow twitch. min-height is just
+     a one-line floor before the JS runs. */
+  min-height: 24px;
   max-height: 200px;
   border: none;
   background: transparent;
   box-shadow: none;
   padding: 0 0 var(--s2);
   resize: none;
+  overflow-y: auto;
 }
 .composer .workout-text:focus { outline: none; }
 

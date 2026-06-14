@@ -494,6 +494,28 @@
   // Remove the nudge on form submit (new preview wipes the old state)
   document.getElementById('logger-form')?.addEventListener('submit', clearEditedNudge);
 
+  /* ===== Composer auto-grow ===== */
+  // One line at rest; grows with content up to the CSS max-height (200px), then
+  // scrolls. Height tracks scrollHeight (content), NOT flex distribution, so it
+  // stays stable when the hero hides, a coaching message types, or the thread
+  // fills — no shrink/grow twitch. style.height via CSSOM is CSP-safe.
+  const COMPOSER_MAX_H = 200;
+  const composerTextarea = document.getElementById('workout-text');
+
+  function growComposer() {
+    if (!composerTextarea) return;
+    composerTextarea.style.height = 'auto';
+    composerTextarea.style.height = Math.min(composerTextarea.scrollHeight, COMPOSER_MAX_H) + 'px';
+  }
+
+  if (composerTextarea) {
+    // Covers typing and the chips' programmatic input dispatch.
+    composerTextarea.addEventListener('input', growComposer);
+    // The submit handler clears the value on a later tick; shrink back after it.
+    document.getElementById('logger-form')?.addEventListener('submit', () => setTimeout(growComposer, 0));
+    growComposer(); // initial one-line sizing
+  }
+
   /* ===== Time-of-day greeting ===== */
 
   const greeting = document.getElementById('coach-greeting');
