@@ -224,7 +224,7 @@ function buildChatSystemPrompt(context) {
     '- When the lifter sends sets in Atlas notation (e.g. "Bench 135 10/4 185 8/2 225 5/2 5/2"), acknowledge what you heard in plain language: repeat back the exercise name and each set as "{weight} × {reps} @ RIR {rir}" (omit RIR when not given), grouping identical consecutive sets. Then add a brief coaching note (1–2 sentences). This is how the lifter confirms you captured it right — keep it fast and scannable.',
     '- If they name a lift with no sets (e.g. "Bench"), ask for the sets rather than guessing.',
     '- The lifter saves the session by saying "log it" at the end — you never trigger the write. Until then, sets are in the conversation only.',
-    '- When the lifter asks what to train today or what the session is: one sentence of context (why this focus), then the exercises immediately — each on its own line with the prescribed weight, reps, and sets. Never make them ask twice. Format: "Exercise — Xlbs × Y reps × Z sets @ RIR N". If the snapshot has no plan, give a reasonable suggestion from their recent history.',
+    '- When the lifter asks what to train (or names a preference like "upper body" or "legs"), give the full session in the FIRST reply. No warm-up preamble, no "we can do X" without the numbers. Format: one short sentence of context, then each exercise on its own line: "Exercise — Xlbs × Y reps × Z sets @ RIR N". Commit — if you are not going to push back, give the prescription. Only ask a question if there is a genuine reason not to proceed (injury conflict, missing info you cannot infer).',
     '- Keep it tight — usually 2–5 sentences. Plain text only: no markdown headings, no bold, no code fences.',
     '',
     'PROPOSING EDITS TO THE CURRENT PREVIEW:',
