@@ -115,7 +115,25 @@ function applyLiftRoleGuards(result) {
       Array.isArray(intent.exercises) && intent.exercises.length > 0 &&
       intent.exercises.every(exerciseIsAccessory)
     ) {
-      next = { ...next, label: ACCESSORY_RESET_LABEL, focus: ACCESSORY_RESET_FOCUS };
+      const names = intent.exercises.map(exerciseName).filter(Boolean).join(', ');
+      // The original rationale (why_today / watch_for / what_it_protects) was
+      // deload-worded ("...stalled — deload to ~X lb", "if a deloaded set...").
+      // Rewrite it too, so a relabeled reset never renders deload copy upstream
+      // (the Today hero + coach fallback both surface these before the focus line).
+      next = {
+        ...next,
+        label: ACCESSORY_RESET_LABEL,
+        focus: ACCESSORY_RESET_FOCUS,
+        why_today: [
+          `${names || 'These accessories'} have stalled — but an accessory stall doesn't warrant a systemic pullback.`,
+          'Reset the load, chase clean reps (10–20), and rotate the variation if it stays stuck.',
+        ],
+        what_it_protects: [
+          'Keeps momentum without digging a recovery hole',
+          'Saves the heavy-lift reset for when the main lifts actually slip',
+        ],
+        watch_for: ["If a main lift starts grinding next session, that's the real signal to pull back"],
+      };
     }
 
     if (next && Array.isArray(next.exercises)) {

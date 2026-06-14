@@ -82,11 +82,23 @@ function deloadResult(exercises, recommended = true) {
         id: 'deload_reset', label: 'Deload & Reset', score: 60,
         focus: 'Drop ~10%, sharpen form, rebuild momentum',
         recommended,
+        // Deload-worded rationale, exactly like scoreIntents emits it.
+        why_today: exercises.map(e => `${e.exercise} stalled — deload to ~${e.target_weight} lb`),
+        what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
+        watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
         exercises,
       },
       { id: 'custom', label: 'Custom', score: 50, focus: 'You decide', exercises: [] },
     ],
   };
+}
+
+function rationaleText(intent) {
+  return [
+    intent.label, intent.focus,
+    ...(intent.why_today || []), ...(intent.watch_for || []), ...(intent.what_it_protects || []),
+    ...(intent.exercises || []).map(e => e.reason),
+  ].filter(Boolean).join(' | ');
 }
 
 test('accessory-ONLY stalls do NOT produce a True Deload', () => {
@@ -101,6 +113,9 @@ test('accessory-ONLY stalls do NOT produce a True Deload', () => {
   assert.doesNotMatch(intent.label, /deload/i);
   assert.equal(out.todays_read.recommended_label, ACCESSORY_RESET_LABEL);
   assert.doesNotMatch(out.todays_read.recommended_label, /deload/i);
+  // No deload-worded rationale survives anywhere the UI/coach renders it.
+  assert.doesNotMatch(rationaleText(intent), /deload/i);
+  assert.doesNotMatch((out.todays_read.recommended_reason || ''), /deload/i);
 });
 
 test('curl / face pull / shrug never get 5×3', () => {
@@ -126,6 +141,8 @@ test('a deload that includes a real main lift stays a Deload', () => {
   assert.equal(out.todays_read.recommended_label, 'Deload & Reset');
   // main lifts keep their 5-rep deload singles
   for (const ex of intent.exercises) assert.equal(ex.target_reps, 5);
+  // a genuine deload keeps its deload rationale (rewrite only fires accessory-only)
+  assert.match(rationaleText(intent), /deload/i);
 });
 
 test('a mixed deload keeps the label but still fixes the accessory reps', () => {
