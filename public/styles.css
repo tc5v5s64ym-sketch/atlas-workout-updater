@@ -146,6 +146,76 @@ header {
 header h1 { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
 .tagline { display: none; }
 
+/* Coach surface: swap standard header chrome for the minimal ATLAS nav bar */
+#coach-nav { display: none; }
+body[data-surface="coach"] #coach-nav  { display: flex; }
+body[data-surface="coach"] .brand,
+body[data-surface="coach"] .tagline,
+body[data-surface="coach"] .segmented,
+body[data-surface="coach"] #open-settings,
+body[data-surface="coach"] #conn-status { display: none; }
+
+/* Coach nav bar: hamburger | A T L A S | avatar */
+.coach-nav {
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+}
+.coach-nav-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 1.1rem;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.coach-nav-btn:hover { background: var(--card-sunken); }
+.coach-wordmark {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+.coach-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: white;
+  font-size: 0.82rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  cursor: default;
+}
+.coach-avatar::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  border: 2px solid var(--bg);
+}
+
 /* Segmented control (Coach | Progress) */
 .segmented {
   display: inline-flex;
@@ -415,30 +485,48 @@ body[data-surface="coach"] main {
 .chip:hover { border-color: var(--accent-border); background: var(--accent-soft); }
 .chip:active { transform: scale(0.97); }
 
-/* Composer — the single input that handles text + attachments */
+/* Composer — glass panel: textarea on top, circular controls at bottom corners */
 .composer {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: var(--s2);
+  flex-direction: column;
   background: var(--card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--r-pill);
-  padding: var(--s2);
+  border-radius: 24px;
+  padding: var(--s3) var(--s3) var(--s2);
   box-shadow: var(--shadow);
   transition: border-color 0.15s;
+  min-height: 96px;
 }
 .composer:focus-within { border-color: var(--accent); }
 
+.composer .workout-text {
+  flex: 1;
+  min-height: 48px;
+  max-height: 200px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 0 var(--s2);
+  resize: none;
+}
+.composer .workout-text:focus { outline: none; }
+
+/* Bottom row: + on the left, send on the right */
+.composer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 .composer-attach {
-  flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--r-pill);
   border: none;
   background: var(--card-sunken);
   color: var(--accent);
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;
@@ -449,22 +537,9 @@ body[data-surface="coach"] main {
 .composer-attach:hover { background: var(--accent-soft); }
 .composer-attach:active { transform: scale(0.92); }
 
-.composer .workout-text {
-  flex: 1;
-  min-height: 44px;
-  max-height: 200px;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-  padding: 10px 4px;
-  resize: none;
-}
-.composer .workout-text:focus { outline: none; }
-
 .composer-send {
-  flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--r-pill);
   padding: 0;
   display: inline-flex;
@@ -793,6 +868,8 @@ button.approve {
   font-size: 0.75rem;
   color: var(--muted);
 }
+/* Hide the safety note on the coach surface — it belongs in settings/debug only */
+body[data-surface="coach"] .safety-note.compact { display: none; }
 
 /* Effort details: hidden from view — the + menu opens it via JS when needed.
    We use display:none (not the hidden attribute) so app.js wiring is unaffected. */
@@ -1669,39 +1746,39 @@ a.lift-link:hover { text-decoration: underline; }
   margin: 0;
 }
 
-/* Quick-start tiles — inside the hero, spaced below the tagline */
+/* Quick-start tiles — inside the hero, spaced below the tagline.
+   Not full-width: shrink to content so they feel like cards, not bars. */
 .suggested-tiles {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--s2);
-  width: 100%;
   margin-top: var(--s4);
 }
 .suggested-tiles[hidden] { display: none; }
 .suggest-tile {
-  flex: 1;
   display: flex;
   align-items: center;
-  gap: var(--s2);
-  padding: 14px var(--s3);
-  background: var(--card);
+  gap: var(--s3);
+  padding: 12px 20px;
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border: 1px solid var(--border-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-pill);
   color: var(--ink);
   font-family: inherit;
   font-size: 0.92rem;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+  min-width: 160px;
   transition: box-shadow 0.1s, transform 0.1s, border-color 0.1s;
 }
 .suggest-tile:hover { border-color: var(--accent-border); box-shadow: var(--shadow-sm); }
 .suggest-tile:active { transform: scale(0.97); }
-.suggest-tile-icon { font-size: 1.15rem; line-height: 1; }
+.suggest-tile-icon { font-size: 1.1rem; line-height: 1; }
 .suggest-tile-label { line-height: 1.2; }
-@media (max-width: 420px) {
-  .suggest-tile { font-size: 0.85rem; padding: 12px; }
-}
 
 /* Typed coaching message + blinking cursor */
 .coach-msg { white-space: pre-wrap; }
