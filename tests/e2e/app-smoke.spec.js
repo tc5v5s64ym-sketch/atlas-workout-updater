@@ -327,7 +327,9 @@ test('Chat: a coach outage falls back to a deterministic reply, still no write',
   await page.locator('#workout-text').fill('hey');
   await page.locator('#preview-btn').click();
 
-  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Log a set like');
+  // Deterministic greeting fallback — points the lifter at logging without
+  // reading as a format correction. The chat is never a dead end.
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Log your sets');
   expect(capture.writeRequests).toHaveLength(0);
 });
 

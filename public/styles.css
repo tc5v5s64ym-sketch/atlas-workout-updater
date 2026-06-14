@@ -291,21 +291,26 @@ main {
    Coach (chat-first front door)
    ============================================================================ */
 
-/* Coach is a single calm column: greeting up top, composer docked at the
-   bottom, conversation in between. margin-top:auto on the form pushes the
-   composer down when the thread is short; sticky keeps it docked while the
-   thread scrolls. */
+/* Coach: fixed-height flex column — thread scrolls inside, composer pinned at bottom. */
 #tab-logger.active {
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 140px);
-  min-height: calc(100dvh - 140px);
+  height: calc(100vh - 140px);
+  height: calc(100dvh - 140px);
+  overflow: hidden;
 }
 
+/* Thread fills remaining vertical space and scrolls internally */
+#coach-thread {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Composer stays pinned as a static flex child below the thread */
 #logger-form {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
+  flex: 0 0 auto;
   padding: var(--s2) 0 calc(var(--s2) + env(safe-area-inset-bottom, 0px));
   background: var(--bg);
   z-index: 20;
@@ -1593,28 +1598,9 @@ a.lift-link:hover { text-decoration: underline; }
   .action-row button { width: 100%; }
   .coach-greeting { font-size: 1.4rem; }
 
-  /* Coach surface on mobile: single natural scroll — no nested scroll windows.
-     The whole page scrolls as one column: greeting → thread → rows editor →
-     composer → safe-area gap. De-sticky the form so the rows editor and the
-     composer bar are part of the same document flow. */
+  /* On mobile the safe-area padding at the bottom needs a bit more breathing room */
   #logger-form {
-    position: static;
-    z-index: auto;
     padding-bottom: calc(var(--s4) + env(safe-area-inset-bottom, 0px));
-  }
-
-  /* Without the sticky form, the thread no longer needs its own scroll cage */
-  #coach-thread {
-    max-height: none;
-    overflow-y: visible;
-  }
-
-  /* Remove the inner max-height cap on parsed-rows and effort — they're in
-     the normal page flow now and full height is fine */
-  #logger-form #effort-details[open],
-  #logger-form .parsed-rows-editor:not([hidden]) {
-    max-height: none;
-    overflow-y: visible;
   }
 
   .composer-attach,
