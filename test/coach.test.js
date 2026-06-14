@@ -102,6 +102,8 @@ test('chat system prompt carries the conversational guardrails', () => {
   assert.match(prompt, /don't have that data yet/i, 'must admit missing data rather than guess');
   assert.match(prompt, /5\/2/, 'must teach the slash logging notation');
   assert.match(prompt, /no markdown headings/i, 'plain text only');
+  assert.match(prompt, /acknowledge what you heard/i, 'must instruct set acknowledgment during session');
+  assert.match(prompt, /log it/i, 'must name the end-of-session write trigger');
 });
 
 test('sanitizeChatContext whitelists the snapshot and drops unknown keys + bounds arrays', () => {

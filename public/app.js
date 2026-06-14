@@ -1909,6 +1909,12 @@ let activeExercise = null;
 // the current plan order in coach context (for "why in this order?" questions).
 let lastIntentData = null;
 
+// Set by handleLogIt() before re-submitting the form with compiled workout
+// text. When true, the submit handler skips the "route to coach" branch and
+// runs the parse → preview path so the lifter sees the final session preview.
+// Cleared immediately after being read — single-use gate.
+let sessionCompiledAwaitingPreview = false;
+
 // Populated after a successful manual write. Cleared only after undo or when
 // the user explicitly picks "Log as new" in the correction dialog. NOT cleared
 // by invalidatePreview so the correction guard can fire even after the user
@@ -2624,7 +2630,8 @@ async function handleLogIt() {
   setStatus(loggerStatus, '', 'ok');
   workoutTextInput.value = workoutText;
   invalidatePreview();
-  // Re-submit the form so the normal parse → preview path runs with the compiled text.
+  // Signal the submit handler to run parse → preview instead of routing to coach.
+  sessionCompiledAwaitingPreview = true;
   document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
 }
 
@@ -2829,6 +2836,20 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     }
     setStatus(loggerStatus, 'Enter workout text first, then preview. You can edit parsed rows after preview.', 'error');
     return;
+  }
+
+  // Conversational session mode: parsed workout text (no effort attached) goes
+  // to the coach for acknowledgment instead of immediately showing a preview
+  // card. The chat IS the running log — the lifter sees what Atlas heard and
+  // corrects conversationally. The preview only fires when "log it" compiles the
+  // full session (signalled by sessionCompiledAwaitingPreview) or when the lifter
+  // explicitly attached effort data to this submission.
+  if (logRows.length && !effortOnly) {
+    if (!sessionCompiledAwaitingPreview) {
+      routeMessageToCoach(pendingChatText);
+      return;
+    }
+    sessionCompiledAwaitingPreview = false;
   }
 
   const previewBtn = document.getElementById('preview-btn');
