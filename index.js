@@ -1747,6 +1747,12 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   const writeId = formFields.write_id;
   const hasManualEffortMetrics = Boolean(formFields.effort_json || formFields.effort || formFields.duration);
   let idempotency = { enabled: false, write_id: null, token: null };
+  // CR-1 guard: once the sheet append succeeds the idempotency record must never
+  // be released (failWrite) — a released record lets a retried write_id append a
+  // second time. writeCommitted flips true after the append; liveWriteRecorded
+  // flips true once the full response is recorded via completeWrite.
+  let writeCommitted = false;
+  let liveWriteRecorded = false;
 
   if (!req.file && !hasManualEffortMetrics) {
     return standardError(req, res, 'image file or manual effort metrics are required for complete-workout preview/write', null, 400);
@@ -1929,6 +1935,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         }
         await appendRows(effortSheetName, [effortRow]);
         effortWritten = true;
+        writeCommitted = true;
         invalidateSheetRowsCache();
       } catch (error) {
         if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
@@ -2018,11 +2025,30 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       responseBody.data.duplicate_write = false;
       responseBody.data.idempotency_status = 'completed';
       completeWrite(idempotency.write_id, idempotency.token, responseBody);
+      liveWriteRecorded = true;
     }
 
     return standardSuccess(req, res, 'complete-workout processed', responseBody, 200);
   } catch (error) {
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    if (idempotency.enabled) {
+      if (writeCommitted && !liveWriteRecorded) {
+        // Rows are already on the sheet but the response post-processing threw.
+        // Record the write as completed so a retried write_id replays this state
+        // instead of appending a second time (never failWrite a committed write).
+        completeWrite(idempotency.write_id, idempotency.token, {
+          status: 'ok',
+          message: 'complete-workout written; response post-processing failed',
+          data: {
+            write_id: idempotency.write_id,
+            sheet_written: true,
+            idempotency_status: 'completed',
+            post_processing_error: true
+          }
+        });
+      } else if (!writeCommitted) {
+        failWrite(idempotency.write_id, idempotency.token);
+      }
+    }
     return standardError(req, res, 'Failed to complete workout ingestion', { error: error.message, safeWrite: true }, 500);
   } finally {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
@@ -2253,8 +2279,22 @@ app.post('/api/log-workout', async (req, res) => {
 
     return standardSuccess(req, res, 'log-workout processed', responseBody, 200);
   } catch (error) {
-    console.error('❌ Failed to append workout data:', error);
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    console.error('❌ Failed to finalize workout response after append:', error);
+    // The log (and any effort) rows are already on the sheet by this point, so
+    // releasing the idempotency record would let a retried write_id re-append.
+    // Record the write as completed instead (never failWrite a committed write).
+    if (idempotency.enabled) {
+      completeWrite(idempotency.write_id, idempotency.token, {
+        message: 'Workout data appended; response finalization failed.',
+        log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+        effortWritten: Boolean(formattedEffortRow),
+        test_mode: false,
+        sheet_write: 'success',
+        write_id: idempotency.write_id,
+        duplicate_write: false,
+        idempotency_status: 'completed'
+      });
+    }
     return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
   }
 });
