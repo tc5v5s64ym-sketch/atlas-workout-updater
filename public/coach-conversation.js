@@ -717,6 +717,30 @@
   // backend would see the current turn twice).
   async function getChatReply(message, history, context) {
     if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null, propose_note: null };
+
+    // SME first: a training-knowledge question gets a deterministic, LLM-free answer
+    // from /api/coach/ask. Anything it has no card for (depth log_only / no answer) —
+    // including data questions about the lifter's own history — falls through to the
+    // Gemini coach below. READ-ONLY either way; a slow/failed SME never blocks the chat.
+    try {
+      const sme = await Promise.race([
+        api('/api/coach/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message })
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('sme-timeout')), 4000))
+      ]);
+      const data = sme && sme.data;
+      if (data && data.depth && data.depth !== 'log_only' && data.answer) {
+        const cards = Array.isArray(data.cards) ? data.cards : [];
+        const provenance = cards.length
+          ? `\n\nBased on: ${cards.map(c => String(c).replace(/_/g, ' ')).join(', ')}`
+          : '';
+        return { message: data.answer + provenance, propose_edit: null, propose_note: null };
+      }
+    } catch { /* fall through to the Gemini coach */ }
+
     const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null }), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
