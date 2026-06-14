@@ -112,6 +112,7 @@ function applyLiftRoleGuards(result) {
 
     if (
       intent && intent.id === 'deload_reset' &&
+      intent.label === 'Deload & Reset' &&   // fallback only — skip if the engine already reframed it
       Array.isArray(intent.exercises) && intent.exercises.length > 0 &&
       intent.exercises.every(exerciseIsAccessory)
     ) {

@@ -1,5 +1,5 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
-const { applyLiftRoleGuards } = require('./liftRole');
+const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps } = require('./liftRole');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -1227,33 +1227,104 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   if (eligibleStalls.length >= 1 && stalls.length >= 2) {
     const top = eligibleStalls.slice(0, 3);
     const patternLabel = code => rm[patternOf(code)]?.label || 'that muscle group';
-    const why = top.map(s =>
-      `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${Math.round(s.last_best_weight * 0.9)} lb`
-    );
-    for (const s of holdStalls.slice(0, 2)) {
-      why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
+    const stalledNames = top.map(s => stallName(s.liftCode));
+    const accessoryOnly = stalledNames.length > 0 && stalledNames.every(n => isAccessory(n));
+
+    if (accessoryOnly) {
+      // Accessory-only stalls aren't a systemic deload — and the day shouldn't be
+      // "redo your 3 stalled lifts". Program a real recovery/accessory session from
+      // the owner's non-compound movements; the stalls become a reset note.
+      // Stalled lifts hold their load and chase reps (matching the "reset" note);
+      // everything else progresses normally.
+      const topCodes = new Set(top.map(s => s.liftCode));
+      const stalledWeightByCode = new Map(stalls.map(s => [s.liftCode, s.last_best_weight]));
+      const toExercise = r => {
+        const held = stalledWeightByCode.has(r.liftCode);
+        return guardAccessoryReps({
+          exercise: r.exercise_name,
+          lift_code: r.liftCode,
+          target_weight: held ? stalledWeightByCode.get(r.liftCode) : r.next_target.weight,
+          target_reps: r.next_target.reps,
+          target_sets: r.next_target.sets,
+          reason: held ? 'Reset — hold the load, chase clean reps' : r.recommendation
+        });
+      };
+
+      const usable = allRecs.filter(r => r.exercise_name && r.next_target && !isMainCompound(r.exercise_name));
+      const seen = new Set();
+      const exercises = [];
+      // 1) The stalled accessories that triggered this always lead the session
+      //    (held load) — never crowded out by newer work.
+      for (const r of usable) {
+        if (topCodes.has(r.liftCode) && !seen.has(r.liftCode)) { seen.add(r.liftCode); exercises.push(toExercise(r)); }
+      }
+      for (const s of top) {                       // stalled lift with no recommendation → still reset it
+        if (seen.has(s.liftCode)) continue;
+        seen.add(s.liftCode);
+        exercises.push(guardAccessoryReps({
+          exercise: stallName(s.liftCode), lift_code: s.liftCode,
+          target_weight: s.last_best_weight, target_reps: 12, target_sets: 3,
+          reason: 'Reset — hold the load, chase clean reps'
+        }));
+      }
+      // 2) Fill the rest with the owner's RESTED, non-compound movements only —
+      //    keep patterns the readiness model just marked fatigued out of a recovery day.
+      for (const r of usable) {
+        if (exercises.length >= 6) break;
+        if (seen.has(r.liftCode) || !restedEnough(r.liftCode)) continue;
+        seen.add(r.liftCode);
+        exercises.push(toExercise(r));
+      }
+
+      const resetList = stalledNames.join(', ');
+
+      intents.push({
+        id: 'deload_reset',
+        label: 'Recovery Pull / Accessory',
+        score: 45 + eligibleStalls.length * 5,
+        focus: 'Main lifts are fatigued — bank quality pulling + accessory volume at moderate effort.',
+        confidence: exercises.length >= 3 ? 'high' : 'medium',
+        confidence_reasons: [`${exercises.length} rested accessory movement${exercises.length === 1 ? '' : 's'} available`],
+        why_today: [
+          `${resetList} ${stalledNames.length === 1 ? 'has' : 'have'} stalled — but an accessory stall doesn't warrant a systemic pullback.`,
+          'Keep the big lifts off the table today and get clean pulling + arm/delt/core volume in.',
+          'On the stalled ones, reset the load and chase 10–20 crisp reps, or rotate the variation if they stay stuck.'
+        ],
+        data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: "reset, don't grind" })),
+        what_it_protects: ['Keeps momentum without digging a recovery hole', 'Saves the heavy-lift reset for when the main lifts actually slip'],
+        watch_for: ["If a main lift starts grinding next session, that's the real signal to pull back"],
+        pivot_logic: [],
+        exercises
+      });
+    } else {
+      const why = top.map(s =>
+        `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${Math.round(s.last_best_weight * 0.9)} lb`
+      );
+      for (const s of holdStalls.slice(0, 2)) {
+        why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
+      }
+      intents.push({
+        id: 'deload_reset',
+        label: 'Deload & Reset',
+        score: 45 + eligibleStalls.length * 5,
+        focus: 'Drop ~10%, sharpen form, rebuild momentum',
+        confidence: eligibleStalls.length >= 3 ? 'high' : 'medium',
+        confidence_reasons: [`${eligibleStalls.length} rested lift${eligibleStalls.length === 1 ? '' : 's'} ready for a reset`],
+        why_today: why,
+        data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: 'no progression' })),
+        what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
+        watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
+        pivot_logic: [],
+        exercises: top.map(s => ({
+          exercise: stallName(s.liftCode),
+          lift_code: s.liftCode,
+          target_weight: Math.round(s.last_best_weight * 0.9),
+          target_reps: 5,
+          target_sets: 3,
+          reason: 'Deload — 10% lighter, focus on clean reps'
+        }))
+      });
     }
-    intents.push({
-      id: 'deload_reset',
-      label: 'Deload & Reset',
-      score: 45 + eligibleStalls.length * 5,
-      focus: 'Drop ~10%, sharpen form, rebuild momentum',
-      confidence: eligibleStalls.length >= 3 ? 'high' : 'medium',
-      confidence_reasons: [`${eligibleStalls.length} rested lift${eligibleStalls.length === 1 ? '' : 's'} ready for a reset`],
-      why_today: why,
-      data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: 'no progression' })),
-      what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
-      watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
-      pivot_logic: [],
-      exercises: top.map(s => ({
-        exercise: stallName(s.liftCode),
-        lift_code: s.liftCode,
-        target_weight: Math.round(s.last_best_weight * 0.9),
-        target_reps: 5,
-        target_sets: 3,
-        reason: 'Deload — 10% lighter, focus on clean reps'
-      }))
-    });
   }
 
   // ── Custom (always available, never starred) ─────────────────────
