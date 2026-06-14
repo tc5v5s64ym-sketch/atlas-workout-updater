@@ -180,8 +180,9 @@ body[data-surface="coach"] #conn-status { display: none; }
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.78rem;
-  font-weight: 500;
+  font-family: var(--disp);
+  font-size: 0.82rem;
+  font-weight: 600;
   letter-spacing: 0.22em;
   color: var(--ink);
   text-transform: uppercase;
@@ -212,6 +213,32 @@ body[data-surface="coach"] #conn-status { display: none; }
   border-radius: 50%;
   background: var(--ok);
   border: 2px solid var(--bg);
+}
+
+/* Signature "load line" — a single ember hairline that bears weight: it
+   underlines the Coach nav here, and is reused as the active-tab indicator
+   and progress-to-goal bars elsewhere. Coach surface only. */
+.loadline { display: none; }
+body[data-surface="coach"] header { border-bottom-color: transparent; }
+body[data-surface="coach"] .loadline {
+  display: block;
+  position: absolute;
+  left: var(--s4);
+  right: var(--s4);
+  bottom: 0;
+  height: 1px;
+  background: var(--border);
+  border-radius: 2px;
+}
+body[data-surface="coach"] .loadline::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 1px;
+  width: 34%;
+  background: var(--accent);
+  border-radius: 2px;
 }
 
 /* Segmented control (Coach | Progress) */
@@ -532,18 +559,19 @@ body[data-surface="coach"] main {
   width: 36px;
   height: 36px;
   border-radius: var(--r-pill);
-  border: none;
-  background: var(--card-sunken);
-  color: var(--accent);
+  /* Secondary control: outline + muted, so ember stays on the primary action. */
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--muted);
   font-size: 1.4rem;
   line-height: 1;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, transform 0.1s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
 }
-.composer-attach:hover { background: var(--accent-soft); }
+.composer-attach:hover { border-color: var(--border-strong); color: var(--ink); background: var(--card-sunken); }
 .composer-attach:active { transform: scale(0.92); }
 
 .composer-send {
@@ -1788,15 +1816,16 @@ a.lift-link:hover { text-decoration: underline; }
 .coach-empty[hidden] { display: none; }
 
 .coach-greeting-line {
-  font-size: 0.95rem;
+  font-size: 1.0625rem;
   color: var(--muted);
   margin: 0;
 }
 .coach-empty-tagline {
+  font-family: var(--disp);
   font-size: clamp(3rem, 11vw, 4rem);
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.04;
   color: var(--ink);
   margin: 0;
 }
