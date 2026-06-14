@@ -1214,7 +1214,8 @@ function looksLikeCorrection(text) {
 // End-of-session compilation trigger: the lifter has been logging sets
 // conversationally and now wants Atlas to compile them into one preview.
 function looksLikeLogIt(text) {
-  return /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(String(text || ''));
+  // Accept straight or curly apostrophes — mobile keyboards autocorrect to curly.
+  return /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that['’]?s?\s+all|that['’]?s\s+it(\s+for\s+(today|now))?|we['’]?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(String(text || ''));
 }
 
 function showCorrectionPrompt(capturedText) {
@@ -2570,6 +2571,39 @@ function emitCoachPreview(rows, liftCodes, effortOnly) {
   } catch { /* narration is optional */ }
 }
 
+// In-workout: hand a just-LOGGED (not previewed) set to the conversation layer
+// for a readback + adjusted-next coaching reaction. No write, no preview, no
+// Save — purely narration off the client-parsed rows. The set text rides along
+// so the end-of-session compile can reconstruct the full workout.
+function emitSetLogged(logObjs, text) {
+  const byExercise = [];
+  const seen = new Map();
+  for (const o of (logObjs || [])) {
+    if (!o.exercise) continue;
+    if (!seen.has(o.exercise)) { const g = { exercise: o.exercise, sets: [] }; seen.set(o.exercise, g); byExercise.push(g); }
+    seen.get(o.exercise).sets.push({
+      weight: o.weight,
+      reps: o.reps,
+      rir: (o.rir === '' || o.rir == null) ? null : Number(o.rir)
+    });
+  }
+  if (byExercise.length) {
+    try {
+      document.dispatchEvent(new CustomEvent('atlas:set-logged', {
+        detail: { exercises: byExercise, text: text || '' }
+      }));
+    } catch { /* narration is optional */ }
+  }
+  // The session lives in the conversation (chatTurns), not the parsed-rows
+  // editor — clear the transient rows so the end-of-session compile sees the
+  // FULL session. This matters for the effort / screenshot end triggers, which
+  // compile from the conversation only when the editor is empty.
+  if (setsTableBody) setsTableBody.innerHTML = '';
+  if (parsedRowsEditor) parsedRowsEditor.hidden = true;
+  lastParsedWorkoutText = '';
+  invalidatePreview();
+}
+
 async function fetchReaction(liftCode) {
   if (!liftCode || !getApiKey()) return null;
   try {
@@ -3098,20 +3132,18 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
-  // Conversational session mode: mid-conversation set text routes to the coach
-  // for acknowledgment, not a preview card. Only active when a conversation is
-  // already in progress (chat history has turns) — a fresh submit with no
-  // history goes straight to preview so the direct preview flow still works.
-  // Exceptions: (a) sessionCompiledAwaitingPreview — "log it" re-submission,
-  // go to preview; (b) file or manualEffort — effort always previews.
-  if (logRows.length && !file && !manualEffort) {
-    const inConversation = typeof window.getChatHistory === 'function' && window.getChatHistory().length > 0;
-    if (!sessionCompiledAwaitingPreview && inConversation) {
-      routeMessageToCoach(pendingChatText);
-      return;
-    }
-    sessionCompiledAwaitingPreview = false;
+  // In-workout coaching (session-level save): a logged set is coached in-thread
+  // — readback + adjusted-next prescription — and is NEVER previewed or written.
+  // The single review + write happens only on an explicit END trigger:
+  // "done"/"log it" (which sets sessionCompiledAwaitingPreview), an Apple Watch
+  // screenshot, or manual effort. This makes "no mid-workout Save" a STRUCTURAL
+  // invariant — the preview/approve/write surface is unreachable from logging a
+  // set, by construction (not just hidden by styling).
+  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview) {
+    emitSetLogged(logRows, pendingChatText);
+    return;
   }
+  sessionCompiledAwaitingPreview = false;
 
   const previewBtn = document.getElementById('preview-btn');
   previewBtn.disabled = true;
@@ -3172,7 +3204,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       pendingWrite = { mode: 'manual', payload, previewProof: previewProofFromResult(result, 'manual') };
       renderLogWorkoutPreview(result, effortRow);
     }
-    previewPanel.hidden = false;
+    // Session-level save: the in-thread review card (atlas:preview-ready) is the
+    // single review surface, so the legacy #preview-panel stays hidden. Its
+    // #approve-btn remains the gated write trigger that the review card's Save
+    // clicks — enabled here only once the dry-run proved no-write safety.
+    previewPanel.hidden = true;
     parsedRowsEditor.hidden = false;
     document.getElementById('approve-btn').disabled = !pendingWriteHasPreviewProof(pendingWrite);
     const gateNote = document.getElementById('preview-gate-note');
@@ -3529,6 +3565,10 @@ async function handleUndoLastWrite() {
     }
   }
 }
+
+// The end-of-session review card's "Undo" reuses this exact backend path —
+// no reimplementation of the undo/delete logic.
+window.atlasUndoLastWrite = handleUndoLastWrite;
 
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (writeInFlight) return;

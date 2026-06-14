@@ -1622,6 +1622,81 @@ a.lift-link:hover { text-decoration: underline; }
   margin: var(--s2) 0 var(--s4);
 }
 
+/* ============================================================================
+   In-workout coaching (07) + end-of-session review (08)
+   ============================================================================ */
+/* RIR is the key coaching cue — always rendered in ember. */
+.rir { color: var(--accent); font-weight: 500; }
+.rir-max { color: var(--accent); font-weight: 600; }
+
+/* Set readback */
+.readback {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-bottom: var(--s2);
+}
+.rb-h {
+  font-family: var(--disp);
+  font-weight: 500;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.rb-ck { color: var(--ok); }
+.rb-s { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); line-height: 1.8; }
+
+/* Adjusted-next prescription */
+.nextp {
+  background: transparent;
+  border: 1px solid var(--accent-soft);
+  border-radius: 12px;
+  padding: 11px 14px;
+  margin-top: var(--s2);
+}
+.nextp-h { font-family: var(--disp); font-weight: 500; font-size: 0.82rem; color: var(--accent); margin-bottom: 6px; }
+.nextp-s { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); line-height: 1.7; }
+
+/* End-of-session review card — the ONE save */
+.review {
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  padding: 16px;
+  margin-top: var(--s1);
+}
+.rv-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+.rv-t { font-family: var(--disp); font-weight: 600; font-size: 1rem; }
+.rv-d { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); }
+.rv-ex { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.rv-en { font-family: var(--disp); font-weight: 500; font-size: 0.88rem; }
+.rv-es { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); text-align: right; }
+.rv-tot { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); padding: 11px 0 2px; }
+.rv-tot b { color: var(--ink); font-weight: 500; }
+.rv-eff { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); padding-top: 8px; border-top: 1px solid var(--border); margin-top: 6px; }
+.rv-act { display: flex; gap: 10px; margin-top: 14px; }
+.rv-act .btn {
+  border: none;
+  border-radius: 12px;
+  padding: 13px;
+  font-family: var(--disp);
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.rv-save { flex: 1; background: var(--accent); color: var(--accent-ink); }
+.rv-save:disabled { opacity: 0.55; cursor: default; }
+.rv-edit { flex: 0 0 auto; background: transparent; border: 1px solid var(--border-strong); color: var(--muted); padding: 13px 18px; }
+.rv-note { font-family: var(--mono); font-size: 0.66rem; color: var(--faint); text-align: center; margin-top: 10px; }
+.rv-saved { display: none; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; font-family: var(--disp); font-weight: 500; font-size: 0.88rem; color: var(--ok); }
+.rv-undo { font-family: var(--mono); font-weight: 500; font-size: 0.72rem; color: var(--accent); text-decoration: none; border: 1px solid var(--border-strong); border-radius: 8px; padding: 5px 11px; }
+.review.done .rv-act,
+.review.done .rv-note { display: none; }
+.review.done .rv-saved { display: flex; }
+
 .session-item {
   background: var(--card);
   border: 1px solid var(--border);
