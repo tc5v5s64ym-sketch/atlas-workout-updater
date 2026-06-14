@@ -445,8 +445,67 @@
     </div>
   </div>
 
+  <!-- Coach side panel — opened from #coach-menu-btn. Read-only: readiness
+       ticker (from /api/plan/intent-recommendation), the Views list, and recent
+       sessions. Every row clicks an existing .tab-btn, so the tab engine and the
+       trust loop stay untouched. -->
+  <div id="coach-drawer-backdrop" class="coach-drawer-backdrop"></div>
+  <aside id="coach-drawer" class="coach-drawer" aria-label="Atlas menu" aria-hidden="true">
+    <div class="coach-drawer-top">
+      <span class="coach-drawer-wordmark">ATLAS</span>
+      <span class="coach-drawer-acts">
+        <button type="button" id="drawer-new-session" class="coach-drawer-ib coach-drawer-plus" data-tab="logger" aria-label="New session" title="New session">+</button>
+        <button type="button" id="coach-drawer-close" class="coach-drawer-ib" aria-label="Close menu">&#10005;</button>
+      </span>
+    </div>
+
+    <button type="button" id="drawer-readiness" class="drawer-ticker" data-tab="dashboard" aria-label="Today's readiness">
+      <span class="drawer-ticker-top">
+        <span class="drawer-ticker-label">Readiness</span>
+        <span class="drawer-ticker-link">today &#8594;</span>
+      </span>
+      <span class="drawer-pats" id="drawer-pats"></span>
+    </button>
+
+    <div class="coach-drawer-scroll">
+      <div class="coach-drawer-sec coach-drawer-sec-first">Views</div>
+      <div class="coach-drawer-nav" id="coach-drawer-nav" role="navigation" aria-label="Views">
+        <button type="button" class="drawer-nav-row" data-tab="logger">
+          <span class="drawer-nav-ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v6A1.5 1.5 0 0 1 15.5 13H8l-3.5 3v-3A1.5 1.5 0 0 1 3 11.5z"/></svg></span>
+          <span class="drawer-nav-txt"><span class="drawer-nav-nm">Coach</span><span class="drawer-nav-ht">log a set or ask</span></span>
+        </button>
+        <button type="button" class="drawer-nav-row" data-tab="dashboard">
+          <span class="drawer-nav-ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.4"/></svg></span>
+          <span class="drawer-nav-txt"><span class="drawer-nav-nm">Today</span><span class="drawer-nav-ht">your session</span></span>
+        </button>
+        <button type="button" class="drawer-nav-row" data-tab="progress">
+          <span class="drawer-nav-ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,13 8,8 12,11 17,5"/><polyline points="13,5 17,5 17,9"/></svg></span>
+          <span class="drawer-nav-txt"><span class="drawer-nav-nm">Trends</span><span class="drawer-nav-ht">track your lifts</span></span>
+        </button>
+        <button type="button" class="drawer-nav-row" data-tab="history">
+          <span class="drawer-nav-ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><polyline points="10,6 10,10 13,12"/></svg></span>
+          <span class="drawer-nav-txt"><span class="drawer-nav-nm">History</span><span class="drawer-nav-ht">your training log</span></span>
+        </button>
+        <button type="button" class="drawer-nav-row" data-tab="body">
+          <span class="drawer-nav-ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="6" r="2.6"/><path d="M4.5 16c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/></svg></span>
+          <span class="drawer-nav-txt"><span class="drawer-nav-nm">Body</span><span class="drawer-nav-ht">log your weight</span></span>
+        </button>
+      </div>
+
+      <div class="coach-drawer-sec">Recent sessions</div>
+      <div class="drawer-recent" id="drawer-recent"><span class="muted small">Loading…</span></div>
+    </div>
+
+    <div class="coach-drawer-foot">
+      <span class="coach-drawer-fav">D</span>
+      <span class="coach-drawer-fn">Dale</span>
+      <button type="button" id="drawer-settings" class="coach-drawer-fg" data-tab="settings" aria-label="Settings" title="Settings">&#9881;</button>
+    </div>
+  </aside>
+
   <script src="app.js"></script>
   <script src="nav.js"></script>
+  <script src="drawer.js"></script>
   <script src="chat.js"></script>
   <script src="coach-conversation.js"></script>
 </body>
