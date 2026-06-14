@@ -534,12 +534,15 @@
   // before handing focus to the composer.
   async function startFreestyle() {
     hideHomeEmpty();
-    const handle = appendAtlasBubble();
+    // Focus synchronously, inside the tap's user-activation window, so mobile
+    // browsers open the soft keyboard. Awaiting the typed bubble first would let
+    // that activation expire (typeOut reveals words on timers).
+    document.getElementById('workout-text')?.focus();
     setWorkoutPlaceholder('Bench 135 10/4, 225 5/2 x3');
+    const handle = appendAtlasBubble();
     if (handle) {
       await typeOut(handle.body, "Freestyle it — log a set or ask anything, and I'll react as you go.");
     }
-    document.getElementById('workout-text')?.focus();
   }
 
   document.getElementById('suggested-tiles')?.addEventListener('click', e => {
