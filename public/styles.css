@@ -1644,15 +1644,14 @@ a.lift-link:hover { text-decoration: underline; }
 #coach-read-strip,
 #suggestion-chips { display: none; }
 
-/* Empty-state hero — fills space above the tiles until the chat starts */
+/* Empty-state hero — greeting + tagline + tiles near the top; composer stays pinned at bottom */
 .coach-empty {
-  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: flex-end;
-  gap: var(--s1);
-  padding-bottom: var(--s4);
+  justify-content: flex-start;
+  gap: var(--s2);
+  padding-top: var(--s6);
 }
 .coach-empty[hidden] { display: none; }
 
@@ -1662,20 +1661,21 @@ a.lift-link:hover { text-decoration: underline; }
   margin: 0;
 }
 .coach-empty-tagline {
-  font-size: 2.6rem;
+  font-size: clamp(3rem, 11vw, 4rem);
   font-weight: 700;
   letter-spacing: -0.03em;
-  line-height: 1.1;
+  line-height: 1.05;
   color: var(--ink);
   margin: 0;
 }
 
-/* Quick-start tiles, just above the composer */
+/* Quick-start tiles — inside the hero, spaced below the tagline */
 .suggested-tiles {
   display: flex;
   flex-direction: column;
   gap: var(--s2);
-  margin-bottom: var(--s2);
+  width: 100%;
+  margin-top: var(--s4);
 }
 .suggested-tiles[hidden] { display: none; }
 .suggest-tile {

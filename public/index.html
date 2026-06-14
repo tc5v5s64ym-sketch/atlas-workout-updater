@@ -73,6 +73,19 @@
       <div id="coach-empty" class="coach-empty">
         <p id="coach-greeting" class="coach-greeting-line"></p>
         <p class="coach-empty-tagline">Let's get stronger.</p>
+
+        <!-- Quick-start tiles live inside the hero so they move with the
+             greeting block and hide together when the conversation starts. -->
+        <div id="suggested-tiles" class="suggested-tiles">
+          <button type="button" class="suggest-tile" data-suggest="workout">
+            <span class="suggest-tile-icon" aria-hidden="true">&#x1F9E0;</span>
+            <span class="suggest-tile-label">Coaches pick</span>
+          </button>
+          <button type="button" class="suggest-tile" data-suggest="freestyle">
+            <span class="suggest-tile-icon" aria-hidden="true">&#x26A1;</span>
+            <span class="suggest-tile-label">Freestyle</span>
+          </button>
+        </div>
       </div>
 
       <!-- Conversation thread: user bubbles, Atlas coaching bubbles, the dry-run
@@ -95,19 +108,6 @@
         </details>
 
         <div id="logger-status"></div>
-      </div>
-
-      <!-- Quick-start tiles, just above the composer. Hidden once the
-           conversation starts (coach-conversation.js). -->
-      <div id="suggested-tiles" class="suggested-tiles">
-        <button type="button" class="suggest-tile" data-suggest="workout">
-          <span class="suggest-tile-icon" aria-hidden="true">&#x1F9E0;</span>
-          <span class="suggest-tile-label">Coaches pick</span>
-        </button>
-        <button type="button" class="suggest-tile" data-suggest="freestyle">
-          <span class="suggest-tile-icon" aria-hidden="true">&#x26A1;</span>
-          <span class="suggest-tile-label">Freestyle</span>
-        </button>
       </div>
 
       <form id="logger-form">
