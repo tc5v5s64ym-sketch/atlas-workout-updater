@@ -2841,8 +2841,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         });
         const compiledText = compileRes.data?.workout_text;
         if (compiledText) {
-          const compileDate = date || getLocalDateString();
-          const compileSessionId = sessionId || generateSessionId(compileDate);
+          // Screenshot mode: leave date_clean and session_id blank so the
+          // server can stamp them with the screenshot-resolved date/session_id
+          // (normalizeLogRowObject falls back to topLevelDate/topLevelSessionId
+          // when the row fields are falsy). Manual effort uses the form date.
+          const compileDate = mode === 'screenshot' ? '' : (date || getLocalDateString());
+          const compileSessionId = mode === 'screenshot' ? '' : (sessionId || generateSessionId(compileDate));
           workoutTextInput.value = compiledText;
           try {
             await rowsFromWorkoutInput();

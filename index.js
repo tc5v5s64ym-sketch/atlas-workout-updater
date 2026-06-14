@@ -413,24 +413,7 @@ function resolveWorkoutDate({ manualDate, screenshotDate } = {}) {
     getLocalDateString();
 }
 
-function formatDateForSessionId(dateValue) {
-  const cleanDate = toDateOnly(dateValue).replace(/[^0-9]/g, '');
-  if (!/^\d{8}$/.test(cleanDate)) {
-    throw new Error(`Invalid date for session_id generation: ${dateValue}`);
-  }
-  return cleanDate;
-}
-
-function formatAmPmSuffix(dateTime = new Date()) {
-  const hour = dateTime.getHours();
-  return hour < 12 ? 'AM' : 'PM';
-}
-
-function generateSessionId(dateValue) {
-  const formattedDate = formatDateForSessionId(dateValue);
-  const suffix = formatAmPmSuffix();
-  return `${formattedDate}-${suffix}-01`;
-}
+const { generateSessionId, nextAvailableSessionId } = require('./services/sessionId');
 
 function isTestModeEnabled(value) {
   return String(value || '').toLowerCase() === 'true';
@@ -1697,9 +1680,9 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       manualDate: formFields.date,
       screenshotDate: visionResult.parsed_metrics?.date
     });
-    const sessionId = formFields.session_id || generateSessionId(dateValue);
 
-    // 4) Check duplicate session protection
+    // 4) Check duplicate session protection — fetch existing IDs first so we
+    // can auto-increment the counter when two sessions share the same day/period.
     let existingEffortSessionIds;
     try {
       existingEffortSessionIds = await getEffortSessionIds();
@@ -1708,7 +1691,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
-    const duplicateSession = existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
+    // If the client supplied a session_id, honour it (explicit beats implicit).
+    // A supplied id that already exists is still a duplicate (same data sent twice).
+    const sessionId = formFields.session_id
+      ? formFields.session_id
+      : nextAvailableSessionId(dateValue, existingEffortSessionIds);
+
+    const duplicateSession = Boolean(formFields.session_id) &&
+      existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
     if (duplicateSession) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Duplicate session.', null, 409);
