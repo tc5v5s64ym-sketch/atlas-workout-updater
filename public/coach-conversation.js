@@ -517,6 +517,15 @@
     appendInlineSave(bubble);
   }
 
+  /* ===== Coach-nav wiring (hamburger → Progress, avatar → Settings) ===== */
+
+  document.getElementById('coach-menu-btn')?.addEventListener('click', () => {
+    document.getElementById('surface-progress')?.click();
+  });
+  document.querySelector('.coach-avatar')?.addEventListener('click', () => {
+    document.getElementById('open-settings')?.click();
+  });
+
   /* ===== Tiles + listeners ===== */
 
   document.getElementById('suggested-tiles')?.addEventListener('click', e => {
