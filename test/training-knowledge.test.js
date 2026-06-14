@@ -44,6 +44,13 @@ test('classifier maps natural language intent to goals', () => {
   assert.equal(classifyTrainingGoalFromText('Need explosive power for lacrosse').goal, 'power');
 });
 
+test('powerbuilding classifies as mixed, not power (longer phrase wins over substring)', () => {
+  assert.equal(classifyTrainingGoalFromText('I want to do some powerbuilding today').goal, 'mixed');
+  assert.equal(resolveTrainingGoal({ sessionText: 'powerbuilding' }).goal, 'mixed');
+  // The bare "power" intent must still resolve to power.
+  assert.equal(classifyTrainingGoalFromText('Need explosive power for lacrosse').goal, 'power');
+});
+
 test('explicit goal beats text and user profile', () => {
   const resolved = resolveTrainingGoal({
     explicitGoal: 'hypertrophy',

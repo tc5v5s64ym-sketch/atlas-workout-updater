@@ -102,7 +102,7 @@ function chooseBasePrescription({ goal, exerciseName, exerciseType, movementRegi
   };
 }
 
-function applyProgression({ prescription, policy, previousPerformance = {}, recentTrends = {}, movementRegion, availableIncrement }) {
+function applyProgression({ prescription, policy, previousPerformance = {}, recentTrends = {}, movementRegion, exerciseType, availableIncrement }) {
   const result = {
     ...prescription,
     progression: 'maintain',
@@ -201,7 +201,9 @@ function applyProgression({ prescription, policy, previousPerformance = {}, rece
   }
 
   if (policy.id === 'mixed') {
-    const type = inferExerciseType({ exerciseName: prescription.exerciseName });
+    const type = (exerciseType && exerciseType !== 'unknown')
+      ? exerciseType
+      : inferExerciseType({ exerciseName: prescription.exerciseName });
     if (type === 'isolation' && completedWithRoom && insideRepRange) {
       result.progression = 'add_rep';
       result.adjustment = 'accessory_rep_progression';
@@ -260,6 +262,7 @@ function recommendExercisePrescription(input = {}) {
     previousPerformance: input.previousPerformance || {},
     recentTrends: input.recentTrends || {},
     movementRegion,
+    exerciseType,
     availableIncrement: input.availableIncrement,
   });
 

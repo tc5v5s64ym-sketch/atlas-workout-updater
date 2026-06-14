@@ -44,9 +44,26 @@ function classifyTrainingGoalFromText(text, fallbackGoal = 'general_health') {
   const rawText = typeof text === 'string' ? text : '';
   const normalizedText = rawText.toLowerCase();
 
+  // First pass: every term that literally appears in the text, across all patterns.
+  const presentTerms = new Set();
+  for (const pattern of GOAL_PATTERNS) {
+    for (const term of pattern.terms) {
+      if (normalizedText.includes(term)) presentTerms.add(term);
+    }
+  }
+  // A term is "shadowed" when it is a proper substring of another present term
+  // (e.g. "power" inside "powerbuilding"). Prefer the longer, more specific phrase so
+  // "powerbuilding" resolves to mixed instead of power.
+  const isShadowed = (term) => {
+    for (const other of presentTerms) {
+      if (other !== term && other.includes(term)) return true;
+    }
+    return false;
+  };
+
   const matches = [];
   for (const pattern of GOAL_PATTERNS) {
-    const matchedTerms = pattern.terms.filter((term) => normalizedText.includes(term));
+    const matchedTerms = pattern.terms.filter((term) => presentTerms.has(term) && !isShadowed(term));
     if (matchedTerms.length > 0) {
       matches.push({
         goal: pattern.goal,

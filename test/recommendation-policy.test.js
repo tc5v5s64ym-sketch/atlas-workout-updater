@@ -64,6 +64,23 @@ test('strength goal prioritizes load progression when reps and RIR support it', 
   assert.ok(result.reasonCodes.includes('heavy_load_bias'));
 });
 
+test('mixed goal honors explicit exerciseType for accessory rep progression', () => {
+  // "Pec Deck" is not recognized by the name-based type regex, so the mixed branch must
+  // use the explicit exerciseType to keep accessory rep progression instead of stalling.
+  const result = recommendExercisePrescription({
+    goal: 'mixed',
+    exerciseName: 'Pec Deck',
+    exerciseType: 'isolation',
+    previousPerformance: { weight: 100, reps: 10, sets: 3, rir: 2, completed: true },
+    recentTrends: { fatigueStatus: 'low' },
+    availableIncrement: 5,
+  });
+
+  assert.equal(result.progression, 'add_rep');
+  assert.equal(result.recommendedWeight, 100);
+  assert.ok(result.reasonCodes.includes('rep_progress_after_success'));
+});
+
 test('recovery goal reduces stress and never chases PRs', () => {
   const result = recommendExercisePrescription({
     goal: 'recovery',
