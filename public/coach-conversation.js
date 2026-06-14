@@ -276,16 +276,16 @@
     return lines.join('\n');
   }
 
-  // Build "Bench 185×6, Row 155×8…" placeholder from structured plan exercises.
+  // Build "Bench 185×6" placeholder from the first (current) plan exercise only.
   function buildWorkoutPlaceholder(exercises) {
     if (!exercises || !exercises.length) return null;
-    const items = exercises.slice(0, 4).map(raw => {
+    const items = exercises.slice(0, 1).map(raw => {
       const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
       if (!ex || !ex.name || ex.weight == null || ex.reps == null) return null;
       const name = ex.name.split(' ').slice(0, 2).join(' ');
       return `${name} ${ex.weight}×${ex.reps}`;
     }).filter(Boolean);
-    return items.length ? items.join(', ') : null;
+    return items.length ? items[0] : null;
   }
 
   // Extract placeholder from a typed Atlas reply that contains exercise prescriptions.
@@ -295,7 +295,7 @@
     if (!text) return null;
     const items = [];
     const lines = text.split('\n');
-    for (let i = 0; i < lines.length - 1 && items.length < 4; i++) {
+    for (let i = 0; i < lines.length - 1 && !items.length; i++) {
       const line = lines[i].trim();
       const next = lines[i + 1].trim();
       const m = /^(\d+)lbs\s+(\d+)/.exec(next);
@@ -305,14 +305,11 @@
       }
     }
     if (!items.length) {
-      const re = /([A-Z][a-zA-Z\s]{2,25}?):\s*(\d+)\s*(?:lb[s]?\s*)?[×xX]\s*(\d+)/g;
-      let m;
-      while ((m = re.exec(text)) !== null && items.length < 4) {
-        const name = m[1].trim().split(' ').slice(0, 2).join(' ');
-        items.push(`${name} ${m[2]}×${m[3]}`);
-      }
+      const re = /([A-Z][a-zA-Z\s]{2,25}?):\s*(\d+)\s*(?:lb[s]?\s*)?[×xX]\s*(\d+)/;
+      const m = re.exec(text);
+      if (m) items.push(`${m[1].trim().split(' ').slice(0, 2).join(' ')} ${m[2]}×${m[3]}`);
     }
-    return items.length ? items.join(', ') : null;
+    return items.length ? items[0] : null;
   }
 
   function setWorkoutPlaceholder(text) {
