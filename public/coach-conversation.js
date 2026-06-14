@@ -617,9 +617,13 @@
   function chatFallback(message) {
     const t = String(message || '').toLowerCase();
     if (/^\s*(hi|hey|hello|yo|sup|good (morning|evening))\b/.test(t)) {
-      return 'Hey — ready when you are. Log a set like "Bench 225 5/2 5/2", or ask me about your training.';
+      return "Hey — ready when you are. Log your sets and say \"log it\" when you're done.";
     }
-    return "I can't reach my coaching voice right now. Log a set like \"Bench 225 5/2\" (225 lb × 5 reps @ 2 RIR), or ask me again in a moment.";
+    // Looks like workout notation (has numbers) — don't suggest format correction
+    if (/\d/.test(t)) {
+      return "Noted — I'm having trouble connecting right now. Keep logging and say \"log it\" when you're done; I'll compile everything then.";
+    }
+    return "I'm having trouble connecting right now — try again in a moment.";
   }
 
   async function handleChatMessage(detail) {
