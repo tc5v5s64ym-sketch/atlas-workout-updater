@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atlas — History</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0A0B0E;--surface:#131419;--surface-2:#1B1D23;--line:rgba(244,243,239,.09);--line-2:rgba(244,243,239,.16);
+    --ink:#F3F2ED;--muted:#9A9A93;--faint:#63635C;--ember:#E8772E;--ok:#34C77B;
+    --disp:'Space Grotesk',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#050507;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:34px 16px;-webkit-font-smoothing:antialiased}
+  .phone{width:390px;height:830px;background:var(--bg);border-radius:46px;position:relative;overflow:hidden;border:1px solid #24252b;box-shadow:0 40px 100px -25px rgba(0,0,0,.9),0 0 0 9px #0c0c0e;display:flex;flex-direction:column}
+  .statusbar{height:50px;flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 5px;font-size:14px;font-weight:500}
+  .statusbar .r{display:flex;gap:6px;align-items:center;font-size:12px}
+  .seg-wrap{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:6px 18px 0}
+  .seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
+  .seg b{font-family:var(--disp);font-weight:500;font-size:14px;padding:7px 16px;border-radius:999px;color:var(--muted)}
+  .seg b.on{background:var(--surface-2);color:var(--ink)}
+  .gear{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:17px}
+  .gear .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .subnav{flex:0 0 auto;display:flex;gap:22px;padding:14px 22px 0;border-bottom:1px solid var(--line)}
+  .subnav button{background:none;border:none;font-family:var(--disp);font-weight:500;font-size:15px;color:var(--muted);padding:0 0 12px;position:relative;cursor:pointer}
+  .subnav button.on{color:var(--ink)}
+  .subnav button.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--ember);border-radius:2px}
+  .scroll{flex:1;overflow-y:auto;padding:18px 22px 16px}
+  .scroll::-webkit-scrollbar{display:none}
+
+  /* cadence glance */
+  .cadence{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:15px 16px 13px}
+  .cadence-top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+  .cadence-top .big{font-family:var(--disp);font-weight:600;font-size:20px}
+  .cadence-top .big small{font-family:var(--body);font-weight:400;font-size:13px;color:var(--muted);margin-left:4px}
+  .cadence-top .sub{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .bars{display:flex;align-items:flex-end;gap:8px;height:40px}
+  .bars i{flex:1;background:var(--line-2);border-radius:3px}
+  .bars i.cur{background:var(--ember)}
+
+  .wk-head{display:flex;align-items:baseline;justify-content:space-between;margin:22px 0 8px}
+  .wk-head h2{font-family:var(--disp);font-weight:500;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .wk-head .tot{font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+  .sess{display:block;padding:13px 0;border-bottom:1px solid var(--line);cursor:pointer}
+  .sess:last-child{border-bottom:none}
+  .s1{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .s-date{font-family:var(--disp);font-weight:500;font-size:15.5px}
+  .s-date .ap{font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:6px;letter-spacing:.06em}
+  .s-vol{font-family:var(--mono);font-size:12px;color:var(--muted);flex:0 0 auto}
+  .s-vol b{color:var(--ink);font-weight:500}
+  .s-lifts{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.4}
+  .empty-day{font-size:13px;color:var(--faint);padding:10px 0 2px}
+  .homeind{flex:0 0 auto;display:flex;justify-content:center;padding:6px 0 9px}
+  .homeind i{width:130px;height:5px;border-radius:5px;background:rgba(244,243,239,.28)}
+</style></head>
+<body><div class="phone">
+  <div class="statusbar"><div>8:53</div><div class="r"><span>&#128246;</span><span>&#xF8FF;</span><span>94</span></div></div>
+  <div class="seg-wrap"><div class="seg"><b>Coach</b><b class="on">Progress</b></div><div class="gear"><span>&#9881;</span><span class="dot"></span></div></div>
+  <div class="subnav"><button>Today</button><button>Trends</button><button class="on">History</button><button>Body</button></div>
+  <div class="scroll">
+
+    <div class="cadence">
+      <div class="cadence-top"><div class="big">3&times;<small>/ week</small></div><div class="sub">LAST 8 WEEKS</div></div>
+      <div class="bars">
+        <i style="height:60%"></i><i style="height:60%"></i><i style="height:40%"></i><i style="height:60%"></i>
+        <i style="height:40%"></i><i style="height:60%"></i><i style="height:40%"></i><i class="cur" style="height:60%"></i>
+      </div>
+    </div>
+
+    <div class="wk-head"><h2>This week</h2><span class="tot">3 sessions &middot; 52,360 lb</span></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Fri, Jun 12<span class="ap">PM</span></span><span class="s-vol"><b>14</b> sets &middot; 14,270 lb</span></div>
+      <div class="s-lifts">Deadlift, Single-Leg Leg Curl, Leg Extension &middot; +1 more</div></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Thu, Jun 11<span class="ap">PM</span></span><span class="s-vol"><b>17</b> sets &middot; 16,740 lb</span></div>
+      <div class="s-lifts">Bench Press, Incline DB Press, Lat Pulldown &middot; +3 more</div></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Tue, Jun 9<span class="ap">AM</span></span><span class="s-vol"><b>17</b> sets &middot; 21,350 lb</span></div>
+      <div class="s-lifts">Back Squat, Overhead Press, Seated Leg Press &middot; +3 more</div></div>
+
+    <div class="wk-head"><h2>Last week</h2><span class="tot">2 sessions &middot; 27,923 lb</span></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Sun, Jun 7<span class="ap">PM</span></span><span class="s-vol"><b>20</b> sets &middot; 16,465 lb</span></div>
+      <div class="s-lifts">Bench Press, Incline DB Press, Weighted Dips &middot; +4 more</div></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Sun, Jun 1<span class="ap">AM</span></span><span class="s-vol"><b>12</b> sets &middot; 11,458 lb</span></div>
+      <div class="s-lifts">Bench Press, Overhead Press, Weighted Dips</div></div>
+
+    <div class="wk-head"><h2>May 25&ndash;31</h2><span class="tot">2 sessions &middot; 30,500 lb</span></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Fri, May 29<span class="ap">PM</span></span><span class="s-vol"><b>17</b> sets &middot; 15,150 lb</span></div>
+      <div class="s-lifts">Back Squat, Seated Leg Press, Single-Leg Leg Curl &middot; +3 more</div></div>
+
+    <div class="sess"><div class="s1"><span class="s-date">Mon, May 25<span class="ap">PM</span></span><span class="s-vol"><b>20</b> sets &middot; 15,350 lb</span></div>
+      <div class="s-lifts">Bench Press, Incline DB Press, Seated Row &middot; +3 more</div></div>
+
+  </div>
+  <div class="homeind"><i></i></div>
+</div></body></html>

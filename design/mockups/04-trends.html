@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atlas — Trends</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0A0B0E;--surface:#131419;--surface-2:#1B1D23;--line:rgba(244,243,239,.09);--line-2:rgba(244,243,239,.16);
+    --ink:#F3F2ED;--muted:#9A9A93;--faint:#63635C;--ember:#E8772E;--ok:#34C77B;
+    --disp:'Space Grotesk',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#050507;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:34px 16px;-webkit-font-smoothing:antialiased}
+  .phone{width:390px;height:830px;background:var(--bg);border-radius:46px;position:relative;overflow:hidden;border:1px solid #24252b;box-shadow:0 40px 100px -25px rgba(0,0,0,.9),0 0 0 9px #0c0c0e;display:flex;flex-direction:column}
+  .statusbar{height:50px;flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 5px;font-size:14px;font-weight:500}
+  .statusbar .r{display:flex;gap:6px;align-items:center;font-size:12px}
+  .seg-wrap{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:6px 18px 0}
+  .seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
+  .seg b{font-family:var(--disp);font-weight:500;font-size:14px;padding:7px 16px;border-radius:999px;color:var(--muted)}
+  .seg b.on{background:var(--surface-2);color:var(--ink)}
+  .gear{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:17px}
+  .gear .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+  .subnav{flex:0 0 auto;display:flex;gap:22px;padding:14px 22px 0;border-bottom:1px solid var(--line)}
+  .subnav button{background:none;border:none;font-family:var(--disp);font-weight:500;font-size:15px;color:var(--muted);padding:0 0 12px;position:relative;cursor:pointer}
+  .subnav button.on{color:var(--ink)}
+  .subnav button.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--ember);border-radius:2px}
+  .scroll{flex:1;overflow-y:auto;padding:18px 22px 16px}
+  .scroll::-webkit-scrollbar{display:none}
+
+  .glance{display:flex;align-items:center;gap:16px;margin-bottom:14px;min-height:18px}
+  .glance .g{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted)}
+  .glance .g b{font-family:var(--mono);font-weight:600;color:var(--ink);font-size:14px}
+  .pip{width:8px;height:8px;border-radius:50%}
+  .pip.up{background:var(--ok)}.pip.hold{background:var(--muted)}.pip.stall{background:var(--ember)}
+
+  /* timeframe control */
+  .frame{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:3px;gap:2px}
+  .frame button{flex:1;background:none;border:none;font-family:var(--disp);font-weight:500;font-size:13px;color:var(--muted);padding:8px 4px;border-radius:8px;cursor:pointer;transition:background .15s,color .15s}
+  .frame button.on{background:var(--surface-2);color:var(--ink)}
+
+  .list-head{display:flex;align-items:baseline;justify-content:space-between;margin:18px 0 2px}
+  .list-head h2{font-family:var(--disp);font-weight:500;font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .list-head .cap{font-family:var(--mono);font-size:11px;color:var(--faint)}
+
+  .lift{display:block;padding:13px 0;border-bottom:1px solid var(--line);cursor:pointer}
+  .lift:last-of-type{border-bottom:none}
+  .name{font-family:var(--disp);font-weight:500;font-size:17px;color:var(--ink)}
+  .l2{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:6px}
+  .read{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+  .read b{color:var(--ink);font-weight:500}
+  .pct.up{color:var(--ok)}.pct.hold{color:var(--muted)}.pct.stall{color:var(--ember)}
+  .spark{flex:0 0 auto;transition:opacity .2s}
+  .homeind{flex:0 0 auto;display:flex;justify-content:center;padding:6px 0 9px}
+  .homeind i{width:130px;height:5px;border-radius:5px;background:rgba(244,243,239,.28)}
+</style></head>
+<body><div class="phone">
+  <div class="statusbar"><div>8:53</div><div class="r"><span>&#128246;</span><span>&#xF8FF;</span><span>94</span></div></div>
+  <div class="seg-wrap"><div class="seg"><b>Coach</b><b class="on">Progress</b></div><div class="gear"><span>&#9881;</span><span class="dot"></span></div></div>
+  <div class="subnav"><button>Today</button><button class="on">Trends</button><button>History</button><button>Body</button></div>
+  <div class="scroll">
+    <div class="glance" id="glance"></div>
+
+    <div class="frame" id="frame">
+      <button data-f="week">Week</button>
+      <button data-f="month">Month</button>
+      <button data-f="ytd">YTD</button>
+      <button data-f="all" class="on">All time</button>
+    </div>
+
+    <div class="list-head"><h2>Your lifts</h2><span class="cap" id="cap">vs all time</span></div>
+    <div id="lifts"></div>
+  </div>
+  <div class="homeind"><i></i></div>
+</div>
+
+<script>
+  var LIFTS=[
+    {n:'Back Squat',w:'205 lb',e:'e1RM 252',p:{week:1,month:4,ytd:22,all:109}},
+    {n:'Bench Press',w:'205 lb',e:'e1RM 239',p:{week:0,month:2,ytd:12,all:67}},
+    {n:'Deadlift',w:'315 lb',e:'e1RM 365',p:{week:2,month:5,ytd:18,all:81}},
+    {n:'Weighted Dips',w:'+90 lb',e:'e1RM 250',p:{week:3,month:6,ytd:30,all:150}},
+    {n:'Overhead Press',w:'95 lb',e:'e1RM 113',p:{week:0,month:1,ytd:9,all:78}},
+    {n:'Lat Pulldown',w:'160 lb',e:'e1RM 190',p:{week:1,month:3,ytd:14,all:21}},
+    {n:'Seated Row',w:'190 lb',e:'e1RM 214',p:{week:0,month:0,ytd:8,all:39}},
+    {n:'Lateral Raises',w:'25 lb',e:'e1RM 28',p:{week:-1,month:0,ytd:1,all:3}}
+  ];
+  var CAP={week:'vs last week',month:'vs last month',ytd:'year to date',all:'vs all time'};
+  var COL={up:'#34C77B',hold:'#9A9A93',stall:'#E8772E'};
+  function statusOf(p){return p>=2?'up':(p<=-1?'stall':'hold');}
+  function spark(st){
+    var ys = st==='up'?[17,16,14,12,10,7,4] : st==='stall'?[9,10,11,12,13,14,15] : [12,11,12,11,12,11,12];
+    var pts = ys.map(function(y,i){return (2+i*64/6).toFixed(0)+','+y;}).join(' ');
+    var c=COL[st];
+    return '<svg class="spark" width="68" height="22" viewBox="0 0 68 22"><polyline points="'+pts+'" fill="none" stroke="'+c+'" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="66" cy="'+ys[6]+'" r="2.6" fill="'+c+'"/></svg>';
+  }
+  function pctText(p){
+    var st=statusOf(p);
+    var t = p>0?('\u25B2'+p+'%') : p<0?('\u25BC'+Math.abs(p)+'%') : 'even';
+    return '<span class="pct '+st+'">'+t+'</span>';
+  }
+  function render(f){
+    var up=0,hold=0,stall=0,html='';
+    LIFTS.forEach(function(L){
+      var p=L.p[f], st=statusOf(p);
+      if(st==='up')up++; else if(st==='hold')hold++; else stall++;
+      html+='<div class="lift"><div class="name">'+L.n+'</div><div class="l2">'+
+        '<span class="read"><b>'+L.w+'</b> \u00B7 '+L.e+' \u00B7 '+pctText(p)+'</span>'+spark(st)+'</div></div>';
+    });
+    document.getElementById('lifts').innerHTML=html;
+    document.getElementById('glance').innerHTML=
+      '<div class="g"><span class="pip up"></span><b>'+up+'</b> climbing</div>'+
+      '<div class="g"><span class="pip hold"></span><b>'+hold+'</b> holding</div>'+
+      '<div class="g"><span class="pip stall"></span><b>'+stall+'</b> to fix</div>';
+    document.getElementById('cap').textContent=CAP[f];
+  }
+  document.getElementById('frame').addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b)return;
+    [].forEach.call(this.children,function(c){c.classList.remove('on');});
+    b.classList.add('on'); render(b.dataset.f);
+  });
+  render('all');
+</script>
+</body></html>

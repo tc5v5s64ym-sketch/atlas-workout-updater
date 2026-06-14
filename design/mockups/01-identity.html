@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atlas — Visual Identity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0A0B0E;        /* graphite ground */
+    --surface:#131419;
+    --surface-2:#1B1D23;
+    --line:rgba(244,243,239,.09);
+    --line-2:rgba(244,243,239,.16);
+    --ink:#F3F2ED;       /* warm chalk */
+    --muted:#9A9A93;
+    --faint:#63635C;
+    --ember:#E8772E;     /* the one accent */
+    --ember-soft:rgba(232,119,46,.14);
+    --ok:#34C77B;
+    --disp:'Space Grotesk',system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+    --body:'Inter',system-ui,sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#050507;color:var(--ink);min-height:100vh;
+    display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start;justify-content:center;
+    padding:40px 18px;-webkit-font-smoothing:antialiased}
+
+  /* ---------- phone: the home, reskinned ---------- */
+  .phone{width:380px;height:812px;background:var(--bg);border-radius:46px;position:relative;overflow:hidden;
+    border:1px solid #24252b;box-shadow:0 40px 100px -25px rgba(0,0,0,.9),0 0 0 9px #0c0c0e;flex:0 0 auto}
+  .statusbar{height:52px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 6px;font-size:14px;font-weight:500;color:var(--ink)}
+  .statusbar .r{display:flex;gap:6px;align-items:center;font-size:12px}
+  .app{position:absolute;inset:52px 0 0;display:flex;flex-direction:column}
+
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 22px 0}
+  .menu{display:flex;flex-direction:column;gap:4px}
+  .menu span{width:19px;height:1.5px;background:var(--ink);opacity:.8;border-radius:2px}
+  .wordmark{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:7px;padding-left:7px}
+  .av{width:33px;height:33px;border-radius:50%;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;
+    font-family:var(--disp);font-weight:500;font-size:13px;position:relative}
+  .av .dot{position:absolute;top:-1px;right:-1px;width:8px;height:8px;border-radius:50%;background:var(--ember);border:1.5px solid var(--bg)}
+
+  /* the load line — signature */
+  .loadline{height:1px;margin:14px 22px 0;background:var(--line);position:relative;border-radius:2px}
+  .loadline::before{content:"";position:absolute;left:0;top:0;height:1px;width:34%;background:var(--ember);border-radius:2px}
+
+  .stage{flex:1;display:flex;flex-direction:column;padding:0 22px}
+  .greeting{color:var(--muted);font-size:17px;margin-top:26px}
+  .headline{font-family:var(--disp);font-weight:500;font-size:46px;letter-spacing:-0.02em;line-height:1.04;margin-top:8px}
+
+  .tiles{margin-top:26px;display:flex;flex-direction:column;gap:11px;align-items:flex-start}
+  .tile{display:flex;align-items:center;gap:13px;min-width:206px;background:var(--surface);border:1px solid var(--line);
+    border-radius:15px;padding:14px 20px;font-size:15.5px;font-weight:500;cursor:pointer;transition:border-color .2s,background .2s}
+  .tile:hover{border-color:var(--line-2);background:var(--surface-2)}
+  .mark{width:11px;height:11px;border-radius:50%;flex:0 0 auto}
+  .mark.pick{background:var(--ember);box-shadow:0 0 0 3px var(--ember-soft)}
+  .mark.free{border:1.5px solid var(--muted)}
+  .tile small{font-family:var(--mono);font-weight:400;color:var(--faint);font-size:11px;margin-left:auto;letter-spacing:.02em}
+
+  .spacer{flex:1}
+
+  .composer{margin:0 18px 14px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:15px 15px 11px}
+  .ph{font-size:15px;color:var(--faint);padding:2px 3px 18px;line-height:1.5}
+  .ph .ex{font-family:var(--mono);color:var(--muted);font-size:13px}
+  .crow{display:flex;align-items:center;justify-content:space-between}
+  .cbtn{width:37px;height:37px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--line-2);color:var(--muted);font-size:19px;background:transparent}
+  .cbtn.send{background:var(--ember);border-color:var(--ember);color:#120A04;font-weight:600}
+  .safety{font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.02em;margin:8px 4px 0}
+
+  .homeind{position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:center}
+  .homeind i{width:130px;height:5px;border-radius:5px;background:rgba(244,243,239,.28)}
+
+  /* ---------- spec panel ---------- */
+  .spec{width:400px;max-width:100%;display:flex;flex-direction:column;gap:18px;flex:0 0 auto}
+  .spec h2{font-family:var(--disp);font-weight:500;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);margin-bottom:13px}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:20px}
+
+  .sw{display:flex;gap:10px;flex-wrap:wrap}
+  .chip{flex:1 1 86px;min-width:86px;border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  .chip .col{height:46px}
+  .chip .lab{padding:7px 9px;font-size:11px;line-height:1.35}
+  .chip .lab b{display:block;font-weight:500}
+  .chip .lab span{font-family:var(--mono);color:var(--faint);font-size:10px}
+
+  .type-row{padding:13px 0;border-bottom:1px solid var(--line)}
+  .type-row:last-child{border-bottom:none;padding-bottom:0}
+  .type-row .k{font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.04em;margin-bottom:7px}
+  .sg{font-family:var(--disp);font-weight:500;font-size:30px;letter-spacing:-0.01em}
+  .jb{font-family:var(--mono);font-weight:500;font-size:18px;color:var(--ink)}
+  .jb .a{color:var(--ember)}
+  .in{font-family:var(--body);font-size:15px;color:var(--muted)}
+
+  .sig-line{height:2px;background:var(--line);border-radius:2px;position:relative;margin:6px 0 10px}
+  .sig-line::before{content:"";position:absolute;left:0;top:0;height:2px;width:62%;background:var(--ember);border-radius:2px}
+  .sig-line .dot{position:absolute;left:62%;top:50%;transform:translate(-50%,-50%);width:9px;height:9px;border-radius:50%;background:var(--ember);box-shadow:0 0 0 4px var(--ember-soft)}
+  .sig-cap{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .sig-cap b{color:var(--ink);font-weight:500}
+
+  @media (max-width:840px){ body{padding:24px 14px} .phone{transform:scale(.96);transform-origin:top center} }
+</style>
+</head>
+<body>
+
+  <div class="phone">
+    <div class="statusbar"><div>7:49</div><div class="r"><span>&#128246;</span><span>&#xF8FF;</span><span>100</span></div></div>
+    <div class="app">
+      <div class="topbar">
+        <div class="menu"><span></span><span></span><span></span></div>
+        <div class="wordmark">ATLAS</div>
+        <div class="av">D<span class="dot"></span></div>
+      </div>
+      <div class="loadline"></div>
+
+      <div class="stage">
+        <div class="greeting">Good evening, Dale.</div>
+        <div class="headline">Let&rsquo;s get<br>stronger.</div>
+
+        <div class="tiles">
+          <div class="tile"><span class="mark pick"></span>Coaches pick<small>RECOMMENDED</small></div>
+          <div class="tile"><span class="mark free"></span>Freestyle</div>
+        </div>
+
+        <div class="spacer"></div>
+      </div>
+
+      <div class="composer">
+        <div class="ph">Log a set or ask anything<br><span class="ex">try&nbsp; 225 5/2 bench</span></div>
+        <div class="crow">
+          <div class="cbtn">+</div>
+          <div class="cbtn send">&#8593;</div>
+        </div>
+      </div>
+      <div class="safety" style="position:absolute;bottom:34px;left:22px">preview only &middot; nothing saved until you approve</div>
+    </div>
+    <div class="homeind"><i></i></div>
+  </div>
+
+  <div class="spec">
+    <div>
+      <h2>Palette &mdash; graphite, chalk, ember</h2>
+      <div class="panel">
+        <div class="sw">
+          <div class="chip"><div class="col" style="background:#0A0B0E"></div><div class="lab"><b>Graphite</b><span>#0A0B0E</span></div></div>
+          <div class="chip"><div class="col" style="background:#131419"></div><div class="lab"><b>Surface</b><span>#131419</span></div></div>
+          <div class="chip"><div class="col" style="background:#F3F2ED"></div><div class="lab"><b>Chalk</b><span>#F3F2ED</span></div></div>
+          <div class="chip"><div class="col" style="background:#9A9A93"></div><div class="lab"><b>Muted</b><span>#9A9A93</span></div></div>
+          <div class="chip"><div class="col" style="background:#E8772E"></div><div class="lab"><b>Ember</b><span>#E8772E</span></div></div>
+          <div class="chip"><div class="col" style="background:#34C77B"></div><div class="lab"><b>Go</b><span>#34C77B</span></div></div>
+        </div>
+        <p style="font-size:12.5px;color:var(--faint);margin-top:13px;line-height:1.5">Ember appears only on the primary action, a PR, or "live." One job — that's what keeps it calm.</p>
+      </div>
+    </div>
+
+    <div>
+      <h2>Type &mdash; a quiet voice, a precise readout</h2>
+      <div class="panel">
+        <div class="type-row"><div class="k">SPACE GROTESK &mdash; display &amp; headlines</div><div class="sg">Let&rsquo;s get stronger.</div></div>
+        <div class="type-row"><div class="k">JETBRAINS MONO &mdash; the readout</div><div class="jb">225 &times; 5 @ RIR 2 &nbsp;<span class="a">&middot;</span>&nbsp; e1RM 239</div></div>
+        <div class="type-row"><div class="k">INTER &mdash; body &amp; interface</div><div class="in">Calm, legible, gets out of the way.</div></div>
+      </div>
+    </div>
+
+    <div>
+      <h2>Signature &mdash; the load line</h2>
+      <div class="panel">
+        <div class="sig-line"><span class="dot"></span></div>
+        <div class="sig-cap"><b>Back Squat</b> &nbsp;205 &rarr; 215 lb&nbsp; <span style="color:var(--faint)">&middot; 7 reps @ RIR3</span></div>
+        <p style="font-size:12.5px;color:var(--faint);margin-top:12px;line-height:1.5">One taut hairline that bears weight &mdash; it underlines the wordmark, becomes the progress bar toward a goal, and anchors trend charts. Structural, like a loaded bar.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

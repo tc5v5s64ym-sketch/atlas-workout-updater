@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atlas — Side panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0A0B0E;--surface:#131419;--surface-2:#1B1D23;--line:rgba(244,243,239,.09);--line-2:rgba(244,243,239,.16);
+    --ink:#F3F2ED;--muted:#9A9A93;--faint:#63635C;--ember:#E8772E;--ember-soft:rgba(232,119,46,.14);--ok:#34C77B;
+    --disp:'Space Grotesk',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#050507;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:34px 16px;-webkit-font-smoothing:antialiased}
+  .phone{width:390px;height:830px;background:var(--bg);border-radius:46px;position:relative;overflow:hidden;border:1px solid #24252b;box-shadow:0 40px 100px -25px rgba(0,0,0,.9),0 0 0 9px #0c0c0e;display:flex;flex-direction:column}
+  .statusbar{height:50px;flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 5px;font-size:14px;font-weight:500}
+  .statusbar .r{display:flex;gap:6px;align-items:center;font-size:12px}
+  .topbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:8px 22px 0}
+  .menu{display:flex;flex-direction:column;gap:4px;cursor:pointer;padding:6px;margin:-6px}
+  .menu span{width:19px;height:1.5px;background:var(--ink);opacity:.85;border-radius:2px}
+  .wordmark{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:7px;padding-left:7px}
+  .av{width:33px;height:33px;border-radius:50%;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:500;font-size:13px;position:relative;background:var(--surface)}
+  .av .dot{position:absolute;top:-1px;right:-1px;width:8px;height:8px;border-radius:50%;background:var(--ember);border:1.5px solid var(--bg)}
+  .loadline{height:1px;margin:14px 22px 0;background:var(--line);position:relative;border-radius:2px}
+  .loadline::before{content:"";position:absolute;left:0;top:0;height:1px;width:34%;background:var(--ember);border-radius:2px}
+  .stage{flex:1;display:flex;flex-direction:column;padding:0 22px}
+  .greeting{color:var(--muted);font-size:17px;margin-top:24px}
+  .headline{font-family:var(--disp);font-weight:500;font-size:44px;letter-spacing:-0.02em;line-height:1.04;margin-top:7px}
+  .tiles{margin-top:24px;display:flex;flex-direction:column;gap:11px;align-items:flex-start}
+  .tile{display:flex;align-items:center;gap:13px;min-width:206px;background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:13px 20px;font-size:15px;font-weight:500}
+  .mark{width:11px;height:11px;border-radius:50%}
+  .mark.pick{background:var(--ember);box-shadow:0 0 0 3px var(--ember-soft)}.mark.free{border:1.5px solid var(--muted)}
+  .spacer{flex:1}
+  .composer{margin:0 18px 14px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:15px 15px 11px}
+  .ph{font-size:15px;color:var(--faint);padding:2px 3px 16px}
+  .ph .ex{font-family:var(--mono);color:var(--muted);font-size:13px}
+  .crow{display:flex;align-items:center;justify-content:space-between}
+  .cbtn{width:37px;height:37px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid var(--line-2);color:var(--muted);font-size:19px;background:transparent}
+  .cbtn.send{background:var(--ember);border-color:var(--ember);color:#120A04;font-weight:600}
+  .homeind{flex:0 0 auto;display:flex;justify-content:center;padding:6px 0 9px}
+  .homeind i{width:130px;height:5px;border-radius:5px;background:rgba(244,243,239,.28)}
+
+  .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .25s;z-index:8}
+  .backdrop.on{opacity:1;pointer-events:auto}
+  .drawer{position:absolute;top:0;bottom:0;left:0;width:324px;max-width:86%;background:#0F1014;border-right:1px solid var(--line-2);
+    transform:translateX(-104%);transition:transform .3s cubic-bezier(.2,.8,.2,1);z-index:9;display:flex;flex-direction:column;box-shadow:18px 0 60px rgba(0,0,0,.55)}
+  .drawer.on{transform:none}
+  .dr-top{padding:calc(18px + env(safe-area-inset-top)) 18px 4px;display:flex;align-items:center;justify-content:space-between}
+  .dr-top .wm{font-family:var(--disp);font-weight:600;font-size:14px;letter-spacing:6px}
+  .dr-top .acts{display:flex;align-items:center;gap:4px}
+  .dr-top .ib{color:var(--muted);font-size:20px;cursor:pointer;padding:6px;line-height:1}
+  .dr-top .ib.plus{font-size:22px}
+
+  /* readiness ticker */
+  .ticker{margin:12px 16px 8px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:11px 14px 13px;cursor:pointer;transition:border-color .2s}
+  .ticker:hover{border-color:var(--line-2)}
+  .tk-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .tk-top .l{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--faint);text-transform:uppercase}
+  .tk-top .r{font-family:var(--mono);font-size:10px;color:var(--ember)}
+  .pats{display:flex;justify-content:space-between;gap:5px}
+  .pat{flex:1;display:flex;flex-direction:column;align-items:center;gap:7px}
+  .pat .pdot{width:11px;height:11px;border-radius:50%}
+  .pat .pl{font-size:10.5px;color:var(--muted);font-weight:500;letter-spacing:.01em}
+  .pat .bar{width:100%;max-width:40px;height:4px;border-radius:4px;background:var(--surface-2);overflow:hidden}
+  .pat .bar i{display:block;height:100%;border-radius:4px}
+  .ember-c{background:var(--ember)} .ok-c{background:var(--ok)}
+
+  .dr-scroll{flex:1;overflow-y:auto;padding:6px 16px}
+  .dr-scroll::-webkit-scrollbar{display:none}
+  .sec{font-family:var(--disp);font-weight:500;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:18px 8px 10px}
+  .sec.first{margin-top:6px}
+  .navrow{display:flex;align-items:center;gap:14px;width:100%;background:none;border:none;padding:12px 10px;cursor:pointer;text-align:left;border-radius:12px;position:relative;margin-bottom:2px}
+  .navrow:hover{background:var(--surface)}
+  .navrow.active{background:var(--surface)}
+  .navrow.active::before{content:"";position:absolute;left:-2px;top:10px;bottom:10px;width:3px;border-radius:3px;background:var(--ember)}
+  .navrow .ic{width:34px;height:34px;border-radius:10px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;color:var(--muted);flex:0 0 auto}
+  .navrow.active .ic{background:var(--ember-soft);color:var(--ember)}
+  .navrow .ic svg{width:18px;height:18px;display:block}
+  .navrow .txt{flex:1;min-width:0}
+  .navrow .nm{font-family:var(--disp);font-weight:500;font-size:16px;color:var(--ink);line-height:1.2}
+  .navrow .ht{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .navrow .ht .em{color:var(--ember)}
+  .recent{display:flex;flex-direction:column}
+  .rrow{display:flex;align-items:baseline;gap:10px;padding:10px 10px;border-radius:10px;cursor:pointer}
+  .rrow:hover{background:var(--surface)}
+  .rrow .rd{font-family:var(--mono);font-size:11px;color:var(--faint);flex:0 0 auto;letter-spacing:.04em}
+  .rrow .rn{font-size:14px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dr-foot{border-top:1px solid var(--line);padding:14px 20px calc(16px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px}
+  .dr-foot .fav{width:32px;height:32px;border-radius:50%;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:500;font-size:12px}
+  .dr-foot .fn{font-family:var(--disp);font-weight:500;font-size:14px;flex:1}
+  .dr-foot .fg{color:var(--muted);font-size:17px;cursor:pointer;padding:4px}
+
+  .toast{position:absolute;left:50%;top:18px;background:var(--ember);color:#120A04;font-family:var(--disp);font-weight:600;font-size:13px;padding:8px 16px;border-radius:999px;opacity:0;transition:opacity .2s,translate .2s;z-index:12;pointer-events:none;translate:-50% -20px}
+  .toast.on{opacity:1;translate:-50% 0}
+</style></head>
+<body><div class="phone" id="phone">
+  <div class="statusbar"><div>7:49</div><div class="r"><span>&#128246;</span><span>&#xF8FF;</span><span>100</span></div></div>
+  <div class="topbar">
+    <div class="menu" id="menu"><span></span><span></span><span></span></div>
+    <div class="wordmark">ATLAS</div>
+    <div class="av">D<span class="dot"></span></div>
+  </div>
+  <div class="loadline"></div>
+  <div class="stage">
+    <div class="greeting">Good evening, Dale.</div>
+    <div class="headline">Let&rsquo;s get<br>stronger.</div>
+    <div class="tiles"><div class="tile"><span class="mark pick"></span>Coaches pick</div><div class="tile"><span class="mark free"></span>Freestyle</div></div>
+    <div class="spacer"></div>
+  </div>
+  <div class="composer">
+    <div class="ph">Log a set or ask anything<br><span class="ex">try&nbsp; 225 5/2 bench</span></div>
+    <div class="crow"><div class="cbtn">+</div><div class="cbtn send">&#8593;</div></div>
+  </div>
+  <div class="homeind"><i></i></div>
+
+  <div class="backdrop on" id="bd"></div>
+  <aside class="drawer on" id="drawer">
+    <div class="dr-top">
+      <span class="wm">ATLAS</span>
+      <span class="acts"><span class="ib plus" data-go="New session" title="New session">+</span><span class="ib" id="x">&#10005;</span></span>
+    </div>
+
+    <div class="ticker" data-go="Today">
+      <div class="tk-top"><span class="l">Readiness</span><span class="r">today &#8594;</span></div>
+      <div class="pats">
+        <div class="pat"><span class="pdot ember-c"></span><span class="pl">Legs</span><span class="bar"><i class="ember-c" style="width:40%"></i></span></div>
+        <div class="pat"><span class="pdot ember-c"></span><span class="pl">Push</span><span class="bar"><i class="ember-c" style="width:46%"></i></span></div>
+        <div class="pat"><span class="pdot ok-c"></span><span class="pl">Pull</span><span class="bar"><i class="ok-c" style="width:72%"></i></span></div>
+        <div class="pat"><span class="pdot ember-c"></span><span class="pl">Hips</span><span class="bar"><i class="ember-c" style="width:42%"></i></span></div>
+        <div class="pat"><span class="pdot ok-c"></span><span class="pl">Core</span><span class="bar"><i class="ok-c" style="width:100%"></i></span></div>
+      </div>
+    </div>
+
+    <div class="dr-scroll">
+      <div class="sec first">Views</div>
+      <button class="navrow active" data-go="Coach">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v6A1.5 1.5 0 0 1 15.5 13H8l-3.5 3v-3A1.5 1.5 0 0 1 3 11.5z"/></svg></span>
+        <span class="txt"><div class="nm">Coach</div><div class="ht">log a set or ask</div></span></button>
+      <button class="navrow" data-go="Today">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.4"/></svg></span>
+        <span class="txt"><div class="nm">Today</div><div class="ht">Recovery Pull &middot; <span class="em">ready</span></div></span></button>
+      <button class="navrow" data-go="Trends">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,13 8,8 12,11 17,5"/><polyline points="13,5 17,5 17,9"/></svg></span>
+        <span class="txt"><div class="nm">Trends</div><div class="ht">8 climbing &middot; <span class="em">1 to fix</span></div></span></button>
+      <button class="navrow" data-go="History">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><polyline points="10,6 10,10 13,12"/></svg></span>
+        <span class="txt"><div class="nm">History</div><div class="ht">3 sessions this week</div></span></button>
+      <button class="navrow" data-go="Body">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="6" r="2.6"/><path d="M4.5 16c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/></svg></span>
+        <span class="txt"><div class="nm">Body</div><div class="ht">75.5 kg &middot; &#9660;0.4</div></span></button>
+
+      <div class="sec">Recent sessions</div>
+      <div class="recent">
+        <div class="rrow" data-go="Jun 12 session"><span class="rd">JUN 12</span><span class="rn">Deadlift day &middot; 14 sets</span></div>
+        <div class="rrow" data-go="Jun 11 session"><span class="rd">JUN 11</span><span class="rn">Bench day &middot; 17 sets</span></div>
+        <div class="rrow" data-go="Jun 9 session"><span class="rd">JUN 9</span><span class="rn">Squat day &middot; 17 sets</span></div>
+        <div class="rrow" data-go="Jun 7 session"><span class="rd">JUN 7</span><span class="rn">Bench day &middot; 20 sets</span></div>
+      </div>
+    </div>
+    <div class="dr-foot"><span class="fav">D</span><span class="fn">Dale</span><span class="fg" data-go="Settings">&#9881;</span></div>
+  </aside>
+  <div class="toast" id="toast"></div>
+</div>
+<script>
+  var menu=document.getElementById('menu'),bd=document.getElementById('bd'),drawer=document.getElementById('drawer'),
+      x=document.getElementById('x'),toast=document.getElementById('toast');
+  function open(){drawer.classList.add('on');bd.classList.add('on');}
+  function close(){drawer.classList.remove('on');bd.classList.remove('on');}
+  menu.addEventListener('click',open); bd.addEventListener('click',close); x.addEventListener('click',close);
+  var t;
+  document.querySelectorAll('[data-go]').forEach(function(el){el.addEventListener('click',function(ev){
+    ev.stopPropagation(); close(); clearTimeout(t); toast.textContent='\u2192 '+el.dataset.go; toast.classList.add('on');
+    t=setTimeout(function(){toast.classList.remove('on');},1300);});});
+</script>
+</body></html>
