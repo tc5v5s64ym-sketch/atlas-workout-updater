@@ -4,36 +4,62 @@
    Tokens live in :root; every component reads from them so theming is global.
    ============================================================================ */
 
+/* Self-hosted variable fonts — CSP default-src 'self' (no Google Fonts <link>).
+   One variable woff2 per family covers the full weight axis we use. */
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('fonts/space-grotesk.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('fonts/jetbrains-mono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter.woff2') format('woff2');
+}
+
 :root {
-  /* Surfaces */
-  --bg: #f2f2f7;
-  --bg-elevated: #ffffff;
-  --card: #ffffff;
-  --card-sunken: #f7f7f9;
-  --border: #e3e3e8;
-  --border-strong: #d1d1d8;
+  /* Surfaces — graphite ground, two raised steps */
+  --bg: #0A0B0E;
+  --bg-elevated: #131419;
+  --card: #131419;
+  --surface: #131419;
+  --surface-2: #1B1D23;
+  --card-sunken: #0C0D11;
+  --border: rgba(244, 243, 239, 0.09);
+  --border-strong: rgba(244, 243, 239, 0.16);
 
-  /* Ink */
-  --ink: #111114;
-  --fg: #111114;            /* legacy alias */
-  --muted: #6b6b70;
-  --faint: #84848d;         /* darkened from #9a9aa2 for better contrast */
+  /* Ink — warm chalk */
+  --ink: #F3F2ED;
+  --fg: #F3F2ED;            /* legacy alias */
+  --muted: #9A9A93;
+  --faint: #63635C;
 
-  /* Brand + semantics (one accent, used sparingly) */
-  --accent: #0a84ff;
-  --accent-ink: #ffffff;
-  --accent-soft: #eaf3ff;
-  --accent-border: #cfe4ff;
-  --ok: #1f9d57;
-  --ok-soft: #eaf7ef;
-  --ok-border: #bfe6cd;
-  --warn: #b45309;
-  --warn-soft: #fdf3e7;
-  --warn-border: #f3d9b5;
-  --danger: #dc2626;
-  --danger-soft: #fdecec;
-  --danger-border: #f5c9c9;
-  --flame: #f97316;
+  /* Brand + semantics — one accent (ember), used sparingly */
+  --accent: #E8772E;
+  --accent-ink: #120A04;
+  --accent-soft: rgba(232, 119, 46, 0.14);
+  --accent-border: rgba(232, 119, 46, 0.38);
+  --ok: #34C77B;
+  --ok-soft: rgba(52, 199, 123, 0.14);
+  --ok-border: rgba(52, 199, 123, 0.32);
+  --warn: #E3922F;
+  --warn-soft: rgba(227, 146, 47, 0.14);
+  --warn-border: rgba(227, 146, 47, 0.34);
+  --danger: #FF5A52;
+  --danger-soft: rgba(255, 90, 82, 0.14);
+  --danger-border: rgba(255, 90, 82, 0.34);
+  --flame: var(--accent);
 
   /* Radius */
   --r-sm: 8px;
@@ -51,51 +77,23 @@
   --s8: 32px;
 
   /* Elevation */
-  --shadow-sm: 0 1px 2px rgba(17, 17, 20, 0.05);
-  --shadow: 0 4px 16px rgba(17, 17, 20, 0.08);
-  --shadow-lg: 0 12px 40px rgba(17, 17, 20, 0.16);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
 
-  /* Type */
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
-  --num: "SF Pro Display", -apple-system, system-ui, sans-serif;
+  /* Type — Inter (body), Space Grotesk (display), JetBrains Mono (all numerics) */
+  --body: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  --disp: 'Space Grotesk', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font: var(--body);   /* legacy alias */
+  --num: var(--mono);    /* legacy alias — all numerics in mono */
 
   --header-h: 56px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #000000;
-    --bg-elevated: #1c1c1f;
-    --card: #16161a;
-    --card-sunken: #0e0e11;
-    --border: #2a2a30;
-    --border-strong: #3a3a42;
-
-    --ink: #f2f2f5;
-    --fg: #f2f2f5;
-    --muted: #9a9aa2;
-    --faint: #6b6b72;
-
-    --accent: #0a84ff;
-    --accent-ink: #ffffff;
-    --accent-soft: #11233a;
-    --accent-border: #1d3a5c;
-    --ok: #34c77b;
-    --ok-soft: #11281c;
-    --ok-border: #1f4632;
-    --warn: #e3922f;
-    --warn-soft: #2a1f10;
-    --warn-border: #4a361b;
-    --danger: #ff5a52;
-    --danger-soft: #2a1413;
-    --danger-border: #4a2120;
-    --flame: #ff8a3d;
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-    --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
-  }
-}
+/* Atlas's primary look is the dark graphite/ember system above — it is the
+   single source of truth for both OS themes, so there is no separate
+   prefers-color-scheme override. (Light theme intentionally retired.) */
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
