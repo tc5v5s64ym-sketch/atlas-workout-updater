@@ -9,7 +9,7 @@
  *    app still opens from the home screen on a dead gym connection.
  */
 
-const CACHE_NAME = 'atlas-shell-v2';
+const CACHE_NAME = 'atlas-shell-v3';
 const SHELL_ASSETS = [
   '/app/',
   '/app/index.html',
@@ -19,6 +19,9 @@ const SHELL_ASSETS = [
   '/app/chat.js',
   '/app/coach-conversation.js',
   '/app/manifest.json',
+  '/app/fonts/space-grotesk.woff2',
+  '/app/fonts/jetbrains-mono.woff2',
+  '/app/fonts/inter.woff2',
   '/app/icons/icon-192.png',
   '/app/icons/icon-512.png'
 ];

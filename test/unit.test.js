@@ -3410,7 +3410,10 @@ test('shell: nav.js routes surfaces without touching the trust loop', () => {
 
 test('shell: styles define dark mode and the new component tokens', () => {
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
-  assert.match(css, /prefers-color-scheme:\s*dark/, 'must support a dark theme');
+  // Dark is the single primary theme now (graphite/ember in :root), so the dark
+  // look is asserted via the base ground token rather than a media query.
+  assert.match(css, /--bg:\s*#0A0B0E/i, 'dark graphite ground must be the base theme');
+  assert.match(css, /@font-face[\s\S]*?Space Grotesk/, 'must self-host the display font (no Google Fonts link)');
   assert.match(css, /--accent:/, 'must define the accent design token');
   assert.match(css, /\.segmented/, 'must style the segmented control');
   assert.match(css, /\.surface-btn/, 'must style surface buttons');
@@ -3732,9 +3735,10 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v2/, 'cache name must be bumped so stale styles are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v1/, 'old cache name must be gone');
-  for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/chat.js']) {
+  assert.match(sw, /atlas-shell-v3/, 'cache name must be bumped so stale styles are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v2/, 'old cache name must be gone');
+  for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/chat.js',
+    '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
   // The API must still never be intercepted

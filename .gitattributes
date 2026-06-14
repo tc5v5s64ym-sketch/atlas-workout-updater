@@ -6,3 +6,6 @@
 service-account.json -diff
 google-credentials.json -diff
 credentials*.json -diff
+
+# Self-hosted fonts — binary assets, never line-ending normalized or diffed.
+*.woff2 binary -diff

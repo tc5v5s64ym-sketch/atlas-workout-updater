@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atlas — Logging flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0A0B0E;--surface:#131419;--surface-2:#1B1D23;--line:rgba(244,243,239,.09);--line-2:rgba(244,243,239,.16);
+    --ink:#F3F2ED;--muted:#9A9A93;--faint:#63635C;--ember:#E8772E;--ember-soft:rgba(232,119,46,.14);--ok:#34C77B;
+    --disp:'Space Grotesk',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#050507;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:34px 16px;-webkit-font-smoothing:antialiased}
+  .phone{width:390px;height:830px;background:var(--bg);border-radius:46px;position:relative;overflow:hidden;border:1px solid #24252b;box-shadow:0 40px 100px -25px rgba(0,0,0,.9),0 0 0 9px #0c0c0e;display:flex;flex-direction:column}
+  .statusbar{height:50px;flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 5px;font-size:14px;font-weight:500}
+  .statusbar .r{display:flex;gap:6px;align-items:center;font-size:12px}
+  .topbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:8px 22px}
+  .menu{display:flex;flex-direction:column;gap:4px}.menu span{width:19px;height:1.5px;background:var(--ink);opacity:.8;border-radius:2px}
+  .wordmark{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:7px;padding-left:7px}
+  .av{width:33px;height:33px;border-radius:50%;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:500;font-size:13px;position:relative;background:var(--surface)}
+  .av .dot{position:absolute;top:-1px;right:-1px;width:8px;height:8px;border-radius:50%;background:var(--ember);border:1.5px solid var(--bg)}
+  .thread{flex:1;overflow-y:auto;padding:8px 18px 12px;display:flex;flex-direction:column;gap:14px}
+  .thread::-webkit-scrollbar{display:none}
+
+  .u{align-self:flex-end;max-width:78%;background:var(--surface-2);border:1px solid var(--line);border-radius:18px 18px 6px 18px;padding:11px 15px;font-size:15px;color:var(--ink)}
+  .a{align-self:flex-start;max-width:88%;display:flex;flex-direction:column;gap:9px}
+  .cap{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;font-family:var(--mono);font-size:11.5px;color:var(--muted);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 10px}
+  .cap .ck{color:var(--ok);font-weight:600}
+  .a .coach{font-size:14.5px;line-height:1.5;color:var(--ink)}
+  .a .next{display:inline-flex;align-items:center;gap:7px;font-family:var(--disp);font-weight:500;font-size:13.5px;color:var(--ember)}
+  .a .next .arr{font-size:14px}
+
+  /* end-of-session review */
+  .review{align-self:stretch;background:var(--surface);border:1px solid var(--line-2);border-radius:18px;padding:16px;margin-top:2px}
+  .rv-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+  .rv-h .t{font-family:var(--disp);font-weight:600;font-size:16px}
+  .rv-h .d{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .ex{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .ex .en{font-family:var(--disp);font-weight:500;font-size:14px}
+  .ex .es{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .rv-tot{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;color:var(--muted);padding:11px 0 2px}
+  .rv-tot b{color:var(--ink);font-weight:500}
+  .rv-eff{font-family:var(--mono);font-size:11.5px;color:var(--faint);padding-top:8px;border-top:1px solid var(--line);margin-top:6px}
+  .rv-act{display:flex;gap:10px;margin-top:14px}
+  .btn{flex:1;border:none;border-radius:12px;padding:13px;font-family:var(--disp);font-weight:600;font-size:14px;cursor:pointer}
+  .btn.save{background:var(--ember);color:#120A04}
+  .btn.edit{flex:0 0 auto;background:transparent;border:1px solid var(--line-2);color:var(--muted);padding:13px 18px}
+  .rv-note{font-family:var(--mono);font-size:10.5px;color:var(--faint);text-align:center;margin-top:10px}
+  .saved{display:none;align-items:center;justify-content:center;gap:10px;margin-top:14px;font-family:var(--disp);font-weight:500;font-size:14px;color:var(--ok)}
+  .saved a{font-family:var(--mono);font-weight:500;font-size:12px;color:var(--ember);text-decoration:none;border:1px solid var(--line-2);border-radius:8px;padding:5px 11px}
+  .review.done .rv-act,.review.done .rv-note{display:none}
+  .review.done .saved{display:flex}
+
+  .composer{flex:0 0 auto;margin:0 18px 14px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:14px 15px 11px}
+  .ph{font-size:15px;color:var(--faint);padding:2px 3px 16px}
+  .crow{display:flex;align-items:center;justify-content:space-between}
+  .cbtn{width:37px;height:37px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid var(--line-2);color:var(--muted);font-size:19px;background:transparent}
+  .cbtn.send{background:var(--ember);border-color:var(--ember);color:#120A04;font-weight:600}
+  .homeind{flex:0 0 auto;display:flex;justify-content:center;padding:6px 0 9px}.homeind i{width:130px;height:5px;border-radius:5px;background:rgba(244,243,239,.28)}
+</style></head>
+<body><div class="phone">
+  <div class="statusbar"><div>6:18</div><div class="r"><span>&#128246;</span><span>&#xF8FF;</span><span>71</span></div></div>
+  <div class="topbar"><div class="menu"><span></span><span></span><span></span></div><div class="wordmark">ATLAS</div><div class="av">D<span class="dot"></span></div></div>
+
+  <div class="thread">
+    <div class="u">bench 225 10-2 x3</div>
+    <div class="a">
+      <span class="cap"><span class="ck">&#10003;</span> Bench Press &middot; 225 &times; 10 @ RIR 2 &middot; &times;3</span>
+      <div class="coach">Strong &mdash; that&rsquo;s a rep up on last Thursday&rsquo;s 225&times;9, and two in reserve across all three. Plenty of room. Next time we either flirt with 230, or lock a clean 10&times;3 here first.</div>
+      <div class="next"><span class="arr">&#8594;</span> Next up &mdash; Bent-Over Row</div>
+    </div>
+
+    <div class="u">row 135 12-3 x3</div>
+    <div class="a">
+      <span class="cap"><span class="ck">&#10003;</span> Bent-Over Row &middot; 135 &times; 12 @ RIR 3 &middot; &times;3</span>
+      <div class="coach">Clean and controlled &mdash; lats doing the work, not momentum. Keep that tempo.</div>
+      <div class="next"><span class="arr">&#8594;</span> Next &mdash; Weighted Dips</div>
+    </div>
+
+    <div class="u">that&rsquo;s it for today</div>
+    <div class="a">
+      <div class="coach">Solid session, Dale. Here&rsquo;s everything from our conversation &mdash; give it a look before it goes to your sheet:</div>
+      <div class="review" id="review">
+        <div class="rv-h"><span class="t">Today&rsquo;s workout</span><span class="d">JUN 14 &middot; PM</span></div>
+        <div class="ex"><span class="en">Bench Press</span><span class="es">225 &times; 10 &middot; RIR 2 &middot; &times;3</span></div>
+        <div class="ex"><span class="en">Bent-Over Row</span><span class="es">135 &times; 12 &middot; RIR 3 &middot; &times;3</span></div>
+        <div class="ex"><span class="en">Weighted Dips</span><span class="es">+90 &times; 8 &middot; RIR 2 &middot; &times;3</span></div>
+        <div class="ex"><span class="en">Face Pull</span><span class="es">40 &times; 15 &middot; RIR 2 &middot; &times;3</span></div>
+        <div class="rv-tot"><span>4 exercises &middot; 12 sets</span><span><b>14,180 lb</b></span></div>
+        <div class="rv-eff">+ add Apple Watch effort (duration, cals, HR)</div>
+        <div class="rv-act"><button class="btn save" id="saveBtn">Save workout</button><button class="btn edit">Edit</button></div>
+        <div class="rv-note">Nothing&rsquo;s saved yet &middot; this is the only save</div>
+        <div class="saved"><span>&#10003; Saved to your sheet</span><a href="#" id="undo">Undo</a></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="ph">Log a set or ask anything&hellip;</div>
+    <div class="crow"><div class="cbtn">+</div><div class="cbtn send">&#8593;</div></div>
+  </div>
+  <div class="homeind"><i></i></div>
+
+<script>
+  var r=document.getElementById('review');
+  document.getElementById('saveBtn').addEventListener('click',function(){ r.classList.add('done'); });
+  document.getElementById('undo').addEventListener('click',function(e){ e.preventDefault(); r.classList.remove('done'); });
+</script>
+</body></html>

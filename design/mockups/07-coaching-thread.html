@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Atlas — Coaching</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0A0B0E;--surface:#131419;--surface-2:#1B1D23;--line:rgba(244,243,239,.09);--line-2:rgba(244,243,239,.16);
+    --ink:#F3F2ED;--muted:#9A9A93;--faint:#63635C;--ember:#E8772E;--ember-soft:rgba(232,119,46,.14);--ok:#34C77B;
+    --disp:'Space Grotesk',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;--body:'Inter',system-ui,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#050507;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:34px 16px;-webkit-font-smoothing:antialiased}
+  .phone{width:390px;height:830px;background:var(--bg);border-radius:46px;position:relative;overflow:hidden;border:1px solid #24252b;box-shadow:0 40px 100px -25px rgba(0,0,0,.9),0 0 0 9px #0c0c0e;display:flex;flex-direction:column}
+  .statusbar{height:50px;flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;padding:0 28px 5px;font-size:14px;font-weight:500}
+  .statusbar .r{display:flex;gap:6px;align-items:center;font-size:12px}
+  .topbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:8px 22px}
+  .menu{display:flex;flex-direction:column;gap:4px}.menu span{width:19px;height:1.5px;background:var(--ink);opacity:.8;border-radius:2px}
+  .wordmark{font-family:var(--disp);font-weight:600;font-size:15px;letter-spacing:7px;padding-left:7px}
+  .av{width:33px;height:33px;border-radius:50%;border:1px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-family:var(--disp);font-weight:500;font-size:13px;position:relative;background:var(--surface)}
+  .av .dot{position:absolute;top:-1px;right:-1px;width:8px;height:8px;border-radius:50%;background:var(--ember);border:1.5px solid var(--bg)}
+  .thread{flex:1;overflow-y:auto;padding:8px 18px 12px;display:flex;flex-direction:column;gap:14px}
+  .thread::-webkit-scrollbar{display:none}
+
+  .u{align-self:flex-end;max-width:80%;background:var(--surface-2);border:1px solid var(--line);border-radius:18px 18px 6px 18px;padding:11px 15px;font-size:15px;color:var(--ink)}
+  .u.mono{font-family:var(--mono);font-size:13.5px}
+  .a{align-self:flex-start;max-width:90%;display:flex;flex-direction:column;gap:10px}
+  .coach{font-size:14.5px;line-height:1.5;color:var(--ink)}
+  .coach .em{color:var(--ember);font-weight:500}
+
+  .rir{color:var(--ember);font-weight:500}
+
+  .plan{background:var(--surface);border:1px solid var(--line-2);border-radius:16px;padding:15px 16px}
+  .plan-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+  .plan-h .t{font-family:var(--disp);font-weight:600;font-size:15px}
+  .plan-h .tag{font-family:var(--mono);font-size:10px;color:var(--ember);letter-spacing:.04em}
+  .pex{padding:9px 0;border-bottom:1px solid var(--line)}
+  .pex:last-of-type{border-bottom:none}
+  .pex-n{font-family:var(--disp);font-weight:500;font-size:14px;display:flex;align-items:center;gap:8px}
+  .pex-n .main{font-family:var(--mono);font-size:9px;color:var(--ember);border:1px solid var(--ember-soft);background:var(--ember-soft);border-radius:5px;padding:2px 5px;letter-spacing:.05em}
+  .pex-s{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.7}
+  .fin{margin-top:10px;padding-top:11px;border-top:1px solid var(--line)}
+  .fin-h{font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;margin-bottom:7px}
+  .fin-o{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-bottom:4px}
+  .fin-o b{color:var(--ink);font-weight:500}
+  .call{margin-top:12px;padding-left:11px;border-left:2px solid var(--ember);font-size:13px;color:var(--ink);line-height:1.45}
+
+  .readback{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:11px 14px}
+  .rb-h{font-family:var(--disp);font-weight:500;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .rb-h .ck{color:var(--ok)}
+  .rb-s{font-family:var(--mono);font-size:12px;color:var(--muted);line-height:1.8}
+  .rb-s .max{color:var(--ember);font-weight:500}
+
+  .nextp{background:transparent;border:1px solid var(--ember-soft);border-radius:12px;padding:11px 14px}
+  .nextp .nh{font-family:var(--disp);font-weight:500;font-size:13px;color:var(--ember);margin-bottom:6px}
+  .nextp .ns{font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.7}
+
+  .composer{flex:0 0 auto;margin:0 18px 14px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:14px 15px 11px}
+  .ph{font-size:15px;color:var(--faint);padding:2px 3px 16px}
+  .crow{display:flex;align-items:center;justify-content:space-between}
+  .cbtn{width:37px;height:37px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid var(--line-2);color:var(--muted);font-size:19px;background:transparent}
+  .cbtn.send{background:var(--ember);border-color:var(--ember);color:#120A04;font-weight:600}
+  .homeind{flex:0 0 auto;display:flex;justify-content:center;padding:6px 0 9px}.homeind i{width:130px;height:5px;border-radius:5px;background:rgba(244,243,239,.28)}
+</style></head>
+<body><div class="phone">
+  <div class="statusbar"><div>6:02</div><div class="r"><span>&#128246;</span><span>&#xF8FF;</span><span>78</span></div></div>
+  <div class="topbar"><div class="menu"><span></span><span></span><span></span></div><div class="wordmark">ATLAS</div><div class="av">D<span class="dot"></span></div></div>
+
+  <div class="thread">
+    <div class="u">my legs are still pretty fatigued</div>
+
+    <div class="a">
+      <div class="coach"><span class="em">Good call &mdash; no RDLs today, that&rsquo;d be dumb.</span> You PR&rsquo;d squat two days ago. If legs are still cooked, today flips to upper-only with back support.</div>
+      <div class="plan">
+        <div class="plan-h"><span class="t">Today &mdash; Upper</span><span class="tag">REVISED &middot; LEGS COOKED</span></div>
+        <div class="pex"><div class="pex-n">Bench Press <span class="main">MAIN</span></div><div class="pex-s">135&times;10 <span class="rir">RIR 4&ndash;5</span> &middot; 185&times;8 <span class="rir">RIR 3</span> &middot; 225&times;5 <span class="rir">RIR 2</span> &times;3</div></div>
+        <div class="pex"><div class="pex-n">Incline DB Press</div><div class="pex-s">60&times;10 <span class="rir">RIR 2</span> &middot; 70&times;8 <span class="rir">RIR 2</span> &times;2</div></div>
+        <div class="pex"><div class="pex-n">Lat Pulldown</div><div class="pex-s">170&times;8 <span class="rir">RIR 2</span> &times;3</div></div>
+        <div class="pex"><div class="pex-n">Face Pulls</div><div class="pex-s">50&times;15 <span class="rir">RIR 2</span> &times;3</div></div>
+        <div class="pex"><div class="pex-n">Hammer Curls</div><div class="pex-s">40&times;10 <span class="rir">RIR 2</span> &middot; 40&times;8&ndash;10 <span class="rir">RIR 2</span> &middot; 40&times;8 <span class="rir">RIR 2</span></div></div>
+        <div class="fin">
+          <div class="fin-h">Finisher &mdash; pick one</div>
+          <div class="fin-o"><b>A &middot; Dips</b> +45&times;8 <span class="rir">RIR 2</span> &times;2 &mdash; only if shoulders feel good</div>
+          <div class="fin-o"><b>B &middot; Lat Raises</b> 15&times;15 <span class="rir">RIR 2</span> &times;3 &mdash; if you&rsquo;re beat up</div>
+        </div>
+        <div class="call">No legs, no hinge, no &ldquo;just testing it.&rdquo; You earned the lower-body work on June 9. Today is upper + recovery-compatible volume.</div>
+      </div>
+    </div>
+
+    <div class="u mono">bench 135 12/4 185 10/2 225 6/1 6/1 5/0</div>
+
+    <div class="a">
+      <div class="readback">
+        <div class="rb-h"><span class="ck">&#10003;</span> Bench Press</div>
+        <div class="rb-s">135&times;12 <span class="rir">RIR 4</span> &middot; 185&times;10 <span class="rir">RIR 2</span> &middot; 225&times;6 <span class="rir">RIR 1</span> &middot; 225&times;6 <span class="rir">RIR 1</span> &middot; <span class="max">225&times;5 RIR 0 &middot; failure</span></div>
+      </div>
+      <div class="coach"><span class="em">Strong &mdash; but that got spicy fast.</span> You beat your usual 225&times;5&times;3, that&rsquo;s a rep-PR bench day. But the last set was RIR 0 &mdash; true max effort. Chest and triceps are already heavily taxed, so we don&rsquo;t add more heavy pressing now.</div>
+      <div class="nextp">
+        <div class="nh">&#8594; Next &mdash; Incline DB, pulled back</div>
+        <div class="ns">60&times;10 <span class="rir">RIR 2</span> &middot; 65&times;8 <span class="rir">RIR 2</span> &times;2 &mdash; if 65 feels heavy, stay at 60. Clean reps only.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="ph">Log a set or ask anything&hellip;</div>
+    <div class="crow"><div class="cbtn">+</div><div class="cbtn send">&#8593;</div></div>
+  </div>
+  <div class="homeind"><i></i></div>
+</div></body></html>
