@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow } = require('../services/exerciseEnrichment');
-const { parseWorkoutText, buildWorkoutTextParseDryRunResponse, looksLikeCorrection } = require('../services/workoutTextParser');
+const { parseWorkoutText, buildWorkoutTextParseDryRunResponse, looksLikeCorrection, looksLikeLogIt } = require('../services/workoutTextParser');
 const { normalizeDurationString } = require('../services/duration');
 const {
   recommendNextSet, buildSessionSummary, computeExerciseProgress,
@@ -22,6 +22,7 @@ const {
 } = require('../config/sheetContract');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
+const { generateSessionId, nextAvailableSessionId, formatDateForSessionId, formatAmPmSuffix } = require('../services/sessionId');
 
 const repoRoot = path.resolve(__dirname, '..');
 
@@ -3776,4 +3777,116 @@ test('looksLikeCorrection: handles edge cases gracefully', () => {
   assert.ok(!looksLikeCorrection(''),    'empty string is not a correction');
   assert.ok(!looksLikeCorrection(null),  'null is not a correction');
   assert.ok(!looksLikeCorrection(42),    'number is not a correction');
+});
+
+// ── End-of-session "log it" detection ─────────────────────────────────────────
+
+test('looksLikeLogIt: recognises end-of-session triggers', () => {
+  const yes = [
+    'log it',
+    'Log it',
+    'LOG IT',
+    'log it.',
+    'log it!',
+    'log that',
+    'log the session',
+    'log this session',
+    'log this workout',
+    'save the session',
+    'save it',
+    'ok log it',
+    'alright log it',
+    'compile session',
+    'compile the session',
+    'that\'s all',
+    'thats all',
+    "we're done",
+    'were done',
+    'done',
+    'done for today',
+    'finish session',
+    'end session',
+    'end the session',
+    'we\'re done logging',
+  ];
+  yes.forEach(p => assert.ok(looksLikeLogIt(p), `should detect log-it in: "${p}"`));
+});
+
+test('looksLikeLogIt: does not flag workout text or coach questions', () => {
+  const no = [
+    'Bench 225 5/2',
+    'log bench press 225',
+    'log set bench 135 10',
+    'What should I train today?',
+    'How is my bench progressing?',
+    'Squat 315 3/1 x3',
+    'I want to log a new session',
+    'log my morning session on friday',
+    '',
+  ];
+  no.forEach(p => assert.ok(!looksLikeLogIt(p), `should NOT detect log-it in: "${p}"`));
+});
+
+test('looksLikeLogIt: handles edge cases gracefully', () => {
+  assert.ok(!looksLikeLogIt(''),    'empty string is not log-it');
+  assert.ok(!looksLikeLogIt(null),  'null is not log-it');
+  assert.ok(!looksLikeLogIt(42),    'number is not log-it');
+});
+
+// ── Session ID generation ──────────────────────────────────────────────────────
+
+test('generateSessionId produces the correct format', () => {
+  const noon = new Date('2026-06-14T12:00:00');
+  const morning = new Date('2026-06-14T09:00:00');
+  assert.equal(generateSessionId('2026-06-14', noon), '20260614-PM-01');
+  assert.equal(generateSessionId('2026-06-14', morning), '20260614-AM-01');
+});
+
+test('formatDateForSessionId strips separators', () => {
+  assert.equal(formatDateForSessionId('2026-06-14'), '20260614');
+  assert.equal(formatDateForSessionId('20260614'), '20260614');
+});
+
+test('formatDateForSessionId throws on bad input', () => {
+  assert.throws(() => formatDateForSessionId('not-a-date'), /Invalid date/);
+  assert.throws(() => formatDateForSessionId(''), /Invalid date/);
+});
+
+test('formatAmPmSuffix: morning is AM, afternoon/evening is PM', () => {
+  assert.equal(formatAmPmSuffix(new Date('2026-06-14T06:00:00')), 'AM');
+  assert.equal(formatAmPmSuffix(new Date('2026-06-14T11:59:00')), 'AM');
+  assert.equal(formatAmPmSuffix(new Date('2026-06-14T12:00:00')), 'PM');
+  assert.equal(formatAmPmSuffix(new Date('2026-06-14T21:00:00')), 'PM');
+});
+
+test('nextAvailableSessionId returns -01 when no existing sessions', () => {
+  const noon = new Date('2026-06-14T14:00:00');
+  const id = nextAvailableSessionId('2026-06-14', [], noon);
+  assert.equal(id, '20260614-PM-01');
+});
+
+test('nextAvailableSessionId increments past occupied slots', () => {
+  const noon = new Date('2026-06-14T14:00:00');
+  const existing = ['20260614-PM-01', '20260614-PM-02'];
+  assert.equal(nextAvailableSessionId('2026-06-14', existing, noon), '20260614-PM-03');
+});
+
+test('nextAvailableSessionId is case-insensitive against existing IDs', () => {
+  const noon = new Date('2026-06-14T14:00:00');
+  const existing = ['20260614-pm-01'];
+  assert.equal(nextAvailableSessionId('2026-06-14', existing, noon), '20260614-PM-02');
+});
+
+test('nextAvailableSessionId handles null/undefined existing list', () => {
+  const noon = new Date('2026-06-14T14:00:00');
+  assert.equal(nextAvailableSessionId('2026-06-14', null, noon), '20260614-PM-01');
+  assert.equal(nextAvailableSessionId('2026-06-14', undefined, noon), '20260614-PM-01');
+});
+
+test('session/compile route is registered as read-only', () => {
+  const route = routeDefinitions.find(r => r.path === '/api/session/compile');
+  assert.ok(route, '/api/session/compile must be in routeDefinitions');
+  assert.ok(route.authRequired, 'must require auth');
+  assert.ok(route.readOnly, 'must be read-only');
+  assert.ok(!route.writeCapable, 'must not be write-capable');
 });

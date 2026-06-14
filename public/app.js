@@ -1140,6 +1140,12 @@ function looksLikeCorrection(text) {
   return /\b(actually[,. ]|i was wrong|that'?s wrong|correction[,: ]|meant to (say|log|write|do)\b|should have been|that was wrong|i meant\b|wrong (weight|reps|sets|exercise)|oops[,. ]|my mistake|i made a mistake)\b/.test(t);
 }
 
+// End-of-session compilation trigger: the lifter has been logging sets
+// conversationally and now wants Atlas to compile them into one preview.
+function looksLikeLogIt(text) {
+  return /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(String(text || ''));
+}
+
 function showCorrectionPrompt(capturedText) {
   const thread = document.getElementById('thread-messages');
   if (!thread) return;
@@ -1385,8 +1391,8 @@ async function loadRecentHistory() {
       return;
     }
     box.appendChild(renderTable(
-      ['Date', 'Session', 'Exercise', 'Set', 'Weight', 'Reps', 'RIR'],
-      sets.map(s => [s.date_clean, s.session_id, s.exercise, s.set_number, s.weight, s.reps, s.rir])
+      ['Exercise', 'Set', 'Weight', 'Reps', 'RIR'],
+      sets.map(s => [s.exercise, s.set_number, s.weight, s.reps, s.rir])
     ));
   } catch (err) {
     box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
@@ -1902,6 +1908,12 @@ let activeExercise = null;
 // Cached when the Today dashboard loads so routeMessageToCoach can include
 // the current plan order in coach context (for "why in this order?" questions).
 let lastIntentData = null;
+
+// Set by handleLogIt() before re-submitting the form with compiled workout
+// text. When true, the submit handler skips the "route to coach" branch and
+// runs the parse → preview path so the lifter sees the final session preview.
+// Cleared immediately after being read — single-use gate.
+let sessionCompiledAwaitingPreview = false;
 
 // Populated after a successful manual write. Cleared only after undo or when
 // the user explicitly picks "Log as new" in the correction dialog. NOT cleared
@@ -2584,6 +2596,45 @@ function startOverWorkout() {
 
 document.getElementById('start-over-btn')?.addEventListener('click', startOverWorkout);
 
+// End-of-session compilation: take the in-memory chat history, ask the server
+// to extract the workout sets the lifter logged conversationally, then populate
+// the composer and trigger a normal parse → preview → approve flow.
+async function handleLogIt() {
+  const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+
+  if (!turns.length) {
+    setStatus(loggerStatus, "No conversation yet — log some sets in the chat first, then say 'log it'.", 'error');
+    return;
+  }
+
+  setStatus(loggerStatus, 'Compiling session from conversation…', 'ok');
+
+  let workoutText;
+  try {
+    const res = await api('/api/session/compile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history: turns })
+    });
+    workoutText = res.data?.workout_text || null;
+  } catch (err) {
+    setStatus(loggerStatus, `Could not compile session: ${err.message}`, 'error');
+    return;
+  }
+
+  if (!workoutText) {
+    setStatus(loggerStatus, "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", 'error');
+    return;
+  }
+
+  setStatus(loggerStatus, '', 'ok');
+  workoutTextInput.value = workoutText;
+  invalidatePreview();
+  // Signal the submit handler to run parse → preview instead of routing to coach.
+  sessionCompiledAwaitingPreview = true;
+  document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+}
+
 // One write_id per previewed workout: if the live write is retried (double
 // tap, network blip), the backend recognises the id and refuses to append
 // twice, returning proof the original write completed instead.
@@ -2670,7 +2721,10 @@ function currentPlanForChat() {
   const exercises = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
   return exercises.slice(0, 10).map(ex => ({
     name: ex.canonical_exercise || ex.exercise || null,
-    rationale: ex.focus || null
+    rationale: ex.focus || ex.reason || null,
+    weight: ex.target_weight ?? ex.weight ?? null,
+    reps: ex.target_reps ?? ex.reps ?? null,
+    sets: ex.target_sets ?? ex.sets ?? null
   })).filter(e => e.name);
 }
 
@@ -2683,9 +2737,13 @@ function routeMessageToCoach(text) {
   const context = {};
   if (preview.length) context.current_preview = preview;
   if (plan.length) context.current_plan = plan;
-  document.dispatchEvent(new CustomEvent('atlas:chat-message', {
-    detail: { text, context }
-  }));
+  // Defer one tick so chat.js's submit listener paints the user bubble first —
+  // without this, the Atlas "Thinking…" bubble appends before the user bubble.
+  setTimeout(() => {
+    document.dispatchEvent(new CustomEvent('atlas:chat-message', {
+      detail: { text, context }
+    }));
+  }, 0);
   setTimeout(() => { workoutTextInput.value = ''; }, 0);
   invalidatePreview();
 }
@@ -2699,6 +2757,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     const planText = workoutTextInput.value.trim();
     setTimeout(() => { workoutTextInput.value = ''; }, 0);
     routeMessageToCoach(planText);
+    return;
+  }
+
+  // "Log it" / "done" — compile the full conversational session from chat
+  // history and run the normal parse → preview → approve flow on the result.
+  if (looksLikeLogIt(workoutTextInput.value)) {
+    workoutTextInput.value = '';
+    await handleLogIt();
     return;
   }
 
@@ -2766,6 +2832,44 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     file = imageInput.files[0] || null;
   }
 
+  // Screenshot upload and manual effort form are end-of-session triggers.
+  // If the lifter logged sets conversationally (set table is empty because sets
+  // were routed to the coach), compile the session from chat history so one
+  // preview covers both the workout rows AND the effort data.
+  if (!logRows.length && (file || manualEffort)) {
+    const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
+    if (turns.length) {
+      setStatus(loggerStatus, 'Compiling session…', 'ok');
+      try {
+        const compileRes = await api('/api/session/compile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ history: turns })
+        });
+        const compiledText = compileRes.data?.workout_text;
+        if (compiledText) {
+          // Screenshot mode: leave date_clean and session_id blank so the
+          // server can stamp them with the screenshot-resolved date/session_id
+          // (normalizeLogRowObject falls back to topLevelDate/topLevelSessionId
+          // when the row fields are falsy). Manual effort uses the form date.
+          const compileDate = mode === 'screenshot' ? '' : (date || getLocalDateString());
+          const compileSessionId = mode === 'screenshot' ? '' : (sessionId || generateSessionId(compileDate));
+          workoutTextInput.value = compiledText;
+          try {
+            await rowsFromWorkoutInput();
+            logRows = collectLogRows(compileSessionId, compileDate);
+          } finally {
+            workoutTextInput.value = '';
+            lastParsedWorkoutText = '';
+          }
+        }
+      } catch {
+        // Compilation failed or Gemini unavailable — fall through to effort-only preview
+      }
+      setStatus(loggerStatus, '', 'ok');
+    }
+  }
+
   const effortOnly = !logRows.length && Boolean(file || manualEffort);
   if (!logRows.length && !effortOnly) {
     // Pure text with nothing to log → route to the coach (same as the parse
@@ -2777,6 +2881,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     }
     setStatus(loggerStatus, 'Enter workout text first, then preview. You can edit parsed rows after preview.', 'error');
     return;
+  }
+
+  // Conversational session mode: mid-conversation set text routes to the coach
+  // for acknowledgment, not a preview card. Only active when a conversation is
+  // already in progress (chat history has turns) — a fresh submit with no
+  // history goes straight to preview so the direct preview flow still works.
+  // Exceptions: (a) sessionCompiledAwaitingPreview — "log it" re-submission,
+  // go to preview; (b) file or manualEffort — effort always previews.
+  if (logRows.length && !file && !manualEffort) {
+    const inConversation = typeof window.getChatHistory === 'function' && window.getChatHistory().length > 0;
+    if (!sessionCompiledAwaitingPreview && inConversation) {
+      routeMessageToCoach(pendingChatText);
+      return;
+    }
+    sessionCompiledAwaitingPreview = false;
   }
 
   const previewBtn = document.getElementById('preview-btn');

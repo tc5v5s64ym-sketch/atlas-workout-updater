@@ -220,9 +220,12 @@ function buildChatSystemPrompt(context) {
     "- If the snapshot does not contain what you need, say you don't have that data yet — never guess a number.",
     '- General training, form, and programming advice is fine, but tie any specifics back to the snapshot.',
     '- You can only TALK and SUGGEST. You never write, save, log, edit, undo, or delete anything — that is impossible for you. Never say or imply that you saved, logged, changed, or removed something.',
-    '- To log a workout, the lifter types it into the composer and approves the preview. Atlas slash notation: "Bench 225 5/2 5/2" means Bench Press, 225 lb × 5 reps at 2 RIR, twice.',
-    '- If they name a lift with no sets (e.g. "Bench"), ask for the sets in that format rather than guessing.',
-    '- Keep it tight — usually 1–4 sentences. Plain text only: no markdown headings, no bold, no code fences.',
+    '- Atlas slash notation: "Bench 225 5/2 5/2" means Bench Press, 225 lb × 5 reps at RIR 2, twice. "185 8" means 185 lb × 8 reps, no RIR given.',
+    '- When the lifter sends sets in Atlas notation (e.g. "Bench 135 10/4 185 8/2 225 5/2 5/2"), acknowledge what you heard in plain language: repeat back the exercise name and each set as "{weight} × {reps} @ RIR {rir}" (omit RIR when not given), grouping identical consecutive sets. Then add a brief coaching note (1–2 sentences). This is how the lifter confirms you captured it right — keep it fast and scannable.',
+    '- If they name a lift with no sets (e.g. "Bench"), ask for the sets rather than guessing.',
+    '- The lifter saves the session by saying "log it" at the end — you never trigger the write. Until then, sets are in the conversation only.',
+    '- When the lifter asks what to train (or names a preference like "upper body" or "legs"), give the full session in the FIRST reply. No warm-up preamble, no "we can do X" without the numbers. Format: one short sentence of context, then each exercise on its own line: "Exercise — Xlbs × Y reps × Z sets @ RIR N". Commit — if you are not going to push back, give the prescription. Only ask a question if there is a genuine reason not to proceed (injury conflict, missing info you cannot infer).',
+    '- Keep it tight — usually 2–5 sentences. Plain text only: no markdown headings, no bold, no code fences.',
     '',
     'PROPOSING EDITS TO THE CURRENT PREVIEW:',
     '- When the lifter clearly asks to change, update, delete, or add a specific set in current_preview, you MAY propose an edit.',
@@ -233,7 +236,17 @@ function buildChatSystemPrompt(context) {
     '  or PROPOSE_EDIT: {"action":"add_set","weight":225,"reps":5,"rir":2}',
     '- index is 0-based. For update_set, omit weight/reps/rir fields you are not changing.',
     '- The PROPOSE_EDIT line is stripped by the app and never shown to the lifter — write your prose as if it does not exist.',
-    '- If the intent is ambiguous or current_preview is empty, respond in prose only with no PROPOSE_EDIT line.'
+    '- If the intent is ambiguous or current_preview is empty, respond in prose only with no PROPOSE_EDIT line.',
+    '',
+    'PROPOSING A COACHING NOTE (persistent background memory):',
+    '- When the lifter reveals something durable and actionable — an injury, a mobility limit, a goal, a program change, an equipment constraint — you MAY propose saving it as a coaching note.',
+    '- Only propose a note for facts worth persisting across sessions. Session observations ("great set today") do not qualify.',
+    '- You can only ever propose ONE thing per reply — either a PROPOSE_EDIT or a PROPOSE_NOTE, never both.',
+    '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly:',
+    '  PROPOSE_NOTE: {"note": "..."}',
+    '- The note text must be concise (under 120 characters), factual, and third-person ("Left shoulder impingement — avoid overhead pressing"). No coaching advice in the note text itself.',
+    '- The PROPOSE_NOTE line is stripped by the app and shown to the lifter as "Save this note?". Write your prose as if it does not exist.',
+    '- If nothing worth persisting came up, respond in prose only with no PROPOSE_NOTE line.'
   ].join('\n');
 }
 
@@ -300,9 +313,18 @@ function sanitizeChatContext(context) {
   })).filter(s => s.exercise) : [];
   const current_plan = Array.isArray(c.current_plan) ? c.current_plan.slice(0, 10).map(e => ({
     name: strOrNull(e && e.name),
-    rationale: strOrNull(e && e.rationale)
+    rationale: strOrNull(e && e.rationale),
+    weight: numOrNull(e && e.weight),
+    reps: numOrNull(e && e.reps),
+    sets: numOrNull(e && e.sets)
   })).filter(e => e.name) : [];
   const session_count = numOrNull(c.session_count);
+  const coaching_notes = Array.isArray(c.coaching_notes)
+    ? c.coaching_notes.slice(0, 10).map(n => ({
+        date: strOrNull(n && n.date),
+        note: clampText(n && n.note, 200)
+      })).filter(n => n.note)
+    : [];
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -311,8 +333,64 @@ function sanitizeChatContext(context) {
     stalls,
     current_preview,
     current_plan,
-    session_count
+    session_count,
+    coaching_notes
   };
+}
+
+// Extract an optional PROPOSE_NOTE: {...} from the last non-blank line.
+// Returns { reply: proseText, propose_note: objectOrNull }.
+function parseNoteFromReply(text) {
+  if (typeof text !== 'string') return { reply: '', propose_note: null };
+  const lines = text.split('\n');
+  let noteLineIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('PROPOSE_NOTE:')) noteLineIdx = i;
+    break;
+  }
+  if (noteLineIdx === -1) return { reply: text.trim(), propose_note: null };
+  const jsonPart = lines[noteLineIdx].trim().slice('PROPOSE_NOTE:'.length).trim();
+  const prose = lines.slice(0, noteLineIdx).join('\n').trim();
+  let propose_note = null;
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (parsed && typeof parsed === 'object' && typeof parsed.note === 'string' && parsed.note.trim()) {
+      propose_note = { note: parsed.note.trim().slice(0, 200) };
+    }
+  } catch { /* malformed JSON — no note */ }
+  return { reply: prose || text.trim(), propose_note };
+}
+
+// Internal parser that handles both PROPOSE_EDIT and PROPOSE_NOTE in one pass —
+// the last non-blank line can carry at most one token per reply.
+function parseReplyWithProposals(text) {
+  if (typeof text !== 'string') return { reply: '', propose_edit: null, propose_note: null };
+  const lines = text.split('\n');
+  let tokenLineIdx = -1;
+  let tokenType = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('PROPOSE_EDIT:')) { tokenLineIdx = i; tokenType = 'edit'; }
+    else if (trimmed.startsWith('PROPOSE_NOTE:')) { tokenLineIdx = i; tokenType = 'note'; }
+    break;
+  }
+  if (tokenLineIdx === -1) return { reply: text.trim(), propose_edit: null, propose_note: null };
+  const prefix = tokenType === 'edit' ? 'PROPOSE_EDIT:' : 'PROPOSE_NOTE:';
+  const jsonPart = lines[tokenLineIdx].trim().slice(prefix.length).trim();
+  const prose = lines.slice(0, tokenLineIdx).join('\n').trim();
+  let propose_edit = null;
+  let propose_note = null;
+  try {
+    const parsed = JSON.parse(jsonPart);
+    if (tokenType === 'edit' && isValidEditSchema(parsed)) propose_edit = parsed;
+    else if (tokenType === 'note' && parsed && typeof parsed === 'object' && typeof parsed.note === 'string' && parsed.note.trim()) {
+      propose_note = { note: parsed.note.trim().slice(0, 200) };
+    }
+  } catch { /* malformed JSON — no proposal */ }
+  return { reply: prose || text.trim(), propose_edit, propose_note };
 }
 
 // Bound the conversation to the last few turns; only role + text survive. The
@@ -335,21 +413,76 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
 
   // Prime with the snapshot as the first exchange so the model treats it as
   // grounding, then replay prior turns, then the lifter's current message.
+  // coaching_notes arrive already inside `snapshot` (via sanitizeChatContext);
+  // they are included here without any extra instruction so the model treats them
+  // as silent background — not something to announce or repeat.
   const contents = [
     { role: 'user', parts: [{ text: `TRAINING SNAPSHOT (read-only facts):\n${JSON.stringify(snapshot, null, 2)}` }] },
-    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts and never claim to save anything." }] }
+    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts, use any coaching notes as silent background only, and never claim to save anything." }] }
   ];
   for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
   const raw = await callGeminiContents(buildChatSystemPrompt(snapshot), contents, { timeoutMs, maxOutputTokens: 450 });
-  return parseEditFromReply(raw);
+  return parseReplyWithProposals(raw);
 }
 
 function extractText(data) {
   const parts = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
   if (!Array.isArray(parts)) return '';
   return parts.map(p => (p && typeof p.text === 'string' ? p.text : '')).join('').trim();
+}
+
+// ── Session compilation: extract logged sets from conversation ────────────────
+// When the lifter says "log it" at the end of a conversational session, this
+// asks Gemini to extract all the workout sets they actually did — ignoring
+// Atlas's own suggestions and any sets discussed but not performed.
+function buildCompileSystemPrompt() {
+  return [
+    'You are Atlas, a workout logging assistant.',
+    'You are given a conversation between a lifter and Atlas (their coach).',
+    'Your job: extract ONLY the workout sets the lifter ACTUALLY LOGGED OR PERFORMED during this session.',
+    '',
+    'Output format — Atlas slash notation, one exercise per line:',
+    '  Bench Press 135 10 185 8/2 225 6/1',
+    '  Deadlift 135 10/4 185 10/2 225 8/2 245 6/2',
+    '',
+    'Set notation: {exercise} {weight} {reps}/{rir}',
+    '  - weight is in lbs (numbers only, no units in output)',
+    '  - reps is number of reps',
+    '  - rir is reps in reserve — omit the /rir if not mentioned',
+    '  - Chain multiple sets for the same exercise on one line',
+    '',
+    'Rules:',
+    '- ONLY include sets the lifter did. Ignore Atlas\'s recommendations, plans, and suggestions.',
+    '- If the lifter corrected a number ("actually that was 8 not 10"), use the corrected value.',
+    '- Preserve the order exercises were performed.',
+    '- Use the canonical exercise name when obvious (e.g. "bench" → "Bench Press"), or the lifter\'s exact phrasing otherwise.',
+    '- If no workout sets are found in the conversation, output exactly: NO_WORKOUT_FOUND',
+    '- Output ONLY the workout lines. No prose, no explanations, no headings, no commentary.'
+  ].join('\n');
+}
+
+async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (!Array.isArray(turns) || !turns.length) return { workout_text: null };
+
+  const sanitized = turns
+    .filter(t => t && (t.role === 'user' || t.role === 'atlas'))
+    .slice(-40)
+    .map(t => {
+      const role = t.role === 'atlas' ? 'Atlas' : 'Lifter';
+      const text = clampText(t.text, 800);
+      return text ? `${role}: ${text}` : null;
+    })
+    .filter(Boolean);
+
+  if (!sanitized.length) return { workout_text: null };
+
+  const userPrompt = `CONVERSATION:\n${sanitized.join('\n')}\n\nExtract the workout sets.`;
+  const raw = await callGemini(buildCompileSystemPrompt(), userPrompt, timeoutMs);
+  const result = raw.trim();
+  if (!result || result === 'NO_WORKOUT_FOUND') return { workout_text: null };
+  return { workout_text: result };
 }
 
 module.exports = {
@@ -368,5 +501,8 @@ module.exports = {
   sanitizeChatHistory,
   generateChatReply,
   parseEditFromReply,
-  isValidEditSchema
+  parseNoteFromReply,
+  isValidEditSchema,
+  buildCompileSystemPrompt,
+  compileSessionFromHistory
 };

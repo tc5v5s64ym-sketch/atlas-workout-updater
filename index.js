@@ -142,7 +142,7 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
@@ -413,24 +413,7 @@ function resolveWorkoutDate({ manualDate, screenshotDate } = {}) {
     getLocalDateString();
 }
 
-function formatDateForSessionId(dateValue) {
-  const cleanDate = toDateOnly(dateValue).replace(/[^0-9]/g, '');
-  if (!/^\d{8}$/.test(cleanDate)) {
-    throw new Error(`Invalid date for session_id generation: ${dateValue}`);
-  }
-  return cleanDate;
-}
-
-function formatAmPmSuffix(dateTime = new Date()) {
-  const hour = dateTime.getHours();
-  return hour < 12 ? 'AM' : 'PM';
-}
-
-function generateSessionId(dateValue) {
-  const formattedDate = formatDateForSessionId(dateValue);
-  const suffix = formatAmPmSuffix();
-  return `${formattedDate}-${suffix}-01`;
-}
+const { generateSessionId, nextAvailableSessionId } = require('./services/sessionId');
 
 function isTestModeEnabled(value) {
   return String(value || '').toLowerCase() === 'true';
@@ -975,7 +958,7 @@ app.post('/api/coach/message', async (req, res) => {
 // recommended focus, and stalled lifts. Bounded here and bounded again in
 // coach.sanitizeChatContext. The lifter's current preview rows (if any) ride
 // along from the client so "is this set good?" can be answered in context.
-function buildChatContext(logRows, effortRows, clientContext) {
+function buildChatContext(logRows, effortRows, clientContext, coachingNotes) {
   const intents = scoreIntents(logRows, effortRows);
   const recent = buildRecentSessions(logRows, effortRows, { limit: 5 });
   const stalls = detectStalls(logRows);
@@ -992,7 +975,8 @@ function buildChatContext(logRows, effortRows, clientContext) {
     stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
-    session_count: sessions.length
+    session_count: sessions.length,
+    coaching_notes: Array.isArray(coachingNotes) ? coachingNotes.slice(0, 10) : []
   };
 }
 
@@ -1012,21 +996,112 @@ app.post('/api/coach/chat', async (req, res) => {
     });
   }
   try {
-    const [allLog, allEffort] = await Promise.all([
+    const [allLog, allEffort, notesRows] = await Promise.all([
       getSheetRows(logSheetName),
-      getSheetRows(effortSheetName)
+      getSheetRows(effortSheetName),
+      getSheetRows('Coaching_Notes').catch(() => [])
     ]);
-    const context = buildChatContext(allLog, allEffort, req.body && req.body.context);
+    const coachingNotes = notesRows
+      .map(row => Array.isArray(row) ? { date: row[0] || null, note: row[1] || null } : { date: row.date || null, note: row.note || null })
+      .filter(n => n.note);
+    const context = buildChatContext(allLog, allEffort, req.body && req.body.context, coachingNotes);
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
-    const { reply, propose_edit } = await coach.generateChatReply({ message, context, history });
+    const { reply, propose_edit, propose_note } = await coach.generateChatReply({ message, context, history });
     return standardSuccess(req, res, 'Coach chat reply', {
-      message: reply, propose_edit: propose_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
+      message: reply, propose_edit: propose_edit || null, propose_note: propose_note || null, configured: true, model: coach.coachModel(), source: 'gemini'
     });
   } catch (error) {
     // Degrade gracefully — the client shows a templated fallback, never an error bubble.
     return standardSuccess(req, res, 'Coach chat failed — use fallback', {
       message: null, configured: true, model: coach.coachModel(), error: error.message
     });
+  }
+});
+
+// POST /api/session/compile — extract logged sets from conversation history.
+// Called by the frontend when the lifter says "log it" at the end of a
+// conversational session. Gemini reads the chat turns and returns the sets in
+// Atlas slash notation so the normal parse → preview → approve flow can run.
+// READ-ONLY: no Sheets access, no writes.
+app.post('/api/session/compile', async (req, res) => {
+  const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
+  if (!history.length) {
+    return standardError(req, res, "history array required — log some sets in the chat first, then say 'log it'", null, 400);
+  }
+  if (!coach.isConfigured()) {
+    return standardSuccess(req, res, 'Session compile unavailable — Gemini not configured', {
+      workout_text: null, configured: false
+    });
+  }
+  try {
+    const { workout_text } = await coach.compileSessionFromHistory(history);
+    return standardSuccess(req, res, 'Session compiled', { workout_text });
+  } catch (error) {
+    console.log(JSON.stringify({ event: 'session_compile_error', error: error.message }));
+    return standardSuccess(req, res, 'Session compile failed', {
+      workout_text: null, error: error.message
+    });
+  }
+});
+
+// GET /api/coaching-notes — return all notes from the Coaching_Notes tab.
+// READ-ONLY. Returns empty array when the tab does not exist yet.
+app.get('/api/coaching-notes', async (req, res) => {
+  try {
+    const rows = await getSheetRows('Coaching_Notes').catch(() => []);
+    const notes = rows
+      .map(row => Array.isArray(row)
+        ? { date: row[0] || null, note: row[1] || null }
+        : { date: (row && row.date) || null, note: (row && row.note) || null })
+      .filter(n => n.note);
+    return standardSuccess(req, res, 'Coaching notes', { notes });
+  } catch (err) {
+    return standardSuccess(req, res, 'Coaching notes', { notes: [] });
+  }
+});
+
+// POST /api/coaching-notes — append a coaching note to the Coaching_Notes tab.
+// Requires { note: string, write_id: string }. write_id is required for
+// idempotency (retry safety). Returns sheet_written: true on success.
+app.post('/api/coaching-notes', async (req, res) => {
+  const note = req.body && typeof req.body.note === 'string' ? req.body.note.trim() : '';
+  const writeId = req.body && typeof req.body.write_id === 'string' ? req.body.write_id.trim() : '';
+  if (!note) return standardError(req, res, 'note string is required', null, 400);
+  if (!writeId) return standardError(req, res, 'write_id is required', null, 400);
+
+  const idempotency = beginWrite(writeId, { endpoint: '/api/coaching-notes' });
+
+  if (idempotency.duplicate) {
+    const record = idempotency.record || {};
+    const original = record.response || {};
+    return standardSuccess(req, res,
+      record.status === 'completed'
+        ? 'Duplicate write_id; coaching note was already saved.'
+        : 'Duplicate write_id; coaching note write is in progress.',
+      { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false }
+    );
+  }
+
+  const tabs = await getSpreadsheetTabs().catch(() => []);
+  if (!tabs.includes('Coaching_Notes')) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Coaching_Notes tab not found — create it in Google Sheets first (columns: date, note)', null, 503);
+  }
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  try {
+    await appendRows('Coaching_Notes', [[dateStr, note.slice(0, 200)]]);
+    invalidateSheetRowsCache();
+    const responseBody = { sheet_written: true, note_written: true, date: dateStr, note: note.slice(0, 200) };
+    if (idempotency.enabled) {
+      responseBody.write_id = idempotency.write_id;
+      responseBody.duplicate_write = false;
+      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    }
+    return standardSuccess(req, res, 'Coaching note saved', responseBody);
+  } catch (err) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to save coaching note', err.message, 500);
   }
 });
 
@@ -1671,9 +1746,9 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       manualDate: formFields.date,
       screenshotDate: visionResult.parsed_metrics?.date
     });
-    const sessionId = formFields.session_id || generateSessionId(dateValue);
 
-    // 4) Check duplicate session protection
+    // 4) Check duplicate session protection — fetch existing IDs first so we
+    // can auto-increment the counter when two sessions share the same day/period.
     let existingEffortSessionIds;
     try {
       existingEffortSessionIds = await getEffortSessionIds();
@@ -1682,7 +1757,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       return standardError(req, res, 'Failed to validate duplicate session.', null, 500);
     }
 
-    const duplicateSession = existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
+    // If the client supplied a session_id, honour it (explicit beats implicit).
+    // A supplied id that already exists is still a duplicate (same data sent twice).
+    const sessionId = formFields.session_id
+      ? formFields.session_id
+      : nextAvailableSessionId(dateValue, existingEffortSessionIds);
+
+    const duplicateSession = Boolean(formFields.session_id) &&
+      existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
     if (duplicateSession) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Duplicate session.', null, 409);
