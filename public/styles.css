@@ -778,6 +778,29 @@ button.approve {
   color: var(--muted);
 }
 
+/* "Learn" chips inside the empty-state hero — visible (unlike the legacy
+   #suggestion-chips row). Tap → deterministic SME answer in the thread. */
+.learn-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  justify-content: center;
+  margin-top: var(--s3);
+}
+
+/* Deterministic training-SME answer card (the "Learn" chips → /api/coach/ask). */
+.sme-answer {
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  margin-top: 2px;
+}
+.sme-cards {
+  margin-top: var(--s2);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 /* Structured suggested-workout block: bold exercise names, compact RIR-safe
    set lines, one gap between exercises. No bullets — set lines are plain. */
 .workout-plan {

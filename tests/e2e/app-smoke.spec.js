@@ -677,3 +677,52 @@ test('Recovery board: per-pattern tiles sorted most-recovered first, tap asks th
 
   expect(capture.writeRequests).toHaveLength(0);
 });
+
+test('Learn chip: an SME answer renders in-thread, read-only, no write', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Deterministic SME endpoint (registered after openApp, so it wins for this path).
+  let askBody = null;
+  await page.route('**/api/coach/ask', route => {
+    askBody = route.request().postDataJSON();
+    return route.fulfill(json({
+      status: 'success',
+      data: {
+        depth: 'compare_options',
+        answer: 'Strength: heavier, lower reps, load-first.\nHypertrophy: moderate reps, add reps before load, closer to failure.',
+        cards: ['strength_training', 'hypertrophy_training'],
+        confidenceLevel: 'high',
+        source: 'training_sme'
+      }
+    }));
+  });
+
+  await page.locator('.chip[data-ask="Explain strength vs hypertrophy"]').click();
+
+  // The card-grounded answer lands in the thread, and the request carried the question.
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('add reps before load');
+  await expect(page.locator('#thread-messages')).toContainText('Based on: strength training, hypertrophy training');
+  expect(askBody).toMatchObject({ message: 'Explain strength vs hypertrophy' });
+
+  // Pure read: nothing previewed, nothing written.
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  expect(capture.writeRequests).toHaveLength(0);
+  expect(capture.parseRequests).toHaveLength(0);
+});
+
+test('Learn chip: a topic with no card stays quiet (no lecture), still no write', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.route('**/api/coach/ask', route => route.fulfill(json({
+    status: 'success',
+    data: { depth: 'log_only', answer: null, cards: [], confidenceLevel: null, source: 'training_sme' }
+  })));
+
+  await page.locator('.chip[data-ask="What is a deload?"]').click();
+
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText("don't have a card on that yet");
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  expect(capture.writeRequests).toHaveLength(0);
+});
