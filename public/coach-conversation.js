@@ -528,13 +528,27 @@
 
   /* ===== Tiles + listeners ===== */
 
+  // Freestyle: the user wants to log their own way. Hiding the home hero would
+  // leave a blank screen (no greeting, no tiles, empty thread), so drop a short
+  // Atlas bubble to ground the conversation and seed an example placeholder
+  // before handing focus to the composer.
+  async function startFreestyle() {
+    hideHomeEmpty();
+    const handle = appendAtlasBubble();
+    setWorkoutPlaceholder('Bench 135 10/4, 225 5/2 x3');
+    if (handle) {
+      await typeOut(handle.body, "Freestyle it — log a set or ask anything, and I'll react as you go.");
+    }
+    document.getElementById('workout-text')?.focus();
+  }
+
   document.getElementById('suggested-tiles')?.addEventListener('click', e => {
     const tile = e.target.closest('.suggest-tile');
     if (!tile) return;
-    hideHomeEmpty();
     if (tile.dataset.suggest === 'freestyle') {
-      document.getElementById('workout-text')?.focus();
+      startFreestyle();
     } else {
+      hideHomeEmpty();
       typeSuggestedWorkout();
     }
   });
