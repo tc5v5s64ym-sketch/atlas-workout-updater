@@ -1391,8 +1391,8 @@ async function loadRecentHistory() {
       return;
     }
     box.appendChild(renderTable(
-      ['Date', 'Session', 'Exercise', 'Set', 'Weight', 'Reps', 'RIR'],
-      sets.map(s => [s.date_clean, s.session_id, s.exercise, s.set_number, s.weight, s.reps, s.rir])
+      ['Exercise', 'Set', 'Weight', 'Reps', 'RIR'],
+      sets.map(s => [s.exercise, s.set_number, s.weight, s.reps, s.rir])
     ));
   } catch (err) {
     box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
