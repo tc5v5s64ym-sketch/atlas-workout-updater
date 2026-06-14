@@ -2721,7 +2721,10 @@ function currentPlanForChat() {
   const exercises = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
   return exercises.slice(0, 10).map(ex => ({
     name: ex.canonical_exercise || ex.exercise || null,
-    rationale: ex.focus || null
+    rationale: ex.focus || ex.reason || null,
+    weight: ex.target_weight ?? ex.weight ?? null,
+    reps: ex.target_reps ?? ex.reps ?? null,
+    sets: ex.target_sets ?? ex.sets ?? null
   })).filter(e => e.name);
 }
 

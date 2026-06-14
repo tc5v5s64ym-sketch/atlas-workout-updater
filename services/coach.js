@@ -313,7 +313,10 @@ function sanitizeChatContext(context) {
   })).filter(s => s.exercise) : [];
   const current_plan = Array.isArray(c.current_plan) ? c.current_plan.slice(0, 10).map(e => ({
     name: strOrNull(e && e.name),
-    rationale: strOrNull(e && e.rationale)
+    rationale: strOrNull(e && e.rationale),
+    weight: numOrNull(e && e.weight),
+    reps: numOrNull(e && e.reps),
+    sets: numOrNull(e && e.sets)
   })).filter(e => e.name) : [];
   const session_count = numOrNull(c.session_count);
   const coaching_notes = Array.isArray(c.coaching_notes)
