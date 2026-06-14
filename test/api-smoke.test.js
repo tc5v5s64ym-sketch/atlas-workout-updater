@@ -86,7 +86,7 @@ const fakeSheets = {
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     return [];
   },
-  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight'],
+  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes'],
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort'
 };

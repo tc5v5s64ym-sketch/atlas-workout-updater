@@ -2883,12 +2883,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
-  // Conversational session mode: parsed workout text routes to the coach for
-  // acknowledgment, not a preview card. Exceptions:
-  //   (a) sessionCompiledAwaitingPreview — "log it" re-submission, go to preview
-  //   (b) file or manualEffort is set — effort submission always previews
+  // Conversational session mode: mid-conversation set text routes to the coach
+  // for acknowledgment, not a preview card. Only active when a conversation is
+  // already in progress (chat history has turns) — a fresh submit with no
+  // history goes straight to preview so the direct preview flow still works.
+  // Exceptions: (a) sessionCompiledAwaitingPreview — "log it" re-submission,
+  // go to preview; (b) file or manualEffort — effort always previews.
   if (logRows.length && !file && !manualEffort) {
-    if (!sessionCompiledAwaitingPreview) {
+    const inConversation = typeof window.getChatHistory === 'function' && window.getChatHistory().length > 0;
+    if (!sessionCompiledAwaitingPreview && inConversation) {
       routeMessageToCoach(pendingChatText);
       return;
     }

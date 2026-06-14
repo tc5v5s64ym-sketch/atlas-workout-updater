@@ -142,7 +142,7 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
@@ -1080,6 +1080,12 @@ app.post('/api/coaching-notes', async (req, res) => {
         : 'Duplicate write_id; coaching note write is in progress.',
       { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false }
     );
+  }
+
+  const tabs = await getSpreadsheetTabs().catch(() => []);
+  if (!tabs.includes('Coaching_Notes')) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Coaching_Notes tab not found — create it in Google Sheets first (columns: date, note)', null, 503);
   }
 
   const dateStr = new Date().toISOString().slice(0, 10);
