@@ -258,24 +258,53 @@ function summarizeExercises(exercises, max = 3) {
   return `${ex.slice(0, max).join(', ')} +${ex.length - max} more`;
 }
 
-function sessionWhenLabel(s, inToday) {
+const HIST_WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const HIST_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function parseLocalDate(dateStr) {
+  return new Date(`${dateStr}T00:00:00`);
+}
+
+// Monday-start week containing `date`, as a local midnight Date.
+function mondayStart(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d;
+}
+
+// "Fri, Jun 12 · PM" — weekday + date, with the AM/PM tag from the session id.
+function sessionWhenLabel(s) {
+  const d = parseLocalDate(s.date || '');
   const tag = sessionTimeTag(s.session_id);
-  if (inToday) {
-    if (tag === 'AM') return 'Morning session';
-    if (tag === 'PM') return 'Afternoon session';
-    return "Today's session";
+  const base = (s.date && !Number.isNaN(d.getTime()))
+    ? `${HIST_WD[d.getDay()]}, ${HIST_MON[d.getMonth()]} ${d.getDate()}`
+    : (s.date || '');
+  return tag ? `${base} · ${tag}` : base;
+}
+
+function weekRangeLabel(weekStart) {
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  if (weekStart.getMonth() === end.getMonth()) {
+    return `${HIST_MON[weekStart.getMonth()]} ${weekStart.getDate()}–${end.getDate()}`;
   }
-  const date = formatSessionDate(s.date);
-  return tag ? `${date} · ${tag}` : date;
+  return `${HIST_MON[weekStart.getMonth()]} ${weekStart.getDate()} – ${HIST_MON[end.getMonth()]} ${end.getDate()}`;
+}
+
+function weekHeaderLabel(weekStart, currentWeekStart) {
+  const diff = Math.round((currentWeekStart.getTime() - weekStart.getTime()) / (7 * 86400000));
+  if (diff <= 0) return 'This week';
+  if (diff === 1) return 'Last week';
+  return weekRangeLabel(weekStart);
 }
 
 // One clean, tappable session card: when + stats on top, exercises beneath.
 // Full set/effort detail lazy-loads on first expand (unchanged).
-function renderSessionCard(s, inToday) {
+function renderSessionCard(s) {
   const details = el('details', { class: 'session-item' });
   const sum = el('summary', { class: 'session-summary' }, [
     el('div', { class: 'session-head' }, [
-      el('span', { class: 'session-when', text: sessionWhenLabel(s, inToday) }),
+      el('span', { class: 'session-when', text: sessionWhenLabel(s) }),
       el('span', { class: 'session-stats', text: `${s.sets_count} sets · ${Number(s.total_volume || 0).toLocaleString()} lb` })
     ]),
     el('div', { class: 'session-exercises', text: summarizeExercises(s.exercises) })
@@ -295,37 +324,75 @@ function renderSessionCard(s, inToday) {
   return details;
 }
 
+// Cadence strip — sessions per week over the recent window, current week ember.
+function renderCadenceStrip(summary) {
+  const byWeek = Array.isArray(summary && summary.sessions_by_week) ? summary.sessions_by_week.slice(-8) : [];
+  if (!byWeek.length) return null;
+  const avg = summary.average_sessions_per_week != null
+    ? Math.round(summary.average_sessions_per_week)
+    : Math.round(byWeek.reduce((a, w) => a + (Number(w.sessions) || 0), 0) / byWeek.length);
+  const max = Math.max(1, ...byWeek.map(w => Number(w.sessions) || 0));
+
+  const bars = el('div', { class: 'cadence-bars' });
+  byWeek.forEach((w, i) => {
+    const bar = el('i', { class: i === byWeek.length - 1 ? 'cadence-bar cur' : 'cadence-bar' });
+    bar.style.height = `${Math.max(8, Math.round(((Number(w.sessions) || 0) / max) * 100))}%`;
+    bars.appendChild(bar);
+  });
+
+  return el('div', { class: 'cadence' }, [
+    el('div', { class: 'cadence-top' }, [
+      el('div', { class: 'cadence-big' }, [document.createTextNode(`${avg}×`), el('small', { text: '/ week' })]),
+      el('div', { class: 'cadence-sub', text: `LAST ${byWeek.length} WEEKS` })
+    ]),
+    bars
+  ]);
+}
+
 async function loadSessions() {
   const result = document.getElementById('sessions-result');
   result.textContent = 'Loading…';
   try {
-    const res = await api('/api/sessions/recent');
-    const sessions = res?.data?.sessions || [];
-    if (!sessions.length) {
-      result.innerHTML = '<p class="muted">No sessions logged yet.</p>';
+    const [sessRes, sumRes] = await Promise.allSettled([
+      api('/api/sessions/recent'),
+      api('/api/progress/summary')
+    ]);
+    const sessions = (sessRes.status === 'fulfilled' && sessRes.value && sessRes.value.data && sessRes.value.data.sessions) || [];
+    const summary = (sumRes.status === 'fulfilled' && sumRes.value && (sumRes.value.data || sumRes.value)) || {};
+
+    // Drop phantom 0-set rows — logging artifacts, not real sessions.
+    const real = sessions.filter(s => Number(s.sets_count) > 0);
+
+    result.innerHTML = '';
+    const cadence = renderCadenceStrip(summary);
+    if (cadence) result.appendChild(cadence);
+
+    if (!real.length) {
+      result.appendChild(el('p', { class: 'muted', text: 'No sessions logged yet.' }));
       return;
     }
 
-    // Today's sessions populate live (History re-fetches after each write);
-    // everything else falls under "Past sessions".
-    const today = getLocalDateString();
-    const todaySessions = sessions.filter(s => s.date === today);
-    const pastSessions = sessions.filter(s => s.date !== today);
-
-    const frag = document.createDocumentFragment();
-    frag.appendChild(el('div', { class: 'session-group-header', text: 'Today' }));
-    if (todaySessions.length) {
-      for (const s of todaySessions) frag.appendChild(renderSessionCard(s, true));
-    } else {
-      frag.appendChild(el('p', { class: 'muted session-empty', text: 'Nothing logged yet today.' }));
+    // Group by Monday-week with per-week totals; most-recent week first.
+    const currentWeekStart = mondayStart(new Date());
+    const groupMap = new Map();
+    const groups = [];
+    for (const s of real) {
+      const ws = mondayStart(parseLocalDate(s.date || getLocalDateString()));
+      const key = ws.getTime();
+      let g = groupMap.get(key);
+      if (!g) { g = { weekStart: ws, sessions: [], volume: 0 }; groupMap.set(key, g); groups.push(g); }
+      g.sessions.push(s);
+      g.volume += Number(s.total_volume || 0);
     }
-    if (pastSessions.length) {
-      frag.appendChild(el('div', { class: 'session-group-header', text: 'Past sessions' }));
-      for (const s of pastSessions) frag.appendChild(renderSessionCard(s, false));
-    }
+    groups.sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime());
 
-    result.innerHTML = '';
-    result.appendChild(frag);
+    for (const g of groups) {
+      result.appendChild(el('div', { class: 'session-week-header' }, [
+        el('h2', { text: weekHeaderLabel(g.weekStart, currentWeekStart) }),
+        el('span', { class: 'week-tot', text: `${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'} · ${Math.round(g.volume).toLocaleString()} lb` })
+      ]));
+      for (const s of g.sessions) result.appendChild(renderSessionCard(s));
+    }
   } catch (err) {
     result.textContent = err.message || 'Failed to load sessions.';
   }

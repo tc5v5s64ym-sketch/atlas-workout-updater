@@ -518,31 +518,41 @@ test('Progress surface renders the Today screen from mocked data without crashin
   await expect(page.locator('#intent-grid')).toContainText('Bench + OHP');
 });
 
-test('History groups sessions under Today / Past with clean cards', async ({ page }) => {
+test('History groups sessions by week with per-week totals, dropping phantom 0-set rows', async ({ page }) => {
   await openApp(page);
-  const d = new Date();
-  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const fmt = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  const today = fmt(new Date());
+  const older = new Date(); older.setDate(older.getDate() - 9); // always a strictly earlier week
+  const olderDate = fmt(older);
   await page.route('**/api/sessions/recent', route => route.fulfill(json({
     status: 'success',
     data: {
       sessions: [
         { date: today, session_id: today.replace(/-/g, '') + '-AM-01', exercises: ['Bench Press', 'Incline DB Press', 'Lat Pulldown', 'Face Pull'], sets_count: 12, total_volume: 8420 },
-        { date: '2026-06-09', session_id: '20260609-PM-01', exercises: ['Deadlift', 'Row'], sets_count: 8, total_volume: 14270 }
+        { date: olderDate, session_id: olderDate.replace(/-/g, '') + '-PM-01', exercises: ['Deadlift', 'Row'], sets_count: 8, total_volume: 14270 },
+        // Phantom 0-set row — must be dropped from the list and the weekly total.
+        { date: today, session_id: today.replace(/-/g, '') + '-PM-09', exercises: [], sets_count: 0, total_volume: 0 }
       ]
     }
   })));
 
   await openDrawerNav(page, 'history'); // hamburger → drawer → History
 
-  const headers = page.locator('.session-group-header');
-  await expect(headers.nth(0)).toHaveText('Today');
-  await expect(headers.nth(1)).toHaveText('Past sessions');
+  // Week grouping: "This week" first, with a per-week total reflecting only the
+  // real session (the phantom 0-set row is excluded), then one earlier week.
+  const headers = page.locator('.session-week-header');
+  await expect(headers.first()).toContainText('This week');
+  await expect(headers.first()).toContainText('1 session');
+  await expect(headers.first()).toContainText('8,420 lb');
+  await expect(headers).toHaveCount(2);
 
-  // Today card: friendly label, stats, and a truncated exercise summary.
+  // Today card: weekday/date label, stats, truncated exercise summary.
   const todayCard = page.locator('.session-item').first();
-  await expect(todayCard.locator('.session-when')).toHaveText('Morning session');
+  await expect(todayCard.locator('.session-when')).toContainText(', ');
   await expect(todayCard.locator('.session-stats')).toContainText('12 sets');
   await expect(todayCard.locator('.session-exercises')).toContainText('+1 more');
+  // Only the two real sessions render — the phantom 0-set row is gone.
+  await expect(page.locator('.session-item')).toHaveCount(2);
 });
 
 test('Tapping a session expands to exactly what was logged, grouped by exercise', async ({ page }) => {
