@@ -194,9 +194,17 @@
     return groups.map(g => g.count > 1 ? `${g.line} x${g.count}` : g.line);
   }
 
-  // The exercise list + closing line, shared by the templated and LLM-voiced
-  // suggested-workout messages (the app always shows the exercises; only the
-  // "why" prose above them changes).
+  // Format one suggested-workout set as "{weight}lbs {reps}/{rir}". RIR is NEVER
+  // silently dropped: when the engine gave no RIR we render "/?", never a bare
+  // "{weight}lbs {reps}". Pure (no DOM, no closure deps) so it is unit-testable.
+  function formatPlanSetLine(ex) {
+    const rir = (ex.rir != null && Number.isFinite(Number(ex.rir))) ? `${ex.rir}` : '?';
+    return `${ex.weight}lbs ${ex.reps}/${rir}`;
+  }
+
+  // The exercise list + closing line as plain text — used only for the
+  // no-structured-plan fallbacks (bootstrap / no history). The main path renders
+  // the structured block via appendWorkoutPlan() so names can be bold.
   function suggestedExercisesBlock(rec) {
     const exercises = (rec && rec.exercises) || [];
     const lines = [];
@@ -209,16 +217,81 @@
       any = true;
       lines.push(ex.name);
       if (ex.weight != null && ex.reps != null) {
-        const rir = (ex.rir != null && Number.isFinite(Number(ex.rir))) ? `/${ex.rir}` : '';
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         for (let i = 0; i < count; i++) {
-          lines.push(`${ex.weight}lbs ${ex.reps}${rir}`);
+          lines.push(formatPlanSetLine(ex));
         }
       }
     }
     if (any) {
       lines.push('');
       lines.push("Log your first sets when you're ready and I'll react as you go.");
+    }
+    return lines;
+  }
+
+  // Render the recommended workout as a STRUCTURED block so exercise names are
+  // bold and set lines are RIR-safe — markdown "**" would not render in the
+  // pre-wrap typed bubble. No bullets; one visual gap between exercises (CSS).
+  // Returns the count of exercises rendered.
+  function appendWorkoutPlan(container, rec) {
+    const exercises = (rec && rec.exercises) || [];
+    const plan = document.createElement('div');
+    plan.className = 'workout-plan';
+    let rendered = 0;
+    for (const raw of exercises) {
+      const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
+      if (!ex || !ex.name) continue;
+      const exEl = document.createElement('div');
+      exEl.className = 'workout-plan-ex';
+      const name = document.createElement('strong');
+      name.className = 'workout-plan-name';
+      name.textContent = ex.name;
+      exEl.appendChild(name);
+      if (ex.weight != null && ex.reps != null) {
+        const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
+        for (let i = 0; i < count; i++) {
+          const set = document.createElement('div');
+          set.className = 'workout-plan-set';
+          set.textContent = formatPlanSetLine(ex);
+          exEl.appendChild(set);
+        }
+      }
+      plan.appendChild(exEl);
+      rendered++;
+    }
+    if (rendered) container.appendChild(plan);
+    return rendered;
+  }
+
+  // The "why" prose lines (headline · focus · why-today bullets) — everything
+  // above the workout block. Shared by the text fallback and the structured path.
+  function suggestedWorkoutProseLines(data) {
+    const read = (data && data.todays_read) || {};
+    const rec = recommendedIntent(data);
+    const label = read.recommended_label || (rec && rec.label) || null;
+
+    const lines = [];
+    lines.push(label ? `Today's read: ${label}.` : "Here's a solid session for today.");
+    const focus = read.recommended_reason || (rec && rec.focus);
+    if (focus) lines.push(focus);
+
+    // Why today — surface the engine's deterministic reasoning behind the pick:
+    // the plain-language reasons, current movement-pattern readiness, and the
+    // numbers that drove it. (When Gemini is connected this same data can be
+    // phrased more conversationally; the substance is already here.)
+    const whyReasons = (rec && Array.isArray(rec.why_today) ? rec.why_today : [])
+      .filter(Boolean)
+      .filter(w => w !== focus)
+      .slice(0, 2);
+    const readiness = patternReadinessLine(read.patterns);
+    const numbers = dataPointLines(rec && rec.data_points);
+    if (whyReasons.length || readiness || numbers.length) {
+      lines.push('');
+      lines.push('Why today:');
+      for (const w of whyReasons) lines.push(`* ${w}`);
+      if (readiness) lines.push(`* ${readiness}`);
+      for (const n of numbers) lines.push(`* ${n}`);
     }
     return lines;
   }
@@ -252,29 +325,7 @@
       ].join('\n');
     }
 
-    const lines = [];
-    lines.push(label ? `Today's read: ${label}.` : "Here's a solid session for today.");
-    const focus = read.recommended_reason || (rec && rec.focus);
-    if (focus) lines.push(focus);
-
-    // Why today — surface the engine's deterministic reasoning behind the pick:
-    // the plain-language reasons, current movement-pattern readiness, and the
-    // numbers that drove it. (When Gemini is connected this same data can be
-    // phrased more conversationally; the substance is already here.)
-    const whyReasons = (rec && Array.isArray(rec.why_today) ? rec.why_today : [])
-      .filter(Boolean)
-      .filter(w => w !== focus)
-      .slice(0, 2);
-    const readiness = patternReadinessLine(read.patterns);
-    const numbers = dataPointLines(rec && rec.data_points);
-    if (whyReasons.length || readiness || numbers.length) {
-      lines.push('');
-      lines.push('Why today:');
-      for (const w of whyReasons) lines.push(`* ${w}`);
-      if (readiness) lines.push(`* ${readiness}`);
-      for (const n of numbers) lines.push(`* ${n}`);
-    }
-
+    const lines = suggestedWorkoutProseLines(data);
     if (exercises.length) {
       for (const line of suggestedExercisesBlock(rec)) lines.push(line);
     }
@@ -357,14 +408,22 @@
     return Promise.race([request, timeout]);
   }
 
-  // Compose the Gemini "why" prose into the full suggested-workout note: the
-  // headline and the exercise list stay deterministic; only the reasoning is voiced.
-  function composeLlmPlanMessage(whyProse, data) {
+  // The Gemini "why" prose lines (headline + voiced reasoning) — everything
+  // above the workout block.
+  function composeLlmPlanProseLines(whyProse, data) {
     const read = (data && data.todays_read) || {};
     const rec = recommendedIntent(data);
     const label = read.recommended_label || (rec && rec.label) || null;
     const lines = [label ? `Today's read: ${label}.` : "Here's a solid session for today."];
     if (whyProse && whyProse.trim()) { lines.push(''); lines.push(whyProse.trim()); }
+    return lines;
+  }
+
+  // Compose the Gemini "why" prose into the full suggested-workout note: the
+  // headline and the exercise list stay deterministic; only the reasoning is voiced.
+  function composeLlmPlanMessage(whyProse, data) {
+    const rec = recommendedIntent(data);
+    const lines = composeLlmPlanProseLines(whyProse, data);
     for (const line of suggestedExercisesBlock(rec)) lines.push(line);
     return lines.join('\n');
   }
@@ -407,15 +466,34 @@
     try {
       const res = await api('/api/plan/intent-recommendation');
       const data = res.data || {};
+      const rec = recommendedIntent(data) || {};
+      const exercises = rec.exercises || [];
       // Prefer Gemini's voiced "why"; fall back to the templated note on
       // no-key / slow / error so the tile always answers.
       const whyProse = await getLlmPlanMessage(data).catch(() => null);
       body.textContent = '';
-      const message = (whyProse && whyProse.trim())
-        ? composeLlmPlanMessage(whyProse, data)
-        : getSuggestedWorkoutMessage(data);
-      await typeOut(body, message);
-      setWorkoutPlaceholder(buildWorkoutPlaceholder((recommendedIntent(data) || {}).exercises));
+
+      if (exercises.length) {
+        // Type the "why" prose, then render the workout as a STRUCTURED block so
+        // exercise names are bold and RIR is never dropped from a set line.
+        const proseLines = (whyProse && whyProse.trim())
+          ? composeLlmPlanProseLines(whyProse, data)
+          : suggestedWorkoutProseLines(data);
+        await typeOut(body, proseLines.join('\n'));
+        appendWorkoutPlan(body, rec);
+        const closing = document.createElement('div');
+        closing.className = 'workout-plan-closing';
+        closing.textContent = "Log your first sets when you're ready and I'll react as you go.";
+        body.appendChild(closing);
+        softScroll(body);
+      } else {
+        // No structured plan (new user / no history) — type the all-text guidance.
+        const message = (whyProse && whyProse.trim())
+          ? composeLlmPlanMessage(whyProse, data)
+          : getSuggestedWorkoutMessage(data);
+        await typeOut(body, message);
+      }
+      setWorkoutPlaceholder(buildWorkoutPlaceholder(exercises));
     } catch {
       body.textContent = '';
       await typeOut(body, "I couldn't pull a suggestion just now — but start logging and I'll react as you go.");

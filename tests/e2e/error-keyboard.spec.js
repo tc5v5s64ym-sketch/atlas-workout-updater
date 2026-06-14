@@ -44,25 +44,33 @@ test('surface switcher and subnav expose ARIA tab semantics', async ({ page }) =
 
 test('keyboard: arrow keys move and activate the Coach/Progress surfaces', async ({ page }) => {
   await openApp(page);
+  // The segmented switcher is hidden on the coach surface (the hamburger is the
+  // entry point there); reach Progress first so the switcher is visible.
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
+  await expect(page.locator('.segmented')).toBeVisible();
+  await expect(page.locator('#subnav')).toBeVisible();
+
   const coach = page.locator('#surface-coach');
   const progress = page.locator('#surface-progress');
 
+  // Roving tabindex: only the selected (Progress) tab is in the tab order.
+  await expect(progress).toHaveAttribute('tabindex', '0');
+  await expect(coach).toHaveAttribute('tabindex', '-1');
+
+  // ArrowRight moves focus to Progress and keeps the Progress surface.
   await coach.focus();
   await page.keyboard.press('ArrowRight');
   await expect(progress).toBeFocused();
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
-  await expect(page.locator('#subnav')).toBeVisible();
-  await expect(progress).toHaveAttribute('tabindex', '0');
-  await expect(coach).toHaveAttribute('tabindex', '-1');
 
+  // ArrowLeft moves to and activates the Coach surface (which hides the switcher).
   await page.keyboard.press('ArrowLeft');
-  await expect(coach).toBeFocused();
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
 });
 
 test('keyboard: arrow keys move and activate the Progress subnav', async ({ page }) => {
   await openApp(page);
-  await page.locator('#surface-progress').click();
+  await page.locator('#coach-menu-btn').click(); // hamburger → Progress (segmented control is coach-hidden)
   await expect(page.locator('#tab-dashboard')).toBeVisible();
 
   const today = page.locator('#nav-today');

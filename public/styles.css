@@ -767,6 +767,29 @@ button.approve {
   color: var(--muted);
 }
 
+/* Structured suggested-workout block: bold exercise names, compact RIR-safe
+   set lines, one gap between exercises. No bullets — set lines are plain. */
+.workout-plan {
+  margin-top: var(--s3);
+  font-variant-numeric: tabular-nums;
+}
+.workout-plan-ex { margin-top: var(--s3); }
+.workout-plan-ex:first-child { margin-top: 0; }
+.workout-plan-name {
+  display: block;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+.workout-plan-set {
+  line-height: 1.5;
+  color: var(--ink);
+}
+.workout-plan-closing {
+  margin-top: var(--s3);
+  color: var(--muted);
+}
+
 /* Inside the thread the preview panel reads as Atlas's reply card */
 .coach-thread #preview-panel {
   margin-top: 0;
