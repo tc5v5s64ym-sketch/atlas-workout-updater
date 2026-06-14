@@ -158,8 +158,10 @@ function findFuzzyMatch(normalizedKey, catalogMap) {
 }
 
 function buildExerciseCatalogMap(rows) {
+  if (!Array.isArray(rows)) return new Map();
   if (!rows.length) return new Map();
 
+  if (!Array.isArray(rows[0])) return new Map();
   const header = rows[0].map(cell => String(cell || '').trim().toLowerCase());
   const originalVariantsIndex = header.findIndex(value => ['original_variants', 'original variants', 'originalvariant', 'original variant'].includes(value));
   const exerciseIndex = header.findIndex(value => ['exercise', 'exercise_name', 'exercise name'].includes(value));
@@ -175,7 +177,7 @@ function buildExerciseCatalogMap(rows) {
   const knownMuscleGroups = new Set(['chest', 'back', 'legs', 'shoulders', 'arms', 'core', 'cardio', 'full body', 'glutes']);
   for (let i = 1; i < rows.length; i += 1) {
     const row = rows[i];
-    if (!row || row.length === 0) continue;
+    if (!Array.isArray(row) || row.length === 0) continue;
 
     const exerciseName = exerciseIndex === -1 ? '' : String(row[exerciseIndex] || '').trim();
     const canonicalName = String(row[canonicalNameIndex] || exerciseName).trim();
@@ -210,6 +212,9 @@ function buildExerciseCatalogMap(rows) {
 }
 
 function enrichLogRow(rowObj, catalogMap) {
+  rowObj = rowObj && typeof rowObj === 'object' ? rowObj : {};
+  catalogMap = catalogMap instanceof Map ? catalogMap : new Map();
+
   const key = normalizeExerciseKey(rowObj.exercise);
   const providedLiftCode = String(rowObj.lift_code || rowObj.liftCode || '').trim();
 
@@ -299,6 +304,7 @@ function enrichLogRow(rowObj, catalogMap) {
 function closestExerciseMatches(input, catalogMap, limit = 5) {
   const normalizedInput = normalizeExerciseKey(input);
   if (!normalizedInput) return [];
+  if (!(catalogMap instanceof Map)) return [];
 
   const candidates = Array.from(catalogMap.entries()).map(([key, value]) => ({ key, value }));
   const scored = candidates.map(item => {
