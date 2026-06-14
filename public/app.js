@@ -228,6 +228,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'body') loadBodyTab();
     if (btn.dataset.tab === 'history') loadHistory();
     if (btn.dataset.tab === 'progress') loadProgressLiftList();
+    if (btn.dataset.tab === 'settings') loadPendingExercises();
   });
 });
 
@@ -3847,40 +3848,69 @@ document.getElementById('bw-approve-btn').addEventListener('click', async () => 
   }
 });
 
+// Trend-first body view: a big current weight + 30-day change + a line of the
+// last 90 days. Bodyweight direction isn't inherently good or bad (down is the
+// goal on a cut), so the delta stays a neutral readout — no green/red judgment.
+function renderBwGlance(glance, data, entries) {
+  if (!glance) return;
+  glance.innerHTML = '';
+  if (!entries.length) {
+    glance.appendChild(el('p', { class: 'muted', text: 'Log your weight to start a trend.' }));
+    return;
+  }
+  const last = entries[entries.length - 1];
+  const latest = (data.latest && data.latest.weight != null) ? Number(data.latest.weight) : Number(last.weight);
+  const latestDate = (data.latest && data.latest.date) || last.date;
+  const unit = data.unit ? ` ${data.unit}` : '';
+
+  // 30-day change: compare to the entry nearest 30 days before the latest.
+  const cutoff = Date.parse(latestDate) - 30 * 86400000;
+  let baseline = entries[0];
+  for (const e of entries) { if (Date.parse(e.date) <= cutoff) baseline = e; else break; }
+  const delta = latest - Number(baseline.weight);
+  const arrow = delta < 0 ? '▼' : (delta > 0 ? '▲' : '·');
+
+  glance.appendChild(el('div', { class: 'bw-now' }, [
+    el('div', { class: 'bw-w' }, [document.createTextNode(String(latest)), el('small', { text: unit })]),
+    el('div', { class: 'bw-delta' }, [
+      el('b', { text: `${arrow} ${Math.abs(delta).toFixed(1)}` }),
+      el('span', { text: 'LAST 30 DAYS' })
+    ])
+  ]));
+  glance.appendChild(el('div', { class: 'bw-chart' }, [
+    svgLineChart(entries.map(e => ({ x: e.date, y: Number(e.weight) })),
+      { color: '#E8772E', label: 'Bodyweight over time', height: 120 })
+  ]));
+}
+
 async function loadBwHistory() {
+  const glance = document.getElementById('bw-glance');
   const box = document.getElementById('bw-history');
+  const hint = document.getElementById('bw-history-hint');
   if (!getApiKey()) {
-    box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    if (glance) glance.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    if (box) box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
     return;
   }
   try {
     const res = await api('/api/bodyweight/history?days=90');
     const data = res.data || {};
-    box.innerHTML = '';
     const entries = data.entries || [];
-    if (!entries.length) {
-      box.appendChild(el('span', { class: 'muted', text: 'No bodyweight entries in the last 90 days.' }));
-      return;
+    renderBwGlance(glance, data, entries);
+    if (box) {
+      box.innerHTML = '';
+      if (!entries.length) {
+        box.appendChild(el('span', { class: 'muted', text: 'No bodyweight entries in the last 90 days.' }));
+      } else {
+        box.appendChild(renderTable(
+          ['Date', 'Weight', 'Notes'],
+          entries.slice().reverse().slice(0, 20).map(e => [e.date, e.weight, e.notes])
+        ));
+      }
     }
-    // Bodyweight direction isn't inherently good or bad (down is the goal on a
-    // cut), so the pill stays neutral — no green/red judgment colors.
-    const trendPill = el('span', { class: 'pill', text: `trend: ${data.trend}` });
-    const latest = data.latest;
-    const summary = el('p', {}, [
-      document.createTextNode(`Latest: ${latest?.weight ?? '—'}  ·  90-day avg: ${data.average ?? '—'}  `),
-      trendPill
-    ]);
-    box.appendChild(summary);
-    box.appendChild(svgLineChart(
-      entries.map(e => ({ x: e.date, y: e.weight })),
-      { color: '#16a34a', label: 'Bodyweight over time' }
-    ));
-    box.appendChild(renderTable(
-      ['Date', 'Weight', 'Notes'],
-      entries.slice().reverse().slice(0, 20).map(e => [e.date, e.weight, e.notes])
-    ));
+    if (hint) hint.textContent = entries.length ? `${entries.length} entries` : '';
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    if (glance) glance.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
   }
 }
 
@@ -3912,7 +3942,8 @@ async function loadPendingExercises() {
 }
 
 async function loadBodyTab() {
-  await Promise.all([loadBwHistory(), loadPendingExercises()]);
+  // Pending/unrecognised exercises moved to Settings → Data; Body is trend-first.
+  await loadBwHistory();
 }
 
 /* ===== Init ===== */
