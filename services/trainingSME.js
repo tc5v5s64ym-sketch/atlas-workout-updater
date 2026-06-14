@@ -25,6 +25,15 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Whole-word match for single tokens (so "power" does not match inside "powerbuilding"); multi-word
+// phrases stay as substring matches so suffix/plural forms still hit (e.g. "rest period"/"rest periods").
+function termMatchesQuery(term, q) {
+  const t = normalize(term);
+  if (!t) return false;
+  if (/\s/.test(t)) return q.includes(t);
+  return new RegExp(`\\b${escapeRegExp(t)}\\b`).test(q);
+}
+
 /**
  * Rank cards by relevance to a free-text query. Returns cards (most relevant first), score > 0 only.
  */
@@ -35,11 +44,11 @@ function findTrainingKnowledgeCards(query) {
   const scored = CARDS.map((card) => {
     let score = 0;
     for (const term of card.matchTerms || []) {
-      if (term && q.includes(normalize(term))) score += 2;
+      if (termMatchesQuery(term, q)) score += 2;
     }
     const tokens = new Set([...tokensFrom(card.id), ...tokensFrom(card.title)]);
     for (const tok of tokens) {
-      if (new RegExp(`\\b${escapeRegExp(tok)}`).test(q)) score += 1;
+      if (termMatchesQuery(tok, q)) score += 1;
     }
     return { card, score };
   }).filter((entry) => entry.score > 0);

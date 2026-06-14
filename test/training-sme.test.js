@@ -19,6 +19,13 @@ test('direct topics retrieve the right knowledge cards', () => {
   assert.equal(findTrainingKnowledgeCards('how should I structure my program split')[0].id, 'program_splits');
 });
 
+test('retrieval matches whole words — "powerbuilding" does not pull in power_training', () => {
+  const ids = findTrainingKnowledgeCards('compare strength vs powerbuilding').map((c) => c.id);
+  assert.ok(ids.includes('powerbuilding'));
+  assert.ok(ids.includes('strength_training'));
+  assert.ok(!ids.includes('power_training'));
+});
+
 test('strength vs hypertrophy comparison includes the major differences', () => {
   const res = buildTrainingSMEAnswer({ question: 'explain strength vs hypertrophy' });
   assert.equal(res.depth, 'compare_options');
