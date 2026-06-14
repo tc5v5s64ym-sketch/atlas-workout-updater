@@ -608,14 +608,15 @@
 
   // Freestyle: the user wants to log their own way. Hiding the home hero would
   // leave a blank screen (no greeting, no tiles, empty thread), so drop a short
-  // Atlas bubble to ground the conversation and seed an example placeholder
-  // before handing focus to the composer.
+  // Atlas bubble to ground the conversation and seed an example placeholder.
+  //
+  // We deliberately do NOT focus the composer here. Focusing pops the mobile
+  // soft keyboard, which on the position:fixed coach surface shoves the pinned
+  // composer up and compresses it — the box appears to shrink and move. The
+  // composer's shape, size, and position must stay put when Freestyle is
+  // tapped, so the lifter taps the box themselves when ready to type.
   async function startFreestyle() {
     hideHomeEmpty();
-    // Focus synchronously, inside the tap's user-activation window, so mobile
-    // browsers open the soft keyboard. Awaiting the typed bubble first would let
-    // that activation expire (typeOut reveals words on timers).
-    document.getElementById('workout-text')?.focus();
     setWorkoutPlaceholder('Bench 135 10/4, 225 5/2 x3');
     const handle = appendAtlasBubble();
     if (handle) {
