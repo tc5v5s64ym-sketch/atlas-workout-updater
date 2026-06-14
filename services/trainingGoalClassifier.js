@@ -29,6 +29,13 @@ const GOAL_PATTERNS = Object.freeze([
     terms: ['fat loss', 'lose weight', 'lean out', 'conditioning', 'work capacity', 'sweat', 'density', 'calorie burn', 'cutting'],
   },
   {
+    // Resistance-specific endurance phrases only. Bare "endurance"/"stamina" are handled by the
+    // cardio-aware guard below so running/cardio endurance is not misread as muscular endurance.
+    goal: 'muscular_endurance',
+    confidence: 0.8,
+    terms: ['muscular endurance', 'muscle endurance', 'high reps', 'high-rep', 'higher reps', 'endurance reps', 'rep endurance'],
+  },
+  {
     goal: 'mixed',
     confidence: 0.75,
     terms: ['powerbuilding', 'strength and size', 'strong and muscular', 'strength plus hypertrophy', 'mixed'],
@@ -71,6 +78,16 @@ function classifyTrainingGoalFromText(text, fallbackGoal = 'general_health') {
         matchedTerms,
       });
     }
+  }
+
+  // Ambiguous "endurance"/"stamina" map to muscular (resistance) endurance ONLY when the text
+  // carries a lifting/resistance signal and is not an obvious cardio/running endurance question.
+  const mentionsAmbiguousEndurance = /\b(endurance|stamina)\b/.test(normalizedText);
+  const hasResistanceSignal = /\b(reps?|sets?|lift(?:s|ing)?|weights?|dumbbells?|barbells?|kettlebells?|machines?|muscle|muscular|gym|press(?:es)?|curls?|squats?|bench(?:es)?|rows?|hypertrophy|resistance|high[-\s]?reps?)\b/.test(normalizedText);
+  const hasCardioOnlySignal = /\b(run(?:ning)?|jog(?:ging)?|cardio|marathon|5k|10k|cycling|biking|rowing|swim(?:ming)?|sprint(?:ing)?|treadmill|miles?)\b/.test(normalizedText);
+  if (mentionsAmbiguousEndurance && hasResistanceSignal && !hasCardioOnlySignal
+      && !matches.some((m) => m.goal === 'muscular_endurance')) {
+    matches.push({ goal: 'muscular_endurance', confidence: 0.82, matchedTerms: ['endurance_resistance_context'] });
   }
 
   if (matches.length === 0) {
