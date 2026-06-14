@@ -655,33 +655,36 @@ button.approve {
   gap: var(--s3);
   margin-bottom: var(--s4);
 }
-#thread-messages { display: flex; flex-direction: column; gap: var(--s2); }
+#thread-messages { display: flex; flex-direction: column; gap: var(--s4); }
 #thread-messages:empty { display: none; }
 
+/* Shared type settings only — bubble chrome lives in the variant classes */
 .chat-bubble {
-  max-width: 85%;
-  padding: 10px 14px;
-  border-radius: var(--r-lg);
   font-size: 0.95rem;
-  line-height: 1.4;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* User messages: compact bubble, right-aligned (unchanged) */
 .chat-bubble-user {
   align-self: flex-end;
+  max-width: 80%;
+  padding: 10px 14px;
   background: var(--accent);
   color: var(--accent-ink);
+  border-radius: var(--r-lg);
   border-bottom-right-radius: var(--r-sm);
 }
+
+/* Atlas messages: full-width flowing text, no bubble — ChatGPT style */
 .chat-bubble-atlas {
-  align-self: flex-start;
-  background: var(--card);
+  align-self: stretch;
   color: var(--ink);
-  border: 1px solid var(--border);
-  border-bottom-left-radius: var(--r-sm);
+  padding: 0;
 }
 .chat-bubble-atlas .atlas-reply-gate {
-  margin-top: var(--s1);
+  margin-top: var(--s2);
   font-size: 0.78rem;
   color: var(--muted);
 }
