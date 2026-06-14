@@ -1236,34 +1236,47 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       // the owner's non-compound movements; the stalls become a reset note.
       // Stalled lifts hold their load and chase reps (matching the "reset" note);
       // everything else progresses normally.
+      const topCodes = new Set(top.map(s => s.liftCode));
       const stalledWeightByCode = new Map(stalls.map(s => [s.liftCode, s.last_best_weight]));
-      const seen = new Set();
-      const session = allRecs
-        .filter(r => r.exercise_name && r.next_target && !isMainCompound(r.exercise_name))
-        .filter(r => { if (seen.has(r.liftCode)) return false; seen.add(r.liftCode); return true; })
-        .slice(0, 6)
-        .map(r => {
-          const held = stalledWeightByCode.has(r.liftCode);
-          return guardAccessoryReps({
-            exercise: r.exercise_name,
-            lift_code: r.liftCode,
-            target_weight: held ? stalledWeightByCode.get(r.liftCode) : r.next_target.weight,
-            target_reps: r.next_target.reps,
-            target_sets: r.next_target.sets,
-            reason: held ? 'Reset — hold the load, chase clean reps' : r.recommendation
-          });
+      const toExercise = r => {
+        const held = stalledWeightByCode.has(r.liftCode);
+        return guardAccessoryReps({
+          exercise: r.exercise_name,
+          lift_code: r.liftCode,
+          target_weight: held ? stalledWeightByCode.get(r.liftCode) : r.next_target.weight,
+          target_reps: r.next_target.reps,
+          target_sets: r.next_target.sets,
+          reason: held ? 'Reset — hold the load, chase clean reps' : r.recommendation
         });
+      };
+
+      const usable = allRecs.filter(r => r.exercise_name && r.next_target && !isMainCompound(r.exercise_name));
+      const seen = new Set();
+      const exercises = [];
+      // 1) The stalled accessories that triggered this always lead the session
+      //    (held load) — never crowded out by newer work.
+      for (const r of usable) {
+        if (topCodes.has(r.liftCode) && !seen.has(r.liftCode)) { seen.add(r.liftCode); exercises.push(toExercise(r)); }
+      }
+      for (const s of top) {                       // stalled lift with no recommendation → still reset it
+        if (seen.has(s.liftCode)) continue;
+        seen.add(s.liftCode);
+        exercises.push(guardAccessoryReps({
+          exercise: stallName(s.liftCode), lift_code: s.liftCode,
+          target_weight: s.last_best_weight, target_reps: 12, target_sets: 3,
+          reason: 'Reset — hold the load, chase clean reps'
+        }));
+      }
+      // 2) Fill the rest with the owner's RESTED, non-compound movements only —
+      //    keep patterns the readiness model just marked fatigued out of a recovery day.
+      for (const r of usable) {
+        if (exercises.length >= 6) break;
+        if (seen.has(r.liftCode) || !restedEnough(r.liftCode)) continue;
+        seen.add(r.liftCode);
+        exercises.push(toExercise(r));
+      }
 
       const resetList = stalledNames.join(', ');
-      const fallback = top.map(s => guardAccessoryReps({
-        exercise: stallName(s.liftCode),
-        lift_code: s.liftCode,
-        target_weight: Math.round(s.last_best_weight * 0.9),
-        target_reps: 12,
-        target_sets: 3,
-        reason: 'Reset — lighter load, chase clean reps'
-      }));
-      const exercises = session.length ? session : fallback;
 
       intents.push({
         id: 'deload_reset',
