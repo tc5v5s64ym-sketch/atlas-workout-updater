@@ -700,15 +700,18 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     confidence = anchored.confidence;
     effort_verdict = anchored.effort_verdict;
   } else if (isDeload) {
-    // Active deload day with no just-logged set: the only number on hand is the
-    // lifter's usual (heavy) historical load — the lighter deload weight isn't in
-    // the sheet yet, and inventing one would break the deterministic-numbers rule.
-    // So reference the usual weight and tell them to go lighter (never "hold" it),
-    // and never emit progression here. The in-workout path anchors on the lighter
-    // weight the lifter actually self-selected.
-    nextWeight = lastSet.weight;
+    // Active deload day with no just-logged set: reference the lifter's USUAL
+    // working weight and tell them to go lighter (never "hold" it), never progress.
+    // If a deload set already reached the sheet this block, lastSet is the lighter
+    // deload weight — using it would understate the "usual". So prefer the
+    // established pre-deload weight detectDeloadRecovery computes; fall back to
+    // lastSet only when no deload is detected (then lastSet IS the usual weight).
+    // Either way the number is the lifter's own history — nothing invented.
+    const recovery = detectDeloadRecovery(rows);
+    const usualWeight = recovery ? recovery.preDeloadWeight : lastSet.weight;
+    nextWeight = usualWeight;
     nextReps = lastSet.reps;
-    recommendation = `Today's a deload — take a lighter load than your usual ${lastSet.weight}, and stay well short of failure. Normal weight resumes next block.`;
+    recommendation = `Today's a deload — take a lighter load than your usual ${usualWeight}, and stay well short of failure. Normal weight resumes next block.`;
     reasoning = 'Deload session — back off from your normal working weight and bank clean, easy reps. Normal progression resumes after the deload.';
     confidence = 'medium';
   } else {
