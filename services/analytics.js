@@ -399,6 +399,28 @@ function roundLoad(weight, step = 5) {
   return Math.round(w / s) * s;
 }
 
+// The lifter's documented working weight for a lift, from a recommendation: the
+// top of their recent working sets, falling back to their best, then the next
+// target. Used to keep deload accessories anchored on what they actually lift.
+function recentWorkingWeight(rec) {
+  const sets = rec && Array.isArray(rec.last_working_sets) ? rec.last_working_sets : [];
+  const weights = sets.map(s => Number(s.weight)).filter(isPositiveFinite);
+  if (weights.length) return Math.max(...weights);
+  if (rec && isPositiveFinite(rec.best_weight)) return rec.best_weight;
+  const nt = rec && rec.next_target ? Number(rec.next_target.weight) : NaN;
+  return isPositiveFinite(nt) ? nt : null;
+}
+
+// Deload load for an accessory/filler on a deload day. NEVER its next_target
+// (that's a progression — a step UP). Anchor on the documented working weight,
+// drop ~10%, clamp so it can never exceed what the lifter actually lifts, and
+// snap to a real increment. Falls back to the next target only if no history.
+function deloadFillerWeight(rec) {
+  const working = recentWorkingWeight(rec);
+  if (!isPositiveFinite(working)) return rec && rec.next_target ? rec.next_target.weight : null;
+  return Math.min(roundLoad(working * 0.9), working);
+}
+
 // Effort read for a logged set: how the ACTUAL logged RIR compares to the target
 // RIR. Deterministic — the rule engine owns this verdict; the coaching LLM only
 // words it and must never derive its own read of how hard a set was.
@@ -1565,10 +1587,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         exercises.push(guardAccessoryReps({
           exercise: r.exercise_name,
           lift_code: r.liftCode,
-          target_weight: r.next_target.weight,
+          target_weight: deloadFillerWeight(r),
           target_reps: r.next_target.reps,
           target_sets: r.next_target.sets,
-          reason: 'Accessory volume — moderate effort while the mains deload'
+          reason: 'Accessory volume — ~10% off your usual, moderate effort while the mains deload'
         }));
       }
 

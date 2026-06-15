@@ -123,6 +123,47 @@ test('integration: a true deload rounds out to a fuller session with rested acce
   );
 });
 
+test('integration: a deload clamps EVERY lift to its documented working weight on real increments (PR 5)', () => {
+  const rows = [
+    ...flatStall('Back Squat', 'Quads', 'SQ01', 315, 5),
+    ...flatStall('Bench Press', 'Chest', 'BEN01', 225, 5),
+    // Rested, progressing accessories — their next_target would be a step UP, so
+    // before PR 5 they overshot (face pull 55 > 50 best, lat pulldown 180 > 170).
+    row('2026-06-01', 'FP-1', 'Face Pull', 'Rear Delts', 'FP01', 45, 15),
+    row('2026-06-04', 'FP-2', 'Face Pull', 'Rear Delts', 'FP01', 50, 15),
+    row('2026-06-01', 'LPD-1', 'Lat Pulldown', 'Back', 'LPD01', 160, 10),
+    row('2026-06-04', 'LPD-2', 'Lat Pulldown', 'Back', 'LPD01', 170, 10),
+    row('2026-06-01', 'DBC-1', 'Dumbbell Curl', 'Biceps', 'DBC01', 25, 12),
+    row('2026-06-04', 'DBC-2', 'Dumbbell Curl', 'Biceps', 'DBC01', 30, 12),
+  ];
+  const result = scoreIntents(rows, [], { today: TODAY });
+  const deload = result.intents.find(i => i.id === 'deload_reset');
+  assert.ok(deload && deload.label === 'Deload & Reset', 'a genuine deload should be present');
+
+  // Documented working weight = the heaviest the lifter has actually used per lift.
+  const workingByCode = {};
+  for (const r of rows) {
+    const code = r[5];
+    workingByCode[code] = Math.max(workingByCode[code] || 0, Number(r[7]));
+  }
+
+  for (const ex of deload.exercises) {
+    const working = workingByCode[ex.lift_code];
+    assert.ok(working, `${ex.exercise} should have working history`);
+    // Every prescribed lift — mains AND accessories — is deloaded: below the usual
+    // working weight, never above it, and on a real 5 lb increment.
+    assert.ok(ex.target_weight <= working, `${ex.exercise} ${ex.target_weight} must not exceed working ${working}`);
+    assert.ok(ex.target_weight < working, `${ex.exercise} ${ex.target_weight} must be deloaded below working ${working}`);
+    assert.equal(ex.target_weight % 5, 0, `${ex.exercise} ${ex.target_weight} must land on a real increment`);
+  }
+
+  // The exact repro lifts no longer step UP on a deload day.
+  const fp = deload.exercises.find(e => e.lift_code === 'FP01');
+  const lpd = deload.exercises.find(e => e.lift_code === 'LPD01');
+  if (fp) assert.ok(fp.target_weight <= 45, `face pull deload ${fp.target_weight} should be ~45, not a step up to 55`);
+  if (lpd) assert.ok(lpd.target_weight < 170, `lat pulldown deload ${lpd.target_weight} should be below the usual 170, not 180`);
+});
+
 test('integration: an accessory reset programs a fuller session, not just the stalled lifts', () => {
   const rows = [
     ...flatStall('Dumbbell Curl', 'Biceps', 'DBC01', 30, 12),
