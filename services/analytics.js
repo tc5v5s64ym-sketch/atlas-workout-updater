@@ -767,19 +767,18 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     confidence = anchored.confidence;
     effort_verdict = anchored.effort_verdict;
   } else if (isDeload) {
-    // Active deload day with no just-logged set: reference the lifter's USUAL
-    // working weight and tell them to go lighter (never "hold" it), never progress.
-    // If a deload set already reached the sheet this block, lastSet is the lighter
-    // deload weight — using it would understate the "usual". So prefer the
-    // established pre-deload weight detectDeloadRecovery computes; fall back to
-    // lastSet only when no deload is detected (then lastSet IS the usual weight).
-    // Either way the number is the lifter's own history — nothing invented.
+    // Active deload day with no just-logged set. Volume-first: HOLD the lifter's
+    // usual working weight and cut sets/effort — never tell them to go lighter (a
+    // weight cut), never progress. If a deload set already reached the sheet this
+    // block it is at the SAME held weight, so lastSet is already the working weight;
+    // detectDeloadRecovery still recovers the pre-deload weight for legacy/explicit
+    // cases. Either way the number is the lifter's own history — nothing invented.
     const recovery = detectDeloadRecovery(rows);
     const usualWeight = recovery ? recovery.preDeloadWeight : lastSet.weight;
     nextWeight = usualWeight;
     nextReps = lastSet.reps;
-    recommendation = `Today's a deload — take a lighter load than your usual ${usualWeight}, and stay well short of failure. Normal weight resumes next block.`;
-    reasoning = 'Deload session — back off from your normal working weight and bank clean, easy reps. Normal progression resumes after the deload.';
+    recommendation = `Today's a deload — hold your usual ${usualWeight}, cut the sets, and stay well short of failure (RIR 4–5). Normal volume resumes next block.`;
+    reasoning = 'Deload session — keep the weight near-normal, cut the volume, and bank clean reps well short of failure. Normal volume resumes after the deload.';
     confidence = 'medium';
   } else {
     // Bug 3: post-deload recovery — a deload is a one-off, so return to the

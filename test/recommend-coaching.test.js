@@ -265,31 +265,31 @@ test('deload via explicit options.deload flag behaves the same as intentId', () 
   assert.doesNotMatch(rec.recommendation, /chase|progress/i);
 });
 
-test('deload intent with NO just-logged set references the usual load and says go lighter — never holds the heavy weight, never progresses', () => {
-  // Without a just-logged set, the most recent set is the lifter's usual heavy
-  // load (the deload isn't in the sheet yet). The reaction must not "hold 225 —
-  // keep it light" (a contradiction) nor progress; it references the usual and
-  // says go lighter.
+test('deload intent with NO just-logged set holds the usual weight, cuts volume — never goes lighter, never progresses', () => {
+  // Volume-first deload: without a just-logged set, the reaction HOLDS the lifter's
+  // usual working weight and cuts the sets/effort. It must not tell them to go
+  // lighter (that's a weight cut) nor progress — and the next target holds the weight.
   const rows = [
     row({ date: '2026-06-03', session: 's1', weight: 225, reps: 8, rir: 2 }),
     row({ date: '2026-06-10', session: 's2', weight: 225, reps: 8, rir: 2 })
   ];
   const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
-  assert.match(rec.recommendation, /lighter|deload/i);
-  assert.doesNotMatch(rec.recommendation, /increase|progress|chase/i);
-  assert.doesNotMatch(rec.recommendation, /hold 225/i); // no "hold the heavy weight" contradiction
+  assert.match(rec.recommendation, /deload/i);
+  assert.match(rec.recommendation, /hold your usual 225/i);     // holds the working weight
+  assert.match(rec.recommendation, /cut the sets|short of failure/i); // the cut is volume/effort
+  assert.doesNotMatch(rec.recommendation, /lighter|increase|progress|chase/i);
+  assert.equal(rec.next_target.weight, 225);                    // held, not dropped
 });
 
-test('deload intent with NO just-logged set names the PRE-deload weight when a deload set is already in the sheet', () => {
-  // A deload set (180, ~10% light) already landed this block; the most recent set
-  // is therefore the deload weight, not the usual. The reaction must reference the
-  // established pre-deload working weight (200), not the deload weight (180) — so
-  // "take a lighter load than your usual 200", never "...than your usual 180".
+test('deload intent with NO just-logged set names the PRE-deload weight when a lighter (legacy) deload set is already in the sheet', () => {
+  // A lighter deload set (180) already landed this block under the old weight-cut
+  // scheme; the most recent set is therefore the deload weight, not the usual. The
+  // reaction must hold the established pre-deload working weight (200), not 180.
   const rows = [
     row({ date: '2026-05-20', session: 'd1', weight: 200, reps: 5, rir: 2 }),
     row({ date: '2026-05-27', session: 'd2', weight: 200, reps: 5, rir: 2 }),
     row({ date: '2026-06-03', session: 'd3', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-06-10', session: 'd4', weight: 180, reps: 5, rir: 4 }) // deload set already logged
+    row({ date: '2026-06-10', session: 'd4', weight: 180, reps: 5, rir: 4 }) // legacy lighter deload set
   ];
   const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
   assert.match(rec.recommendation, /your usual 200/);          // names the pre-deload weight
