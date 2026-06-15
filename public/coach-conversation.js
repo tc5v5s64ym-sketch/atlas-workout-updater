@@ -11,10 +11,10 @@
  *       atlas:preview-ready  { rows, liftCodes, effortOnly }   (after a preview)
  *     and mirrors #logger-status (the post-write card) onto the inline Save btn.
  *
- * Coaching voice seam: getCoachingMessage(facts) turns Atlas's deterministic
+ * Coaching voice seam: getInWorkoutNote(facts) turns Atlas's deterministic
  * *facts* into the coach's *voice* via /api/coach/message (Gemini), falling back
- * to a deterministic templated note whenever the LLM is unconfigured, slow, or
- * errors. The engine owns the numbers; the voice only words them.
+ * to a deterministic one-line reaction whenever the LLM is unconfigured, slow,
+ * or errors. The engine owns the numbers; the voice only words them.
  *
  * Reuses app.js globals (top-level fns): api, getApiKey, fetchReaction,
  * previewSetsForLift, normalizePlanExercise.
@@ -310,25 +310,6 @@
   function recommendedIntent(data) {
     const intents = (data && data.intents) || [];
     return intents.find(i => i.recommended) || intents[0] || null;
-  }
-
-  // Format one set as "{weight}lbs {reps}/{rir}", omitting "/{rir}" when null.
-  function formatSetLine(s) {
-    const weight = s.weight != null ? `${s.weight}lbs` : '?lbs';
-    const reps = s.reps != null ? `${s.reps}` : '?';
-    const rir = (s.rir != null && Number.isFinite(Number(s.rir))) ? `/${s.rir}` : '';
-    return `${weight} ${reps}${rir}`;
-  }
-
-  // Group consecutive identical set lines — e.g. three "225lbs 5/2" → "225lbs 5/2 x3".
-  function groupSets(sets) {
-    const groups = [];
-    for (const s of sets) {
-      const line = formatSetLine(s);
-      const last = groups[groups.length - 1];
-      if (last && last.line === line) { last.count += 1; } else { groups.push({ line, count: 1 }); }
-    }
-    return groups.map(g => g.count > 1 ? `${g.line} x${g.count}` : g.line);
   }
 
   // Format one suggested-workout set as "{weight}lbs {reps}/{rir}". RIR is NEVER
@@ -637,32 +618,14 @@
     }
   }
 
-  /* ===== Coaching voice — the swappable seam ===== */
+  /* ===== Coaching voice — the live seam ===== */
 
   // facts = {
   //   liftCode, exerciseName,
   //   todaySets: [{ weight, reps, rir }],   // what was just previewed
   //   rec,                                   // /api/recommend/next payload (or null)
   // }
-  //
-  // ── SEAM ──────────────────────────────────────────────────────────────────
-  // Atlas's engine produced the facts above (logged sets + the deterministic
-  // next-set recommendation). This function turns facts into the coach's voice.
-  //
-  // Primary path: POST the facts to /api/coach/message, which asks Gemini to
-  // phrase them. The engine still owns every number; the LLM only words them,
-  // and the endpoint never writes. If Gemini is unconfigured, slow, or errors,
-  // the endpoint returns message:null (or we time out / throw) and we fall back
-  // to the deterministic templated note — the conversation is never blocked.
-  //
-  // Contract: input = facts; output = a plain string (newlines + "* " bullets
-  // render as-is in the pre-wrap bubble).
   const COACH_LLM_TIMEOUT_MS = 9000;
-
-  async function getCoachingMessage(facts) {
-    const llm = await getLlmCoachingMessage(facts).catch(() => null);
-    return (llm && llm.trim()) ? llm : buildTemplatedCoaching(facts);
-  }
 
   // In-workout note: conversational prose only. The structured readback already
   // shows the sets and the .nextp card shows the prescription, so the templated
@@ -681,18 +644,6 @@
       body: JSON.stringify({ facts })
     }).then(res => (res && res.data && res.data.message) || null);
     return Promise.race([request, timeout]);
-  }
-
-  function buildTemplatedCoaching(facts) {
-    const { exerciseName, todaySets = [], rec } = facts;
-    const lines = [];
-    lines.push(coachOpener(todaySets, rec));
-    lines.push('');
-    lines.push(exerciseName);
-    for (const line of groupSets(todaySets)) lines.push(line);
-    const next = coachNext(rec);
-    if (next) { lines.push(''); lines.push(next); }
-    return lines.join('\n');
   }
 
   function coachOpener(todaySets, rec) {
@@ -717,11 +668,6 @@
     if (lastTop != null && topWeight === lastTop) return 'Solid — you matched your last top set. Clean reps bank the next jump.';
     if (lastTop == null) return "Logged. That sets your baseline — I'll track your progress from here.";
     return 'Logged. Steady work.';
-  }
-
-  function coachNext(rec) {
-    if (rec && rec.recommendation) return `Next: ${rec.recommendation}`;
-    return '';
   }
 
   /* ===== Event wiring (read-only narration of app.js's trust loop) ===== */
