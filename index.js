@@ -57,6 +57,7 @@ const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const coach = require('./services/coach');
 const trainingSME = require('./services/trainingSME');
+const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
@@ -1024,15 +1025,21 @@ app.post('/api/coach/chat', async (req, res) => {
 // routes a training question to structured knowledge cards. READ-ONLY (no Sheets, no
 // writes). Logging-shaped input returns depth "log_only" with answer:null so the chat
 // stays quiet and practical during logging. Body: { message: string }.
-app.post('/api/coach/ask', (req, res) => {
+app.post('/api/coach/ask', async (req, res) => {
   const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
   if (!message) {
     return standardError(req, res, 'message string is required', null, 400);
   }
   const result = trainingSME.buildTrainingSMEAnswer({ question: message });
+  // Optional Gemini polish: natural wording, numbers locked. Degrades to the deterministic
+  // card-grounded answer when Gemini is unconfigured, slow, or drifts a number.
+  let answer = result.answer;
+  if (answer) {
+    try { answer = await coachPolish.polishSmeAnswer(answer); } catch { answer = result.answer; }
+  }
   return standardSuccess(req, res, 'Training SME answer', {
     depth: result.depth,
-    answer: result.answer,
+    answer,
     cards: result.cards,
     confidenceLevel: result.confidenceLevel,
     source: 'training_sme'
@@ -1276,6 +1283,14 @@ app.get('/api/recommendation/preview', async (req, res) => {
       effortRows: allEffort,
       constraints: parseRecommendationConstraints(req.query)
     });
+    // Optional Gemini polish: natural wording, locked numbers enforced by the field-aware
+    // validator. Degrades to the deterministic templated explanation on any failure/drift.
+    let coachExplanation = rec.coachExplanation;
+    if (coachExplanation) {
+      try {
+        coachExplanation = await coachPolish.polishCoachExplanation(coachExplanation, rec.llmBrief && rec.llmBrief.lockedNumbers);
+      } catch { coachExplanation = rec.coachExplanation; }
+    }
     const payload = {
       intent: rec.intent,
       source: rec.source,
@@ -1283,7 +1298,7 @@ app.get('/api/recommendation/preview', async (req, res) => {
       reasonCodes: rec.reasonCodes,
       safetyFlags: rec.safetyFlags,
       llmBrief: rec.llmBrief,
-      coachExplanation: rec.coachExplanation
+      coachExplanation
     };
     if (rec.weightGuidance) payload.weightGuidance = rec.weightGuidance;
     return standardSuccess(req, res, 'Recommendation preview', payload);
