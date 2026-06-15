@@ -1,5 +1,5 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
-const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps } = require('./liftRole');
+const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps, recommendedTargetRir } = require('./liftRole');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -386,6 +386,121 @@ function isLowerBodyGroup(muscleGroup) {
   return /leg|quad|hamstring|glute|calf|lower body|hip/i.test(muscleGroup || '');
 }
 
+// Effort read for a logged set: how the ACTUAL logged RIR compares to the target
+// RIR. Deterministic — the rule engine owns this verdict; the coaching LLM only
+// words it and must never derive its own read of how hard a set was.
+//   failure   → RIR ≤ 0: at or near failure; acknowledge it and back off.
+//   easy      → RIR ≥ target + 2: well within reserve; room to add load/reps.
+//   hard      → 0 < RIR < target: a grinder, just shy of the target.
+//   on_target → RIR at (or one above) the target.
+// Returns null when no RIR was logged — there is nothing to read.
+function effortVerdict(rir, targetRir) {
+  if (rir == null || !Number.isFinite(Number(rir))) return null;
+  const r = Number(rir);
+  const t = Number.isFinite(Number(targetRir)) ? Number(targetRir) : 2;
+  if (r <= 0) {
+    return { level: 'failure', target_rir: t, headline: 'That set was at or near failure.' };
+  }
+  if (r - t >= 2) {
+    return { level: 'easy', target_rir: t, headline: `Well within reserve — RIR ${r} against a target of ${t}. Room to add load or reps.` };
+  }
+  if (r < t) {
+    return { level: 'hard', target_rir: t, headline: `A grinder — RIR ${r}, just shy of the ${t} target.` };
+  }
+  return { level: 'on_target', target_rir: t, headline: `On target — RIR ${r}.` };
+}
+
+// Bug-1 path: when the lifter has JUST logged a set, session-level save means it
+// is not in the sheet yet — so the recommendation must anchor on THAT set, not on
+// stale history. RIR ≥ target + 2 → room to progress; RIR ≤ 0 → hold (near
+// failure); between → repeat / add a rep. The advice can never contradict the
+// logged RIR (RIR 5 can never read as "near failure").
+function recommendFromJustLoggedSet(set, { targetRir, increaseAmount }) {
+  const weight = Number(set.weight);
+  const reps = Number(set.reps);
+  const rir = set && set.rir != null && Number.isFinite(Number(set.rir)) ? Number(set.rir) : null;
+  const verdict = effortVerdict(rir, targetRir);
+  let recommendation;
+  let reasoning;
+  let nextWeight = weight;
+  let nextReps = reps;
+  let confidence = 'medium';
+
+  if (rir == null) {
+    recommendation = `Repeat ${weight} × ${reps} and log your RIR so I can tune the next step.`;
+    reasoning = 'No RIR logged for that set — repeating the load until the effort is known.';
+    confidence = 'low';
+  } else if (rir <= 0) {
+    recommendation = `Hold ${weight} × ${reps} — that set was at or near failure.`;
+    reasoning = `RIR ${rir}: at or near failure. Keep the load and bank clean reps before adding weight.`;
+    confidence = 'high';
+  } else if (rir - targetRir >= 2) {
+    nextWeight = weight + increaseAmount;
+    recommendation = `Room to progress — move to ${nextWeight} × ${reps} next set.`;
+    reasoning = `RIR ${rir} is well above the ${targetRir} target — you left ${rir} in reserve, so a ${increaseAmount} lb step up is warranted.`;
+    confidence = 'high';
+  } else if (rir < targetRir) {
+    recommendation = `Hold ${weight} × ${reps} — you're right around target effort.`;
+    reasoning = `RIR ${rir} is just shy of the ${targetRir} target. Repeat the load and keep form tight.`;
+    confidence = 'medium';
+  } else {
+    nextReps = reps + 1;
+    recommendation = `On target — keep ${weight} and chase ${nextReps} reps next set.`;
+    reasoning = `RIR ${rir} matches the ${targetRir} target. Add a rep before adding load.`;
+    confidence = 'medium';
+  }
+
+  return { recommendation, reasoning, next_target: { weight: nextWeight, reps: nextReps, sets: 3 }, effort_verdict: verdict, confidence };
+}
+
+// Bug-3 path: is the most recent session a ONE-OFF deload? If so the next session
+// should return to the pre-deload working weight and resume normal progression —
+// not carry the lighter deload load forward as the new baseline.
+//
+// Two signals, note text primary:
+//   1. Explicit — any row in the last session has a note matching /deload/i.
+//      Definitive when present, but rarely persisted to the sheet today (the
+//      deload plan reason is not written into the row's notes column), so it is
+//      mostly a safety net until an explicit deload marker is persisted (future
+//      write-path PR).
+//   2. Heuristic (the workhorse) — the last session's top working weight is ≥7%
+//      below the established working weight (the heaviest of the prior few
+//      sessions), with at least two prior sessions to anchor "established".
+// Returns { isDeload, preDeloadWeight, lastTop, dropPct, signal } or null.
+function detectDeloadRecovery(rows) {
+  const order = [];
+  const topBySession = new Map();
+  const notesBySession = new Map();
+  for (const row of rows) {
+    const sid = row.session_id || '';
+    if (!topBySession.has(sid)) { order.push(sid); topBySession.set(sid, 0); notesBySession.set(sid, []); }
+    if (isPositiveFinite(row.weight)) topBySession.set(sid, Math.max(topBySession.get(sid), row.weight));
+    if (row.notes) notesBySession.get(sid).push(String(row.notes));
+  }
+  if (order.length < 3) return null; // need ≥2 prior sessions plus the last one
+
+  const lastSid = order[order.length - 1];
+  const lastTop = topBySession.get(lastSid) || 0;
+  if (!isPositiveFinite(lastTop)) return null;
+
+  const recentPriorTops = order.slice(0, -1).slice(-3).map(s => topBySession.get(s)).filter(isPositiveFinite);
+  if (recentPriorTops.length < 2) return null;
+  const established = Math.max(...recentPriorTops);
+  if (!isPositiveFinite(established) || lastTop >= established) return null;
+
+  const explicit = (notesBySession.get(lastSid) || []).some(n => /deload/i.test(n));
+  const dropPct = (established - lastTop) / established;
+  if (!explicit && dropPct < 0.07) return null;
+
+  return {
+    isDeload: true,
+    preDeloadWeight: established,
+    lastTop,
+    dropPct: Math.round(dropPct * 100),
+    signal: explicit ? 'note' : 'heuristic'
+  };
+}
+
 function recommendNextSet(logRows, liftCode, options = {}) {
   const { today = null } = options || {};
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
@@ -395,7 +510,7 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     .sort((a, b) => (a.date_clean || '').localeCompare(b.date_clean || '') || (a.session_id || '').localeCompare(b.session_id || '') || (Number(a.set_number) || 0) - (Number(b.set_number) || 0));
 
   if (!rows.length) {
-    return {
+    const base = {
       liftCode: normalizedCode,
       exercise_name: normalizedCode,
       last_working_sets: [],
@@ -403,8 +518,19 @@ function recommendNextSet(logRows, liftCode, options = {}) {
       reasoning: 'There is not enough history to make a recommendation.',
       next_target: null,
       sessions_analyzed: 0,
-      days_since_last_session: null
+      days_since_last_session: null,
+      target_rir: null,
+      effort_verdict: null
     };
+    // Even with no history, a just-logged set still gets an effort read + a next
+    // step anchored on that set (a brand-new lift logged in-workout).
+    const jl = options.justLoggedSet;
+    if (jl && isPositiveFinite(Number(jl.weight)) && isPositiveFinite(Number(jl.reps))) {
+      const targetRir = recommendedTargetRir({ exercise: normalizedCode }, options.intentId);
+      const anchored = recommendFromJustLoggedSet(jl, { targetRir, increaseAmount: 5 });
+      return { ...base, recommendation: anchored.recommendation, reasoning: anchored.reasoning, next_target: anchored.next_target, confidence: anchored.confidence, target_rir: targetRir, effort_verdict: anchored.effort_verdict };
+    }
+    return base;
   }
 
   const exercise_name = rows[rows.length - 1].canonical_exercise || rows[rows.length - 1].exercise || normalizedCode;
@@ -488,6 +614,35 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     reasoning = `${reasoning} Based on your last session, ${daysSinceLastSession} days ago.`;
   }
 
+  // Recommended effort target for this lift (role-aware). Drives the effort
+  // verdict below; options.intentId lets a caller pass today's training goal.
+  const targetRir = recommendedTargetRir({ exercise: exercise_name, muscle_group: muscleGroup }, options.intentId);
+  let effort_verdict = null;
+
+  const justLogged = options.justLoggedSet;
+  if (justLogged && isPositiveFinite(Number(justLogged.weight)) && isPositiveFinite(Number(justLogged.reps))) {
+    // Bug 1: in-workout, anchor the next step on the just-logged set — it is not
+    // in the sheet yet (session-level save), so history alone is stale.
+    const anchored = recommendFromJustLoggedSet(justLogged, { targetRir, increaseAmount });
+    recommendation = anchored.recommendation;
+    reasoning = anchored.reasoning;
+    nextWeight = anchored.next_target.weight;
+    nextReps = anchored.next_target.reps;
+    confidence = anchored.confidence;
+    effort_verdict = anchored.effort_verdict;
+  } else {
+    // Bug 3: post-deload recovery — a deload is a one-off, so return to the
+    // pre-deload working weight and resume normal progression next session.
+    const deload = detectDeloadRecovery(rows);
+    if (deload) {
+      nextWeight = deload.preDeloadWeight;
+      nextReps = lastSet.reps;
+      recommendation = `That's your deload done — back to ${nextWeight} × ${nextReps} next session.`;
+      reasoning = `Last session was a deload (${deload.lastTop} lb, ~${deload.dropPct}% lighter${deload.signal === 'note' ? ', noted' : ''}). A deload is a one-off — return to your working weight and resume normal progression.`;
+      confidence = 'medium';
+    }
+  }
+
   const allWeights = rows.map(r => r.weight).filter(w => w > 0);
   // Use the first session's best weight (not first set) so warm-up sets on day
   // one don't inflate the progress % badge (e.g. 45 lb warm-up → 400% is wrong).
@@ -510,7 +665,9 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     confidence,
     days_since_last_session: daysSinceLastSession,
     first_weight,
-    best_weight
+    best_weight,
+    target_rir: targetRir,
+    effort_verdict
   };
 }
 
@@ -1737,6 +1894,7 @@ module.exports = {
   searchSessions,
   detectRecentPrs,
   recommendNextSet,
+  effortVerdict,
   buildBodyweightHistory,
   previewTestRows,
   detectStalls,
