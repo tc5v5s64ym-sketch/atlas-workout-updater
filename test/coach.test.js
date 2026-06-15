@@ -162,6 +162,20 @@ test('plan system prompt carries its guardrails', () => {
   assert.match(prompt, /no markdown/i, 'plain text only');
 });
 
+test('plan system prompt reads as a verdict, keeps a spine, and points forward', () => {
+  const prompt = buildPlanSystemPrompt();
+  // Pre-session note still takes a position — the readiness/focus call is the verdict.
+  assert.match(prompt, /POSITION|verdict/i, 'must take a position, not just describe');
+  // Spine: name a real gap (a fatigued pattern, elevated load) rather than only cheering.
+  assert.match(prompt, /spine|name it honestly/i, 'must call out a gap honestly');
+  // Cite only numbers present; drop the beat instead of fabricating — the IRON RULE.
+  assert.match(prompt, /drop that beat/i, 'a missing number is dropped, not invented');
+  assert.match(prompt, /only if it is present|only one concrete|at most one concrete/i, 'grounds in a real number only when present');
+  // Forward-looking close about the arc, not a prescription.
+  assert.match(prompt, /forward-looking/i, 'must end on a forward-looking line');
+  assert.match(prompt, /NOT a prescription|not a prescription/i, 'forward line is the arc, not a rep/weight target');
+});
+
 test('sanitizePlanFacts whitelists reasons, readiness and numbers', () => {
   const clean = sanitizePlanFacts({
     label: 'Recovery / Pump',
