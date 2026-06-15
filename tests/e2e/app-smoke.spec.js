@@ -1030,3 +1030,29 @@ test('PR2: six typed lifts with RIR all survive the end-of-session compile; effo
   expect(capture.writeRequests).toHaveLength(1);
   expect(capture.writeRequests[0].log_rows).toHaveLength(18);
 });
+
+test('PR7: a single logged set renders exactly one readback tile and one Next card — no duplicated plain-text block', async ({ page }) => {
+  await openApp(page);
+
+  await logSet(page);
+
+  // Exactly one readback tile (the structured in-workout card).
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(1);
+
+  // Exactly one Next prescription card — no second restatement block.
+  await expect(page.locator('#thread-messages .nextp')).toHaveCount(1);
+
+  // The thread must NOT contain a plain-text duplicate of the exercise name
+  // outside of a structured card (the legacy renderer produced a bare
+  // "Bench Press / 225lbs 5/2 x3 / Next: …" block as a second text node).
+  const bubbles = page.locator('#thread-messages .chat-bubble-atlas');
+  const count = await bubbles.count();
+  for (let i = 0; i < count; i++) {
+    const bubble = bubbles.nth(i);
+    // Skip the structured readback itself — we're hunting for a duplicate bare-text copy.
+    const isReadback = await bubble.locator('.readback').count();
+    if (isReadback > 0) continue;
+    // Any Atlas prose bubble should NOT restate the exercise line in legacy format.
+    await expect(bubble).not.toContainText('Bench Press\n225lbs');
+  }
+});

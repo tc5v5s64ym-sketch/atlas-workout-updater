@@ -3,7 +3,7 @@
  * Atlas's engine produces the *facts* (what was logged, the last working sets,
  * the deterministic next-set recommendation). This service turns those facts
  * into the coach's *voice* via Gemini 2.5 Flash-Lite. It is the server side of
- * the frontend's getCoachingMessage() seam.
+ * the frontend's getInWorkoutNote() seam.
  *
  * Hard rules (enforced by the prompt + by only ever forwarding whitelisted
  * fields): the model phrases the numbers, it never invents them, and it never
