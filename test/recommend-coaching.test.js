@@ -119,6 +119,95 @@ test('recommendNextSet: steady progression is NOT mistaken for a deload', () => 
   assert.doesNotMatch(rec.recommendation, /deload/i);
 });
 
+// ── PR 3b — in-session deload-aware reactions ─────────────────────────────────
+//
+// Gap (was a characterization test, now flipped to the fix): with a deload intent
+// active (intentId 'deload_reset', forwarded from the active plan context), the
+// engine must NOT coach progression or chasing reps — it holds the lighter load
+// and stays short of failure. The numbers stay deterministic; only the wording
+// flips. The same input on a NON-deload day must still progress (guard below).
+
+test('deload intent: an on-target deload set holds the load and never chases reps', () => {
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 5 }),
+    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 5 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 5 }, intentId: 'deload_reset'
+  });
+  assert.match(rec.recommendation, /hold|deload/i);
+  assert.doesNotMatch(rec.recommendation, /chase|progress/i);
+  assert.equal(rec.next_target.weight, 135); // held, not chased up
+  assert.equal(rec.next_target.reps, 8);     // no extra rep
+});
+
+test('deload intent: a high-RIR deload set still holds — never "move to" a heavier load', () => {
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 5 }),
+    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 5 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 7 }, intentId: 'deload_reset'
+  });
+  assert.doesNotMatch(rec.recommendation, /progress|move to/i);
+  assert.match(rec.recommendation, /deload|hold/i);
+  assert.equal(rec.next_target.weight, 135); // no +5 bump on a deload
+});
+
+test('deload intent: a failure set on a deload says back off, never progress', () => {
+  const rows = [row({ date: '2026-06-10', session: 's1', weight: 135, reps: 8, rir: 5 })];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 0 }, intentId: 'deload_reset'
+  });
+  assert.match(rec.recommendation, /ease off|back off|deload/i);
+  assert.doesNotMatch(rec.recommendation, /progress|chase/i);
+  assert.equal(rec.next_target.weight, 135); // no bump
+});
+
+test('deload via explicit options.deload flag behaves the same as intentId', () => {
+  const rows = [row({ date: '2026-06-10', session: 's1', weight: 135, reps: 8, rir: 5 })];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 5 }, deload: true
+  });
+  assert.match(rec.recommendation, /hold|deload/i);
+  assert.doesNotMatch(rec.recommendation, /chase|progress/i);
+});
+
+test('deload intent with NO just-logged set references the usual load and says go lighter — never holds the heavy weight, never progresses', () => {
+  // Without a just-logged set, the most recent set is the lifter's usual heavy
+  // load (the deload isn't in the sheet yet). The reaction must not "hold 225 —
+  // keep it light" (a contradiction) nor progress; it references the usual and
+  // says go lighter.
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 225, reps: 8, rir: 2 }),
+    row({ date: '2026-06-10', session: 's2', weight: 225, reps: 8, rir: 2 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
+  assert.match(rec.recommendation, /lighter|deload/i);
+  assert.doesNotMatch(rec.recommendation, /increase|progress|chase/i);
+  assert.doesNotMatch(rec.recommendation, /hold 225/i); // no "hold the heavy weight" contradiction
+});
+
+test('NON-deload regression: the same on-target set still chases reps (deload gating is isolated)', () => {
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 3 }),
+    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 3 })
+  ];
+  // No intentId → normal day. Default target RIR 3, just-logged RIR 3 → on target
+  // → chase reps. The identical set with intentId 'deload_reset' holds instead.
+  const normal = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 3 }
+  });
+  assert.match(normal.recommendation, /chase|9 reps/i);
+  assert.doesNotMatch(normal.recommendation, /deload/i);
+
+  const deload = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 3 }, intentId: 'deload_reset'
+  });
+  assert.doesNotMatch(deload.recommendation, /chase|progress/i);
+  assert.match(deload.recommendation, /hold|deload/i);
+});
+
 // ── Shape + backward compatibility ────────────────────────────────────────────
 
 test('recommendNextSet: attaches a deterministic target_rir', () => {
