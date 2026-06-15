@@ -535,10 +535,15 @@
     if (!reduceMotion) {
       let hintIndex = 0;
       let hintPaused = false;
+      let sessionActive = false;
       composerTextarea.addEventListener('focus', () => { hintPaused = true; });
       composerTextarea.addEventListener('blur', () => { hintPaused = false; });
+      // Once logging begins, stop cycling generic home hints so coach-conversation.js
+      // can own the placeholder (pointing at the next exercise). Pre-session rotation
+      // is unaffected — sessionActive starts false.
+      document.addEventListener('atlas:set-logged', () => { sessionActive = true; });
       setInterval(() => {
-        if (hintPaused || composerTextarea.value) return;
+        if (hintPaused || composerTextarea.value || sessionActive) return;
         hintIndex = (hintIndex + 1) % PLACEHOLDER_HINTS.length;
         composerTextarea.placeholder = PLACEHOLDER_HINTS[hintIndex];
       }, 4500);
