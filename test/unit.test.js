@@ -637,7 +637,8 @@ test('conversational logger calls backend parser before local parser fallback', 
   assert.match(appSource, /api\('\/api\/parse-workout-text'/);
   assert.match(appSource, /test_mode: true/);
   assert.ok(rowsFunction.indexOf('parseWorkoutTextWithBackend(workoutText)') < rowsFunction.indexOf('parseWorkoutText(workoutText)'));
-  assert.match(rowsFunction, /Backend parser unavailable - using local parser fallback/);
+  assert.match(rowsFunction, /console\.warn.*parse-workout-text unavailable/);
+  assert.doesNotMatch(rowsFunction, /setStatus.*Backend parser unavailable/);
 });
 
 test('conversational logger converts backend parser output to editable rows', () => {
@@ -814,7 +815,7 @@ test('conversational logger shows parser source without changing save gating', (
 
   assert.match(appSource, /let lastParserStatus = null/);
   assert.match(statusFunction, /Parsed by backend parser/);
-  assert.match(statusFunction, /Backend parser unavailable - local parser fallback used/);
+  assert.match(statusFunction, /Parsed locally/);
   assert.match(appSource, /lastParserStatus = \{ source: 'backend' \}/);
   assert.match(appSource, /lastParserStatus = \{ source: 'local' \}/);
   assert.match(appSource, /const parseStatus = parserStatusNode\(lastParserStatus\)/);
@@ -833,7 +834,8 @@ test('backend down fallback parity and gating', () => {
   assert.equal(local.intent, 'log_sets');
   assert.equal(local.canonical_name, 'Bench Press');
   assert.deepEqual(compactParsedSets(local), [[225, 5, 2]]);
-  assert.match(fallbackFunction, /Backend parser unavailable - using local parser fallback/);
+  assert.match(fallbackFunction, /console\.warn.*parse-workout-text unavailable/);
+  assert.doesNotMatch(fallbackFunction, /setStatus.*Backend parser unavailable/);
   assert.match(fallbackFunction, /lastParserStatus = \{ source: 'local' \}/);
   assert.doesNotMatch(fallbackFunction, /pendingWrite\s*=/);
   assert.match(appSource, /if \(!hasLogWorkoutNoWriteProof\(result\)\)/);
@@ -3515,18 +3517,16 @@ test('screenshot: chat.js drops the attachment bubble on file change, not on sub
   assert.doesNotMatch(submitBlock, /effort-mode/, 'submit handler must not re-derive the screenshot bubble');
 });
 
-test('screenshot: Atlas replies in-thread with parsed effort and a "nothing saved" gate', () => {
+test('screenshot/effort: parsed effort flows into the single review card (no separate save panel)', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(app, /function addAtlasEffortReply\(/, 'effort reply narrator must exist');
-  const start = app.indexOf('function addAtlasEffortReply(');
-  const end = app.indexOf('\nasync function handleUndoLastWrite', start);
-  const fn = app.slice(start, end > start ? end : start + 3500);
-  assert.match(fn, /thread-messages/, 'reply must land in the chat thread');
-  assert.match(fn, /chat-bubble-atlas/, 'reply must read as an Atlas bubble');
-  assert.match(fn, /Nothing saved yet/, 'reply must state nothing is written yet');
-  assert.match(fn, /peak HR not visible in screenshot/, 'reply must surface a missing peak HR plainly');
-  // It must be called from the screenshot preview path.
-  assert.match(app, /renderCompleteWorkoutPreview\(result\);\s*\n\s*addAtlasEffortReply\(result\);/, 'screenshot path must narrate the reply');
+  const coach = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  // The legacy second save surface (effort-reply card with its own Save) is gone.
+  assert.doesNotMatch(app, /function addAtlasEffortReply\(/, 'the legacy effort-reply save card must be removed');
+  // The screenshot/effort preview forwards the watch metrics onto the review card.
+  assert.match(app, /emitCoachPreview\(data\.rows_to_write, completeLiftCodes, effortOnly, data\.parsed_effort/, 'effort preview must forward parsed_effort to the review card');
+  // The single review card renders the Apple Watch metrics grid and receives the effort.
+  assert.match(coach, /function buildEffortGrid\(/, 'review card must render the Apple Watch metrics grid');
+  assert.match(coach, /buildReviewCard\(rows, liftCodes, effortOnly, effort\)/, 'review card must receive the effort');
 });
 
 test('screenshot: missing peak HR renders plainly in the preview table, not blank', () => {
@@ -3536,13 +3536,13 @@ test('screenshot: missing peak HR renders plainly in the preview table, not blan
 
 test('screenshot: the dry-run + approval gate is unchanged', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const coach = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // Preview still asserts no-write proof before allowing approval.
   assert.match(app, /hasCompleteWorkoutNoWriteProof\(result\)/, 'screenshot preview must still prove no-write');
-  // The narrator is read-only — it must not call any write endpoint.
-  const effortStart = app.indexOf('function addAtlasEffortReply(');
-  const effortEnd = app.indexOf('\nasync function handleUndoLastWrite', effortStart);
-  const fn = app.slice(effortStart, effortEnd > effortStart ? effortEnd : effortStart + 3500);
-  assert.doesNotMatch(fn, /api\(|fetch\(|complete-workout|log-workout/, 'narrator must not write');
+  // The effort metrics display in the review card is read-only — no write endpoint.
+  const start = coach.indexOf('function buildEffortGrid(');
+  const fn = coach.slice(start, start + 800);
+  assert.doesNotMatch(fn, /api\(|fetch\(|complete-workout|log-workout/, 'effort metrics display must not write');
 });
 
 test('screenshot: styles define the Atlas reply bubble', () => {

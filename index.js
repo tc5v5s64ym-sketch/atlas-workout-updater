@@ -1687,10 +1687,13 @@ app.get('/api/debug/exercise-match', async (req, res) => {
 });
 
 app.post('/api/parse-workout-text', (req, res) => {
+  const t0 = Date.now();
   try {
     const responseBody = buildWorkoutTextParseDryRunResponse(req.body);
+    console.log(`[parse-workout-text] ok ${Date.now() - t0}ms`);
     return standardSuccess(req, res, 'parse-workout-text processed', responseBody, 200);
   } catch (error) {
+    console.error(`[parse-workout-text] error ${Date.now() - t0}ms: ${error.message}`);
     return standardError(req, res, error.message, null, 400);
   }
 });
