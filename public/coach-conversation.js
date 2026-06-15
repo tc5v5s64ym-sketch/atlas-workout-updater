@@ -745,9 +745,12 @@
       bubble.appendChild(buildNextPrescription(rec));
     }
 
-    // Next-exercise handoff: append a short line pointing at exercise N+1
-    // in the plan. The engine owns the ordering — we only word it.
-    const nextEx = await getNextExerciseInPlan(primary.exercise);
+    // Next-exercise handoff: append a short line pointing at the next exercise
+    // in the plan. The engine owns the ordering — we only word it. Anchor on the
+    // LAST logged exercise so that when several lifts are logged in one input the
+    // handoff advances past everything just logged, not just past the first.
+    const lastLogged = exercises[exercises.length - 1];
+    const nextEx = await getNextExerciseInPlan(lastLogged.exercise);
     if (nextEx) {
       const handoff = document.createElement('div');
       handoff.className = 'next-exercise-handoff';
