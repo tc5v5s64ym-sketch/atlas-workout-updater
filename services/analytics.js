@@ -666,12 +666,16 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     confidence = anchored.confidence;
     effort_verdict = anchored.effort_verdict;
   } else if (isDeload) {
-    // Active deload day with no just-logged set: hold the reduced load and never
-    // emit progression. Mirrors the just-logged deload branch above.
+    // Active deload day with no just-logged set: the only number on hand is the
+    // lifter's usual (heavy) historical load — the lighter deload weight isn't in
+    // the sheet yet, and inventing one would break the deterministic-numbers rule.
+    // So reference the usual weight and tell them to go lighter (never "hold" it),
+    // and never emit progression here. The in-workout path anchors on the lighter
+    // weight the lifter actually self-selected.
     nextWeight = lastSet.weight;
     nextReps = lastSet.reps;
-    recommendation = `Hold ${nextWeight} × ${nextReps} — this is a deload. Keep it light and short of failure; back to your normal working weight next block.`;
-    reasoning = 'Deload session — hold the reduced load and bank clean, easy reps. Normal progression resumes after the deload.';
+    recommendation = `Today's a deload — take a lighter load than your usual ${lastSet.weight}, and stay well short of failure. Normal weight resumes next block.`;
+    reasoning = 'Deload session — back off from your normal working weight and bank clean, easy reps. Normal progression resumes after the deload.';
     confidence = 'medium';
   } else {
     // Bug 3: post-deload recovery — a deload is a one-off, so return to the

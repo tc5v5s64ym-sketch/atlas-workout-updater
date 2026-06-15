@@ -173,6 +173,21 @@ test('deload via explicit options.deload flag behaves the same as intentId', () 
   assert.doesNotMatch(rec.recommendation, /chase|progress/i);
 });
 
+test('deload intent with NO just-logged set references the usual load and says go lighter — never holds the heavy weight, never progresses', () => {
+  // Without a just-logged set, the most recent set is the lifter's usual heavy
+  // load (the deload isn't in the sheet yet). The reaction must not "hold 225 —
+  // keep it light" (a contradiction) nor progress; it references the usual and
+  // says go lighter.
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 225, reps: 8, rir: 2 }),
+    row({ date: '2026-06-10', session: 's2', weight: 225, reps: 8, rir: 2 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
+  assert.match(rec.recommendation, /lighter|deload/i);
+  assert.doesNotMatch(rec.recommendation, /increase|progress|chase/i);
+  assert.doesNotMatch(rec.recommendation, /hold 225/i); // no "hold the heavy weight" contradiction
+});
+
 test('NON-deload regression: the same on-target set still chases reps (deload gating is isolated)', () => {
   const rows = [
     row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 3 }),
