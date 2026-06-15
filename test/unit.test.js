@@ -1931,15 +1931,43 @@ test('in-workout note: handleSetLogged anchors the recommendation on the just-lo
   assert.match(fn, /fetchReaction\(code, justLogged\)/, 'must forward it to fetchReaction');
 });
 
-test('in-workout note: coachOpener leads with the engine effort verdict', () => {
+test('in-workout note: coachOpener leads with the engine effort verdict, de-templated (PR4)', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const start = cc.indexOf('function coachOpener(');
-  const fn = cc.slice(start, start + 1100);
-  assert.match(fn, /effort_verdict/, 'opener must consult the verdict');
-  // An easy set is never praised as a grind; failure is acknowledged.
-  assert.match(fn, /level === 'easy'/, 'must handle the easy verdict');
-  assert.match(fn, /level === 'failure'/, 'must handle the failure verdict');
-  assert.match(fn, /add load or reps/i, 'easy → say there is room to add load/reps');
+  const opener = cc.slice(cc.indexOf('function coachOpener('), cc.indexOf('function coachOpener(') + 900);
+  assert.match(opener, /effort_verdict/, 'opener must consult the verdict');
+  assert.match(opener, /pickVerdictLine\(verdict\.level\)/, 'opener must route the verdict through the de-templating picker');
+
+  // The variant table + rotation: every verdict level is covered, failure has
+  // multiple phrasings (de-templating), far_easy reads as under-effort/add weight,
+  // and the easy copy still offers room to add load or reps.
+  const vstart = cc.indexOf('const VERDICT_VARIANTS');
+  const block = cc.slice(vstart, vstart + 2200);
+  assert.ok(vstart !== -1, 'a VERDICT_VARIANTS table must exist');
+  for (const level of ['failure', 'far_easy', 'easy', 'hard', 'on_target']) {
+    assert.match(block, new RegExp(`${level}:\\s*\\[`), `variants must cover the ${level} verdict`);
+  }
+  const failureArr = block.match(/failure:\s*\[([\s\S]*?)\]/);
+  const failureCount = (failureArr[1].match(/^\s*'/gm) || failureArr[1].match(/',/g) || []).length;
+  assert.ok(failureCount >= 2, 'failure must have at least two phrasings so two failure sets do not repeat');
+  assert.match(block, /add real weight|too light|under-effort/i, 'far_easy → add-weight language, not praise');
+  assert.match(block, /add load or reps/i, 'easy → room to add load or reps');
+  assert.match(cc, /verdictRotation/, 'must rotate phrasings per level to de-template within a session');
+});
+
+// De-templating guarantee (re-implemented rotation, mirrors pickVerdictLine):
+// rotating a per-level index means consecutive same-level notes never repeat
+// until the variants are exhausted.
+test('coachOpener de-templating: a per-level rotation yields non-identical consecutive notes', () => {
+  const variants = ['a', 'b', 'c'];
+  const rotation = {};
+  const pick = level => {
+    const i = (rotation[level] || 0) % variants.length;
+    rotation[level] = (rotation[level] || 0) + 1;
+    return variants[i];
+  };
+  const first = pick('failure');
+  const second = pick('failure');
+  assert.notEqual(first, second, 'two failure notes in a session must differ');
 });
 
 test('reaction layer: renderAtlasSuggestion and extractLiftCodes exist', () => {

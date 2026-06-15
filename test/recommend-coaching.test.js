@@ -18,10 +18,24 @@ function row({ date, session, weight, reps, rir, notes = '', code = 'BENCH01', n
 
 // ── effortVerdict — the effort read from logged RIR vs target (Bug 2) ──────────
 
-test('effortVerdict: RIR well above target reads as easy — room to add load', () => {
-  const v = effortVerdict(8, 2);
+test('effortVerdict: RIR far above target reads as far_easy — under-effort, add weight', () => {
+  const v = effortVerdict(8, 2);   // 6 in reserve above a target of 2 — way too light
+  assert.equal(v.level, 'far_easy');
+  assert.match(v.headline, /too light|under-effort|add real weight/i);
+  assert.doesNotMatch(v.headline, /within target|on target/i);
+});
+
+test('effortVerdict: RIR moderately above target stays easy — room to add', () => {
+  const v = effortVerdict(4, 2);   // 2 in reserve — within target, a little room
   assert.equal(v.level, 'easy');
   assert.match(v.headline, /reserve|add load/i);
+});
+
+test('effortVerdict: the far_easy boundary sits at target + 5', () => {
+  assert.equal(effortVerdict(6, 2).level, 'easy');      // 4 over → still easy
+  assert.equal(effortVerdict(7, 2).level, 'far_easy');  // 5 over → far too easy
+  // The shrugs repro: RIR 10 against a RIR-4 target must read as far too light.
+  assert.equal(effortVerdict(10, 4).level, 'far_easy');
 });
 
 test('effortVerdict: RIR 0 is acknowledged as failure', () => {

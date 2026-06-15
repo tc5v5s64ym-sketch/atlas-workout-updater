@@ -101,6 +101,8 @@ test('coach system prompt binds the opener to the effort verdict and grounds his
   assert.match(prompt, /effort_verdict/, 'must reference the verdict the engine provides');
   assert.match(prompt, /MUST agree with it/i, 'opener must not contradict the verdict');
   assert.match(prompt, /do NOT praise it as a grind|within reserve/i, 'an easy set must not be praised as hard');
+  assert.match(prompt, /far_easy/, 'the prompt must instruct the model on the far-too-easy verdict so the LLM path stays in sync with the engine');
+  assert.match(prompt, /add real weight/i, 'far_easy guidance must say to add real weight, not just "room to add"');
   assert.match(prompt, /first_weight or best_weight/, 'may ground progress in one real history number');
   assert.match(prompt, /Never invent a past number/i);
 });

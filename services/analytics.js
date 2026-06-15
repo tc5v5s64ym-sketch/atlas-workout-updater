@@ -403,7 +403,9 @@ function roundLoad(weight, step = 5) {
 // RIR. Deterministic — the rule engine owns this verdict; the coaching LLM only
 // words it and must never derive its own read of how hard a set was.
 //   failure   → RIR ≤ 0: at or near failure; acknowledge it and back off.
-//   easy      → RIR ≥ target + 2: well within reserve; room to add load/reps.
+//   far_easy  → RIR ≥ target + 5: way under the target — not "on target with room",
+//               it's under-effort; the read is "add real weight", not "nice work".
+//   easy      → target + 2 ≤ RIR < target + 5: within reserve; room to add a bit.
 //   hard      → 0 < RIR < target: a grinder, just shy of the target.
 //   on_target → RIR at (or one above) the target.
 // Returns null when no RIR was logged — there is nothing to read.
@@ -413,6 +415,9 @@ function effortVerdict(rir, targetRir) {
   const t = Number.isFinite(Number(targetRir)) ? Number(targetRir) : 2;
   if (r <= 0) {
     return { level: 'failure', target_rir: t, headline: 'That set was at or near failure.' };
+  }
+  if (r - t >= 5) {
+    return { level: 'far_easy', target_rir: t, headline: `Far too light — RIR ${r} against a target of ${t}, ${r - t} more in reserve than the goal. That's under-effort; add real weight next time.` };
   }
   if (r - t >= 2) {
     return { level: 'easy', target_rir: t, headline: `Well within reserve — RIR ${r} against a target of ${t}. Room to add load or reps.` };
