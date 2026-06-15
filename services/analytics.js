@@ -1514,6 +1514,31 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
       }
 
+      // PR 3a — frame the deload as a CHOICE, not a silent imposition: say how long
+      // it runs, that loads are lighter now, the working weight you return to after,
+      // and a way to decline. Weigh fatigue too — a fresh-but-stalled lifter (weekly
+      // volume well below their average) usually needs a variation change or a push,
+      // not a deload, so the framing softens and the score drops below the pushing
+      // intents (it stays on the menu, just isn't the silent default).
+      const lead = top[0];
+      const returnWeight = lead ? lead.last_best_weight : null;
+      const returnName = lead ? stallName(lead.liftCode) : 'your main lifts';
+      const freshButStalled = fatigue.status === 'low';
+      const proposal = {
+        duration: 'about one week — one pass through your rotation, then you step back up',
+        loads: '~10% lighter than your usual working weights today',
+        return_point: returnWeight != null
+          ? `back to your normal working weight right after — about ${returnWeight} lb on ${returnName}`
+          : 'back to your normal working weight right after',
+        decline: freshButStalled
+          ? "You're not actually beat up this week, so this is optional — to push instead, pick Test Progress or a Strength session."
+          : 'Prefer to power through? Pick Test Progress or a Strength session instead — this is your call.'
+      };
+      why.push(`Take it or skip it: ${proposal.duration}.`);
+      why.push(`Loads are ${proposal.loads}, and you're ${proposal.return_point}.`);
+      why.push(proposal.decline);
+      const fatigueScoreAdj = fatigue.status === 'high' ? 10 : fatigue.status === 'low' ? -25 : 0;
+
       // The deloaded stalled mains lead the session — 10% lighter, clean reps.
       const exercises = top.map(s => ({
         exercise: stallName(s.liftCode),
@@ -1545,11 +1570,12 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       intents.push({
         id: 'deload_reset',
         label: 'Deload & Reset',
-        score: 45 + eligibleStalls.length * 5,
-        focus: 'Drop ~10%, sharpen form, rebuild momentum',
+        score: 45 + eligibleStalls.length * 5 + fatigueScoreAdj,
+        focus: 'Drop ~10% for about a week, sharpen form, then step back to your normal weights',
         confidence: eligibleStalls.length >= 3 ? 'high' : 'medium',
         confidence_reasons: [`${eligibleStalls.length} rested lift${eligibleStalls.length === 1 ? '' : 's'} ready for a reset`],
         why_today: why,
+        proposal,
         data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: 'no progression' })),
         what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
         watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
