@@ -1479,6 +1479,35 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       for (const s of holdStalls.slice(0, 2)) {
         why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
       }
+
+      // The deloaded stalled mains lead the session — 10% lighter, clean reps.
+      const exercises = top.map(s => ({
+        exercise: stallName(s.liftCode),
+        lift_code: s.liftCode,
+        target_weight: roundLoad(s.last_best_weight * 0.9),
+        target_reps: 5,
+        target_sets: 3,
+        reason: 'Deload — 10% lighter, focus on clean reps'
+      }));
+      // A deload is still a full session — round it out to ~4–6 movements with the
+      // owner's RESTED, non-compound accessories at moderate effort, so it's never
+      // a token 1–2 lift day. Fatigued patterns and other main compounds stay out.
+      const seen = new Set(exercises.map(e => e.lift_code));
+      const fillers = allRecs.filter(r => r.exercise_name && r.next_target && !isMainCompound(r.exercise_name));
+      for (const r of fillers) {
+        if (exercises.length >= 6) break;
+        if (seen.has(r.liftCode) || !restedEnough(r.liftCode)) continue;
+        seen.add(r.liftCode);
+        exercises.push(guardAccessoryReps({
+          exercise: r.exercise_name,
+          lift_code: r.liftCode,
+          target_weight: r.next_target.weight,
+          target_reps: r.next_target.reps,
+          target_sets: r.next_target.sets,
+          reason: 'Accessory volume — moderate effort while the mains deload'
+        }));
+      }
+
       intents.push({
         id: 'deload_reset',
         label: 'Deload & Reset',
@@ -1491,14 +1520,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
         watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
         pivot_logic: [],
-        exercises: top.map(s => ({
-          exercise: stallName(s.liftCode),
-          lift_code: s.liftCode,
-          target_weight: roundLoad(s.last_best_weight * 0.9),
-          target_reps: 5,
-          target_sets: 3,
-          reason: 'Deload — 10% lighter, focus on clean reps'
-        }))
+        exercises
       });
     }
   }
