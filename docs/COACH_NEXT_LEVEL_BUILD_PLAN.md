@@ -1,18 +1,18 @@
 # Atlas Coach — "Next-Level" Build Plan
 
 A handoff for Claude Code. Six coaching upgrades, organized into **three model phases**
-with **hard hold points** where you switch Claude Code's model before continuing. Each
-task is its own PR.
+with **one model switch** (Sonnet → Opus at HOLD 1) and a **rebase/merge checkpoint**
+at HOLD 2 (no model change — Phase 3 stays on Opus 4.8). Each task is its own PR.
 
 This document is the canonical roadmap for the next-level coach work. It persists across
-sessions and the two model switches; update it as tasks land.
+sessions and the one model switch (Sonnet → Opus at HOLD 1); update it as tasks land.
 
 ---
 
 ## How to use this plan
 
-- Work top to bottom. Within a phase, every task uses the **same model**, so you only
-  switch models at the two **HOLD POINTS**.
+- Work top to bottom. There is **one model switch**: Sonnet 4.6 (Phase 1) → Opus 4.8
+  (Phases 2 & 3) at HOLD 1. HOLD 2 is a rebase/merge checkpoint only — no model change.
 - Each task = one focused PR. **Plan mode first**, show the plan, get the diff reviewed,
   merge on green.
 - The model on each task is a *suggestion*. **Claude Code: if you think a task warrants a
@@ -51,10 +51,11 @@ sessions and the two model switches; update it as tasks land.
 
 - **Sonnet 4.6** — deterministic foundations, schema, sanitizers, plumbing, tests.
   Pattern-following work that mirrors what's already in the repo.
-- **Opus 4.8** — hard engine algorithms that need real reasoning: substitution pricing,
-  constraint-aware re-planning, goal projection, auto-regulation calibration.
-- **Fable 5** — coaching voice and judgment: verdict prompts, the conversational
-  game-planning behavior, the teaching voice. Highest-stakes wording.
+- **Opus 4.8** — hard engine algorithms that need real reasoning (substitution pricing,
+  constraint-aware re-planning, goal projection, auto-regulation calibration) **and**
+  coaching voice and judgment (verdict prompts, conversational game-planning behavior,
+  the teaching voice). Fable 5 would be marginally stronger for voice work but is
+  restricted on this account — Opus 4.8 covers both Phases 2 and 3.
 - *(Haiku 4.5 — optional for the most rote sub-tasks, e.g. pure test fixtures. Default to
   Sonnet to avoid an extra model switch.)*
 
@@ -189,15 +190,16 @@ where one exists. Each can be its own branch; rebase before merge.
   not; fresh-but-stalled still routes to "push", not "deload".
 - **Depends on:** 5.1.
 
-> ## ▶▶ HOLD POINT 2 — switch Claude Code to **Fable 5**
-> First: rebase + merge all Phase 2 PRs. Then change the model to Fable 5 and continue.
+> ## ▶▶ HOLD POINT 2 — rebase + merge checkpoint (no model change)
+> Rebase + merge all Phase 2 PRs so Phase 3 builds on a clean `main`. Continue on
+> **Opus 4.8** — no model switch needed.
 
 ---
 
-# ═══ PHASE 3 — Fable 5 ═══
+# ═══ PHASE 3 — Opus 4.8 ═══
 ### Coaching voice & prompts (highest-judgment), and tests
 
-### P3 · 3.3 — Session-summary verdict prompt · **Fable 5**
+### P3 · 3.3 — Session-summary verdict prompt · **Opus 4.8**
 - **What:** a new LLM prompt (`buildSummarySystemPrompt`) that narrates the end-of-session
   verdict per `docs/COACHING_NOTE_VOICE.md` — per-lift verdicts, the big-picture read, the
   effort line, and a forward decision ("245×6 is the marker; next time repeat or nudge to
@@ -207,7 +209,7 @@ where one exists. Each can be its own branch; rebase before merge.
   no invented numbers, no set restatement.
 - **Depends on:** 3.1, 3.2.
 
-### P3 · 1.3 — Game-planning conversational behavior · **Fable 5**  *(the marquee)*
+### P3 · 1.3 — Game-planning conversational behavior · **Opus 4.8**  *(the marquee)*
 - **What:** the chat behavior that negotiates constraints in real time — "rack's taken,
   shoulder's cranky, I'll do chest" rebuilds the session and explains it; "actually I'll do
   bench" re-plans on the spot. Conversation owns the *constraints*; the engine (1.2) owns
@@ -218,7 +220,7 @@ where one exists. Each can be its own branch; rebase before merge.
   invents a load; respects saved injury/equipment constraints (2.x).
 - **Depends on:** 1.2, 2.x.
 
-### P3 · 5.3 — Proactive readiness voice · **Fable 5**
+### P3 · 5.3 — Proactive readiness voice · **Opus 4.8**
 - **What:** how the coach raises fatigue/readiness *first* without nagging — "second session
   your bench felt heavier than the numbers say; want to deload?" Words the 5.2 signal.
 - **Files:** `services/coach.js`, `test/coach.test.js`.
@@ -226,21 +228,21 @@ where one exists. Each can be its own branch; rebase before merge.
   the lifter's call.
 - **Depends on:** 5.2.
 
-### P3 · 4.3 — Goal-framing voice · **Fable 5**
+### P3 · 4.3 — Goal-framing voice · **Opus 4.8**
 - **What:** the day-opener and notes reference goal progress when present — "three clean
   sessions from 215 at this rate." Words the 4.2 projection; drops the beat if absent.
 - **Files:** `services/coach.js` (`buildPlanSystemPrompt` + per-set note), `test/coach.test.js`.
 - **Tests:** cites the projection only when present; never fabricates an ETA.
 - **Depends on:** 4.2.
 
-### P3 · 6.2 — "Why" explanation voice · **Fable 5**
+### P3 · 6.2 — "Why" explanation voice · **Opus 4.8**
 - **What:** a "tell me why" behavior that teaches the principle behind a call from the 6.1
   reasoning fact — grounded in the engine's actual logic, not a generic article.
 - **Files:** `services/coach.js`, `test/coach.test.js`.
 - **Tests:** explanation maps to the real reasons in the fact; no invented rationale.
 - **Depends on:** 6.1.
 
-### P3 · DOC — Update the voice standard · **Fable 5**
+### P3 · DOC — Update the voice standard · **Opus 4.8**
 - **What:** extend `docs/COACHING_NOTE_VOICE.md` to cover the new surfaces (session summary,
   game-planning, why-layer, proactive readiness) and record the precedence rules already in
   place (deload framing overrides the effort-verdict "add weight" steer; constraints
@@ -252,9 +254,9 @@ where one exists. Each can be its own branch; rebase before merge.
 ## Done = all three phases rebased, merged, and green.
 
 ## Alternative ordering (if you'd rather ship feature-by-feature)
-The model-grouped order above **minimizes model switches** (two), at the cost of a feature
-only going end-to-end once its later-phase slice lands. If you'd rather see one feature fully
-working before the next, reorder by feature instead — but you'll switch models more often
-(each feature spans Sonnet → Opus and/or Fable). If you go that route, start with **#3
-(session summary)** for the fastest visible win and **#2 → #1 (game-planning)** for the
-biggest capability jump.
+The model-grouped order above **minimizes model switches** (one: Sonnet → Opus at HOLD 1),
+at the cost of a feature only going end-to-end once its later-phase slice lands. If you'd
+rather see one feature fully working before the next, reorder by feature instead — but you'll
+switch models more often (each feature spans Sonnet → Opus). If you go that route, start
+with **#3 (session summary)** for the fastest visible win and **#2 → #1 (game-planning)**
+for the biggest capability jump.
