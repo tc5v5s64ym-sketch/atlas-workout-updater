@@ -913,3 +913,120 @@ test('Composer: a non-knowledge question falls through to the Gemini coach', asy
   expect(chatCalled).toBe(true);
   expect(capture.writeRequests).toHaveLength(0);
 });
+
+// ---------------------------------------------------------------------------
+// PR 2 — End-of-session compile from the in-session buffer.
+//
+// The deload-session repro lost 2 of 6 exercises and re-asked for effort. PR 1
+// fixed the misparse that caused the drop (two lifts collapsing onto one); this
+// test locks in the compile behaviour: six DISTINCT lifts logged conversationally
+// with RIR all survive to the single review card with RIR intact, effort is NOT
+// re-asked, zero writes fire mid-workout, and exactly one write fires on Save.
+// ---------------------------------------------------------------------------
+
+const SESSION_EXERCISES = [
+  { text: 'bench 225 5/2 x3',          name: 'Bench Press',    code: 'BEN01', mg: 'Chest',     rir: 2,  weight: 225, reps: 5 },
+  { text: 'lateral raises 15 12/4 x3', name: 'Lateral Raises', code: 'LRA01', mg: 'Shoulders', rir: 4,  weight: 15,  reps: 12 },
+  { text: 'shrugs 70 12/10 x3',        name: 'Shrug',          code: 'SHR01', mg: 'Back',      rir: 10, weight: 70,  reps: 12 },
+  { text: 'lat pulldown 170 8/2 x3',   name: 'Lat Pulldown',   code: 'LAT01', mg: 'Back',      rir: 2,  weight: 170, reps: 8 },
+  { text: 'face pulls 50 15/1 x3',     name: 'Face Pull',      code: 'FP01',  mg: 'Shoulders', rir: 1,  weight: 50,  reps: 15 },
+  { text: 'hammer curl 30 10/3 x3',    name: 'Hammer Curl',    code: 'HC01',  mg: 'Arms',      rir: 3,  weight: 30,  reps: 10 }
+];
+
+function setsFor(ex) {
+  return [0, 1, 2].map(() => ({ weight: ex.weight, reps: ex.reps, rir: ex.rir }));
+}
+
+// Parser + preview mocks that honour the typed exercise (instead of the default
+// bench-only stubs), so the buffer accumulates six distinct lifts and the review
+// echoes back exactly what was logged.
+async function mockSixExerciseSession(page, capture) {
+  const byName = new Map(SESSION_EXERCISES.map(e => [e.name, e]));
+
+  await page.route('**/api/parse-workout-text', route => {
+    const body = route.request().postDataJSON();
+    capture.parseRequests.push(body);
+    const ex = SESSION_EXERCISES.find(e => e.text === body.text);
+    if (!ex) {
+      return route.fulfill(json({ status: 'success', data: {
+        test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+        parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+      } }));
+    }
+    return route.fulfill(json({ status: 'success', data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'log_sets', raw_name: ex.name, canonical_name: ex.name, exercise: ex.name, sets: setsFor(ex) }
+    } }));
+  });
+
+  await page.route('**/api/log-workout', route => {
+    const body = route.request().postDataJSON();
+    const isPreview = body?.test_mode === true || body?.test_mode === 'true';
+    if (isPreview) {
+      capture.previewRequests.push(body);
+      const preview = (body.log_rows || []).map(r => {
+        const ex = byName.get(r.exercise) || { code: 'UNK01', mg: 'Unknown' };
+        return [r.date_clean || '', r.session_id || '', r.exercise, r.exercise, ex.mg, ex.code,
+          r.set_number, r.weight, r.reps, r.rir, r.notes || '', (Number(r.weight) || 0) * (Number(r.reps) || 0)];
+      });
+      return route.fulfill(json({ status: 'success', data: {
+        test_mode: true, sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true,
+        warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [], log_rows_preview: preview
+      } }));
+    }
+    capture.writeRequests.push(body);
+    return route.fulfill(json({ status: 'success', data: {
+      sheet_write: 'success', sheet_written: true,
+      log_rows_written: (body.log_rows || []).length, logAppendedRange: 'Log_Cleaned!A200:L217'
+    } }));
+  });
+}
+
+test('PR2: six typed lifts with RIR all survive the end-of-session compile; effort not re-asked; one write on Save', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+  await mockSixExerciseSession(page, capture);
+
+  // Log all six lifts conversationally — each accumulates in the session buffer.
+  for (const ex of SESSION_EXERCISES) await logSet(page, ex.text);
+
+  // Mid-workout: six coached readbacks, and nothing written or previewed.
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(6);
+  expect(capture.writeRequests).toHaveLength(0);
+  expect(capture.previewRequests).toHaveLength(0);
+
+  // End trigger compiles the FULL session from the buffer into one review card.
+  await endSession(page);
+  const review = page.locator('.review');
+  await expect(review).toBeVisible();
+
+  // All six exercises survive (none dropped, none collapsed onto another).
+  for (const ex of SESSION_EXERCISES) await expect(review).toContainText(ex.name);
+  await expect(review.locator('.rv-en')).toHaveCount(6);
+  await expect(review.locator('.rv-tot')).toContainText('6 exercises');
+  await expect(review.locator('.rv-tot')).toContainText('18 sets');
+
+  // RIR is intact per lift — including the distinct values, never flattened.
+  await expect(review.locator('.rv-ex', { hasText: 'Shrug' })).toContainText('RIR 10');
+  await expect(review.locator('.rv-ex', { hasText: 'Face Pull' })).toContainText('RIR 1');
+  await expect(review.locator('.rv-ex', { hasText: 'Bench Press' })).toContainText('RIR 2');
+  await expect(review.locator('.rv-es .rir')).toHaveCount(6);
+
+  // Effort is NOT re-asked: no legacy effort-save panel; watch effort is an
+  // optional add-on hint, not a demand to re-enter what was typed per set.
+  await expect(page.locator('.effort-save-btn')).toHaveCount(0);
+  await expect(review.locator('.rv-eff')).toContainText('+ add Apple Watch effort');
+
+  // The dry-run proved no-write safety and still nothing is written.
+  expect(capture.previewRequests).toHaveLength(1);
+  expect(capture.previewRequests[0]).toMatchObject({ test_mode: 'true' });
+  expect(capture.previewRequests[0].write_id).toBeTruthy();
+  expect(capture.writeRequests).toHaveLength(0);
+
+  // Exactly one write fires on Save — the single end-of-session write.
+  await expect(review.locator('.rv-save')).toBeEnabled();
+  await review.locator('.rv-save').click();
+  await expect(page.locator('.review.done')).toBeVisible();
+  expect(capture.writeRequests).toHaveLength(1);
+  expect(capture.writeRequests[0].log_rows).toHaveLength(18);
+});
