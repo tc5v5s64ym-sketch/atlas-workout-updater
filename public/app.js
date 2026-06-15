@@ -2563,10 +2563,10 @@ function extractLiftCodes(logRowsPreview) {
 // so it can type a coaching note with an inline Save. Read-only narration: it
 // never writes — Save just clicks #approve-btn, which stays gated by the dry-run
 // proof. Best-effort; a missing listener is a no-op.
-function emitCoachPreview(rows, liftCodes, effortOnly) {
+function emitCoachPreview(rows, liftCodes, effortOnly, effort) {
   try {
     document.dispatchEvent(new CustomEvent('atlas:preview-ready', {
-      detail: { rows: rows || [], liftCodes: liftCodes || [], effortOnly: Boolean(effortOnly) }
+      detail: { rows: rows || [], liftCodes: liftCodes || [], effortOnly: Boolean(effortOnly), effort: effort || null }
     }));
   } catch { /* narration is optional */ }
 }
@@ -2575,6 +2575,21 @@ function emitCoachPreview(rows, liftCodes, effortOnly) {
 // for a readback + adjusted-next coaching reaction. No write, no preview, no
 // Save — purely narration off the client-parsed rows. The set text rides along
 // so the end-of-session compile can reconstruct the full workout.
+// Structured client-side buffer of every set logged this session. The end-of-
+// session save (done / effort / screenshot) is built from THIS — never from a
+// Gemini compile or a re-parse — so it's reliable and identical across triggers.
+let sessionLog = [];
+
+// Editor-ready rows from the buffer, numbering sets per exercise.
+function buildRowsFromSessionLog() {
+  const counts = new Map();
+  return sessionLog.map(s => {
+    const n = (counts.get(s.exercise) || 0) + 1;
+    counts.set(s.exercise, n);
+    return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '' };
+  });
+}
+
 function emitSetLogged(logObjs, text) {
   const byExercise = [];
   const seen = new Map();
@@ -2586,6 +2601,8 @@ function emitSetLogged(logObjs, text) {
       reps: o.reps,
       rir: (o.rir === '' || o.rir == null) ? null : Number(o.rir)
     });
+    // Accumulate the raw set into the session buffer for the end-of-session save.
+    sessionLog.push({ exercise: o.exercise, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
   }
   if (byExercise.length) {
     try {
@@ -2594,10 +2611,9 @@ function emitSetLogged(logObjs, text) {
       }));
     } catch { /* narration is optional */ }
   }
-  // The session lives in the conversation (chatTurns), not the parsed-rows
-  // editor — clear the transient rows so the end-of-session compile sees the
-  // FULL session. This matters for the effort / screenshot end triggers, which
-  // compile from the conversation only when the editor is empty.
+  // The session lives in the buffer (sessionLog) above, not the parsed-rows
+  // editor — clear the transient rows so the end-of-session save rebuilds the
+  // FULL session from the buffer.
   if (setsTableBody) setsTableBody.innerHTML = '';
   if (parsedRowsEditor) parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = '';
@@ -2823,6 +2839,7 @@ document.getElementById('logger-form').addEventListener('input', invalidatePrevi
 function startOverWorkout() {
   workoutTextInput.value = '';
   lastParsedWorkoutText = '';
+  sessionLog = [];
   setsTableBody.innerHTML = '';
   parsedRowsEditor.hidden = true;
   const effortDetails = document.getElementById('effort-details');
@@ -2848,6 +2865,16 @@ document.getElementById('start-over-btn')?.addEventListener('click', startOverWo
 // to extract the workout sets the lifter logged conversationally, then populate
 // the composer and trigger a normal parse → preview → approve flow.
 async function handleLogIt() {
+  // Prefer the structured session buffer — no Gemini, no re-parse. The
+  // conversational compile below is only a fallback (e.g. after a page reload
+  // when the buffer is empty but the chat history survived).
+  if (sessionLog.length) {
+    populateSetRows(buildRowsFromSessionLog());
+    sessionCompiledAwaitingPreview = true;
+    document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    return;
+  }
+
   const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
 
   if (!turns.length) {
@@ -3082,9 +3109,16 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   }
 
   // Screenshot upload and manual effort form are end-of-session triggers.
-  // If the lifter logged sets conversationally (set table is empty because sets
-  // were routed to the coach), compile the session from chat history so one
-  // preview covers both the workout rows AND the effort data.
+  // If the lifter logged sets conversationally (the editor is empty because each
+  // set went to the buffer), rebuild the FULL session so one preview covers both
+  // the workout rows AND the effort data. Prefer the structured buffer; fall back
+  // to the conversational compile only when the buffer is empty.
+  if (!logRows.length && (file || manualEffort) && sessionLog.length) {
+    const compileDate = mode === 'screenshot' ? '' : (date || getLocalDateString());
+    const compileSessionId = mode === 'screenshot' ? '' : (sessionId || generateSessionId(date || getLocalDateString()));
+    populateSetRows(buildRowsFromSessionLog());
+    logRows = collectLogRows(compileSessionId, compileDate);
+  }
   if (!logRows.length && (file || manualEffort)) {
     const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
     if (turns.length) {
@@ -3179,7 +3213,6 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         previewProof: previewProofFromResult(result, 'screenshot')
       };
       renderCompleteWorkoutPreview(result);
-      addAtlasEffortReply(result);
     } else if (effortOnly) {
       const result = await submitCompleteWorkout({ logRows, sessionId, date, location, notes, manualEffort, testMode: true });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
@@ -3387,7 +3420,16 @@ function renderLogWorkoutPreview(result, effortRow) {
       }).catch(() => {});
     }
   }
-  emitCoachPreview(data.log_rows_preview, liftCodes, false);
+  // Manual effort + sets writes via /api/log-workout; surface its metrics in the
+  // single review card too (normalize the snake_case effort_row to the grid shape).
+  const reviewEffort = effortRow ? {
+    duration: effortRow.duration,
+    activeCalories: effortRow.active_calories,
+    totalCalories: effortRow.total_calories,
+    averageHR: effortRow.average_hr,
+    peakHR: effortRow.peak_hr
+  } : null;
+  emitCoachPreview(data.log_rows_preview, liftCodes, false, reviewEffort);
 }
 
 function renderCompleteWorkoutPreview(result) {
@@ -3416,7 +3458,7 @@ function renderCompleteWorkoutPreview(result) {
   }
   const completeLiftCodes = extractLiftCodes(data.rows_to_write);
   if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;
-  emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly);
+  emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly, data.parsed_effort || null);
   if (completeLiftCodes.length && getApiKey()) {
     const suggestionSlot = el('div', {});
     previewContent.appendChild(suggestionSlot);
@@ -3426,8 +3468,8 @@ function renderCompleteWorkoutPreview(result) {
     }).catch(() => {});
   }
 
-  // Effort details collapse behind "Review technical details" — the chat card
-  // (addAtlasEffortReply) is the primary view for screenshot results.
+  // Effort details collapse behind "Review technical details" — the in-thread
+  // .review card (with the watch metrics) is the primary view for screenshots.
   const effort = data.parsed_effort || {};
   const peakHrCell = effort.peakHR == null ? 'not visible in screenshot' : effort.peakHR;
   const effortDetailsInner = el('div', {}, [
@@ -3456,80 +3498,6 @@ function renderCompleteWorkoutPreview(result) {
   ]));
   const approveBtn = document.getElementById('approve-btn');
   approveBtn.textContent = effortOnly ? 'Write Effort to Google Sheets' : 'Write to Google Sheets';
-}
-
-// Clean effort summary card in the chat thread after a screenshot upload.
-// Shows all parsed metrics, clearly states "Nothing saved yet", and provides
-// inline Save/Edit buttons — so the screenshot flow reads as one conversation.
-// Read-only: Save clicks the existing #approve-btn; the trust loop is unchanged.
-function addAtlasEffortReply(result) {
-  const thread = document.getElementById('thread-messages');
-  if (!thread) return;
-  const data = result?.data?.data || {};
-  const e = data.parsed_effort || {};
-
-  const rows = [];
-  if (e.duration)            rows.push(['Duration',    String(e.duration)]);
-  if (e.activeCalories != null) rows.push(['Active cal',  String(e.activeCalories)]);
-  if (e.totalCalories != null)  rows.push(['Total cal',   String(e.totalCalories)]);
-  if (e.averageHR != null)      rows.push(['Avg HR',      `${e.averageHR} bpm`]);
-  rows.push(['peak HR', e.peakHR != null ? `${e.peakHR} bpm` : 'peak HR not visible in screenshot']);
-
-  const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas effort-reply-card' });
-
-  if (rows.length) {
-    const grid = el('div', { class: 'effort-reply-grid' });
-    for (const [label, value] of rows) {
-      grid.appendChild(el('span', { class: 'effort-reply-label', text: label }));
-      grid.appendChild(el('span', { class: 'effort-reply-value', text: value }));
-    }
-    bubble.appendChild(grid);
-  } else {
-    bubble.appendChild(el('div', { class: 'muted', text: "Couldn't read metrics from that image — try Edit to enter them manually." }));
-  }
-
-  bubble.appendChild(el('div', { class: 'atlas-reply-gate', text: 'Nothing saved yet.' }));
-
-  const approveMirror = document.getElementById('approve-btn');
-  const actions = el('div', { class: 'effort-reply-actions' });
-
-  // Once the preview behind this card is invalidated, the card is stale: the
-  // live pendingWrite now belongs to a different preview, so this Save must not
-  // fire it. The cleanup disconnects the mirror and locks the button down.
-  let stale = false;
-  const saveBtn = el('button', { type: 'button', class: 'approve effort-save-btn', text: 'Save to Sheets' });
-  saveBtn.disabled = approveMirror ? approveMirror.disabled : true;
-  let obs = null;
-  if (approveMirror) {
-    obs = new MutationObserver(() => { if (!stale) saveBtn.disabled = approveMirror.disabled; });
-    obs.observe(approveMirror, { attributes: true, attributeFilter: ['disabled'] });
-  }
-  registerEffortCardCleanup(() => {
-    stale = true;
-    if (obs) obs.disconnect();
-    saveBtn.disabled = true;
-    bubble.classList.add('effort-reply-stale');
-  });
-  saveBtn.addEventListener('click', () => {
-    if (stale || !approveMirror || approveMirror.disabled) return;
-    saveBtn.textContent = 'Saving…';
-    saveBtn.disabled = true;
-    approveMirror.click();
-  });
-
-  const editBtn = el('button', { type: 'button', class: 'secondary effort-edit-btn', text: 'Edit' });
-  editBtn.addEventListener('click', () => prefillEffortForm(e));
-
-  const cancelBtn = el('button', { type: 'button', class: 'secondary effort-cancel-btn', text: 'Cancel' });
-  cancelBtn.addEventListener('click', () => { invalidatePreview(); bubble.remove(); });
-
-  actions.appendChild(saveBtn);
-  actions.appendChild(editBtn);
-  actions.appendChild(cancelBtn);
-  bubble.appendChild(actions);
-
-  thread.appendChild(bubble);
-  bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 document.getElementById('cancel-preview-btn').addEventListener('click', invalidatePreview);
@@ -3672,6 +3640,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // this clears any stale manual range — otherwise a correction after an
     // effort save would Replace-via-undo the wrong (older) rows.
     lastWrite = pendingLastWrite;
+    // The session is saved — start the next session's buffer fresh.
+    if (pendingLastWrite) sessionLog = [];
     if (pendingLastWrite) {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);

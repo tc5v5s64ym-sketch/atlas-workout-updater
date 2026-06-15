@@ -173,13 +173,33 @@
     return span;
   }
 
-  function buildReviewCard(rows, liftCodes, effortOnly) {
+  // Apple Watch metrics grid for the effort/screenshot review.
+  function buildEffortGrid(effort) {
+    const grid = elc('div', 'rv-effort');
+    const items = [
+      ['Duration', effort.duration],
+      ['Active cal', effort.activeCalories],
+      ['Total cal', effort.totalCalories],
+      ['Avg HR', effort.averageHR != null ? `${effort.averageHR} bpm` : null],
+      ['Peak HR', effort.peakHR != null ? `${effort.peakHR} bpm` : 'not in screenshot']
+    ].filter(([, v]) => v != null && v !== '');
+    for (const [label, value] of items) {
+      grid.appendChild(elc('span', 'rv-effort-label', label));
+      grid.appendChild(elc('span', 'rv-effort-value', String(value)));
+    }
+    return grid;
+  }
+
+  function buildReviewCard(rows, liftCodes, effortOnly, effort) {
     const card = elc('div', 'review');
 
     const head = elc('div', 'rv-h');
     head.appendChild(elc('span', 'rv-t', "Today’s workout"));
     head.appendChild(elc('span', 'rv-d', (rows[0] && rows[0][0]) ? String(rows[0][0]) : ''));
     card.appendChild(head);
+
+    // Watch metrics first, then the workout summary, then one Save.
+    if (effort) card.appendChild(buildEffortGrid(effort));
 
     let exCount = 0, setCount = 0, volume = 0;
     for (const code of liftCodes) {
@@ -194,14 +214,19 @@
       card.appendChild(ex);
     }
 
-    const tot = elc('div', 'rv-tot');
-    tot.appendChild(elc('span', null, `${exCount} exercise${exCount === 1 ? '' : 's'} · ${setCount} sets`));
-    tot.appendChild(elc('b', null, `${Math.round(volume).toLocaleString()} lb`));
-    card.appendChild(tot);
+    if (exCount) {
+      const tot = elc('div', 'rv-tot');
+      tot.appendChild(elc('span', null, `${exCount} exercise${exCount === 1 ? '' : 's'} · ${setCount} sets`));
+      tot.appendChild(elc('b', null, `${Math.round(volume).toLocaleString()} lb`));
+      card.appendChild(tot);
+    } else if (effortOnly) {
+      card.appendChild(elc('div', 'rv-tot', 'Effort only — no sets logged this session'));
+    }
 
-    card.appendChild(elc('div', 'rv-eff', effortOnly
-      ? 'Apple Watch effort attached'
-      : '+ add Apple Watch effort (duration, cals, HR)'));
+    // The "+ add effort" hint only on the workout-only ("done") path.
+    if (!effort && !effortOnly) {
+      card.appendChild(elc('div', 'rv-eff', '+ add Apple Watch effort (duration, cals, HR)'));
+    }
 
     const act = elc('div', 'rv-act');
     const saveBtn = elc('button', 'btn rv-save', 'Save workout');
@@ -745,16 +770,17 @@
   // / Undo delegate to the existing #approve-btn / #parsed-rows-editor /
   // window.atlasUndoLastWrite — the write path itself is unchanged.
   async function handlePreviewReady(detail) {
-    const { rows = [], liftCodes = [], effortOnly } = detail || {};
+    const { rows = [], liftCodes = [], effortOnly, effort } = detail || {};
     if (!effortOnly && !liftCodes.length) return;       // nothing to review
 
     const handle = appendAtlasBubble();
     if (!handle) return;
     const { bubble, body } = handle;
-    await typeOut(body, effortOnly
-      ? "Here's your effort for today — give it a look before it goes to your sheet:"
-      : "Solid session. Here's everything from our conversation — give it a look before it goes to your sheet:");
-    bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly));
+    const intro = effort
+      ? "Here's your effort and the full session — give it a look before it goes to your sheet:"
+      : "Solid session. Here's everything from our conversation — give it a look before it goes to your sheet:";
+    await typeOut(body, intro);
+    bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort));
   }
 
   /* ===== Coach-nav wiring (avatar → Settings) =====

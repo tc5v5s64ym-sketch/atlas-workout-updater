@@ -572,6 +572,38 @@ test('Guardrail (bulk): a whole workout in one message writes nothing; one revie
   expect(capture.writeRequests).toHaveLength(1);
 });
 
+test('Effort end trigger: review shows the compiled session (not zero) + watch metrics + one Save/Edit', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Log a set conversationally — it accumulates in the session buffer.
+  await logSet(page, 'bench 225 5/2 x3');
+  expect(capture.writeRequests).toHaveLength(0);
+
+  // Open the manual-effort form via the + menu and fill it.
+  await page.locator('#composer-attach').click();
+  await page.locator('#attach-manual').click();
+  await page.locator('#effort-duration').fill('47:12');
+  await page.locator('#effort-active-cal').fill('412');
+  await page.locator('#effort-total-cal').fill('520');
+  await page.locator('#effort-avg-hr').fill('142');
+  await page.locator('#effort-peak-hr').fill('168');
+  await page.locator('#preview-btn').click();
+
+  // The SINGLE review card shows the compiled session (NOT zero) and the watch
+  // metrics — built from the session buffer, not a flaky compile.
+  const review = page.locator('.review');
+  await expect(review).toBeVisible();
+  await expect(review).toContainText('Bench Press');
+  await expect(review.locator('.rv-tot')).toContainText('3 sets');     // compiled, not "0 exercises"
+  await expect(review.locator('.rv-effort')).toContainText('142');     // Avg HR from the watch metrics
+  // Exactly one Save + one Edit, and NO leftover legacy effort save panel.
+  await expect(page.locator('.rv-save')).toHaveCount(1);
+  await expect(page.locator('.rv-edit')).toHaveCount(1);
+  await expect(page.locator('.effort-save-btn')).toHaveCount(0);
+  expect(capture.writeRequests).toHaveLength(0);
+});
+
 test('Progress surface renders the Today screen from mocked data without crashing', async ({ page }) => {
   await openApp(page);
 

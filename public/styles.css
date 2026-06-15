@@ -1237,10 +1237,11 @@ button.approve {
 body[data-surface="coach"] .safety-note.compact { display: none; }
 
 /* Effort details: hidden from view — the + menu opens it via JS when needed.
-   We use display:none (not the hidden attribute) so app.js wiring is unaffected. */
-#effort-details { display: none; }
-/* When opened programmatically by the + menu, reveal it */
-#effort-details.effort-open { display: block; margin-top: var(--s3); }
+   It is shown/hidden via the [hidden] attribute, which the + menu's manual /
+   screenshot handlers (nav.js setEffortMode) and prefillEffortForm toggle; the
+   global [hidden] rule does the hiding. (The old .effort-open class was never
+   set by any code, so it kept the form permanently hidden.) */
+#effort-details:not([hidden]) { display: block; margin-top: var(--s3); }
 #effort-details > summary {
   cursor: pointer;
   font-size: 0.85rem;
@@ -1686,6 +1687,18 @@ a.lift-link:hover { text-decoration: underline; }
 .rv-tot { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); padding: 11px 0 2px; }
 .rv-tot b { color: var(--ink); font-weight: 500; }
 .rv-eff { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); padding-top: 8px; border-top: 1px solid var(--border); margin-top: 6px; }
+/* Apple Watch metrics grid inside the effort/screenshot review */
+.rv-effort {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 4px 16px;
+  justify-content: start;
+  padding: 4px 0 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.rv-effort-label { font-family: var(--mono); font-size: 0.7rem; color: var(--faint); }
+.rv-effort-value { font-family: var(--mono); font-size: 0.75rem; color: var(--ink); font-weight: 500; text-align: right; }
 .rv-act { display: flex; gap: 10px; margin-top: 14px; }
 .rv-act .btn {
   border: none;
