@@ -516,6 +516,35 @@
     growComposer(); // initial one-line sizing
   }
 
+  /* ===== Composer placeholder rotation ===== */
+  // Cycle a few example prompts through the EMPTY composer to teach the input
+  // formats (slash notation, "log it") and surface that you can just ask a
+  // question. Purely the placeholder attribute — never the value, so it can't
+  // affect parsing, height, or the trust loop. Pauses while the box is focused
+  // or has text so it never shifts under the user, and honours reduced motion.
+  if (composerTextarea) {
+    const PLACEHOLDER_HINTS = [
+      'Log a set or ask anything…',
+      'Try: Bench 225 5/2 5/2',
+      'Ask: what should I train today?',
+      "Ask: how's my recovery?",
+      'Say “log it” to save your session'
+    ];
+    composerTextarea.placeholder = PLACEHOLDER_HINTS[0];
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduceMotion) {
+      let hintIndex = 0;
+      let hintPaused = false;
+      composerTextarea.addEventListener('focus', () => { hintPaused = true; });
+      composerTextarea.addEventListener('blur', () => { hintPaused = false; });
+      setInterval(() => {
+        if (hintPaused || composerTextarea.value) return;
+        hintIndex = (hintIndex + 1) % PLACEHOLDER_HINTS.length;
+        composerTextarea.placeholder = PLACEHOLDER_HINTS[hintIndex];
+      }, 4500);
+    }
+  }
+
   /* ===== Time-of-day greeting ===== */
 
   const greeting = document.getElementById('coach-greeting');

@@ -3445,6 +3445,21 @@ test('shell: nav.js routes surfaces without touching the trust loop', () => {
   assert.doesNotMatch(nav, /appendRows|sheet_write|confirm_delete|\/api\/log-workout/, 'nav.js must not touch write endpoints');
 });
 
+test('shell: nav.js rotates the composer placeholder, paused for focus/typing and reduced motion', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  assert.match(nav, /PLACEHOLDER_HINTS/, 'must define the rotating hint list');
+  assert.match(nav, /225 5\/2/, 'hints teach the slash notation');
+  assert.match(nav, /what should I train today/i, 'hints surface that you can just ask');
+  assert.match(nav, /prefers-reduced-motion/, 'must honour reduced motion (no rotation)');
+  assert.match(nav, /hintPaused/, 'must pause rotation while the composer is focused');
+  assert.match(nav, /composerTextarea\.value\)/, 'must skip rotating while the box has text');
+  // Presentation only — it sets the placeholder, never the composer value.
+  const start = nav.indexOf('PLACEHOLDER_HINTS');
+  const block = nav.slice(start, start + 1000);
+  assert.match(block, /\.placeholder =/, 'must rotate via the placeholder attribute');
+  assert.doesNotMatch(block, /composerTextarea\.value\s*=[^=]/, 'must never write the composer value');
+});
+
 test('shell: styles define dark mode and the new component tokens', () => {
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
   // Dark is the single primary theme now (graphite/ember in :root), so the dark
