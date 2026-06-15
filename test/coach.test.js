@@ -7,10 +7,13 @@ test('coach system prompt carries the hard guardrails', () => {
   const prompt = buildCoachSystemPrompt();
   assert.match(prompt, /Never invent or change numbers/i, 'must forbid inventing numbers');
   assert.match(prompt, /ONLY the weights, reps, and RIR present in the facts/i);
-  assert.match(prompt, /"Next:"/i, 'must require a single Next: line');
   assert.match(prompt, /never write to any database or sheet/i, 'must forbid writes');
-  assert.match(prompt, /\{weight\}lbs \{reps\}/, 'must specify the set format');
   assert.match(prompt, /plain text only/i, 'must forbid markdown');
+  // The note is the reaction only — the client renders the set readout (tile) and
+  // the next-set card, so the prompt must NOT request a per-set restatement or a
+  // Next: line (that was the on-screen regurgitation).
+  assert.doesNotMatch(prompt, /show the exercise name alone|each set as|\{weight\}lbs \{reps\}/i, 'must not request a per-set restatement');
+  assert.match(prompt, /Do NOT restate the logged sets/i, 'must tell the model to skip the set/Next regurgitation');
 });
 
 test('coach model defaults to gemini 2.5 flash-lite and is env-overridable', () => {
