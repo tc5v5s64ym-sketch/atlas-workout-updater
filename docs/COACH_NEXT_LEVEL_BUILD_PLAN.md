@@ -25,6 +25,10 @@ sessions and the two model switches; update it as tasks land.
   rather than fabricate it.
 - **Trust loop untouched:** approve-before-save, no blind writes to the Sheet, undo intact.
   Any new persisted thing (a constraint, a goal) is *proposed and approved* before it saves.
+- **New write paths are `write_id`-idempotent:** any task that adds a write route (e.g. the
+  2.1 constraint store, the 4.1 goal model) must go through `beginWrite`/`completeWrite`/
+  `failWrite` (`services/idempotency.js`) so a repeated `write_id` replays the original
+  response instead of writing twice — same discipline as every existing write path.
 - **Sanitize every new fact** fed to an LLM with a whitelist that mirrors the existing
   `sanitizeVerdict` / `sanitizeProgressionVerdict` / `sanitizeDeloadPhase` pattern — only
   known fields survive; unknown keys are dropped; a malformed fact returns null.
