@@ -29,6 +29,10 @@ sessions and the two model switches; update it as tasks land.
   2.1 constraint store, the 4.1 goal model) must go through `beginWrite`/`completeWrite`/
   `failWrite` (`services/idempotency.js`) so a repeated `write_id` replays the original
   response instead of writing twice — same discipline as every existing write path.
+- **New Sheets tabs need a pinned column contract:** any task that adds a tab (constraint
+  store, goal model) must document its columns in `config/columns.js` /
+  `config/sheetContract.js` and `CLAUDE.md`, the same way the 12-column `Log_Cleaned` and
+  9-column `Effort` contracts are pinned. No undocumented schema.
 - **Sanitize every new fact** fed to an LLM with a whitelist that mirrors the existing
   `sanitizeVerdict` / `sanitizeProgressionVerdict` / `sanitizeDeloadPhase` pattern — only
   known fields survive; unknown keys are dropped; a malformed fact returns null.
