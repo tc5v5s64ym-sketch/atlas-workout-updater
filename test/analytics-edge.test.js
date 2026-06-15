@@ -15,8 +15,39 @@ const {
   buildProgressSummary,
   buildWeeklyReport,
   recoveryFraction,
-  effortIntensityBySession
+  effortIntensityBySession,
+  roundLoad
 } = require('../services/analytics');
+
+test('roundLoad snaps a computed load to the nearest rackable 5 lb increment', () => {
+  assert.equal(roundLoad(166.5), 165); // 185 × 0.9 → rackable, not 167
+  assert.equal(roundLoad(157.5), 160); // 175 × 0.9 → half rounds up
+  assert.equal(roundLoad(180), 180);   // already on the grid
+  assert.equal(roundLoad(172.4), 170);
+  assert.equal(roundLoad(173), 175);
+  assert.equal(roundLoad(100, 10), 100);
+  assert.equal(roundLoad(104, 10), 100);
+});
+
+test('roundLoad is defensive about bad input', () => {
+  assert.equal(roundLoad(null), null);
+  assert.equal(roundLoad('nope'), null);
+  assert.equal(roundLoad(undefined), null);
+  // A non-positive step falls back to the 5 lb default rather than dividing by zero.
+  assert.equal(roundLoad(166.5, 0), 165);
+});
+
+test('deload weights are rounded to a rackable increment (185 stall → 165, not 167)', () => {
+  // A lift stalled at 185 — 185 × 0.9 = 166.5, which used to render as 167.
+  const stallRows = [];
+  for (let s = 1; s <= 5; s += 1) {
+    stallRows.push(['2026-05-0' + s, 'S' + s, 'Overhead Press', 'Overhead Press', 'Shoulders', 'OHP01', '1', '185', '5', '2', '']);
+  }
+  const deloads = suggestDeloads(stallRows, 4);
+  assert.equal(deloads.length, 1);
+  assert.equal(deloads[0].suggested_deload_weight, 165);
+  assert.equal(deloads[0].suggested_deload_weight % 5, 0, 'deload weight must be rackable');
+});
 
 const logRows = [
   ['2026-06-02', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '5', '2', 'solid'],

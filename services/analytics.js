@@ -386,6 +386,19 @@ function isLowerBodyGroup(muscleGroup) {
   return /leg|quad|hamstring|glute|calf|lower body|hip/i.test(muscleGroup || '');
 }
 
+// Round a COMPUTED load to the nearest rackable increment (default 5 lb) so a
+// percentage-derived target — e.g. a 10% deload — reads as a real weight a lifter
+// can actually load: 185 × 0.9 = 166.5 → 165, not 167. Progression weights that
+// are a logged weight plus a fixed step already respect the lifter's own
+// increment (incl. micro-loading), so those are deliberately left untouched.
+function roundLoad(weight, step = 5) {
+  if (weight == null || weight === '') return null; // Number(null) === 0, guard it
+  const w = Number(weight);
+  if (!Number.isFinite(w)) return null;
+  const s = Number.isFinite(step) && step > 0 ? step : 5;
+  return Math.round(w / s) * s;
+}
+
 // Effort read for a logged set: how the ACTUAL logged RIR compares to the target
 // RIR. Deterministic — the rule engine owns this verdict; the coaching LLM only
 // words it and must never derive its own read of how hard a set was.
@@ -753,7 +766,7 @@ function detectStalls(logRows, minSessions = 3) {
 function suggestDeloads(logRows, minSessions = 4) {
   const stalls = detectStalls(logRows, minSessions);
   return stalls.map(stall => {
-    const deloadWeight = Math.round(stall.last_best_weight * 0.9);
+    const deloadWeight = roundLoad(stall.last_best_weight * 0.9);
     return {
       liftCode: stall.liftCode,
       exercise: stall.exercise || '',
@@ -1294,7 +1307,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const baseExercises = exForPatterns(['push', 'pull', 'core'], 4);
     const exercises = baseExercises.map(ex => ({
       ...ex,
-      target_weight: Math.round(ex.target_weight * 0.75 / 5) * 5,
+      target_weight: roundLoad(ex.target_weight * 0.75),
       target_reps: Math.min(15, ex.target_reps + 4),
       reason: 'Light pump — 70–75% load, 12–15 reps, 2 sets'
     }));
@@ -1461,7 +1474,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       });
     } else {
       const why = top.map(s =>
-        `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${Math.round(s.last_best_weight * 0.9)} lb`
+        `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${roundLoad(s.last_best_weight * 0.9)} lb`
       );
       for (const s of holdStalls.slice(0, 2)) {
         why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
@@ -1481,7 +1494,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         exercises: top.map(s => ({
           exercise: stallName(s.liftCode),
           lift_code: s.liftCode,
-          target_weight: Math.round(s.last_best_weight * 0.9),
+          target_weight: roundLoad(s.last_best_weight * 0.9),
           target_reps: 5,
           target_sets: 3,
           reason: 'Deload — 10% lighter, focus on clean reps'
@@ -1895,6 +1908,7 @@ module.exports = {
   detectRecentPrs,
   recommendNextSet,
   effortVerdict,
+  roundLoad,
   buildBodyweightHistory,
   previewTestRows,
   detectStalls,
