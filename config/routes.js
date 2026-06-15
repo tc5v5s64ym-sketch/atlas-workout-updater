@@ -50,7 +50,9 @@ const routeDefinitions = [
   { path: '/api/report/weekly', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coaching/insights', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coaching-notes', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/coaching-notes', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
+  { path: '/api/coaching-notes', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/constraints', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/constraints', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
 ];
 
 module.exports = { routeDefinitions };

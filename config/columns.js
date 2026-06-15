@@ -44,6 +44,8 @@ const exerciseCatalogColumns = ['Exercise', 'Muscle_Group', 'Lift Code', 'Canoni
 
 const coachingNotesColumns = ['date', 'note'];
 
+const constraintsColumns = ['date', 'kind', 'target', 'rule', 'note'];
+
 const effortRowFieldAliases = {
   date: ['date'],
   session_id: ['session_id', 'sessionId'],
@@ -62,5 +64,6 @@ module.exports = {
   effortColumns,
   exerciseCatalogColumns,
   coachingNotesColumns,
+  constraintsColumns,
   effortRowFieldAliases
 };

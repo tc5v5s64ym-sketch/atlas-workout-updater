@@ -1010,7 +1010,8 @@
     }).then(res => ({
       message: (res && res.data && res.data.message) || null,
       propose_edit: (res && res.data && res.data.propose_edit) || null,
-      propose_note: (res && res.data && res.data.propose_note) || null
+      propose_note: (res && res.data && res.data.propose_note) || null,
+      propose_constraint: (res && res.data && res.data.propose_constraint) || null
     }));
     return Promise.race([request, timeout]);
   }
@@ -1065,6 +1066,66 @@
     });
   }
 
+  // Show a "Save this constraint?" prompt under Atlas's bubble. Calls POST
+  // /api/constraints on approval; disappears on skip. Same trust loop as notes —
+  // never saves silently. constraint is { kind, target, rule, note }.
+  function showSaveConstraintPrompt(bubble, constraint) {
+    const wrap = document.createElement('div');
+    wrap.className = 'propose-note-wrap';
+
+    const ruleVerb = { avoid: 'avoid', limit: 'limit', substitute: 'substitute' }[constraint.rule] || constraint.rule;
+    const summary = `${ruleVerb} ${constraint.target} (${constraint.kind})`;
+
+    const label = document.createElement('p');
+    label.className = 'propose-note-label';
+    label.textContent = `Save constraint: ${summary}`;
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'propose-note-save-btn';
+    saveBtn.textContent = 'Save constraint';
+
+    const skipBtn = document.createElement('button');
+    skipBtn.type = 'button';
+    skipBtn.className = 'propose-note-skip-btn';
+    skipBtn.textContent = 'Skip';
+
+    wrap.appendChild(label);
+    wrap.appendChild(saveBtn);
+    wrap.appendChild(skipBtn);
+    bubble.appendChild(wrap);
+    softScroll(wrap);
+
+    skipBtn.addEventListener('click', () => { wrap.remove(); });
+
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      skipBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        const writeId = `constraint-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        await api('/api/constraints', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: constraint.kind,
+            target: constraint.target,
+            rule: constraint.rule,
+            note: constraint.note || '',
+            write_id: writeId
+          })
+        });
+        label.textContent = 'Constraint saved.';
+        saveBtn.remove();
+        skipBtn.remove();
+      } catch {
+        saveBtn.textContent = 'Save constraint';
+        saveBtn.disabled = false;
+        skipBtn.disabled = false;
+      }
+    });
+  }
+
   // Deterministic fallback when the coach voice is unconfigured, slow, or errors
   // — the chat is never a dead end, and we never claim anything was saved.
   function chatFallback(message) {
@@ -1095,7 +1156,7 @@
     const { bubble, body } = handle;
     body.textContent = 'Thinking…';
 
-    let chatResult = { message: null, propose_edit: null, propose_note: null };
+    let chatResult = { message: null, propose_edit: null, propose_note: null, propose_constraint: null };
     try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
 
     let reply = chatResult.message;
@@ -1122,6 +1183,12 @@
     // explicit lifter approval — never saves silently.
     if (chatResult.propose_note && chatResult.propose_note.note) {
       showSaveNotePrompt(bubble, chatResult.propose_note.note);
+    }
+
+    // Show "Save this constraint?" prompt if Atlas proposed a structured constraint.
+    // Same explicit-approval trust loop as notes — at most one proposal per reply.
+    if (chatResult.propose_constraint && chatResult.propose_constraint.target) {
+      showSaveConstraintPrompt(bubble, chatResult.propose_constraint);
     }
 
     chatTurns.push({ role: 'atlas', text: reply });
