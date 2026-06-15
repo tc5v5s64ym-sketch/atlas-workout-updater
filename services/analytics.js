@@ -457,6 +457,71 @@ function effortVerdict(rir, targetRir) {
   return { level: 'on_target', target_rir: t, headline: `On target — RIR ${r}.` };
 }
 
+// The engine's read of today's LOAD against the lifter's own working history — the
+// progression analogue of effortVerdict. Pure: it judges a single number (today's top
+// working weight) against a band the engine already computed from real sessions. The
+// model only WORDS this; it never derives its own read of progress. Levels:
+//   new_ground         → top clears the historical ceiling (a fresh working best).
+//   under_shot         → top below the bottom of the recent band.
+//   progressing        → top above the band but not past the ceiling (climbing).
+//   in_pocket          → top in the upper half of the band — solidly in range.
+//   maintenance_drift  → top in the lower half of the band — holding but slipping.
+// Returns null when there is no top or no band — there is nothing to read.
+function progressionVerdict(top, band) {
+  const t = Number(top);
+  if (!isPositiveFinite(t)) return null;
+  if (!band || typeof band !== 'object') return null;
+  // Coerce strictly — Number(null) is 0, which would let a missing band slip through.
+  const num = v => (v == null ? NaN : Number(v));
+  const low = num(band.range_low);
+  const high = num(band.range_high);
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
+  const ceiling = num(band.ceiling);
+  const hasCeiling = Number.isFinite(ceiling);
+  const out = (level, headline) => ({
+    level,
+    range_low: low,
+    range_high: high,
+    ceiling: hasCeiling ? ceiling : null,
+    headline
+  });
+  if (hasCeiling && t > ceiling) {
+    return out('new_ground', `New working weight — ${t} clears your previous best of ${ceiling}.`);
+  }
+  if (t < low) {
+    return out('under_shot', `Under your range — ${t} is below your recent ${low}–${high} working band.`);
+  }
+  if (t > high) {
+    return out('progressing', `Climbing — ${t} is above your recent ${low}–${high} band, pushing it up.`);
+  }
+  const midpoint = (low + high) / 2;
+  if (t < midpoint) {
+    return out('maintenance_drift', `Holding low — ${t} sits at the bottom of your ${low}–${high} band.`);
+  }
+  return out('in_pocket', `Right in your range — ${t} sits inside your recent ${low}–${high} band.`);
+}
+
+// The lifter's recent working-weight band for a lift, from their own session history.
+// Top working weight per session (warm-ups never beat a working set, so a max is safe),
+// chronological because the caller passes already-sorted rows. range_low/high come from
+// the most recent `window` sessions; ceiling is the best top across all sessions seen.
+// `excludeSessionId` drops the session being judged (e.g. today's) so the band is pure
+// history. Returns null when no qualifying prior session exists — not enough to read.
+function progressionBand(rows, excludeSessionId = null, window = 5) {
+  const bySession = new Map();
+  for (const r of asArray(rows)) {
+    if (excludeSessionId != null && r.session_id === excludeSessionId) continue;
+    if (!isPositiveFinite(r.weight)) continue;
+    const cur = bySession.get(r.session_id) || 0;
+    if (r.weight > cur) bySession.set(r.session_id, r.weight);
+  }
+  const tops = [...bySession.values()];
+  if (!tops.length) return null;
+  const ceiling = Math.max(...tops);
+  const recent = tops.slice(-window);
+  return { range_low: Math.min(...recent), range_high: Math.max(...recent), ceiling };
+}
+
 // Bug-1 path: when the lifter has JUST logged a set, session-level save means it
 // is not in the sheet yet — so the recommendation must anchor on THAT set, not on
 // stale history. RIR ≥ target + 2 → room to progress; RIR ≤ 0 → hold (near
@@ -589,7 +654,8 @@ function recommendNextSet(logRows, liftCode, options = {}) {
       sessions_analyzed: 0,
       days_since_last_session: null,
       target_rir: null,
-      effort_verdict: null
+      effort_verdict: null,
+      progression_verdict: null
     };
     // Even with no history, a just-logged set still gets an effort read + a next
     // step anchored on that set (a brand-new lift logged in-workout).
@@ -737,6 +803,25 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   const first_weight = firstSessionBests.length ? Math.max(...firstSessionBests) : null;
   const best_weight = allWeights.length ? Math.max(...allWeights) : null;
 
+  // Progression verdict — today's top working set judged against the lifter's own
+  // recent band. Two sources for "today": in-workout the just-logged set is the truth
+  // (it is not in the sheet yet), and the whole row history is prior history. Otherwise
+  // the latest logged session is "today" and the band excludes it so the read is honest.
+  let progressionTop = null;
+  let band = null;
+  if (justLogged && isPositiveFinite(Number(justLogged.weight))) {
+    progressionTop = Number(justLogged.weight);
+    band = progressionBand(rows, null);
+  } else {
+    progressionTop = rows
+      .filter(r => r.session_id === lastSessionId && isPositiveFinite(r.weight))
+      .reduce((m, r) => Math.max(m, r.weight), 0) || null;
+    band = progressionBand(rows, lastSessionId);
+  }
+  const progression_verdict = isPositiveFinite(progressionTop) && band
+    ? progressionVerdict(progressionTop, band)
+    : null;
+
   return {
     liftCode: normalizedCode,
     exercise_name,
@@ -751,7 +836,8 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     first_weight,
     best_weight,
     target_rir: targetRir,
-    effort_verdict
+    effort_verdict,
+    progression_verdict
   };
 }
 
@@ -2027,6 +2113,8 @@ module.exports = {
   detectRecentPrs,
   recommendNextSet,
   effortVerdict,
+  progressionVerdict,
+  progressionBand,
   roundLoad,
   buildBodyweightHistory,
   previewTestRows,

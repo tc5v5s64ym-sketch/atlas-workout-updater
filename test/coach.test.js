@@ -110,6 +110,50 @@ test('coach system prompt binds the opener to the effort verdict and grounds his
   assert.match(prompt, /Never invent a past number/i);
 });
 
+test('sanitizeFacts forwards the progression verdict, whitelisted to its known fields', () => {
+  const clean = sanitizeFacts({
+    exerciseName: 'Bench Press',
+    rec: {
+      progression_verdict: {
+        level: 'in_pocket',
+        range_low: 200,
+        range_high: 225,
+        ceiling: 230,
+        headline: 'Right in your range — 215 sits inside your recent 200–225 band.',
+        junk: 'IGNORE ME'
+      }
+    }
+  });
+  assert.deepEqual(clean.progression_verdict, {
+    level: 'in_pocket',
+    range_low: 200,
+    range_high: 225,
+    ceiling: 230,
+    headline: 'Right in your range — 215 sits inside your recent 200–225 band.'
+  });
+  assert.ok(!JSON.stringify(clean.progression_verdict).includes('IGNORE ME'), 'unknown verdict keys must be dropped');
+});
+
+test('sanitizeFacts leaves the progression verdict null when malformed or absent', () => {
+  assert.equal(sanitizeFacts({ rec: { recommendation: 'Hold.' } }).progression_verdict, null);
+  // No level → rejected, not partially forwarded.
+  assert.equal(sanitizeFacts({ rec: { progression_verdict: { range_low: 200 } } }).progression_verdict, null);
+});
+
+test('coach system prompt reads today against the range and ends on a forward decision', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /progression_verdict/, 'must reference the load verdict the engine provides');
+  assert.match(prompt, /range_low.*range_high|recent working range/i, 'must read today against the band');
+  assert.match(prompt, /under_shot/, 'must instruct the model on the under-shot verdict');
+  assert.match(prompt, /new_ground/, 'must instruct the model on the new-ground verdict');
+  assert.match(prompt, /forward-looking DECISION|points? forward|trajectory/i, 'note must end on a forward-looking line');
+  assert.match(prompt, /Cite ONLY numbers present in the facts/i, 'note must never emit a number absent from facts');
+  assert.match(prompt, /If a fact is missing, drop that beat/i, 'missing facts are dropped, not fabricated');
+  // The forward line is the arc, NOT a duplicated next-set prescription.
+  assert.match(prompt, /do not duplicate the next-set/i, 'must not duplicate the next-set numbers');
+  assert.match(prompt, /Do NOT restate the logged sets/i, 'must still skip the set regurgitation');
+});
+
 test('plan system prompt carries its guardrails', () => {
   const prompt = buildPlanSystemPrompt();
   assert.match(prompt, /Never invent data/i, 'must forbid inventing data');

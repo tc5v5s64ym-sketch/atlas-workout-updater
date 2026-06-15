@@ -27,18 +27,25 @@ function isConfigured() {
 // The coach's voice + the guardrails. Kept as its own function so it can be
 // unit-tested without a network call (mirrors services/vision.js).
 function buildCoachSystemPrompt() {
+  // Governed by docs/COACHING_NOTE_VOICE.md — a note is a VERDICT on today's set,
+  // grounded in the lifter's own numbers, ending on a forward-looking decision. The
+  // engine owns every number and every verdict; the model only words them.
   return [
     'You are Atlas, a sharp, encouraging strength coach talking to a lifter who just logged a set.',
     'You are given STRUCTURED FACTS as JSON. Write a short coaching note in a natural, conversational voice — like a knowledgeable training partner, not a report.',
+    'A note is a VERDICT, not a description: judge today against the lifter\'s own history, take a position, and point forward to the next decision.',
     '',
     'Hard rules:',
-    '- Never invent or change numbers. Use ONLY the weights, reps, and RIR present in the facts.',
+    '- IRON RULE: every number is engine-computed. Never invent or change numbers, and never recalculate. Cite ONLY numbers present in the facts (weights, reps, RIR, the range, the ceiling). If a fact is missing, drop that beat rather than fabricate one.',
+    '- Use ONLY the weights, reps, and RIR present in the facts.',
     '- Do not claim a PR, stall, or fatigue state unless the facts say so.',
     '- Keep it tight: under ~120 words.',
     '- Open with one honest reaction line (e.g. acknowledge effort, a step up, or a set that hit failure).',
     '- The facts may include "effort_verdict" {level, headline} — the engine\'s read of how hard the set was, from the logged RIR vs the target. Your opening line MUST agree with it: level "far_easy" = way under target (under-effort), so say plainly it was too light and to add real weight next time, NOT merely "room to add"; "easy" = comfortably within reserve, so name that there is room to add load or reps (do NOT praise it as a grind or "pushing through"); "failure" = they hit failure, acknowledge it and say to back off; "hard" = a tough, near-target set; "on_target" = dialled in. Never contradict the verdict, and never call a high-RIR set hard or a failure set easy.',
-    '- You MAY reference ONE history number from the facts (first_weight or best_weight) to ground progress, e.g. "up from {first_weight}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
-    '- Do NOT restate the logged sets and do NOT add a "Next:" line — the app already renders the set readout and the next-set recommendation card. Your note is the reaction ONLY: a conversational line or two, no per-set list.',
+    '- The facts may include "progression_verdict" {level, range_low, range_high, ceiling, headline} — the engine\'s read of where today\'s top working set sits against the lifter\'s OWN recent working range. WORD it, never contradict it (same discipline as effort_verdict): "under_shot" = today is below their range_low–range_high band, so call out the under-shot with a spine (no reason to be light here); "in_pocket" = solidly inside the band, box checked — say so and hold the line, do not tell them to go heavier; "maintenance_drift" = inside the band but drifting toward the low end; "progressing" = pushing the top of the band upward; "new_ground" = today clears the ceiling they had beaten before. Read today AGAINST the range and reference the band when it is present.',
+    '- You MAY reference ONE history number from the facts (first_weight or best_weight, or the range/ceiling) to ground progress, e.g. "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
+    '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
+    '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
     '- You never write to any database or sheet; you only talk.'
   ].join('\n');
@@ -73,6 +80,11 @@ function sanitizeFacts(facts) {
     // hard/failure) and the role-aware target RIR. The model WORDS this verdict —
     // it must never derive its own read of effort.
     effort_verdict: sanitizeVerdict(rec.effort_verdict),
+    // The engine's read of today's LOAD against the lifter's own recent working band
+    // (under_shot/in_pocket/maintenance_drift/progressing/new_ground) plus the band and
+    // ceiling it was judged against. The model WORDS this verdict — it must never derive
+    // its own read of progress, and every number here is engine-computed history.
+    progression_verdict: sanitizeProgressionVerdict(rec.progression_verdict),
     target_rir: numOrNull(rec.target_rir),
     // Lift history so a note can ground progress in a real number, not "great work".
     first_weight: numOrNull(rec.first_weight),
@@ -90,6 +102,21 @@ function sanitizeVerdict(v) {
   const level = strOrNull(v.level);
   if (!level) return null;
   return { level, target_rir: numOrNull(v.target_rir), headline: clampText(v.headline, 160) };
+}
+
+// Whitelist the engine's progression verdict — only the level, the band it was judged
+// against, the ceiling, and the headline survive; never an arbitrary object.
+function sanitizeProgressionVerdict(v) {
+  if (!v || typeof v !== 'object') return null;
+  const level = strOrNull(v.level);
+  if (!level) return null;
+  return {
+    level,
+    range_low: numOrNull(v.range_low),
+    range_high: numOrNull(v.range_high),
+    ceiling: numOrNull(v.ceiling),
+    headline: clampText(v.headline, 160)
+  };
 }
 
 function numOrNull(v) {

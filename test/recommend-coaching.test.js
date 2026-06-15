@@ -6,7 +6,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendNextSet, effortVerdict } = require('../services/analytics');
+const { recommendNextSet, effortVerdict, progressionVerdict } = require('../services/analytics');
 
 // 12-column-contract row in object form (the shape normalizeLogRow accepts).
 function row({ date, session, weight, reps, rir, notes = '', code = 'BENCH01', name = 'Bench Press', mg = 'Chest' }) {
@@ -57,6 +57,84 @@ test('effortVerdict: just under target is a hard grinder (not failure)', () => {
 test('effortVerdict: no RIR logged → null (nothing to read)', () => {
   assert.equal(effortVerdict(null, 2), null);
   assert.equal(effortVerdict(undefined, 2), null);
+});
+
+// ── progressionVerdict — the load read of today's top set vs the lifter's band ──
+
+const BAND = { range_low: 200, range_high: 225, ceiling: 230 }; // midpoint 212.5
+
+test('progressionVerdict: top below the band reads as under_shot', () => {
+  const v = progressionVerdict(185, BAND);
+  assert.equal(v.level, 'under_shot');
+  assert.match(v.headline, /under your range/i);
+  // Every number it cites comes from the band/top — nothing invented.
+  assert.deepEqual([v.range_low, v.range_high, v.ceiling], [200, 225, 230]);
+});
+
+test('progressionVerdict: top in the upper half of the band reads as in_pocket', () => {
+  assert.equal(progressionVerdict(215, BAND).level, 'in_pocket');     // above midpoint
+  assert.equal(progressionVerdict(225, BAND).level, 'in_pocket');     // at range_high
+});
+
+test('progressionVerdict: top in the lower half of the band reads as maintenance_drift', () => {
+  assert.equal(progressionVerdict(205, BAND).level, 'maintenance_drift'); // below midpoint
+  assert.equal(progressionVerdict(200, BAND).level, 'maintenance_drift'); // at range_low
+});
+
+test('progressionVerdict: top above the band but under the ceiling reads as progressing', () => {
+  const v = progressionVerdict(228, BAND);
+  assert.equal(v.level, 'progressing');
+  assert.match(v.headline, /climbing|pushing/i);
+});
+
+test('progressionVerdict: top above the ceiling reads as new_ground', () => {
+  const v = progressionVerdict(235, BAND);
+  assert.equal(v.level, 'new_ground');
+  assert.match(v.headline, /new working weight|previous best/i);
+});
+
+test('progressionVerdict: a flat band — beating their usual weight is new ground', () => {
+  // They have only ever done 225; ceiling == band, so 230 is a fresh best.
+  assert.equal(progressionVerdict(230, { range_low: 225, range_high: 225, ceiling: 225 }).level, 'new_ground');
+  assert.equal(progressionVerdict(225, { range_low: 225, range_high: 225, ceiling: 225 }).level, 'in_pocket');
+});
+
+test('progressionVerdict: no band or no top → null (nothing to read)', () => {
+  assert.equal(progressionVerdict(225, null), null);
+  assert.equal(progressionVerdict(225, { range_low: null, range_high: null }), null);
+  assert.equal(progressionVerdict(null, BAND), null);
+  assert.equal(progressionVerdict(0, BAND), null);
+});
+
+test('recommendNextSet: attaches a progression_verdict from real history', () => {
+  // Two prior sessions at 225 set the band; a light just-logged 203 under-shoots it.
+  const rows = [
+    row({ date: '2026-06-01', session: 's1', weight: 225, reps: 5, rir: 0 }),
+    row({ date: '2026-06-08', session: 's2', weight: 225, reps: 5, rir: 0 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-10', justLoggedSet: { weight: 203, reps: 5, rir: 5 }
+  });
+  assert.ok(rec.progression_verdict, 'progression_verdict must be present with history');
+  assert.equal(rec.progression_verdict.level, 'under_shot');
+  assert.equal(rec.progression_verdict.range_low, 225);
+  assert.equal(rec.progression_verdict.range_high, 225);
+});
+
+test('recommendNextSet: a fresh top working set reads as new_ground', () => {
+  const rows = [
+    row({ date: '2026-06-01', session: 's1', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-06-08', session: 's2', weight: 210, reps: 5, rir: 2 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-10', justLoggedSet: { weight: 215, reps: 5, rir: 1 }
+  });
+  assert.equal(rec.progression_verdict.level, 'new_ground');
+});
+
+test('recommendNextSet: no history → progression_verdict is null', () => {
+  const rec = recommendNextSet([], 'BENCH01', { today: '2026-06-10' });
+  assert.equal(rec.progression_verdict, null);
 });
 
 // ── Bug 1 — just-logged set anchors the recommendation, not stale history ──────
