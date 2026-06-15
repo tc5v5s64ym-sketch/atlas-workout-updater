@@ -696,6 +696,16 @@
   }
 
   function coachOpener(todaySets, rec) {
+    // The engine's effort verdict (logged RIR vs target) is authoritative — lead
+    // with it so the note reflects what actually happened, not canned praise.
+    const verdict = rec && rec.effort_verdict;
+    if (verdict && verdict.level) {
+      if (verdict.level === 'failure') return 'That last set went to the well — you hit failure. Back off the load and bank clean reps before pushing again.';
+      if (verdict.level === 'easy') return 'Plenty left in reserve on that one — it was well within target. Room to add load or reps next time.';
+      if (verdict.level === 'hard') return 'Tough set — right up against your target effort. Strong stimulus.';
+      if (verdict.level === 'on_target') return 'Dialled in — that landed right on your target effort.';
+    }
+
     const rirs = todaySets.map(s => s.rir).filter(v => v != null && Number.isFinite(v));
     const hitFailure = rirs.some(v => v <= 0);
     const topWeight = Math.max(0, ...todaySets.map(s => Number(s.weight) || 0));
@@ -747,7 +757,11 @@
     const code = liftCodeForExercise(primary.exercise);
     let rec = null;
     if (code) {
-      try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code); } catch { /* best effort */ }
+      // Anchor the recommendation on the set just logged (the last of this
+      // exercise) — under session-level save it isn't in the sheet yet, so
+      // without it the "Next" would reflect the previous session.
+      const justLogged = primary.sets && primary.sets.length ? primary.sets[primary.sets.length - 1] : null;
+      try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code, justLogged); } catch { /* best effort */ }
     }
 
     const note = await getInWorkoutNote({

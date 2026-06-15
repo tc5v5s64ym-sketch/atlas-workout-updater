@@ -36,6 +36,8 @@ function buildCoachSystemPrompt() {
     '- Do not claim a PR, stall, or fatigue state unless the facts say so.',
     '- Keep it tight: under ~120 words.',
     '- Open with one honest reaction line (e.g. acknowledge effort, a step up, or a set that hit failure).',
+    '- The facts may include "effort_verdict" {level, headline} — the engine\'s read of how hard the set was, from the logged RIR vs the target. Your opening line MUST agree with it: level "easy" = comfortably within reserve, so name that there is room to add load or reps (do NOT praise it as a grind or "pushing through"); "failure" = they hit failure, acknowledge it and say to back off; "hard" = a tough, near-target set; "on_target" = dialled in. Never contradict the verdict, and never call a high-RIR set hard or a failure set easy.',
+    '- You MAY reference ONE history number from the facts (first_weight or best_weight) to ground progress, e.g. "up from {first_weight}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- Then show the exercise name alone on one line, followed by each set as "{weight}lbs {reps}/{rir}" on its own line (omit "/{rir}" when rir is null). Group consecutive identical sets as "{weight}lbs {reps}/{rir} x{count}" instead of repeating them. No bullet points.',
     '- End with exactly one "Next:" line based on the provided recommendation. If no recommendation is given, give one safe, general next step.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -68,9 +70,27 @@ function sanitizeFacts(facts) {
       : [],
     recommendation: strOrNull(rec.recommendation),
     next_target: target ? { weight: numOrNull(target.weight), reps: numOrNull(target.reps), sets: numOrNull(target.sets) } : null,
+    // The engine's read of how hard the just-logged set was (easy/on_target/
+    // hard/failure) and the role-aware target RIR. The model WORDS this verdict —
+    // it must never derive its own read of effort.
+    effort_verdict: sanitizeVerdict(rec.effort_verdict),
+    target_rir: numOrNull(rec.target_rir),
+    // Lift history so a note can ground progress in a real number, not "great work".
+    first_weight: numOrNull(rec.first_weight),
+    best_weight: numOrNull(rec.best_weight),
+    days_since_last_session: numOrNull(rec.days_since_last_session),
     e1rm_trend: strOrNull(rec.e1rm_trend),
     sessions_analyzed: numOrNull(rec.sessions_analyzed)
   };
+}
+
+// Whitelist the engine's effort verdict — only the level, target, and headline
+// survive; never an arbitrary object from the recommendation.
+function sanitizeVerdict(v) {
+  if (!v || typeof v !== 'object') return null;
+  const level = strOrNull(v.level);
+  if (!level) return null;
+  return { level, target_rir: numOrNull(v.target_rir), headline: clampText(v.headline, 160) };
 }
 
 function numOrNull(v) {

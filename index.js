@@ -1292,6 +1292,21 @@ app.get('/api/recommendation/preview', async (req, res) => {
   }
 });
 
+// Optional just-logged set from the query (?w=&reps=&rir=). Under session-level
+// save the set the lifter just did is not in the sheet yet, so the in-workout
+// recommendation must anchor on it. Returns null unless a valid weight+reps pair
+// is present — absent/invalid params preserve the history-only recommendation.
+function parseJustLoggedSet(query) {
+  if (!query || typeof query !== 'object') return null;
+  const weight = Number(query.w);
+  const reps = Number(query.reps);
+  if (!Number.isFinite(weight) || weight <= 0 || !Number.isFinite(reps) || reps <= 0) return null;
+  const rirRaw = query.rir;
+  const rirNum = Number(rirRaw);
+  const rir = (rirRaw === '' || rirRaw == null || !Number.isFinite(rirNum)) ? null : rirNum;
+  return { weight, reps, rir };
+}
+
 // GET /api/recommend/next/:liftCode
 app.get('/api/recommend/next/:liftCode', async (req, res) => {
 
@@ -1300,9 +1315,11 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     return standardError(req, res, 'liftCode is required in path', null, 400);
   }
 
+  const justLoggedSet = parseJustLoggedSet(req.query);
+
   try {
     const allLog = await getSheetRows(logSheetName);
-    const recommendation = recommendNextSet(allLog, liftCode);
+    const recommendation = recommendNextSet(allLog, liftCode, justLoggedSet ? { justLoggedSet } : {});
     const normalizedRows = allLog
       .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
       .map(normalizeAnalyticsLogRow);

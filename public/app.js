@@ -2626,10 +2626,20 @@ function emitSetLogged(logObjs, text) {
   invalidatePreview();
 }
 
-async function fetchReaction(liftCode) {
+// `justLoggedSet` (optional) anchors the recommendation on the set the lifter
+// just logged — under session-level save it isn't in the sheet yet, so without
+// it the recommendation reflects the PREVIOUS session. Other callers (preview,
+// post-write) omit it and get the history-only recommendation, unchanged.
+async function fetchReaction(liftCode, justLoggedSet) {
   if (!liftCode || !getApiKey()) return null;
   try {
-    const res = await api(`/api/recommend/next/${encodeURIComponent(liftCode)}`);
+    let path = `/api/recommend/next/${encodeURIComponent(liftCode)}`;
+    if (justLoggedSet && justLoggedSet.weight != null && justLoggedSet.reps != null) {
+      const params = new URLSearchParams({ w: String(justLoggedSet.weight), reps: String(justLoggedSet.reps) });
+      if (justLoggedSet.rir != null && justLoggedSet.rir !== '') params.set('rir', String(justLoggedSet.rir));
+      path += `?${params.toString()}`;
+    }
+    const res = await api(path);
     return res.data || null;
   } catch {
     return null;
