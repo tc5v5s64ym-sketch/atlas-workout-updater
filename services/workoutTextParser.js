@@ -19,6 +19,7 @@ const EXERCISE_ALIASES = [
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   ['Face Pull', ['face pulls', 'face pull']],
   ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
+  ['Shrug', ['shrugs', 'shrug', 'db shrugs', 'dumbbell shrugs', 'barbell shrugs']],
   ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
@@ -327,6 +328,14 @@ function parseLogSets(rawText, context = {}) {
   }
 
   if (!exercise) {
+    // A leading exercise NAME the resolver couldn't confidently match must never
+    // be silently absorbed into the previous active exercise — that writes the
+    // wrong lift's history (e.g. "shrugs 70 12/10" becoming Bench Press). Echo
+    // the typed name and flag it for review instead.
+    const unknownExercise = parseUnknownExercise(rawText);
+    if (unknownExercise) return unknownExercise;
+    // No leading name — bare set tokens like "205 5/3" are continuation sets of
+    // the lift already in progress, so inherit the active exercise.
     if (context.activeExercise) {
       return parseWithExercise(rawText, {
         canonicalName: context.activeExercise,
@@ -334,8 +343,6 @@ function parseLogSets(rawText, context = {}) {
         rest: rawText,
       });
     }
-    const unknownExercise = parseUnknownExercise(rawText);
-    if (unknownExercise) return unknownExercise;
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
@@ -437,7 +444,10 @@ function extractUnknownExerciseLead(rawText) {
   const rawName = tokens
     .slice(0, start)
     .join(' ')
-    .replace(/^\s*(today|i did|did|was|were|then|and)\s+/i, '')
+    // Strip continuation fillers so phrasing like "another 205 5/3" or "same
+    // 185 8/2" stays a continuation of the active lift rather than becoming a
+    // bogus exercise named "Another"/"Same".
+    .replace(/^\s*(today|i did|did|was|were|then|and|another|next|same|again|also|plus)\b\s*/i, '')
     .trim();
   if (!rawName) return null;
 

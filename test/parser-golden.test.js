@@ -316,3 +316,52 @@ test('golden: unknown exercises parse with review-needed metadata instead of cla
     assert.deepEqual(sets(result), expectedSets, input);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Fail-safe fallback — an unrecognized lift name must never be silently
+// relabeled as the previously-active lift (PR 1). The deload-session repro:
+// "shrugs 70 12/10" and "db 25 12/4" both came back as Bench Press because the
+// active-exercise context was applied before the unknown-exercise path.
+// ---------------------------------------------------------------------------
+
+test('failsafe: shrugs resolves to Shrug, never Bench Press', () => {
+  const noCtx = parseWorkoutText('shrugs 70 12/10');
+  assert.equal(noCtx.canonical_name, 'Shrug');
+  assert.deepEqual(sets(noCtx), [[70, 12, 10]]);
+
+  // Even with a stale active-exercise context from a prior lift.
+  const withCtx = parseWorkoutText('shrugs 70 12/10', { activeExercise: 'Bench Press' });
+  assert.equal(withCtx.canonical_name, 'Shrug');
+});
+
+test('failsafe: unknown lift name is echoed + flagged, not absorbed into the active lift', () => {
+  const result = parseWorkoutText('db 25 12/4', { activeExercise: 'Bench Press' });
+  assert.equal(result.intent, 'log_sets');
+  assert.notEqual(result.canonical_name, 'Bench Press');
+  assert.equal(result.canonical_name, 'Db');
+  assert.equal(result.needs_catalog_review, true);
+  assert.ok(result.warnings.includes('unknown_exercise'));
+  assert.deepEqual(sets(result), [[25, 12, 4]]);
+});
+
+test('failsafe: a genuinely unknown lift with context is flagged, never relabeled', () => {
+  const result = parseWorkoutText('zercher curl 40 10/2', { activeExercise: 'Bench Press' });
+  assert.equal(result.canonical_name, 'Zercher Curl');
+  assert.ok(result.warnings.includes('unknown_exercise'));
+});
+
+test('failsafe: bare continuation sets still inherit the active exercise', () => {
+  // No leading name — these are follow-up sets of the lift in progress.
+  for (const input of ['205 5/3', 'another 205 5/3', 'same 185 8/2', 'then 200 6/2']) {
+    const result = parseWorkoutText(input, { activeExercise: 'Bench Press' });
+    assert.equal(result.canonical_name, 'Bench Press', input);
+    assert.ok(!(result.warnings || []).includes('unknown_exercise'), input);
+  }
+});
+
+test('failsafe: filler strip does not over-match real lift names', () => {
+  // "and" inside "andover" must not be stripped to "over".
+  const result = parseWorkoutText('andover press 95 8/2');
+  assert.equal(result.canonical_name, 'Andover Press');
+  assert.ok(result.warnings.includes('unknown_exercise'));
+});

@@ -2510,6 +2510,14 @@ async function rowsFromWorkoutInput() {
   activeExercise = parsed.rows[0]?.exercise || null;
   parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = workoutText;
+
+  // The parser couldn't confidently resolve the lift name and echoed the typed
+  // text instead of guessing a real lift. Surface it so the wrong history isn't
+  // saved — the exercise field is editable, so a tap fixes it before approval.
+  if ((parsed.warnings || []).includes('unknown_exercise')) {
+    parsedRowsEditor.hidden = false;
+    setStatus(loggerStatus, "Didn't catch that lift — check the exercise name before saving.", 'warn');
+  }
 }
 
 function shouldUseLocalFallback(err) {
