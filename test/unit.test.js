@@ -637,7 +637,8 @@ test('conversational logger calls backend parser before local parser fallback', 
   assert.match(appSource, /api\('\/api\/parse-workout-text'/);
   assert.match(appSource, /test_mode: true/);
   assert.ok(rowsFunction.indexOf('parseWorkoutTextWithBackend(workoutText)') < rowsFunction.indexOf('parseWorkoutText(workoutText)'));
-  assert.match(rowsFunction, /Backend parser unavailable - using local parser fallback/);
+  assert.match(rowsFunction, /console\.warn.*parse-workout-text unavailable/);
+  assert.doesNotMatch(rowsFunction, /setStatus.*Backend parser unavailable/);
 });
 
 test('conversational logger converts backend parser output to editable rows', () => {
@@ -814,7 +815,7 @@ test('conversational logger shows parser source without changing save gating', (
 
   assert.match(appSource, /let lastParserStatus = null/);
   assert.match(statusFunction, /Parsed by backend parser/);
-  assert.match(statusFunction, /Backend parser unavailable - local parser fallback used/);
+  assert.match(statusFunction, /Parsed locally/);
   assert.match(appSource, /lastParserStatus = \{ source: 'backend' \}/);
   assert.match(appSource, /lastParserStatus = \{ source: 'local' \}/);
   assert.match(appSource, /const parseStatus = parserStatusNode\(lastParserStatus\)/);
@@ -833,7 +834,8 @@ test('backend down fallback parity and gating', () => {
   assert.equal(local.intent, 'log_sets');
   assert.equal(local.canonical_name, 'Bench Press');
   assert.deepEqual(compactParsedSets(local), [[225, 5, 2]]);
-  assert.match(fallbackFunction, /Backend parser unavailable - using local parser fallback/);
+  assert.match(fallbackFunction, /console\.warn.*parse-workout-text unavailable/);
+  assert.doesNotMatch(fallbackFunction, /setStatus.*Backend parser unavailable/);
   assert.match(fallbackFunction, /lastParserStatus = \{ source: 'local' \}/);
   assert.doesNotMatch(fallbackFunction, /pendingWrite\s*=/);
   assert.match(appSource, /if \(!hasLogWorkoutNoWriteProof\(result\)\)/);

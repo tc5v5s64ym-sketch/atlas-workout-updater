@@ -2368,9 +2368,7 @@ function parseWorkoutText(text) {
 
 function parserStatusNode(status) {
   if (!status) return null;
-  const label = status.source === 'backend'
-    ? 'Parsed by backend parser'
-    : 'Backend parser unavailable - local parser fallback used';
+  const label = status.source === 'backend' ? 'Parsed by backend parser' : 'Parsed locally';
   return el('div', { class: 'parser-status', text: label });
 }
 
@@ -2402,19 +2400,27 @@ function rowsFromBackendParsedWorkout(parsed) {
 }
 
 async function parseWorkoutTextWithBackend(workoutText) {
-  const result = await api('/api/parse-workout-text', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text: workoutText,
-      context: {
-        activeExercise,
-        activeSessionType: null,
-        todayPlan: null
-      },
-      test_mode: true
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  let result;
+  try {
+    result = await api('/api/parse-workout-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: workoutText,
+        context: {
+          activeExercise,
+          activeSessionType: null,
+          todayPlan: null
+        },
+        test_mode: true
+      }),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = result?.data || {};
   if (data.test_mode !== true || data.sheet_written !== false || data.no_write_confirmed !== true) {
@@ -2474,7 +2480,7 @@ async function rowsFromWorkoutInput() {
     parsed = await parseWorkoutTextWithBackend(workoutText);
   } catch (backendError) {
     if (!shouldUseLocalFallback(backendError)) throw backendError;
-    setStatus(loggerStatus, 'Backend parser unavailable - using local parser fallback.', 'warn');
+    console.warn('[atlas] parse-workout-text unavailable, using local fallback:', backendError.message);
     const localResult = parseWorkoutText(workoutText);
     if (localResult.errors.length > 0) throw new Error(localResult.errors.join(' | '));
     if (!localResult.rows.length) throw new Error('Workout text did not produce any set rows.');
