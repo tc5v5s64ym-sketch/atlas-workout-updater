@@ -1895,11 +1895,46 @@ test('reaction layer: fetchReaction exists and fails quietly', () => {
   assert.match(appSource, /async function fetchReaction\(/, 'fetchReaction must exist');
   const fetchFn = appSource.slice(
     appSource.indexOf('async function fetchReaction('),
-    appSource.indexOf('async function fetchReaction(') + 600
+    appSource.indexOf('async function fetchReaction(') + 900
   );
   assert.match(fetchFn, /return null/, 'must return null on unavailable data');
   assert.match(fetchFn, /catch/, 'must catch errors silently');
   assert.match(fetchFn, /\/api\/recommend\/next\//, 'must call the recommend endpoint');
+  // The just-logged set is forwarded as query params so the recommendation
+  // anchors on it (Bug 1) — not on the previous session in the sheet.
+  assert.match(fetchFn, /async function fetchReaction\(liftCode, justLoggedSet\)/, 'must accept an optional just-logged set');
+  assert.match(fetchFn, /URLSearchParams/, 'must append the set as query params');
+});
+
+test('reaction layer: the recommend route reads ?w&reps&rir and stays read-only', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // The route parses the optional just-logged set and passes it to the engine.
+  assert.match(indexSource, /function parseJustLoggedSet\(query\)/, 'route must parse the just-logged query set');
+  assert.match(indexSource, /recommendNextSet\(allLog, liftCode, justLoggedSet \? \{ justLoggedSet \} : \{\}\)/, 'route must forward the just-logged set to the engine');
+  // It's a GET that only reads — a just-logged set must never trigger a write.
+  const start = indexSource.indexOf("app.get('/api/recommend/next/:liftCode'");
+  const routeFn = indexSource.slice(start, start + 700);
+  assert.doesNotMatch(routeFn, /appendRows|deleteRows|completeWrite/, 'recommend-next must never write');
+});
+
+test('in-workout note: handleSetLogged anchors the recommendation on the just-logged set', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSetLogged(');
+  const fn = cc.slice(start, start + 1400);
+  // Passes the last just-logged set of the primary exercise into fetchReaction.
+  assert.match(fn, /primary\.sets\[primary\.sets\.length - 1\]/, 'must take the just-logged set');
+  assert.match(fn, /fetchReaction\(code, justLogged\)/, 'must forward it to fetchReaction');
+});
+
+test('in-workout note: coachOpener leads with the engine effort verdict', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('function coachOpener(');
+  const fn = cc.slice(start, start + 1100);
+  assert.match(fn, /effort_verdict/, 'opener must consult the verdict');
+  // An easy set is never praised as a grind; failure is acknowledged.
+  assert.match(fn, /level === 'easy'/, 'must handle the easy verdict');
+  assert.match(fn, /level === 'failure'/, 'must handle the failure verdict');
+  assert.match(fn, /add load or reps/i, 'easy → say there is room to add load/reps');
 });
 
 test('reaction layer: renderAtlasSuggestion and extractLiftCodes exist', () => {

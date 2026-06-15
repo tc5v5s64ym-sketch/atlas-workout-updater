@@ -65,6 +65,46 @@ test('sanitizeFacts is defensive about missing / malformed input', () => {
   assert.match(user, /"exercise": "Squat"/);
 });
 
+test('sanitizeFacts forwards the effort verdict, target RIR, and lift history', () => {
+  const clean = sanitizeFacts({
+    exerciseName: 'Bench Press',
+    liftCode: 'BEN01',
+    todaySets: [{ weight: 203, reps: 5, rir: 5 }],
+    rec: {
+      recommendation: 'Room to progress — move to 208 × 5 next set.',
+      effort_verdict: { level: 'easy', target_rir: 3, headline: 'Well within reserve — room to add load.', junk: 'IGNORE ME' },
+      target_rir: 3,
+      first_weight: 185,
+      best_weight: 225,
+      days_since_last_session: 4
+    }
+  });
+  assert.deepEqual(clean.effort_verdict, { level: 'easy', target_rir: 3, headline: 'Well within reserve — room to add load.' });
+  assert.ok(!JSON.stringify(clean.effort_verdict).includes('IGNORE ME'), 'unknown verdict keys must be dropped');
+  assert.equal(clean.target_rir, 3);
+  assert.equal(clean.first_weight, 185);
+  assert.equal(clean.best_weight, 225);
+  assert.equal(clean.days_since_last_session, 4);
+});
+
+test('sanitizeFacts leaves the verdict null when the engine gives none', () => {
+  const clean = sanitizeFacts({ exerciseName: 'Squat', todaySets: [], rec: { recommendation: 'Hold.' } });
+  assert.equal(clean.effort_verdict, null);
+  assert.equal(clean.target_rir, null);
+  // A malformed verdict (no level) is rejected, not partially forwarded.
+  const bad = sanitizeFacts({ rec: { effort_verdict: { headline: 'no level' } } });
+  assert.equal(bad.effort_verdict, null);
+});
+
+test('coach system prompt binds the opener to the effort verdict and grounds history', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /effort_verdict/, 'must reference the verdict the engine provides');
+  assert.match(prompt, /MUST agree with it/i, 'opener must not contradict the verdict');
+  assert.match(prompt, /do NOT praise it as a grind|within reserve/i, 'an easy set must not be praised as hard');
+  assert.match(prompt, /first_weight or best_weight/, 'may ground progress in one real history number');
+  assert.match(prompt, /Never invent a past number/i);
+});
+
 test('plan system prompt carries its guardrails', () => {
   const prompt = buildPlanSystemPrompt();
   assert.match(prompt, /Never invent data/i, 'must forbid inventing data');
