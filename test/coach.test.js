@@ -154,6 +154,41 @@ test('coach system prompt reads today against the range and ends on a forward de
   assert.match(prompt, /Do NOT restate the logged sets/i, 'must still skip the set regurgitation');
 });
 
+test('sanitizeFacts forwards the deload phase, whitelisted to its known fields', () => {
+  const clean = sanitizeFacts({
+    exerciseName: 'Bench Press',
+    rec: {
+      deload_phase: {
+        active: true,
+        return_weight: 225,
+        summary: 'fewer sets at near-normal weight, kept well short of failure — one pass, then back up',
+        junk: 'IGNORE ME'
+      }
+    }
+  });
+  assert.deepEqual(clean.deload_phase, {
+    active: true,
+    return_weight: 225,
+    summary: 'fewer sets at near-normal weight, kept well short of failure — one pass, then back up'
+  });
+  assert.ok(!JSON.stringify(clean.deload_phase).includes('IGNORE ME'), 'unknown deload keys must be dropped');
+});
+
+test('sanitizeFacts leaves the deload phase null when absent or not active', () => {
+  assert.equal(sanitizeFacts({ rec: { recommendation: 'Hold.' } }).deload_phase, null);
+  // active must be exactly true — a falsy/absent flag is not a deload day.
+  assert.equal(sanitizeFacts({ rec: { deload_phase: { active: false, return_weight: 200 } } }).deload_phase, null);
+  assert.equal(sanitizeFacts({ rec: { deload_phase: { return_weight: 200 } } }).deload_phase, null);
+});
+
+test('coach system prompt frames a deload set as on-plan, not under-effort', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /deload_phase/, 'must reference the deload-phase fact the engine provides');
+  assert.match(prompt, /by design/i, 'must say the reduced sets / high RIR are intentional');
+  assert.match(prompt, /not.*under-effort|do NOT tell them to add weight/i, 'must not steer toward adding weight on a deload');
+  assert.match(prompt, /return_weight/, 'must point forward to the weight they snap back to');
+});
+
 test('plan system prompt carries its guardrails', () => {
   const prompt = buildPlanSystemPrompt();
   assert.match(prompt, /Never invent data/i, 'must forbid inventing data');

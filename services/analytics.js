@@ -575,6 +575,11 @@ function recommendFromJustLoggedSet(set, { targetRir, increaseAmount, deload = f
   return { recommendation, reasoning, next_target: { weight: nextWeight, reps: nextReps, sets: 3 }, effort_verdict: verdict, confidence };
 }
 
+// Volume-first deload, said once: a deload holds near-normal weight and cuts sets
+// (it is NOT a weight cut), kept well short of failure. Shared by every deload_phase
+// fact so the coach note's framing stays consistent with the prescription.
+const DELOAD_PHASE_SUMMARY = 'fewer sets at near-normal weight, kept well short of failure — one pass, then back up';
+
 // Bug-3 path: is the most recent session a ONE-OFF deload? If so the next session
 // should return to the pre-deload working weight and resume normal progression —
 // not carry the lighter deload load forward as the new baseline.
@@ -648,7 +653,10 @@ function recommendNextSet(logRows, liftCode, options = {}) {
       days_since_last_session: null,
       target_rir: null,
       effort_verdict: null,
-      progression_verdict: null
+      progression_verdict: null,
+      // Known deload day with no history yet — frame as a deload, but there is no
+      // working weight to name as the return point.
+      deload_phase: isDeload ? { active: true, return_weight: null, summary: DELOAD_PHASE_SUMMARY } : null
     };
     // Even with no history, a just-logged set still gets an effort read + a next
     // step anchored on that set (a brand-new lift logged in-workout).
@@ -815,6 +823,22 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     ? progressionVerdict(progressionTop, band)
     : null;
 
+  // Deload phase fact — present ONLY on a known deload day (the active plan intent,
+  // forwarded as intentId/deload). It lets the coach note name the deload and the
+  // weight to snap back to after the pass. return_weight is engine-computed from
+  // this lift's own history: a detected pre-deload working weight, else the best
+  // weight on record. Null on a normal day so the note frames nothing.
+  let deload_phase = null;
+  if (isDeload) {
+    const recovery = detectDeloadRecovery(rows);
+    const back = recovery ? recovery.preDeloadWeight : best_weight;
+    deload_phase = {
+      active: true,
+      return_weight: isPositiveFinite(back) ? back : null,
+      summary: DELOAD_PHASE_SUMMARY
+    };
+  }
+
   return {
     liftCode: normalizedCode,
     exercise_name,
@@ -830,7 +854,8 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     best_weight,
     target_rir: targetRir,
     effort_verdict,
-    progression_verdict
+    progression_verdict,
+    deload_phase
   };
 }
 
