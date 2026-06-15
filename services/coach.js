@@ -38,8 +38,7 @@ function buildCoachSystemPrompt() {
     '- Open with one honest reaction line (e.g. acknowledge effort, a step up, or a set that hit failure).',
     '- The facts may include "effort_verdict" {level, headline} — the engine\'s read of how hard the set was, from the logged RIR vs the target. Your opening line MUST agree with it: level "far_easy" = way under target (under-effort), so say plainly it was too light and to add real weight next time, NOT merely "room to add"; "easy" = comfortably within reserve, so name that there is room to add load or reps (do NOT praise it as a grind or "pushing through"); "failure" = they hit failure, acknowledge it and say to back off; "hard" = a tough, near-target set; "on_target" = dialled in. Never contradict the verdict, and never call a high-RIR set hard or a failure set easy.',
     '- You MAY reference ONE history number from the facts (first_weight or best_weight) to ground progress, e.g. "up from {first_weight}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
-    '- Then show the exercise name alone on one line, followed by each set as "{weight}lbs {reps}/{rir}" on its own line (omit "/{rir}" when rir is null). Group consecutive identical sets as "{weight}lbs {reps}/{rir} x{count}" instead of repeating them. No bullet points.',
-    '- End with exactly one "Next:" line based on the provided recommendation. If no recommendation is given, give one safe, general next step.',
+    '- Do NOT restate the logged sets and do NOT add a "Next:" line — the app already renders the set readout and the next-set recommendation card. Your note is the reaction ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
     '- You never write to any database or sheet; you only talk.'
   ].join('\n');
