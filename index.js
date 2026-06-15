@@ -145,7 +145,7 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
