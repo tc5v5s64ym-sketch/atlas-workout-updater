@@ -65,6 +65,40 @@ test('integration: main-lift stalls can still emit a true Deload', () => {
   }
 });
 
+test('integration: a true deload rounds out to a fuller session with rested accessories', () => {
+  const rows = [
+    // Two stalled MAIN lifts → a genuine systemic deload (not accessory-only).
+    ...flatStall('Back Squat', 'Quads', 'SQ01', 315, 5),
+    ...flatStall('Bench Press', 'Chest', 'BEN01', 225, 5),
+    // Rested, progressing accessories the owner trains → fillers for the deload day.
+    row('2026-06-01', 'DBC-1', 'Dumbbell Curl', 'Biceps', 'DBC01', 25, 12),
+    row('2026-06-04', 'DBC-2', 'Dumbbell Curl', 'Biceps', 'DBC01', 30, 12),
+    row('2026-06-01', 'FP-1', 'Face Pull', 'Rear Delts', 'FP01', 45, 15),
+    row('2026-06-04', 'FP-2', 'Face Pull', 'Rear Delts', 'FP01', 50, 15),
+    row('2026-06-01', 'LPD-1', 'Lat Pulldown', 'Back', 'LPD01', 120, 10),
+    row('2026-06-04', 'LPD-2', 'Lat Pulldown', 'Back', 'LPD01', 130, 10),
+  ];
+  const result = scoreIntents(rows, [], { today: TODAY });
+
+  const deload = result.intents.find(i => i.id === 'deload_reset');
+  assert.ok(deload, 'two main-lift stalls must arm a true deload');
+  assert.equal(deload.label, 'Deload & Reset');
+
+  // The deloaded mains lead at 5 reps; the session is fuller than just the 2 stalls.
+  assert.ok(deload.exercises.length > 2, `expected a fuller deload, got ${deload.exercises.length}`);
+  assert.ok(deload.exercises.length <= 6, 'deload session is capped at 6 movements');
+  const mains = deload.exercises.filter(e => ['SQ01', 'BEN01'].includes(e.lift_code));
+  assert.equal(mains.length, 2, 'both deloaded mains lead the session');
+  for (const m of mains) assert.equal(m.target_reps, 5);
+  // At least one rested accessory was pulled in to round it out, and no extra main
+  // compound was added to the deload day.
+  const names = deload.exercises.map(e => e.exercise);
+  assert.ok(
+    names.some(n => ['Dumbbell Curl', 'Face Pull', 'Lat Pulldown'].includes(n)),
+    'a rested accessory should round out the deload day'
+  );
+});
+
 test('integration: an accessory reset programs a fuller session, not just the stalled lifts', () => {
   const rows = [
     ...flatStall('Dumbbell Curl', 'Biceps', 'DBC01', 30, 12),
