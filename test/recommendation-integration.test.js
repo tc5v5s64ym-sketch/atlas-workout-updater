@@ -65,6 +65,30 @@ test('integration: main-lift stalls can still emit a true Deload', () => {
   }
 });
 
+test('integration: a true deload is framed as a proposal — duration, return point, and a decline path (PR 3a)', () => {
+  const rows = [
+    ...flatStall('Back Squat', 'Quads', 'SQ01', 315, 5),
+    ...flatStall('Bench Press', 'Chest', 'BEN01', 225, 5),
+  ];
+  const result = scoreIntents(rows, [], { today: TODAY });
+  const deload = result.intents.find(i => i.id === 'deload_reset');
+  assert.ok(deload && deload.label === 'Deload & Reset', 'a genuine deload should be present');
+
+  // Structured proposal carries all three consent elements.
+  assert.ok(deload.proposal, 'deload must carry a structured proposal');
+  assert.match(deload.proposal.duration, /week|rotation/i, 'states how long the deload runs');
+  assert.match(deload.proposal.return_point, /normal working weight|back to/i, 'states the return point');
+  assert.match(deload.proposal.return_point, /315|225/, 'names a real pre-deload working weight to return to');
+  assert.match(deload.proposal.decline, /Test Progress|Strength|power through|optional/i, 'offers a decline / power-through path');
+
+  // The proposal also surfaces in the rendered why_today rationale (so it shows
+  // even without a UI that reads the structured field).
+  const why = (deload.why_today || []).join(' | ');
+  assert.match(why, /week|rotation/i, 'why_today states the duration');
+  assert.match(why, /normal working weight|back to/i, 'why_today states the return point');
+  assert.match(why, /Test Progress|Strength|power through|optional/i, 'why_today offers the decline path');
+});
+
 test('integration: a true deload rounds out to a fuller session with rested accessories', () => {
   const rows = [
     // Two stalled MAIN lifts → a genuine systemic deload (not accessory-only).
