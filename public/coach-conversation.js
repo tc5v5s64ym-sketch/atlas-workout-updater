@@ -646,15 +646,56 @@
     return Promise.race([request, timeout]);
   }
 
+  // De-templating: several phrasings per verdict level so the SAME verdict never
+  // produces an identical note twice in a session. Numbers stay locked — only the
+  // prose varies. `far_easy` reads as under-effort ("add weight"), never as a
+  // praised on-target set. "add load or reps" stays in the easy copy on purpose.
+  const VERDICT_VARIANTS = {
+    failure: [
+      'That last set went to the well — you hit failure. Back off the load and bank clean reps before pushing again.',
+      'You buried that one — that set hit failure. Drop the weight a touch and rebuild with clean reps.',
+      'Nothing left in the tank there — that was failure. Ease off the load and groove a few crisp sets before loading back up.'
+    ],
+    far_easy: [
+      'Way too light — you left a stack of reps in reserve, well under your target effort. Add real weight next time.',
+      'That barely registered — far below the effort you were aiming for. Put meaningfully more on the bar next set.',
+      "Too easy to count as a working set — that's under-effort, not on-target. Bump the load up next time."
+    ],
+    easy: [
+      'Plenty left in reserve on that one — it was well within target. Room to add load or reps next time.',
+      'Comfortable — you stayed inside your target. A little more load or an extra rep next time.',
+      'That had room to spare, just inside target. Nudge the load or chase a rep next time.'
+    ],
+    hard: [
+      'Tough set — right up against your target effort. Strong stimulus.',
+      'A grinder — right at your target. Quality work.',
+      'Right at the edge of target — hard, productive set.'
+    ],
+    on_target: [
+      'Dialled in — that landed right on your target effort.',
+      'Bang on target — that effort was exactly where you want it.',
+      'Right on the money — that set hit your target effort.'
+    ]
+  };
+  // Per-level rotation index, lives for the page session, so two failure sets (or
+  // two of any level) in one session never read back the identical sentence.
+  const verdictRotation = {};
+  function pickVerdictLine(level) {
+    const variants = VERDICT_VARIANTS[level];
+    if (!variants || !variants.length) return null;
+    const i = (verdictRotation[level] || 0) % variants.length;
+    verdictRotation[level] = (verdictRotation[level] || 0) + 1;
+    return variants[i];
+  }
+
   function coachOpener(todaySets, rec) {
     // The engine's effort verdict (logged RIR vs target) is authoritative — lead
     // with it so the note reflects what actually happened, not canned praise.
+    // Phrasing rotates per verdict level (see pickVerdictLine) to de-template.
     const verdict = rec && rec.effort_verdict;
     if (verdict && verdict.level) {
-      if (verdict.level === 'failure') return 'That last set went to the well — you hit failure. Back off the load and bank clean reps before pushing again.';
-      if (verdict.level === 'easy') return 'Plenty left in reserve on that one — it was well within target. Room to add load or reps next time.';
-      if (verdict.level === 'hard') return 'Tough set — right up against your target effort. Strong stimulus.';
-      if (verdict.level === 'on_target') return 'Dialled in — that landed right on your target effort.';
+      const line = pickVerdictLine(verdict.level);
+      if (line) return line;
     }
 
     const rirs = todaySets.map(s => s.rir).filter(v => v != null && Number.isFinite(v));
