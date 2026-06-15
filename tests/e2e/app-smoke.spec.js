@@ -1105,7 +1105,9 @@ test('PR6: logging exercise N names N+1 in the reply and advances the composer p
     'log it'
   ];
   const placeholder = await page.locator('#workout-text').getAttribute('placeholder');
-  expect(placeholder).toContain('Lat Pulldown');
+  // FIX 2: the placeholder is the next exercise's FULL prescription — each set
+  // written out (reps/rir per set), bare weight, no "xN" — not just the name.
+  expect(placeholder).toBe('Lat Pulldown 170 8/2 8/2 8/2');
   for (const hint of GENERIC_HINTS) {
     expect(placeholder).not.toContain(hint);
   }

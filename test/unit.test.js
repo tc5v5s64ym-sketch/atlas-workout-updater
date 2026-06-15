@@ -3831,8 +3831,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v4/, 'cache name must be bumped so stale styles are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v3/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v5/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v4/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
@@ -4166,15 +4166,64 @@ test('PR6: coach-conversation.js emits the handoff div with the correct class an
   assert.match(cc, /next-exercise-handoff/, 'must use .next-exercise-handoff class');
   // Handoff text must include "Moving on" and "next up".
   assert.match(cc, /Moving on.*next up/, 'handoff text must say "Moving on — next up: <Name>"');
-  // Must call setWorkoutPlaceholder to advance the composer.
-  assert.match(cc, /setWorkoutPlaceholder\(nextEx\)/, 'must advance placeholder to next exercise after handoff');
+  // Must call setWorkoutPlaceholder to advance the composer (now with the full
+  // next prescription via formatNextPlaceholder, falling back to the name).
+  assert.match(cc, /setWorkoutPlaceholder\(placeholder\)/, 'must advance the placeholder after the handoff');
   // Trust loop must be untouched: handoff is in the same bubble, no new write surface.
   assert.doesNotMatch(cc, /buildReviewCard.*nextEx|nextEx.*buildReviewCard/, 'handoff must not touch the review card');
 });
 
 test('PR6: coach-conversation.js getNextExerciseInPlan uses getPlanTodayByName (engine-owned ordering)', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const fn = cc.slice(cc.indexOf('async function getNextExerciseInPlan('), cc.indexOf('// In-workout: a logged set'));
+  const fn = cc.slice(cc.indexOf('async function getNextExerciseInPlan('), cc.indexOf('function formatNextPlaceholder('));
   assert.match(fn, /getPlanTodayByName/, 'must source ordering from getPlanTodayByName');
   assert.doesNotMatch(fn, /api\(|fetch\(/, 'must not make its own API call — reuses cached plan map');
+});
+
+// ── FIX 2 — next-exercise composer placeholder = full prescription ────────────
+
+// Re-implements formatNextPlaceholder for unit coverage (the real function is a
+// browser-IIFE closure). One "{reps}/{rir}" token per prescribed set, bare
+// weight (no "lbs"), no "xN".
+function fmtNextPlaceholder(rec) {
+  if (!rec || typeof rec !== 'object') return null;
+  const name = rec.exercise_name || rec.exercise || '';
+  const t = rec.next_target && typeof rec.next_target === 'object' ? rec.next_target : {};
+  const weight = t.weight != null ? t.weight : rec.target_weight;
+  const reps = t.reps != null ? t.reps : rec.target_reps;
+  const rir = rec.target_rir;
+  let sets = Number(t.sets != null ? t.sets : rec.target_sets);
+  if (!Number.isFinite(sets) || sets < 1) sets = 1;
+  sets = Math.min(sets, 10);
+  if (!name || weight == null || reps == null) return name || null;
+  const token = (rir == null || rir === '') ? `${reps}` : `${reps}/${rir}`;
+  return `${name} ${weight} ${Array(sets).fill(token).join(' ')}`;
+}
+
+test('FIX2: next-exercise placeholder writes each set out — bare weight, reps/rir per set, no xN', () => {
+  // Real /api/plan/today shape (next_target + target_rir).
+  assert.equal(
+    fmtNextPlaceholder({ exercise_name: 'Face Pull', next_target: { weight: 45, reps: 15, sets: 3 }, target_rir: 4 }),
+    'Face Pull 45 15/4 15/4 15/4'
+  );
+  // Flat target_* shape (dashboard / e2e mock).
+  assert.equal(
+    fmtNextPlaceholder({ exercise_name: 'Lat Pulldown', target_weight: 170, target_reps: 8, target_sets: 3, target_rir: 2 }),
+    'Lat Pulldown 170 8/2 8/2 8/2'
+  );
+  // Null RIR → bare reps, no slash.
+  assert.equal(
+    fmtNextPlaceholder({ exercise_name: 'Plank', next_target: { weight: 0, reps: 60, sets: 2 }, target_rir: null }),
+    'Plank 0 60 60'
+  );
+  // Missing numbers → name only (graceful fallback).
+  assert.equal(fmtNextPlaceholder({ exercise_name: 'Mystery' }), 'Mystery');
+});
+
+test('FIX2: coach-conversation.js advances the composer to the full next prescription', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(cc, /function formatNextPlaceholder\(/, 'must define the placeholder formatter');
+  assert.match(cc, /Array\(sets\)\.fill\(token\)\.join\(' '\)/, 'one set token per prescribed set');
+  assert.match(cc, /formatNextPlaceholder\(nextRec\)/, 'the placeholder comes from the formatter');
+  assert.match(cc, /Moving on — next up: \$\{nextEx\}/, 'the handoff line stays name-only');
 });

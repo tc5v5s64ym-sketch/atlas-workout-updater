@@ -744,6 +744,27 @@
     return (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null;
   }
 
+  // Build the composer placeholder for the next plan exercise: the prescription
+  // written out, ONE "{reps}/{rir}" token per prescribed set, bare weight (no
+  // "lbs"), no "xN" — e.g. "Face Pull 45 15/4 15/4 15/4". Reads the /api/plan/today
+  // shape (next_target.{weight,reps,sets} + target_rir), falling back to flat
+  // target_* fields. Returns the name alone when weight/reps are missing. The
+  // numbers come straight from the engine's plan — nothing is invented here.
+  function formatNextPlaceholder(rec) {
+    if (!rec || typeof rec !== 'object') return null;
+    const name = rec.exercise_name || rec.exercise || '';
+    const t = rec.next_target && typeof rec.next_target === 'object' ? rec.next_target : {};
+    const weight = t.weight != null ? t.weight : rec.target_weight;
+    const reps = t.reps != null ? t.reps : rec.target_reps;
+    const rir = rec.target_rir;
+    let sets = Number(t.sets != null ? t.sets : rec.target_sets);
+    if (!Number.isFinite(sets) || sets < 1) sets = 1;
+    sets = Math.min(sets, 10);
+    if (!name || weight == null || reps == null) return name || null;
+    const token = (rir == null || rir === '') ? `${reps}` : `${reps}/${rir}`;
+    return `${name} ${weight} ${Array(sets).fill(token).join(' ')}`;
+  }
+
   // In-workout: a logged set → readback (RIR in ember) + coach note + adjusted-
   // next prescription + next-exercise handoff. NO Save/preview/approve — the only
   // Save is the end-of-session review card below. Rendered purely from the
@@ -797,9 +818,16 @@
       handoff.className = 'next-exercise-handoff';
       handoff.textContent = `Moving on — next up: ${nextEx}.`;
       bubble.appendChild(handoff);
-      // Advance the composer placeholder to the next exercise so the lifter
-      // has a ready hint without scrolling back to the plan.
-      setWorkoutPlaceholder(nextEx);
+      // Advance the composer placeholder to the next exercise's FULL prescription
+      // (each set written out) so the lifter can log it without scrolling back to
+      // the plan. Falls back to the bare name if the plan entry has no numbers.
+      let placeholder = nextEx;
+      try {
+        const map = (typeof getPlanTodayByName === 'function') ? await getPlanTodayByName() : null;
+        const nextRec = map ? map.get(String(nextEx).toLowerCase()) : null;
+        placeholder = formatNextPlaceholder(nextRec) || nextEx;
+      } catch { /* best effort — fall back to the name */ }
+      setWorkoutPlaceholder(placeholder);
     }
   }
 
