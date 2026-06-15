@@ -202,6 +202,23 @@ test('deload intent with NO just-logged set references the usual load and says g
   assert.doesNotMatch(rec.recommendation, /hold 225/i); // no "hold the heavy weight" contradiction
 });
 
+test('deload intent with NO just-logged set names the PRE-deload weight when a deload set is already in the sheet', () => {
+  // A deload set (180, ~10% light) already landed this block; the most recent set
+  // is therefore the deload weight, not the usual. The reaction must reference the
+  // established pre-deload working weight (200), not the deload weight (180) — so
+  // "take a lighter load than your usual 200", never "...than your usual 180".
+  const rows = [
+    row({ date: '2026-05-20', session: 'd1', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-05-27', session: 'd2', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-06-03', session: 'd3', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-06-10', session: 'd4', weight: 180, reps: 5, rir: 4 }) // deload set already logged
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
+  assert.match(rec.recommendation, /your usual 200/);          // names the pre-deload weight
+  assert.doesNotMatch(rec.recommendation, /your usual 180/);   // never the deload weight
+  assert.doesNotMatch(rec.recommendation, /increase|progress|chase/i);
+});
+
 test('NON-deload regression: the same on-target set still chases reps (deload gating is isolated)', () => {
   const rows = [
     row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 3 }),
