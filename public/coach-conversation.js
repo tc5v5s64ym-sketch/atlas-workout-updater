@@ -681,11 +681,33 @@
     return opt ? (opt.label || null) : null;
   }
 
+  // Given an exercise name just logged, look up the next exercise in the
+  // ordered plan (insertion order from getPlanTodayByName = plan order).
+  // Returns the display name of the N+1 entry, or null when the exercise is
+  // last (or not found) in the plan. Best-effort — never throws.
+  async function getNextExerciseInPlan(exerciseName) {
+    if (typeof getPlanTodayByName !== 'function') return null;
+    let map;
+    try { map = await getPlanTodayByName(); } catch { return null; }
+    if (!map || !map.size) return null;
+    const key = String(exerciseName).toLowerCase();
+    // Find the logged exercise in the plan's ordered keys.
+    const keys = Array.from(map.keys());
+    let idx = keys.indexOf(key);
+    if (idx === -1) {
+      // Fuzzy: "bench" ↔ "bench press"
+      idx = keys.findIndex(k => k.includes(key) || key.includes(k));
+    }
+    if (idx === -1 || idx >= keys.length - 1) return null; // last or not found
+    const nextRec = map.get(keys[idx + 1]);
+    return (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null;
+  }
+
   // In-workout: a logged set → readback (RIR in ember) + coach note + adjusted-
-  // next prescription. NO Save/preview/approve — the only Save is the end-of-
-  // session review card below. Rendered purely from the client-parsed sets; the
-  // set text is recorded so the end-of-session compile can reconstruct the
-  // full workout.
+  // next prescription + next-exercise handoff. NO Save/preview/approve — the only
+  // Save is the end-of-session review card below. Rendered purely from the
+  // client-parsed sets; the set text is recorded so the end-of-session compile
+  // can reconstruct the full workout.
   async function handleSetLogged(detail) {
     const { exercises = [], text = '' } = detail || {};
     if (!exercises.length) return;
@@ -721,6 +743,22 @@
 
     if (rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
+    }
+
+    // Next-exercise handoff: append a short line pointing at the next exercise
+    // in the plan. The engine owns the ordering — we only word it. Anchor on the
+    // LAST logged exercise so that when several lifts are logged in one input the
+    // handoff advances past everything just logged, not just past the first.
+    const lastLogged = exercises[exercises.length - 1];
+    const nextEx = await getNextExerciseInPlan(lastLogged.exercise);
+    if (nextEx) {
+      const handoff = document.createElement('div');
+      handoff.className = 'next-exercise-handoff';
+      handoff.textContent = `Moving on — next up: ${nextEx}.`;
+      bubble.appendChild(handoff);
+      // Advance the composer placeholder to the next exercise so the lifter
+      // has a ready hint without scrolling back to the plan.
+      setWorkoutPlaceholder(nextEx);
     }
   }
 

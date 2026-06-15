@@ -1056,3 +1056,85 @@ test('PR7: a single logged set renders exactly one readback tile and one Next ca
     await expect(bubble).not.toContainText('Bench Press\n225lbs');
   }
 });
+
+// ---------------------------------------------------------------------------
+// PR 6 — Next-exercise handoff + composer advance.
+//
+// After logging exercise N from a multi-exercise plan, the Atlas reply must
+// name exercise N+1 in a ".next-exercise-handoff" line, the #workout-text
+// placeholder must reflect N+1 (not a generic home hint), and the single-
+// render invariant (one .readback, one .nextp) must still hold.
+// ---------------------------------------------------------------------------
+
+test('PR6: logging exercise N names N+1 in the reply and advances the composer placeholder', async ({ page }) => {
+  await openApp(page);
+
+  // Override /api/plan/today to return a two-exercise ordered plan:
+  // Bench Press → Lat Pulldown (insertion order = plan order).
+  await page.route('**/api/plan/today', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      recommendations: [
+        { exercise_name: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 },
+        { exercise_name: 'Lat Pulldown', lift_code: 'LPD01', target_weight: 170, target_reps: 8, target_sets: 3, target_rir: 2 }
+      ]
+    }
+  })));
+
+  // Log the first exercise (Bench Press = exercise 0 in the plan).
+  await logSet(page, 'bench 225 5/2 x3');
+
+  // The Atlas reply bubble must contain the next-exercise handoff line.
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').last();
+  await expect(bubble.locator('.next-exercise-handoff')).toBeVisible();
+  await expect(bubble.locator('.next-exercise-handoff')).toContainText('Lat Pulldown');
+  await expect(bubble.locator('.next-exercise-handoff')).toContainText('Moving on');
+
+  // Single-render invariant: still exactly one .readback and one .nextp —
+  // the handoff is an extra line in the SAME bubble, not a new block.
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(1);
+  await expect(page.locator('#thread-messages .nextp')).toHaveCount(1);
+
+  // The composer placeholder must now reflect the next exercise (Lat Pulldown),
+  // not one of the generic home hints.
+  const GENERIC_HINTS = [
+    'Log a set or ask anything',
+    'Try: Bench 225',
+    'what should I train today',
+    "how's my recovery",
+    'log it'
+  ];
+  const placeholder = await page.locator('#workout-text').getAttribute('placeholder');
+  expect(placeholder).toContain('Lat Pulldown');
+  for (const hint of GENERIC_HINTS) {
+    expect(placeholder).not.toContain(hint);
+  }
+
+  // Trust loop untouched: nothing written or previewed mid-session.
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  await expect(page.locator('.review')).toHaveCount(0);
+});
+
+test('PR6: logging the last exercise in the plan shows no handoff (not fabricated)', async ({ page }) => {
+  await openApp(page);
+
+  // Plan with a single exercise — Bench Press is the only (and last) entry.
+  await page.route('**/api/plan/today', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      recommendations: [
+        { exercise_name: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 }
+      ]
+    }
+  })));
+
+  await logSet(page, 'bench 225 5/2 x3');
+
+  // When the logged exercise is the last in the plan, no handoff div is rendered —
+  // we never fabricate an exercise that isn't in the plan.
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').last();
+  await expect(bubble.locator('.next-exercise-handoff')).toHaveCount(0);
+
+  // Single-render invariant still holds.
+  await expect(page.locator('#thread-messages .readback')).toHaveCount(1);
+});

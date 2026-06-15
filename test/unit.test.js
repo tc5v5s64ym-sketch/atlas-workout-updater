@@ -3452,12 +3452,25 @@ test('shell: nav.js rotates the composer placeholder, paused for focus/typing an
   assert.match(nav, /what should I train today/i, 'hints surface that you can just ask');
   assert.match(nav, /prefers-reduced-motion/, 'must honour reduced motion (no rotation)');
   assert.match(nav, /hintPaused/, 'must pause rotation while the composer is focused');
-  assert.match(nav, /composerTextarea\.value\)/, 'must skip rotating while the box has text');
+  // composerTextarea.value is checked (possibly alongside sessionActive) to skip rotation while the box has text.
+  assert.match(nav, /composerTextarea\.value/, 'must skip rotating while the box has text');
   // Presentation only — it sets the placeholder, never the composer value.
   const start = nav.indexOf('PLACEHOLDER_HINTS');
   const block = nav.slice(start, start + 1000);
   assert.match(block, /\.placeholder =/, 'must rotate via the placeholder attribute');
   assert.doesNotMatch(block, /composerTextarea\.value\s*=[^=]/, 'must never write the composer value');
+});
+
+test('shell: nav.js stops rotating placeholder once a session is active (atlas:set-logged)', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  // Must listen for the atlas:set-logged event to detect session start.
+  assert.match(nav, /atlas:set-logged/, 'must listen for the atlas:set-logged event');
+  // Must have a sessionActive flag that blocks rotation.
+  assert.match(nav, /sessionActive/, 'must track whether a session is underway');
+  // The rotation guard must include the sessionActive check.
+  assert.match(nav, /sessionActive\)/, 'rotation interval must bail out when sessionActive is true');
+  // Pre-session rotation is unaffected: sessionActive starts as false.
+  assert.match(nav, /sessionActive\s*=\s*false/, 'sessionActive must start false so pre-session rotation runs normally');
 });
 
 test('shell: styles define dark mode and the new component tokens', () => {
@@ -4055,4 +4068,80 @@ test('session/compile route is registered as read-only', () => {
   assert.ok(route.authRequired, 'must require auth');
   assert.ok(route.readOnly, 'must be read-only');
   assert.ok(!route.writeCapable, 'must not be write-capable');
+});
+
+// ── PR 6 — Next-exercise handoff + composer advance ───────────────────────────
+
+// Extract the pure getNextExerciseInPlan logic as a synchronous helper for
+// unit-testing. The real function is async (calls getPlanTodayByName which
+// hits the API), but the index/lookup logic is pure once the map is available.
+function nextExerciseFromMap(map, exerciseName) {
+  if (!map || !map.size) return null;
+  const key = String(exerciseName).toLowerCase();
+  const keys = Array.from(map.keys());
+  let idx = keys.indexOf(key);
+  if (idx === -1) {
+    idx = keys.findIndex(k => k.includes(key) || key.includes(k));
+  }
+  if (idx === -1 || idx >= keys.length - 1) return null;
+  const nextRec = map.get(keys[idx + 1]);
+  return (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null;
+}
+
+test('PR6: getNextExerciseInPlan returns the N+1 exercise for an exact match', () => {
+  const map = new Map([
+    ['bench press', { exercise_name: 'Bench Press' }],
+    ['lat pulldown', { exercise_name: 'Lat Pulldown' }],
+    ['face pull', { exercise_name: 'Face Pull' }]
+  ]);
+  assert.equal(nextExerciseFromMap(map, 'Bench Press'), 'Lat Pulldown');
+  assert.equal(nextExerciseFromMap(map, 'Lat Pulldown'), 'Face Pull');
+});
+
+test('PR6: getNextExerciseInPlan returns null when the exercise is last in the plan', () => {
+  const map = new Map([
+    ['bench press', { exercise_name: 'Bench Press' }],
+    ['lat pulldown', { exercise_name: 'Lat Pulldown' }]
+  ]);
+  assert.equal(nextExerciseFromMap(map, 'Lat Pulldown'), null);
+});
+
+test('PR6: getNextExerciseInPlan uses fuzzy matching ("bench" ↔ "bench press")', () => {
+  const map = new Map([
+    ['bench press', { exercise_name: 'Bench Press' }],
+    ['overhead press', { exercise_name: 'Overhead Press' }]
+  ]);
+  assert.equal(nextExerciseFromMap(map, 'bench'), 'Overhead Press');
+});
+
+test('PR6: getNextExerciseInPlan returns null for an empty or missing map', () => {
+  assert.equal(nextExerciseFromMap(null, 'Bench Press'), null);
+  assert.equal(nextExerciseFromMap(new Map(), 'Bench Press'), null);
+});
+
+test('PR6: getNextExerciseInPlan returns null when exercise is not found in the plan', () => {
+  const map = new Map([
+    ['bench press', { exercise_name: 'Bench Press' }],
+    ['squat', { exercise_name: 'Back Squat' }]
+  ]);
+  assert.equal(nextExerciseFromMap(map, 'deadlift'), null);
+});
+
+test('PR6: coach-conversation.js emits the handoff div with the correct class and text format', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  // Must create the handoff element with the right class.
+  assert.match(cc, /next-exercise-handoff/, 'must use .next-exercise-handoff class');
+  // Handoff text must include "Moving on" and "next up".
+  assert.match(cc, /Moving on.*next up/, 'handoff text must say "Moving on — next up: <Name>"');
+  // Must call setWorkoutPlaceholder to advance the composer.
+  assert.match(cc, /setWorkoutPlaceholder\(nextEx\)/, 'must advance placeholder to next exercise after handoff');
+  // Trust loop must be untouched: handoff is in the same bubble, no new write surface.
+  assert.doesNotMatch(cc, /buildReviewCard.*nextEx|nextEx.*buildReviewCard/, 'handoff must not touch the review card');
+});
+
+test('PR6: coach-conversation.js getNextExerciseInPlan uses getPlanTodayByName (engine-owned ordering)', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('async function getNextExerciseInPlan('), cc.indexOf('// In-workout: a logged set'));
+  assert.match(fn, /getPlanTodayByName/, 'must source ordering from getPlanTodayByName');
+  assert.doesNotMatch(fn, /api\(|fetch\(/, 'must not make its own API call — reuses cached plan map');
 });
