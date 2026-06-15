@@ -1783,7 +1783,7 @@ test('buildBackupManifest summarizes exported tabs', () => {
 
 const { suggestDeloads, computeFatigueStatus } = require('../services/analytics');
 
-test('suggestDeloads recommends a 10% reduction for persistent stalls', () => {
+test('suggestDeloads holds working weight for persistent stalls (volume-first)', () => {
   const rows = [
     ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '1', ''],
     ['2026-04-05', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '1', ''],
@@ -1795,7 +1795,8 @@ test('suggestDeloads recommends a 10% reduction for persistent stalls', () => {
   assert.equal(suggestions[0].liftCode, 'BP');
   // The exercise name rides along so the UI can show it instead of the code.
   assert.equal(suggestions[0].exercise, 'Bench Press');
-  assert.equal(suggestions[0].suggested_deload_weight, 180);
+  // Volume-first: hold the working weight, cut sets — not a weight reduction.
+  assert.equal(suggestions[0].suggested_deload_weight, 200);
   assert.match(suggestions[0].suggestion, /Deload/);
 });
 
@@ -3170,10 +3171,11 @@ test('scoreIntents: surfaces a Deload & Reset intent when 2+ rested lifts are st
   const deload = result.intents.find(i => i.id === 'deload_reset');
   assert.ok(deload, 'Deload & Reset must appear when multiple rested lifts stall');
   assert.ok(deload.exercises.length >= 2, 'deload must list the stalled lifts');
-  assert.ok(deload.why_today.some(w => /deload/i.test(w)), 'deload must explain the lighter target');
-  // Deload targets are reduced from the stalled best (≈10% lighter).
+  assert.ok(deload.why_today.some(w => /hold.*lb.*cut|cut.*sets/i.test(w)), 'deload must describe the hold+volume prescription');
+  // Volume-first: hold the working weight, cut sets to 2 — no weight reduction.
   const bench = deload.exercises.find(ex => ex.lift_code === 'BENCH01');
-  assert.ok(bench && bench.target_weight < 185, 'deload weight must drop below the stalled best');
+  assert.ok(bench && bench.target_weight === 185, 'deload must hold the stalled working weight');
+  assert.equal(bench.target_sets, 2, 'mains get 2 sets on deload day');
 });
 
 test('scoreIntents: a stalled lift trained yesterday is held out of the deload, with an honest reason', () => {
