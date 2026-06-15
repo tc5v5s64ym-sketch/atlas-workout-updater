@@ -826,12 +826,14 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   // Deload phase fact — present ONLY on a known deload day (the active plan intent,
   // forwarded as intentId/deload). It lets the coach note name the deload and the
   // weight to snap back to after the pass. return_weight is engine-computed from
-  // this lift's own history: a detected pre-deload working weight, else the best
-  // weight on record. Null on a normal day so the note frames nothing.
+  // this lift's own history, and deliberately uses the SAME expression as the
+  // no-just-logged deload branch above (`recovery ? preDeloadWeight : lastSet.weight`)
+  // so the prescription text and the note never name two different return points.
+  // Null on a normal day so the note frames nothing.
   let deload_phase = null;
   if (isDeload) {
     const recovery = detectDeloadRecovery(rows);
-    const back = recovery ? recovery.preDeloadWeight : best_weight;
+    const back = recovery ? recovery.preDeloadWeight : lastSet.weight;
     deload_phase = {
       active: true,
       return_weight: isPositiveFinite(back) ? back : null,
