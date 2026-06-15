@@ -1910,7 +1910,12 @@ test('reaction layer: the recommend route reads ?w&reps&rir and stays read-only'
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   // The route parses the optional just-logged set and passes it to the engine.
   assert.match(indexSource, /function parseJustLoggedSet\(query\)/, 'route must parse the just-logged query set');
-  assert.match(indexSource, /recommendNextSet\(allLog, liftCode, justLoggedSet \? \{ justLoggedSet \} : \{\}\)/, 'route must forward the just-logged set to the engine');
+  assert.match(indexSource, /recommendNextSet\(allLog, liftCode, \{/, 'route must forward options to the engine');
+  assert.match(indexSource, /\.\.\.\(justLoggedSet \? \{ justLoggedSet \} : \{\}\)/, 'route must forward the just-logged set to the engine');
+  // PR 3b: the deload signal (intentId 'deload_reset' or ?deload) is forwarded too,
+  // so the engine's reaction language can flip on a deload day.
+  assert.match(indexSource, /req\.query\.intentId/, 'route must read the optional intentId from the query');
+  assert.match(indexSource, /\.\.\.\(deload \? \{ deload: true \} : \{\}\)/, 'route must forward the deload signal to the engine');
   // It's a GET that only reads — a just-logged set must never trigger a write.
   const start = indexSource.indexOf("app.get('/api/recommend/next/:liftCode'");
   const routeFn = indexSource.slice(start, start + 700);

@@ -428,7 +428,7 @@ function effortVerdict(rir, targetRir) {
 // stale history. RIR ≥ target + 2 → room to progress; RIR ≤ 0 → hold (near
 // failure); between → repeat / add a rep. The advice can never contradict the
 // logged RIR (RIR 5 can never read as "near failure").
-function recommendFromJustLoggedSet(set, { targetRir, increaseAmount }) {
+function recommendFromJustLoggedSet(set, { targetRir, increaseAmount, deload = false }) {
   const weight = Number(set.weight);
   const reps = Number(set.reps);
   const rir = set && set.rir != null && Number.isFinite(Number(set.rir)) ? Number(set.rir) : null;
@@ -438,6 +438,23 @@ function recommendFromJustLoggedSet(set, { targetRir, increaseAmount }) {
   let nextWeight = weight;
   let nextReps = reps;
   let confidence = 'medium';
+
+  // Deload day: the lifter is on a back-off block. Never progress and never chase
+  // reps — hold the lighter load and stay short of failure. The numbers stay the
+  // logged load (no bump, no extra rep); only the wording flips to deload-aware
+  // coaching. Returns before the normal progression branches below.
+  if (deload) {
+    if (rir != null && rir <= 0) {
+      recommendation = `Ease off ${weight} × ${reps} — that hit failure on a deload. Back off the load and keep the reps clean.`;
+      reasoning = `RIR ${rir}: a deload is a back-off block, not a day to grind. Drop the load and stay well short of failure.`;
+    } else {
+      recommendation = `Hold ${weight} × ${reps} — this is a deload. Keep it light and short of failure; back to your normal working weight next block.`;
+      reasoning = rir == null
+        ? 'Deload set — hold the lighter load and bank easy, clean reps. Log your RIR if you want a tuned read.'
+        : `RIR ${rir} on a deload is exactly the point — hold the load, stay short of failure, and let fatigue drop. Normal weight resumes next block.`;
+    }
+    return { recommendation, reasoning, next_target: { weight, reps, sets: 3 }, effort_verdict: verdict, confidence: 'high' };
+  }
 
   if (rir == null) {
     recommendation = `Repeat ${weight} × ${reps} and log your RIR so I can tune the next step.`;
@@ -516,6 +533,11 @@ function detectDeloadRecovery(rows) {
 
 function recommendNextSet(logRows, liftCode, options = {}) {
   const { today = null } = options || {};
+  // Is today a deload? The signal rides in the active session/plan context — the
+  // plan layer emits intent id 'deload_reset', forwarded here (e.g. via the
+  // recommend endpoint) so the reaction language can flip. No persistence, no
+  // mid-workout write. `options.deload` is an explicit override for callers.
+  const isDeload = options.intentId === 'deload_reset' || options.deload === true;
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
   const rows = asArray(logRows)
     .map(normalizeLogRow)
@@ -540,7 +562,7 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     const jl = options.justLoggedSet;
     if (jl && isPositiveFinite(Number(jl.weight)) && isPositiveFinite(Number(jl.reps))) {
       const targetRir = recommendedTargetRir({ exercise: normalizedCode }, options.intentId);
-      const anchored = recommendFromJustLoggedSet(jl, { targetRir, increaseAmount: 5 });
+      const anchored = recommendFromJustLoggedSet(jl, { targetRir, increaseAmount: 5, deload: isDeload });
       return { ...base, recommendation: anchored.recommendation, reasoning: anchored.reasoning, next_target: anchored.next_target, confidence: anchored.confidence, target_rir: targetRir, effort_verdict: anchored.effort_verdict };
     }
     return base;
@@ -636,13 +658,21 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   if (justLogged && isPositiveFinite(Number(justLogged.weight)) && isPositiveFinite(Number(justLogged.reps))) {
     // Bug 1: in-workout, anchor the next step on the just-logged set — it is not
     // in the sheet yet (session-level save), so history alone is stale.
-    const anchored = recommendFromJustLoggedSet(justLogged, { targetRir, increaseAmount });
+    const anchored = recommendFromJustLoggedSet(justLogged, { targetRir, increaseAmount, deload: isDeload });
     recommendation = anchored.recommendation;
     reasoning = anchored.reasoning;
     nextWeight = anchored.next_target.weight;
     nextReps = anchored.next_target.reps;
     confidence = anchored.confidence;
     effort_verdict = anchored.effort_verdict;
+  } else if (isDeload) {
+    // Active deload day with no just-logged set: hold the reduced load and never
+    // emit progression. Mirrors the just-logged deload branch above.
+    nextWeight = lastSet.weight;
+    nextReps = lastSet.reps;
+    recommendation = `Hold ${nextWeight} × ${nextReps} — this is a deload. Keep it light and short of failure; back to your normal working weight next block.`;
+    reasoning = 'Deload session — hold the reduced load and bank clean, easy reps. Normal progression resumes after the deload.';
+    confidence = 'medium';
   } else {
     // Bug 3: post-deload recovery — a deload is a one-off, so return to the
     // pre-deload working weight and resume normal progression next session.

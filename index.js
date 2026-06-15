@@ -1331,10 +1331,20 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
   }
 
   const justLoggedSet = parseJustLoggedSet(req.query);
+  // Optional deload signal from the active session/plan context: the plan layer
+  // emits intent id 'deload_reset', forwarded here as ?intentId=deload_reset (or
+  // ?deload=1) so the reaction language flips on a deload day. Absent params
+  // preserve the normal recommendation exactly.
+  const intentId = typeof req.query.intentId === 'string' ? req.query.intentId : null;
+  const deload = req.query.deload === '1' || req.query.deload === 'true';
 
   try {
     const allLog = await getSheetRows(logSheetName);
-    const recommendation = recommendNextSet(allLog, liftCode, justLoggedSet ? { justLoggedSet } : {});
+    const recommendation = recommendNextSet(allLog, liftCode, {
+      ...(justLoggedSet ? { justLoggedSet } : {}),
+      ...(intentId ? { intentId } : {}),
+      ...(deload ? { deload: true } : {})
+    });
     const normalizedRows = allLog
       .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
       .map(normalizeAnalyticsLogRow);
