@@ -39,7 +39,9 @@ const fakeSheetsState = {
   // call — simulates a partial-write failure between the two live appends.
   failAppendForTab: null,
   // Rows returned by getSheetRows for Coaching_Notes. Tests may set this.
-  coachingNotesRows: []
+  coachingNotesRows: [],
+  // Rows returned by getSheetRows for Constraints. Tests may set this.
+  constraintsRows: []
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -84,9 +86,10 @@ const fakeSheets = {
     if (tabName === 'Log_Cleaned') return logRows;
     if (tabName === 'Effort') return [];
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
+    if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
     return [];
   },
-  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes'],
+  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Constraints'],
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort'
 };
@@ -135,6 +138,7 @@ const fakeCoachState = {
   chatMessage: 'Your bench has been flat for a few sessions — try 5×5 at 225 this week.',
   chatEditProposal: null, // set to an edit object in tests that exercise the edit path
   chatNoteProposal: null, // set to a note object in tests that exercise the note path
+  chatConstraintProposal: null, // set to a constraint object in tests that exercise the constraint path
   throwError: null
 };
 const fakeCoach = {
@@ -150,7 +154,7 @@ const fakeCoach = {
   },
   generateChatReply: async () => {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
-    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal };
+    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal, propose_constraint: fakeCoachState.chatConstraintProposal };
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -1851,5 +1855,104 @@ test('api smoke: coaching-notes is registered in the route manifest with correct
   assert.equal(getRoute.readOnly, true, 'GET must be read-only');
   assert.equal(getRoute.writeCapable, false, 'GET must not be write-capable');
   assert.ok(postRoute, 'POST /api/coaching-notes must be registered');
+  assert.equal(postRoute.writeCapable, true, 'POST must be write-capable');
+});
+
+// ── Structured constraints (P1 · 2.1) ─────────────────────────────────────────
+
+test('api smoke: GET /api/constraints returns empty array when tab has no rows', async () => {
+  fakeSheetsState.constraintsRows = [];
+  const { response, body } = await requestJson('/api/constraints');
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.deepEqual(body.data.constraints, []);
+});
+
+test('api smoke: GET /api/constraints returns typed constraints from the Constraints tab', async () => {
+  fakeSheetsState.constraintsRows = [
+    ['2026-06-01', 'injury', 'overhead pressing', 'avoid', 'left shoulder impingement'],
+    ['2026-06-10', 'equipment', 'barbell', 'substitute', '']
+  ];
+  const { response, body } = await requestJson('/api/constraints');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.constraints.length, 2);
+  assert.equal(body.data.constraints[0].kind, 'injury');
+  assert.equal(body.data.constraints[0].target, 'overhead pressing');
+  assert.equal(body.data.constraints[0].rule, 'avoid');
+  assert.equal(body.data.constraints[1].kind, 'equipment');
+  fakeSheetsState.constraintsRows = [];
+});
+
+test('api smoke: POST /api/constraints validates kind, rule, target, and write_id', async () => {
+  const base = { kind: 'injury', target: 'overhead pressing', rule: 'avoid', write_id: 'c-1' };
+  const { response: rKind } = await requestJson('/api/constraints', { method: 'POST', body: JSON.stringify({ ...base, kind: 'mood' }) });
+  assert.equal(rKind.status, 400, 'bad kind → 400');
+  const { response: rRule } = await requestJson('/api/constraints', { method: 'POST', body: JSON.stringify({ ...base, rule: 'destroy' }) });
+  assert.equal(rRule.status, 400, 'bad rule → 400');
+  const { response: rTarget } = await requestJson('/api/constraints', { method: 'POST', body: JSON.stringify({ ...base, target: '' }) });
+  assert.equal(rTarget.status, 400, 'missing target → 400');
+  const { response: rWid } = await requestJson('/api/constraints', { method: 'POST', body: JSON.stringify({ kind: 'injury', target: 'x', rule: 'avoid' }) });
+  assert.equal(rWid.status, 400, 'missing write_id → 400');
+});
+
+test('api smoke: POST /api/constraints writes a typed row to the Constraints tab', async () => {
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  const { response, body } = await requestJson('/api/constraints', {
+    method: 'POST',
+    body: JSON.stringify({ kind: 'Injury', target: 'Overhead Pressing', rule: 'AVOID', note: 'left shoulder', write_id: 'c-smoke-1' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.sheet_written, true);
+  assert.equal(body.data.constraint_written, true);
+  assert.equal(body.data.constraint.kind, 'injury', 'kind is normalized to lowercase');
+  assert.equal(body.data.constraint.rule, 'avoid', 'rule is normalized to lowercase');
+  const call = fakeSheetsState.appendCalls.find(c => c.tabName === 'Constraints');
+  assert.ok(call, 'must append to Constraints tab');
+  const row = call.rows[0];
+  assert.match(row[0], /^\d{4}-\d{2}-\d{2}$/, 'column 0 is an ISO date');
+  assert.deepEqual(row.slice(1), ['injury', 'Overhead Pressing', 'avoid', 'left shoulder'], 'columns are [kind, target, rule, note]');
+  fakeSheetsState.allowAppend = false;
+  fakeSheetsState.appendCalls = [];
+});
+
+test('api smoke: POST /api/constraints is idempotent for repeated write_id', async () => {
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+  const payload = JSON.stringify({ kind: 'equipment', target: 'leg press', rule: 'substitute', write_id: 'c-idem-1' });
+  await requestJson('/api/constraints', { method: 'POST', body: payload });
+  const { response: r2, body: b2 } = await requestJson('/api/constraints', { method: 'POST', body: payload });
+  assert.equal(r2.status, 200);
+  assert.equal(b2.data.duplicate_write, true, 'second call must be marked duplicate');
+  assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Constraints').length, 1, 'sheet must only be written once');
+  fakeSheetsState.allowAppend = false;
+  fakeSheetsState.appendCalls = [];
+});
+
+test('api smoke: coach/chat returns propose_constraint when coach proposes a constraint', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.chatConstraintProposal = { kind: 'injury', target: 'overhead pressing', rule: 'avoid', note: 'left shoulder' };
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: "My shoulder can't handle overhead work anymore" })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.propose_constraint, 'propose_constraint must be in the response');
+  assert.equal(body.data.propose_constraint.kind, 'injury');
+  assert.equal(body.data.propose_constraint.rule, 'avoid');
+  fakeCoachState.configured = false;
+  fakeCoachState.chatConstraintProposal = null;
+});
+
+test('api smoke: constraints is registered in the route manifest with correct read/write flags', async () => {
+  const { body } = await requestJson('/routes');
+  const routes = body.data.routes;
+  const constraintRoutes = routes.filter(r => r.path === '/api/constraints');
+  const getRoute = constraintRoutes.find(r => r.methods.includes('GET'));
+  const postRoute = constraintRoutes.find(r => r.methods.includes('POST'));
+  assert.ok(getRoute, 'GET /api/constraints must be registered');
+  assert.equal(getRoute.readOnly, true, 'GET must be read-only');
+  assert.equal(getRoute.writeCapable, false, 'GET must not be write-capable');
+  assert.ok(postRoute, 'POST /api/constraints must be registered');
   assert.equal(postRoute.writeCapable, true, 'POST must be write-capable');
 });

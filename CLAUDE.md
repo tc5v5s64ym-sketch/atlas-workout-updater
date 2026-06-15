@@ -62,6 +62,16 @@ date | session_id | duration | active_calories | total_calories | average_hr | p
 
 `average_hr` and `peak_hr` are distinct metrics — never copy one into the other (see Invariant / the vision prompt in `services/vision.js`). These columns feed the recovery curve via `effortIntensityBySession()` in `services/analytics.js`.
 
+### Constraints tab (5 columns)
+
+Structured, approved training rules written by `POST /api/constraints` go to the `Constraints` tab in this order:
+
+```
+date | kind | target | rule | note
+```
+
+`kind` ∈ `injury | equipment | preference`; `rule` ∈ `avoid | limit | substitute`; `target` is the movement/pattern/equipment (≤100 chars); `note` is optional context (≤200 chars). This is a *typed* sibling of the free-text `Coaching_Notes` tab — both coexist. The vocabularies are pinned in `config/columns.js` (`constraintsColumns`) and validated in both the write route and `sanitizeConstraint()` (`services/coach.js`). The tab is optional (`config/sheetContract.js`); the write route returns 503 until it exists.
+
 ---
 
 ## Coaching voice (LLM)
@@ -139,4 +149,4 @@ When in doubt, do less and ask.
 
 ### Write paths (all `write_id`-idempotent)
 
-`POST /api/log-workout`, `POST /api/log-workout/undo-last`, `POST /api/complete-workout` (screenshot/effort), and `POST /api/bodyweight`. Each uses `beginWrite`/`completeWrite`/`failWrite`; a repeated `write_id` replays the original response instead of writing twice. Everything else is read-only.
+`POST /api/log-workout`, `POST /api/log-workout/undo-last`, `POST /api/complete-workout` (screenshot/effort), `POST /api/bodyweight`, `POST /api/coaching-notes`, and `POST /api/constraints`. Each uses `beginWrite`/`completeWrite`/`failWrite`; a repeated `write_id` replays the original response instead of writing twice. Everything else is read-only.

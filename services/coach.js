@@ -306,12 +306,26 @@ function buildChatSystemPrompt(context) {
     'PROPOSING A COACHING NOTE (persistent background memory):',
     '- When the lifter reveals something durable and actionable — an injury, a mobility limit, a goal, a program change, an equipment constraint — you MAY propose saving it as a coaching note.',
     '- Only propose a note for facts worth persisting across sessions. Session observations ("great set today") do not qualify.',
-    '- You can only ever propose ONE thing per reply — either a PROPOSE_EDIT or a PROPOSE_NOTE, never both.',
     '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly:',
     '  PROPOSE_NOTE: {"note": "..."}',
     '- The note text must be concise (under 120 characters), factual, and third-person ("Left shoulder impingement — avoid overhead pressing"). No coaching advice in the note text itself.',
     '- The PROPOSE_NOTE line is stripped by the app and shown to the lifter as "Save this note?". Write your prose as if it does not exist.',
-    '- If nothing worth persisting came up, respond in prose only with no PROPOSE_NOTE line.'
+    '',
+    'PROPOSING A STRUCTURED CONSTRAINT (a typed rule the engine can act on):',
+    '- When the durable fact is a hard training rule the planner should obey — an injury that rules out a movement, a missing piece of equipment, a standing preference — prefer a structured constraint over a free-text note. It carries the same fact in a shape the engine can filter on.',
+    '- A constraint has exactly three required fields plus an optional note:',
+    '  - kind: one of "injury", "equipment", "preference".',
+    '  - target: the movement, pattern, or equipment it applies to ("overhead pressing", "barbell", "high-bar squat").',
+    '  - rule: one of "avoid" (never program it), "limit" (keep it light/cautious), "substitute" (swap for an alternative).',
+    '  - note (optional): brief context, under 120 characters, factual ("left shoulder impingement").',
+    '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly:',
+    '  PROPOSE_CONSTRAINT: {"kind":"injury","target":"overhead pressing","rule":"avoid","note":"left shoulder impingement"}',
+    '- The PROPOSE_CONSTRAINT line is stripped by the app and shown to the lifter as "Save this constraint?". Write your prose as if it does not exist.',
+    '',
+    'PROPOSAL RULES (apply to all three):',
+    '- You can only ever propose ONE thing per reply — a PROPOSE_EDIT, a PROPOSE_NOTE, or a PROPOSE_CONSTRAINT, never more than one.',
+    '- The `constraints` already in the snapshot are active rules — treat them as silent background; never re-propose a constraint that is already saved.',
+    '- If nothing worth persisting came up, respond in prose only with no proposal line.'
   ].join('\n');
 }
 
@@ -349,6 +363,26 @@ function isValidEditSchema(obj) {
     return Number.isInteger(obj.index) && obj.index >= 0;
   }
   return action === 'add_set';
+}
+
+// Fixed vocabularies for structured constraints. A constraint is a typed,
+// approved rule ({ kind, target, rule }) — distinct from a free-text note.
+// These mirror the validation the /api/constraints write route enforces.
+const CONSTRAINT_KINDS = ['injury', 'equipment', 'preference'];
+const CONSTRAINT_RULES = ['avoid', 'limit', 'substitute'];
+
+// Whitelist a single constraint fact for the model. Only known fields survive;
+// kind/rule must come from the fixed vocabularies; a malformed constraint → null.
+// Same discipline as sanitizeVerdict / sanitizeProgressionVerdict.
+function sanitizeConstraint(v) {
+  if (!v || typeof v !== 'object') return null;
+  const kind = typeof v.kind === 'string' ? v.kind.trim().toLowerCase() : '';
+  const rule = typeof v.rule === 'string' ? v.rule.trim().toLowerCase() : '';
+  const target = strOrNull(v.target);
+  if (!CONSTRAINT_KINDS.includes(kind)) return null;
+  if (!CONSTRAINT_RULES.includes(rule)) return null;
+  if (!target) return null;
+  return { kind, target, rule, note: clampText(v.note, 200) };
 }
 
 // Forward ONLY a known, bounded snapshot — never arbitrary client object keys.
@@ -391,6 +425,9 @@ function sanitizeChatContext(context) {
         note: clampText(n && n.note, 200)
       })).filter(n => n.note)
     : [];
+  const constraints = Array.isArray(c.constraints)
+    ? c.constraints.slice(0, 12).map(sanitizeConstraint).filter(Boolean)
+    : [];
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -400,7 +437,8 @@ function sanitizeChatContext(context) {
     current_preview,
     current_plan,
     session_count,
-    coaching_notes
+    coaching_notes,
+    constraints
   };
 }
 
@@ -429,10 +467,11 @@ function parseNoteFromReply(text) {
   return { reply: prose || text.trim(), propose_note };
 }
 
-// Internal parser that handles both PROPOSE_EDIT and PROPOSE_NOTE in one pass —
-// the last non-blank line can carry at most one token per reply.
+// Internal parser that handles PROPOSE_EDIT, PROPOSE_NOTE, and PROPOSE_CONSTRAINT
+// in one pass — the last non-blank line can carry at most one token per reply.
 function parseReplyWithProposals(text) {
-  if (typeof text !== 'string') return { reply: '', propose_edit: null, propose_note: null };
+  const empty = { reply: '', propose_edit: null, propose_note: null, propose_constraint: null };
+  if (typeof text !== 'string') return empty;
   const lines = text.split('\n');
   let tokenLineIdx = -1;
   let tokenType = null;
@@ -441,22 +480,26 @@ function parseReplyWithProposals(text) {
     if (!trimmed) continue;
     if (trimmed.startsWith('PROPOSE_EDIT:')) { tokenLineIdx = i; tokenType = 'edit'; }
     else if (trimmed.startsWith('PROPOSE_NOTE:')) { tokenLineIdx = i; tokenType = 'note'; }
+    else if (trimmed.startsWith('PROPOSE_CONSTRAINT:')) { tokenLineIdx = i; tokenType = 'constraint'; }
     break;
   }
-  if (tokenLineIdx === -1) return { reply: text.trim(), propose_edit: null, propose_note: null };
-  const prefix = tokenType === 'edit' ? 'PROPOSE_EDIT:' : 'PROPOSE_NOTE:';
+  if (tokenLineIdx === -1) return { ...empty, reply: text.trim() };
+  const prefix = tokenType === 'edit' ? 'PROPOSE_EDIT:' : tokenType === 'note' ? 'PROPOSE_NOTE:' : 'PROPOSE_CONSTRAINT:';
   const jsonPart = lines[tokenLineIdx].trim().slice(prefix.length).trim();
   const prose = lines.slice(0, tokenLineIdx).join('\n').trim();
   let propose_edit = null;
   let propose_note = null;
+  let propose_constraint = null;
   try {
     const parsed = JSON.parse(jsonPart);
     if (tokenType === 'edit' && isValidEditSchema(parsed)) propose_edit = parsed;
     else if (tokenType === 'note' && parsed && typeof parsed === 'object' && typeof parsed.note === 'string' && parsed.note.trim()) {
       propose_note = { note: parsed.note.trim().slice(0, 200) };
+    } else if (tokenType === 'constraint') {
+      propose_constraint = sanitizeConstraint(parsed);
     }
   } catch { /* malformed JSON — no proposal */ }
-  return { reply: prose || text.trim(), propose_edit, propose_note };
+  return { reply: prose || text.trim(), propose_edit, propose_note, propose_constraint };
 }
 
 // Bound the conversation to the last few turns; only role + text survive. The
@@ -484,7 +527,7 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
   // as silent background — not something to announce or repeat.
   const contents = [
     { role: 'user', parts: [{ text: `TRAINING SNAPSHOT (read-only facts):\n${JSON.stringify(snapshot, null, 2)}` }] },
-    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts, use any coaching notes as silent background only, and never claim to save anything." }] }
+    { role: 'model', parts: [{ text: "Got it — I'll answer from these facts, treat any coaching notes and saved constraints as silent background only, and never claim to save anything." }] }
   ];
   for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
@@ -566,9 +609,11 @@ module.exports = {
   buildChatSystemPrompt,
   sanitizeChatContext,
   sanitizeChatHistory,
+  sanitizeConstraint,
   generateChatReply,
   parseEditFromReply,
   parseNoteFromReply,
+  parseReplyWithProposals,
   isValidEditSchema,
   buildCompileSystemPrompt,
   compileSessionFromHistory

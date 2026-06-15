@@ -961,7 +961,7 @@ app.post('/api/coach/message', async (req, res) => {
 // recommended focus, and stalled lifts. Bounded here and bounded again in
 // coach.sanitizeChatContext. The lifter's current preview rows (if any) ride
 // along from the client so "is this set good?" can be answered in context.
-function buildChatContext(logRows, effortRows, clientContext, coachingNotes) {
+function buildChatContext(logRows, effortRows, clientContext, coachingNotes, constraints) {
   const intents = scoreIntents(logRows, effortRows);
   const recent = buildRecentSessions(logRows, effortRows, { limit: 5 });
   const stalls = detectStalls(logRows);
@@ -979,7 +979,8 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes) {
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
     session_count: sessions.length,
-    coaching_notes: Array.isArray(coachingNotes) ? coachingNotes.slice(0, 10) : []
+    coaching_notes: Array.isArray(coachingNotes) ? coachingNotes.slice(0, 10) : [],
+    constraints: Array.isArray(constraints) ? constraints.slice(0, 12) : []
   };
 }
 
@@ -999,19 +1000,25 @@ app.post('/api/coach/chat', async (req, res) => {
     });
   }
   try {
-    const [allLog, allEffort, notesRows] = await Promise.all([
+    const [allLog, allEffort, notesRows, constraintRows] = await Promise.all([
       getSheetRows(logSheetName),
       getSheetRows(effortSheetName),
-      getSheetRows('Coaching_Notes').catch(() => [])
+      getSheetRows('Coaching_Notes').catch(() => []),
+      getSheetRows('Constraints').catch(() => [])
     ]);
     const coachingNotes = notesRows
       .map(row => Array.isArray(row) ? { date: row[0] || null, note: row[1] || null } : { date: row.date || null, note: row.note || null })
       .filter(n => n.note);
-    const context = buildChatContext(allLog, allEffort, req.body && req.body.context, coachingNotes);
+    const constraints = constraintRows
+      .map(row => Array.isArray(row)
+        ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
+        : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
+      .filter(c => c.kind && c.target && c.rule);
+    const context = buildChatContext(allLog, allEffort, req.body && req.body.context, coachingNotes, constraints);
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
-    const { reply, propose_edit, propose_note } = await coach.generateChatReply({ message, context, history });
+    const { reply, propose_edit, propose_note, propose_constraint } = await coach.generateChatReply({ message, context, history });
     return standardSuccess(req, res, 'Coach chat reply', {
-      message: reply, propose_edit: propose_edit || null, propose_note: propose_note || null, configured: true, model: coach.coachModel(), source: 'gemini'
+      message: reply, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
     });
   } catch (error) {
     // Degrade gracefully — the client shows a templated fallback, never an error bubble.
@@ -1130,6 +1137,97 @@ app.post('/api/coaching-notes', async (req, res) => {
   } catch (err) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to save coaching note', err.message, 500);
+  }
+});
+
+// Structured-constraint vocabulary. A constraint is a durable, typed rule the
+// lifter has approved — distinct from a free-text coaching note. Both stores
+// coexist; this one adds structure (kind/target/rule) on top.
+const CONSTRAINT_KINDS = ['injury', 'equipment', 'preference'];
+const CONSTRAINT_RULES = ['avoid', 'limit', 'substitute'];
+
+// GET /api/constraints — return all structured constraints from the Constraints tab.
+// READ-ONLY. Returns empty array when the tab does not exist yet.
+app.get('/api/constraints', async (req, res) => {
+  try {
+    const rows = await getSheetRows('Constraints').catch(() => []);
+    const constraints = rows
+      .map(row => Array.isArray(row)
+        ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
+        : {
+            date: (row && row.date) || null,
+            kind: (row && row.kind) || null,
+            target: (row && row.target) || null,
+            rule: (row && row.rule) || null,
+            note: (row && row.note) || null
+          })
+      .filter(c => c.kind && c.target && c.rule);
+    return standardSuccess(req, res, 'Constraints', { constraints });
+  } catch (err) {
+    return standardSuccess(req, res, 'Constraints', { constraints: [] });
+  }
+});
+
+// POST /api/constraints — append a structured constraint to the Constraints tab.
+// Requires { kind, target, rule, write_id }; note is optional. kind and rule must
+// come from the fixed vocabularies above. write_id is required for idempotency.
+app.post('/api/constraints', async (req, res) => {
+  const body = req.body || {};
+  const kind = typeof body.kind === 'string' ? body.kind.trim().toLowerCase() : '';
+  const target = typeof body.target === 'string' ? body.target.trim() : '';
+  const rule = typeof body.rule === 'string' ? body.rule.trim().toLowerCase() : '';
+  const note = typeof body.note === 'string' ? body.note.trim() : '';
+  const writeId = typeof body.write_id === 'string' ? body.write_id.trim() : '';
+
+  if (!CONSTRAINT_KINDS.includes(kind)) {
+    return standardError(req, res, `kind must be one of: ${CONSTRAINT_KINDS.join(', ')}`, null, 400);
+  }
+  if (!target) return standardError(req, res, 'target string is required', null, 400);
+  if (!CONSTRAINT_RULES.includes(rule)) {
+    return standardError(req, res, `rule must be one of: ${CONSTRAINT_RULES.join(', ')}`, null, 400);
+  }
+  if (!writeId) return standardError(req, res, 'write_id is required', null, 400);
+
+  const idempotency = beginWrite(writeId, { endpoint: '/api/constraints' });
+
+  if (idempotency.duplicate) {
+    const record = idempotency.record || {};
+    const original = record.response || {};
+    return standardSuccess(req, res,
+      record.status === 'completed'
+        ? 'Duplicate write_id; constraint was already saved.'
+        : 'Duplicate write_id; constraint write is in progress.',
+      { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false }
+    );
+  }
+
+  const tabs = await getSpreadsheetTabs().catch(() => []);
+  if (!tabs.includes('Constraints')) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Constraints tab not found — create it in Google Sheets first (columns: date, kind, target, rule, note)', null, 503);
+  }
+
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const cleanTarget = target.slice(0, 100);
+  const cleanNote = note.slice(0, 200);
+  try {
+    await appendRows('Constraints', [[dateStr, kind, cleanTarget, rule, cleanNote]]);
+    invalidateSheetRowsCache();
+    const responseBody = {
+      sheet_written: true,
+      constraint_written: true,
+      date: dateStr,
+      constraint: { kind, target: cleanTarget, rule, note: cleanNote }
+    };
+    if (idempotency.enabled) {
+      responseBody.write_id = idempotency.write_id;
+      responseBody.duplicate_write = false;
+      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    }
+    return standardSuccess(req, res, 'Constraint saved', responseBody);
+  } catch (err) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to save constraint', err.message, 500);
   }
 });
 
