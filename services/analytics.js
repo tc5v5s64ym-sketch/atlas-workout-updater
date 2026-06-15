@@ -418,7 +418,14 @@ function recentWorkingWeight(rec) {
 function deloadFillerWeight(rec) {
   const working = recentWorkingWeight(rec);
   if (!isPositiveFinite(working)) return rec && rec.next_target ? rec.next_target.weight : null;
-  return Math.min(roundLoad(working * 0.9), working);
+  const step = 5;
+  // FLOOR the 10% drop to a real increment — rounding to nearest would round a
+  // light accessory's drop back UP to the working weight (25 → 22.5 → 25), so the
+  // deload silently wouldn't happen while the row still claims "~10% off". Then
+  // guarantee at least one increment below the working weight, never below one.
+  let target = Math.floor((working * 0.9) / step) * step;
+  if (target >= working) target = working - step;
+  return Math.max(target, step);
 }
 
 // Effort read for a logged set: how the ACTUAL logged RIR compares to the target

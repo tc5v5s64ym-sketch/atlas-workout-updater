@@ -133,8 +133,12 @@ test('integration: a deload clamps EVERY lift to its documented working weight o
     row('2026-06-04', 'FP-2', 'Face Pull', 'Rear Delts', 'FP01', 50, 15),
     row('2026-06-01', 'LPD-1', 'Lat Pulldown', 'Back', 'LPD01', 160, 10),
     row('2026-06-04', 'LPD-2', 'Lat Pulldown', 'Back', 'LPD01', 170, 10),
-    row('2026-06-01', 'DBC-1', 'Dumbbell Curl', 'Biceps', 'DBC01', 25, 12),
-    row('2026-06-04', 'DBC-2', 'Dumbbell Curl', 'Biceps', 'DBC01', 30, 12),
+    // Light accessories whose 10% drop rounds back UP to the working weight under
+    // round-to-nearest (25 → 22.5 → 25, 15 → 13.5 → 15) — the regression case.
+    row('2026-06-01', 'DBC-1', 'Dumbbell Curl', 'Biceps', 'DBC01', 20, 12),
+    row('2026-06-04', 'DBC-2', 'Dumbbell Curl', 'Biceps', 'DBC01', 25, 12),
+    row('2026-06-01', 'LR-1', 'Lateral Raise', 'Side Delts', 'LR01', 15, 15),
+    row('2026-06-04', 'LR-2', 'Lateral Raise', 'Side Delts', 'LR01', 15, 15),
   ];
   const result = scoreIntents(rows, [], { today: TODAY });
   const deload = result.intents.find(i => i.id === 'deload_reset');
@@ -162,6 +166,13 @@ test('integration: a deload clamps EVERY lift to its documented working weight o
   const lpd = deload.exercises.find(e => e.lift_code === 'LPD01');
   if (fp) assert.ok(fp.target_weight <= 45, `face pull deload ${fp.target_weight} should be ~45, not a step up to 55`);
   if (lpd) assert.ok(lpd.target_weight < 170, `lat pulldown deload ${lpd.target_weight} should be below the usual 170, not 180`);
+
+  // The light-accessory regression: a 10% drop must FLOOR, never round back up.
+  const dbc = deload.exercises.find(e => e.lift_code === 'DBC01');
+  const lr = deload.exercises.find(e => e.lift_code === 'LR01');
+  assert.ok(dbc && lr, 'the light accessories must be programmed into the deload');
+  assert.equal(dbc.target_weight, 20, 'a 25 lb curl must drop to 20, not round back up to 25');
+  assert.equal(lr.target_weight, 10, 'a 15 lb lateral raise must drop to 10, not round back up to 15');
 });
 
 test('integration: an accessory reset programs a fuller session, not just the stalled lifts', () => {
