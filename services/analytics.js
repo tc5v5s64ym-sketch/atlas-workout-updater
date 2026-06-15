@@ -412,20 +412,13 @@ function recentWorkingWeight(rec) {
 }
 
 // Deload load for an accessory/filler on a deload day. NEVER its next_target
-// (that's a progression — a step UP). Anchor on the documented working weight,
-// drop ~10%, clamp so it can never exceed what the lifter actually lifts, and
-// snap to a real increment. Falls back to the next target only if no history.
+// (that's a progression — a step UP). Hold the documented working weight —
+// the deload cut comes via fewer sets, not a weight reduction. Falls back to
+// the next target only if no history exists.
 function deloadFillerWeight(rec) {
   const working = recentWorkingWeight(rec);
   if (!isPositiveFinite(working)) return rec && rec.next_target ? rec.next_target.weight : null;
-  const step = 5;
-  // FLOOR the 10% drop to a real increment — rounding to nearest would round a
-  // light accessory's drop back UP to the working weight (25 → 22.5 → 25), so the
-  // deload silently wouldn't happen while the row still claims "~10% off". Then
-  // guarantee at least one increment below the working weight, never below one.
-  let target = Math.floor((working * 0.9) / step) * step;
-  if (target >= working) target = working - step;
-  return Math.max(target, step);
+  return working; // hold the working weight; volume cut happens via target_sets
 }
 
 // Effort read for a logged set: how the ACTUAL logged RIR compares to the target
@@ -923,14 +916,14 @@ function detectStalls(logRows, minSessions = 3) {
 function suggestDeloads(logRows, minSessions = 4) {
   const stalls = detectStalls(logRows, minSessions);
   return stalls.map(stall => {
-    const deloadWeight = roundLoad(stall.last_best_weight * 0.9);
+    const deloadWeight = roundLoad(stall.last_best_weight);
     return {
       liftCode: stall.liftCode,
       exercise: stall.exercise || '',
       sessions_stalled: stall.sessions_stalled,
       last_best_weight: stall.last_best_weight,
       suggested_deload_weight: deloadWeight,
-      suggestion: `No progression in ${stall.sessions_stalled} sessions. Deload to ~${deloadWeight} (−10%) for one session, then rebuild.`
+      suggestion: `No progression in ${stall.sessions_stalled} sessions. Deload: same weight, fewer sets, kept well short of failure for one pass, then rebuild.`
     };
   });
 }
@@ -1631,25 +1624,22 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       });
     } else {
       const why = top.map(s =>
-        `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — deload to ~${roundLoad(s.last_best_weight * 0.9)} lb`
+        `${stallName(s.liftCode)} stalled for ${s.sessions_stalled} sessions — hold ${s.last_best_weight} lb, cut to 2 sets at RIR 4–5`
       );
       for (const s of holdStalls.slice(0, 2)) {
         why.push(`${stallName(s.liftCode)} needs a deload soon — not today, ${patternLabel(s.liftCode)} was trained recently`);
       }
 
-      // PR 3a — frame the deload as a CHOICE, not a silent imposition: say how long
-      // it runs, that loads are lighter now, the working weight you return to after,
-      // and a way to decline. Weigh fatigue too — a fresh-but-stalled lifter (weekly
-      // volume well below their average) usually needs a variation change or a push,
-      // not a deload, so the framing softens and the score drops below the pushing
-      // intents (it stays on the menu, just isn't the silent default).
+      // Frame the deload as a CHOICE with duration, return point, and a way to
+      // decline. Fatigue is weighed too — a fresh-but-stalled lifter softens the
+      // framing and scores below the pushing intents.
       const lead = top[0];
       const returnWeight = lead ? lead.last_best_weight : null;
       const returnName = lead ? stallName(lead.liftCode) : 'your main lifts';
       const freshButStalled = fatigue.status === 'low';
       const proposal = {
         duration: 'about one week — one pass through your rotation, then you step back up',
-        loads: '~10% lighter than your usual working weights today',
+        loads: 'near-normal weight, just fewer sets and kept well short of failure (RIR 4–5)',
         return_point: returnWeight != null
           ? `back to your normal working weight right after — about ${returnWeight} lb on ${returnName}`
           : 'back to your normal working weight right after',
@@ -1662,14 +1652,14 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       why.push(proposal.decline);
       const fatigueScoreAdj = fatigue.status === 'high' ? 10 : fatigue.status === 'low' ? -25 : 0;
 
-      // The deloaded stalled mains lead the session — 10% lighter, clean reps.
+      // The stalled mains lead the session — same weight, fewer sets, well short of failure.
       const exercises = top.map(s => ({
         exercise: stallName(s.liftCode),
         lift_code: s.liftCode,
-        target_weight: roundLoad(s.last_best_weight * 0.9),
+        target_weight: roundLoad(s.last_best_weight),
         target_reps: 5,
-        target_sets: 3,
-        reason: 'Deload — 10% lighter, focus on clean reps'
+        target_sets: 2,
+        reason: 'Deload — same weight, fewer sets, well short of failure (RIR 4–5)'
       }));
       // A deload is still a full session — round it out to ~4–6 movements with the
       // owner's RESTED, non-compound accessories at moderate effort, so it's never
@@ -1685,8 +1675,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
           lift_code: r.liftCode,
           target_weight: deloadFillerWeight(r),
           target_reps: r.next_target.reps,
-          target_sets: r.next_target.sets,
-          reason: 'Accessory volume — ~10% off your usual, moderate effort while the mains deload'
+          target_sets: Math.max(1, r.next_target.sets - 1),
+          reason: 'Accessory volume — near-normal weight, a set lighter, moderate effort'
         }));
       }
 
@@ -1694,7 +1684,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         id: 'deload_reset',
         label: 'Deload & Reset',
         score: 45 + eligibleStalls.length * 5 + fatigueScoreAdj,
-        focus: 'Drop ~10% for about a week, sharpen form, then step back to your normal weights',
+        focus: 'Fewer sets at near-normal weight for about a week, kept well short of failure, then step back to your normal volume',
         confidence: eligibleStalls.length >= 3 ? 'high' : 'medium',
         confidence_reasons: [`${eligibleStalls.length} rested lift${eligibleStalls.length === 1 ? '' : 's'} ready for a reset`],
         why_today: why,

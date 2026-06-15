@@ -123,18 +123,16 @@ test('integration: a true deload rounds out to a fuller session with rested acce
   );
 });
 
-test('integration: a deload clamps EVERY lift to its documented working weight on real increments (PR 5)', () => {
+test('integration: volume-first deload — every lift holds working weight, accessories shed a set', () => {
   const rows = [
     ...flatStall('Back Squat', 'Quads', 'SQ01', 315, 5),
     ...flatStall('Bench Press', 'Chest', 'BEN01', 225, 5),
-    // Rested, progressing accessories — their next_target would be a step UP, so
-    // before PR 5 they overshot (face pull 55 > 50 best, lat pulldown 180 > 170).
+    // Rested accessories — weight held at the working max, NOT bumped to next_target.
     row('2026-06-01', 'FP-1', 'Face Pull', 'Rear Delts', 'FP01', 45, 15),
     row('2026-06-04', 'FP-2', 'Face Pull', 'Rear Delts', 'FP01', 50, 15),
     row('2026-06-01', 'LPD-1', 'Lat Pulldown', 'Back', 'LPD01', 160, 10),
     row('2026-06-04', 'LPD-2', 'Lat Pulldown', 'Back', 'LPD01', 170, 10),
-    // Light accessories whose 10% drop rounds back UP to the working weight under
-    // round-to-nearest (25 → 22.5 → 25, 15 → 13.5 → 15) — the regression case.
+    // Light accessories — volume-first means weight stays at 25 and 15, not dropped.
     row('2026-06-01', 'DBC-1', 'Dumbbell Curl', 'Biceps', 'DBC01', 20, 12),
     row('2026-06-04', 'DBC-2', 'Dumbbell Curl', 'Biceps', 'DBC01', 25, 12),
     row('2026-06-01', 'LR-1', 'Lateral Raise', 'Side Delts', 'LR01', 15, 15),
@@ -151,28 +149,34 @@ test('integration: a deload clamps EVERY lift to its documented working weight o
     workingByCode[code] = Math.max(workingByCode[code] || 0, Number(r[7]));
   }
 
+  // Volume-first: every lift holds its working weight (no weight cut), on a real increment.
   for (const ex of deload.exercises) {
     const working = workingByCode[ex.lift_code];
     assert.ok(working, `${ex.exercise} should have working history`);
-    // Every prescribed lift — mains AND accessories — is deloaded: below the usual
-    // working weight, never above it, and on a real 5 lb increment.
     assert.ok(ex.target_weight <= working, `${ex.exercise} ${ex.target_weight} must not exceed working ${working}`);
-    assert.ok(ex.target_weight < working, `${ex.exercise} ${ex.target_weight} must be deloaded below working ${working}`);
     assert.equal(ex.target_weight % 5, 0, `${ex.exercise} ${ex.target_weight} must land on a real increment`);
   }
 
-  // The exact repro lifts no longer step UP on a deload day.
+  // Mains hold working weight and get 2 sets (the volume cut).
+  const sq = deload.exercises.find(e => e.lift_code === 'SQ01');
+  const bench = deload.exercises.find(e => e.lift_code === 'BEN01');
+  assert.ok(sq && sq.target_weight === 315, 'squat holds its 315 working weight');
+  assert.equal(sq.target_sets, 2, 'squat gets 2 sets on deload day');
+  assert.ok(bench && bench.target_weight === 225, 'bench holds its 225 working weight');
+  assert.equal(bench.target_sets, 2, 'bench gets 2 sets on deload day');
+
+  // Accessories hold working weight (not bumped to next_target, not cut 10%).
   const fp = deload.exercises.find(e => e.lift_code === 'FP01');
   const lpd = deload.exercises.find(e => e.lift_code === 'LPD01');
-  if (fp) assert.ok(fp.target_weight <= 45, `face pull deload ${fp.target_weight} should be ~45, not a step up to 55`);
-  if (lpd) assert.ok(lpd.target_weight < 170, `lat pulldown deload ${lpd.target_weight} should be below the usual 170, not 180`);
+  if (fp) assert.equal(fp.target_weight, 50, `face pull holds working weight 50, not a step up to 55`);
+  if (lpd) assert.equal(lpd.target_weight, 170, `lat pulldown holds working weight 170, not 180`);
 
-  // The light-accessory regression: a 10% drop must FLOOR, never round back up.
+  // Light accessories: weight stays at working weight, not cut.
   const dbc = deload.exercises.find(e => e.lift_code === 'DBC01');
   const lr = deload.exercises.find(e => e.lift_code === 'LR01');
   assert.ok(dbc && lr, 'the light accessories must be programmed into the deload');
-  assert.equal(dbc.target_weight, 20, 'a 25 lb curl must drop to 20, not round back up to 25');
-  assert.equal(lr.target_weight, 10, 'a 15 lb lateral raise must drop to 10, not round back up to 15');
+  assert.equal(dbc.target_weight, 25, 'curl holds working weight 25 (volume-first, no weight cut)');
+  assert.equal(lr.target_weight, 15, 'lateral raise holds working weight 15 (volume-first, no weight cut)');
 });
 
 test('integration: an accessory reset programs a fuller session, not just the stalled lifts', () => {

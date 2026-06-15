@@ -37,15 +37,15 @@ test('roundLoad is defensive about bad input', () => {
   assert.equal(roundLoad(166.5, 0), 165);
 });
 
-test('deload weights are rounded to a rackable increment (185 stall → 165, not 167)', () => {
-  // A lift stalled at 185 — 185 × 0.9 = 166.5, which used to render as 167.
+test('deload holds working weight (185 stall → 185, volume-first)', () => {
+  // Volume-first deload: hold the working weight, cut sets — not a weight reduction.
   const stallRows = [];
   for (let s = 1; s <= 5; s += 1) {
     stallRows.push(['2026-05-0' + s, 'S' + s, 'Overhead Press', 'Overhead Press', 'Shoulders', 'OHP01', '1', '185', '5', '2', '']);
   }
   const deloads = suggestDeloads(stallRows, 4);
   assert.equal(deloads.length, 1);
-  assert.equal(deloads[0].suggested_deload_weight, 165);
+  assert.equal(deloads[0].suggested_deload_weight, 185);
   assert.equal(deloads[0].suggested_deload_weight % 5, 0, 'deload weight must be rackable');
 });
 
@@ -124,7 +124,7 @@ test('analytics valid-input characterization', () => {
 
   const deloads = suggestDeloads(stallRows, 4);
   assert.equal(deloads.length, 1);
-  assert.equal(deloads[0].suggested_deload_weight, 180);
+  assert.equal(deloads[0].suggested_deload_weight, 200);
 
   const fatigue = computeFatigueStatus(logRows, '2026-06-10T12:00:00Z');
   assert.equal(fatigue.recent_volume, 3380);
