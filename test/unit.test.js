@@ -4196,8 +4196,8 @@ function fmtNextPlaceholder(rec) {
   if (!Number.isFinite(sets) || sets < 1) sets = 1;
   sets = Math.min(sets, 10);
   if (!name || weight == null || reps == null) return name || null;
-  const token = (rir == null || rir === '') ? `${reps}` : `${reps}/${rir}`;
-  return `${name} ${weight} ${Array(sets).fill(token).join(' ')}`;
+  if (rir == null || rir === '') return `${name} ${weight} ${reps}`;
+  return `${name} ${weight} ${Array(sets).fill(`${reps}/${rir}`).join(' ')}`;
 }
 
 test('FIX2: next-exercise placeholder writes each set out — bare weight, reps/rir per set, no xN', () => {
@@ -4211,10 +4211,11 @@ test('FIX2: next-exercise placeholder writes each set out — bare weight, reps/
     fmtNextPlaceholder({ exercise_name: 'Lat Pulldown', target_weight: 170, target_reps: 8, target_sets: 3, target_rir: 2 }),
     'Lat Pulldown 170 8/2 8/2 8/2'
   );
-  // Null RIR → bare reps, no slash.
+  // Null RIR → a single round-tripping "{weight} {reps}" token (a repeated bare-
+  // reps list would re-parse to one set), never an invented RIR.
   assert.equal(
     fmtNextPlaceholder({ exercise_name: 'Plank', next_target: { weight: 0, reps: 60, sets: 2 }, target_rir: null }),
-    'Plank 0 60 60'
+    'Plank 0 60'
   );
   // Missing numbers → name only (graceful fallback).
   assert.equal(fmtNextPlaceholder({ exercise_name: 'Mystery' }), 'Mystery');
@@ -4223,7 +4224,8 @@ test('FIX2: next-exercise placeholder writes each set out — bare weight, reps/
 test('FIX2: coach-conversation.js advances the composer to the full next prescription', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   assert.match(cc, /function formatNextPlaceholder\(/, 'must define the placeholder formatter');
-  assert.match(cc, /Array\(sets\)\.fill\(token\)\.join\(' '\)/, 'one set token per prescribed set');
+  assert.match(cc, /Array\(sets\)\.fill\(`\$\{reps\}\/\$\{rir\}`\)\.join\(' '\)/, 'one reps/rir token per prescribed set when RIR is present');
+  assert.match(cc, /rir == null \|\| rir === ''\) return `\$\{name\} \$\{weight\} \$\{reps\}`/, 'RIR-less prescriptions emit a single round-tripping token');
   assert.match(cc, /formatNextPlaceholder\(nextRec\)/, 'the placeholder comes from the formatter');
   assert.match(cc, /Moving on — next up: \$\{nextEx\}/, 'the handoff line stays name-only');
 });

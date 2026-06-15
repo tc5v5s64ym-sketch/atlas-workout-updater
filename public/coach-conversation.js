@@ -761,8 +761,14 @@
     if (!Number.isFinite(sets) || sets < 1) sets = 1;
     sets = Math.min(sets, 10);
     if (!name || weight == null || reps == null) return name || null;
-    const token = (rir == null || rir === '') ? `${reps}` : `${reps}/${rir}`;
-    return `${name} ${weight} ${Array(sets).fill(token).join(' ')}`;
+    // With an RIR, write each set out ("45 15/4 15/4 15/4") — that parses back
+    // cleanly into N sets. WITHOUT one, a repeated bare-reps list ("50 15 15 15")
+    // does NOT round-trip (the parser reads it as a single set), and inventing an
+    // RIR is off-limits — so emit a single "{weight} {reps}" token that parses
+    // cleanly. Plan entries carry a target_rir in production, so the RIR-less path
+    // is a defensive fallback.
+    if (rir == null || rir === '') return `${name} ${weight} ${reps}`;
+    return `${name} ${weight} ${Array(sets).fill(`${reps}/${rir}`).join(' ')}`;
   }
 
   // In-workout: a logged set → readback (RIR in ember) + coach note + adjusted-
