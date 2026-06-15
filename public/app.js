@@ -1139,6 +1139,9 @@ function startPlannedSession(intent) {
   if (!exercises.length) return;
   activePlannedSession = {
     label: intent.label || 'Recommended session',
+    // The plan intent id (e.g. 'deload_reset') rides along so the in-workout
+    // reaction can flip on a deload day — see fetchReaction.
+    intentId: intent.id || null,
     exercises,
     index: 0
   };
@@ -2641,12 +2644,18 @@ function emitSetLogged(logObjs, text) {
 async function fetchReaction(liftCode, justLoggedSet) {
   if (!liftCode || !getApiKey()) return null;
   try {
-    let path = `/api/recommend/next/${encodeURIComponent(liftCode)}`;
+    const params = new URLSearchParams();
+    // Thread the active plan intent (e.g. 'deload_reset') so the engine's reaction
+    // flips on a deload day — an easy/high-RIR set reads on-plan, not "add weight".
+    const intentId = activePlannedSession && activePlannedSession.intentId;
+    if (intentId) params.set('intentId', intentId);
     if (justLoggedSet && justLoggedSet.weight != null && justLoggedSet.reps != null) {
-      const params = new URLSearchParams({ w: String(justLoggedSet.weight), reps: String(justLoggedSet.reps) });
+      params.set('w', String(justLoggedSet.weight));
+      params.set('reps', String(justLoggedSet.reps));
       if (justLoggedSet.rir != null && justLoggedSet.rir !== '') params.set('rir', String(justLoggedSet.rir));
-      path += `?${params.toString()}`;
     }
+    const qs = params.toString();
+    const path = `/api/recommend/next/${encodeURIComponent(liftCode)}${qs ? `?${qs}` : ''}`;
     const res = await api(path);
     return res.data || null;
   } catch {

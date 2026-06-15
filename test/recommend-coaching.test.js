@@ -317,6 +317,61 @@ test('NON-deload regression: the same on-target set still chases reps (deload ga
   assert.match(deload.recommendation, /hold|deload/i);
 });
 
+// ── Deload phase fact — lets the coach note name the deload + the return weight ──
+
+test('deload_phase: present and active under a deload intent, with the return weight named', () => {
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 225, reps: 5, rir: 2 }),
+    row({ date: '2026-06-10', session: 's2', weight: 225, reps: 5, rir: 2 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 225, reps: 5, rir: 5 }, intentId: 'deload_reset'
+  });
+  assert.ok(rec.deload_phase, 'a deload day must carry a deload_phase fact');
+  assert.equal(rec.deload_phase.active, true);
+  // The return weight is the lifter's own working weight from history (no invention).
+  assert.equal(rec.deload_phase.return_weight, 225);
+  assert.match(rec.deload_phase.summary, /fewer sets|short of failure/i);
+  assert.doesNotMatch(rec.deload_phase.summary, /10%|lighter/i); // volume-first, not a weight cut
+});
+
+test('deload_phase: names the PRE-deload weight when a lighter deload set is already in the sheet', () => {
+  const rows = [
+    row({ date: '2026-05-20', session: 'd1', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-05-27', session: 'd2', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-06-03', session: 'd3', weight: 200, reps: 5, rir: 2 }),
+    row({ date: '2026-06-10', session: 'd4', weight: 180, reps: 5, rir: 4 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
+  assert.ok(rec.deload_phase && rec.deload_phase.active);
+  assert.equal(rec.deload_phase.return_weight, 200); // established working weight, not the 180 deload set
+});
+
+test('deload_phase: null on a normal (non-deload) day', () => {
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 3 }),
+    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 3 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 3 }
+  });
+  assert.equal(rec.deload_phase, null, 'no deload intent → no deload_phase fact');
+});
+
+test('deload_phase: an easy/high-RIR deload set reads on_target, never far_easy (so the note never says "add weight")', () => {
+  const rows = [
+    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 5 }),
+    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 5 })
+  ];
+  const rec = recommendNextSet(rows, 'BENCH01', {
+    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 5 }, intentId: 'deload_reset'
+  });
+  // Recovery target RIR (4–5) means a RIR-5 set is dialled in, not under-effort.
+  assert.ok(rec.effort_verdict, 'a deload set still gets an effort read');
+  assert.equal(rec.effort_verdict.level, 'on_target');
+  assert.ok(rec.deload_phase && rec.deload_phase.active);
+});
+
 // ── Shape + backward compatibility ────────────────────────────────────────────
 
 test('recommendNextSet: attaches a deterministic target_rir', () => {

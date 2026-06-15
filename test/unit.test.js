@@ -1896,7 +1896,7 @@ test('reaction layer: fetchReaction exists and fails quietly', () => {
   assert.match(appSource, /async function fetchReaction\(/, 'fetchReaction must exist');
   const fetchFn = appSource.slice(
     appSource.indexOf('async function fetchReaction('),
-    appSource.indexOf('async function fetchReaction(') + 900
+    appSource.indexOf('async function fetchReaction(') + 1200
   );
   assert.match(fetchFn, /return null/, 'must return null on unavailable data');
   assert.match(fetchFn, /catch/, 'must catch errors silently');
@@ -1905,6 +1905,19 @@ test('reaction layer: fetchReaction exists and fails quietly', () => {
   // anchors on it (Bug 1) — not on the previous session in the sheet.
   assert.match(fetchFn, /async function fetchReaction\(liftCode, justLoggedSet\)/, 'must accept an optional just-logged set');
   assert.match(fetchFn, /URLSearchParams/, 'must append the set as query params');
+  // Deload narration: the active plan intent is threaded through so the engine's
+  // reaction (and the coach note) can flip on a deload day.
+  assert.match(fetchFn, /activePlannedSession && activePlannedSession\.intentId/, 'must read the active plan intent');
+  assert.match(fetchFn, /params\.set\('intentId', intentId\)/, 'must forward the active intent as ?intentId');
+});
+
+test('deload narration: a planned session records its intent id for the in-workout reaction', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const start = appSource.indexOf('function startPlannedSession(');
+  const fn = appSource.slice(start, start + 500);
+  // The intent id (e.g. 'deload_reset') is stored on the active session so
+  // fetchReaction can forward it — without it, a deload set mis-reads as too light.
+  assert.match(fn, /intentId: intent\.id \|\| null/, 'must store the plan intent id on the active session');
 });
 
 test('reaction layer: the recommend route reads ?w&reps&rir and stays read-only', () => {
@@ -3833,8 +3846,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v5/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v4/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v6/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v5/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
