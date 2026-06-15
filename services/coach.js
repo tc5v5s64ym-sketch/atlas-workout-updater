@@ -509,6 +509,7 @@ async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS
 module.exports = {
   isConfigured,
   coachModel,
+  callGemini,
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
   sanitizeFacts,
