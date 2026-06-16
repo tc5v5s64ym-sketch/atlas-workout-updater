@@ -58,6 +58,15 @@ test('protocols are frozen constants', () => {
   assert.equal(STRENGTH_DELOAD_V1.load_multiplier, 0.92);
 });
 
+test('every nested remove/notes array is deep-frozen (shallow freeze is not enough)', () => {
+  // Object.freeze is shallow; an un-frozen inner array could be .push()ed by a
+  // downstream consumer and silently corrupt the shared source of truth.
+  for (const protocol of Object.values(PROTOCOLS)) {
+    assert.ok(Object.isFrozen(protocol.remove), `${protocol.id}.remove must be frozen`);
+    assert.ok(Object.isFrozen(protocol.notes), `${protocol.id}.notes must be frozen`);
+  }
+});
+
 /* ===== selectProtocol: focus → protocol, with a safe default ===== */
 
 test('selectProtocol maps each focus to its protocol', () => {

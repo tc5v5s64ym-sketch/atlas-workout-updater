@@ -55,7 +55,7 @@ const POWER_DELOAD_V1 = Object.freeze({
   duration_min_exposures: 1,
   duration_max_exposures: 1,
   exit: 'Return to normal training after one week.',
-  remove: [],
+  remove: Object.freeze([]),
   notes: Object.freeze(['Terminate sets when speed declines.'])
 });
 
@@ -69,8 +69,8 @@ const ENDURANCE_DELOAD_V1 = Object.freeze({
   duration_min_exposures: 1,
   duration_max_exposures: 1,
   exit: 'Return to normal training after one week.',
-  remove: [],
-  notes: []
+  remove: Object.freeze([]),
+  notes: Object.freeze([])
 });
 
 const PROTOCOLS = Object.freeze({
