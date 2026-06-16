@@ -80,6 +80,7 @@ test('an active deload holds the protocol and does not evaluate a new one', () =
   assert.equal(out.in_deload, true);
   assert.equal(out.action, 'CONTINUE_DELOAD');
   assert.equal(out.protocol_id, 'STRENGTH_DELOAD_V1');
+  assert.equal(out.protocol, STRENGTH_DELOAD_V1); // both keys always populated
   assert.equal(out.sessions_remaining, 1);
   assert.equal(out.score, undefined); // never re-scored while active
 });
@@ -98,6 +99,8 @@ test('a healthy lifter (rising reps at fixed weight) gets normal coaching, score
   assert.equal(out.action, ACTIONS.NORMAL_COACHING);
   assert.equal(out.suggested_state, STATES.NORMAL);
   assert.equal(out.protocol, null);
+  assert.equal(out.protocol_id, null); // both keys present, both null off-deload
+  assert.equal(out.sessions_remaining, null);
 });
 
 test('stacked fatigue across two lifts + recovery + exposure offers a deload with a protocol', () => {
@@ -123,6 +126,7 @@ test('stacked fatigue across two lifts + recovery + exposure offers a deload wit
   assert.equal(out.action, ACTIONS.OFFER_DELOAD);
   assert.equal(out.suggested_state, STATES.DELOAD_RECOMMENDED);
   assert.equal(out.protocol, STRENGTH_DELOAD_V1); // dominant focus defaults to strength
+  assert.equal(out.protocol_id, 'STRENGTH_DELOAD_V1');
 });
 
 /* ======================= lifecycle (persisted) ======================= */

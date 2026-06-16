@@ -18,6 +18,7 @@
 const { normalizeLogRow } = require('./analytics');
 const { computeFatigueScore } = require('./deloadFatigueScore');
 const { evaluate } = require('./deloadEscalationLadder');
+const { PROTOCOLS } = require('./deloadProtocols');
 const { STATES, isActiveDeload, transition } = require('./deloadStateMachine');
 const {
   defaultDeloadState, readCurrentDeloadState, appendDeloadState
@@ -129,11 +130,15 @@ function evaluateDeload({
   const state = normalizeCurrentState(currentState);
 
   if (isActiveDeload(state.training_state)) {
+    const protocol_id = state.deload_protocol || null;
     return {
       in_deload: true,
       training_state: STATES.DELOAD_ACTIVE,
       action: 'CONTINUE_DELOAD',
-      protocol_id: state.deload_protocol || null,
+      // Both protocol and protocol_id are always present (one may be null) so a
+      // consumer never has to branch on in_deload to know which key to read.
+      protocol: protocol_id ? (PROTOCOLS[protocol_id] || null) : null,
+      protocol_id,
       sessions_remaining: state.deload_sessions_remaining,
       reason: 'A deload is active — holding the protocol and not evaluating a new one.'
     };
@@ -159,6 +164,8 @@ function evaluateDeload({
     band: decision.band,
     suggested_state: decision.suggested_state,
     protocol: decision.protocol,
+    protocol_id: decision.protocol ? decision.protocol.id : null,
+    sessions_remaining: null,
     focus: sessionFocus,
     frequency_per_week: view.frequency_per_week,
     reason: decision.reason
