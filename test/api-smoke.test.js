@@ -120,6 +120,9 @@ const fakeSheets = {
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
     if (tabName === 'Deload_State') {
+      // Simulate a missing/unreadable tab (real values.get throws "Unable to parse
+      // range") so the graceful-degrade path can be exercised.
+      if (fakeSheetsState.failDeloadRead) throw new Error('Unable to parse range: Deload_State');
       // Mirror the real read: strip row 0 (header); [] when only a header exists.
       return fakeSheetsState.deloadStateSheet.length > 1
         ? fakeSheetsState.deloadStateSheet.slice(1).map(r => [...r])
@@ -127,7 +130,11 @@ const fakeSheets = {
     }
     return [];
   },
-  getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Constraints'],
+  getSpreadsheetTabs: async () => {
+    const base = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Constraints'];
+    // Deload_State is present unless a test hides it to exercise the 503 path.
+    return fakeSheetsState.hideDeloadStateTab ? base : [...base, 'Deload_State'];
+  },
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort'
 };
@@ -2208,5 +2215,29 @@ test('api smoke: deload routes are registered in the manifest', async () => {
   const paths = body.data.routes.map(r => r.path);
   for (const p of ['/api/deload/status', '/api/deload/begin', '/api/deload/advance', '/api/deload/resolve']) {
     assert.ok(paths.includes(p), `${p} must be registered`);
+  }
+});
+
+test('api smoke: recommend degrades gracefully when Deload_State is missing/unreadable (no 500)', async () => {
+  fakeSheetsState.failDeloadRead = true;
+  try {
+    const { response, body } = await requestJson('/api/recommend/next/BEN01');
+    assert.equal(response.status, 200);
+    assert.equal(body.data.deload.in_deload, false); // defaults to NORMAL, no active deload
+  } finally {
+    fakeSheetsState.failDeloadRead = false;
+  }
+});
+
+test('api smoke: deload begin returns an actionable 503 when the Deload_State tab is absent', async () => {
+  fakeSheetsState.hideDeloadStateTab = true;
+  try {
+    const { response, body } = await requestJson('/api/deload/begin', {
+      method: 'POST', body: JSON.stringify({ focus: 'strength' })
+    });
+    assert.equal(response.status, 503);
+    assert.match(body.message || body.error || '', /Deload_State tab not found/);
+  } finally {
+    fakeSheetsState.hideDeloadStateTab = false;
   }
 });

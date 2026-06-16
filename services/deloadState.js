@@ -86,9 +86,18 @@ async function ensureHeaderRow() {
 }
 
 // Read the lifter's current training state — the last row of Deload_State, or the
-// default NORMAL state when the tab is empty/absent.
+// default NORMAL state when the tab is empty/absent. Deload_State is an OPTIONAL
+// tab (config/sheetContract.js): a missing or unreadable tab is simply "no deload
+// yet", so degrade to NORMAL rather than throw — otherwise read-only callers that
+// now consult deload state (e.g. /api/recommend/next) would 500 on a spreadsheet
+// where the tab was never created.
 async function readCurrentDeloadState() {
-  const rows = await sheets.getSheetRows(DELOAD_STATE_TAB);
+  let rows;
+  try {
+    rows = await sheets.getSheetRows(DELOAD_STATE_TAB);
+  } catch {
+    return defaultDeloadState();
+  }
   if (!Array.isArray(rows) || rows.length === 0) return defaultDeloadState();
   return rowToState(rows[rows.length - 1]);
 }

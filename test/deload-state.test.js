@@ -63,6 +63,17 @@ test('an empty tab reads as the default NORMAL state', async () => {
   assert.equal(fakeSheetsState.lastReadTab, DELOAD_STATE_TAB);
 });
 
+test('readCurrentDeloadState degrades to NORMAL when the tab read throws (optional/missing tab)', async () => {
+  const original = fakeSheets.getSheetRows;
+  fakeSheets.getSheetRows = async () => { throw new Error('Unable to parse range: Deload_State'); };
+  try {
+    const state = await readCurrentDeloadState();
+    assert.equal(state.training_state, STATES.NORMAL);
+  } finally {
+    fakeSheets.getSheetRows = original;
+  }
+});
+
 test('defaultDeloadState returns a fresh object each call (no shared mutation)', () => {
   const a = defaultDeloadState();
   a.training_state = STATES.DELOAD_ACTIVE;
