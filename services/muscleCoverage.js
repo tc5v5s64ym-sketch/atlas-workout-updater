@@ -13,7 +13,9 @@
 const TAXONOMY = new Set([
   'chest', 'front_delts', 'side_delts', 'rear_delts', 'traps',
   'lats', 'upper_back', 'lower_back', 'biceps', 'triceps', 'forearms',
-  'quads', 'hamstrings', 'glutes', 'calves', 'abs', 'obliques',
+  'quads', 'hamstrings', 'glutes',
+  'calves', // in taxonomy for completeness; no fixture lift currently yields it
+  'abs', 'obliques',
 ]);
 
 const UNKNOWN = { needsReview: true };
@@ -50,7 +52,7 @@ const MUSCLE_MAP = [
   },
   // Incline press — before bench press
   {
-    pattern: /incline\s*(?:db|dumbbell|barbell|bench)?\s*press|incline\s*press/i,
+    pattern: /incline\s*(?:db|dumbbell|barbell|bench)?\s*press/i,
     matchPattern: 'incline_press',
     primary: ['chest', 'front_delts'],
     secondary: ['triceps'],
