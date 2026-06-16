@@ -3239,10 +3239,12 @@ test('scoreIntents: no Deload intent when fewer than two lifts are stalled', () 
 
 test('scoreIntents: a stalled lift is kept out of Test Progress while a progressing lift stays in', () => {
   const rows = makeIntentLogRows([
-    // Flat weight, rising reps → e1RM trends up but the weight is stalled.
+    // True plateau: flat weight AND flat reps → e1RM never moves → a real stall.
+    // (Flat weight with RISING reps is progress, not a stall — see the ME-7
+    // golden fixtures in analytics-edge.test.js.)
     { date: '2026-06-02', session: 'A1', muscle: 'Chest', liftCode: 'STALL01', weight: 185, reps: 5, rir: 2 },
-    { date: '2026-06-05', session: 'A2', muscle: 'Chest', liftCode: 'STALL01', weight: 185, reps: 6, rir: 2 },
-    { date: '2026-06-09', session: 'A3', muscle: 'Chest', liftCode: 'STALL01', weight: 185, reps: 7, rir: 2 },
+    { date: '2026-06-05', session: 'A2', muscle: 'Chest', liftCode: 'STALL01', weight: 185, reps: 5, rir: 2 },
+    { date: '2026-06-09', session: 'A3', muscle: 'Chest', liftCode: 'STALL01', weight: 185, reps: 5, rir: 2 },
     // Rising weight → genuinely progressing, not stalled.
     { date: '2026-06-02', session: 'A1', muscle: 'Chest', liftCode: 'RISE01', weight: 100, reps: 5, rir: 2 },
     { date: '2026-06-05', session: 'A2', muscle: 'Chest', liftCode: 'RISE01', weight: 110, reps: 5, rir: 2 },

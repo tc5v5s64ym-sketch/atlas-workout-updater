@@ -851,8 +851,13 @@ function detectStalls(logRows, minSessions = 3) {
     const sessionMap = new Map();
     sorted.forEach(row => {
       const key = `${row.session_id}||${row.date_clean}`;
-      const current = sessionMap.get(key) || { session_id: row.session_id, date: row.date_clean, best_weight: 0 };
+      const current = sessionMap.get(key) || { session_id: row.session_id, date: row.date_clean, best_weight: 0, best_e1rm: 0 };
       current.best_weight = Math.max(current.best_weight, row.weight || 0);
+      // Estimated 1RM (Epley, the same formula used elsewhere in this file) so the
+      // stall decision counts reps, not just top weight: adding reps at a fixed
+      // weight (205×5 → 205×6 → 205×7) is real progress, not a stall.
+      const e1rm = row.weight * (1 + row.reps / 30);
+      current.best_e1rm = Math.max(current.best_e1rm, e1rm || 0);
       sessionMap.set(key, current);
     });
 
@@ -860,10 +865,14 @@ function detectStalls(logRows, minSessions = 3) {
     if (sessions.length < count) continue;
 
     const lastN = sessions.slice(-count);
-    const maxWeight = Math.max(...lastN.map(s => s.best_weight));
-    const firstWeight = lastN[0].best_weight;
+    // Stall = best e1RM across the window did not meaningfully exceed the first
+    // session's best e1RM. The epsilon keeps float noise from reading as progress;
+    // a real same-weight rep gain clears it, a flat/falling window does not.
+    const STALL_EPSILON = 1e-6;
+    const maxE1rm = Math.max(...lastN.map(s => s.best_e1rm));
+    const firstE1rm = lastN[0].best_e1rm;
 
-    if (maxWeight <= firstWeight) {
+    if (maxE1rm - firstE1rm <= STALL_EPSILON) {
       const lastNamed = [...sorted].reverse().find(r => r.canonical_exercise || r.exercise);
       stalls.push({
         liftCode,
