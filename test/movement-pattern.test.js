@@ -170,6 +170,18 @@ test('Lateral Raises (plural) = delt_isolation', () => {
 
 /* ===== VALID_PATTERNS export ===== */
 
+test('hip_isolation is reachable: Hip Thrust, Glute Bridge', () => {
+  assert.equal(patternFor('Hip Thrust').pattern, 'hip_isolation');
+  assert.equal(patternFor('Glute Bridge').pattern, 'hip_isolation');
+  assert.equal(patternFor('Hip Abduction').pattern, 'hip_isolation');
+});
+
+test("carry is reachable: Farmer's Walk, Suitcase Carry", () => {
+  assert.equal(patternFor("Farmer's Walk").pattern, 'carry');
+  assert.equal(patternFor('Farmers Walk').pattern, 'carry');
+  assert.equal(patternFor('Suitcase Carry').pattern, 'carry');
+});
+
 test('VALID_PATTERNS contains all 14 expected patterns', () => {
   const expected = [
     'squat', 'hinge', 'horizontal_push', 'vertical_push',

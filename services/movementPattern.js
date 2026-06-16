@@ -128,6 +128,16 @@ const PATTERN_MAP = [
     re: /rear\s*delt|reverse\s*(?:pec\s*)?(?:deck|fly|flye)/i,
     movement: 'delt_isolation',
   },
+  // Hip isolation (Hip Thrust, Glute Bridge, Hip Abduction, etc.)
+  {
+    re: /hip\s*thrust|glute\s*bridge|hip\s*abduct|hip\s*ext(?:ension)?/i,
+    movement: 'hip_isolation',
+  },
+  // Carries (Farmer's / Suitcase / Trap-bar Carry)
+  {
+    re: /farmer(?:'?s)?\s*(?:walk|carry)|suitcase\s*carry|trap[\s-]*bar\s*carry/i,
+    movement: 'carry',
+  },
   // Shrugs — trap isolation; no closer pattern in this vocabulary
   {
     re: /\bshrugs?\b/i,
