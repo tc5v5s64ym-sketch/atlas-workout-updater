@@ -39,6 +39,7 @@ Read `docs/INVARIANTS.md` for rules that must never be broken.
 | Live-write proof fields: `sheet_write:'success'`, `log_rows_written>0` | `index.js` |
 | Undo read-back: missing/empty row = 409 | `index.js` undo-last handler |
 | Log tab restriction in undo | `index.js` undo-last handler |
+| Deload = predefined protocol, not invented numbers; AI decides *if*, engine decides *what* | `docs/DELOAD_SPEC.md` |
 
 ---
 
