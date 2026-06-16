@@ -39,6 +39,8 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - **PR 4.2 — session builder** — anchor → support → balance + pairing check + warm-up ramps, consuming `muscleCoverage`, `muscleVolume`, under-coverage, balance signal, `movementPattern`, cost tier. Every offered option builds a coherent, pairing-legal, balanced session or is de-emphasized. Must pass the four acceptance cases in [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) (brief matches session, no duplicate lifts, per-muscle cap, anchor + ramp).
   - **Open decision:** Squat + Deadlift same day — block by default, allow as opt-in "heavy day" override? Default = separate until owner decides.
 
+- **Conversational input robustness / elasticity** — see [`CONVERSATION_DESIGN.md`](./CONVERSATION_DESIGN.md). Defines the composer interaction model: save-and-echo (evolves the user-facing approve-before-save step; real-write safeguards unchanged), conversational corrections, fluid log/ask switching. 7 acceptance scenarios (non-uniform sets, batch brain-dumps, log-vs-ask intent, floor deviations, load ambiguity, conversational undo, mid-session stats). Separate future thread — NOT part of the 4.x session builder. Behavior-changing → Opus 4.8 when it's time to build; scope and PR it separately.
+
 ## Housekeeping
 
 - **Close obsolete PR [#288](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/pull/288)** (superseded by [#290](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/pull/290)). ✅ Already closed 2026-06-16.
