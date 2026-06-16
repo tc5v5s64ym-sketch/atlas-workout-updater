@@ -1,76 +1,378 @@
-# Atlas — Deload Spec
+# Atlas Deload System Specification
 
-**Status: DRAFT — awaiting owner (Dale) approval.** Single source of truth for what a deload *is* in Atlas. Code follows this; if behavior is ever wrong, change this section first, then the code.
+> **Status: DRAFT — awaiting owner (Dale) approval.** Single source of truth for what a deload *is* in Atlas. Code follows this spec; if behavior is ever wrong, change this spec first, then the code.
+
+## GOAL
+
+Atlas must not invent deloads. Atlas must select from predefined deload protocols using deterministic rules.
+
+The AI's job is to determine whether a deload is needed.
+
+The rules engine's job is to determine exactly what the deload looks like.
+
+The system must be predictable, testable, explainable, and auditable.
+
+A user should always be able to understand:
+
+* Why a deload was triggered
+* Which protocol was selected
+* How long it will last
+* What will change
+* When normal training resumes
 
 ---
 
-## 0. Design decision: a real feature, recommended *intelligently*
+## CORE PRINCIPLE
 
-Deload is a first-class Atlas feature (Atlas is becoming a product, not just Dale's logger). But the recommendation is **conditional on training stress, not on a naive weight stall** — because the need for a deload scales with frequency, volume, and fatigue:
+A deload is a temporary reduction in fatigue while preserving fitness.
 
-- A high-frequency user (4–6x/week) grinding low-RIR for weeks → Atlas **recommends** a deload.
-- A low-frequency user (1–3x/week, e.g. current-Dale) with a flat weight → Atlas **stays quiet** and suggests "add a rep / nudge load." Their rest days already are their deload.
-- Any user can **invoke** a deload on demand ("ease me off," "deload week").
+A deload is NOT:
 
-Same feature, same code, correct behavior for both. It must **never** fire just because the top weight was flat for N sessions.
+* punishment
+* regression
+* starting over
+* random lighter weights
 
-## Decisions to confirm (the knobs)
+A deload is a defined training state.
 
-| Knob | Default | Change if… |
-|---|---|---|
-| How a deload starts | owner-invoked, **or** recommended when frequency + fatigue warrant | you want different gating |
-| Recommendation gate | trains ~4+ days/week **and** effort grinding (RIR ≤ 1) over several sessions, **or** a pain flag | too eager / too shy |
-| Movements in a deload session | keep the normal **4–6** | you want fewer |
-| Weight | **held** (no drop) | you'd rather drop load |
-| Volume | cut working sets ~in half (e.g. 3 → 1–2 per movement) | bigger/smaller cut |
-| Effort | easy — **RIR 4+** | harder/easier |
-| Duration | **1 session**, re-evaluate | you want a full week |
+Atlas must distinguish between:
 
-## 1. When a deload happens (and when it must NOT)
+1. Workout Adjustment
+2. Recovery Workout
+3. Lift-Specific Deload
+4. Full-System Deload
 
-**Owner-invoked (always available):** Dale/the user asks — "deload week," "ease me off," "I'm wiped."
+Do not jump directly to a full deload when a smaller intervention would solve the problem.
 
-**Recommended (conditional):** Atlas *offers* a deload only when training stress is genuinely high — roughly **4+ sessions/week AND effort grinding (RIR ≤ 1) across several sessions**, or a logged **pain flag**. Even then it's a question, never an automatic prescription.
+---
 
-**Must NOT trigger on:**
-- ❌ a flat top weight for N sessions (NOT a deload signal — especially at low frequency),
-- ❌ rep progress at the same weight (that's progress),
-- ❌ a single hard session or a PR.
+## ATLAS TRAINING STATES
 
-## 2. What a deload prescribes (volume-first)
+```
+NORMAL
+  ↓
+RECOVERY_CANDIDATE
+  ↓
+DELOAD_RECOMMENDED
+  ↓
+DELOAD_ACTIVE
+  ↓
+POST_DELOAD_EVALUATION
+  ↓
+NORMAL
+```
 
-**Keep your movements, hold the weight, cut the sets, keep it easy.**
-- Same **4–6 movements** you'd train that day — a full session, not a stripped one.
-- **Same working weight** per movement (no drop).
-- **Fewer working sets** — roughly half (3 → 1–2).
-- **RIR 4+** — comfortably easy.
-- **One session**, then re-evaluate.
+Atlas must track and expose current training state.
 
-## 3. What the coach says during a deload
+---
 
-While a deload is active, the coach must: know it's a deload **for the whole session**, **name the held weight**, **frame easy sets as the point**, and **never** say "you left a lot in the tank, bump it next time."
+## FATIGUE DETECTION
 
-- *"Deload set — 205 held, RIR 4, nice and easy. Banking recovery, not chasing reps."*
-- *"That's the deload doing its job — light dose this week so next week's sharp."*
+Atlas should evaluate fatigue using training exposure, not calendar time.
 
-## 4. How a lift returns to normal
+Track:
 
-After the deload session: next session returns to the **same pre-deload working weight** (205, not lower), **full working-set count**, **progression target unchanged** (chase 10 clean reps @ RIR 3, then 215).
+* Lift exposures
+* Hard sets
+* Near-failure sets (RIR 0-1)
+* Performance trends
+* Recovery trends
+* Stalled progress
+* User-reported fatigue
 
-## 5. Worked examples (real numbers — these are the acceptance tests)
+Atlas should never trigger a deload from:
 
-### Example A — Owner-invoked, Bench Press @ 205
+* one bad workout
+* one missed target
+* one low-energy day
+* one poor sleep
 
-Dale types *"give me a deload this week."* → prescription: normal bench day, `205 × 1–2 sets × ~5 @ RIR 4+`, other movements cut the same. → logs `205 5/4` → coach: *"Deload set — 205 held, 4 in reserve. Easy week so bench comes back fresh."* → next bench day: `205 × full sets`, resume toward 10 @ RIR 3 → 215.
+---
 
-### Example B — Recommendation correctly STAYS QUIET, Back Squat @ 205
+## DELOAD TRIGGER CRITERIA
 
-Current-Dale (1–3x/week) hits `205 × 7` after a few flat sessions. Weight flat, but reps progressing and frequency low → Atlas does **NOT** recommend a deload; it says *"add a rep / hold for 10 @ RIR 3."* (For a 5x/week user grinding RIR ≤ 1 for weeks, the same engine *would* offer one — that's the conditional gate working.)
+Create a fatigue score.
 
-## 6. What this spec deliberately does NOT do
+Major fatigue signals:
 
-- ❌ recommend deloads from a flat-weight stall,
-- ❌ drop the working weight (volume-first, not load-cut),
-- ❌ reset progression or the 215 target,
-- ❌ strip the session below the normal 4–6 movements,
-- ❌ let the coach push for more during a deload.
+### A. Performance Stagnation
+
+Strength:
+
+* No progress for 3+ exposures
+
+Low-frequency lifter (1-3x/week):
+
+* No progress for 4-6 exposures
+
+Hypertrophy:
+
+* No rep/load/volume progress for 4+ exposures
+
+### B. Performance Regression
+
+* Same weight produces fewer reps
+* Estimated strength drops 5%+
+
+### C. RIR Drift
+
+Example:
+
+```
+225 x 5 @3
+225 x 5 @2
+225 x 5 @1
+225 x 5 @0
+```
+
+Performance stable.
+Fatigue increasing.
+
+### D. Multiple Lift Stagnation
+
+Two or more major lifts stall simultaneously.
+
+### E. Recovery Signals
+
+Repeated reports of:
+
+* beat up
+* exhausted
+* unusually sore
+* joint pain
+* low motivation
+
+### F. High Fatigue Exposure
+
+* many hard sets
+* frequent failure
+* long uninterrupted training block
+
+This alone cannot trigger a deload.
+
+---
+
+## ESCALATION LADDER
+
+| Fatigue Score | Action |
+|---|---|
+| < 50 | Normal coaching |
+| 50-75 | Workout adjustment or recovery workout |
+| 75-90 | Offer deload |
+| > 90 | Recommend deload |
+
+This allows Atlas to scale intervention appropriately.
+
+---
+
+## DELOAD PROTOCOL SELECTION
+
+Atlas must never invent percentages.
+
+Atlas must select a predefined protocol.
+
+---
+
+### PROTOCOL: STRENGTH_DELOAD_V1
+
+Purpose:
+Reduce fatigue while preserving strength skill.
+
+Trigger:
+Strength-focused training.
+
+Prescription:
+
+```
+load_multiplier = 0.92
+set_multiplier = 0.50
+target_rir = 5
+```
+
+Typical:
+
+```
+225 x 5 x 5 @2
+```
+
+becomes
+
+```
+205-210 x 5 x 2-3 @5
+```
+
+Duration:
+
+1 exposure minimum
+1 week maximum
+
+Exit:
+
+Return immediately to previous working weight.
+
+---
+
+### PROTOCOL: HYPERTROPHY_DELOAD_V1
+
+Purpose:
+Reduce fatigue and muscle damage.
+
+Prescription:
+
+```
+load_multiplier = 0.85
+set_multiplier = 0.50
+target_rir = 5
+```
+
+Remove:
+
+* failure sets
+* drop sets
+* rest-pause
+* intensity techniques
+
+Duration:
+
+1 week
+
+---
+
+### PROTOCOL: POWER_DELOAD_V1
+
+Purpose:
+Preserve speed and explosiveness.
+
+Prescription:
+
+```
+load_multiplier = 0.90
+set_multiplier = 0.35
+target_rir = 4
+```
+
+Rule:
+
+Terminate sets when speed declines.
+
+Duration:
+
+1 week
+
+---
+
+### PROTOCOL: ENDURANCE_DELOAD_V1
+
+Purpose:
+Reduce accumulated fatigue.
+
+Prescription:
+
+```
+load_multiplier = 0.80
+set_multiplier = 0.60
+target_rir = 5
+```
+
+Duration:
+
+1 week
+
+---
+
+## TRAINING FREQUENCY ADJUSTMENT
+
+Users training 1-3x/week:
+
+* Require stronger evidence before deloading
+* Require more stalled exposures
+* Naturally accumulate less fatigue
+
+Users training 4-6x/week:
+
+* Lower threshold for fatigue accumulation
+* Fewer stalled exposures needed
+
+Atlas should evaluate exposure count rather than weeks.
+
+---
+
+## DELOAD STATE
+
+When a deload is activated:
+
+Store:
+
+```
+training_state = DELOAD_ACTIVE
+deload_protocol
+deload_reason
+deload_start_date
+deload_sessions_remaining
+deload_exit_criteria
+```
+
+Atlas must remember it is currently in a deload.
+
+Do not generate independent recommendations that conflict with the active deload.
+
+---
+
+## USER COMMUNICATION
+
+Atlas must explicitly tell the user:
+
+* why the deload was triggered
+* which protocol was selected
+* how many sessions remain
+* what changes are being made
+* when normal training resumes
+
+Never hide a deload.
+
+---
+
+## POST-DELOAD EVALUATION
+
+After the final deload session:
+
+Enter:
+
+```
+POST_DELOAD_EVALUATION
+```
+
+Evaluate:
+
+* performance rebound
+* recovery improvement
+* readiness
+
+If improved:
+
+Return to NORMAL
+
+If not improved:
+
+Do not immediately trigger another deload.
+
+Instead investigate:
+
+* excessive volume
+* poor exercise selection
+* poor progression model
+* inadequate sleep
+* inadequate nutrition
+* illness
+* injury
+
+---
+
+## IMPORTANT RULE
+
+Atlas decides IF a deload is needed.
+
+The protocol determines WHAT the deload is.
+
+Atlas must not generate custom deload percentages or durations from scratch.
+Atlas must select from predefined protocols.
