@@ -48,6 +48,11 @@ const COST_MAP = [
     re: /(?:barbell|bent[\s-]*over|reverse|pendlay|t[\s-]*bar)\s*row/i,
     cost: 'high',
   },
+  // Good Morning — heavy barbell hinge, same lower-back demand as RDL → HIGH
+  {
+    re: /good\s*morning/i,
+    cost: 'high',
+  },
 
   // ── MEDIUM ────────────────────────────────────────────────────────────
   // Leg Press family — MEDIUM (quad-dominant but no lower-back loading)
@@ -95,12 +100,6 @@ const COST_MAP = [
     re: /\brow\b/i,
     cost: 'medium',
   },
-  // Good Morning — hinge pattern, meaningful lower-back load
-  {
-    re: /good\s*morning/i,
-    cost: 'medium',
-  },
-
   // ── LOW (isolations / accessories) ────────────────────────────────────
   // Leg Curl (single-leg variant too) — before generic curl
   {

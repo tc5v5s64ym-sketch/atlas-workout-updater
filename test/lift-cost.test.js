@@ -110,6 +110,10 @@ test('Goblet Squat / Bulgarian Split Squat / Hack Squat are medium, not high', (
   assert.equal(costFor('Hack Squat').cost, 'medium');
 });
 
+test('Good Morning = high (barbell hinge, same lower-back demand as RDL)', () => {
+  assert.equal(costFor('Good Morning').cost, 'high');
+});
+
 test('Back Squat is still high after accessory carve-out', () => {
   assert.equal(costFor('Back Squat').cost, 'high');
   assert.equal(costFor('Front Squat').cost, 'high');
