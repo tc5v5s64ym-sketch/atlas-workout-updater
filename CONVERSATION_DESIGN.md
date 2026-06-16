@@ -50,3 +50,7 @@ Acceptance form: feed each as raw composer text; assert Atlas (a) parses to the 
 - Never lose the session thread across a question or correction.
 - Destructive changes are stated out loud, even though no button is required.
 - Engine parses and owns the data; the coach only words it.
+
+## Implementation prerequisite
+
+The "save-and-echo, silence confirms" pattern described here replaces the approve-before-save trust loop listed as a critical behaviour in `CLAUDE.md` and enforced in `public/app.js`. **Implementing this spec requires explicit owner approval before any code changes** — it is not a routine PR and must not be treated as one by any agent or contributor.
