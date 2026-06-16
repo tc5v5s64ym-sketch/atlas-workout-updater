@@ -66,6 +66,25 @@ function stateToRow(state) {
   });
 }
 
+// Guarantee the tab has a header row before the first data append. The read path
+// (sheets.getSheetRows) strips row 0 as a header, so without one the first
+// persisted state would be swallowed and the lifter would read back as NORMAL —
+// defeating "Atlas must remember it is currently in a deload". A1 empty ⇒ no
+// header yet ⇒ write the column names first.
+async function ensureHeaderRow() {
+  let firstRow = [];
+  try {
+    const top = await sheets.readRange(`${DELOAD_STATE_TAB}!A1:A1`);
+    firstRow = Array.isArray(top) ? top : [];
+  } catch {
+    firstRow = [];
+  }
+  const hasHeader = firstRow.length > 0 && Array.isArray(firstRow[0]) && String(firstRow[0][0] || '').trim() !== '';
+  if (!hasHeader) {
+    await sheets.appendRows(DELOAD_STATE_TAB, [[...deloadStateColumns]]);
+  }
+}
+
 // Read the lifter's current training state — the last row of Deload_State, or the
 // default NORMAL state when the tab is empty/absent.
 async function readCurrentDeloadState() {
@@ -86,6 +105,7 @@ async function appendDeloadState(state = {}) {
     ...state,
     updated_at: state.updated_at || new Date().toISOString()
   };
+  await ensureHeaderRow();
   await sheets.appendRows(DELOAD_STATE_TAB, [stateToRow(record)]);
   return record;
 }

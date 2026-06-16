@@ -13,6 +13,7 @@ const fakeSheets = {
     if (fakeSheetsState.rows.length <= 1) return [];
     return fakeSheetsState.rows.slice(1).map(r => [...r]);
   },
+  readRange: async () => (fakeSheetsState.rows.length ? [fakeSheetsState.rows[0]] : []),
   appendRows: async (tabName, rows) => {
     fakeSheetsState.appendCalls.push({ tabName, rows });
     for (const r of rows) fakeSheetsState.rows.push([...r]);

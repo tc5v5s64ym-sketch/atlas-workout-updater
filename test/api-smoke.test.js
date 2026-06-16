@@ -57,7 +57,10 @@ const fakeSheetsState = {
   // to exercise the duplicate-session guard; default empty (no duplicates).
   effortSessionIds: [],
   // Rows returned by getSheetRows for Constraints. Tests may set this.
-  constraintsRows: []
+  constraintsRows: [],
+  // Deload_State tab, modeled WITH its header row at index 0 so reads mirror the
+  // real getSheetRows header-stripping. Deload-lifecycle tests reset this to [].
+  deloadStateSheet: []
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -70,6 +73,12 @@ function getLocalDateString(dateTime = new Date()) {
 const fakeSheets = {
   appendRows: async (tabName, rows) => {
     fakeSheetsState.appendCalls.push({ tabName, rows });
+    // Deload_State is system-state (append-only, outside the trust loop), so it
+    // bypasses the allowAppend guard that protects the logged-set write paths.
+    if (tabName === 'Deload_State') {
+      for (const r of rows) fakeSheetsState.deloadStateSheet.push([...r]);
+      return { data: { updates: { updatedRange: `${tabName}!A1`, updatedRows: rows.length } } };
+    }
     if (!fakeSheetsState.allowAppend) {
       throw new Error('appendRows should not be called by endpoint smoke tests');
     }
@@ -77,6 +86,13 @@ const fakeSheets = {
       throw new Error(`Simulated append failure for "${tabName}"`);
     }
     return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
+  },
+  readRange: async (range) => {
+    // ensureHeaderRow reads A1 of Deload_State to decide whether a header exists.
+    if (String(range).startsWith('Deload_State')) {
+      return fakeSheetsState.deloadStateSheet.length ? [fakeSheetsState.deloadStateSheet[0]] : [];
+    }
+    return [];
   },
   deleteRowsByRange: async (tabName, startIndex, endIndex) => {
     fakeSheetsState.deleteCalls.push({ tabName, startIndex, endIndex });
@@ -103,6 +119,12 @@ const fakeSheets = {
     if (tabName === 'Effort') return [];
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
+    if (tabName === 'Deload_State') {
+      // Mirror the real read: strip row 0 (header); [] when only a header exists.
+      return fakeSheetsState.deloadStateSheet.length > 1
+        ? fakeSheetsState.deloadStateSheet.slice(1).map(r => [...r])
+        : [];
+    }
     return [];
   },
   getSpreadsheetTabs: async () => ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Constraints'],
@@ -2124,4 +2146,67 @@ test('api smoke: constraints is registered in the route manifest with correct re
   assert.equal(getRoute.writeCapable, false, 'GET must not be write-capable');
   assert.ok(postRoute, 'POST /api/constraints must be registered');
   assert.equal(postRoute.writeCapable, true, 'POST must be write-capable');
+});
+
+// ---- Deload engine wiring (PR 6b) -------------------------------------------
+
+test('api smoke: deload lifecycle — status, begin, advance, resolve, and the 409 guards', async () => {
+  fakeSheetsState.deloadStateSheet = []; // fresh, unprovisioned tab
+
+  // Status starts at NORMAL.
+  const status0 = await requestJson('/api/deload/status');
+  assert.equal(status0.response.status, 200);
+  assert.equal(status0.body.data.state.training_state, 'NORMAL');
+
+  // Owner invokes a strength deload.
+  const begin = await requestJson('/api/deload/begin', {
+    method: 'POST',
+    body: JSON.stringify({ focus: 'strength', reason: 'wiped', sessions_remaining: 1 })
+  });
+  assert.equal(begin.response.status, 200);
+  assert.equal(begin.body.data.state.training_state, 'DELOAD_ACTIVE');
+  assert.equal(begin.body.data.state.deload_protocol, 'STRENGTH_DELOAD_V1');
+  // The tab was provisioned with a header row, so the state reads back.
+  const status1 = await requestJson('/api/deload/status');
+  assert.equal(status1.body.data.state.training_state, 'DELOAD_ACTIVE');
+
+  // Beginning again while active is rejected (illegal transition → 409).
+  const beginAgain = await requestJson('/api/deload/begin', {
+    method: 'POST', body: JSON.stringify({ focus: 'strength' })
+  });
+  assert.equal(beginAgain.response.status, 409);
+
+  // The single session completes → POST_DELOAD_EVALUATION.
+  const advance = await requestJson('/api/deload/advance', { method: 'POST' });
+  assert.equal(advance.response.status, 200);
+  assert.equal(advance.body.data.state.training_state, 'POST_DELOAD_EVALUATION');
+
+  // Resolve → back to NORMAL.
+  const resolve = await requestJson('/api/deload/resolve', { method: 'POST' });
+  assert.equal(resolve.response.status, 200);
+  assert.equal(resolve.body.data.state.training_state, 'NORMAL');
+
+  // Advancing when not deloading is rejected.
+  const advanceBad = await requestJson('/api/deload/advance', { method: 'POST' });
+  assert.equal(advanceBad.response.status, 409);
+
+  fakeSheetsState.deloadStateSheet = [];
+});
+
+test('api smoke: recommend response carries the engine deload decision', async () => {
+  fakeSheetsState.deloadStateSheet = [];
+  const { response, body } = await requestJson('/api/recommend/next/BEN01');
+  assert.equal(response.status, 200);
+  // Engine-driven deload field is always present; off-deload it is an evaluation.
+  assert.ok(body.data.deload, 'recommendation must carry a deload decision');
+  assert.equal(body.data.deload.in_deload, false);
+  assert.ok('action' in body.data.deload, 'deload decision must include an action');
+});
+
+test('api smoke: deload routes are registered in the manifest', async () => {
+  const { body } = await requestJson('/routes');
+  const paths = body.data.routes.map(r => r.path);
+  for (const p of ['/api/deload/status', '/api/deload/begin', '/api/deload/advance', '/api/deload/resolve']) {
+    assert.ok(paths.includes(p), `${p} must be registered`);
+  }
 });
