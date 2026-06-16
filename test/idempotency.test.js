@@ -93,15 +93,28 @@ test('completeWrite clones the response — later mutation does not leak in', ()
   assert.equal(beginWrite('clone').record.response.a, 1);
 });
 
-/* ===== failWrite: frees the id for a retry ===== */
+/* ===== failWrite: marks the record failed but keeps the id retryable ===== */
 
-test('failWrite deletes the record so a retry can begin fresh', () => {
+test('failWrite frees the id for a clean retry', () => {
   const r = beginWrite('retry');
   assert.equal(failWrite('retry', 'wrong'), false);  // wrong token: no-op
   assert.equal(failWrite('retry', r.token), true);
   const retry = beginWrite('retry');
-  assert.equal(retry.duplicate, false);              // fresh, not a duplicate
+  assert.equal(retry.duplicate, false);              // failed → retryable, not a duplicate
   assert.ok(retry.token);
+  assert.notEqual(retry.token, r.token);             // a fresh attempt with a new token
+});
+
+test('failWrite marks the record failed (not deleted) and invalidates the released token', () => {
+  const r = beginWrite('mark-failed');
+  assert.equal(failWrite('mark-failed', r.token), true);
+  // The released attempt's token can no longer commit — a stale completeWrite for
+  // the abandoned attempt must never resurrect the record.
+  assert.equal(completeWrite('mark-failed', r.token, { sheet_write: 'success' }), false);
+  // The id is still retryable: a fresh attempt starts in_progress, not a duplicate.
+  const retry = beginWrite('mark-failed');
+  assert.equal(retry.duplicate, false);
+  assert.equal(beginWrite('mark-failed').record.status, 'in_progress');
 });
 
 test('failWrite on an unknown or blank id returns false', () => {

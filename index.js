@@ -43,7 +43,8 @@ const { buildRecommendation, parseRecommendationConstraints } = require('./servi
 const {
   beginWrite,
   completeWrite,
-  failWrite
+  failWrite,
+  normalizeWriteId
 } = require('./services/idempotency');
 const { normalizeDate, parseNumber, calculateQualityScore, qualityScoreBreakdown } = require('./services/validation');
 const {
@@ -1577,6 +1578,12 @@ app.post('/api/bodyweight', async (req, res) => {
       });
     }
 
+    // Live writes must carry a write_id so a lost-response retry is deduplicated
+    // instead of appending the same entry twice. Dry-runs (above) are exempt.
+    if (!normalizeWriteId(writeId)) {
+      return standardError(req, res, 'write_id is required', null, 400);
+    }
+
     const idempotency = beginWrite(writeId, {
       endpoint: '/api/bodyweight',
       date: normalizedDate,
@@ -1602,8 +1609,14 @@ app.post('/api/bodyweight', async (req, res) => {
       return standardSuccess(req, res, message, duplicateBody, record.status === 'completed' ? 200 : 409);
     }
 
+    // Tracks whether the row is already on the sheet. Once it flips true the
+    // idempotency record must never be released (failWrite) — a released record
+    // lets a retried write_id append the same entry a second time. Mirrors the
+    // committed-guard in /api/complete-workout.
+    let writeCommitted = false;
     try {
       await appendRows('Bodyweight', [[normalizedDate, weightValue, notes || '']]);
+      writeCommitted = true;
       const responseBody = {
         entry,
         test_mode: false,
@@ -1618,7 +1631,25 @@ app.post('/api/bodyweight', async (req, res) => {
       }
       return standardSuccess(req, res, 'Bodyweight entry appended', responseBody);
     } catch (error) {
-      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      if (idempotency.enabled) {
+        if (writeCommitted) {
+          // The row landed but post-append processing threw. Record the write as
+          // completed so a retried write_id replays this state instead of
+          // appending again (never failWrite a committed write).
+          completeWrite(idempotency.write_id, idempotency.token, {
+            entry,
+            test_mode: false,
+            sheet_write: 'success',
+            sheet_written: true,
+            write_id: idempotency.write_id,
+            duplicate_write: false,
+            idempotency_status: 'completed',
+            post_processing_error: true
+          });
+        } else {
+          failWrite(idempotency.write_id, idempotency.token);
+        }
+      }
       throw error;
     }
   } catch (error) {
@@ -1942,6 +1973,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     let logAppendCount = rowsToWrite.length;
     let effortWritten = false;
     if (!testMode) {
+      // Live writes must carry a write_id so a lost-response retry is deduplicated
+      // instead of appending the same session twice. Dry-runs never write, so they
+      // are exempt (the preview path above never reaches here).
+      if (!normalizeWriteId(writeId)) {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(req, res, 'write_id is required', null, 400);
+      }
       // Idempotency guard: a retried write_id must never append a second time.
       // Mirrors the /api/log-workout contract (beginWrite → completeWrite/failWrite).
       idempotency = beginWrite(writeId, {
@@ -2176,6 +2214,13 @@ app.post('/api/log-workout', async (req, res) => {
     if (autoMatchesForPreview.length > 0) previewBody.auto_matches = autoMatchesForPreview;
     if (ruleFlags.length > 0) previewBody.rule_flags = ruleFlags;
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
+  }
+
+  // Live writes must carry a write_id so a lost-response retry is deduplicated
+  // instead of appending the same rows twice. Dry-runs (above) never write, so
+  // they are exempt.
+  if (!normalizeWriteId(writeId)) {
+    return standardError(req, res, 'write_id is required', null, 400);
   }
 
   const idempotency = beginWrite(writeId, {

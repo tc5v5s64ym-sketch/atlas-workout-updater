@@ -39,7 +39,10 @@ const fakeSheetsState = {
   // call — simulates a partial-write failure between the two live appends.
   failAppendForTab: null,
   // Rows returned by getSheetRows for Coaching_Notes. Tests may set this.
-  coachingNotesRows: []
+  coachingNotesRows: [],
+  // Existing Effort session_ids returned by getEffortSessionIds. Tests set this
+  // to exercise the duplicate-session guard; default empty (no duplicates).
+  effortSessionIds: []
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -67,7 +70,7 @@ const fakeSheets = {
   getExerciseCatalog: async () => exerciseCatalogRows,
   getEffortSessionIds: async () => {
     fakeSheetsState.safetyReadCalls.effortSessionIds += 1;
-    return [];
+    return [...fakeSheetsState.effortSessionIds];
   },
   getLogCompositeKeys: async () => {
     fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
@@ -736,6 +739,7 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
       form.append('session_id', 'EFFORT-MANUAL-ONLY-01');
       form.append('date', '2026-06-11');
       form.append('log_rows_json', JSON.stringify([]));
+      form.append('write_id', 'complete-effort-only-live-01');
       form.append('effort_json', JSON.stringify({
         duration: '42',
         activeCalories: 410,
@@ -823,6 +827,7 @@ test('api smoke: complete-workout approval payload (effort_json, no image) write
       const form = new FormData();
       form.append('session_id', 'APPROVE-PREVIEWED-01');
       form.append('date', '2026-06-11');
+      form.append('write_id', 'approve-previewed-live-01');
       form.append('log_rows_json', JSON.stringify([
         { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
       ]));
@@ -918,6 +923,7 @@ test('api smoke: complete-workout approval payload preserves a missing peak HR a
       const form = new FormData();
       form.append('session_id', 'APPROVE-NO-PEAK-01');
       form.append('date', '2026-06-11');
+      form.append('write_id', 'approve-no-peak-live-01');
       form.append('log_rows_json', JSON.stringify([]));
       form.append('effort_json', JSON.stringify({
         duration: '00:42:00',
@@ -1120,6 +1126,7 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
       body: JSON.stringify({
         session_id: 'LIVE-WRITE-SMOKE-01',
         date: '2026-06-11',
+        write_id: 'live-write-smoke-01',
         // test_mode intentionally omitted — this exercises the live-write branch
         log_rows: [
           {
@@ -1533,6 +1540,98 @@ test('api smoke: bodyweight live write with write_id appends once and skips dupl
   }
 });
 
+// ── Step 1A (HI-1): a live write with no write_id has no dedup, so a lost-response
+// retry would double-append. Every live write path must reject a missing write_id.
+test('api smoke: live log-workout without write_id is rejected with 400 and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response, body } = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'NO-WRITE-ID-01',
+        date: '2026-06-12',
+        // test_mode omitted → live write, but write_id is missing.
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
+      })
+    }));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /write_id is required/i);
+    assert.deepEqual(fakeSheetsState.appendCalls, [], 'a rejected write must not append');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live complete-workout without write_id is rejected with 400 and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'NO-WRITE-ID-COMPLETE-01');
+      form.append('date', '2026-06-12');
+      form.append('log_rows_json', JSON.stringify([]));
+      // write_id intentionally omitted on a live (non-test_mode) write.
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      assert.equal(response.status, 400, JSON.stringify(body));
+      assert.equal(body.status, 'error');
+      assert.match(body.message, /write_id is required/i);
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'a rejected write must not append');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live bodyweight without write_id is rejected with 400 and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response, body } = await withMutedConsoleLog(() => requestJson('/api/bodyweight', {
+      method: 'POST',
+      body: JSON.stringify({ date: '2026-06-12', weight: 183.4, notes: 'morning' })
+    }));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /write_id is required/i);
+    assert.deepEqual(fakeSheetsState.appendCalls, [], 'a rejected write must not append');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// ── Step 1A (CR-2): the Effort append must be guarded against a session_id that
+// already has an effort row, so a re-sent session can never write a second Effort row.
+test('api smoke: complete-workout with a duplicate session_id is rejected (409) and writes no Effort row', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.effortSessionIds = ['DUP-EFFORT-SESSION-01'];
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'DUP-EFFORT-SESSION-01'); // already present in Effort
+      form.append('date', '2026-06-12');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('write_id', 'dup-effort-session-write-01');
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      assert.equal(response.status, 409, JSON.stringify(body));
+      assert.equal(body.status, 'error');
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'a duplicate session must not append an Effort row');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.effortSessionIds = [];
+  }
+});
+
 test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', async () => {
   // Regression: "Knee raises 20/2 20/2 13/2" produces weight:null from the parser.
   // The frontend maps null → '0'. Backend must accept weight '0' (or 0) without
@@ -1567,6 +1666,9 @@ async function liveEffortWrite(sessionId) {
   form.append('session_id', sessionId);
   form.append('date', '2026-06-11');
   form.append('log_rows_json', JSON.stringify([]));
+  // Live writes require a write_id; derive a unique one per session so repeated
+  // calls each write (and invalidate the cache) rather than dedup as duplicates.
+  form.append('write_id', `live-effort-${sessionId}`);
   form.append('effort_json', JSON.stringify({
     duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
   }));
