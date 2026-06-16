@@ -90,9 +90,10 @@ function failWrite(writeId, token) {
   if (!existing || existing.token !== token) return false;
 
   // Mark the record 'failed' rather than deleting it. The id stays retryable
-  // (beginWrite starts a clean attempt for a 'failed' record), but the record is
-  // retained for audit instead of silently vanishing. The token is invalidated
-  // so a stale completeWrite for this released attempt can never resurrect it.
+  // (beginWrite starts a clean attempt for a 'failed' record, superseding this
+  // one), and until that retry the released attempt is observable as 'failed'
+  // rather than silently vanishing. The token is invalidated so a stale
+  // completeWrite for this released attempt can never resurrect it.
   const now = Date.now();
   writeRecords.set(normalizedWriteId, {
     ...existing,
