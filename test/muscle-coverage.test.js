@@ -161,7 +161,7 @@ test('Machine Bench Press matches bench_press profile', () => {
 });
 
 test('Incline DB Press and Incline Dumbbell Press: chest + front_delts primary', () => {
-  for (const name of ['Incline DB Press', 'Incline Dumbbell Press']) {
+  for (const name of ['Incline DB Press', 'Incline Dumbbell Press', 'Incline Bench Press']) {
     const { primary, secondary } = musclesFor(name);
     assert.ok(primary.includes('chest'), `${name}: chest must be primary`);
     assert.ok(primary.includes('front_delts'), `${name}: front_delts must be primary`);

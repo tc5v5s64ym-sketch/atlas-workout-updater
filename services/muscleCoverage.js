@@ -50,7 +50,7 @@ const MUSCLE_MAP = [
   },
   // Incline press — before bench press
   {
-    pattern: /incline\s*(?:db|dumbbell|barbell)?\s*press|incline\s*press/i,
+    pattern: /incline\s*(?:db|dumbbell|barbell|bench)?\s*press|incline\s*press/i,
     matchPattern: 'incline_press',
     primary: ['chest', 'front_delts'],
     secondary: ['triceps'],
