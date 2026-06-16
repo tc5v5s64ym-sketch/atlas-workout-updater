@@ -21,7 +21,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 - **Coach intelligence build (COACH_PLAN.md).** Phased build: muscle-coverage data → coverage-aware stalls → proactive suggestions → goal- & coverage-aware workout selection.
   - ✅ **PR 1.1** — `services/muscleCoverage.js`: `musclesFor` / `liftsForMuscle`, 17-muscle taxonomy, pattern-based, pure data (31 tests).
-  - **PR 1.2** — `services/muscleVolume.js`: weekly volume per muscle (rolling window, direct 1.0 + indirect 0.5 credit). _(next)_
+  - ✅ **PR 1.2** — `services/muscleVolume.js`: `weeklyMuscleVolume`, rolling-window volume per muscle, direct 1.0 + indirect 0.5 credit (16 tests).
   - **PR 1.3** — `services/movementPattern.js`: movement-pattern map. _(optional — owner's call)_
   - ⏸ **Hold Point 1** — owner reviews coverage map + per-muscle volumes against real log before behavior changes. _(Sonnet → Opus 4.8 after hold)_
   - **PR 2.1** — Coverage-aware stall/deload: downgrade (not erase) accessory stalls whose muscle is covered.
