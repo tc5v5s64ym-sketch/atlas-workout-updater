@@ -983,6 +983,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   const { computeUnderCoverage } = require('./services/underCoverage');
   const muscle_gaps = computeUnderCoverage(logRows)
     .filter(r => r.status === 'under')
+    .sort((a, b) => (a.currentEffectiveSets - a.targetRange.min) - (b.currentEffectiveSets - b.targetRange.min))
     .slice(0, 6)
     .map(r => ({ muscle: r.muscle, currentEffectiveSets: r.currentEffectiveSets, targetMin: r.targetRange.min }));
 
