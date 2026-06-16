@@ -1,5 +1,5 @@
 const requiredSheetTabs = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary'];
-const optionalSheetTabs = ['Dashboard', 'Coaching_Notes'];
+const optionalSheetTabs = ['Dashboard', 'Coaching_Notes', 'Constraints'];
 
 function getMissingRequiredTabs(tabNames) {
   const present = new Set(tabNames || []);
