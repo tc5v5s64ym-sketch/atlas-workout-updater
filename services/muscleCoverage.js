@@ -16,7 +16,7 @@ const TAXONOMY = new Set([
   'quads', 'hamstrings', 'glutes', 'calves', 'abs', 'obliques',
 ]);
 
-const UNKNOWN = Object.freeze({ primary: [], secondary: [], needsReview: true });
+const UNKNOWN = { needsReview: true };
 
 // Ordered most-specific first so the first match wins.
 const MUSCLE_MAP = [
@@ -173,9 +173,9 @@ const MUSCLE_MAP = [
 // Returns { primary, secondary, needsReview, matchPattern? }.
 // Unknown lifts → needsReview: true, empty arrays.
 function musclesFor(liftName) {
-  if (!liftName || typeof liftName !== 'string') return { ...UNKNOWN };
+  if (!liftName || typeof liftName !== 'string') return { primary: [], secondary: [], ...UNKNOWN };
   const entry = MUSCLE_MAP.find(e => e.pattern.test(liftName));
-  if (!entry) return { ...UNKNOWN };
+  if (!entry) return { primary: [], secondary: [], ...UNKNOWN };
   return {
     primary: [...entry.primary],
     secondary: [...entry.secondary],
