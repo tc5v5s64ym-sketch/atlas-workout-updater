@@ -2210,6 +2210,44 @@ test('api smoke: recommend response carries the engine deload decision', async (
   assert.ok('action' in body.data.deload, 'deload decision must include an action');
 });
 
+test('api smoke: an active deload cuts next_target.weight by the protocol load_multiplier and shows the protocol RIR', async () => {
+  const DELOAD_HEADER = ['updated_at', 'training_state', 'deload_protocol', 'deload_reason', 'deload_start_date', 'deload_sessions_remaining', 'deload_exit_criteria'];
+
+  // Baseline (NORMAL day): capture the unmodified prescription for BEN01.
+  fakeSheetsState.deloadStateSheet = [];
+  const normal = await requestJson('/api/recommend/next/BEN01');
+  assert.equal(normal.response.status, 200);
+  assert.equal(normal.body.data.deload.in_deload, false);
+  const normalWeight = normal.body.data.next_target.weight;
+  const normalRir = normal.body.data.target_rir;
+  assert.ok(Number.isFinite(Number(normalWeight)), 'baseline must have a numeric next_target.weight');
+
+  // Active STRENGTH deload (load_multiplier 0.92, target_rir 5).
+  fakeSheetsState.deloadStateSheet = [
+    DELOAD_HEADER,
+    ['2026-06-16T00:00:00Z', 'DELOAD_ACTIVE', 'STRENGTH_DELOAD_V1', 'testing', '2026-06-16', '1', '']
+  ];
+  const deload = await requestJson('/api/recommend/next/BEN01');
+  assert.equal(deload.response.status, 200);
+  assert.equal(deload.body.data.deload.in_deload, true);
+
+  // Weight cut by 0.92, rounded to the nearest 5 lb (rounding spelled out here, not
+  // taken from the code under test). e.g. 225 → 207 → 205.
+  const expectedWeight = Math.round((Number(normalWeight) * 0.92) / 5) * 5;
+  assert.equal(deload.body.data.next_target.weight, expectedWeight);
+  assert.ok(deload.body.data.next_target.weight < Number(normalWeight), 'deload weight must be lighter than the normal prescription');
+
+  // RIR now reflects the protocol (5), not the normal policy.
+  assert.equal(deload.body.data.target_rir, 5);
+  assert.notEqual(normalRir, 5); // sanity: the normal policy RIR for bench is not the protocol's 5
+
+  // The non-deload path is untouched: weight + RIR unchanged when not deloading.
+  fakeSheetsState.deloadStateSheet = [];
+  const normalAgain = await requestJson('/api/recommend/next/BEN01');
+  assert.equal(normalAgain.body.data.next_target.weight, normalWeight);
+  assert.equal(normalAgain.body.data.target_rir, normalRir);
+});
+
 test('api smoke: deload routes are registered in the manifest', async () => {
   const { body } = await requestJson('/routes');
   const paths = body.data.routes.map(r => r.path);
