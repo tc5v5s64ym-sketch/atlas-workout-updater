@@ -27,7 +27,8 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - ✅ **PR 2.1** — Coverage-aware stall/deload: `coverageStalls.annotateStallsForDeload`; accessories downgraded when primary muscles covered by other lifts; `weeklyMuscleVolume` extended with `today`/`excludeLiftCode` options (929 tests).
   - ✅ **Hold Point 2** — live-app test confirmed: Face Pull correctly feeds deload (rear_delts 1.5 eff. sets < 2.0 threshold); OHP main stall feeds independently. Coverage logic verified correct.
   - ✅ **PR 3.1** — `services/underCoverage.js`: `computeUnderCoverage`; per-muscle status (`under`/`adequate`/`optimal`) + reason string vs. MEV-style target ranges (950 tests).
-  - **PR 3.2** — Surface under-coverage via coaching voice.
+  - ✅ **PR 3.2** — Surface under-coverage in coaching chat: `muscle_gaps` (sorted by severity) wired into `buildChatContext` + `sanitizeChatContext`; LLM nudges 1–2 under-served muscles when asked what to train (952 tests).
+  - ⏸ **Hold Point 3** — owner reviews live coach replies: do gap nudges appear naturally when asking what to train? Wording style approved pre-merge; confirm it reads right in real conversations.
   - **PR 4.x** — Goal- & coverage-aware workout selection (Coach's Pick + deck redesign).
 
 ## Housekeeping
