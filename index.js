@@ -967,9 +967,9 @@ app.post('/api/coach/message', async (req, res) => {
 
 // Assemble a compact, read-only training snapshot for the chat coach from the
 // deterministic engine — recent sessions, movement-pattern readiness, today's
-// recommended focus, and stalled lifts. Bounded here and bounded again in
-// coach.sanitizeChatContext. The lifter's current preview rows (if any) ride
-// along from the client so "is this set good?" can be answered in context.
+// recommended focus, stalled lifts, and under-coverage gaps. Bounded here and
+// bounded again in coach.sanitizeChatContext. The lifter's current preview rows
+// (if any) ride along from the client so "is this set good?" can be answered.
 function buildChatContext(logRows, effortRows, clientContext, coachingNotes, constraints) {
   const intents = scoreIntents(logRows, effortRows);
   const recent = buildRecentSessions(logRows, effortRows, { limit: 5 });
@@ -977,6 +977,16 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   const read = intents.todays_read || {};
   const cc = clientContext && typeof clientContext === 'object' ? clientContext : {};
   const sessions = recent.sessions || [];
+
+  // Lazily required to avoid a load-time cycle possibility; under-coverage is
+  // a read-only data layer with no dependency on index.js.
+  const { computeUnderCoverage } = require('./services/underCoverage');
+  const muscle_gaps = computeUnderCoverage(logRows)
+    .filter(r => r.status === 'under')
+    .sort((a, b) => (a.currentEffectiveSets - a.targetRange.min) - (b.currentEffectiveSets - b.targetRange.min))
+    .slice(0, 6)
+    .map(r => ({ muscle: r.muscle, currentEffectiveSets: r.currentEffectiveSets, targetMin: r.targetRange.min }));
+
   return {
     recommended_label: read.recommended_label || null,
     recommended_focus: read.recommended_reason || null,
@@ -985,6 +995,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
       date: s.date, exercises: s.exercises, sets: s.sets_count, volume: s.total_volume
     })),
     stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
+    muscle_gaps,
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
     session_count: sessions.length,

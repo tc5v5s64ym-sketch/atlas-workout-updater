@@ -398,6 +398,29 @@ test('sanitizeChatContext forwards active constraints, sanitized and bounded', (
   assert.ok(clean.constraints.every(c => ['injury', 'equipment', 'preference'].includes(c.kind)), 'malformed constraints are dropped');
 });
 
+test('sanitizeChatContext forwards muscle_gaps, sanitized and bounded', () => {
+  const clean = sanitizeChatContext({
+    muscle_gaps: [
+      { muscle: 'rear_delts', currentEffectiveSets: 1.5, targetMin: 3 },
+      { muscle: null, currentEffectiveSets: 0, targetMin: 3 },    // dropped — no muscle
+      { muscle: 'calves', currentEffectiveSets: 0, targetMin: 2, secret: 'INJECTED' }, // unknown key stripped
+      ...Array.from({ length: 10 }, (_, i) => ({ muscle: `fake_${i}`, currentEffectiveSets: 0, targetMin: 2 }))
+    ]
+  });
+  assert.ok(Array.isArray(clean.muscle_gaps), 'muscle_gaps array is present');
+  assert.ok(clean.muscle_gaps.length <= 6, 'muscle_gaps are capped at 6');
+  assert.ok(clean.muscle_gaps.every(g => g.muscle), 'entries without muscle are dropped');
+  assert.ok(!clean.muscle_gaps.some(g => 'secret' in g), 'unknown keys do not leak through');
+  assert.equal(clean.muscle_gaps[0].muscle, 'rear_delts');
+  assert.equal(clean.muscle_gaps[0].currentEffectiveSets, 1.5);
+  assert.equal(clean.muscle_gaps[0].targetMin, 3);
+});
+
+test('sanitizeChatContext returns empty muscle_gaps when field is absent', () => {
+  const clean = sanitizeChatContext({});
+  assert.deepEqual(clean.muscle_gaps, []);
+});
+
 test('parseReplyWithProposals extracts a constraint and strips the token line', () => {
   const raw = "Got it — I'll keep you off overhead work.\nPROPOSE_CONSTRAINT: {\"kind\":\"injury\",\"target\":\"overhead pressing\",\"rule\":\"avoid\",\"note\":\"left shoulder\"}";
   const { reply, propose_edit, propose_note, propose_constraint } = parseReplyWithProposals(raw);
