@@ -211,93 +211,16 @@ test('recommendNextSet: steady progression is NOT mistaken for a deload', () => 
   assert.doesNotMatch(rec.recommendation, /deload/i);
 });
 
-// ── PR 3b — in-session deload-aware reactions ─────────────────────────────────
+// ── Deload is engine-driven (PR 6b/7) ─────────────────────────────────────────
 //
-// Gap (was a characterization test, now flipped to the fix): with a deload intent
-// active (intentId 'deload_reset', forwarded from the active plan context), the
-// engine must NOT coach progression or chasing reps — it holds the lighter load
-// and stays short of failure. The numbers stay deterministic; only the wording
-// flips. The same input on a NON-deload day must still progress (guard below).
+// The in-session deload reaction is no longer a recommendNextSet option — an
+// active deload comes from the deload engine (services/deloadEngine) and is
+// surfaced on /api/recommend/next's `deload` field, with the coach narrating it.
+// recommendNextSet no longer reads intentId/deload for a deload branch; what
+// remains here is the post-deload weight recovery (above) and that an intent
+// still tunes the target RIR via the rir policy (below).
 
-test('deload intent: an on-target deload set holds the load and never chases reps', () => {
-  const rows = [
-    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 5 }),
-    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 5 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 5 }, intentId: 'deload_reset'
-  });
-  assert.match(rec.recommendation, /hold|deload/i);
-  assert.doesNotMatch(rec.recommendation, /chase|progress/i);
-  assert.equal(rec.next_target.weight, 135); // held, not chased up
-  assert.equal(rec.next_target.reps, 8);     // no extra rep
-});
-
-test('deload intent: a high-RIR deload set still holds — never "move to" a heavier load', () => {
-  const rows = [
-    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 5 }),
-    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 5 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 7 }, intentId: 'deload_reset'
-  });
-  assert.doesNotMatch(rec.recommendation, /progress|move to/i);
-  assert.match(rec.recommendation, /deload|hold/i);
-  assert.equal(rec.next_target.weight, 135); // no +5 bump on a deload
-});
-
-test('deload intent: a failure set on a deload says back off, never progress', () => {
-  const rows = [row({ date: '2026-06-10', session: 's1', weight: 135, reps: 8, rir: 5 })];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 0 }, intentId: 'deload_reset'
-  });
-  assert.match(rec.recommendation, /ease off|back off|deload/i);
-  assert.doesNotMatch(rec.recommendation, /progress|chase/i);
-  assert.equal(rec.next_target.weight, 135); // no bump
-});
-
-test('deload via explicit options.deload flag behaves the same as intentId', () => {
-  const rows = [row({ date: '2026-06-10', session: 's1', weight: 135, reps: 8, rir: 5 })];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 5 }, deload: true
-  });
-  assert.match(rec.recommendation, /hold|deload/i);
-  assert.doesNotMatch(rec.recommendation, /chase|progress/i);
-});
-
-test('deload intent with NO just-logged set holds the usual weight, cuts volume — never goes lighter, never progresses', () => {
-  // Volume-first deload: without a just-logged set, the reaction HOLDS the lifter's
-  // usual working weight and cuts the sets/effort. It must not tell them to go
-  // lighter (that's a weight cut) nor progress — and the next target holds the weight.
-  const rows = [
-    row({ date: '2026-06-03', session: 's1', weight: 225, reps: 8, rir: 2 }),
-    row({ date: '2026-06-10', session: 's2', weight: 225, reps: 8, rir: 2 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
-  assert.match(rec.recommendation, /deload/i);
-  assert.match(rec.recommendation, /hold your usual 225/i);     // holds the working weight
-  assert.match(rec.recommendation, /cut the sets|short of failure/i); // the cut is volume/effort
-  assert.doesNotMatch(rec.recommendation, /lighter|increase|progress|chase/i);
-  assert.equal(rec.next_target.weight, 225);                    // held, not dropped
-});
-
-test('deload intent with NO just-logged set names the PRE-deload weight when a lighter (legacy) deload set is already in the sheet', () => {
-  // A lighter deload set (180) already landed this block under the old weight-cut
-  // scheme; the most recent set is therefore the deload weight, not the usual. The
-  // reaction must hold the established pre-deload working weight (200), not 180.
-  const rows = [
-    row({ date: '2026-05-20', session: 'd1', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-05-27', session: 'd2', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-06-03', session: 'd3', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-06-10', session: 'd4', weight: 180, reps: 5, rir: 4 }) // legacy lighter deload set
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
-  assert.match(rec.recommendation, /your usual 200/);          // names the pre-deload weight
-  assert.doesNotMatch(rec.recommendation, /your usual 180/);   // never the deload weight
-  assert.doesNotMatch(rec.recommendation, /increase|progress|chase/i);
-});
-
-test('NON-deload regression: the same on-target set still chases reps (deload gating is isolated)', () => {
+test('intent still tunes target RIR even without a deload branch (recovery RIR holds, never chases)', () => {
   const rows = [
     row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 3 }),
     row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 3 })
@@ -315,61 +238,6 @@ test('NON-deload regression: the same on-target set still chases reps (deload ga
   });
   assert.doesNotMatch(deload.recommendation, /chase|progress/i);
   assert.match(deload.recommendation, /hold|deload/i);
-});
-
-// ── Deload phase fact — lets the coach note name the deload + the return weight ──
-
-test('deload_phase: present and active under a deload intent, with the return weight named', () => {
-  const rows = [
-    row({ date: '2026-06-03', session: 's1', weight: 225, reps: 5, rir: 2 }),
-    row({ date: '2026-06-10', session: 's2', weight: 225, reps: 5, rir: 2 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 225, reps: 5, rir: 5 }, intentId: 'deload_reset'
-  });
-  assert.ok(rec.deload_phase, 'a deload day must carry a deload_phase fact');
-  assert.equal(rec.deload_phase.active, true);
-  // The return weight is the lifter's own working weight from history (no invention).
-  assert.equal(rec.deload_phase.return_weight, 225);
-  assert.match(rec.deload_phase.summary, /fewer sets|short of failure/i);
-  assert.doesNotMatch(rec.deload_phase.summary, /10%|lighter/i); // volume-first, not a weight cut
-});
-
-test('deload_phase: names the PRE-deload weight when a lighter deload set is already in the sheet', () => {
-  const rows = [
-    row({ date: '2026-05-20', session: 'd1', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-05-27', session: 'd2', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-06-03', session: 'd3', weight: 200, reps: 5, rir: 2 }),
-    row({ date: '2026-06-10', session: 'd4', weight: 180, reps: 5, rir: 4 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-12', intentId: 'deload_reset' });
-  assert.ok(rec.deload_phase && rec.deload_phase.active);
-  assert.equal(rec.deload_phase.return_weight, 200); // established working weight, not the 180 deload set
-});
-
-test('deload_phase: null on a normal (non-deload) day', () => {
-  const rows = [
-    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 3 }),
-    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 3 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 3 }
-  });
-  assert.equal(rec.deload_phase, null, 'no deload intent → no deload_phase fact');
-});
-
-test('deload_phase: an easy/high-RIR deload set reads on_target, never far_easy (so the note never says "add weight")', () => {
-  const rows = [
-    row({ date: '2026-06-03', session: 's1', weight: 135, reps: 8, rir: 5 }),
-    row({ date: '2026-06-10', session: 's2', weight: 135, reps: 8, rir: 5 })
-  ];
-  const rec = recommendNextSet(rows, 'BENCH01', {
-    today: '2026-06-12', justLoggedSet: { weight: 135, reps: 8, rir: 5 }, intentId: 'deload_reset'
-  });
-  // Recovery target RIR (4–5) means a RIR-5 set is dialled in, not under-effort.
-  assert.ok(rec.effort_verdict, 'a deload set still gets an effort read');
-  assert.equal(rec.effort_verdict.level, 'on_target');
-  assert.ok(rec.deload_phase && rec.deload_phase.active);
 });
 
 // ── Shape + backward compatibility ────────────────────────────────────────────
