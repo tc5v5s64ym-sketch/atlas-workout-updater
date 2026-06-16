@@ -13,6 +13,16 @@ Read `docs/INVARIANTS.md` for rules that must never be broken.
 
 ---
 
+## Backlog discipline
+
+`BACKLOG.md` (repo root) is the single source of truth for open and deferred work.
+
+- At the start of any work session, read `BACKLOG.md`.
+- Whenever you defer a task, discover a follow-up, or decide something is out of scope, append it to `BACKLOG.md` in the same PR — never rely on memory or chat history to carry it.
+- When an item ships, mark it done or remove it in the same PR.
+
+---
+
 ## Branch strategy
 
 - Develop on the branch specified in your task brief (typically prefixed `claude/`).
