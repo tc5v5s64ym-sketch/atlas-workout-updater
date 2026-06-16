@@ -41,6 +41,14 @@ const {
 } = require('./services/analytics');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const {
+  evaluateCurrentDeload,
+  beginDeload,
+  recordDeloadSession,
+  resolvePostDeload
+} = require('./services/deloadEngine');
+const { readCurrentDeloadState } = require('./services/deloadState');
+const { selectProtocol } = require('./services/deloadProtocols');
+const {
   beginWrite,
   completeWrite,
   failWrite,
@@ -1430,20 +1438,17 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
   }
 
   const justLoggedSet = parseJustLoggedSet(req.query);
-  // Optional deload signal from the active session/plan context: the plan layer
-  // emits intent id 'deload_reset', forwarded here as ?intentId=deload_reset (or
-  // ?deload=1) so the reaction language flips on a deload day. Absent params
-  // preserve the normal recommendation exactly.
-  const intentId = typeof req.query.intentId === 'string' ? req.query.intentId : null;
-  const deload = req.query.deload === '1' || req.query.deload === 'true';
 
   try {
     const allLog = await getSheetRows(logSheetName);
     const recommendation = recommendNextSet(allLog, liftCode, {
-      ...(justLoggedSet ? { justLoggedSet } : {}),
-      ...(intentId ? { intentId } : {}),
-      ...(deload ? { deload: true } : {})
+      ...(justLoggedSet ? { justLoggedSet } : {})
     });
+    // Deload is no longer a query-flag override — it is driven by the engine's
+    // persisted training state (Deload_State). Attach the engine's decision so a
+    // consumer can see an active deload or an offer/recommendation. The protocol
+    // numbers come from the engine; nothing is invented here.
+    recommendation.deload = await evaluateCurrentDeload({ logRows: allLog });
     const normalizedRows = allLog
       .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
       .map(normalizeAnalyticsLogRow);
@@ -1800,6 +1805,100 @@ app.get('/api/coaching/insights', async (req, res) => {
     });
   } catch (error) {
     return standardError(req, res, 'Failed to compute coaching insights', error.message, 500);
+  }
+});
+
+// ---- Deload lifecycle (engine-driven, system-state) -------------------------
+// These read/write the Deload_State tab via the deload engine. They are NOT
+// logged sets: append-only system state, outside the preview→approve→write trust
+// loop, no write_id (see CLAUDE.md "Deload_State tab"). Illegal lifecycle moves
+// (begin while already deloading, advance when not deloading, resolve outside
+// post-evaluation) are rejected by the state machine and surface as 409.
+
+// GET /api/deload/status — the lifter's current training state.
+app.get('/api/deload/status', async (req, res) => {
+  try {
+    const state = await readCurrentDeloadState();
+    return standardSuccess(req, res, 'Deload status', { state });
+  } catch (error) {
+    return standardError(req, res, 'Failed to read deload status', error.message, 500);
+  }
+});
+
+// A deload lifecycle error is a state-machine CONFLICT (illegal move) only when it
+// matches these patterns; anything else (Sheets I/O, etc.) is infra, not a 409.
+function isDeloadConflict(error) {
+  return /Illegal training-state transition|not in a deload|not in POST_DELOAD_EVALUATION/i
+    .test(error && error.message ? error.message : '');
+}
+
+// Deload_State is an optional tab and appendRows cannot create it — so a write
+// lifecycle action needs the tab to exist, mirroring /api/constraints' 503.
+const DELOAD_STATE_MISSING_MSG =
+  'Deload_State tab not found — create it in Google Sheets first (columns: updated_at, training_state, deload_protocol, deload_reason, deload_start_date, deload_sessions_remaining, deload_exit_criteria)';
+
+async function deloadStateTabPresent() {
+  const tabs = await getSpreadsheetTabs().catch(() => []);
+  return tabs.includes('Deload_State');
+}
+
+// Classify a lifecycle write failure: 409 for a genuine illegal move, else 500
+// with a fixed message (raw error as the detail, never the user-facing message).
+function sendDeloadError(req, res, error, friendlyConflict) {
+  if (isDeloadConflict(error)) {
+    return standardError(req, res, friendlyConflict, error.message, 409);
+  }
+  return standardError(req, res, 'Failed to update deload state', error.message, 500);
+}
+
+// POST /api/deload/begin — owner invokes a deload. The protocol is selected from
+// the training focus (deterministic); nothing is invented.
+app.post('/api/deload/begin', async (req, res) => {
+  const body = req.body || {};
+  const focus = typeof body.focus === 'string' ? body.focus : 'strength';
+  const protocol = selectProtocol(focus);
+  const reason = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 200) : 'owner invoked';
+  const sessionsRaw = Number(body.sessions_remaining);
+  const sessions_remaining = Number.isFinite(sessionsRaw) && sessionsRaw > 0
+    ? Math.floor(sessionsRaw)
+    : protocol.duration_min_exposures;
+  const exit_criteria = typeof body.exit_criteria === 'string' && body.exit_criteria.trim()
+    ? body.exit_criteria.trim().slice(0, 200)
+    : protocol.exit;
+  if (!(await deloadStateTabPresent())) {
+    return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
+  }
+  try {
+    const state = await beginDeload({ protocol, reason, sessions_remaining, exit_criteria });
+    return standardSuccess(req, res, 'Deload started', { state });
+  } catch (error) {
+    return sendDeloadError(req, res, error, 'Cannot start a deload from the current training state');
+  }
+});
+
+// POST /api/deload/advance — record that a deload session was completed.
+app.post('/api/deload/advance', async (req, res) => {
+  if (!(await deloadStateTabPresent())) {
+    return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
+  }
+  try {
+    const state = await recordDeloadSession({});
+    return standardSuccess(req, res, 'Deload session recorded', { state });
+  } catch (error) {
+    return sendDeloadError(req, res, error, 'No active deload to advance');
+  }
+});
+
+// POST /api/deload/resolve — close out the post-deload evaluation back to NORMAL.
+app.post('/api/deload/resolve', async (req, res) => {
+  if (!(await deloadStateTabPresent())) {
+    return standardError(req, res, DELOAD_STATE_MISSING_MSG, null, 503);
+  }
+  try {
+    const state = await resolvePostDeload({});
+    return standardSuccess(req, res, 'Deload resolved', { state });
+  } catch (error) {
+    return sendDeloadError(req, res, error, 'No post-deload evaluation to resolve');
   }
 });
 

@@ -52,7 +52,11 @@ const routeDefinitions = [
   { path: '/api/coaching-notes', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coaching-notes', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/constraints', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/constraints', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
+  { path: '/api/constraints', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/deload/status', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/deload/begin', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/deload/advance', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/deload/resolve', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
 ];
 
 module.exports = { routeDefinitions };

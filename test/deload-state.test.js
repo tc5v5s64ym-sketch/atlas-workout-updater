@@ -9,10 +9,15 @@ const fakeSheetsState = {
   appendCalls: []    // { tabName, rows }
 };
 const fakeSheets = {
+  // Mirrors the real getSheetRows: strips row 0 (header) and returns [] when only
+  // a header (or nothing) exists. Tests seed a header row so appends read back.
   getSheetRows: async (tabName) => {
     fakeSheetsState.lastReadTab = tabName;
-    return fakeSheetsState.rows.map(r => [...r]);
+    if (fakeSheetsState.rows.length <= 1) return [];
+    return fakeSheetsState.rows.slice(1).map(r => [...r]);
   },
+  // ensureHeaderRow reads A1 to decide whether a header exists.
+  readRange: async () => (fakeSheetsState.rows.length ? [fakeSheetsState.rows[0]] : []),
   appendRows: async (tabName, rows) => {
     fakeSheetsState.appendCalls.push({ tabName, rows });
     for (const r of rows) fakeSheetsState.rows.push([...r]);
@@ -28,9 +33,24 @@ const {
 const { STATES } = require('../services/deloadStateMachine');
 const { deloadStateColumns } = require('../config/columns');
 
+// Seed a header row (matching a provisioned tab) so ensureHeaderRow is a no-op
+// for the standard tests and appendCalls reflects only data appends. The
+// header-provisioning behaviour itself is exercised in its own test below.
 beforeEach(() => {
-  fakeSheetsState.rows = [];
+  fakeSheetsState.rows = [[...deloadStateColumns]];
   fakeSheetsState.appendCalls = [];
+});
+
+test('appendDeloadState provisions a header row on a truly empty tab so the first state is not swallowed', async () => {
+  fakeSheetsState.rows = [];        // no header at all
+  fakeSheetsState.appendCalls = [];
+  await appendDeloadState({ training_state: STATES.DELOAD_ACTIVE, deload_protocol: 'STRENGTH_DELOAD_V1' });
+  // First append is the header, second is the state row.
+  assert.equal(fakeSheetsState.appendCalls.length, 2);
+  assert.deepEqual(fakeSheetsState.appendCalls[0].rows[0], [...deloadStateColumns]);
+  // The state reads back (not stripped away as the header).
+  const state = await readCurrentDeloadState();
+  assert.equal(state.training_state, STATES.DELOAD_ACTIVE);
 });
 
 /* ===== default state ===== */
@@ -41,6 +61,17 @@ test('an empty tab reads as the default NORMAL state', async () => {
   assert.equal(state.deload_protocol, null);
   assert.equal(state.deload_sessions_remaining, 0);
   assert.equal(fakeSheetsState.lastReadTab, DELOAD_STATE_TAB);
+});
+
+test('readCurrentDeloadState degrades to NORMAL when the tab read throws (optional/missing tab)', async () => {
+  const original = fakeSheets.getSheetRows;
+  fakeSheets.getSheetRows = async () => { throw new Error('Unable to parse range: Deload_State'); };
+  try {
+    const state = await readCurrentDeloadState();
+    assert.equal(state.training_state, STATES.NORMAL);
+  } finally {
+    fakeSheets.getSheetRows = original;
+  }
 });
 
 test('defaultDeloadState returns a fresh object each call (no shared mutation)', () => {
