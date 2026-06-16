@@ -62,16 +62,6 @@ const deloadStateColumns = [
   'deload_exit_criteria'
 ];
 
-const deloadStateRowFieldAliases = {
-  updated_at: ['updated_at', 'updatedAt'],
-  training_state: ['training_state', 'trainingState', 'state'],
-  deload_protocol: ['deload_protocol', 'deloadProtocol', 'protocol'],
-  deload_reason: ['deload_reason', 'deloadReason', 'reason'],
-  deload_start_date: ['deload_start_date', 'deloadStartDate', 'start_date'],
-  deload_sessions_remaining: ['deload_sessions_remaining', 'deloadSessionsRemaining', 'sessions_remaining'],
-  deload_exit_criteria: ['deload_exit_criteria', 'deloadExitCriteria', 'exit_criteria']
-};
-
 const effortRowFieldAliases = {
   date: ['date'],
   session_id: ['session_id', 'sessionId'],
@@ -92,6 +82,5 @@ module.exports = {
   coachingNotesColumns,
   constraintsColumns,
   effortRowFieldAliases,
-  deloadStateColumns,
-  deloadStateRowFieldAliases
+  deloadStateColumns
 };
