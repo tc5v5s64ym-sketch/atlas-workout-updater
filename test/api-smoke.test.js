@@ -7,7 +7,12 @@ const originalConsoleLog = console.log;
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// Not a real key. sheets.js is fully stubbed in these tests (see require.cache
+// injection below), so this value is never parsed — it only needs to be present
+// so config validation does not trip. Kept free of a literal PEM header so the
+// changed-file secret scan (scripts/check-changed-files-for-secrets.js) does not
+// flag this throwaway stub.
+process.env.GOOGLE_PRIVATE_KEY = 'test-private-key-stub';
 
 const logRows = [
   ['2026-06-01', 'SESSION-OLD', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '205', '5', '3', 'old bench'],
