@@ -47,7 +47,7 @@ const {
   resolvePostDeload
 } = require('./services/deloadEngine');
 const { readCurrentDeloadState } = require('./services/deloadState');
-const { selectProtocol } = require('./services/deloadProtocols');
+const { selectProtocol, roundLoad } = require('./services/deloadProtocols');
 const {
   beginWrite,
   completeWrite,
@@ -1449,6 +1449,22 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     // consumer can see an active deload or an offer/recommendation. The protocol
     // numbers come from the engine; nothing is invented here.
     recommendation.deload = await evaluateCurrentDeload({ logRows: allLog });
+    // On an ACTIVE deload, the next-set card must reflect the protocol, not a
+    // normal day: cut the load by the protocol's load_multiplier and show the
+    // protocol's target RIR. Weight + RIR only — the set count and the non-deload
+    // path are untouched. (The card RIR is the top-level target_rir; app.js:1126.)
+    const activeDeload = recommendation.deload;
+    if (activeDeload && activeDeload.in_deload === true && activeDeload.protocol) {
+      const { load_multiplier, target_rir } = activeDeload.protocol;
+      const nt = recommendation.next_target;
+      if (nt && Number.isFinite(Number(nt.weight)) && Number.isFinite(Number(load_multiplier))) {
+        const cut = roundLoad(Number(nt.weight) * Number(load_multiplier));
+        if (cut != null) nt.weight = cut;
+      }
+      if (Number.isFinite(Number(target_rir))) {
+        recommendation.target_rir = Number(target_rir);
+      }
+    }
     const normalizedRows = allLog
       .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
       .map(normalizeAnalyticsLogRow);
