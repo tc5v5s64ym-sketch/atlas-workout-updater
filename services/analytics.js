@@ -421,6 +421,23 @@ function deloadFillerWeight(rec) {
   return working; // hold the working weight; volume cut happens via target_sets
 }
 
+// Apply an ACTIVE deload's protocol load cut to a recommendation's prescribed
+// working-set weight. On a deload the engine holds a fraction of the working
+// weight (protocol.load_multiplier) so the set is actually doable at the
+// protocol's high RIR — otherwise the card prescribes the lifter's normal,
+// near-failure load at RIR 5, which is impossible. The set cut and target RIR
+// are owned elsewhere; this scales ONLY the weight. No-op unless a deload is
+// active and carries a usable multiplier and a real working weight.
+function applyDeloadLoad(recommendation, deloadDecision) {
+  if (!recommendation || !recommendation.next_target) return recommendation;
+  if (!deloadDecision || deloadDecision.in_deload !== true) return recommendation;
+  const mult = deloadDecision.protocol ? Number(deloadDecision.protocol.load_multiplier) : NaN;
+  const working = recentWorkingWeight(recommendation);
+  if (!(mult > 0) || !isPositiveFinite(working)) return recommendation;
+  recommendation.next_target = { ...recommendation.next_target, weight: roundLoad(working * mult) };
+  return recommendation;
+}
+
 // Effort read for a logged set: how the ACTUAL logged RIR compares to the target
 // RIR. Deterministic — the rule engine owns this verdict; the coaching LLM only
 // words it and must never derive its own read of how hard a set was.
@@ -2077,6 +2094,7 @@ module.exports = {
   searchSessions,
   detectRecentPrs,
   recommendNextSet,
+  applyDeloadLoad,
   effortVerdict,
   progressionVerdict,
   progressionBand,

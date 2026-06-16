@@ -6,7 +6,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendNextSet, effortVerdict, progressionVerdict } = require('../services/analytics');
+const { recommendNextSet, effortVerdict, progressionVerdict, applyDeloadLoad } = require('../services/analytics');
+const { STRENGTH_DELOAD_V1, HYPERTROPHY_DELOAD_V1 } = require('../services/deloadProtocols');
 
 // 12-column-contract row in object form (the shape normalizeLogRow accepts).
 function row({ date, session, weight, reps, rir, notes = '', code = 'BENCH01', name = 'Bench Press', mg = 'Chest' }) {
@@ -256,4 +257,38 @@ test('recommendNextSet: without a logged set or deload, effort_verdict is null a
   const rec = recommendNextSet(rows, 'BENCH01', { today: '2026-06-11' });
   assert.equal(rec.effort_verdict, null);
   assert.match(rec.recommendation, /increase/i); // stable reps over two sessions → progression
+});
+
+// ── applyDeloadLoad — an active deload scales ONLY the prescribed weight ────────
+// Golden fixtures are hand-computed, not read back from the code under test.
+
+test('applyDeloadLoad: active STRENGTH deload cuts the prescribed weight by the protocol multiplier', () => {
+  const rec = {
+    next_target: { weight: 225, reps: 5, sets: 3 },
+    last_working_sets: [{ weight: 225, reps: 5, rir: 1 }],
+    target_rir: 5
+  };
+  const out = applyDeloadLoad(rec, { in_deload: true, protocol: STRENGTH_DELOAD_V1 });
+  assert.equal(out.next_target.weight, 205); // 225 × 0.92 = 207 → nearest 5 lb = 205
+  assert.equal(out.next_target.reps, 5);     // reps untouched
+  assert.equal(out.next_target.sets, 3);     // set cut is owned elsewhere — untouched here
+  assert.equal(out.target_rir, 5);           // target RIR untouched
+});
+
+test('applyDeloadLoad: active HYPERTROPHY deload uses its own multiplier', () => {
+  const rec = { next_target: { weight: 225, reps: 8, sets: 4 }, last_working_sets: [{ weight: 225, reps: 8, rir: 2 }] };
+  const out = applyDeloadLoad(rec, { in_deload: true, protocol: HYPERTROPHY_DELOAD_V1 });
+  assert.equal(out.next_target.weight, 190); // 225 × 0.85 = 191.25 → nearest 5 lb = 190
+});
+
+test('applyDeloadLoad: a non-deload decision leaves the prescribed weight unchanged', () => {
+  const rec = { next_target: { weight: 230, reps: 5, sets: 3 }, last_working_sets: [{ weight: 225, reps: 5, rir: 1 }] };
+  const out = applyDeloadLoad(rec, { in_deload: false, protocol: null });
+  assert.equal(out.next_target.weight, 230);
+});
+
+test('applyDeloadLoad: no deload decision or no next_target is a safe no-op', () => {
+  const rec = { next_target: { weight: 225, reps: 5, sets: 3 }, last_working_sets: [{ weight: 225 }] };
+  assert.equal(applyDeloadLoad(rec, null).next_target.weight, 225);
+  assert.equal(applyDeloadLoad({ last_working_sets: [] }, { in_deload: true, protocol: STRENGTH_DELOAD_V1 }).next_target, undefined);
 });

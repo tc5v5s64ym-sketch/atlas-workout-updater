@@ -27,6 +27,7 @@ const {
   searchSessions,
   detectRecentPrs,
   recommendNextSet,
+  applyDeloadLoad,
   buildBodyweightHistory,
   previewTestRows,
   detectStalls,
@@ -1449,6 +1450,10 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     // consumer can see an active deload or an offer/recommendation. The protocol
     // numbers come from the engine; nothing is invented here.
     recommendation.deload = await evaluateCurrentDeload({ logRows: allLog });
+    // On an ACTIVE deload, scale the prescribed weight by the protocol's load
+    // multiplier — otherwise the card holds the lifter's normal (near-failure)
+    // load at the protocol's high RIR. Weight only; set cut and RIR untouched.
+    applyDeloadLoad(recommendation, recommendation.deload);
     const normalizedRows = allLog
       .filter(row => Array.isArray(row) && String(row[0] || '') !== 'date_clean')
       .map(normalizeAnalyticsLogRow);
