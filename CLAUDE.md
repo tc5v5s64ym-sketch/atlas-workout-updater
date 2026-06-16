@@ -73,6 +73,16 @@ date | kind | target | rule | note
 
 `kind` ∈ `injury | equipment | preference`; `rule` ∈ `avoid | limit | substitute`; `target` is the movement/pattern/equipment (≤100 chars); `note` is optional context (≤200 chars). This is a *typed* sibling of the free-text `Coaching_Notes` tab — both coexist. The vocabularies are pinned in `config/columns.js` (`constraintsColumns`) and validated in both the write route and `sanitizeConstraint()` (`services/coach.js`). The tab is optional (`config/sheetContract.js`); the write route returns 503 until it exists.
 
+### Deload_State tab (7 columns)
+
+The deload system's persisted training state (`docs/DELOAD_SPEC.md`, "DELOAD STATE") lives in the `Deload_State` tab in this order:
+
+```
+updated_at | training_state | deload_protocol | deload_reason | deload_start_date | deload_sessions_remaining | deload_exit_criteria
+```
+
+**Append-only**: each state change appends a row; the current state is the *last* row (keeps an audit trail). Read/written by `services/deloadState.js`, never by hand. These are **system-state writes, not logged sets** — they do NOT route through the preview→approve→write trust loop, carry no `write_id`, and never touch `Log_Cleaned`/`Effort`. Same schema-migration rule as the other tabs: do not add, remove, or reorder columns without explicit owner approval.
+
 ---
 
 ## Coaching voice (LLM)
