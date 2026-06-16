@@ -43,7 +43,7 @@ function buildCoachSystemPrompt() {
     '- Open with one honest reaction line (e.g. acknowledge effort, a step up, or a set that hit failure).',
     '- The facts may include "effort_verdict" {level, headline} — the engine\'s read of how hard the set was, from the logged RIR vs the target. Your opening line MUST agree with it: level "far_easy" = way under target (under-effort), so say plainly it was too light and to add real weight next time, NOT merely "room to add"; "easy" = comfortably within reserve, so name that there is room to add load or reps (do NOT praise it as a grind or "pushing through"); "failure" = they hit failure, acknowledge it and say to back off; "hard" = a tough, near-target set; "on_target" = dialled in. Never contradict the verdict, and never call a high-RIR set hard or a failure set easy.',
     '- The facts may include "progression_verdict" {level, range_low, range_high, ceiling, headline} — the engine\'s read of where today\'s top working set sits against the lifter\'s OWN recent working range. WORD it, never contradict it (same discipline as effort_verdict): "under_shot" = today is below their range_low–range_high band, so call out the under-shot with a spine (no reason to be light here); "in_pocket" = solidly inside the band, box checked — say so and hold the line, do not tell them to go heavier; "maintenance_drift" = inside the band but drifting toward the low end; "progressing" = pushing the top of the band upward; "new_ground" = today clears the ceiling they had beaten before. Read today AGAINST the range and reference the band when it is present.',
-    '- The facts may include "deload_phase" {active, return_weight, summary} — when present with active true, today is a DELOAD the lifter deliberately chose. Frame the whole note as a deload: name it plainly, and make clear the fewer sets, near-normal weight, and high RIR (well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. Point forward to snapping back to normal volume after this one pass, and when return_weight is present name it (e.g. "back to about {return_weight} next block"). This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
+    '- The facts may include "deload" {active, protocol_id, load_pct, target_rir, sessions_remaining} — when present with active true, today is a DELOAD the engine is running. Frame the whole note as a deload: name it plainly, and make clear the reduced load (~{load_pct}% of the normal working weight), the fewer sets, and the high RIR (target {target_rir}, well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. When sessions_remaining is present, note how many easy sessions are left and that normal training resumes after. This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
     '- You MAY reference ONE history number from the facts (first_weight or best_weight, or the range/ceiling) to ground progress, e.g. "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
@@ -86,11 +86,11 @@ function sanitizeFacts(facts) {
     // ceiling it was judged against. The model WORDS this verdict — it must never derive
     // its own read of progress, and every number here is engine-computed history.
     progression_verdict: sanitizeProgressionVerdict(rec.progression_verdict),
-    // The engine's deload-phase fact — present only on a KNOWN deload day (the
-    // lifter started from the Deload & Reset plan). It tells the note today is a
-    // chosen deload, so an easy/high-RIR set is on-plan, not under-effort. The
-    // model WORDS this; the return weight is engine-computed history.
-    deload_phase: sanitizeDeloadPhase(rec.deload_phase),
+    // The deload engine's decision (from /api/recommend/next's `deload` field).
+    // When a deload is active it tells the note today is a deload — reduced load,
+    // fewer sets, high RIR by design — so an easy/high-RIR set is on-plan, not
+    // under-effort. The model WORDS this; every number is engine-computed.
+    deload: sanitizeDeloadFact(rec.deload),
     target_rir: numOrNull(rec.target_rir),
     // Lift history so a note can ground progress in a real number, not "great work".
     first_weight: numOrNull(rec.first_weight),
@@ -125,12 +125,22 @@ function sanitizeProgressionVerdict(v) {
   };
 }
 
-// Whitelist the engine's deload-phase fact — only active, the return weight, and
-// the summary survive. Returns null unless the engine marked the day active, so a
-// normal day never carries deload framing into the prompt.
-function sanitizeDeloadPhase(d) {
-  if (!d || typeof d !== 'object' || d.active !== true) return null;
-  return { active: true, return_weight: numOrNull(d.return_weight), summary: clampText(d.summary, 160) };
+// Whitelist the deload engine's decision into the coach fact. Only an ACTIVE
+// deload (in_deload true) carries framing into the prompt — a normal day, an
+// offer, or a recommendation never does. The protocol's load multiplier becomes
+// a plain percent and its target RIR rides along; nothing else from the decision
+// (scores, signals, raw protocol object) reaches the model.
+function sanitizeDeloadFact(d) {
+  if (!d || typeof d !== 'object' || d.in_deload !== true) return null;
+  const protocol = d.protocol && typeof d.protocol === 'object' ? d.protocol : null;
+  const loadMult = protocol ? numOrNull(protocol.load_multiplier) : null;
+  return {
+    active: true,
+    protocol_id: strOrNull(d.protocol_id),
+    load_pct: loadMult != null ? Math.round(loadMult * 100) : null,
+    target_rir: protocol ? numOrNull(protocol.target_rir) : null,
+    sessions_remaining: numOrNull(d.sessions_remaining)
+  };
 }
 
 function numOrNull(v) {
