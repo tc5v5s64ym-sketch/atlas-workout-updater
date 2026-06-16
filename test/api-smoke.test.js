@@ -7,6 +7,14 @@ const originalConsoleLog = console.log;
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
+// These smoke tests fire many requests against shared, IP-keyed rate limiters
+// (the whole suite runs as one client within a single window). They exercise
+// endpoint behaviour, not throttling — rate-limiter coverage lives in
+// security.test.js with its own limiter instance — so lift the production caps
+// out of the way. Must be set before require('../index'), which reads them at load.
+process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
+process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
+process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
 // Not a real key. sheets.js is fully stubbed in these tests (see require.cache
 // injection below), so this value is never parsed — it only needs to be present
 // so config validation does not trip. Kept free of a literal PEM header so the
@@ -816,6 +824,60 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
     });
   } finally {
     fakeSheetsState.allowAppend = false;
+  }
+});
+
+// Partial-write guard parity with /api/log-workout: on a full session (log rows
+// + effort) where the log append commits but the effort append throws, the
+// write_id must be recorded as a partial completion — NOT released — so a retry
+// replays the partial state instead of re-appending the log rows a second time.
+test('api smoke: complete-workout effort failure after log append is partial, retry never re-appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failAppendForTab = 'Effort';
+
+  const buildForm = () => {
+    const form = new FormData();
+    form.append('session_id', 'COMPLETE-PARTIAL-01');
+    form.append('date', '2026-06-12');
+    form.append('write_id', 'complete-partial-retry-01');
+    form.append('log_rows_json', JSON.stringify([
+      { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
+    ]));
+    form.append('effort_json', JSON.stringify({
+      duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+    }));
+    return form;
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const first = await requestMultipart('/api/complete-workout', buildForm());
+      // Log rows landed; effort append failed → honest partial 500, not a clean failure.
+      assert.equal(first.response.status, 500, JSON.stringify(first.body));
+      assert.equal(first.body.status, 'error');
+      assert.equal(first.body.details.sheet_write, 'partial');
+      assert.equal(first.body.details.sheet_written, true);
+      assert.equal(first.body.details.log_rows_written, 1);
+      assert.equal(first.body.details.effort_written, false);
+      assert.equal(first.body.details.write_id, 'complete-partial-retry-01');
+      // One log append + one failed effort attempt (the stub records before throwing).
+      assert.equal(fakeSheetsState.appendCalls.length, 2);
+
+      // Outage clears; the client retries the SAME write_id. The log rows must
+      // not be appended a second time — the recorded partial result replays.
+      fakeSheetsState.failAppendForTab = null;
+      const retry = await requestMultipart('/api/complete-workout', buildForm());
+      const dupData = retry.body.data.data;
+      assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
+      assert.equal(dupData.duplicate_write, true);
+      assert.equal(dupData.sheet_write, 'skipped_duplicate');
+      assert.equal(dupData.original_sheet_written, true);
+      assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.failAppendForTab = null;
   }
 });
 

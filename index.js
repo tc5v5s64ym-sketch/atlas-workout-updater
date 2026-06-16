@@ -2015,14 +2015,44 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       try {
         if (rowsToWrite.length > 0) {
           await appendRows(logSheetName, rowsToWrite);
+          // Log rows have landed. From here a failure must never release the
+          // write_id (a retry would re-append these rows) — mark the write
+          // committed so the catch records a partial completion instead.
+          writeCommitted = true;
         }
         await appendRows(effortSheetName, [effortRow]);
         effortWritten = true;
         writeCommitted = true;
         invalidateSheetRowsCache();
       } catch (error) {
-        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        if (idempotency.enabled && writeCommitted) {
+          // The log rows are already on the sheet but the effort append (or a
+          // later step) threw. Record the write as completed with a partial body
+          // so a retried write_id replays this state instead of re-appending the
+          // log rows. Mirrors /api/log-workout's partial-write contract.
+          invalidateSheetRowsCache();
+          const partialData = {
+            session_id: sessionId,
+            date: dateValue,
+            write_id: idempotency.write_id,
+            duplicate_write: false,
+            idempotency_status: 'completed',
+            sheet_write: 'partial',
+            sheet_written: true,
+            log_rows_written: logAppendCount,
+            effort_written: false,
+            post_processing_error: true
+          };
+          completeWrite(idempotency.write_id, idempotency.token, {
+            status: 'ok',
+            message: 'complete-workout log rows written; effort append failed',
+            data: partialData
+          });
+          liveWriteRecorded = true;
+          return standardError(req, res, 'Effort row append failed after log rows were written.', partialData, 500);
+        }
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
         return standardError(req, res, 'Failed to append workout data.', null, 500);
       }
     }
