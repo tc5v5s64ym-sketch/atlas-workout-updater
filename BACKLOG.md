@@ -28,7 +28,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - ✅ **Hold Point 2** — live-app test confirmed: Face Pull correctly feeds deload (rear_delts 1.5 eff. sets < 2.0 threshold); OHP main stall feeds independently. Coverage logic verified correct.
   - ✅ **PR 3.1** — `services/underCoverage.js`: `computeUnderCoverage`; per-muscle status (`under`/`adequate`/`optimal`) + reason string vs. MEV-style target ranges (950 tests).
   - ✅ **PR 3.2** — Surface under-coverage in coaching chat: `muscle_gaps` (sorted by severity) wired into `buildChatContext` + `sanitizeChatContext`; LLM nudges 1–2 under-served muscles when asked what to train (952 tests).
-  - ⏸ **Hold Point 3** — owner reviews live coach replies: do gap nudges appear naturally when asking what to train? Wording style approved pre-merge; confirm it reads right in real conversations.
+  - ✅ **Hold Point 3** — gap nudges reviewed and approved in live conversations. Wording reads naturally; style confirmed.
   - **PR 3.3 — expectation verdict engine** — extend `analytics.js` / `computePrescription` to emit `{ outcome, why, prescribedRir, actualRir, rirDelta }` per set/session; golden fixtures for beat/met/fell_short/swap. Pure data, nothing surfaces it yet. _(see [`COACH_PERSONALITY.md`](./COACH_PERSONALITY.md))_
   - **PR 3.4 — coach voice reaction** — in `coach.js`, word the PR 3.3 verdict with the personality spec; gated by "gap worth talking about"; default quiet. Celebrate on beat+story, pushback on fell_short, smart-swap acknowledgement. Approve 2–3 example outputs before merge.
   - **PR 3.5 — swap detection + working-weight finder** — detect substitutions, acknowledge as wins, run "find working weight at target RIR" protocol when no clean equivalent load exists.
@@ -36,7 +36,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - **PR 3.x — balance signal** — antagonist volume-ratio engine: horizontal push:pull, vertical push:pull, anterior:posterior, quad:hamstring → `{ pair, ratio, status, reason }`, wide bands, read-only, golden fixtures. Sibling to `underCoverage.js`; nothing surfaces it yet. _(see [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) Rule B)_
   - **PR 4.0** — Give the engine a stored `profileGoal` to read; pass through recommendation pipeline.
   - **PR 4.1** — Goal- + coverage-aware ranking (Coach's Pick + menu order).
-  - **PR 4.2 — session builder** — anchor → support → balance + pairing check, consuming `muscleCoverage`, `muscleVolume`, under-coverage, balance signal, `movementPattern`, cost tier. Every offered option builds a coherent, pairing-legal, balanced session or is de-emphasized. See [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) for the full spec.
+  - **PR 4.2 — session builder** — anchor → support → balance + pairing check + warm-up ramps, consuming `muscleCoverage`, `muscleVolume`, under-coverage, balance signal, `movementPattern`, cost tier. Every offered option builds a coherent, pairing-legal, balanced session or is de-emphasized. Must pass the four acceptance cases in [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) (brief matches session, no duplicate lifts, per-muscle cap, anchor + ramp).
   - **Open decision:** Squat + Deadlift same day — block by default, allow as opt-in "heavy day" override? Default = separate until owner decides.
 
 ## Housekeeping
