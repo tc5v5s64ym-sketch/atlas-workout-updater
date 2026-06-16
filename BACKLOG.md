@@ -22,14 +22,19 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 - **Coach intelligence build (COACH_PLAN.md).** Phased build: muscle-coverage data → coverage-aware stalls → proactive suggestions → goal- & coverage-aware workout selection.
   - ✅ **PR 1.1** — `services/muscleCoverage.js`: `musclesFor` / `liftsForMuscle`, 17-muscle taxonomy, pattern-based, pure data (31 tests).
   - ✅ **PR 1.2** — `services/muscleVolume.js`: `weeklyMuscleVolume`, rolling-window volume per muscle, direct 1.0 + indirect 0.5 credit (16 tests).
-  - **PR 1.3** — `services/movementPattern.js`: movement-pattern map. _(optional — owner's call)_
+  - **PR 1.3** — `services/movementPattern.js`: movement-pattern map. _(was optional → **now required**: the pairing rule in [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) needs patterns to enforce anchor co-anchor rules)_
   - ✅ **Hold Point 1** — owner reviews coverage map + per-muscle volumes against real log before behavior changes. _(Sonnet → Opus 4.8 after hold)_
   - ✅ **PR 2.1** — Coverage-aware stall/deload: `coverageStalls.annotateStallsForDeload`; accessories downgraded when primary muscles covered by other lifts; `weeklyMuscleVolume` extended with `today`/`excludeLiftCode` options (929 tests).
   - ✅ **Hold Point 2** — live-app test confirmed: Face Pull correctly feeds deload (rear_delts 1.5 eff. sets < 2.0 threshold); OHP main stall feeds independently. Coverage logic verified correct.
   - ✅ **PR 3.1** — `services/underCoverage.js`: `computeUnderCoverage`; per-muscle status (`under`/`adequate`/`optimal`) + reason string vs. MEV-style target ranges (950 tests).
   - ✅ **PR 3.2** — Surface under-coverage in coaching chat: `muscle_gaps` (sorted by severity) wired into `buildChatContext` + `sanitizeChatContext`; LLM nudges 1–2 under-served muscles when asked what to train (952 tests).
   - ⏸ **Hold Point 3** — owner reviews live coach replies: do gap nudges appear naturally when asking what to train? Wording style approved pre-merge; confirm it reads right in real conversations.
-  - **PR 4.x** — Goal- & coverage-aware workout selection (Coach's Pick + deck redesign).
+  - **PR 3.x — systemic-cost tier** — tiny lookup (HIGH/MEDIUM/LOW by name pattern) for the pairing rule; `services/liftCost.js` or addition to `liftRole`. Pure data + tests only. _(feeds PR 4.2 session builder)_
+  - **PR 3.x — balance signal** — antagonist volume-ratio engine: horizontal push:pull, vertical push:pull, anterior:posterior, quad:hamstring → `{ pair, ratio, status, reason }`, wide bands, read-only, golden fixtures. Sibling to `underCoverage.js`; nothing surfaces it yet. _(see [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) Rule B)_
+  - **PR 4.0** — Give the engine a stored `profileGoal` to read; pass through recommendation pipeline.
+  - **PR 4.1** — Goal- + coverage-aware ranking (Coach's Pick + menu order).
+  - **PR 4.2 — session builder** — anchor → support → balance + pairing check, consuming `muscleCoverage`, `muscleVolume`, under-coverage, balance signal, `movementPattern`, cost tier. Every offered option builds a coherent, pairing-legal, balanced session or is de-emphasized. See [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) for the full spec.
+  - **Open decision:** Squat + Deadlift same day — block by default, allow as opt-in "heavy day" override? Default = separate until owner decides.
 
 ## Housekeeping
 
