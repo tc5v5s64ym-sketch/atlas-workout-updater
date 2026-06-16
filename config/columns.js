@@ -46,6 +46,22 @@ const coachingNotesColumns = ['date', 'note'];
 
 const constraintsColumns = ['date', 'kind', 'target', 'rule', 'note'];
 
+// Deload_State — the persisted training-state record for the deload system
+// (docs/DELOAD_SPEC.md, "DELOAD STATE"). Append-only: each state change appends
+// a row, and the current state is the last row. This keeps an audit trail (the
+// spec requires the system be auditable) and fits the append-only sheets model.
+// These writes are system state, NOT logged sets — they never route through the
+// preview→approve→write trust loop or the write_id log path.
+const deloadStateColumns = [
+  'updated_at',
+  'training_state',
+  'deload_protocol',
+  'deload_reason',
+  'deload_start_date',
+  'deload_sessions_remaining',
+  'deload_exit_criteria'
+];
+
 const effortRowFieldAliases = {
   date: ['date'],
   session_id: ['session_id', 'sessionId'],
@@ -65,5 +81,6 @@ module.exports = {
   exerciseCatalogColumns,
   coachingNotesColumns,
   constraintsColumns,
-  effortRowFieldAliases
+  effortRowFieldAliases,
+  deloadStateColumns
 };
