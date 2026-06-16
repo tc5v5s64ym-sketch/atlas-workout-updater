@@ -165,11 +165,22 @@ test('rows outside the window are excluded', () => {
   assert.equal(result14.traps.directSets, 2, 'Shrugs (10 days ago) included in 14-day window');
 });
 
-test('rows inside the window are included, boundary is inclusive', () => {
-  const onBoundary = [row(D_RECENT, 'Shrugs', '1')];
-  const result = weeklyMuscleVolume(onBoundary, { days: 7 });
-  // D_RECENT is 3 days ago, well inside the 7-day window
-  assert.equal(result.traps.directSets, 1);
+test('boundary is inclusive: row at exactly cutoff day is included', () => {
+  const exactCutoff = (() => {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  })();
+  const result = weeklyMuscleVolume([row(exactCutoff, 'Shrugs', '1')], { days: 7 });
+  assert.equal(result.traps.directSets, 1, 'row at exactly cutoff day must be included');
+});
+
+test('boundary is exclusive one day beyond: row at cutoff+1 days is excluded', () => {
+  const beyondCutoff = (() => {
+    const d = new Date(); d.setDate(d.getDate() - 8);
+    return d.toISOString().slice(0, 10);
+  })();
+  const result = weeklyMuscleVolume([row(beyondCutoff, 'Shrugs', '1')], { days: 7 });
+  assert.equal(result.traps.directSets, 0, 'row one day beyond cutoff must be excluded');
 });
 
 /* ─── liftsContributing ─────────────────────────────────────────────────────── */
