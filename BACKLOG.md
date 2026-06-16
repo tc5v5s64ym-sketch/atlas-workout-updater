@@ -19,13 +19,27 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 ## Future epic
 
-- **Coach context & nuance (north-star).** The coach should reason about the whole training picture, not per-lift stalls:
-  1. classify lifts as **primary vs accessory**;
-  2. understand **muscle/movement overlap** (e.g. traps from deadlifts/rows, biceps from pulls) so a flat isolation lift isn't treated as a gap when the muscle is already covered;
-  3. tune **how far back it looks** and how holistic its view is;
-  4. surface **"I want to bring X to the forefront"** via coaching conversation, not mechanical triggers.
+- **Coach context & nuance (north-star)** — the coach should reason about the whole training picture, not per-lift stalls. These are **engine intelligences**: the engine decides, the LLM voices them. The ⭐ markers are the keystone spine.
 
-  **First slice when this starts:** primary-vs-accessory classification.
+  **Foundation (build first):**
+  - ⭐ **Muscle-coverage map** — which muscles each lift trains, directly + indirectly (deadlift → traps/back/legs; row → back/biceps/rear delts).
+  - ⭐ **Weekly volume per muscle** — running tally of sets/effort per muscle, to see what's under/over-worked.
+  - **Lift role + fatigue cost as catalog data** — move main/secondary/accessory out of the hardcoded `liftRole` heuristic into `Exercise_Catalog`; add a systemic-fatigue cost per lift. (Note: basic role classification already exists in `services/liftRole.js` as a heuristic — this is about moving it to data + enriching it.)
+  - **Variant/equipment awareness** — single-leg vs double-leg, machine vs barbell, so weights aren't conflated.
+
+  **Reasoning (uses the foundation):**
+  - ⭐ **Coverage-aware stalls** — don't flag/deload a flat accessory whose muscle is already covered by compounds (fixes the shrugs/curls case).
+  - **Per-muscle fatigue & freshness** — what's fried vs fresh, days-since-trained per lift.
+  - **Plateau diagnosis** — why a lift stalled (fatigue/volume/rep-range/ceiling) → the right fix, not a blanket deload.
+  - **Smarter deload trigger** — fire on real systemic fatigue weighted by lift role + training frequency.
+
+  **Coaching layer (engine-driven, user-facing):**
+  - **Goal-aware progression** — strength schemes for big lifts, volume schemes for accessories.
+  - **Session selection** — "what to train today" from recovery + weekly volume gaps.
+  - ⭐ **Proactive suggestions** — engine spots a gap, LLM raises it conversationally ("add face pulls?").
+  - **Intent/priority awareness** — which lifts the user cares about vs casual accessories.
+
+  **Spine** = the four ⭐ items in order; they deliver most of the holistic-coach vision. Pattern for all: use the LLM once to generate the knowledge as data, persist it, engine owns the decisions.
 
 ## Housekeeping
 
