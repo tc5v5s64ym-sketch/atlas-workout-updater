@@ -156,9 +156,9 @@ test('high fatigue exposure is capped at 12 and cannot reach the trigger band al
   assert.equal(scoreFatigueExposure({ hard_sets: 12, failure_sets: 2, block_length_sessions: 5 }), 6);
 });
 
-/* ===== Stacked signals cross into the recommend band (>75) ===== */
+/* ===== Stacked signals cross into the deload bands (offer is 75-90) ===== */
 
-test('genuinely high fatigue (several signals stacking) crosses the recommend band', () => {
+test('genuinely high fatigue (several signals stacking) crosses into the offer band', () => {
   // Lift1: 225×6→5→4→4 @2 — stalls (count 3 → A 20) AND regresses 5.56% (B 20).
   // Lift2: 225×5 @2 ×4 — stalls (count 3). Two lifts stalled → D 10.
   // Recovery: three distinct reports → E 25. Fatigue exposure maxed → F 12.
@@ -174,7 +174,9 @@ test('genuinely high fatigue (several signals stacking) crosses the recommend ba
   });
   assert.deepEqual(out.signals, { A: 20, B: 20, C: 0, D: 10, E: 25, F: 12 });
   assert.equal(out.score, 87);
-  assert.ok(out.score > 75, 'stacked fatigue should land in the recommend band');
+  // 87 sits in the spec's OFFER band (75-90); recommend is >90. The band → action
+  // mapping is the escalation-ladder PR; here we only assert the score crosses 75.
+  assert.ok(out.score > 75, 'stacked fatigue should clear the 75 offer threshold');
 });
 
 /* ===== degenerate input ===== */

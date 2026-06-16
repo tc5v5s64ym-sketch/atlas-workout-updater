@@ -18,9 +18,10 @@
 //   - Stagnation (A) "must NOT" fire on rep progress at a fixed weight → the
 //     progress test credits a higher e1RM/volume, so same-weight-more-reps is
 //     progress, never a stall.
-//   - A lone signal stays modest; a deload recommendation (>75) requires
-//     several signals stacking — matching the spec's "conditional on genuine
-//     fatigue, not a naive stall" stance.
+//   - A lone signal stays modest; reaching the deload bands (offer is 75-90,
+//     recommend is >90 per the spec's escalation ladder) requires several
+//     signals stacking — matching the spec's "conditional on genuine fatigue,
+//     not a naive stall" stance.
 // Every weight is pinned by hand-computed golden fixtures, so tuning a weight is
 // a one-line change with a visible test delta.
 
