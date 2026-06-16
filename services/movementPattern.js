@@ -93,14 +93,9 @@ const PATTERN_MAP = [
     re: /(?:weighted\s*)?(?:pull[\s-]*up|chin[\s-]*up)/i,
     movement: 'vertical_pull',
   },
-  // Barbell / Bent-Over / Pendlay / T-Bar Row
+  // Barbell / Bent-Over / Reverse Bent-Over / Pendlay / T-Bar Row
   {
-    re: /(?:barbell|bent[\s-]*over|pendlay|t[\s-]*bar)\s*row/i,
-    movement: 'horizontal_pull',
-  },
-  // Reverse Bent Over Row
-  {
-    re: /reverse\s*(?:bent[\s-]*over\s*)?row/i,
+    re: /(?:barbell|bent[\s-]*over|reverse|pendlay|t[\s-]*bar)\s*row/i,
     movement: 'horizontal_pull',
   },
   // Seated Row
