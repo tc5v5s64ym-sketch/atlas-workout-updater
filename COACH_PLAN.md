@@ -64,14 +64,13 @@ Create `services/muscleVolume.js`. **Read-only.** Consumes recent log rows + the
 - **No undertraining decision, no behavior change** — just the numbers.
 - Golden fixtures hand-computed from a small fake log.
 
-### PR 1.3 — Movement-pattern map *(OPTIONAL — owner's call)*
+### PR 1.3 — Movement-pattern map *(was optional → **now required**)*
 
 Create `services/movementPattern.js`. One primary pattern per lift from:
 `squat, hinge, horizontal_push, vertical_push, horizontal_pull, vertical_pull, knee_isolation, hip_isolation, arm_isolation, delt_isolation, calf_isolation, trunk, carry, other`
 
-- Nothing consumes it.
+- The session builder's pairing/competition rule (see [`SESSION_DESIGN.md`](./SESSION_DESIGN.md)) depends on patterns to enforce anchor co-anchor rules — this is no longer optional.
 - Tests: Bench = horizontal_push, OHP = vertical_push, Row = horizontal_pull, Pulldown = vertical_pull, Back Squat = squat, RDL = hinge.
-- **Build only if explicitly asked.**
 
 ### ⏸ HOLD POINT 1 — switch **Sonnet 4.6 → Opus 4.8**
 
@@ -146,14 +145,16 @@ Read the existing scorer in `analytics.js`. Feed in: the resolved goal (4.0) + p
 - Enrich the scorer; don't rip it out.
 - **Golden fixtures:** strength goal + legs fresh → heavy-lower outranks pump; hypertrophy goal + rear delts under-volumed → an upper-pull / delt session ranks up.
 
-### PR 4.2 — Redesign the deck + build each option from data
+### PR 4.2 — Session builder (capstone, rewritten per SESSION_DESIGN.md)
 
-- Replace placeholder tiles with a **frequency-appropriate** archetype set — e.g. **Full Body, Upper, Lower, Push** (upper push + quads), **Pull** (upper pull + posterior chain), plus **Recovery / Deload / Test / Custom.**
-- Let the deck itself **adapt to logged frequency:** at ~2×/week favor Full Body / Upper / Lower; expose narrower Push / Pull / Legs splits only if frequency supports them.
-- Each archetype, when tapped, **builds a concrete session from the data** — targets under-trained muscles / patterns at recovery-appropriate loads.
-- **Every offered option must build a coherent session for today.** If it can't, de-emphasize or flag it rather than present it as valid.
+See [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) for the full spec. Build order: anchor → support → balance, consuming `muscleCoverage` + `muscleVolume` + under-coverage signal + balance signal + `movementPattern` + cost tier + the pairing/competition check.
+
+- **Anchor:** freshest compound by pattern rotation + goal + recovery; two anchors at low frequency (~2×/week).
+- **Support:** accessories matching the anchor's primaries/secondaries, capped at weekly muscle targets.
+- **Balance:** always reserve ≥1 slot for the biggest current gap (from under-coverage + balance signal). Never dropped.
+- **Pairing rule** (Rule A): blocked co-anchor pairs must be golden-fixture tested (e.g. never outputs Deadlift + RDL).
 - Read the existing builders first; enrich, don't replace.
-- Golden fixtures per representative archetype.
+- Every offered option must build a coherent, pairing-legal, balanced session for today, or be de-emphasized.
 
 ### ⏸ HOLD POINT 4 — live test
 
