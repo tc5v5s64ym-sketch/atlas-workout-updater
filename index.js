@@ -2041,7 +2041,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
             sheet_write: 'partial',
             sheet_written: true,
             log_rows_written: logAppendCount,
-            effort_written: false,
+            // Report what actually landed: normally false here (the effort append
+            // is what threw), but use the flag so an unlikely throw from a later
+            // step after a successful effort append can't understate the row.
+            effort_written: effortWritten,
             post_processing_error: true
           };
           completeWrite(idempotency.write_id, idempotency.token, {
