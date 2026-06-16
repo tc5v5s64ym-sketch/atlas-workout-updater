@@ -7,7 +7,20 @@ const originalConsoleLog = console.log;
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// These smoke tests fire many requests against shared, IP-keyed rate limiters
+// (the whole suite runs as one client within a single window). They exercise
+// endpoint behaviour, not throttling — rate-limiter coverage lives in
+// security.test.js with its own limiter instance — so lift the production caps
+// out of the way. Must be set before require('../index'), which reads them at load.
+process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
+process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
+process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
+// Not a real key. sheets.js is fully stubbed in these tests (see require.cache
+// injection below), so this value is never parsed — it only needs to be present
+// so config validation does not trip. Kept free of a literal PEM header so the
+// changed-file secret scan (scripts/check-changed-files-for-secrets.js) does not
+// flag this throwaway stub.
+process.env.GOOGLE_PRIVATE_KEY = 'test-private-key-stub';
 
 const logRows = [
   ['2026-06-01', 'SESSION-OLD', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '205', '5', '3', 'old bench'],
@@ -39,7 +52,10 @@ const fakeSheetsState = {
   // call — simulates a partial-write failure between the two live appends.
   failAppendForTab: null,
   // Rows returned by getSheetRows for Coaching_Notes. Tests may set this.
-  coachingNotesRows: []
+  coachingNotesRows: [],
+  // Existing Effort session_ids returned by getEffortSessionIds. Tests set this
+  // to exercise the duplicate-session guard; default empty (no duplicates).
+  effortSessionIds: []
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -67,7 +83,7 @@ const fakeSheets = {
   getExerciseCatalog: async () => exerciseCatalogRows,
   getEffortSessionIds: async () => {
     fakeSheetsState.safetyReadCalls.effortSessionIds += 1;
-    return [];
+    return [...fakeSheetsState.effortSessionIds];
   },
   getLogCompositeKeys: async () => {
     fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
@@ -736,6 +752,7 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
       form.append('session_id', 'EFFORT-MANUAL-ONLY-01');
       form.append('date', '2026-06-11');
       form.append('log_rows_json', JSON.stringify([]));
+      form.append('write_id', 'complete-effort-only-live-01');
       form.append('effort_json', JSON.stringify({
         duration: '42',
         activeCalories: 410,
@@ -810,6 +827,60 @@ test('api smoke: live complete-workout with write_id appends once and skips dupl
   }
 });
 
+// Partial-write guard parity with /api/log-workout: on a full session (log rows
+// + effort) where the log append commits but the effort append throws, the
+// write_id must be recorded as a partial completion — NOT released — so a retry
+// replays the partial state instead of re-appending the log rows a second time.
+test('api smoke: complete-workout effort failure after log append is partial, retry never re-appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failAppendForTab = 'Effort';
+
+  const buildForm = () => {
+    const form = new FormData();
+    form.append('session_id', 'COMPLETE-PARTIAL-01');
+    form.append('date', '2026-06-12');
+    form.append('write_id', 'complete-partial-retry-01');
+    form.append('log_rows_json', JSON.stringify([
+      { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
+    ]));
+    form.append('effort_json', JSON.stringify({
+      duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+    }));
+    return form;
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const first = await requestMultipart('/api/complete-workout', buildForm());
+      // Log rows landed; effort append failed → honest partial 500, not a clean failure.
+      assert.equal(first.response.status, 500, JSON.stringify(first.body));
+      assert.equal(first.body.status, 'error');
+      assert.equal(first.body.details.sheet_write, 'partial');
+      assert.equal(first.body.details.sheet_written, true);
+      assert.equal(first.body.details.log_rows_written, 1);
+      assert.equal(first.body.details.effort_written, false);
+      assert.equal(first.body.details.write_id, 'complete-partial-retry-01');
+      // One log append + one failed effort attempt (the stub records before throwing).
+      assert.equal(fakeSheetsState.appendCalls.length, 2);
+
+      // Outage clears; the client retries the SAME write_id. The log rows must
+      // not be appended a second time — the recorded partial result replays.
+      fakeSheetsState.failAppendForTab = null;
+      const retry = await requestMultipart('/api/complete-workout', buildForm());
+      const dupData = retry.body.data.data;
+      assert.equal(retry.response.status, 200, JSON.stringify(retry.body));
+      assert.equal(dupData.duplicate_write, true);
+      assert.equal(dupData.sheet_write, 'skipped_duplicate');
+      assert.equal(dupData.original_sheet_written, true);
+      assert.equal(fakeSheetsState.appendCalls.length, 2, 'retry must not append again');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.failAppendForTab = null;
+  }
+});
+
 // PR-02: a screenshot approval re-sends the reviewed effort as effort_json with
 // NO image, so what gets written is exactly what the owner saw — and the vision
 // model is never run a second time. These tests pin that backend contract.
@@ -823,6 +894,7 @@ test('api smoke: complete-workout approval payload (effort_json, no image) write
       const form = new FormData();
       form.append('session_id', 'APPROVE-PREVIEWED-01');
       form.append('date', '2026-06-11');
+      form.append('write_id', 'approve-previewed-live-01');
       form.append('log_rows_json', JSON.stringify([
         { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
       ]));
@@ -918,6 +990,7 @@ test('api smoke: complete-workout approval payload preserves a missing peak HR a
       const form = new FormData();
       form.append('session_id', 'APPROVE-NO-PEAK-01');
       form.append('date', '2026-06-11');
+      form.append('write_id', 'approve-no-peak-live-01');
       form.append('log_rows_json', JSON.stringify([]));
       form.append('effort_json', JSON.stringify({
         duration: '00:42:00',
@@ -1120,6 +1193,7 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
       body: JSON.stringify({
         session_id: 'LIVE-WRITE-SMOKE-01',
         date: '2026-06-11',
+        write_id: 'live-write-smoke-01',
         // test_mode intentionally omitted — this exercises the live-write branch
         log_rows: [
           {
@@ -1533,6 +1607,98 @@ test('api smoke: bodyweight live write with write_id appends once and skips dupl
   }
 });
 
+// ── Step 1A (HI-1): a live write with no write_id has no dedup, so a lost-response
+// retry would double-append. Every live write path must reject a missing write_id.
+test('api smoke: live log-workout without write_id is rejected with 400 and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response, body } = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'NO-WRITE-ID-01',
+        date: '2026-06-12',
+        // test_mode omitted → live write, but write_id is missing.
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
+      })
+    }));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /write_id is required/i);
+    assert.deepEqual(fakeSheetsState.appendCalls, [], 'a rejected write must not append');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live complete-workout without write_id is rejected with 400 and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'NO-WRITE-ID-COMPLETE-01');
+      form.append('date', '2026-06-12');
+      form.append('log_rows_json', JSON.stringify([]));
+      // write_id intentionally omitted on a live (non-test_mode) write.
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      assert.equal(response.status, 400, JSON.stringify(body));
+      assert.equal(body.status, 'error');
+      assert.match(body.message, /write_id is required/i);
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'a rejected write must not append');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live bodyweight without write_id is rejected with 400 and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response, body } = await withMutedConsoleLog(() => requestJson('/api/bodyweight', {
+      method: 'POST',
+      body: JSON.stringify({ date: '2026-06-12', weight: 183.4, notes: 'morning' })
+    }));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal(body.status, 'error');
+    assert.match(body.message, /write_id is required/i);
+    assert.deepEqual(fakeSheetsState.appendCalls, [], 'a rejected write must not append');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// ── Step 1A (CR-2): the Effort append must be guarded against a session_id that
+// already has an effort row, so a re-sent session can never write a second Effort row.
+test('api smoke: complete-workout with a duplicate session_id is rejected (409) and writes no Effort row', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.effortSessionIds = ['DUP-EFFORT-SESSION-01'];
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'DUP-EFFORT-SESSION-01'); // already present in Effort
+      form.append('date', '2026-06-12');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('write_id', 'dup-effort-session-write-01');
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      assert.equal(response.status, 409, JSON.stringify(body));
+      assert.equal(body.status, 'error');
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'a duplicate session must not append an Effort row');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+    fakeSheetsState.effortSessionIds = [];
+  }
+});
+
 test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', async () => {
   // Regression: "Knee raises 20/2 20/2 13/2" produces weight:null from the parser.
   // The frontend maps null → '0'. Backend must accept weight '0' (or 0) without
@@ -1567,6 +1733,9 @@ async function liveEffortWrite(sessionId) {
   form.append('session_id', sessionId);
   form.append('date', '2026-06-11');
   form.append('log_rows_json', JSON.stringify([]));
+  // Live writes require a write_id; derive a unique one per session so repeated
+  // calls each write (and invalidate the cache) rather than dedup as duplicates.
+  form.append('write_id', `live-effort-${sessionId}`);
   form.append('effort_json', JSON.stringify({
     duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
   }));

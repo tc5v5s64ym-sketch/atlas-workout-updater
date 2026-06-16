@@ -26,7 +26,10 @@ function beginWrite(writeId, metadata = {}, options = {}) {
   pruneExpired(now, options.ttlMs || DEFAULT_TTL_MS);
 
   const existing = writeRecords.get(normalizedWriteId);
-  if (existing) {
+  // A 'failed' record is retryable: a prior attempt released without committing,
+  // so fall through and start a clean attempt. Only 'in_progress' / 'completed'
+  // records are genuine duplicates that must be refused or replayed.
+  if (existing && existing.status !== 'failed') {
     // Return a record isolated from the store: { ...existing } is only a shallow
     // copy, so clone the mutable nested fields too. Otherwise a caller mutating
     // the replayed response/metadata would corrupt the stored record.
@@ -86,7 +89,19 @@ function failWrite(writeId, token) {
   const existing = writeRecords.get(normalizedWriteId);
   if (!existing || existing.token !== token) return false;
 
-  writeRecords.delete(normalizedWriteId);
+  // Mark the record 'failed' rather than deleting it. The id stays retryable
+  // (beginWrite starts a clean attempt for a 'failed' record, superseding this
+  // one), and until that retry the released attempt is observable as 'failed'
+  // rather than silently vanishing. The token is invalidated so a stale
+  // completeWrite for this released attempt can never resurrect it.
+  const now = Date.now();
+  writeRecords.set(normalizedWriteId, {
+    ...existing,
+    status: 'failed',
+    token: null,
+    failed_at_ms: now,
+    failed_at: new Date(now).toISOString()
+  });
   return true;
 }
 
