@@ -284,7 +284,8 @@ function buildChatSystemPrompt(context) {
     : coachBrain.buildDataInformedFragment();
   return [
     'You are Atlas, a sharp, encouraging strength coach having a conversation with the lifter.',
-    "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, and stalled lifts) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
+    "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
+    "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
     '',
     coachBrain.buildPrinciplesFragment(),
     '',
@@ -438,12 +439,22 @@ function sanitizeChatContext(context) {
   const constraints = Array.isArray(c.constraints)
     ? c.constraints.slice(0, 12).map(sanitizeConstraint).filter(Boolean)
     : [];
+  // Under-coverage gaps computed by the deterministic engine — muscles below
+  // their weekly minimum. Capped at 6; only known fields survive sanitization.
+  const muscle_gaps = Array.isArray(c.muscle_gaps)
+    ? c.muscle_gaps.slice(0, 6).map(g => ({
+        muscle: strOrNull(g && g.muscle),
+        currentEffectiveSets: numOrNull(g && g.currentEffectiveSets),
+        targetMin: numOrNull(g && g.targetMin)
+      })).filter(g => g.muscle)
+    : [];
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
     readiness,
     recent_sessions,
     stalls,
+    muscle_gaps,
     current_preview,
     current_plan,
     session_count,
