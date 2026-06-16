@@ -82,7 +82,8 @@ test('an active deload holds the protocol and does not evaluate a new one', () =
   assert.equal(out.protocol_id, 'STRENGTH_DELOAD_V1');
   assert.equal(out.protocol, STRENGTH_DELOAD_V1); // both keys always populated
   assert.equal(out.sessions_remaining, 1);
-  assert.equal(out.score, undefined); // never re-scored while active
+  assert.equal(out.score, null); // never re-scored while active (uniform shape, null not undefined)
+  assert.equal(out.signals, null);
 });
 
 test('a healthy lifter (rising reps at fixed weight) gets normal coaching, score 0', () => {

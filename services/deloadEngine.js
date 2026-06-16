@@ -16,7 +16,7 @@
 // which is stubbed in tests.
 
 const { normalizeLogRow } = require('./analytics');
-const { computeFatigueScore } = require('./deloadFatigueScore');
+const { computeFatigueScore, estimateE1rm } = require('./deloadFatigueScore');
 const { evaluate } = require('./deloadEscalationLadder');
 const { PROTOCOLS } = require('./deloadProtocols');
 const { STATES, isActiveDeload, transition } = require('./deloadStateMachine');
@@ -27,13 +27,14 @@ const {
 /* ============================ adapter ============================ */
 
 // The top set of a session for one lift: the heaviest effective set by estimated
-// 1RM (load × reps), so a back-off set never masquerades as the day's exposure.
+// 1RM, so a back-off set never masquerades as the day's exposure. Uses the shared
+// estimateE1rm so the formula can't drift from the fatigue score's.
 function topSetOfSession(rows) {
   let best = null;
   let bestE1rm = -Infinity;
   for (const r of rows) {
-    const e1rm = r.weight * (1 + r.reps / 30);
-    if (e1rm > bestE1rm) { bestE1rm = e1rm; best = r; }
+    const e1rm = estimateE1rm(r.weight, r.reps);
+    if (e1rm != null && e1rm > bestE1rm) { bestE1rm = e1rm; best = r; }
   }
   return best;
 }
@@ -129,17 +130,23 @@ function evaluateDeload({
 } = {}) {
   const state = normalizeCurrentState(currentState);
 
+  // Both branches return the SAME key set (null where a field doesn't apply) so a
+  // consumer never has to branch on in_deload to know which keys exist.
   if (isActiveDeload(state.training_state)) {
     const protocol_id = state.deload_protocol || null;
     return {
       in_deload: true,
       training_state: STATES.DELOAD_ACTIVE,
       action: 'CONTINUE_DELOAD',
-      // Both protocol and protocol_id are always present (one may be null) so a
-      // consumer never has to branch on in_deload to know which key to read.
+      score: null,
+      signals: null,
+      band: null,
+      suggested_state: null,
       protocol: protocol_id ? (PROTOCOLS[protocol_id] || null) : null,
       protocol_id,
       sessions_remaining: state.deload_sessions_remaining,
+      focus: null,
+      frequency_per_week: null,
       reason: 'A deload is active — holding the protocol and not evaluating a new one.'
     };
   }
