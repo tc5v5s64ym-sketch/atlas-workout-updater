@@ -988,7 +988,16 @@ test('PR2: six typed lifts with RIR all survive the end-of-session compile; effo
   await mockSixExerciseSession(page, capture);
 
   // Log all six lifts conversationally — each accumulates in the session buffer.
-  for (const ex of SESSION_EXERCISES) await logSet(page, ex.text);
+  // Assert the readback count grows by one per set instead of firing all six
+  // back-to-back: under parallel CPU contention a set could be typed before the
+  // prior readback (and its buffer entry) rendered, which raced this spec. This
+  // web-first per-set wait keeps logging deterministic without a fixed delay.
+  let loggedSets = 0;
+  for (const ex of SESSION_EXERCISES) {
+    await logSet(page, ex.text);
+    loggedSets += 1;
+    await expect(page.locator('#thread-messages .readback')).toHaveCount(loggedSets);
+  }
 
   // Mid-workout: six coached readbacks, and nothing written or previewed.
   await expect(page.locator('#thread-messages .readback')).toHaveCount(6);
