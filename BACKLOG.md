@@ -23,8 +23,9 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - ✅ **PR 1.1** — `services/muscleCoverage.js`: `musclesFor` / `liftsForMuscle`, 17-muscle taxonomy, pattern-based, pure data (31 tests).
   - ✅ **PR 1.2** — `services/muscleVolume.js`: `weeklyMuscleVolume`, rolling-window volume per muscle, direct 1.0 + indirect 0.5 credit (16 tests).
   - **PR 1.3** — `services/movementPattern.js`: movement-pattern map. _(optional — owner's call)_
-  - ⏸ **Hold Point 1** — owner reviews coverage map + per-muscle volumes against real log before behavior changes. _(Sonnet → Opus 4.8 after hold)_
-  - **PR 2.1** — Coverage-aware stall/deload: downgrade (not erase) accessory stalls whose muscle is covered.
+  - ✅ **Hold Point 1** — owner reviews coverage map + per-muscle volumes against real log before behavior changes. _(Sonnet → Opus 4.8 after hold)_
+  - ✅ **PR 2.1** — Coverage-aware stall/deload: `coverageStalls.annotateStallsForDeload`; accessories downgraded when primary muscles covered by other lifts; `weeklyMuscleVolume` extended with `today`/`excludeLiftCode` options (929 tests).
+  - ⏸ **Hold Point 2** — owner tests the live app: log a stall on a covered accessory (e.g. Shrugs while Deadlifting), confirm no false deload. _(Opus 4.8 → check COACH_PLAN.md for Phase 3 model)_
   - **PR 3.1** — Under-coverage signal engine (read-only).
   - **PR 3.2** — Surface under-coverage via coaching voice.
   - **PR 4.x** — Goal- & coverage-aware workout selection (Coach's Pick + deck redesign).
