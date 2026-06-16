@@ -122,6 +122,41 @@ First **locate and read** the current `detectStalls` / deload-trigger flow. Veri
 
 -----
 
+## PHASE 3 (continued) — Coach personality reaction layer
+
+> See [`COACH_PERSONALITY.md`](./COACH_PERSONALITY.md) for the full personality spec. Same discipline as everything else: engine owns the verdict, the LLM only words it. Default to quiet.
+
+### PR 3.3 — Expectation verdict engine (engine layer)
+
+**Model: Claude Sonnet 4.6.** Extend the existing `analytics.js` / `computePrescription` output to emit a structured per-set / per-session verdict the coach can react to.
+
+- Verdict fields: `outcome` ∈ `beat | met | fell_short`, plus `why` (e.g. `progression_hit`, `pr`, `post_layoff`, `rir_delta`, `swap_detected`), `prescribedRir`, `actualRir`, `rirDelta`.
+- Much of the grading logic already exists (`rirPolicy`, `autoregulation`, RIR-verdict logic). **Read it first; extend, don't replace.**
+- **Golden fixtures:** beat with progression_hit; met (quiet, no reaction); fell_short with rir_delta; swap_detected.
+- Pure data output — nothing surfaces it yet.
+
+### PR 3.4 — Coach voice reaction (voice layer)
+
+**Model: Claude Sonnet 4.6.** In `coach.js`, word the verdict from PR 3.3 with the personality in `COACH_PERSONALITY.md`, **gated** by "is there a gap worth talking about."
+
+- Celebrate only on `beat` + real story (progression_hit, PR, post_layoff).
+- Pushback only on `fell_short` with meaningful RIR delta.
+- Smart adjustment/swap: acknowledge the good call; no deviation flag.
+- **Default to quiet** — met expectations → brief nod or silence.
+- Engine owns the verdict; the coach only words it.
+- Provide **2–3 example outputs to approve before merge.**
+
+### PR 3.5 — Swap detection + working-weight finder
+
+**Model: Claude Sonnet 4.6.** Detect substitutions, acknowledge them as wins, and when no clean equivalent load exists run the "find your working weight at the target RIR" protocol.
+
+- Detect swap: logged lift differs from prescribed lift for that slot.
+- Acknowledge with personality tone ("Smart swap.").
+- When no reliable load equivalent: coach them to find working weight → *"start here, work up, find the load where 8 reps leaves you one or two in reserve."*
+- Golden fixtures: known swap with equivalent; unknown swap (no clean equivalent → working-weight protocol).
+
+-----
+
 ## PHASE 4 — Goal- & coverage-aware workout selection *(capstone)*
 
 **Model: Claude Opus 4.8**

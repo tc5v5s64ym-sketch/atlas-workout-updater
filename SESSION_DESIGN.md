@@ -82,12 +82,27 @@ For each pair return `{ pair, ratio, status, reason }` where status ∈ `balance
 
 ---
 
+## Set progression — warm-up ramps
+
+The working sets are only half a prescription. A heavy compound needs a *climb* into its working weight — flat sets (235×8 three times, cold) are wrong and unsafe for the first heavy lift of a pattern.
+
+**Rule:** ramp into the working sets on a compound **when the lifter isn't already warm for that movement**; skip the ramp when they are.
+
+- A ramp is ascending load, **submaximal and easy on the way up** (high RIR — these sets are priming, not working), reps tapering as load climbs, landing on the prescribed working sets. e.g. Bench → 135×10, 185×8, then 225×5×3. Squat → 125 → 185 → 205 → working. Deadlift similar. You never walk up cold to a heavy single-pattern lift.
+- **"Already warm" = session order + pattern/muscle overlap with an earlier lift.** Dips after Bench → no ramp (same musculature already primed). This reuses the **movement-pattern + muscle-coverage maps** — the *same* overlap logic as the pairing rule, just pointed at warmth instead of fatigue.
+- Ramp depth scales with working load and how cold the pattern is: first heavy hinge/squat/press of the day → full ramp; a later compound sharing an already-warm pattern → minimal or none; accessories → none.
+- **Warm-up sets are flagged as priming and do NOT count as working volume** — otherwise they inflate effective-set counts and skew the coverage/balance math.
+
+Lands in PR 4.2: after anchor → support → balance are chosen *and ordered*, layer ramps onto each working lift based on its position and the warmth state.
+
+---
+
 ## How it lands in the plan (build order, each a tiny PR)
 
 1. **PR 1.3 — movement-pattern map** *(was optional → now required)*: the pairing rule needs patterns. Build `services/movementPattern.js` as specced.
 2. **PR (small) — systemic-cost tier**: a tiny lookup (HIGH/MEDIUM/LOW by name pattern), either added to `liftRole` or its own `services/liftCost.js`. Pure data, tests only.
 3. **PR 3.x — balance signal**: antagonist-ratio engine above, read-only, golden fixtures. Sibling to the under-coverage signal; nothing surfaces it yet.
-4. **PR 4.2 — session builder** *(the capstone, rewritten)*: anchor → support → balance, consuming `muscleCoverage` + `muscleVolume` + under-coverage + balance signal + `movementPattern` + cost tier + the **pairing check**. Verify existing builders first; enrich, don't replace. Every offered option must build a coherent, pairing-legal, balanced session for today, or be de-emphasized. Golden fixtures per representative archetype (incl. a blocked-pair case, e.g. it never outputs Deadlift + RDL).
+4. **PR 4.2 — session builder** *(the capstone, rewritten)*: anchor → support → balance, consuming `muscleCoverage` + `muscleVolume` + under-coverage + balance signal + `movementPattern` + cost tier + the **pairing check**. Verify existing builders first; enrich, don't replace. Every offered option must build a coherent, pairing-legal, balanced session for today, or be de-emphasized. Order the session (anchor first), then layer warm-up ramps per **Set progression** above (warm-ups flagged priming, not working volume). Golden fixtures per representative archetype (incl. a blocked-pair case, e.g. it never outputs Deadlift + RDL; and a ramp case, e.g. cold Deadlift gets a ramp but Dips-after-Bench does not).
 
 > Phase order is otherwise unchanged: still finish Phase 2 (coverage-aware stalls) and Phase 3 (under-coverage + this balance signal) before the PR 4.2 capstone. The model hold-points still apply.
 
