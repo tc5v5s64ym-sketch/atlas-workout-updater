@@ -224,3 +224,61 @@ test('accepts pre-normalized object-form rows', () => {
   assert.equal(result.traps.directSets, 1);
   assert.equal(result.traps.totalEffectiveSets, 1.0);
 });
+
+/* ─── today anchor (deterministic window) ────────────────────────────────────
+ * Hand-computed: anchor 2026-06-14, days=7 → cutoff 2026-06-07.
+ * Row at 2026-06-07 is included; row at 2026-06-06 is excluded.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+function fixedRow(date, exercise, liftCode, setNum = '1') {
+  return [date, 'S1', exercise, exercise, 'Test', liftCode, setNum, '100', '8', '2', '', '800'];
+}
+
+test('today option: anchors the window to a fixed date', () => {
+  const rows = [
+    fixedRow('2026-06-07', 'Shrugs', 'SH01', '1'), // at exactly cutoff → included
+    fixedRow('2026-06-06', 'Shrugs', 'SH01', '2'), // one day before cutoff → excluded
+  ];
+  const result = weeklyMuscleVolume(rows, { today: '2026-06-14', days: 7 });
+  assert.equal(result.traps.directSets, 1, 'row at cutoff day included');
+  assert.equal(result.traps.totalEffectiveSets, 1.0);
+});
+
+test('today option: rows after the anchor are excluded', () => {
+  const rows = [
+    fixedRow('2026-06-14', 'Shrugs', 'SH01', '1'), // at anchor → included
+    fixedRow('2026-06-15', 'Shrugs', 'SH01', '2'), // one day after anchor → excluded
+  ];
+  const result = weeklyMuscleVolume(rows, { today: '2026-06-14', days: 7 });
+  assert.equal(result.traps.directSets, 1, 'row after anchor excluded');
+});
+
+/* ─── excludeLiftCode option ─────────────────────────────────────────────────
+ * Deadlift (DL01) × 3 sets: traps secondary 0.5/set = 1.5.
+ * Bench Press (BP01) × 2 sets: chest primary 1.0/set = 2.0.
+ * Excluding DL01 removes traps contribution; chest from BP01 remains.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+test('excludeLiftCode: excluded lift contributes no volume', () => {
+  const rows = [
+    fixedRow('2026-06-14', 'Deadlift', 'DL01', '1'),
+    fixedRow('2026-06-14', 'Deadlift', 'DL01', '2'),
+    fixedRow('2026-06-14', 'Deadlift', 'DL01', '3'),
+    fixedRow('2026-06-14', 'Bench Press', 'BP01', '1'),
+    fixedRow('2026-06-14', 'Bench Press', 'BP01', '2'),
+  ];
+  const result = weeklyMuscleVolume(rows, { today: '2026-06-14', excludeLiftCode: 'DL01' });
+  assert.equal(result.traps.indirectSets, 0, 'Deadlift excluded → traps = 0');
+  assert.equal(result.traps.totalEffectiveSets, 0);
+  assert.equal(result.chest.directSets, 2, 'Bench Press not excluded → chest = 2');
+});
+
+test('excludeLiftCode is case-insensitive (stored as uppercase in log)', () => {
+  const rows = [
+    fixedRow('2026-06-14', 'Deadlift', 'DL01', '1'),
+  ];
+  const lower = weeklyMuscleVolume(rows, { today: '2026-06-14', excludeLiftCode: 'dl01' });
+  const upper = weeklyMuscleVolume(rows, { today: '2026-06-14', excludeLiftCode: 'DL01' });
+  assert.equal(lower.hamstrings.directSets, 0, 'lower-case excludeLiftCode works');
+  assert.equal(upper.hamstrings.directSets, 0, 'upper-case excludeLiftCode works');
+});

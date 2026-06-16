@@ -1196,7 +1196,12 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const todayStr = safeDateString(today);
   const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr, effortRows });
   const fatigue = computeFatigueStatus(logRows, new Date(todayStr + 'T12:00:00'));
-  const stalls = detectStalls(logRows);
+  // Lazily required to break a load-time cycle: coverageStalls → muscleVolume →
+  // analytics. By the time scoreIntents runs, every module is fully loaded.
+  const { annotateStallsForDeload } = require('./coverageStalls');
+  // Each stall is tagged ignored_for_deload when it's a flat accessory whose
+  // muscle is already covered by other lifts — downgraded, not erased.
+  const stalls = annotateStallsForDeload(detectStalls(logRows), logRows);
   // Lifts with no progression over their last few sessions. Used to keep stale
   // lifts out of PR attempts and to surface a deload when several plateau.
   const stalledCodes = new Set(stalls.map(s => s.liftCode));
@@ -1276,8 +1281,13 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const st = rm[patternOf(code)]?.status;
     return st === 'ready' || st === 'fresh' || st === 'unknown' || st == null;
   };
-  const eligibleStalls = stalls.filter(s => restedEnough(s.liftCode));
-  const holdStalls = stalls.filter(s => !restedEnough(s.liftCode));
+  // Coverage-aware deload gate. A flat accessory whose primary muscle is already
+  // covered by other lifts is downgraded (ignored_for_deload) and must not feed a
+  // whole-program deload — but it stays in `stalls` (visible) for PR-exclusion and
+  // watchouts. Mains, secondary lifts, and uncovered accessories keep feeding.
+  const deloadFeedingStalls = stalls.filter(s => !s.ignored_for_deload);
+  const eligibleStalls = deloadFeedingStalls.filter(s => restedEnough(s.liftCode));
+  const holdStalls = deloadFeedingStalls.filter(s => !restedEnough(s.liftCode));
 
   const intents = [];
 
@@ -1525,7 +1535,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   // Appears when 2+ lifts have plateaued AND at least one of them sits on a
   // rested muscle group. Stalled lifts trained recently are surfaced as an
   // honest "due soon, not today" note rather than recommended for a session.
-  if (eligibleStalls.length >= 1 && stalls.length >= 2) {
+  if (eligibleStalls.length >= 1 && deloadFeedingStalls.length >= 2) {
     const top = eligibleStalls.slice(0, 3);
     const patternLabel = code => rm[patternOf(code)]?.label || 'that muscle group';
     const stalledNames = top.map(s => stallName(s.liftCode));
