@@ -19,13 +19,15 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 ## Future epic
 
-- **Coach context & nuance (north-star).** The coach should reason about the whole training picture, not per-lift stalls:
-  1. classify lifts as **primary vs accessory**;
-  2. understand **muscle/movement overlap** (e.g. traps from deadlifts/rows, biceps from pulls) so a flat isolation lift isn't treated as a gap when the muscle is already covered;
-  3. tune **how far back it looks** and how holistic its view is;
-  4. surface **"I want to bring X to the forefront"** via coaching conversation, not mechanical triggers.
-
-  **First slice when this starts:** primary-vs-accessory classification.
+- **Coach intelligence build (COACH_PLAN.md).** Phased build: muscle-coverage data → coverage-aware stalls → proactive suggestions → goal- & coverage-aware workout selection.
+  - ✅ **PR 1.1** — `services/muscleCoverage.js`: `musclesFor` / `liftsForMuscle`, 17-muscle taxonomy, pattern-based, pure data (31 tests).
+  - **PR 1.2** — `services/muscleVolume.js`: weekly volume per muscle (rolling window, direct 1.0 + indirect 0.5 credit). _(next)_
+  - **PR 1.3** — `services/movementPattern.js`: movement-pattern map. _(optional — owner's call)_
+  - ⏸ **Hold Point 1** — owner reviews coverage map + per-muscle volumes against real log before behavior changes. _(Sonnet → Opus 4.8 after hold)_
+  - **PR 2.1** — Coverage-aware stall/deload: downgrade (not erase) accessory stalls whose muscle is covered.
+  - **PR 3.1** — Under-coverage signal engine (read-only).
+  - **PR 3.2** — Surface under-coverage via coaching voice.
+  - **PR 4.x** — Goal- & coverage-aware workout selection (Coach's Pick + deck redesign).
 
 ## Housekeeping
 
