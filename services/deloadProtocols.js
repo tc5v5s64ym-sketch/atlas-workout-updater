@@ -27,8 +27,8 @@ const STRENGTH_DELOAD_V1 = Object.freeze({
   duration_max_exposures: 1,
   // 1 week maximum; at low frequency a single exposure can span a week.
   exit: 'Return immediately to the previous working weight.',
-  remove: [],
-  notes: []
+  remove: Object.freeze([]),
+  notes: Object.freeze([])
 });
 
 const HYPERTROPHY_DELOAD_V1 = Object.freeze({
@@ -42,7 +42,7 @@ const HYPERTROPHY_DELOAD_V1 = Object.freeze({
   duration_max_exposures: 1,
   exit: 'Return to normal training after one week.',
   remove: Object.freeze(['failure sets', 'drop sets', 'rest-pause', 'intensity techniques']),
-  notes: []
+  notes: Object.freeze([])
 });
 
 const POWER_DELOAD_V1 = Object.freeze({
