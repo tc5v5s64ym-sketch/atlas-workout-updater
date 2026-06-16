@@ -1,6 +1,6 @@
 # Atlas Deload System Specification
 
-> **Status: DRAFT — awaiting owner (Dale) approval.** Single source of truth for what a deload *is* in Atlas. Code follows this spec; if behavior is ever wrong, change this spec first, then the code.
+> **Status: APPROVED (owner-supplied, 2026-06-16).** Single source of truth for what a deload *is* in Atlas. Code follows this spec; if behavior is ever wrong, change this spec first, then the code.
 
 ## GOAL
 
