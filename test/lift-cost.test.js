@@ -33,6 +33,11 @@ const FIXTURES = [
   ['Seated Leg Press',      'medium'],
   ['Single-Leg Leg Press',  'medium'],
 
+  // ── MEDIUM (accessory squat variants) ────────────────────────────────
+  ['Goblet Squat',          'medium'],
+  ['Bulgarian Split Squat', 'medium'],
+  ['Hack Squat',            'medium'],
+
   // ── LOW (isolations) ──────────────────────────────────────────────────
   ['Leg Curl',              'low'],
   ['Single-Leg Leg Curl',   'low'],
@@ -97,6 +102,17 @@ test('Lat Pulldown is medium, not confused with Lateral Raise', () => {
   assert.equal(costFor('Lat Pulldown').cost, 'medium');
   assert.equal(costFor('Lateral Raise').cost, 'low');
   assert.equal(costFor('Lateral Raises').cost, 'low');
+});
+
+test('Goblet Squat / Bulgarian Split Squat / Hack Squat are medium, not high', () => {
+  assert.equal(costFor('Goblet Squat').cost, 'medium');
+  assert.equal(costFor('Bulgarian Split Squat').cost, 'medium');
+  assert.equal(costFor('Hack Squat').cost, 'medium');
+});
+
+test('Back Squat is still high after accessory carve-out', () => {
+  assert.equal(costFor('Back Squat').cost, 'high');
+  assert.equal(costFor('Front Squat').cost, 'high');
 });
 
 test('Dips are medium (not high)', () => {

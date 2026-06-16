@@ -31,10 +31,13 @@ const COST_MAP = [
     re: /\bdeadlift\b/i,
     cost: 'high',
   },
-  // Back Squat (and generic squat — all barbell squat variants are HIGH)
-  // Leg Press is MEDIUM and listed before this rule wouldn't help since
-  // "leg press" doesn't contain "squat". But Front Squat, Hack Squat, etc.
-  // all carry similar systemic cost, so squat → HIGH is correct.
+  // Light / accessory squat variants — MEDIUM (no heavy barbell spinal load)
+  // Must be listed before the generic squat rule below.
+  {
+    re: /goblet\s*squat|bulgarian|split\s*squat|hack\s*squat|box\s*squat/i,
+    cost: 'medium',
+  },
+  // Back Squat and remaining barbell squat variants — HIGH
   {
     re: /\bsquat\b/i,
     cost: 'high',
