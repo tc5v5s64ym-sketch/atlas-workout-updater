@@ -154,39 +154,46 @@ test('coach system prompt reads today against the range and ends on a forward de
   assert.match(prompt, /Do NOT restate the logged sets/i, 'must still skip the set regurgitation');
 });
 
-test('sanitizeFacts forwards the deload phase, whitelisted to its known fields', () => {
+test('sanitizeFacts forwards the engine deload decision, whitelisted to its known fields', () => {
   const clean = sanitizeFacts({
     exerciseName: 'Bench Press',
     rec: {
-      deload_phase: {
-        active: true,
-        return_weight: 225,
-        summary: 'fewer sets at near-normal weight, kept well short of failure — one pass, then back up',
+      deload: {
+        in_deload: true,
+        protocol_id: 'STRENGTH_DELOAD_V1',
+        protocol: { id: 'STRENGTH_DELOAD_V1', load_multiplier: 0.92, target_rir: 5, set_multiplier: 0.5 },
+        sessions_remaining: 1,
+        score: null,
+        signals: null,
         junk: 'IGNORE ME'
       }
     }
   });
-  assert.deepEqual(clean.deload_phase, {
+  assert.deepEqual(clean.deload, {
     active: true,
-    return_weight: 225,
-    summary: 'fewer sets at near-normal weight, kept well short of failure — one pass, then back up'
+    protocol_id: 'STRENGTH_DELOAD_V1',
+    load_pct: 92,        // 0.92 → 92% of the normal working weight
+    target_rir: 5,
+    sessions_remaining: 1
   });
-  assert.ok(!JSON.stringify(clean.deload_phase).includes('IGNORE ME'), 'unknown deload keys must be dropped');
+  // The raw protocol object, score/signals, and unknown keys must not leak.
+  assert.ok(!JSON.stringify(clean.deload).includes('IGNORE ME'), 'unknown deload keys must be dropped');
+  assert.ok(!JSON.stringify(clean.deload).includes('set_multiplier'), 'raw protocol fields must not leak');
 });
 
-test('sanitizeFacts leaves the deload phase null when absent or not active', () => {
-  assert.equal(sanitizeFacts({ rec: { recommendation: 'Hold.' } }).deload_phase, null);
-  // active must be exactly true — a falsy/absent flag is not a deload day.
-  assert.equal(sanitizeFacts({ rec: { deload_phase: { active: false, return_weight: 200 } } }).deload_phase, null);
-  assert.equal(sanitizeFacts({ rec: { deload_phase: { return_weight: 200 } } }).deload_phase, null);
+test('sanitizeFacts leaves the deload fact null unless a deload is ACTIVE', () => {
+  assert.equal(sanitizeFacts({ rec: { recommendation: 'Hold.' } }).deload, null);
+  // in_deload must be exactly true — an offer/recommendation is not an active deload.
+  assert.equal(sanitizeFacts({ rec: { deload: { in_deload: false, action: 'OFFER_DELOAD' } } }).deload, null);
+  assert.equal(sanitizeFacts({ rec: { deload: { action: 'RECOMMEND_DELOAD' } } }).deload, null);
 });
 
 test('coach system prompt frames a deload set as on-plan, not under-effort', () => {
   const prompt = buildCoachSystemPrompt();
-  assert.match(prompt, /deload_phase/, 'must reference the deload-phase fact the engine provides');
-  assert.match(prompt, /by design/i, 'must say the reduced sets / high RIR are intentional');
+  assert.match(prompt, /"deload"/, 'must reference the deload fact the engine provides');
+  assert.match(prompt, /by design/i, 'must say the reduced load / sets / high RIR are intentional');
   assert.match(prompt, /not.*under-effort|do NOT tell them to add weight/i, 'must not steer toward adding weight on a deload');
-  assert.match(prompt, /return_weight/, 'must point forward to the weight they snap back to');
+  assert.match(prompt, /load_pct|reduced load/, 'must convey the deload cuts load, not hold it');
 });
 
 test('plan system prompt carries its guardrails', () => {
