@@ -32,7 +32,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - **PR 3.3 — expectation verdict engine** — extend `analytics.js` / `computePrescription` to emit `{ outcome, why, prescribedRir, actualRir, rirDelta }` per set/session; golden fixtures for beat/met/fell_short/swap. Pure data, nothing surfaces it yet. _(see [`COACH_PERSONALITY.md`](./COACH_PERSONALITY.md))_
   - **PR 3.4 — coach voice reaction** — in `coach.js`, word the PR 3.3 verdict with the personality spec; gated by "gap worth talking about"; default quiet. Celebrate on beat+story, pushback on fell_short, smart-swap acknowledgement. Approve 2–3 example outputs before merge.
   - **PR 3.5 — swap detection + working-weight finder** — detect substitutions, acknowledge as wins, run "find working weight at target RIR" protocol when no clean equivalent load exists.
-  - **PR 3.x — systemic-cost tier** — tiny lookup (HIGH/MEDIUM/LOW by name pattern) for the pairing rule; `services/liftCost.js` or addition to `liftRole`. Pure data + tests only. _(feeds PR 4.2 session builder)_
+  - ✅ **PR 3.x — systemic-cost tier** — `services/liftCost.js`: `costFor`; HIGH/MEDIUM/LOW by name pattern; pure data (16 tests).
   - **PR 3.x — balance signal** — antagonist volume-ratio engine: horizontal push:pull, vertical push:pull, anterior:posterior, quad:hamstring → `{ pair, ratio, status, reason }`, wide bands, read-only, golden fixtures. Sibling to `underCoverage.js`; nothing surfaces it yet. _(see [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) Rule B)_
   - **PR 4.0** — Give the engine a stored `profileGoal` to read; pass through recommendation pipeline.
   - **PR 4.1** — Goal- + coverage-aware ranking (Coach's Pick + menu order).
