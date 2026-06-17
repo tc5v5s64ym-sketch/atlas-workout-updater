@@ -7,13 +7,13 @@ const NUMBER_WORDS = {
 };
 
 const EXERCISE_ALIASES = [
-  ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db', 'db incline', 'incline press', 'incline']],
+  ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db bench', 'dumbbell incline press']],
   ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
   ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
   ['Deadlift', ['deadlift', 'dead', 'dl']],
   ['RDL', ['romanian deadlift', 'romanian dl', 'rdl']],
   ['Overhead Press', ['overhead press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
-  ['Lat Pulldown', ['lat pulldown', 'lat pull', 'pull down', 'pulldown', 'lats']],
+  ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],
   ['Seated Row', ['seated row', 'cable row', 'machine row']],
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
@@ -30,6 +30,14 @@ const AMBIGUOUS_ALIASES = {
   press: 'Which press - OHP, bench, or incline?',
   row: 'Which row - seated, bent-over, cable, or machine?',
   rows: 'Which row - seated, bent-over, cable, or machine?',
+};
+
+// Contextual aliases only resolve when the exercise's strong alias is already
+// present in the same parsed input. They cannot start a new exercise on their
+// own. Longer aliases are listed first so stripping is applied longest-match-first.
+const CONTEXTUAL_ALIASES = {
+  'Lat Pulldown':    ['lat pull', 'lats'],
+  'Incline DB Press': ['incline press', 'incline'],
 };
 
 function normalizeParserText(value) {
@@ -351,6 +359,32 @@ function parseLogSets(rawText, context = {}) {
   }
 
   if (!exercise) {
+    // Contextual aliases (e.g. "lats", "incline") cannot start a new exercise
+    // on their own, but they should still inherit the activeExercise when that
+    // exercise matches (cross-turn continuation). With no matching context they
+    // surface as ambiguous rather than creating a bogus unknown-exercise row.
+    const contextualLead = findContextualAliasLead(rawText);
+    if (contextualLead) {
+      if (context.activeExercise === contextualLead.canonicalName) {
+        const ctxAliases = CONTEXTUAL_ALIASES[contextualLead.canonicalName] || [];
+        const strippedRest = ctxAliases.reduce((text, alias) => {
+          const key = normalizeKey(alias);
+          return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
+        }, contextualLead.rest);
+        return parseWithExercise(rawText, {
+          canonicalName: contextualLead.canonicalName,
+          rawName: contextualLead.canonicalName,
+          rest: strippedRest,
+        });
+      }
+      return {
+        intent: 'needs_clarification',
+        raw_text: rawText,
+        message: `Did you mean ${contextualLead.canonicalName}? Use the full exercise name to be sure.`,
+        warnings: ['ambiguous_exercise_alias'],
+      };
+    }
+
     // A leading exercise NAME the resolver couldn't confidently match must never
     // be silently absorbed into the previous active exercise — that writes the
     // wrong lift's history (e.g. "shrugs 70 12/10" becoming Bench Press). Echo
@@ -374,34 +408,45 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
-  if (exercise.canonicalName === 'Hanging Knee Raises') {
-    const bodyweightSets = parseBodyweightReps(exercise.rest);
+  // Strip contextual alias tokens from the rest text. Contextual aliases are
+  // only valid because the strong alias was already matched above — any
+  // remaining occurrence is a set-separator label, not a new exercise name.
+  const contextualAliases = CONTEXTUAL_ALIASES[exercise.canonicalName];
+  const resolvedExercise = contextualAliases && exercise.rest
+    ? { ...exercise, rest: contextualAliases.reduce((text, alias) => {
+        const key = normalizeKey(alias);
+        return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
+      }, exercise.rest) }
+    : exercise;
+
+  if (resolvedExercise.canonicalName === 'Hanging Knee Raises') {
+    const bodyweightSets = parseBodyweightReps(resolvedExercise.rest);
     if (bodyweightSets.length) {
       return buildLogResult({
         rawText,
-        rawName: titleCaseFallback(exercise.rawName),
-        canonicalName: exercise.canonicalName,
+        rawName: titleCaseFallback(resolvedExercise.rawName),
+        canonicalName: resolvedExercise.canonicalName,
         sets: bodyweightSets,
       });
     }
   }
 
-  if (exercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(exercise.rest)) {
-    const reps = extractNumbers(exercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
+  if (resolvedExercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(resolvedExercise.rest)) {
+    const reps = extractNumbers(resolvedExercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
       message: 'Knee raises: do you mean bodyweight reps 20, 15, 15?',
       partial: {
-        exercise: exercise.canonicalName,
-        raw_name: exercise.rawName,
+        exercise: resolvedExercise.canonicalName,
+        raw_name: resolvedExercise.rawName,
         sets: reps,
       },
       warnings: ['missing_weight_or_bodyweight_context'],
     };
   }
 
-  return parseWithExercise(rawText, exercise);
+  return parseWithExercise(rawText, resolvedExercise);
 }
 
 function parseWithExercise(rawText, exercise) {
@@ -457,6 +502,23 @@ function parseUnknownExercise(rawText) {
     warnings: ['unknown_exercise'],
     needsCatalogReview: true,
   });
+}
+
+// Returns the canonical exercise name and stripped rest text when the input
+// leads with a contextual alias (e.g. "lats 130 8/2" → Lat Pulldown). Returns
+// null when no contextual alias is present at the start of the text. Aliases
+// are checked longest-first because CONTEXTUAL_ALIASES lists them that way.
+function findContextualAliasLead(rawText) {
+  const normalized = normalizeKey(rawText);
+  for (const [canonicalName, aliases] of Object.entries(CONTEXTUAL_ALIASES)) {
+    for (const alias of aliases) {
+      const key = normalizeKey(alias);
+      if (normalized === key || normalized.startsWith(`${key} `)) {
+        return { canonicalName, rest: stripExerciseText(rawText, key) };
+      }
+    }
+  }
+  return null;
 }
 
 function extractUnknownExerciseLead(rawText) {
