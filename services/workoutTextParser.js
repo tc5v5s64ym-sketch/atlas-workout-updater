@@ -336,6 +336,27 @@ function parseLogSets(rawText, context = {}) {
   }
 
   if (!exercise) {
+    // Contextual aliases (e.g. "lats", "incline") cannot start a new exercise
+    // on their own, but they should still inherit the activeExercise when that
+    // exercise matches (cross-turn continuation). With no matching context they
+    // surface as ambiguous rather than creating a bogus unknown-exercise row.
+    const contextualLead = findContextualAliasLead(rawText);
+    if (contextualLead) {
+      if (context.activeExercise === contextualLead.canonicalName) {
+        return parseWithExercise(rawText, {
+          canonicalName: contextualLead.canonicalName,
+          rawName: contextualLead.canonicalName,
+          rest: contextualLead.rest,
+        });
+      }
+      return {
+        intent: 'needs_clarification',
+        raw_text: rawText,
+        message: `Did you mean ${contextualLead.canonicalName}? Use the full exercise name to be sure.`,
+        warnings: ['ambiguous_exercise_alias'],
+      };
+    }
+
     // A leading exercise NAME the resolver couldn't confidently match must never
     // be silently absorbed into the previous active exercise — that writes the
     // wrong lift's history (e.g. "shrugs 70 12/10" becoming Bench Press). Echo
@@ -453,6 +474,23 @@ function parseUnknownExercise(rawText) {
     warnings: ['unknown_exercise'],
     needsCatalogReview: true,
   });
+}
+
+// Returns the canonical exercise name and stripped rest text when the input
+// leads with a contextual alias (e.g. "lats 130 8/2" → Lat Pulldown). Returns
+// null when no contextual alias is present at the start of the text. Aliases
+// are checked longest-first because CONTEXTUAL_ALIASES lists them that way.
+function findContextualAliasLead(rawText) {
+  const normalized = normalizeKey(rawText);
+  for (const [canonicalName, aliases] of Object.entries(CONTEXTUAL_ALIASES)) {
+    for (const alias of aliases) {
+      const key = normalizeKey(alias);
+      if (normalized === key || normalized.startsWith(`${key} `)) {
+        return { canonicalName, rest: stripExerciseText(rawText, key) };
+      }
+    }
+  }
+  return null;
 }
 
 function extractUnknownExerciseLead(rawText) {

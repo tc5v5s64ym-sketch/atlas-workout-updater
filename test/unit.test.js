@@ -1235,17 +1235,18 @@ test('bare correction number asks clarification instead of defaulting to RIR', (
 
 test('contextual_alias_lats_standalone_no_set_data_does_not_create_log', () => {
   // "lats" is contextual-only — cannot start an exercise without a strong alias.
-  // With no set tokens following, the parser should ask for clarification, not log.
+  // With no set tokens and no activeExercise context, the parser asks for
+  // clarification and surfaces an ambiguous_exercise_alias warning (not log_sets).
   const result = parseWorkoutText('lats are sore today');
   assert.equal(result.intent, 'needs_clarification');
-  assert.ok(result.warnings.includes('missing_exercise'));
+  assert.ok(result.warnings.includes('ambiguous_exercise_alias'));
   assert.equal(result.sets, undefined);
 });
 
 test('contextual_alias_incline_standalone_no_set_data_does_not_create_log', () => {
   const result = parseWorkoutText('incline felt weird');
   assert.equal(result.intent, 'needs_clarification');
-  assert.ok(result.warnings.includes('missing_exercise'));
+  assert.ok(result.warnings.includes('ambiguous_exercise_alias'));
   assert.equal(result.sets, undefined);
 });
 
@@ -1264,6 +1265,38 @@ test('contextual_alias_incline_resolves_within_incline_db_press_input', () => {
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'Incline DB Press');
   assert.deepEqual(compactParsedSets(result), [[60, 10, 2], [65, 8, 2]]);
+});
+
+test('contextual_alias_lats_with_set_data_no_context_needs_clarification', () => {
+  // "lats 130 8/2" has set data but no strong alias and no activeExercise.
+  // Must NOT create a bogus "Lats" unknown-exercise row — surface as ambiguous instead.
+  const result = parseWorkoutText('lats 130 8/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('ambiguous_exercise_alias'));
+  assert.equal(result.sets, undefined);
+});
+
+test('contextual_alias_incline_with_set_data_no_context_needs_clarification', () => {
+  const result = parseWorkoutText('incline 65 8/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('ambiguous_exercise_alias'));
+  assert.equal(result.sets, undefined);
+});
+
+test('contextual_alias_lats_inherits_active_lat_pulldown', () => {
+  // Cross-turn continuation: "lats 130 8/2" with activeExercise=Lat Pulldown
+  // must inherit the active lift, not create a bogus "Lats" row.
+  const result = parseWorkoutText('lats 130 8/2', { activeExercise: 'Lat Pulldown' });
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[130, 8, 2]]);
+});
+
+test('contextual_alias_incline_inherits_active_incline_db_press', () => {
+  const result = parseWorkoutText('incline 65 8/2', { activeExercise: 'Incline DB Press' });
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(compactParsedSets(result), [[65, 8, 2]]);
 });
 
 test('new_strong_alias_cable_pulldown_maps_to_lat_pulldown', () => {
