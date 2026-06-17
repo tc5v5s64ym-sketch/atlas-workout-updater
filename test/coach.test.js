@@ -649,6 +649,50 @@ test('compileSessionFromHistory returns null for empty or missing turns', async 
   assert.equal(r3.workout_text, null, 'undefined → null');
 });
 
+// ── null-element crash guards ─────────────────────────────────────────────────
+// Regression: the rir guard `s && s.rir == null ? null : numOrNull(s.rir)`
+// short-circuits when s is null, then falls through to numOrNull(s.rir) → crash.
+
+test('sanitizeFacts does not crash on null / non-object elements in todaySets', () => {
+  let clean;
+  assert.doesNotThrow(() => {
+    clean = sanitizeFacts({ todaySets: [null, 'nope', 42, { weight: 225, reps: 5, rir: 0 }] });
+  });
+  assert.equal(clean.today_sets.length, 4);
+  assert.deepEqual(clean.today_sets[0], { weight: null, reps: null, rir: null });
+  assert.deepEqual(clean.today_sets[3], { weight: 225, reps: 5, rir: 0 }, 'valid element still passes through');
+});
+
+test('sanitizeFacts does not crash on null / non-object elements in last_working_sets', () => {
+  let clean;
+  assert.doesNotThrow(() => {
+    clean = sanitizeFacts({ rec: { last_working_sets: [null, { weight: 225, reps: 5, rir: 2 }] } });
+  });
+  assert.equal(clean.last_working_sets.length, 2);
+  assert.deepEqual(clean.last_working_sets[0], { weight: null, reps: null, rir: null });
+  assert.deepEqual(clean.last_working_sets[1], { weight: 225, reps: 5, rir: 2 });
+});
+
+test('sanitizeChatContext does not crash on null / non-object elements in current_preview', () => {
+  let clean;
+  assert.doesNotThrow(() => {
+    clean = sanitizeChatContext({ current_preview: [null, 'nope', { exercise: 'Bench', weight: 225, reps: 5, rir: 0 }] });
+  });
+  assert.equal(clean.current_preview.length, 1, 'null/non-object elements have no exercise and are filtered');
+  assert.equal(clean.current_preview[0].exercise, 'Bench');
+  assert.equal(clean.current_preview[0].rir, 0, 'RIR 0 preserved on valid element');
+});
+
+test('sanitizeChatContext does not crash on null / non-object elements in current_plan', () => {
+  let clean;
+  assert.doesNotThrow(() => {
+    clean = sanitizeChatContext({ current_plan: [null, 'nope', { name: 'Squat', weight: 315, reps: 5, sets: 3, rir: 2 }] });
+  });
+  assert.equal(clean.current_plan.length, 1, 'null/non-object elements have no name and are filtered');
+  assert.equal(clean.current_plan[0].name, 'Squat');
+  assert.equal(clean.current_plan[0].rir, 2);
+});
+
 test('compileSessionFromHistory throws when Gemini is unconfigured (non-empty turns)', async () => {
   const savedKey = process.env.GEMINI_API_KEY;
   delete process.env.GEMINI_API_KEY;

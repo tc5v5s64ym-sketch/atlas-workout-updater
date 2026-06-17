@@ -62,11 +62,11 @@ function buildCoachSystemPrompt() {
 // content to the LLM.
 function sanitizeFacts(facts) {
   const f = facts && typeof facts === 'object' ? facts : {};
-  const toSet = s => ({
-    weight: numOrNull(s && s.weight),
-    reps: numOrNull(s && s.reps),
-    rir: s && s.rir == null ? null : numOrNull(s.rir)
-  });
+  const toSet = s => (s && typeof s === 'object' ? {
+    weight: numOrNull(s.weight),
+    reps: numOrNull(s.reps),
+    rir: s.rir == null ? null : numOrNull(s.rir)
+  } : { weight: null, reps: null, rir: null });
   const rec = f.rec && typeof f.rec === 'object' ? f.rec : {};
   const target = rec.next_target && typeof rec.next_target === 'object' ? rec.next_target : null;
   return {
@@ -74,11 +74,11 @@ function sanitizeFacts(facts) {
     lift_code: strOrNull(f.liftCode),
     today_sets: Array.isArray(f.todaySets) ? f.todaySets.slice(0, 12).map(toSet) : [],
     last_working_sets: Array.isArray(rec.last_working_sets)
-      ? rec.last_working_sets.slice(-6).map(s => ({
-          weight: numOrNull(s && s.weight),
-          reps: numOrNull(s && s.reps),
-          rir: s && s.rir == null ? null : numOrNull(s.rir)
-        }))
+      ? rec.last_working_sets.slice(-6).map(s => (s && typeof s === 'object' ? {
+          weight: numOrNull(s.weight),
+          reps: numOrNull(s.reps),
+          rir: s.rir == null ? null : numOrNull(s.rir)
+        } : { weight: null, reps: null, rir: null }))
       : [],
     recommendation: strOrNull(rec.recommendation),
     next_target: target ? { weight: numOrNull(target.weight), reps: numOrNull(target.reps), sets: numOrNull(target.sets) } : null,
@@ -420,20 +420,20 @@ function sanitizeChatContext(context) {
     weight: numOrNull(s && s.weight),
     sessions_stalled: numOrNull(s && s.sessions_stalled)
   })).filter(s => s.exercise) : [];
-  const current_preview = Array.isArray(c.current_preview) ? c.current_preview.slice(0, 16).map(s => ({
-    exercise: strOrNull(s && s.exercise),
-    weight: numOrNull(s && s.weight),
-    reps: numOrNull(s && s.reps),
-    rir: s && s.rir == null ? null : numOrNull(s.rir)
-  })).filter(s => s.exercise) : [];
-  const current_plan = Array.isArray(c.current_plan) ? c.current_plan.slice(0, 10).map(e => ({
-    name: strOrNull(e && e.name),
-    rationale: strOrNull(e && e.rationale),
-    weight: numOrNull(e && e.weight),
-    reps: numOrNull(e && e.reps),
-    sets: numOrNull(e && e.sets),
-    rir: e && e.rir == null ? null : numOrNull(e.rir)
-  })).filter(e => e.name) : [];
+  const current_preview = Array.isArray(c.current_preview) ? c.current_preview.slice(0, 16).map(s => (s && typeof s === 'object' ? {
+    exercise: strOrNull(s.exercise),
+    weight: numOrNull(s.weight),
+    reps: numOrNull(s.reps),
+    rir: s.rir == null ? null : numOrNull(s.rir)
+  } : { exercise: null, weight: null, reps: null, rir: null })).filter(s => s.exercise) : [];
+  const current_plan = Array.isArray(c.current_plan) ? c.current_plan.slice(0, 10).map(e => (e && typeof e === 'object' ? {
+    name: strOrNull(e.name),
+    rationale: strOrNull(e.rationale),
+    weight: numOrNull(e.weight),
+    reps: numOrNull(e.reps),
+    sets: numOrNull(e.sets),
+    rir: e.rir == null ? null : numOrNull(e.rir)
+  } : { name: null, rationale: null, weight: null, reps: null, sets: null, rir: null })).filter(e => e.name) : [];
   const session_count = numOrNull(c.session_count);
   const coaching_notes = Array.isArray(c.coaching_notes)
     ? c.coaching_notes.slice(0, 10).map(n => ({
