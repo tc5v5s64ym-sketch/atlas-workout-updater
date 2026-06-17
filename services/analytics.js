@@ -1190,15 +1190,33 @@ function buildMuscleGroupReadiness(logRows, options = {}) {
   });
 }
 
+// Maps each of the 17 taxonomy muscles to its primary movement pattern for the
+// coverage-gap signal inside scoreIntents. Exported so tests can assert completeness
+// against TAXONOMY — a missing muscle silently drops its gap contribution otherwise.
+const MUSCLE_PATTERN = Object.freeze({
+  chest: 'push', front_delts: 'push', side_delts: 'push', triceps: 'push',
+  lats: 'pull', biceps: 'pull', rear_delts: 'pull', upper_back: 'pull', traps: 'pull', forearms: 'pull',
+  quads: 'lower', glutes: 'lower', calves: 'lower',
+  hamstrings: 'hinge', lower_back: 'hinge',
+  abs: 'core', obliques: 'core',
+});
+
 // ─── Intent scoring engine ────────────────────────────────────────────────────
 function scoreIntents(logRows, effortRows = [], options = {}) {
-  const { today = null } = options || {};
+  const { today = null, goal = null } = options || {};
   const todayStr = safeDateString(today);
   const readiness = buildMuscleGroupReadiness(logRows, { today: todayStr, effortRows });
   const fatigue = computeFatigueStatus(logRows, new Date(todayStr + 'T12:00:00'));
   // Lazily required to break a load-time cycle: coverageStalls → muscleVolume →
   // analytics. By the time scoreIntents runs, every module is fully loaded.
   const { annotateStallsForDeload } = require('./coverageStalls');
+  // Same lazy require: underCoverage → muscleVolume → analytics (same cycle root).
+  // options.underCoverage can be pre-computed (useful in tests); otherwise computed here.
+  const underCoverageData = (options && options.underCoverage != null)
+    ? options.underCoverage
+    : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
+  const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
+  const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
   // muscle is already covered by other lifts — downgraded, not erased.
   const stalls = annotateStallsForDeload(detectStalls(logRows), logRows);
@@ -1314,7 +1332,16 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (isFresh('pull')) { why.push('Pulling work is overdue — important for shoulder balance'); protects.push('Shoulder health via pulling rotation'); }
     if (rm.lower?.daysSince) data.push({ label: 'Lower body', value: `${rm.lower.daysSince}d since last session`, context: rm.lower.status });
 
-    const exercises = exForPatterns(['push', 'pull']);
+    // When the user's goal is strength and legs are well rested, include lower-body
+    // compounds (squat/hinge) so a full strength session is offered, not just upper work.
+    const strengthPatterns = (goal === 'strength' && isFresh('lower'))
+      ? ['lower', 'hinge', 'push', 'pull']
+      : ['push', 'pull'];
+    if (goal === 'strength' && isFresh('lower')) {
+      score += 10;
+      why.push('Legs are well rested — lead with a heavy lower-body compound');
+    }
+    const exercises = exForPatterns(strengthPatterns);
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
     for (const s of eligibleStalls.slice(0, 2)) {
@@ -1690,6 +1717,41 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     why_today: ['Define your own intent for today'],
     data_points: [], what_it_protects: [], watch_for: [], pivot_logic: [], exercises: []
   });
+
+  // ── Goal-alignment bonus ──────────────────────────────────────────────────
+  // Applied after all intent scores are set. A known goal nudges relevant intents
+  // up/down to reflect what the user is actually training for. Absent or unknown
+  // goal → no change, so the scorer degrades gracefully to today's read-only view.
+  const GOAL_BONUS = {
+    strength:              { build_strength: 20, test_progress: 10, build_muscle: -5,  recovery_pump: -15, deload_reset: -10 },
+    hypertrophy:           { build_muscle: 20,   fix_blind_spots: 8, build_strength: -5, recovery_pump: -5, deload_reset: -5, balanced: 5 },
+    recovery:              { recovery_pump: 25,  short_session: 15,  deload_reset: 10,  build_strength: -15, test_progress: -20, build_muscle: -5 },
+    power:                 { build_strength: 10, test_progress: 15,  recovery_pump: -10 },
+    conditioning_fat_loss: { short_session: 10,  recovery_pump: 5,   deload_reset: -5 },
+    muscular_endurance:    { build_muscle: 10,   recovery_pump: 5,   build_strength: -5, test_progress: -5 },
+    mixed:                 { build_strength: 5,  build_muscle: 5,    recovery_pump: -5 },
+    general_health:        {},
+  };
+  const goalBonuses = (goal && GOAL_BONUS[goal]) ?? {};
+  for (const intent of intents) {
+    const bonus = goalBonuses[intent.id] ?? 0;
+    if (bonus !== 0) intent.score += bonus;
+  }
+
+  // ── Coverage-gap bonus ────────────────────────────────────────────────────
+  // When muscles are under-served, boost intents that naturally fill those gaps:
+  // fix_blind_spots is the home for neglected patterns; build_muscle gets a
+  // hypertrophy-specific lift when specific growth gaps are identified.
+  if (patternsWithGaps.size > 0) {
+    for (const intent of intents) {
+      if (intent.id === 'fix_blind_spots') {
+        intent.score += Math.min(patternsWithGaps.size * 8, 20);
+      }
+      if (intent.id === 'build_muscle' && goal === 'hypertrophy') {
+        intent.score += Math.min(patternsWithGaps.size * 6, 15);
+      }
+    }
+  }
 
   // Sort, mark the top non-custom intent as recommended
   intents.sort((a, b) => b.score - a.score);
@@ -2215,6 +2277,7 @@ module.exports = {
   buildRecentSessions,
   classifyMuscleGroup,
   buildMuscleGroupReadiness,
+  MUSCLE_PATTERN,
   scoreIntents,
   recoveryFraction,
   effortIntensityBySession,
