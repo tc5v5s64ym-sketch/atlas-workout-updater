@@ -69,7 +69,7 @@ const { parseWorkoutScreenshot } = require('./services/vision');
 const coach = require('./services/coach');
 const trainingSME = require('./services/trainingSME');
 const coachPolish = require('./services/coachPolish');
-const { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
+const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
 const trainingStore = require('./services/trainingStore');
@@ -557,9 +557,22 @@ async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, 
   const pending_exercises = [];
   const enrichedRowObjects = [];
 
+  // Use a registry so that *generated* lift codes (the fallback case only) are unique
+  // within this batch of log rows. Pre-claim in sorted-by-name order for determinism
+  // (same input set of names => same assigned codes, independent of row order in payload).
+  const liftCodeRegistry = makeLiftCodeRegistry();
+  const preClaimItems = (logRows || []).map(row => {
+    const rowObj = normalizeLogRow(row, topLevelSessionId, topLevelDate);
+    return { rowObj, normKey: normalizeExerciseKey(rowObj.exercise || '') };
+  }).sort((a, b) => a.normKey.localeCompare(b.normKey));
+  for (const item of preClaimItems) {
+    // Trigger generate claims (if any) for this name in stable order. Result discarded.
+    enrichLogRow({ ...item.rowObj }, catalogMap, liftCodeRegistry);
+  }
+
   const formattedRows = logRows.map(row => {
     const rowObj = normalizeLogRow(row, topLevelSessionId, topLevelDate);
-    const result = enrichLogRow(rowObj, catalogMap);
+    const result = enrichLogRow(rowObj, catalogMap, liftCodeRegistry);
     const enriched = result.enriched;
     enrichedRowObjects.push(enriched);
     if (result.autoMatch) auto_matches.push(result.autoMatch);
