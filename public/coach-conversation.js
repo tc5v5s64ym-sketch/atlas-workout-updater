@@ -1199,11 +1199,16 @@
     if (/^\s*(hi|hey|hello|yo|sup|good (morning|evening))\b/.test(t)) {
       return "Hey — ready when you are. Log your sets and say \"log it\" when you're done.";
     }
+    // Skip + workout notation: user noted a substitution — acknowledge the skip without
+    // claiming it was classified or logged.
+    if (/\bskipp?ed?\b/.test(t) && /\d/.test(t)) {
+      return "Noted the skip. Keep logging and say \"log it\" when you're done — I'll review the full session then.";
+    }
     // Looks like workout notation (has numbers) — don't suggest format correction
     if (/\d/.test(t)) {
-      return "Noted — I'm having trouble connecting right now. Keep logging and say \"log it\" when you're done; I'll compile everything then.";
+      return "Noted — keep logging and say \"log it\" when you're done; I'll compile everything then.";
     }
-    return "I'm having trouble connecting right now — try again in a moment.";
+    return "Coach is unavailable right now — try again in a moment.";
   }
 
   async function handleChatMessage(detail) {
