@@ -2038,26 +2038,28 @@ function buildWeeklyReport(logRows, options = {}) {
     return d >= priorStart && d <= priorEnd && isPositiveFinite(Number(Array.isArray(row) ? row[7] : row?.weight)) && isPositiveFinite(Number(Array.isArray(row) ? row[8] : row?.reps));
   });
 
+  const cell = (row, idx, key) => Array.isArray(row) ? row[idx] : row?.[key];
+
   const sessions_count = new Set(
-    weekRows.map(r => String(r[1] || '').trim()).filter(Boolean)
+    weekRows.map(r => String(cell(r, 1, 'session_id') || '').trim()).filter(Boolean)
   ).size;
 
   let total_sets = 0;
   let total_volume = 0;
   weekRows.forEach(row => {
     total_sets++;
-    total_volume += (Number(row[7]) || 0) * (Number(row[8]) || 0);
+    total_volume += (Number(cell(row, 7, 'weight')) || 0) * (Number(cell(row, 8, 'reps')) || 0);
   });
   total_volume = Math.round(total_volume);
 
   // Top exercises by volume this week
   const exerciseMap = new Map();
   weekRows.forEach(row => {
-    const exercise = String(row[3] || row[2] || '').trim();
-    const liftCode = String(row[5] || '').trim();
+    const exercise = String(cell(row, 3, 'canonical_exercise') || cell(row, 2, 'exercise') || '').trim();
+    const liftCode = String(cell(row, 5, 'lift_code') || '').trim();
     const key = liftCode || exercise;
     if (!key) return;
-    const vol = (Number(row[7]) || 0) * (Number(row[8]) || 0);
+    const vol = (Number(cell(row, 7, 'weight')) || 0) * (Number(cell(row, 8, 'reps')) || 0);
     if (!exerciseMap.has(key)) exerciseMap.set(key, { exercise, lift_code: liftCode, volume: 0, sets: 0 });
     const e = exerciseMap.get(key);
     e.volume += vol;
@@ -2071,27 +2073,27 @@ function buildWeeklyReport(logRows, options = {}) {
   // Muscle group volume this week
   const muscle_group_volume = {};
   weekRows.forEach(row => {
-    const mg = String(row[4] || 'Unknown').trim() || 'Unknown';
-    muscle_group_volume[mg] = (muscle_group_volume[mg] || 0) + (Number(row[7]) || 0) * (Number(row[8]) || 0);
+    const mg = String(cell(row, 4, 'muscle_group') || 'Unknown').trim() || 'Unknown';
+    muscle_group_volume[mg] = (muscle_group_volume[mg] || 0) + (Number(cell(row, 7, 'weight')) || 0) * (Number(cell(row, 8, 'reps')) || 0);
   });
   for (const mg in muscle_group_volume) muscle_group_volume[mg] = Math.round(muscle_group_volume[mg]);
 
   // PRs: this week's best weight vs prior week's best weight per lift
   const thisBest = new Map();
   weekRows.forEach(row => {
-    const liftCode = String(row[5] || '').trim();
+    const liftCode = String(cell(row, 5, 'lift_code') || '').trim();
     if (!liftCode) return;
-    const weight = Number(row[7]) || 0;
-    const exercise = String(row[3] || row[2] || '').trim();
+    const weight = Number(cell(row, 7, 'weight')) || 0;
+    const exercise = String(cell(row, 3, 'canonical_exercise') || cell(row, 2, 'exercise') || '').trim();
     if (!thisBest.has(liftCode) || weight > thisBest.get(liftCode).best_weight) {
       thisBest.set(liftCode, { best_weight: weight, exercise });
     }
   });
   const priorBest = new Map();
   priorRows.forEach(row => {
-    const liftCode = String(row[5] || '').trim();
+    const liftCode = String(cell(row, 5, 'lift_code') || '').trim();
     if (!liftCode) return;
-    const weight = Number(row[7]) || 0;
+    const weight = Number(cell(row, 7, 'weight')) || 0;
     if (!priorBest.has(liftCode) || weight > priorBest.get(liftCode).best_weight) {
       priorBest.set(liftCode, { best_weight: weight });
     }
