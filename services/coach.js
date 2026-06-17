@@ -615,6 +615,69 @@ async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS
   return { workout_text: result };
 }
 
+// ── Expectation verdict reaction (PR 3.4) ────────────────────────────────────
+// Words the PR 3.3 `computeExpectationVerdict` result with the personality spec
+// from COACH_PERSONALITY.md. Nothing surfaces this yet — pure voice layer.
+//
+// Gate: react for fell_short, swap, and beat; stay quiet for met (and null/bad input).
+// Default quiet: the engine decides when a gap is worth talking about; this module
+// only words the decision.
+
+function buildVerdictReactionSystemPrompt() {
+  return [
+    'You are Atlas, a sharp strength coach reacting to a logged set.',
+    'You are given a STRUCTURED VERDICT as JSON — the engine\'s read of the gap between expected and actual effort.',
+    '',
+    'React to the gap. The gap is the story.',
+    '',
+    'outcome rules:',
+    '- "beat": pushed harder than the target. Celebrate ONLY when it is earned — a meaningful push (2+ RIR below target) or hitting the mark after time off. For a small beat (1 RIR under), a brief honest line then move on — not a song.',
+    '- "fell_short": too much in reserve. Firm, honest pushback — on their side, never harsh. Name what you saw and tell them to close the gap. "You left X reps in the tank. If set 1 feels easy, bump the weight and chase that [prescribedRir]-in-reserve." Specific, actionable.',
+    '- "swap": treat it as a win. A brief acknowledgement. If no clear equivalent load exists, note they should find the working weight at the target RIR — start conservative, work up until the set feels like [prescribedRir] in reserve.',
+    '',
+    'Hard rules:',
+    '- IRON RULE: engine owns the verdict; you only word it. Never contradict outcome, why, or rirDelta.',
+    '- The "why" field is the engine\'s read — cite it when useful, never rewrite it with different numbers.',
+    '- Never invent weights, reps, or RIR values not in the verdict.',
+    '- Under 60 words. Plain text only — no markdown, no bullets, no headings.',
+    '- You never write to any database or sheet; you only talk.'
+  ].join('\n');
+}
+
+// Whitelist only the verdict fields the model needs — never arbitrary input.
+function sanitizeVerdictFacts(verdict) {
+  if (!verdict || typeof verdict !== 'object') return null;
+  const outcome = typeof verdict.outcome === 'string' ? verdict.outcome.trim() : null;
+  if (!['beat', 'met', 'fell_short', 'swap'].includes(outcome)) return null;
+  const numNullable = v => (v == null ? null : numOrNull(v));
+  return {
+    outcome,
+    why:           clampText(verdict.why, 200),
+    prescribedRir: numNullable(verdict.prescribedRir),
+    actualRir:     numNullable(verdict.actualRir),
+    rirDelta:      numNullable(verdict.rirDelta),
+  };
+}
+
+// Returns true when the verdict has a gap worth talking about.
+// met → quiet; beat / fell_short / swap → react.
+function isVerdictWorthReacting(verdict) {
+  if (!verdict || typeof verdict !== 'object') return false;
+  const { outcome } = verdict;
+  return outcome === 'beat' || outcome === 'fell_short' || outcome === 'swap';
+}
+
+// Generate a short coaching reaction (1–3 sentences) for the expectation verdict.
+// Returns null when the verdict is not worth reacting to (met, null, bad input).
+// Degrades gracefully — throws when Gemini is unconfigured (caught by the route).
+async function generateVerdictReaction(verdict, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (!isVerdictWorthReacting(verdict)) return null;
+  const facts = sanitizeVerdictFacts(verdict);
+  if (!facts) return null;
+  const userPrompt = `VERDICT:\n${JSON.stringify(facts, null, 2)}`;
+  return callGemini(buildVerdictReactionSystemPrompt(), userPrompt, timeoutMs);
+}
+
 module.exports = {
   isConfigured,
   coachModel,
@@ -637,5 +700,9 @@ module.exports = {
   parseReplyWithProposals,
   isValidEditSchema,
   buildCompileSystemPrompt,
-  compileSessionFromHistory
+  compileSessionFromHistory,
+  buildVerdictReactionSystemPrompt,
+  sanitizeVerdictFacts,
+  isVerdictWorthReacting,
+  generateVerdictReaction
 };
