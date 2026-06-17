@@ -1192,6 +1192,34 @@ test('rdl_and_deadlift_together_is_still_mixed', () => {
   assert.notDeepEqual(result.sets?.map(set => [set.weight, set.reps, set.rir]), [[185, 5, 2], [225, 3, 2]]);
 });
 
+test('skip note on same line as exercise name does not trigger multiple_exercises', () => {
+  // "Deadlift skipped" is a skip context — Romanian Deadlift is the logged lift.
+  const result = parseWorkoutText(
+    'Deadlift skipped - platform busy.\n\nRomanian Deadlift\n245lbs 7/2\n245lbs 7/2\n245lbs 7/2'
+  );
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(compactParsedSets(result), [[245, 7, 2], [245, 7, 2], [245, 7, 2]]);
+  assert.ok(!result.warnings || !result.warnings.includes('multiple_exercises_in_input'));
+});
+
+test('sentence starting with skipped does not trigger multiple_exercises', () => {
+  // "I skipped deadlifts" is skip context — Calf Raise is what was actually logged.
+  const result = parseWorkoutText(
+    'I skipped deadlifts because the machine was busy.\n\nCalf Raise\n200lbs 15/2\n200lbs 15/2\n200lbs 15/2'
+  );
+  assert.ok(!result.warnings || !result.warnings.includes('multiple_exercises_in_input'));
+  // Calf Raise is not in the catalog so it surfaces as unknown_exercise, not as a multiple-exercise error.
+  assert.notEqual(result.intent, 'needs_clarification', 'should not need clarification due to skip sentence');
+});
+
+test('real mixed exercise input without skip word still asks for clarification', () => {
+  // Existing behaviour preserved — genuinely ambiguous input must still clarify.
+  const result = parseWorkoutText('RDL 185 5/2 deadlift 225 3/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
+});
+
 test('ambiguous_press_asks_never_guesses', () => {
   const result = parseWorkoutText('Press 135 8/2');
   assert.equal(result.intent, 'needs_clarification');
