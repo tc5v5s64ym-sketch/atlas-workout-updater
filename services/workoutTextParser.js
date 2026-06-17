@@ -598,6 +598,7 @@ function parseDumbbellGroups(text) {
   const SLASH_GROUP = /(\d+(?:\.\d+)?)s\s+(\d+)\/(\d+(?:\.\d+)?)(?:\s+x(\d+))?/gi;
   const XREP_GROUP  = /(\d+(?:\.\d+)?)s\s+x(\d+)\s+@(\d+(?:\.\d+)?)(?:\s+x(\d+))?/gi;
 
+  // Slash form wins when both notations appear in one entry; xrep is not tried.
   const slashMatches = [...text.matchAll(SLASH_GROUP)];
   if (slashMatches.length) {
     const sets = [];
