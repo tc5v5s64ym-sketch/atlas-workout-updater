@@ -200,15 +200,38 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
     };
   }
 
-  // --- Rule 5: abandoned — different stimulus, ~0 overlap, no justification
+  // --- Rule 5: abandoned — different stimulus, ~0 overlap, no justification,
+  // AND the prescribed lift carried real training weight (medium/high systemic
+  // cost OR a main role). Dropping a heavy main lift for an unrelated stimulus
+  // leaves the session's objective untrained.
+  const prescribedCost = costFor(prescribedName).cost;
+  const prescribedRole = classifyLiftRole(prescribedName);
+  const carriedRealWeight = prescribedCost === 'medium' || prescribedCost === 'high' || prescribedRole === 'main';
+
+  if (carriedRealWeight) {
+    return {
+      classification: 'abandoned',
+      decision:       'warn',
+      reason_code:    'pattern_abandoned',
+      prescribed:     prescribedInfo,
+      logged:         loggedInfo,
+      muscle_overlap,
+      evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'pattern_abandoned' }),
+    };
+  }
+
+  // --- Rule 6: changed — different stimulus but the prescribed lift was a
+  // low-cost accessory (not medium/high cost and not a main lift). Dropping
+  // trivial accessory work warrants a soft flag, not an abandoned-objective
+  // warning (spec: abandoned requires real training weight).
   return {
-    classification: 'abandoned',
+    classification: 'changed',
     decision:       'warn',
-    reason_code:    'pattern_abandoned',
+    reason_code:    'accessory_swap',
     prescribed:     prescribedInfo,
     logged:         loggedInfo,
     muscle_overlap,
-    evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'pattern_abandoned' }),
+    evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'accessory_swap' }),
   };
 }
 
