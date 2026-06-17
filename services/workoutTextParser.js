@@ -250,7 +250,12 @@ function parseWorkoutText(input, context = {}) {
     return parseEffortCapture(rawText);
   }
 
-  return parseLogSets(rawText, context);
+  const skipped = extractSkipNotes(rawText);
+  const result = parseLogSets(rawText, context);
+  if (skipped.length > 0 && result?.intent === 'log_sets') {
+    return { ...result, prescribed: skipped };
+  }
+  return result;
 }
 
 function buildWorkoutTextParseDryRunResponse(payload) {
@@ -354,6 +359,28 @@ function stripSkipNoteSentences(text) {
   // would wipe real set data. Fall back to the original text in that case.
   if (!kept.length) return text;
   return kept.length < parts.length ? kept.join('. ').trim() : text;
+}
+
+// Extract prescribed/skipped exercise metadata from skip-note sentences without
+// stripping them (that is stripSkipNoteSentences' job). Returns an array of
+// { exercise, reason } objects — one per detected skip sentence.
+function extractSkipNotes(text) {
+  const SKIP_WORD = /\bskipp?(?:ed|ing)?\b/i;
+  const HAS_SET_SLASH = /\d+\/\d+/;
+  const EXERCISE_LEAD = /^(.+?)\s+skipp?(?:ed|ing)?\b/i;
+  const REASON_SUFFIX = /skipp?(?:ed|ing)?\s*[-–—:]\s*(.+)/i;
+  const skipped = [];
+  for (const part of text.split('. ')) {
+    if (!SKIP_WORD.test(part) || HAS_SET_SLASH.test(part)) continue;
+    const m = EXERCISE_LEAD.exec(part.trim());
+    if (!m) continue;
+    const reasonMatch = REASON_SUFFIX.exec(part.trim());
+    skipped.push({
+      exercise: m[1].trim(),
+      reason: reasonMatch ? reasonMatch[1].trim().replace(/[.!?]+$/, '') : null,
+    });
+  }
+  return skipped;
 }
 
 function parseLogSets(rawText, context = {}) {

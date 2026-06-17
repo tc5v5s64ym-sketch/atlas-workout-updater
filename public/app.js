@@ -2122,6 +2122,7 @@ function runEffortCardCleanups() {
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
+let lastPrescribed = null;
 // Cached when the Today dashboard loads so routeMessageToCoach can include
 // the current plan order in coach context (for "why in this order?" questions).
 let lastIntentData = null;
@@ -2447,7 +2448,7 @@ async function parseWorkoutTextWithBackend(workoutText) {
     err.noFallback = true;
     throw err;
   }
-  return { intent: 'log_sets', rows, warnings: data.warnings || [] };
+  return { intent: 'log_sets', rows, warnings: data.warnings || [], prescribed: Array.isArray(parsed.prescribed) ? parsed.prescribed : null };
 }
 
 function populateSetRows(rows) {
@@ -2490,6 +2491,7 @@ async function rowsFromWorkoutInput() {
     lastParserStatus = { source: 'local' };
     parsedRowsEditor.hidden = true;
     lastParsedWorkoutText = workoutText;
+    lastPrescribed = null;
     return;
   }
 
@@ -2512,6 +2514,7 @@ async function rowsFromWorkoutInput() {
   activeExercise = parsed.rows[0]?.exercise || null;
   parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = workoutText;
+  lastPrescribed = parsed.prescribed || null;
 
   // The parser couldn't confidently resolve the lift name and echoed the typed
   // text instead of guessing a real lift. Surface it so the wrong history isn't
@@ -3263,6 +3266,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
       const payload = { session_id: sessionId, date, log_rows: logRows, test_mode: 'true', write_id: generateWriteId() };
       if (effortRow) payload.effort_row = effortRow;
+      if (lastPrescribed && lastPrescribed.length > 0 && logRows.length > 0) {
+        const loggedExercise = logRows[0].exercise || '';
+        payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise }));
+      }
 
       const result = await api('/api/log-workout', {
         method: 'POST',
@@ -3665,6 +3672,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     lastParsedWorkoutText = '';
     lastParserStatus = null;
     activeExercise = null;
+    lastPrescribed = null;
     setDefaultDate();
     setStatus(
       loggerStatus,

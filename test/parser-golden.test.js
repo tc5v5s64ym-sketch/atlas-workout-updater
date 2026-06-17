@@ -481,6 +481,39 @@ test('substitution: exercise header on its own paragraph still resolves when set
 });
 
 // ---------------------------------------------------------------------------
+// Substitution wiring — skip-notation "prescribed" metadata
+// ---------------------------------------------------------------------------
+
+test('substitution wiring: deadlift skipped inline → RDL logged, prescribed extracted', () => {
+  const result = parseWorkoutText('Deadlift skipped - platform busy. Romanian Deadlift 245lbs 7/2 x3');
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent}`);
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(sets(result), [[245, 7, 2], [245, 7, 2], [245, 7, 2]]);
+  assert.notEqual(result.canonical_name, 'Deadlift', 'Deadlift must not be logged');
+  assert.ok(Array.isArray(result.prescribed), 'prescribed should be present');
+  assert.equal(result.prescribed.length, 1);
+  assert.equal(result.prescribed[0].exercise, 'Deadlift');
+  assert.equal(result.prescribed[0].reason, 'platform busy');
+});
+
+test('substitution wiring: back squat skipped inline → leg press logged, prescribed extracted', () => {
+  const result = parseWorkoutText('Back Squat skipped - racks taken. Leg Press 360 10/2 x3');
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent}`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.notEqual(result.canonical_name, 'Back Squat', 'Back Squat must not be logged');
+  assert.ok(Array.isArray(result.prescribed), 'prescribed should be present');
+  assert.equal(result.prescribed[0].exercise, 'Back Squat');
+  assert.equal(result.prescribed[0].reason, 'racks taken');
+});
+
+test('substitution wiring: plain RDL with no skip notation has no prescribed', () => {
+  const result = parseWorkoutText('RDL 245 7/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.ok(!result.prescribed || result.prescribed.length === 0, 'prescribed must be absent for plain log');
+});
+
+// ---------------------------------------------------------------------------
 // Dumbbell / per-hand multi-group notation for Incline DB Press
 // ---------------------------------------------------------------------------
 
