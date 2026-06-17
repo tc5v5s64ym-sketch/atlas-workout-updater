@@ -21,6 +21,7 @@ const EXERCISE_ALIASES = [
   ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
   ['Shrug', ['shrugs', 'shrug', 'db shrugs', 'dumbbell shrugs', 'barbell shrugs']],
   ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
+  ['Leg Press', ['leg press', 'machine leg press']],
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
@@ -204,8 +205,30 @@ function detectIntent(text) {
   return 'log_sets';
 }
 
+// When the input has blank-line-separated paragraphs, discard any that are
+// explanatory prose (no set data AND reads like a sentence) so they can't
+// compete with the actual performed-exercise header/sets. A paragraph is prose
+// when it ends with terminal punctuation (. ! ?) or contains an internal
+// sentence break (". "). Short headers like "Leg Press" have no terminal
+// punctuation and are kept so they join with the following set paragraph.
+// Note: this heuristic is best-effort — prose without terminal punctuation
+// (e.g. "no squats — swapping for leg press") is not caught and falls through
+// to the existing multi-exercise guard. When nothing is filtered, returns input
+// unchanged so normalizeParserText handles it as before.
+function extractSetParagraphs(input) {
+  const HAS_SET_SLASH = /\d+\/\d+/;
+  const IS_PROSE = /[.!?]$|[.!?]\s/;
+  const normalized = String(input || '').replace(/\r\n/g, '\n');
+  const paragraphs = normalized.split(/\n[ \t]*\n/);
+  if (paragraphs.length <= 1) return input;
+  const useful = paragraphs.filter(p => HAS_SET_SLASH.test(p) || !IS_PROSE.test(p.trim()));
+  if (useful.length === paragraphs.length) return normalized;
+  if (!useful.length) return input;
+  return useful.join('\n');
+}
+
 function parseWorkoutText(input, context = {}) {
-  const rawText = normalizeParserText(input);
+  const rawText = normalizeParserText(extractSetParagraphs(input));
   const intent = detectIntent(rawText);
 
   if (intent === 'unknown') {

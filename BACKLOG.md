@@ -95,6 +95,7 @@ Note: most are dials on existing behaviour, not new features; the exceptions (pr
 - **Coach-voice golden-output rubric**: Extend `test/coach.test.js` into a rubric where a voice change must update the test — ends the per-PR phrasing loop. See [FIX_PLAN.md "Process changes"](./FIX_PLAN.md).
 - **Phase 3 dead-code cleanup** (optional, low-priority): dead `loadTodaysPlan()` in `public/app.js:1341`; redundant condition in `services/recommendationPolicy.js`; stale imports in `index.js`. One concern per PR. See [FIX_PLAN.md Phase 3](./FIX_PLAN.md).
 - **Dead enrichment alias `Lats → Lat Pulldown` in `exerciseEnrichment.js`**: PR #335 demoted "lats" to a contextual alias — the parser now surfaces `needs_clarification` instead of emitting a "Lats" unknown-exercise row, so the enrichment-layer mapping is effectively unreachable for parser-originated rows. Harmless for now; remove in a future cleanup PR.
+- ✅ **Parser substitution priority fix** — `Leg Press` added to `EXERCISE_ALIASES`; `extractSetParagraphs` strips explanatory prose paragraphs (no set tokens) before normalization so the performed exercise header/sets win over skipped/mentioned exercises in substitution sentences. 4 golden tests added.
 - **API key in `localStorage`** (`public/app.js:9`): XSS exposure risk; safe for single-user Dale, becomes a real item at multi-user/productization. Logged here so it's not a surprise. See [FIX_PLAN.md "Additional verified items"](./FIX_PLAN.md).
 
 ## Someday / future scope

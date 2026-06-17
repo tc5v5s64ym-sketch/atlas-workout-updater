@@ -384,3 +384,98 @@ test('failsafe: filler strip does not over-match real lift names', () => {
   assert.equal(result.canonical_name, 'Andover Press');
   assert.ok(result.warnings.includes('unknown_exercise'));
 });
+
+// ---------------------------------------------------------------------------
+// Substitution / explanatory prose — performed exercise wins over skipped/
+// mentioned exercise when each lives in its own blank-line paragraph.
+// ---------------------------------------------------------------------------
+
+test('substitution: leg press wins over back squat mentioned in explanatory prose', () => {
+  const input = [
+    "All squat racks are taken and there's a line. I'm swapping back squats for leg press today.",
+    '',
+    'Leg Press',
+    '360 10/2',
+    '360 10/2',
+    '360 10/1',
+  ].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+  assert.notEqual(result.canonical_name, 'Back Squat', 'must not log Back Squat');
+});
+
+test('substitution: rdl wins over deadlift mentioned in explanatory prose', () => {
+  const input = [
+    'The deadlift platform is occupied and there are 5 people waiting.',
+    '',
+    'Romanian Deadlift',
+    '245lbs 7/2',
+    '245lbs 7/2',
+    '245lbs 7/2',
+  ].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(sets(result), [[245, 7, 2], [245, 7, 2], [245, 7, 2]]);
+  assert.notEqual(result.canonical_name, 'Deadlift', 'must not log Deadlift');
+});
+
+test('substitution: back squat still logs normally without substitution context', () => {
+  const result = parseWorkoutText('Back Squat 360 10/2 10/2 10/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Back Squat');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+});
+
+test('substitution: leg press logs normally without substitution context', () => {
+  const result = parseWorkoutText('Leg Press 360 10/2 10/2 10/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+});
+
+test('substitution: explanatory prose + x-notation sets — leg press wins, sets preserved', () => {
+  // "Skipped squat rack." ends with a period → IS_PROSE → discarded by extractSetParagraphs.
+  // "Leg Press\n360x10x3" has no slash token but no terminal punctuation → kept.
+  // parseWeightRepsSets resolves 360x10x3 → 3 sets of 10 reps @ weight 360, RIR null.
+  const input = ['Skipped squat rack.', '', 'Leg Press', '360x10x3'].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.equal(result.sets.length, 3, 'x3 = 3 sets');
+  assert.deepEqual(
+    result.sets.map(s => [s.weight, s.reps]),
+    [[360, 10], [360, 10], [360, 10]]
+  );
+  assert.notEqual(result.canonical_name, 'Back Squat', 'prose must not steal ownership');
+});
+
+test('substitution: exercise name only in prose paragraph + sets in next paragraph → needs_clarification (intentional safe failure)', () => {
+  // Known limitation of the IS_PROSE heuristic: if the exercise name lives
+  // only in a punctuated prose sentence ("Leg press today felt great.") and
+  // the sets sit in a separate blank-line paragraph with no exercise header,
+  // the prose paragraph is stripped and the exercise is lost. The result is
+  // needs_clarification — no wrong row is written. This test pins that
+  // behavior as intentional so a future change can't silently regress it to
+  // logging the wrong lift.
+  const input = ['Leg press today felt great.', '', '360 10/2 10/2 10/1'].join('\n');
+  const result = parseWorkoutText(input);
+  assert.notEqual(result.intent, 'log_sets', 'must not silently log a set with a missing exercise name');
+  assert.ok(
+    result.intent === 'needs_clarification' || result.intent === 'unknown',
+    `expected needs_clarification or unknown, got: ${result.intent}`
+  );
+});
+
+test('substitution: exercise header on its own paragraph still resolves when sets follow after blank line', () => {
+  // "Leg Press\n\n360 10/2\n..." — header alone in first paragraph, sets in second.
+  // extractSetParagraphs must keep the short header (no terminal punctuation) and
+  // join it with the set paragraph rather than discarding it.
+  const input = ['Leg Press', '', '360 10/2', '360 10/2', '360 10/1'].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+});
