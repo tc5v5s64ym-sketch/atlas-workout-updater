@@ -1299,6 +1299,16 @@ test('contextual_alias_incline_inherits_active_incline_db_press', () => {
   assert.deepEqual(compactParsedSets(result), [[65, 8, 2]]);
 });
 
+test('contextual_alias_cross_turn_strips_mid_string_alias_tokens', () => {
+  // "lats 130 8/2 lats 140 7/2" — leading "lats" resolved via activeExercise;
+  // remaining "lats" token in the rest string is stripped so parseSetGroups
+  // sees "130 8/2 140 7/2" and correctly returns two sets.
+  const result = parseWorkoutText('lats 130 8/2 lats 140 7/2', { activeExercise: 'Lat Pulldown' });
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[130, 8, 2], [140, 7, 2]]);
+});
+
 test('new_strong_alias_cable_pulldown_maps_to_lat_pulldown', () => {
   const result = parseWorkoutText('cable pulldown 120 10/2 x3');
   assert.equal(result.intent, 'log_sets');

@@ -343,10 +343,15 @@ function parseLogSets(rawText, context = {}) {
     const contextualLead = findContextualAliasLead(rawText);
     if (contextualLead) {
       if (context.activeExercise === contextualLead.canonicalName) {
+        const ctxAliases = CONTEXTUAL_ALIASES[contextualLead.canonicalName] || [];
+        const strippedRest = ctxAliases.reduce((text, alias) => {
+          const key = normalizeKey(alias);
+          return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
+        }, contextualLead.rest);
         return parseWithExercise(rawText, {
           canonicalName: contextualLead.canonicalName,
           rawName: contextualLead.canonicalName,
-          rest: contextualLead.rest,
+          rest: strippedRest,
         });
       }
       return {
