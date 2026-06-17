@@ -1,0 +1,28 @@
+name: Verdict Gate (temp)
+
+on:
+  push:
+    branches: [claude/verdict-gate-harness]
+  workflow_dispatch:
+
+jobs:
+  generate-outputs:
+    name: Generate merge-gate outputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run verdict-reaction harness (live Gemini)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: node verdict_harness.js
