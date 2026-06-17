@@ -37,7 +37,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - **PR 4.0** — Give the engine a stored `profileGoal` to read; pass through recommendation pipeline.
   - **PR 4.1** — Goal- + coverage-aware ranking (Coach's Pick + menu order).
   - **PR 4.2 — session builder** — anchor → support → balance + pairing check + warm-up ramps, consuming `muscleCoverage`, `muscleVolume`, under-coverage, balance signal, `movementPattern`, cost tier. Every offered option builds a coherent, pairing-legal, balanced session or is de-emphasized. Must pass the four acceptance cases in [`SESSION_DESIGN.md`](./SESSION_DESIGN.md) (brief matches session, no duplicate lifts, per-muscle cap, anchor + ramp).
-  - **Open decision:** Squat + Deadlift same day — block by default, allow as opt-in "heavy day" override? Default = separate until owner decides.
+  - **Open decision — RESOLVED:** Squat (`squat` pattern) + hinge (Deadlift/RDL) same day = **allow**. Two hinges (Deadlift + RDL) same session = **block** — both `hinge` pattern, too similar a stimulus. Rule for 4.2: block `hinge + hinge`; allow `squat + hinge`.
 
 - **Conversational input robustness / elasticity** — see [`CONVERSATION_DESIGN.md`](./CONVERSATION_DESIGN.md). Defines the composer interaction model: save-and-echo (evolves the user-facing approve-before-save step; real-write safeguards unchanged), conversational corrections, fluid log/ask switching. 7 acceptance scenarios (non-uniform sets, batch brain-dumps, log-vs-ask intent, floor deviations, load ambiguity, conversational undo, mid-session stats). Separate future thread — NOT part of the 4.x session builder. Behavior-changing → Opus 4.8 when it's time to build; scope and PR it separately.
 
