@@ -513,6 +513,15 @@ test('substitution wiring: plain RDL with no skip notation has no prescribed', (
   assert.ok(!result.prescribed || result.prescribed.length === 0, 'prescribed must be absent for plain log');
 });
 
+test('substitution wiring: "Today I skipped deadlift" prose does not extract bogus prescribed name', () => {
+  // EXERCISE_LEAD captures "Today I" before "skipped" without the catalog guard.
+  // The catalog validation must reject non-exercise leads — no prescribed surfaced.
+  const result = parseWorkoutText('Today I skipped deadlift. RDL 245 7/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.ok(!result.prescribed || result.prescribed.length === 0, 'bogus prose lead must not produce prescribed');
+});
+
 // ---------------------------------------------------------------------------
 // Dumbbell / per-hand multi-group notation for Incline DB Press
 // ---------------------------------------------------------------------------

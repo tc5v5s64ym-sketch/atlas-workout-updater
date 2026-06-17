@@ -364,6 +364,9 @@ function stripSkipNoteSentences(text) {
 // Extract prescribed/skipped exercise metadata from skip-note sentences without
 // stripping them (that is stripSkipNoteSentences' job). Returns an array of
 // { exercise, reason } objects — one per detected skip sentence.
+// The captured lead is validated against the known exercise catalog so prose
+// like "Today I skipped deadlift" does not extract "Today I" as the prescribed
+// exercise. Only recognized exercise names are accepted.
 function extractSkipNotes(text) {
   const SKIP_WORD = /\bskipp?(?:ed|ing)?\b/i;
   const HAS_SET_SLASH = /\d+\/\d+/;
@@ -374,9 +377,11 @@ function extractSkipNotes(text) {
     if (!SKIP_WORD.test(part) || HAS_SET_SLASH.test(part)) continue;
     const m = EXERCISE_LEAD.exec(part.trim());
     if (!m) continue;
+    const knownExercise = findExerciseInText(m[1].trim());
+    if (!knownExercise || knownExercise.ambiguous) continue;
     const reasonMatch = REASON_SUFFIX.exec(part.trim());
     skipped.push({
-      exercise: m[1].trim(),
+      exercise: knownExercise.canonicalName,
       reason: reasonMatch ? reasonMatch[1].trim().replace(/[.!?]+$/, '') : null,
     });
   }
