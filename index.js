@@ -41,6 +41,7 @@ const {
 } = require('./services/analytics');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const { getProfileGoal } = require('./services/profileGoal');
+const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1376,7 +1377,7 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
       getSheetRows(logSheetName),
       getSheetRows(effortSheetName)
     ]);
-    const result = scoreIntents(allLog, allEffort, { goal: req.query.goal || getProfileGoal() });
+    const result = scoreIntents(allLog, allEffort, { goal: req.query.goal ? normalizeTrainingGoal(req.query.goal) : getProfileGoal() });
     return standardSuccess(req, res, 'Intent recommendation', result);
   } catch (error) {
     return standardError(req, res, 'Failed to build intent recommendation', error.message, 500);
