@@ -115,8 +115,15 @@ function buildIntentSession({
   }
 
   // ── 2. Support ───────────────────────────────────────────────────────────────
-  // Reserve the last slot for the balance lift.
-  const supportCap = maxExercises - 1;
+  // Only reserve a balance slot when a lift that covers an under-served muscle
+  // actually exists in allRecs — otherwise support fills to maxExercises and the
+  // balance block below is a no-op (never wastes the reserved slot).
+  const balancePossible = underMuscles.length > 0 && allRecs.some(r => {
+    if (!r.exercise_name || !r.next_target) return false;
+    const ms = musclesFor(r.exercise_name);
+    return underMuscles.some(m => ms.primary.includes(m) || ms.secondary.includes(m));
+  });
+  const supportCap = balancePossible ? maxExercises - 1 : maxExercises;
   for (const rec of candidates) {
     if (exercises.length >= supportCap) break;
     const nameLower = rec.exercise_name.toLowerCase();

@@ -431,6 +431,22 @@ describe('buildIntentSession — edge cases', () => {
       makeRec('Reverse Fly',    'RF01', 'pull', 30,  15),
     ];
     const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [], maxExercises: 4 });
-    assert.ok(session.exercises.length <= 4, `should respect maxExercises=4; got ${session.exercises.length}`);
+    assert.equal(session.exercises.length, 4, `should fill to maxExercises=4 when no under-coverage gap; got ${session.exercises.length}`);
+  });
+
+  it('fills to maxExercises when under-coverage is empty (no wasted balance slot)', () => {
+    // Regression: with old code, supportCap was always maxExercises-1 even when
+    // no balance lift would ever be added, silently returning one fewer exercise.
+    const allRecs = [
+      makeRec('Barbell Row',  'BR01', 'pull', 185, 8),
+      makeRec('Seated Row',   'SR01', 'pull', 140, 12),
+      makeRec('Lat Pulldown', 'LP01', 'pull', 130, 10),
+      makeRec('Face Pull',    'FP01', 'pull', 50,  15),
+      makeRec('Hammer Curls', 'HC01', 'pull', 40,  12),
+      makeRec('Rear Delt Fly','RD01', 'pull', 25,  15),
+    ];
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [], maxExercises: 6 });
+    assert.equal(session.exercises.length, 6,
+      `should return 6 exercises when 6+ candidates are available and under-coverage is empty; got ${session.exercises.length}`);
   });
 });

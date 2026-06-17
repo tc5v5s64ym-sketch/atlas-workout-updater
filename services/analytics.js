@@ -1429,8 +1429,12 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       focus: scheduledFresh.length
         ? scheduledFresh.map(p => PLABEL[p.pattern]).join(' + ')
         : 'Neglected movements',
-      confidence: freshIds.length > 0 ? 'high' : 'low',
-      confidence_reasons: freshIds.length > 0 ? ['Specific underworked patterns identified from data'] : ['No clear gaps detected'],
+      confidence: scheduledFresh.length > 0 ? 'high' : 'low',
+      confidence_reasons: scheduledFresh.length > 0
+        ? ['Specific underworked patterns identified from data']
+        : freshIds.length > 0
+          ? ['Neglected patterns found but no matching exercises available today']
+          : ['No clear gaps detected'],
       why_today: why.length ? why : ['Check for any movements not done recently'],
       data_points: data,
       what_it_protects: ['Movement pattern balance', 'Injury prevention via balanced training'],
