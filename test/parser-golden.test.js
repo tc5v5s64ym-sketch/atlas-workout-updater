@@ -384,3 +384,54 @@ test('failsafe: filler strip does not over-match real lift names', () => {
   assert.equal(result.canonical_name, 'Andover Press');
   assert.ok(result.warnings.includes('unknown_exercise'));
 });
+
+// ---------------------------------------------------------------------------
+// Substitution / explanatory prose — performed exercise wins over skipped/
+// mentioned exercise when each lives in its own blank-line paragraph.
+// ---------------------------------------------------------------------------
+
+test('substitution: leg press wins over back squat mentioned in explanatory prose', () => {
+  const input = [
+    "All squat racks are taken and there's a line. I'm swapping back squats for leg press today.",
+    '',
+    'Leg Press',
+    '360 10/2',
+    '360 10/2',
+    '360 10/1',
+  ].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+  assert.notEqual(result.canonical_name, 'Back Squat', 'must not log Back Squat');
+});
+
+test('substitution: rdl wins over deadlift mentioned in explanatory prose', () => {
+  const input = [
+    'The deadlift platform is occupied and there are 5 people waiting.',
+    '',
+    'Romanian Deadlift',
+    '245lbs 7/2',
+    '245lbs 7/2',
+    '245lbs 7/2',
+  ].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'RDL');
+  assert.deepEqual(sets(result), [[245, 7, 2], [245, 7, 2], [245, 7, 2]]);
+  assert.notEqual(result.canonical_name, 'Deadlift', 'must not log Deadlift');
+});
+
+test('substitution: back squat still logs normally without substitution context', () => {
+  const result = parseWorkoutText('Back Squat 360 10/2 10/2 10/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Back Squat');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+});
+
+test('substitution: leg press logs normally without substitution context', () => {
+  const result = parseWorkoutText('Leg Press 360 10/2 10/2 10/1');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+});

@@ -21,6 +21,7 @@ const EXERCISE_ALIASES = [
   ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
   ['Shrug', ['shrugs', 'shrug', 'db shrugs', 'dumbbell shrugs', 'barbell shrugs']],
   ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
+  ['Leg Press', ['leg press', 'machine leg press']],
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
@@ -204,8 +205,22 @@ function detectIntent(text) {
   return 'log_sets';
 }
 
+// When the input has blank-line-separated paragraphs and only some contain set
+// data (slash tokens like "10/2"), return only those paragraphs. This prevents
+// explanatory substitution prose — "I'm swapping squats for leg press today" —
+// from competing with the actual exercise header + sets that follow after the
+// blank line. When all or no paragraphs have set tokens, returns input unchanged.
+function extractSetParagraphs(input) {
+  const HAS_SET_SLASH = /\d+\/\d+/;
+  const paragraphs = String(input || '').split(/\n[ \t]*\n/);
+  if (paragraphs.length <= 1) return input;
+  const setParas = paragraphs.filter(p => HAS_SET_SLASH.test(p));
+  if (!setParas.length || setParas.length === paragraphs.length) return input;
+  return setParas.join('\n');
+}
+
 function parseWorkoutText(input, context = {}) {
-  const rawText = normalizeParserText(input);
+  const rawText = normalizeParserText(extractSetParagraphs(input));
   const intent = detectIntent(rawText);
 
   if (intent === 'unknown') {
