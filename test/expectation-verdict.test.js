@@ -231,7 +231,7 @@ describe('computeExpectationVerdict — substitution enrichment (PR 3)', () => {
   });
 
   it('substitution is null when only one lift identity is provided', () => {
-    const v = computeExpectationVerdict({ swapped: true, prescribed: { name: 'Back Squat' } });
+    const v = computeExpectationVerdict({ swapped: true, prescribedLift: { name: 'Back Squat' } });
     assert.strictEqual(v.substitution, null);
   });
 
