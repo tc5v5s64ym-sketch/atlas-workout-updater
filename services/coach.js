@@ -49,6 +49,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "effort_verdict" {level, headline} — the engine\'s read of how hard the set was, from the logged RIR vs the target. Your opening line MUST agree with it: level "far_easy" = way under target (under-effort), so say plainly it was too light and to add real weight next time, NOT merely "room to add"; "easy" = comfortably within reserve, so name that there is room to add load or reps (do NOT praise it as a grind or "pushing through"); "failure" = they hit failure, acknowledge it and say to back off; "hard" = a tough, near-target set; "on_target" = dialled in. Never contradict the verdict, and never call a high-RIR set hard or a failure set easy.',
     '- The facts may include "progression_verdict" {level, range_low, range_high, ceiling, headline} — the engine\'s read of where today\'s top working set sits against the lifter\'s OWN recent working range. WORD it, never contradict it (same discipline as effort_verdict): "under_shot" = today is below their range_low–range_high band, so call out the under-shot with a spine (no reason to be light here); "in_pocket" = solidly inside the band, box checked — say so and hold the line, do not tell them to go heavier; "maintenance_drift" = inside the band but drifting toward the low end; "progressing" = pushing the top of the band upward; "new_ground" = today clears the ceiling they had beaten before. Read today AGAINST the range and reference the band when it is present.',
     '- The facts may include "deload" {active, protocol_id, load_pct, target_rir, sessions_remaining} — when present with active true, today is a DELOAD the engine is running. Frame the whole note as a deload: name it plainly, and make clear the reduced load (~{load_pct}% of the normal working weight), the fewer sets, and the high RIR (target {target_rir}, well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. When sessions_remaining is present, note how many easy sessions are left and that normal training resumes after. This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
+    '- The facts may include "substitution" {classification, decision, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
     '- You MAY reference ONE history number from the facts (first_weight or best_weight, or the range/ceiling) to ground progress, e.g. "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
@@ -96,6 +97,10 @@ function sanitizeFacts(facts) {
     // fewer sets, high RIR by design — so an easy/high-RIR set is on-plan, not
     // under-effort. The model WORDS this; every number is engine-computed.
     deload: sanitizeDeloadFact(rec.deload),
+    // The engine's substitution intent classification (preserved/changed/abandoned/
+    // baseline + approve/warn) when the logged lift was a swap. The model WORDS this
+    // decision — it never decides the classification itself or invents a reason.
+    substitution: sanitizeSubstitution(f.substitution || rec.substitution),
     target_rir: numOrNull(rec.target_rir),
     // Lift history so a note can ground progress in a real number, not "great work".
     first_weight: numOrNull(rec.first_weight),
@@ -145,6 +150,35 @@ function sanitizeDeloadFact(d) {
     load_pct: loadMult != null ? Math.round(loadMult * 100) : null,
     target_rir: protocol ? numOrNull(protocol.target_rir) : null,
     sessions_remaining: numOrNull(d.sessions_remaining)
+  };
+}
+
+// Whitelist the engine's substitution intent verdict (services/substitutionIntent.js).
+// Only the fields the model may WORD survive: the classification, the approve/warn
+// decision, the engine's reason code, the two lift NAMES, and the evidence strings.
+// classification and decision must come from the engine's frozen vocabularies — a
+// value outside them (e.g. a client-injected classification) makes the whole fact
+// null. The model never decides preserved/changed/abandoned and never invents a
+// reason; it only words what the engine already decided. Same discipline as
+// sanitizeVerdict / sanitizeConstraint.
+const SUBSTITUTION_CLASSIFICATIONS = ['preserved', 'changed', 'abandoned', 'baseline'];
+const SUBSTITUTION_DECISIONS = ['approve', 'warn'];
+function sanitizeSubstitution(s) {
+  if (!s || typeof s !== 'object') return null;
+  const classification = strOrNull(s.classification);
+  const decision = strOrNull(s.decision);
+  if (!SUBSTITUTION_CLASSIFICATIONS.includes(classification)) return null;
+  if (!SUBSTITUTION_DECISIONS.includes(decision)) return null;
+  const liftName = ref => (ref && typeof ref === 'object' ? strOrNull(ref.name) : strOrNull(ref));
+  return {
+    classification,
+    decision,
+    reason_code: strOrNull(s.reason_code),
+    prescribed: liftName(s.prescribed),
+    logged: liftName(s.logged),
+    evidence: Array.isArray(s.evidence)
+      ? s.evidence.slice(0, 8).map(e => clampText(e, 160)).filter(Boolean)
+      : [],
   };
 }
 
@@ -641,8 +675,13 @@ function buildVerdictReactionSystemPrompt() {
     'outcome rules (from verdict.outcome):',
     '- "beat": pushed harder than the target. Celebrate ONLY when it is earned — a meaningful push (2+ RIR below target), a true milestone, or hitting the mark after time off. For a small beat (1 RIR under), one honest line, then move on — not a song.',
     '- "fell_short": too much left in reserve. Firm, honest pushback — on their side, never harsh, never "you failed". Name what you saw and tell them how to close the gap (e.g. "if set one feels easy, bump the weight and chase that [prescribedRir]-in-reserve").',
-    '- "swap": treat it as a win. A brief acknowledgement of a smart adjustment. If no clean equivalent load exists, coach them to find the working weight at the target RIR — start conservative, work up until the set leaves about [prescribedRir] in reserve.',
+    '- "swap": the lifter logged a different exercise than prescribed. If `context.substitution` is present, it is the engine\'s classification of that swap — defer to it (see the substitution rule below). If it is absent, treat the swap as a win — a brief acknowledgement of a smart adjustment, and if no clean equivalent load exists, coach them to find the working weight at the target RIR — start conservative, work up until the set leaves about [prescribedRir] in reserve.',
     '- "met": a clean set landed where expected — nothing to react to. The gate already filters these out; if one reaches you with no rule raised, a single nod at most.',
+    '',
+    'substitution (context.substitution — the engine\'s read of a swapped exercise; present only on a swap):',
+    '- It carries a `classification` (preserved / changed / abandoned / baseline), a `decision` (approve / warn), the engine\'s `reason_code`, and the `prescribed` / `logged` lift names. The engine OWNS this call.',
+    '- Your read MUST agree with `decision`: "approve" = a sound pivot that kept the session\'s intent (preserved or baseline) — acknowledge it as a smart adjustment; "warn" = the intent was changed or abandoned (wrong muscle, or the objective went untrained) — push back honestly and tell them to get the real movement back in.',
+    '- You may name the `prescribed` and `logged` lifts and restate the engine\'s `reason_code` in plain words. You must NEVER decide the classification yourself, never relabel or contradict it, and never name a reason the engine did not give. Never invent a movement-pattern or muscle claim that is not in the facts.',
     '',
     'rule_decisions (the engine\'s final calls — explain them, never override them):',
     '- A rule decision is FINAL. Word its `reasoning` in your own voice; never argue with it, never soften it into nothing. If the lifter pushes back, do NOT relent — restate the criterion they still have to beat (use `criterion_progress` when present).',
@@ -737,6 +776,9 @@ function sanitizeReactionContext(context) {
     first_weight: numOrNull(c.first_weight),
     best_weight:  numOrNull(c.best_weight),
     days_since_last_session: numOrNull(c.days_since_last_session),
+    // The engine's substitution intent verdict for a swapped lift — the model words
+    // the decision, never derives it. Unknown keys/invalid vocab are dropped.
+    substitution: sanitizeSubstitution(c.substitution),
   };
 }
 
@@ -790,6 +832,7 @@ module.exports = {
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
   sanitizeFacts,
+  sanitizeSubstitution,
   buildPlanSystemPrompt,
   buildPlanUserPrompt,
   sanitizePlanFacts,
