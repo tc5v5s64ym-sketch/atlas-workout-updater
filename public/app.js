@@ -2579,10 +2579,16 @@ function extractLiftCodes(logRowsPreview) {
 // so it can type a coaching note with an inline Save. Read-only narration: it
 // never writes — Save just clicks #approve-btn, which stays gated by the dry-run
 // proof. Best-effort; a missing listener is a no-op.
-function emitCoachPreview(rows, liftCodes, effortOnly, effort) {
+function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions) {
   try {
     document.dispatchEvent(new CustomEvent('atlas:preview-ready', {
-      detail: { rows: rows || [], liftCodes: liftCodes || [], effortOnly: Boolean(effortOnly), effort: effort || null }
+      detail: {
+        rows: rows || [],
+        liftCodes: liftCodes || [],
+        effortOnly: Boolean(effortOnly),
+        effort: effort || null,
+        substitutions: Array.isArray(substitutions) ? substitutions : []
+      }
     }));
   } catch { /* narration is optional */ }
 }
@@ -3461,7 +3467,7 @@ function renderLogWorkoutPreview(result, effortRow) {
     averageHR: effortRow.average_hr,
     peakHR: effortRow.peak_hr
   } : null;
-  emitCoachPreview(data.log_rows_preview, liftCodes, false, reviewEffort);
+  emitCoachPreview(data.log_rows_preview, liftCodes, false, reviewEffort, data.substitutions);
 }
 
 function renderCompleteWorkoutPreview(result) {

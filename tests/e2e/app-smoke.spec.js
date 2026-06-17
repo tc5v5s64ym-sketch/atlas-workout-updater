@@ -455,6 +455,57 @@ test('Session preview: logging then "done" renders a no-write review card from m
   expect(capture.writeRequests).toHaveLength(0);
 });
 
+test('Session review surfaces the substitution verdict as a read-only note, and Save still writes once', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  // Override only the dry-run: classify the logged lift as an abandoned swap.
+  // The live-write branch falls through to the default mock unchanged.
+  await page.route('**/api/log-workout', async route => {
+    const req = route.request();
+    const body = req.method() === 'POST' && req.postData() ? req.postDataJSON() : null;
+    if (body && (body.test_mode === true || body.test_mode === 'true')) {
+      return route.fulfill(json({
+        status: 'success',
+        data: {
+          test_mode: true,
+          sheet_write: 'skipped',
+          sheet_written: false,
+          no_write_confirmed: true,
+          warnings: [], auto_matches: [], pending_exercises: [], rule_flags: [],
+          log_rows_preview: BENCH_ROWS,
+          substitutions: [{
+            classification: 'abandoned',
+            decision: 'warn',
+            reason_code: 'pattern_abandoned',
+            prescribed: { name: 'Back Squat' },
+            logged: { name: 'Bench Press' },
+            muscle_overlap: 0,
+            evidence: []
+          }]
+        }
+      }));
+    }
+    return route.fallback();   // live write handled by the default mock
+  });
+
+  await runToReview(page);
+
+  // Engine verdict surfaces. Gemini is unconfigured in CI (coach/message → null),
+  // so the templated fallback line renders — proving the fallback path works.
+  const note = page.locator('.sub-note');
+  await expect(note).toBeVisible();
+  await expect(note).toContainText('objective untrained');
+  await expect(note).toHaveClass(/sub-warn/);
+  expect(capture.writeRequests).toHaveLength(0);   // displaying the verdict never writes
+
+  // Approval still works with the note present — Save drives the single write.
+  await page.locator('.rv-save').click();
+  await expect(page.locator('#logger-status')).toContainText('Workout written to Google Sheets');
+  expect(capture.writeRequests).toHaveLength(1);
+  expect(capture.writeRequests[0].test_mode).toBeUndefined();
+});
+
 test('Approve: the review card Save sends write_id only after the dry-run and shows success', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
