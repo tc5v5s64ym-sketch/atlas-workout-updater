@@ -14,7 +14,8 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 ## Then
 
-- **Phase 2 hardening (from [`FIX_PLAN.md`](./FIX_PLAN.md)):** service-worker cache bug (HI-5), CSP / inline styles (HI-2), parser set-count cap (HI-3), friendly errors + no contradictory panels (ME-1/2/3), weekly-report row shape (ME-8).
+- **Phase 2 hardening (from [`FIX_PLAN.md`](./FIX_PLAN.md)):** service-worker cache bug (HI-5), parser set-count cap (HI-3), friendly errors + no contradictory panels (ME-1/2/3), weekly-report row shape (ME-8).
+- ✅ **HI-2 — CSP / inline styles** — inline `style=""` moved to CSS classes; recovery-bar fills driven by `--fill` custom property (PR).
 - **Triage the older open issues:** lift-code fallback collision (`generateLiftCode` in `services/exerciseEnrichment.js` — no collision check/increment), and the flaky e2e ([#262](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/262)).
 
 ## Future epic
