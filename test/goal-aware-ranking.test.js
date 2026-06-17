@@ -1,9 +1,17 @@
 'use strict';
 
-const { describe, it } = require('node:test');
+const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { scoreIntents } = require('../services/analytics');
+const { scoreIntents, MUSCLE_PATTERN } = require('../services/analytics');
+const { TAXONOMY } = require('../services/muscleCoverage');
+
+// ── MUSCLE_PATTERN completeness — fails loudly if taxonomy grows without updating the map ──
+test('MUSCLE_PATTERN covers every muscle in TAXONOMY', () => {
+  for (const muscle of TAXONOMY) {
+    assert.ok(muscle in MUSCLE_PATTERN, `${muscle} is in TAXONOMY but missing from MUSCLE_PATTERN — coverage-gap signal would silently drop it`);
+  }
+});
 
 // ── Log row helpers (12-column contract, volume_calc omitted — normalizer is lenient) ──
 

@@ -1190,6 +1190,17 @@ function buildMuscleGroupReadiness(logRows, options = {}) {
   });
 }
 
+// Maps each of the 17 taxonomy muscles to its primary movement pattern for the
+// coverage-gap signal inside scoreIntents. Exported so tests can assert completeness
+// against TAXONOMY — a missing muscle silently drops its gap contribution otherwise.
+const MUSCLE_PATTERN = Object.freeze({
+  chest: 'push', front_delts: 'push', side_delts: 'push', triceps: 'push',
+  lats: 'pull', biceps: 'pull', rear_delts: 'pull', upper_back: 'pull', traps: 'pull', forearms: 'pull',
+  quads: 'lower', glutes: 'lower', calves: 'lower',
+  hamstrings: 'hinge', lower_back: 'hinge',
+  abs: 'core', obliques: 'core',
+});
+
 // ─── Intent scoring engine ────────────────────────────────────────────────────
 function scoreIntents(logRows, effortRows = [], options = {}) {
   const { today = null, goal = null } = options || {};
@@ -1205,14 +1216,6 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     ? options.underCoverage
     : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
-  // Map each under-served muscle to its primary movement pattern for gap-aware ranking.
-  const MUSCLE_PATTERN = {
-    chest: 'push', front_delts: 'push', side_delts: 'push', triceps: 'push',
-    lats: 'pull', biceps: 'pull', rear_delts: 'pull', upper_back: 'pull', traps: 'pull', forearms: 'pull',
-    quads: 'lower', glutes: 'lower', calves: 'lower',
-    hamstrings: 'hinge', lower_back: 'hinge',
-    abs: 'core', obliques: 'core',
-  };
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
   // muscle is already covered by other lifts — downgraded, not erased.
@@ -2274,6 +2277,7 @@ module.exports = {
   buildRecentSessions,
   classifyMuscleGroup,
   buildMuscleGroupReadiness,
+  MUSCLE_PATTERN,
   scoreIntents,
   recoveryFraction,
   effortIntensityBySession,
