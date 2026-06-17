@@ -452,6 +452,23 @@ test('substitution: explanatory prose + x-notation sets — leg press wins, sets
   assert.notEqual(result.canonical_name, 'Back Squat', 'prose must not steal ownership');
 });
 
+test('substitution: exercise name only in prose paragraph + sets in next paragraph → needs_clarification (intentional safe failure)', () => {
+  // Known limitation of the IS_PROSE heuristic: if the exercise name lives
+  // only in a punctuated prose sentence ("Leg press today felt great.") and
+  // the sets sit in a separate blank-line paragraph with no exercise header,
+  // the prose paragraph is stripped and the exercise is lost. The result is
+  // needs_clarification — no wrong row is written. This test pins that
+  // behavior as intentional so a future change can't silently regress it to
+  // logging the wrong lift.
+  const input = ['Leg press today felt great.', '', '360 10/2 10/2 10/1'].join('\n');
+  const result = parseWorkoutText(input);
+  assert.notEqual(result.intent, 'log_sets', 'must not silently log a set with a missing exercise name');
+  assert.ok(
+    result.intent === 'needs_clarification' || result.intent === 'unknown',
+    `expected needs_clarification or unknown, got: ${result.intent}`
+  );
+});
+
 test('substitution: exercise header on its own paragraph still resolves when sets follow after blank line', () => {
   // "Leg Press\n\n360 10/2\n..." — header alone in first paragraph, sets in second.
   // extractSetParagraphs must keep the short header (no terminal punctuation) and
