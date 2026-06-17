@@ -37,8 +37,10 @@ const {
   buildExerciseDetail,
   buildRecentSessions,
   buildMuscleGroupReadiness,
-  scoreIntents
+  scoreIntents,
+  detectSwap
 } = require('./services/analytics');
+const { classifySubstitution } = require('./services/substitutionIntent');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
@@ -2410,6 +2412,68 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   }
 });
 
+// Build substitution-intent previews for any logged lift that differs from the
+// prescribed one supplied by the client. READ-ONLY: reads log history (for the
+// baseline-vs-judge decision) and the Constraints tab to classify; never writes,
+// never touches the trust loop. Returns [] when no prescribed pairs are given.
+//
+// `prescribedList` entries: { logged_exercise, exercise, lift_code? }
+//   logged_exercise — the logged lift to pair against (matched case-insensitively
+//                     to the enriched row's exercise / canonical_exercise)
+//   exercise        — the prescribed lift name
+//   lift_code       — optional prescribed lift code (history lookup key)
+//
+// The engine emits the decision; the voice layer (PR 5) only words it later.
+async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, ruleFlags) {
+  // First occurrence of each distinct logged lift, keyed by both raw and canonical name.
+  const loggedByName = new Map();
+  for (const r of (enrichedLoggedRows || [])) {
+    const logged = { name: r.canonical_exercise || r.exercise || '', lift_code: r.lift_code || null };
+    for (const k of [r.exercise, r.canonical_exercise]) {
+      const key = String(k || '').trim().toLowerCase();
+      if (key && !loggedByName.has(key)) loggedByName.set(key, logged);
+    }
+  }
+
+  // Pain signal reuses the safety rules already evaluated for this preview.
+  const painFlag = Array.isArray(ruleFlags) && ruleFlags.some(f => f && f.rule_id === 'pain_flag');
+
+  // Lazy reads — only reached when prescribed pairs are present.
+  const [allLog, constraintRows] = await Promise.all([
+    getSheetRows(logSheetName).catch(() => []),
+    getSheetRows('Constraints').catch(() => [])
+  ]);
+  const constraints = (constraintRows || [])
+    .map(row => Array.isArray(row)
+      ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
+      : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
+    .filter(c => c.kind && c.target && c.rule);
+
+  const out = [];
+  for (const p of prescribedList) {
+    if (!p || typeof p !== 'object') continue;
+    const prescribedName = String(p.exercise || '').trim();
+    const loggedKey = String(p.logged_exercise || '').trim().toLowerCase();
+    if (!prescribedName || !loggedKey) continue;
+    const logged = loggedByName.get(loggedKey);
+    if (!logged) continue;
+    // Only classify genuine swaps — identical prescribed/logged is not a substitution.
+    if (!detectSwap(prescribedName, logged.name).swapped) continue;
+    const prescribedLiftCode = p.lift_code ? String(p.lift_code).trim().toLowerCase() : null;
+    const history = prescribedLiftCode
+      ? allLog.filter(row => String(row[5] || '').toLowerCase() === prescribedLiftCode)
+      : [];
+    out.push(classifySubstitution({
+      prescribed: { name: prescribedName, lift_code: p.lift_code || null },
+      logged,
+      constraints,
+      painFlag,
+      history
+    }));
+  }
+  return out;
+}
+
 app.post('/api/log-workout', async (req, res) => {
 
   const payload = req.body;
@@ -2451,13 +2515,15 @@ app.post('/api/log-workout', async (req, res) => {
   let pendingExercisesForPreview = [];
   let autoMatchesForPreview = [];
   let ruleFlags = [];
+  let enrichedRowObjects = [];
   try {
     const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings || [];
     pendingExercisesForPreview = logResult.pending_exercises || [];
     autoMatchesForPreview = logResult.auto_matches || [];
-    ruleFlags = evaluateSessionSafety(logResult.enrichedRowObjects || [], payload.notes || '');
+    enrichedRowObjects = logResult.enrichedRowObjects || [];
+    ruleFlags = evaluateSessionSafety(enrichedRowObjects, payload.notes || '');
   } catch (error) {
     return standardError(req, res, error.message, null, 400);
   }
@@ -2472,6 +2538,18 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   if (testMode) {
+    // Substitution-intent classification (read-only). Best-effort: a failure here
+    // must never block a dry-run preview, and it never changes the no-write proof.
+    let substitutions = [];
+    const prescribedList = Array.isArray(payload.prescribed) ? payload.prescribed : [];
+    if (prescribedList.length > 0) {
+      try {
+        substitutions = await buildSubstitutionPreviews(prescribedList, enrichedRowObjects, ruleFlags);
+      } catch (error) {
+        substitutions = [];
+      }
+    }
+
     const previewBody = {
       test_mode: true,
       sheet_write: 'skipped',
@@ -2485,6 +2563,7 @@ app.post('/api/log-workout', async (req, res) => {
     if (pendingExercisesForPreview.length > 0) previewBody.pending_exercises = pendingExercisesForPreview;
     if (autoMatchesForPreview.length > 0) previewBody.auto_matches = autoMatchesForPreview;
     if (ruleFlags.length > 0) previewBody.rule_flags = ruleFlags;
+    if (substitutions.length > 0) previewBody.substitutions = substitutions;
     return standardSuccess(req, res, 'log-workout processed', previewBody, 200);
   }
 
