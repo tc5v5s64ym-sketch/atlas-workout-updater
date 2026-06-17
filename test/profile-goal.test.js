@@ -161,13 +161,26 @@ describe('getProfileGoal() → resolveTrainingGoal integration', () => {
     assert.strictEqual(result.source, 'userProfileGoal');
   });
 
-  it('query override (req.query.profileGoal) takes precedence over stored goal', () => {
+  it('non-empty query value wins over stored goal (simulates req.query.profileGoal || getProfileGoal())', () => {
     process.env.ATLAS_PROFILE_GOAL = 'hypertrophy';
-    const storedGoal = getProfileGoal();
-    // Simulate req.query.profileGoal || getProfileGoal() — query wins
-    const effectiveGoal = 'strength' || storedGoal;
+    const storedGoal = getProfileGoal(); // 'hypertrophy'
+    const queryValue = 'strength';
+    const effectiveGoal = queryValue || storedGoal; // queryValue is truthy → storedGoal not reached
+    assert.strictEqual(effectiveGoal, 'strength');
     const result = resolveTrainingGoal({ userProfileGoal: effectiveGoal });
     assert.strictEqual(result.goal, 'strength');
+    assert.strictEqual(result.source, 'userProfileGoal');
+  });
+
+  it('empty query value falls back to stored goal (simulates absent ?profileGoal=)', () => {
+    process.env.ATLAS_PROFILE_GOAL = 'hypertrophy';
+    const storedGoal = getProfileGoal(); // 'hypertrophy'
+    const queryValue = undefined; // absent query param
+    const effectiveGoal = queryValue || storedGoal; // queryValue is falsy → storedGoal wins
+    assert.strictEqual(effectiveGoal, 'hypertrophy');
+    const result = resolveTrainingGoal({ userProfileGoal: effectiveGoal });
+    assert.strictEqual(result.goal, 'hypertrophy');
+    assert.strictEqual(result.source, 'userProfileGoal');
   });
 
   it('absent env var → pipeline falls back to general_health', () => {
