@@ -2079,6 +2079,66 @@ function buildWeeklyReport(logRows, options = {}) {
   };
 }
 
+// Swap detection — PR 3.5 (COACH_PLAN.md).
+//
+// Detects whether the logged exercise differs from the prescribed one.
+// Comparison is case- and whitespace-insensitive so "bench press" and
+// "Bench Press" are not a swap. Null/missing inputs are never a swap.
+// Pure — no log data required.
+function detectSwap(prescribedExercise, loggedExercise) {
+  const norm = s => (s && typeof s === 'string' ? s.trim().toLowerCase() : null);
+  const a = norm(prescribedExercise);
+  const b = norm(loggedExercise);
+  if (!a || !b) {
+    return {
+      swapped: false,
+      prescribedExercise: (prescribedExercise && typeof prescribedExercise === 'string') ? prescribedExercise.trim() : null,
+      loggedExercise:     (loggedExercise     && typeof loggedExercise     === 'string') ? loggedExercise.trim()     : null,
+    };
+  }
+  return {
+    swapped: a !== b,
+    prescribedExercise: prescribedExercise.trim(),
+    loggedExercise:     loggedExercise.trim(),
+  };
+}
+
+// Working-weight finder — PR 3.5 (COACH_PLAN.md).
+//
+// Produces the "find your working weight at the target RIR" calibration
+// protocol for when a lifter swaps to an exercise with no clean equivalent
+// load — i.e. no prior history to anchor a recommendation.
+//
+//   targetReps      — prescribed rep count (default 8)
+//   targetRir       — prescribed RIR (default 2)
+//   referenceWeight — the prescribed weight for the ORIGINAL lift (optional)
+//
+// Returns: { instruction, targetReps, targetRir, startHint }
+//   startHint   — 70% of referenceWeight rounded to nearest 5 lb, or null
+//   instruction — plain-English protocol for the coach voice to word
+//
+// The 70% anchor is deliberately conservative: mechanics differ across
+// exercise variations and it's always safer to step up than to miss a rep
+// on an unfamiliar movement.
+function buildWorkingWeightProtocol({ targetReps = 8, targetRir = 2, referenceWeight = null } = {}) {
+  const parseOrDefault = (v, d) => { if (v == null) return d; const n = Number(v); return Number.isFinite(n) ? n : d; };
+  const reps = Math.max(1, Math.round(parseOrDefault(targetReps, 8)));
+  const rir  = Math.max(0, Math.round(parseOrDefault(targetRir,  2)));
+
+  let startHint   = null;
+  let startPhrase = 'Start conservative';
+
+  const ref = referenceWeight != null ? Number(referenceWeight) : NaN;
+  if (Number.isFinite(ref) && ref > 0) {
+    startHint   = Math.round((ref * 0.7) / 5) * 5;
+    startPhrase = `Start around ${startHint} lbs`;
+  }
+
+  const instruction = `${startPhrase} and work up in small steps until ${reps} reps leaves you ${rir} in reserve. That working weight is your baseline for this variation.`;
+
+  return { instruction, targetReps: reps, targetRir: rir, startHint };
+}
+
 // Expectation verdict engine — PR 3.3 (COACH_PLAN.md).
 //
 // Compares what was actually logged (actualRir) to what was prescribed
@@ -2157,5 +2217,7 @@ module.exports = {
   buildMuscleGroupReadiness,
   scoreIntents,
   recoveryFraction,
-  effortIntensityBySession
+  effortIntensityBySession,
+  detectSwap,
+  buildWorkingWeightProtocol
 };
