@@ -2079,6 +2079,58 @@ function buildWeeklyReport(logRows, options = {}) {
   };
 }
 
+// Expectation verdict engine — PR 3.3 (COACH_PLAN.md).
+//
+// Compares what was actually logged (actualRir) to what was prescribed
+// (prescribedRir) and emits a structured verdict the coach voice (PR 3.4)
+// can react to. Nothing surfaces this yet — pure data.
+//
+//   outcome    ∈ { 'beat' | 'met' | 'fell_short' | 'swap' }
+//   rirDelta   = actualRir − prescribedRir
+//                negative → pushed harder than target
+//                positive → left more in reserve than target (sandbagged)
+//   swapped    = true when the logged exercise differs from the prescribed one;
+//                in that case actualRir/rirDelta are null (no RIR comparison).
+//
+// Returns null when actualRir is absent and swapped is false — nothing to read.
+// prescribedRir defaults to 2 (matching effortVerdict) when omitted or NaN.
+function computeExpectationVerdict({ actualRir = null, prescribedRir = null, swapped = false } = {}) {
+  if (swapped) {
+    return {
+      outcome:       'swap',
+      why:           'Exercise swapped — no direct RIR comparison; treat as a smart adjustment.',
+      prescribedRir: null,
+      actualRir:     null,
+      rirDelta:      null,
+    };
+  }
+
+  if (actualRir == null || !Number.isFinite(Number(actualRir))) return null;
+
+  const actual     = Number(actualRir);
+  const prescribed = (prescribedRir != null && Number.isFinite(Number(prescribedRir))) ? Number(prescribedRir) : 2;
+  const rirDelta   = Math.round((actual - prescribed) * 100) / 100;
+
+  let outcome, why;
+
+  if (rirDelta < 0) {
+    outcome = 'beat';
+    why = actual <= 0
+      ? `Hit failure — pushed beyond the ${prescribed} RIR target.`
+      : `RIR ${actual} vs target ${prescribed} — pushed ${Math.abs(rirDelta)} below target.`;
+  } else if (rirDelta >= 2) {
+    outcome = 'fell_short';
+    why = `RIR ${actual} vs target ${prescribed} — ${rirDelta} reps left in the tank.`;
+  } else {
+    outcome = 'met';
+    why = rirDelta === 0
+      ? `RIR ${actual} — right on the ${prescribed} target.`
+      : `RIR ${actual} — one above the ${prescribed} target; within range.`;
+  }
+
+  return { outcome, why, prescribedRir: prescribed, actualRir: actual, rirDelta };
+}
+
 module.exports = {
   normalizeLogRow,
   buildSessionSummary,
@@ -2090,6 +2142,7 @@ module.exports = {
   effortVerdict,
   progressionVerdict,
   progressionBand,
+  computeExpectationVerdict,
   roundLoad,
   buildBodyweightHistory,
   previewTestRows,
