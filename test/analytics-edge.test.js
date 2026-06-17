@@ -255,3 +255,32 @@ test('analytics guards invalid dates and non-finite math', () => {
   assert.equal(flatIntensity.get('A'), 0.5);
   assert.equal(flatIntensity.get('B'), 0.5);
 });
+
+// ── ME-8: buildWeeklyReport handles object-shaped rows ───────────────────────
+test('buildWeeklyReport: object-shaped rows produce same totals as array-shaped rows', () => {
+  const today = '2026-06-10';
+  const arrayRows = [
+    ['2026-06-09', 'S1', 'Back Squat', 'Back Squat', 'Quads', 'SQ01', '1', '225', '5', '2', '', ''],
+    ['2026-06-09', 'S1', 'Back Squat', 'Back Squat', 'Quads', 'SQ01', '2', '225', '5', '2', '', ''],
+    ['2026-06-10', 'S2', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '8', '1', '', ''],
+  ];
+  const objectRows = [
+    { date_clean: '2026-06-09', session_id: 'S1', exercise: 'Back Squat', canonical_exercise: 'Back Squat', muscle_group: 'Quads', lift_code: 'SQ01', set_number: '1', weight: '225', reps: '5', rir: '2', notes: '', volume_calc: '' },
+    { date_clean: '2026-06-09', session_id: 'S1', exercise: 'Back Squat', canonical_exercise: 'Back Squat', muscle_group: 'Quads', lift_code: 'SQ01', set_number: '2', weight: '225', reps: '5', rir: '2', notes: '', volume_calc: '' },
+    { date_clean: '2026-06-10', session_id: 'S2', exercise: 'Bench Press', canonical_exercise: 'Bench Press', muscle_group: 'Chest', lift_code: 'BEN01', set_number: '1', weight: '185', reps: '8', rir: '1', notes: '', volume_calc: '' },
+  ];
+
+  const fromArray = buildWeeklyReport(arrayRows, { today, days: 7 });
+  const fromObject = buildWeeklyReport(objectRows, { today, days: 7 });
+
+  assert.equal(fromObject.sessions_count, 2, 'sessions_count from object rows');
+  assert.equal(fromObject.total_sets, 3, 'total_sets from object rows');
+  assert.equal(fromObject.total_volume, 225 * 5 * 2 + 185 * 8, 'total_volume from object rows');
+  assert.ok(fromObject.top_exercises.length > 0, 'top_exercises populated from object rows');
+  assert.ok(fromObject.top_exercises.some(e => e.exercise === 'Back Squat'), 'Back Squat in top exercises');
+  assert.ok(Object.keys(fromObject.muscle_group_volume).includes('Quads'), 'Quads in muscle_group_volume');
+
+  assert.equal(fromObject.sessions_count, fromArray.sessions_count, 'sessions_count matches array');
+  assert.equal(fromObject.total_sets, fromArray.total_sets, 'total_sets matches array');
+  assert.equal(fromObject.total_volume, fromArray.total_volume, 'total_volume matches array');
+});
