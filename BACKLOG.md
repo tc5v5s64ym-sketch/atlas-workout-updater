@@ -6,13 +6,41 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 ---
 
+## Atlas voice & interaction — TOP PRIORITY
+
+The spearhead: the engine already emits verdicts (PR 3.3 ✅) and detects swaps (PR 3.5 ✅). The next build is wording those facts and giving the user control over how much Atlas says. Credibility floor (AC8) must be solid before voice ships.
+
+- **PR 3.4 — coach voice reaction** _(open, awaiting output approval)_ — `buildVerdictReactionSystemPrompt`, `sanitizeVerdictFacts`, `isVerdictWorthReacting`, `generateVerdictReaction` in `coach.js`; gated (met → quiet, beat/fell_short/swap → react); 26 tests. Engine emits the verdict; this PR words it. **Merge gate: owner must approve 2–3 live example outputs** (see PR description).
+- **NEW — Chattiness / verbosity control**: a user setting dialing how much Atlas says, from near-silent (engine output, minimal narration) to chatty (fuller context, longer coaching notes). Tunes ONLY the LLM wording layer — never the numbers. Build alongside PR 3.4.
+- **Preference learning from edits** (larger build): Atlas learns the user's preferences from how they modify suggested sessions over time (favoured/dropped lifts, variations, edit patterns); biases future suggestions toward what's actually picked; flags novel lifts the user introduces as candidates to cycle in for variety. Shapes selection/rotation only — engine still owns every number.
+- **AC8 — phantom-set suppression** (credibility floor for the voice): three rules in the parser / save path: (a) if the message is a question → answer it, log nothing; (b) if the lift name can't be confidently resolved → do NOT save, echo "didn't catch that lift — which one?" and wait; (c) never celebrate a set that wasn't actually logged. Never log-and-flag in the same breath. See [`CONVERSATION_DESIGN.md`](./CONVERSATION_DESIGN.md) AC8.
+- **Voice-relevant conversational scenarios** — part of the [`CONVERSATION_DESIGN.md`](./CONVERSATION_DESIGN.md) epic but flagged here as voice-priority work: log-vs-ask intent switching, mid-session stats queries, and conversational undo. These define correct voice behaviour under ambiguous input and must be resolved before or alongside PR 3.4 wording.
+
+---
+
+## Settings / user-preferences panel — NEEDS DESIGN (not yet scoped)
+
+Status: parked; needs a design pass before any build.
+
+Confirmed anchor: the chattiness/verbosity slider above.
+
+Starting material to flush out — candidate categories:
+- **Voice & personality**: chattiness dial, tone, celebration sensitivity, emoji/formatting.
+- **Training defaults**: units, default RIR, goal lifts/targets, progression pace, load rounding.
+- **Session shaping**: session size, variety-vs-consistency, lifts to prioritize/avoid, accessory volume.
+- **Interaction**: confirmation style (preview-vs-save-and-echo, clarify-vs-infer), optional post-session rating.
+- **Display**: default tab, home cards, chart default, light/dark.
+
+Note: most are dials on existing behaviour, not new features; the exceptions (proactive alerts, save-and-echo) are tracked as their own decisions.
+
+---
+
 ## Near-term
 
 - **[#291](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/291) — Deload prescription consolidation (one model).** **BUMPED** — it's on the Coach's Pick surface the user starts from, not a secondary screen. Anchor on `computePrescription` as the single prescription source; point **both** the next-set card **and** the Coach's Pick / insights overview at it; retire the volume-first `suggestDeloads` path.
 - **NEW — Deload trigger nuance: don't trigger a deload off accessory or deprioritized lifts.** Live example: it flagged Dumbbell Curl as stalled while its e1RM was progressing 40 → 53, and flagged Shrugs, which the user barely trains directly. The trigger should weigh what actually counts, not flag every flat lift.
 - **[#289](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/289) — Frontend deload lifecycle wiring.** State machine is built but dark — the client never calls `/api/deload/begin|advance|resolve`, so saving a workout doesn't advance the machine.
-- **NEW — SESSION_DESIGN AC5: prescribed load sanity guard** (live bug 2026-06-16). Two parts: (a) canonicalize duplicate lift names so history resolves (e.g. "Lateral Raise" vs "Lateral Raises" → one canonical form, merged history); (b) per-lift load ceiling check in the prescription engine — if a prescribed weight is wildly outside that lift's own log history or a sane movement-class ceiling, fall back to the lifter's real working weight or ask. Golden fixture: Lateral Raise must never print 170 lb. See SESSION_DESIGN.md AC5.
-- **NEW — CONVERSATION_DESIGN AC8: phantom-set suppression** (live bug 2026-06-16). Three rules to enforce in the parser / save path: (a) if the message is a question → answer it, log nothing; (b) if the lift name can't be confidently resolved → do NOT save, echo "didn't catch that lift — which one?" and wait; (c) never celebrate a set that wasn't actually logged. Never log-and-flag in the same breath. See CONVERSATION_DESIGN.md AC8.
+- **SESSION_DESIGN AC5: prescribed load sanity guard** (live bug 2026-06-16; also underpins voice credibility — a bad prescribed weight poisons every coaching note built on it). Two parts: (a) canonicalize duplicate lift names so history resolves (e.g. "Lateral Raise" vs "Lateral Raises" → one canonical form, merged history); (b) per-lift load ceiling check in the prescription engine — if a prescribed weight is wildly outside that lift's own log history or a sane movement-class ceiling, fall back to the lifter's real working weight or ask. Golden fixture: Lateral Raise must never print 170 lb. See SESSION_DESIGN.md AC5.
 
 ## Then
 
@@ -35,7 +63,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - ✅ **PR 3.2** — Surface under-coverage in coaching chat: `muscle_gaps` (sorted by severity) wired into `buildChatContext` + `sanitizeChatContext`; LLM nudges 1–2 under-served muscles when asked what to train (952 tests).
   - ✅ **Hold Point 3** — gap nudges reviewed and approved in live conversations. Wording reads naturally; style confirmed.
   - ✅ **PR 3.3 — expectation verdict engine** — `computeExpectationVerdict` in `analytics.js`; emits `{ outcome, why, prescribedRir, actualRir, rirDelta }` per set; outcome ∈ beat/met/fell_short/swap; rirDelta sign convention: negative = pushed harder; golden fixtures for all 4 outcomes (29 tests). Pure data, nothing surfaces it yet.
-  - **PR 3.4 — coach voice reaction** _(open, awaiting output approval)_ — `buildVerdictReactionSystemPrompt`, `sanitizeVerdictFacts`, `isVerdictWorthReacting`, `generateVerdictReaction` in `coach.js`; gated (met → quiet, beat/fell_short/swap → react); 26 tests. **Merge gate: owner must approve 2–3 live example outputs** (see PR description).
+  - **PR 3.4 — coach voice reaction** → promoted to **Atlas voice & interaction (TOP PRIORITY)** above.
   - ✅ **PR 3.5 — swap detection + working-weight finder** — `detectSwap` (case-insensitive name comparison, null-safe) + `buildWorkingWeightProtocol` (calibration protocol; 70% reference anchor → nearest 5 lb startHint; "Start conservative" when no reference); feeds `computeExpectationVerdict` swapped flag; pure data (36 tests).
   - ✅ **PR 3.x — systemic-cost tier** — `services/liftCost.js`: `costFor`; HIGH/MEDIUM/LOW by name pattern; pure data (16 tests).
   - ✅ **PR 3.x — balance signal** — `services/balanceSignal.js`: `computeBalanceSignal`; antagonist volume-ratio engine for 4 pairs (horizontal push:pull, vertical push:pull, anterior:posterior, quad:hamstring) → `{ pair, aSets, bSets, ratio, status, reason }`; wide bands; pure data (39 tests).
@@ -45,7 +73,7 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
   - **Open decision — RESOLVED:** Squat (`squat` pattern) + hinge (Deadlift/RDL) same day = **allow**. Two hinges (Deadlift + RDL) same session = **block** — both `hinge` pattern, too similar a stimulus. Rule for 4.2: block `hinge + hinge`; allow `squat + hinge`.
   - **Deferred — full pairwise blocking in `buildIntentSession`**: `isBlockedPair` currently guards anchor vs. each support lift. Two HIGH-cost same-pattern support lifts can coexist when the anchor is MEDIUM (e.g. Bench as anchor → Deadlift + RDL both pass). Edge case in practice (anchor loop usually picks HIGH first), but technically violates "at most one heavy hinge per session." Fix: after anchor selection, also check each new support candidate against all previously added HIGH-cost exercises.
 
-- **Conversational input robustness / elasticity** — see [`CONVERSATION_DESIGN.md`](./CONVERSATION_DESIGN.md). Defines the composer interaction model: save-and-echo (evolves the user-facing approve-before-save step; real-write safeguards unchanged), conversational corrections, fluid log/ask switching. 7 acceptance scenarios (non-uniform sets, batch brain-dumps, log-vs-ask intent, floor deviations, load ambiguity, conversational undo, mid-session stats). Separate future thread — NOT part of the 4.x session builder. Behavior-changing → Opus 4.8 when it's time to build; scope and PR it separately.
+- **Conversational input robustness / elasticity** — see [`CONVERSATION_DESIGN.md`](./CONVERSATION_DESIGN.md). Defines the composer interaction model: save-and-echo (evolves the user-facing approve-before-save step; real-write safeguards unchanged), conversational corrections, fluid log/ask switching. 7 acceptance scenarios (non-uniform sets, batch brain-dumps, log-vs-ask intent, floor deviations, load ambiguity, conversational undo, mid-session stats). Three of these (log-vs-ask intent, mid-session stats, conversational undo) are also flagged under **Atlas voice & interaction** above as voice-priority work. Separate future thread — NOT part of the 4.x session builder. Behavior-changing → Opus 4.8 when it's time to build; scope and PR it separately.
 
 ## Housekeeping
 
@@ -55,3 +83,12 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 - **Coach-voice golden-output rubric**: Extend `test/coach.test.js` into a rubric where a voice change must update the test — ends the per-PR phrasing loop. See [FIX_PLAN.md "Process changes"](./FIX_PLAN.md).
 - **Phase 3 dead-code cleanup** (optional, low-priority): dead `loadTodaysPlan()` in `public/app.js:1341`; redundant condition in `services/recommendationPolicy.js`; stale imports in `index.js`. One concern per PR. See [FIX_PLAN.md Phase 3](./FIX_PLAN.md).
 - **API key in `localStorage`** (`public/app.js:9`): XSS exposure risk; safe for single-user Dale, becomes a real item at multi-user/productization. Logged here so it's not a surprise. See [FIX_PLAN.md "Additional verified items"](./FIX_PLAN.md).
+
+## Someday / future scope
+
+_Not active queue. Guiding principle: Atlas infers from data and behaviour; it does not interrogate the user._
+- Readiness — non-intrusive: primary signal stays the existing objective per-muscle fatigue/recovery status. Subjective input strictly opt-in (a volunteered note or optional post-session rating); Atlas never prompts, never runs a sleep/stress questionnaire, never auto-adjusts a session off a feelings prompt.
+- Proactive alerts / nudges — optional, opt-in, not naggy.
+- Injury awareness — remember injuries as constraints on programming.
+- Nutrition (Fuel) — real macro tracking, eventually diet↔performance correlation. Way down the road.
+- Minor / if-ever: session search, import-export & backup, light/dark, settings layer. (Auth stays out — personal single-user tool.)
