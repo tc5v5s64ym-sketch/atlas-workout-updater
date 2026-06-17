@@ -1220,6 +1220,16 @@ test('real mixed exercise input without skip word still asks for clarification',
   assert.ok(result.warnings.includes('multiple_exercises_in_input'));
 });
 
+test('skip note without a period separator never drops the real sets', () => {
+  // No ". " between the skip note and the sets, and x-notation (no reps/RIR
+  // slash) — stripping the lone "sentence" would otherwise wipe everything.
+  // The guard keeps the original text so the Bench sets still parse.
+  const result = parseWorkoutText('Skipped warmup bench 225x5x2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.ok(result.sets && result.sets.length > 0, 'real sets must not be silently dropped');
+});
+
 test('ambiguous_press_asks_never_guesses', () => {
   const result = parseWorkoutText('Press 135 8/2');
   assert.equal(result.intent, 'needs_clarification');

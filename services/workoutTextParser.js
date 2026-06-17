@@ -318,6 +318,10 @@ function stripSkipNoteSentences(text) {
   const HAS_SET_SLASH = /\d+\/\d+/;
   const parts = text.split('. ');
   const kept = parts.filter(p => !(SKIP_WORD.test(p) && !HAS_SET_SLASH.test(p)));
+  // Never strip everything: when the skip note isn't a separate ". "-delimited
+  // sentence (e.g. "Skipped warmup bench 225x5 225x5"), filtering the lone part
+  // would wipe real set data. Fall back to the original text in that case.
+  if (!kept.length) return text;
   return kept.length < parts.length ? kept.join('. ').trim() : text;
 }
 
