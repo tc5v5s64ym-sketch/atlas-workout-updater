@@ -307,8 +307,27 @@ function parseNumberMatch(match) {
   return Number.isFinite(value) ? value : null;
 }
 
+// Remove sentences that are skip notes — they name an exercise and include a
+// skip keyword ("skipped", "skipping") but carry no set data (no reps/RIR slash
+// token). This prevents "Deadlift skipped — platform busy." from registering
+// as a second exercise mention when the user is logging a substitution.
+// Sentences are delimited by ". " (period + space), which normalizeParserText
+// preserves. If nothing is stripped the original text is returned unchanged.
+function stripSkipNoteSentences(text) {
+  const SKIP_WORD = /\bskipp?(?:ed|ing)?\b/i;
+  const HAS_SET_SLASH = /\d+\/\d+/;
+  const parts = text.split('. ');
+  const kept = parts.filter(p => !(SKIP_WORD.test(p) && !HAS_SET_SLASH.test(p)));
+  return kept.length < parts.length ? kept.join('. ').trim() : text;
+}
+
 function parseLogSets(rawText, context = {}) {
-  if (hasMultipleExerciseMentions(rawText)) {
+  // Strip skip-note sentences before multi-exercise check and exercise lookup
+  // so "Deadlift skipped." doesn't count as a second exercise when the user
+  // is logging a substitution on the following lines.
+  const textForParsing = stripSkipNoteSentences(rawText);
+
+  if (hasMultipleExerciseMentions(textForParsing)) {
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
@@ -317,7 +336,7 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
-  const exercise = findExerciseInText(rawText);
+  const exercise = findExerciseInText(textForParsing);
   if (exercise?.ambiguous) {
     return {
       intent: 'needs_clarification',
@@ -332,7 +351,7 @@ function parseLogSets(rawText, context = {}) {
     // be silently absorbed into the previous active exercise — that writes the
     // wrong lift's history (e.g. "shrugs 70 12/10" becoming Bench Press). Echo
     // the typed name and flag it for review instead.
-    const unknownExercise = parseUnknownExercise(rawText);
+    const unknownExercise = parseUnknownExercise(textForParsing);
     if (unknownExercise) return unknownExercise;
     // No leading name — bare set tokens like "205 5/3" are continuation sets of
     // the lift already in progress, so inherit the active exercise.
@@ -340,7 +359,7 @@ function parseLogSets(rawText, context = {}) {
       return parseWithExercise(rawText, {
         canonicalName: context.activeExercise,
         rawName: context.activeExercise,
-        rest: rawText,
+        rest: textForParsing,
       });
     }
     return {
