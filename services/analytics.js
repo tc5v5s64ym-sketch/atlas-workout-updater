@@ -1215,6 +1215,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const underCoverageData = (options && options.underCoverage != null)
     ? options.underCoverage
     : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
+  // No cycle: sessionBuilder → movementPattern / liftCost / muscleCoverage (none import analytics).
+  const { buildIntentSession } = require('./sessionBuilder');
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
@@ -1381,7 +1383,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (upwardLifts.length === 0) score += 8;
     if (daysSinceLast === 0) score -= 10;
 
-    const exercises = exForPatterns(['push', 'pull', 'lower', 'core'], 6);
+    const { exercises } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'core'], allRecs, underCoverageData });
     intents.push({
       id: 'build_muscle',
       label: 'Build Muscle',
@@ -1401,25 +1403,38 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   // ── Fix Blind Spots ──────────────────────────────────────────────
   {
     let score = 40;
-    const why = [];
-    const data = [];
     const PLABEL = { lower: 'Lower body', push: 'Pressing', pull: 'Pulling', hinge: 'Hinge', core: 'Core' };
 
-    for (const p of freshPatterns) {
-      score += 20;
-      why.push(`${PLABEL[p.pattern]} has not been trained in ${p.daysSince} days — rotation overdue`);
-      data.push({ label: PLABEL[p.pattern], value: `${p.daysSince}d since last session`, context: 'overdue' });
-    }
+    // Score accounts for every neglected pattern (they ARE overdue, even if not all schedulable today).
+    for (const p of freshPatterns) score += 20;
 
     const freshIds = freshPatterns.map(p => p.pattern);
-    const exercises = freshIds.length ? exForPatterns(freshIds) : exForPatterns(['pull', 'core']);
+    const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];
+    const session = buildIntentSession({ patterns: targetPatterns, allRecs, underCoverageData });
+    const exercises = session.exercises;
+
+    // AC1: only mention patterns that actually have exercises in today's session.
+    const scheduledFresh = freshPatterns.filter(p => session.coveredPatterns.has(p.pattern));
+    const why = scheduledFresh.map(p =>
+      `${PLABEL[p.pattern]} has not been trained in ${p.daysSince} days — rotation overdue`
+    );
+    const data = scheduledFresh.map(p => ({
+      label: PLABEL[p.pattern], value: `${p.daysSince}d since last session`, context: 'overdue'
+    }));
+
     intents.push({
       id: 'fix_blind_spots',
       label: 'Fix Blind Spots',
       score,
-      focus: freshIds.length ? freshPatterns.map(p => PLABEL[p.pattern]).join(' + ') : 'Neglected movements',
-      confidence: freshIds.length > 0 ? 'high' : 'low',
-      confidence_reasons: freshIds.length > 0 ? ['Specific underworked patterns identified from data'] : ['No clear gaps detected'],
+      focus: scheduledFresh.length
+        ? scheduledFresh.map(p => PLABEL[p.pattern]).join(' + ')
+        : 'Neglected movements',
+      confidence: scheduledFresh.length > 0 ? 'high' : 'low',
+      confidence_reasons: scheduledFresh.length > 0
+        ? ['Specific underworked patterns identified from data']
+        : freshIds.length > 0
+          ? ['Neglected patterns found but no matching exercises available today']
+          : ['No clear gaps detected'],
       why_today: why.length ? why : ['Check for any movements not done recently'],
       data_points: data,
       what_it_protects: ['Movement pattern balance', 'Injury prevention via balanced training'],
@@ -1439,7 +1454,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (freshPatterns.length) score -= 10;
     if (fatigue.status === 'normal') score += 10;
 
-    const exercises = exForPatterns(['push', 'pull', 'lower', 'hinge', 'core'], 6);
+    const { exercises } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'hinge', 'core'], allRecs, underCoverageData });
     intents.push({
       id: 'balanced',
       label: 'Balanced Day',
