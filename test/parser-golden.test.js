@@ -114,6 +114,25 @@ test('golden: Kr alias resolves to Hanging Knee Raises — bodyweight repeat for
 // Unsafe / blocked cases
 // ---------------------------------------------------------------------------
 
+test('golden: parseWeightRepsSets — absurd set count rejected', () => {
+  // Format: <weight> x <reps> x <sets> — e.g. "225 x 5 x 3"
+  // Without the guard, "bench 135 x 5 x 99" would emit 99 rows.
+  const result = parseWorkoutText('bench 135 x 5 x 99');
+  assert.ok(
+    result.sets === undefined || result.sets.length <= 10,
+    `expected ≤10 sets or undefined, got ${result.sets?.length}`
+  );
+  assert.notEqual(result.intent, 'log_sets', 'absurd set count must not produce log_sets');
+});
+
+test('golden: parseWeightRepsSets — valid set count parses correctly', () => {
+  // Sanity-check that the guard does not break normal input.
+  const result = parseWorkoutText('bench 135 x 5 x 3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(sets(result), [[135, 5, null], [135, 5, null], [135, 5, null]]);
+});
+
 test('golden: slp 70 x 12 @2 — must not explode into 70 rows', () => {
   // Without the setCount > 10 guard in parseSetsFirst, "70 x 12 @2" would
   // be read as "70 sets × 12 reps @ 2 lb" — 70 rows. Guard must reject it.

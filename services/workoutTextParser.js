@@ -507,6 +507,7 @@ function parseWeightRepsSets(text) {
   const weight = Number(match[1]);
   const reps = Number(match[2]);
   const setCount = Number(match[3]);
+  if (setCount > 10) return null;
   return Array.from({ length: setCount }, () => setRecord({ weight, reps, rir: null }));
 }
 
