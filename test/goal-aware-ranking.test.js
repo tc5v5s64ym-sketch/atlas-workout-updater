@@ -121,7 +121,10 @@ describe('golden fixture 2 — hypertrophy goal + rear delts under-served', () =
 
 // ── Backward compat: no goal → same result as before ─────────────────────────────────
 
-describe('backward compatibility — absent goal leaves scoring unchanged', () => {
+// NOTE: "backward compat" here means the GOAL_BONUS block only — the coverage-gap
+// bonus for fix_blind_spots is intentionally goal-independent (coverage gaps are a
+// real signal for that intent regardless of goal). See the pinning test below.
+describe('backward compatibility — absent goal leaves GOAL_BONUS scoring unchanged', () => {
   const TODAY = '2026-06-17';
   const logRows = [
     ...sets('2026-06-15', 'S1', 'Bench Press', 'Chest', 'BP01', 225, 5),
@@ -153,6 +156,40 @@ describe('backward compatibility — absent goal leaves scoring unchanged', () =
     const withoutGoal = scoreIntents(logRows, [], { today: TODAY });
     assert.ok(withGoal.todays_read.recommended_intent_id,    'should have recommended intent with goal');
     assert.ok(withoutGoal.todays_read.recommended_intent_id, 'should have recommended intent without goal');
+  });
+});
+
+// ── Coverage-gap bonus is goal-independent for fix_blind_spots ────────────────────────
+// Under-coverage is a real gap signal for fix_blind_spots regardless of whether the
+// caller passes a goal. This affects every scoreIntents caller (incl. coach chat at
+// /api/coach/chat). Pinned here so the behavior is explicit and tested.
+describe('coverage-gap bonus is goal-independent for fix_blind_spots', () => {
+  it('fix_blind_spots gap bonus fires without any goal', () => {
+    const pullGap    = [{ muscle: 'rear_delts', status: 'under' }];
+    const withGap    = scoreIntents([], [], { underCoverage: pullGap });
+    const withoutGap = scoreIntents([], [], { underCoverage: [] });
+    const delta = intentById(withGap, 'fix_blind_spots').score - intentById(withoutGap, 'fix_blind_spots').score;
+    assert.strictEqual(delta, 8, `gap bonus should fire (+8) even when no goal is passed; delta was ${delta}`);
+  });
+
+  it('fix_blind_spots gap bonus stacks with goal bonus when both apply', () => {
+    const pullGap = [{ muscle: 'rear_delts', status: 'under' }];
+    const withGoalAndGap = scoreIntents([], [], { goal: 'hypertrophy', underCoverage: pullGap });
+    const withGoalOnly   = scoreIntents([], [], { goal: 'hypertrophy', underCoverage: [] });
+    const delta = intentById(withGoalAndGap, 'fix_blind_spots').score - intentById(withGoalOnly, 'fix_blind_spots').score;
+    assert.strictEqual(delta, 8, `coverage-gap bonus should stack with goal bonus; delta was ${delta}`);
+  });
+
+  it('build_muscle gap bonus only fires when goal=hypertrophy (remains goal-gated)', () => {
+    const pullGap     = [{ muscle: 'rear_delts', status: 'under' }];
+    const withGoal    = scoreIntents([], [], { goal: 'hypertrophy', underCoverage: pullGap });
+    const withoutGoal = scoreIntents([], [], { underCoverage: pullGap });
+    const bmWithGoal    = intentById(withGoal,    'build_muscle').score;
+    const bmWithoutGoal = intentById(withoutGoal, 'build_muscle').score;
+    // With goal=hypertrophy: GOAL_BONUS (+20) + gap bonus (+6) both fire.
+    // Without goal: neither fires (goal-gated).
+    assert.ok(bmWithGoal > bmWithoutGoal,
+      `build_muscle should score higher with goal=hypertrophy + gap than gap alone (${bmWithGoal} vs ${bmWithoutGoal})`);
   });
 });
 
