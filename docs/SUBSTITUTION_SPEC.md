@@ -105,11 +105,14 @@ Classify `preserved` when **either**:
 
 ### changed → warn
 
-Classify `changed` when the substitute shares a broad region with the prescription but trains the **wrong muscle emphasis** — primary-muscle overlap below the match threshold while some related region remains. The prescribed muscle was skipped, not substituted (`wrong_muscle`).
+Classify `changed` when **either**:
+
+* **Wrong muscle emphasis.** The substitute shares a broad region with the prescription but primary-muscle overlap is below the match threshold while some related region remains. The prescribed muscle was skipped, not substituted (`wrong_muscle`).
+* **Low-stakes accessory swap.** The substitute trains a different stimulus entirely, but the prescribed lift was a **low-cost accessory** — not medium/high systemic cost and not a main role. Dropping trivial accessory work warrants a soft flag, not an abandoned-objective warning (`accessory_swap`).
 
 ### abandoned → warn
 
-Classify `abandoned` when the substitute trains a **different stimulus entirely** (different pattern, primary-muscle overlap at or near zero), no pain or equipment constraint justified the change, and the prescribed lift carried real training weight (medium/high systemic cost or a main role). The objective went untrained (`pattern_abandoned`).
+Classify `abandoned` when the substitute trains a **different stimulus entirely** (different pattern, primary-muscle overlap at or near zero), no pain or equipment constraint justified the change, **and the prescribed lift carried real training weight (medium/high systemic cost or a main role)**. This cost/role gate is mandatory: a different-stimulus swap away from a *low-cost accessory* is `changed` (`accessory_swap`), not `abandoned` — only abandoning real training weight leaves the session's objective untrained (`pattern_abandoned`).
 
 ---
 

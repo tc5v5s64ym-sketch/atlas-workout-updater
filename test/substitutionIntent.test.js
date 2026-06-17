@@ -230,6 +230,78 @@ describe('abandoned (pattern_abandoned) — spec core examples', () => {
   });
 });
 
+// ─── cost/role gate — abandoned requires real training weight ─────────────────
+
+describe('cost/role gate — low-cost accessory swaps are changed, not abandoned', () => {
+  it('Lateral Raise → Treadmill: low-cost accessory, ~0 overlap → changed/accessory_swap', () => {
+    // Lateral Raise: delt_isolation, low cost, accessory role.
+    // Treadmill: unknown (pattern 'other'). Different stimulus, no justification,
+    // but the dropped lift carried no real weight → changed (soft flag), not abandoned.
+    const r = classifySubstitution({
+      prescribed: { name: 'Lateral Raise' },
+      logged:     { name: 'Treadmill' },
+      history:    SOME_HISTORY,
+    });
+    assert.strictEqual(r.classification, 'changed');
+    assert.strictEqual(r.decision,       'warn');
+    assert.strictEqual(r.reason_code,    'accessory_swap');
+  });
+
+  it('Bicep Curl → Leg Press: low-cost accessory dropped for unrelated work → changed/accessory_swap', () => {
+    // Bicep Curl: arm_isolation, low cost, accessory. Leg Press: squat/lower.
+    // No shared region, 0 overlap, no justification, accessory → changed.
+    const r = classifySubstitution({
+      prescribed: { name: 'Bicep Curl' },
+      logged:     { name: 'Leg Press' },
+      history:    SOME_HISTORY,
+    });
+    assert.strictEqual(r.classification, 'changed');
+    assert.strictEqual(r.reason_code,    'accessory_swap');
+  });
+
+  it('main/high-cost lift dropped for unrelated work stays abandoned (gate passes)', () => {
+    // Back Squat is high cost → the gate is satisfied → abandoned.
+    const r = classifySubstitution({
+      prescribed: { name: 'Back Squat' },
+      logged:     { name: 'Treadmill' },
+      history:    SOME_HISTORY,
+    });
+    assert.strictEqual(r.classification, 'abandoned');
+    assert.strictEqual(r.reason_code,    'pattern_abandoned');
+  });
+
+  it('medium-cost lift (Bench) dropped for unrelated work stays abandoned', () => {
+    const r = classifySubstitution({
+      prescribed: { name: 'Bench Press' },
+      logged:     { name: 'Leg Curl' },
+      history:    SOME_HISTORY,
+    });
+    assert.strictEqual(r.classification, 'abandoned');
+    assert.strictEqual(r.reason_code,    'pattern_abandoned');
+  });
+
+  it('accessory_swap evidence names the chosen reason', () => {
+    const r = classifySubstitution({
+      prescribed: { name: 'Lateral Raise' },
+      logged:     { name: 'Treadmill' },
+      history:    SOME_HISTORY,
+    });
+    assert.ok(r.evidence.some(e => /accessory_swap/.test(e)));
+  });
+
+  it('two unknown lifts (both pattern other, no muscles) → changed/accessory_swap', () => {
+    // Unknown lifts default to low cost + secondary role (not main), so the gate
+    // fails and they classify as a soft accessory_swap rather than abandoned.
+    const r = classifySubstitution({
+      prescribed: { name: 'ZZZ Unknown Exercise' },
+      logged:     { name: 'ZZZ Other Unknown' },
+      history:    SOME_HISTORY,
+    });
+    assert.strictEqual(r.classification, 'changed');
+    assert.strictEqual(r.reason_code,    'accessory_swap');
+  });
+});
+
 // ─── pain override ───────────────────────────────────────────────────────────
 
 describe('pain redirect — spec override ordering', () => {
