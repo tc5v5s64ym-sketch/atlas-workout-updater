@@ -1,8 +1,12 @@
 // TEMP merge-gate harness (throwaway branch). Runs the REAL
 // generateVerdictReaction from this branch's services/coach.js.
-// Prints sanitized payload + LIVE Atlas response + VOICE SPEC check.
-// Never prints the API key (only isConfigured() as a boolean).
+// Harness-only: longer per-call timeout + retry/backoff to ride out
+// Gemini 503 / high-demand spikes. Production coach.js default is untouched.
 const coach = require('./services/coach.js');
+
+const CALL_TIMEOUT_MS = 30000;
+const MAX_ATTEMPTS = 5;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const scenarios = [
   { name: '1) Beat expectation, no rule issue',
@@ -36,15 +40,26 @@ function voiceSpec(text) {
   return `words=${words} (<=60:${words<=60}) | sentences=${sentences} (<=4:${sentences<=4}) | no-exclaim-stack:${!exclaim} | no-emoji:${!emoji}`;
 }
 
+async function withRetry(s) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const out = await coach.generateVerdictReaction(s.verdict, { ruleDecisions: s.ruleDecisions, context: s.context, timeoutMs: CALL_TIMEOUT_MS });
+      if (out != null) return { out, attempt };
+      lastErr = 'null (gate or empty)';
+    } catch (e) { lastErr = e.message; }
+    if (attempt < MAX_ATTEMPTS) { console.log(`   (attempt ${attempt} failed: ${lastErr}; retrying in ${attempt * 3}s)`); await sleep(attempt * 3000); }
+  }
+  return { out: null, attempt: MAX_ATTEMPTS, err: lastErr };
+}
+
 (async () => {
   console.log('GEMINI key present:', coach.isConfigured(), '| model:', coach.coachModel());
   for (const s of scenarios) {
     console.log('\n=== ' + s.name + ' ===');
     console.log('PAYLOAD: ' + JSON.stringify(payloadFor(s)));
-    let out = null, err = null;
-    try { out = await coach.generateVerdictReaction(s.verdict, { ruleDecisions: s.ruleDecisions, context: s.context }); }
-    catch (e) { err = e.message; }
-    console.log('ATLAS_LIVE_START>>>');
+    const { out, attempt, err } = await withRetry(s);
+    console.log(`ATLAS_LIVE_START>>> (attempt ${attempt})`);
     console.log(out == null ? '(null)' : out);
     console.log('<<<ATLAS_LIVE_END');
     if (err) console.log('ERROR: ' + err);
