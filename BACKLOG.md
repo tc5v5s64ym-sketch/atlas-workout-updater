@@ -16,8 +16,11 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 ## Then
 
-- **Phase 2 hardening (from [`FIX_PLAN.md`](./FIX_PLAN.md)):** service-worker cache bug (HI-5), parser set-count cap (HI-3), friendly errors + no contradictory panels (ME-1/2/3), weekly-report row shape (ME-8).
-- ✅ **HI-2 — CSP / inline styles** — inline `style=""` moved to CSS classes; recovery-bar fills driven by `--fill` custom property (PR).
+- **Phase 2 hardening (from [`FIX_PLAN.md`](./FIX_PLAN.md)):** friendly errors + no contradictory panels (ME-1/2/3).
+- ✅ **HI-5 — service-worker cache bump** — `CACHE_NAME` bumped to `atlas-shell-v8`; activate handler purges old caches. Owner live-check: hard-refresh on device to confirm new SW activates.
+- ✅ **ME-8 — weekly report row shape** — `buildWeeklyReport` now uses `cell(row, idx, key)` helper for all post-filter accesses; object-shaped rows produce correct totals.
+- ✅ **HI-3 — parser set-count cap** — `parseWeightRepsSets` path capped on all paths (PR #317).
+- ✅ **HI-2 — CSP / inline styles** — inline `style=""` moved to CSS classes; recovery-bar fills driven by `--fill` custom property (PR #315).
 - **Triage the older open issues:** lift-code fallback collision (`generateLiftCode` in `services/exerciseEnrichment.js` — no collision check/increment), and the flaky e2e ([#262](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/262)).
 
 ## Future epic

@@ -26,7 +26,10 @@ This plan was cross-checked against two outside reviews. The signal:
 - ✅ **HI-6** secret scan IS wired into CI (`.github/workflows/ci.yml` has a `secret-scan` job).
 - ✅ **HI-7** lint now globs all `*.js` (no more hand-maintained list).
 - ✅ **HI-4** the Excel-serial date branch now checks `typeof === 'number'` first.
-- ✅ **HI-3** one parser path already has the set-count cap (the other may not — see Step 2B).
+- ✅ **HI-3** all parser paths now capped (PR #317). **Step 2B is done.**
+- ✅ **HI-2** CSP inline styles moved to classes (PR #315). **Step 2A is done.**
+- ✅ **ME-8** `buildWeeklyReport` shape-safe via `cell()` helper (Sonnet hardening batch). **Step 2D is done.**
+- ✅ **HI-5** service-worker bumped to `atlas-shell-v8` (Sonnet hardening batch). **Step 2E is done — owner live-check needed.**
 
 **What was in the reviews but is deliberately NOT here:** a wholesale split of the big files, a home-screen redesign, multi-user/database work. See "Out of scope" — these are owner decisions, and some conflict with your Constitution.
 
@@ -225,18 +228,11 @@ After this, deload is one concept in one file with one spec. If it's wrong, you 
 
 > Switch to **Sonnet 4.6**. Mechanical, well-specified. Separate PR each.
 
-### Step 2A — Fix CSP so the UI stops leaking/breaking
-**Why:** the page CSP blocks inline `style=`, so hidden legacy forms leak onto Trends and recovery bars don't fill.
-**Confirm:** `public/index.html` CSP meta has no `style-src` → open.
-**Change (preferred):** move inline styles to classes in `public/styles.css` — `.hidden{display:none}` for the legacy wrapper, a width utility/CSS var for recovery fills, and the stray `font-size`/`margin`/`white-space` spots in `public/app.js`.
-**Acceptance:** no CSP console warnings on Trends/Today/History/Body; forms stay hidden; bars fill; tests green.
-**PR title:** `fix(ui): inline styles → classes so CSP stops breaking Trends/recovery (HI-2)`
+### ✅ Step 2A — Fix CSP so the UI stops leaking/breaking — DONE
+**Done:** Merged PR #315 (`fix(ui): inline styles → classes so CSP stops breaking Trends/recovery (HI-2)`). Inline `style=""` moved to CSS classes; recovery-bar fills driven by `--fill` custom property.
 
-### Step 2B — Finish the parser set-count cap
-**Confirm:** `services/workoutTextParser.js` → an `Array.from({ length: setCount })` path lacking the `if (setCount > 10) return null;` guard a sibling already has. If all capped, **skip.**
-**Change:** add the guard to any uncapped path; valid input unchanged.
-**Acceptance:** absurd set count rejected on every path; golden parser tests still pass; tests green.
-**PR title:** `fix(parser): cap set-count on all paths (HI-3)`
+### ✅ Step 2B — Finish the parser set-count cap — DONE
+**Done:** PR #317 (`fix(parser): cap set-count on all paths (HI-3)`). `parseWeightRepsSets` path now has `if (setCount > 10) return null;` matching all sibling paths. Two new golden tests cover absurd and valid set counts.
 
 ### Step 2C — Friendly errors, no contradictory panels
 **Why:** raw dev strings and literal `undefined` reach the user; sections fail independently and can contradict (e.g. "log a few sessions" next to "48 total sessions").
@@ -245,18 +241,11 @@ After this, deload is one concept in one file with one spec. If it's wrong, you 
 **Acceptance:** a Playwright e2e feeding empty + partial + error responses asserts no raw error text, no `undefined`, no contradictory panels; tests green.
 **PR title:** `fix(ui): friendly fallbacks + no contradictory states (ME-1/ME-2/ME-3)`
 
-### Step 2D — Weekly report handles object-shaped rows
-**Confirm:** `services/analytics.js` → `buildWeeklyReport`. If it indexes rows positionally (`row[7]`, `row[8]`…) without normalizing, object rows silently zero it out → open.
-**Change:** normalize rows up front like the sibling builders (or branch on array vs object).
-**Acceptance:** object-shaped rows produce the same report as array rows (new test); tests green.
-**PR title:** `fix(analytics): weekly report normalizes row shape (ME-8)`
+### ✅ Step 2D — Weekly report handles object-shaped rows — DONE
+**Done:** `chore: Sonnet hardening batch` PR. `buildWeeklyReport` now uses a local `cell(row, idx, key)` helper for every post-filter row access; object rows produce identical totals to array rows. New test in `test/analytics-edge.test.js` asserts this.
 
-### Step 2E — Service-worker cache bump (the "it disappeared after deploy" fix)
-**Why:** likely the cause of changes not showing on your device. The SW precache rejects the whole install if one asset 404s, and the shell only refreshes when `CACHE_NAME` changes — so a stale shell can persist.
-**Confirm:** `public/sw.js` → `cache.addAll(SHELL_ASSETS)` + a static `CACHE_NAME` (e.g. `atlas-shell-v2`).
-**Change:** switch precache to per-asset `cache.add` in a loop (one 404 no longer voids the shell); bump `CACHE_NAME` on every asset-affecting deploy (ideally a build hash); surface install failures instead of swallowing them.
-**Acceptance:** a missing asset doesn't void the cache; a deploy reliably serves the new shell; tests green.
-**PR title:** `fix(pwa): resilient precache + cache-name bump so deploys aren't masked (HI-5)`
+### ✅ Step 2E — Service-worker cache bump — DONE
+**Done:** `chore: Sonnet hardening batch` PR. `CACHE_NAME` bumped `atlas-shell-v7` → `atlas-shell-v8`. The activate handler already purges all caches whose key ≠ `CACHE_NAME`, so v7 is evicted on next activate. **Owner live-check needed:** hard-refresh the installed PWA on device and confirm the new service worker activates and old cache is gone.
 
 ---
 
