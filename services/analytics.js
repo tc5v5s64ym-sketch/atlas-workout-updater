@@ -1,5 +1,6 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
 const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps, recommendedTargetRir } = require('./liftRole');
+const { classifySubstitution } = require('./substitutionIntent');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -2231,16 +2232,44 @@ function buildWorkingWeightProtocol({ targetReps = 8, targetRir = 2, referenceWe
 //   swapped    = true when the logged exercise differs from the prescribed one;
 //                in that case actualRir/rirDelta are null (no RIR comparison).
 //
+// When swapped, the verdict also carries a `substitution` field — the
+// deterministic intent classification (services/substitutionIntent.js) of the
+// swap (preserved / changed / abandoned / baseline). It is attached only when
+// the prescribed and logged lift identities are supplied; otherwise it is null.
+// This enriches the existing swap verdict without changing the swap outcome.
+// PR 3 (COACH_PLAN.md): pure data — nothing surfaces it yet.
+//
+//   prescribedLift = { name, lift_code? } of the prescribed lift (optional)
+//   loggedLift     = { name, lift_code? } of the logged lift (optional)
+//   constraints    = active Constraints-tab rows (optional)
+//   painFlag       = post-hoc pain signal (optional)
+//   history        = prior log rows for the prescribed lift (optional; absent → baseline)
+//
 // Returns null when actualRir is absent and swapped is false — nothing to read.
 // prescribedRir defaults to 2 (matching effortVerdict) when omitted or NaN.
-function computeExpectationVerdict({ actualRir = null, prescribedRir = null, swapped = false } = {}) {
+function computeExpectationVerdict({
+  actualRir = null,
+  prescribedRir = null,
+  swapped = false,
+  prescribedLift = null,
+  loggedLift = null,
+  constraints = null,
+  painFlag = false,
+  history = null,
+} = {}) {
   if (swapped) {
+    // Classify the swap's intent only when both lift identities are known.
+    // Never overrides the swap outcome; purely additive enrichment.
+    const substitution = (prescribedLift && loggedLift)
+      ? classifySubstitution({ prescribed: prescribedLift, logged: loggedLift, constraints, painFlag, history })
+      : null;
     return {
       outcome:       'swap',
       why:           'Exercise swapped — no direct RIR comparison; treat as a smart adjustment.',
       prescribedRir: null,
       actualRir:     null,
       rirDelta:      null,
+      substitution,
     };
   }
 

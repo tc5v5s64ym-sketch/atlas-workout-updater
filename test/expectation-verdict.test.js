@@ -167,6 +167,103 @@ describe('computeExpectationVerdict — swap', () => {
   });
 });
 
+// ─── PR 3: substitution intent attached to the swap verdict ──────────────────
+
+describe('computeExpectationVerdict — substitution enrichment (PR 3)', () => {
+  const HISTORY = [{ weight: 225, reps: 5, rir: 2 }];
+
+  it('swap still works: outcome and existing fields are preserved', () => {
+    const v = computeExpectationVerdict({
+      swapped: true,
+      prescribedLift: { name: 'Back Squat' },
+      loggedLift:     { name: 'Leg Press' },
+      history:    HISTORY,
+    });
+    assert.strictEqual(v.outcome, 'swap');
+    assert.strictEqual(v.prescribedRir, null);
+    assert.strictEqual(v.actualRir, null);
+    assert.strictEqual(v.rirDelta, null);
+    assert.ok(v.why.toLowerCase().includes('swap'));
+  });
+
+  it('attaches the substitution classification when both lift identities are given', () => {
+    const v = computeExpectationVerdict({
+      swapped: true,
+      prescribedLift: { name: 'Back Squat', lift_code: 'SQ01' },
+      loggedLift:     { name: 'Leg Press' },
+      history:    HISTORY,
+    });
+    assert.ok(v.substitution, 'substitution block should be attached');
+    assert.strictEqual(v.substitution.classification, 'preserved');
+    assert.strictEqual(v.substitution.decision, 'approve');
+    assert.strictEqual(v.substitution.reason_code, 'pattern_and_muscle_match');
+    assert.strictEqual(v.substitution.prescribed.lift_code, 'SQ01');
+    assert.ok(Array.isArray(v.substitution.evidence));
+  });
+
+  it('classifies an abandoned swap (heavy main lift → unrelated stimulus)', () => {
+    const v = computeExpectationVerdict({
+      swapped: true,
+      prescribedLift: { name: 'Back Squat' },
+      loggedLift:     { name: 'Treadmill' },
+      history:    HISTORY,
+    });
+    assert.strictEqual(v.outcome, 'swap');
+    assert.strictEqual(v.substitution.classification, 'abandoned');
+    assert.strictEqual(v.substitution.decision, 'warn');
+  });
+
+  it('classifies a baseline swap when no history is supplied', () => {
+    const v = computeExpectationVerdict({
+      swapped: true,
+      prescribedLift: { name: 'Back Squat' },
+      loggedLift:     { name: 'Leg Press' },
+      // no history
+    });
+    assert.strictEqual(v.substitution.classification, 'baseline');
+    assert.strictEqual(v.substitution.decision, 'approve');
+  });
+
+  it('substitution is null on a swap when lift identities are missing (back-compat)', () => {
+    const v = computeExpectationVerdict({ swapped: true });
+    assert.strictEqual(v.outcome, 'swap');
+    assert.strictEqual(v.substitution, null);
+  });
+
+  it('substitution is null when only one lift identity is provided', () => {
+    const v = computeExpectationVerdict({ swapped: true, prescribedLift: { name: 'Back Squat' } });
+    assert.strictEqual(v.substitution, null);
+  });
+
+  it('non-swap paths are unchanged: no substitution field on a normal verdict', () => {
+    const v = computeExpectationVerdict({ actualRir: 2, prescribedRir: 2 });
+    assert.strictEqual(v.outcome, 'met');
+    assert.ok(!('substitution' in v), 'non-swap verdict must not carry a substitution field');
+  });
+
+  it('non-swap paths ignore substitution inputs entirely', () => {
+    // Even if lift identities are passed, a non-swap verdict never classifies.
+    const v = computeExpectationVerdict({
+      actualRir: 4,
+      prescribedRir: 2,
+      prescribedLift: { name: 'Back Squat' },
+      loggedLift:     { name: 'Leg Press' },
+      history:    HISTORY,
+    });
+    assert.strictEqual(v.outcome, 'fell_short');
+    assert.ok(!('substitution' in v));
+  });
+
+  it('still returns null when not swapped and no actualRir, even with lift identities', () => {
+    const v = computeExpectationVerdict({
+      prescribedLift: { name: 'Back Squat' },
+      loggedLift:     { name: 'Leg Press' },
+      history:    HISTORY,
+    });
+    assert.strictEqual(v, null);
+  });
+});
+
 // ─── default prescribedRir ──────────────────────────────────────────────────
 
 describe('computeExpectationVerdict — prescribedRir defaults', () => {
