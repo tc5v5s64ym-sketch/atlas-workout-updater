@@ -40,6 +40,7 @@ const {
   scoreIntents
 } = require('./services/analytics');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
+const { getProfileGoal } = require('./services/profileGoal');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1394,7 +1395,7 @@ app.get('/api/recommendation/preview', async (req, res) => {
     const rec = buildRecommendation({
       sessionText: req.query.text || req.query.sessionText,
       explicitGoal: req.query.goal,
-      userProfileGoal: req.query.profileGoal,
+      userProfileGoal: req.query.profileGoal || getProfileGoal(),
       liftCode: req.query.liftCode,
       exerciseName: req.query.exercise,
       logRows: allLog,
