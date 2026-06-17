@@ -96,7 +96,7 @@
    prefers-color-scheme override. (Light theme intentionally retired.) */
 
 * { box-sizing: border-box; }
-[hidden] { display: none !important; }
+[hidden], .hidden { display: none !important; }
 
 html { -webkit-text-size-adjust: 100%; }
 
@@ -1981,7 +1981,7 @@ a.lift-link:hover { text-decoration: underline; }
 
 /* Thin recovery bar under each readiness dot — fill width = % recovered */
 .pattern-recovery { width: 32px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: 1px; }
-.pattern-recovery-fill { height: 100%; border-radius: 2px; transition: width 0.3s ease; }
+.pattern-recovery-fill { width: var(--fill, 0%); height: 100%; border-radius: 2px; transition: width 0.3s ease; }
 
 .todays-read-rec { font-weight: 600; margin: var(--s2) 0 2px; font-size: 0.9rem; }
 .todays-read-reason { margin: 0; font-size: 0.82rem; color: var(--muted); }

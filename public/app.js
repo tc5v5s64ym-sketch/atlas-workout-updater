@@ -904,8 +904,7 @@ function renderTodaysRead(data) {
     const rawLabel = p.label || p.pattern;
     const pct = p.recovery == null ? 0 : Math.round(p.recovery * 100);
     const recoveryFill = el('div', { class: `pattern-recovery-fill pattern-dot-${status}` });
-    // Dynamic width set via CSSOM (allowed under CSP), not an inline style attr.
-    recoveryFill.style.width = `${pct}%`;
+    recoveryFill.style.setProperty('--fill', `${pct}%`);
     const recoveryBar = el('div', { class: 'pattern-recovery', title: readinessTitle(p) }, [recoveryFill]);
     const wrap = el('div', { class: 'pattern-dot-wrap' }, [
       el('div', { class: `pattern-dot pattern-dot-${status}`, title: readinessTitle(p) }),
