@@ -435,3 +435,14 @@ test('substitution: leg press logs normally without substitution context', () =>
   assert.equal(result.canonical_name, 'Leg Press');
   assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
 });
+
+test('substitution: exercise header on its own paragraph still resolves when sets follow after blank line', () => {
+  // "Leg Press\n\n360 10/2\n..." — header alone in first paragraph, sets in second.
+  // extractSetParagraphs must keep the short header (no terminal punctuation) and
+  // join it with the set paragraph rather than discarding it.
+  const input = ['Leg Press', '', '360 10/2', '360 10/2', '360 10/1'].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
+});
