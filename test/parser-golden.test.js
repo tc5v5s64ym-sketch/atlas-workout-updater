@@ -479,3 +479,52 @@ test('substitution: exercise header on its own paragraph still resolves when set
   assert.equal(result.canonical_name, 'Leg Press');
   assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
 });
+
+// ---------------------------------------------------------------------------
+// Dumbbell / per-hand multi-group notation for Incline DB Press
+// ---------------------------------------------------------------------------
+
+test('dumbbell: multi-group slash notation — two weights, reps/RIR each, per-hand preserved', () => {
+  // "incline 65s 8/2" → contextual alias stripped; 60s 10/3 and 65s 8/2 parsed
+  // as separate per-hand dumbbell groups via parseDumbbellGroups.
+  const result = parseWorkoutText('Incline DB Press 60s 10/3, incline 65s 8/2');
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.equal(result.sets.length, 2, 'two sets');
+  assert.deepEqual(sets(result), [[60, 10, 3], [65, 8, 2]]);
+  assert.ok(result.sets.every(s => s.load_note === 'per_hand'), 'load_note per_hand on all sets');
+});
+
+test('dumbbell: multi-group xREPS @RIR notation — two weights, per-hand preserved', () => {
+  const result = parseWorkoutText('Incline dumbbell press 55s x10 @3, incline 60s x8 @2');
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.equal(result.sets.length, 2, 'two sets');
+  assert.deepEqual(sets(result), [[55, 10, 3], [60, 8, 2]]);
+  assert.ok(result.sets.every(s => s.load_note === 'per_hand'), 'load_note per_hand on all sets');
+});
+
+test('dumbbell: existing comma-list notation still works — no regression', () => {
+  // parseDumbbellList handles "NNNs REPS,REPS,REPS" (no RIR); must still fire.
+  const result = parseWorkoutText('Incline DB Press 65s 10,10,9');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(sets(result), [[65, 10, null], [65, 10, null], [65, 9, null]]);
+});
+
+test('dumbbell: existing single-weight xN repeat notation still works — no regression', () => {
+  // parseDumbbellSlashRepeats handles the anchored "NNNs REPS/RIR xN" form.
+  const result = parseWorkoutText('Incline DB Press 60s 10/2 x2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.equal(result.sets.length, 2, 'x2 = 2 total sets');
+  assert.deepEqual(sets(result), [[60, 10, 2], [60, 10, 2]]);
+});
+
+test('dumbbell: contextual alias safety — "incline felt weird" must not create a log row', () => {
+  // "incline" alone triggers the contextual alias path and asks for clarification,
+  // not a log row.
+  const result = parseWorkoutText('incline felt weird');
+  assert.notEqual(result.intent, 'log_sets', 'must not log without set data');
+  assert.equal(result.intent, 'needs_clarification');
+});

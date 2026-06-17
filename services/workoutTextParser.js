@@ -500,6 +500,7 @@ function parseSetGroups(text) {
     .trim();
 
   return parseDumbbellSlashRepeats(cleaned)
+    || parseDumbbellGroups(cleaned)
     || parseDumbbellList(cleaned)
     || parseSetsFirst(cleaned)
     || parseWeightRepsSets(cleaned)
@@ -585,6 +586,46 @@ function parseDumbbellSlashRepeats(text) {
     rir,
     load_note: 'per_hand',
   }));
+}
+
+// Parses one or more per-hand dumbbell set groups, supporting two notations:
+//   NNNs REPS/RIR [xCOUNT]   — "60s 10/3", "60s 10/3 65s 8/2"
+//   NNNs xREPS @RIR [xCOUNT] — "55s x10 @3", "55s x10 @3 60s x8 @2"
+// Groups may be separated by commas or spaces.
+// parseDumbbellSlashRepeats handles the narrower anchored form (one weight, xN);
+// this function handles the multi-group and single-set-without-xN cases.
+function parseDumbbellGroups(text) {
+  const SLASH_GROUP = /(\d+(?:\.\d+)?)s\s+(\d+)\/(\d+(?:\.\d+)?)(?:\s+x(\d+))?/gi;
+  const XREP_GROUP  = /(\d+(?:\.\d+)?)s\s+x(\d+)\s+@(\d+(?:\.\d+)?)(?:\s+x(\d+))?/gi;
+
+  // Slash form wins when both notations appear in one entry; xrep is not tried.
+  const slashMatches = [...text.matchAll(SLASH_GROUP)];
+  if (slashMatches.length) {
+    const sets = [];
+    for (const m of slashMatches) {
+      const count = m[4] ? Number(m[4]) : 1;
+      if (count > 10) return null;
+      for (let i = 0; i < count; i++) {
+        sets.push(setRecord({ weight: Number(m[1]), reps: Number(m[2]), rir: Number(m[3]), load_note: 'per_hand' }));
+      }
+    }
+    return sets.length ? sets : null;
+  }
+
+  const xrepMatches = [...text.matchAll(XREP_GROUP)];
+  if (xrepMatches.length) {
+    const sets = [];
+    for (const m of xrepMatches) {
+      const count = m[4] ? Number(m[4]) : 1;
+      if (count > 10) return null;
+      for (let i = 0; i < count; i++) {
+        sets.push(setRecord({ weight: Number(m[1]), reps: Number(m[2]), rir: Number(m[3]), load_note: 'per_hand' }));
+      }
+    }
+    return sets.length ? sets : null;
+  }
+
+  return null;
 }
 
 function parseDumbbellList(text) {
