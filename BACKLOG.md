@@ -19,6 +19,8 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 - **Phase 2 hardening (from [`FIX_PLAN.md`](./FIX_PLAN.md)):** service-worker cache bug (HI-5), parser set-count cap (HI-3), friendly errors + no contradictory panels (ME-1/2/3), weekly-report row shape (ME-8).
 - ✅ **HI-2 — CSP / inline styles** — inline `style=""` moved to CSS classes; recovery-bar fills driven by `--fill` custom property (PR).
 - **Triage the older open issues:** lift-code fallback collision (`generateLiftCode` in `services/exerciseEnrichment.js` — no collision check/increment), and the flaky e2e ([#262](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/262)).
+- **Step 1C — deload logic housing** (`analytics.js` / `coach.js`): Deload decision code is scattered; `services/deloadPolicy.js` does not yet exist. Extract to one module with golden fixtures pinning the 5 behaviors in `DELOAD_SPEC.md`. Distinct from #291's surface consolidation — this is the *where* (housing), not the *what* (surfaces). See [FIX_PLAN.md Step 1C](./FIX_PLAN.md).
+- **In-memory pending-exercise queue** (`index.js:170` — `const pendingExercisesMemory = []`): Drops on redeploy/restart, losing the pending-review queue. Decision needed: persist to a Sheet tab (on-brand), or explicitly document the known limitation. See [FIX_PLAN.md "Additional verified items"](./FIX_PLAN.md).
 
 ## Future epic
 
@@ -48,4 +50,8 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 ## Housekeeping
 
 - **Close obsolete PR [#288](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/pull/288)** (superseded by [#290](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/pull/290)). ✅ Already closed 2026-06-16.
-- **Reconcile [`FIX_PLAN.md`](./FIX_PLAN.md)** — mark shipped items done (e.g. Phase 1: write-path integrity, deload spec + module, ME-7/HI-8 analytics correctness), or fold the remaining ones into this backlog.
+- ✅ **Reconcile [`FIX_PLAN.md`](./FIX_PLAN.md)** — all FIX_PLAN items classified (done/open); open items folded into this backlog; FIX_PLAN archived with a banner. Done in this PR.
+- **Branch protection on `main`** (GitHub Settings → Branches): require PRs + required status checks + "require branches to be up to date before merging." Stops stale branches silently clobbering shared files. See [FIX_PLAN.md "Process changes"](./FIX_PLAN.md).
+- **Coach-voice golden-output rubric**: Extend `test/coach.test.js` into a rubric where a voice change must update the test — ends the per-PR phrasing loop. See [FIX_PLAN.md "Process changes"](./FIX_PLAN.md).
+- **Phase 3 dead-code cleanup** (optional, low-priority): dead `loadTodaysPlan()` in `public/app.js:1341`; redundant condition in `services/recommendationPolicy.js`; stale imports in `index.js`. One concern per PR. See [FIX_PLAN.md Phase 3](./FIX_PLAN.md).
+- **API key in `localStorage`** (`public/app.js:9`): XSS exposure risk; safe for single-user Dale, becomes a real item at multi-user/productization. Logged here so it's not a surprise. See [FIX_PLAN.md "Additional verified items"](./FIX_PLAN.md).

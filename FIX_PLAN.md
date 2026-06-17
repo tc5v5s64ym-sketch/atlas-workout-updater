@@ -1,3 +1,5 @@
+> ⚠️ ARCHIVED — superseded by BACKLOG.md as the live task list. Kept for historical detail and PR specs. Do not add new work here; add it to BACKLOG.md.
+
 # Atlas — Fix Plan (model-sequenced, hand-to-agent ready)
 
 **Audience:** Claude Code (or any AI agent) working on `tc5v5s64ym-sketch/atlas-workout-updater`.
