@@ -843,7 +843,7 @@
   // / Undo delegate to the existing #approve-btn / #parsed-rows-editor /
   // window.atlasUndoLastWrite — the write path itself is unchanged.
   async function handlePreviewReady(detail) {
-    const { rows = [], liftCodes = [], effortOnly, effort } = detail || {};
+    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [] } = detail || {};
     if (!effortOnly && !liftCodes.length) return;       // nothing to review
 
     const handle = appendAtlasBubble();
@@ -854,6 +854,72 @@
       : "Solid session. Here's everything from our conversation — give it a look before it goes to your sheet:";
     await typeOut(body, intro);
     bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort));
+    // Read-only substitution-intent note(s): the engine already decided
+    // preserved/changed/abandoned/baseline (data.substitutions from the dry-run).
+    // The voice only words it; this never writes or gates the Save.
+    if (Array.isArray(substitutions) && substitutions.length) {
+      await renderSubstitutionNotes(bubble, substitutions);
+    }
+  }
+
+  /* ===== Substitution-intent note (read-only) ===== */
+
+  // Templated line keyed off the engine's classification — this ALWAYS surfaces
+  // the engine verdict, so it stands on its own when the Gemini voice is down.
+  // Pure (no DOM, no closure deps) for unit-testability.
+  // The preview carries prescribed/logged as the full classifier objects
+  // ({ name, ... }); the sanitized voice path uses bare name strings. Handle both.
+  function liftLabel(ref, fallback) {
+    if (ref && typeof ref === 'object') return ref.name || fallback;
+    return (typeof ref === 'string' && ref) ? ref : fallback;
+  }
+
+  function templatedSubstitutionLine(sub) {
+    const p = liftLabel(sub && sub.prescribed, 'the prescribed lift');
+    const l = liftLabel(sub && sub.logged, 'what you logged');
+    switch (sub && sub.classification) {
+      case 'preserved':
+        return `Swap check: ${l} for ${p} — same job, different tool. Intent preserved.`;
+      case 'changed':
+        return `Swap check: ${l} for ${p} — that shifts the target muscle. Slot the real match in next time.`;
+      case 'abandoned':
+        return `Swap check: ${l} for ${p} — that left the session's objective untrained. Get the real movement back in this week.`;
+      case 'baseline':
+        return `Swap check: ${l} for ${p} — no history yet to judge it against. Logging it builds the baseline.`;
+      default:
+        return `Swap check: ${l} for ${p}.`;
+    }
+  }
+
+  // approve → calm note; warn → flagged note. Drives the read-only styling only.
+  function substitutionTone(sub) {
+    return (sub && sub.decision === 'warn') ? 'warn' : 'ok';
+  }
+
+  // Gemini path: ask the read-only coach endpoint to word the engine's verdict.
+  // Returns null on outage / no key / timeout so the caller falls back to the
+  // templated line. Mirrors getLlmPlanMessage's prefer-Gemini-then-template shape.
+  async function voiceSubstitution(sub) {
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
+    const timeoutMs = (typeof COACH_LLM_TIMEOUT_MS !== 'undefined') ? COACH_LLM_TIMEOUT_MS : 6000;
+    const timeout = new Promise(resolve => setTimeout(() => resolve(null), timeoutMs));
+    const request = api('/api/coach/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'set', facts: { substitution: sub } })
+    }).then(res => (res && res.data && res.data.message) || null).catch(() => null);
+    return Promise.race([request, timeout]);
+  }
+
+  async function renderSubstitutionNotes(bubble, subs) {
+    for (const sub of subs) {
+      if (!sub || !sub.classification) continue;
+      const note = elc('div', `sub-note sub-${substitutionTone(sub)}`);
+      bubble.appendChild(note);
+      // Prefer Gemini's voiced line; fall back to the templated engine verdict.
+      const voiced = await voiceSubstitution(sub);
+      await typeOut(note, voiced || templatedSubstitutionLine(sub));
+    }
   }
 
   /* ===== Coach-nav wiring (avatar → Settings) =====
