@@ -436,6 +436,22 @@ test('substitution: leg press logs normally without substitution context', () =>
   assert.deepEqual(sets(result), [[360, 10, 2], [360, 10, 2], [360, 10, 1]]);
 });
 
+test('substitution: explanatory prose + x-notation sets — leg press wins, sets preserved', () => {
+  // "Skipped squat rack." ends with a period → IS_PROSE → discarded by extractSetParagraphs.
+  // "Leg Press\n360x10x3" has no slash token but no terminal punctuation → kept.
+  // parseWeightRepsSets resolves 360x10x3 → 3 sets of 10 reps @ weight 360, RIR null.
+  const input = ['Skipped squat rack.', '', 'Leg Press', '360x10x3'].join('\n');
+  const result = parseWorkoutText(input);
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent} (${result.message})`);
+  assert.equal(result.canonical_name, 'Leg Press');
+  assert.equal(result.sets.length, 3, 'x3 = 3 sets');
+  assert.deepEqual(
+    result.sets.map(s => [s.weight, s.reps]),
+    [[360, 10], [360, 10], [360, 10]]
+  );
+  assert.notEqual(result.canonical_name, 'Back Squat', 'prose must not steal ownership');
+});
+
 test('substitution: exercise header on its own paragraph still resolves when sets follow after blank line', () => {
   // "Leg Press\n\n360 10/2\n..." — header alone in first paragraph, sets in second.
   // extractSetParagraphs must keep the short header (no terminal punctuation) and

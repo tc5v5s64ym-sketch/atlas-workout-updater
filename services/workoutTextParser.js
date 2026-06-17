@@ -218,10 +218,11 @@ function detectIntent(text) {
 function extractSetParagraphs(input) {
   const HAS_SET_SLASH = /\d+\/\d+/;
   const IS_PROSE = /[.!?]$|[.!?]\s/;
-  const paragraphs = String(input || '').split(/\n[ \t]*\n/);
+  const normalized = String(input || '').replace(/\r\n/g, '\n');
+  const paragraphs = normalized.split(/\n[ \t]*\n/);
   if (paragraphs.length <= 1) return input;
   const useful = paragraphs.filter(p => HAS_SET_SLASH.test(p) || !IS_PROSE.test(p.trim()));
-  if (useful.length === paragraphs.length) return input;
+  if (useful.length === paragraphs.length) return normalized;
   if (!useful.length) return input;
   return useful.join('\n');
 }
