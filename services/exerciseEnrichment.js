@@ -25,6 +25,35 @@ const knownLiftCodeOverrides = new Map([
   ['knee raise', 'KR01'], ['knee raises', 'KR01']
 ]);
 
+// Small registry for tracking used generated lift codes within one batch of rows.
+// Ensures colliding unknown exercises get distinct 01/02/.. suffixes while keeping
+// generateLiftCode itself pure and unchanged for direct callers/tests.
+// The pre-assignment (in sorted name order) makes output independent of input row order.
+function makeLiftCodeRegistry() {
+  const used = new Set();
+  const assigned = new Map(); // normKey -> code (idempotent per name)
+  return {
+    generate(exerciseName) {
+      const norm = normalizeExerciseKey(exerciseName);
+      if (assigned.has(norm)) return assigned.get(norm);
+      let code = generateLiftCode(exerciseName);
+      if (used.has(code)) {
+        const prefix = code.slice(0, 3);
+        for (let s = 2; s <= 99; s += 1) {
+          const cand = `${prefix}${String(s).padStart(2, '0')}`;
+          if (!used.has(cand)) {
+            code = cand;
+            break;
+          }
+        }
+      }
+      used.add(code);
+      assigned.set(norm, code);
+      return code;
+    }
+  };
+}
+
 // Returns a deterministic lift code when the catalog row has no code.
 // Known exercises map to the canonical codes above; others get a 3-letter
 // initialism prefix so the field is never blank.
@@ -51,10 +80,12 @@ function generateLiftCode(exerciseName) {
 
 // Pick a lift code: catalog -> row-provided -> generated (in that priority).
 // Returns { lift_code, generated: true } when we had to generate a fallback.
-function resolveOrGenerateLiftCode(catalogCode, providedCode, exerciseName) {
+// registry (optional) enables cross-row uniqueness for generated fallbacks only.
+function resolveOrGenerateLiftCode(catalogCode, providedCode, exerciseName, registry = null) {
   if (catalogCode) return { lift_code: catalogCode, generated: false };
   if (providedCode) return { lift_code: providedCode, generated: false };
-  return { lift_code: generateLiftCode(exerciseName), generated: true };
+  const code = registry ? registry.generate(exerciseName) : generateLiftCode(exerciseName);
+  return { lift_code: code, generated: true };
 }
 
 function fallbackMuscleGroup(muscleGroup) {
@@ -211,7 +242,7 @@ function buildExerciseCatalogMap(rows) {
   return entryMap;
 }
 
-function enrichLogRow(rowObj, catalogMap) {
+function enrichLogRow(rowObj, catalogMap, registry = null) {
   rowObj = rowObj && typeof rowObj === 'object' ? rowObj : {};
   catalogMap = catalogMap instanceof Map ? catalogMap : new Map();
 
@@ -221,7 +252,7 @@ function enrichLogRow(rowObj, catalogMap) {
   const preferredAlias = findPreferredAliasMatch(key, catalogMap);
   if (preferredAlias) {
     if (!preferredAlias.entry) {
-      const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise);
+      const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise, registry);
       return {
         enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: fallbackMuscleGroup(), lift_code: resolved.lift_code },
         warnings: [
@@ -231,7 +262,7 @@ function enrichLogRow(rowObj, catalogMap) {
         ]
       };
     }
-    const resolved = resolveOrGenerateLiftCode(preferredAlias.entry.lift_code, providedLiftCode, preferredAlias.entry.canonical_exercise || rowObj.exercise);
+    const resolved = resolveOrGenerateLiftCode(preferredAlias.entry.lift_code, providedLiftCode, preferredAlias.entry.canonical_exercise || rowObj.exercise, registry);
     const enriched = { ...rowObj,
       canonical_exercise: preferredAlias.entry.canonical_exercise,
       muscle_group: fallbackMuscleGroup(preferredAlias.entry.muscle_group),
@@ -248,7 +279,7 @@ function enrichLogRow(rowObj, catalogMap) {
   // Exact match (includes any variants already indexed in the map)
   const exactMatch = catalogMap.get(key);
   if (exactMatch) {
-    const resolved = resolveOrGenerateLiftCode(exactMatch.lift_code, providedLiftCode, exactMatch.canonical_exercise || rowObj.exercise);
+    const resolved = resolveOrGenerateLiftCode(exactMatch.lift_code, providedLiftCode, exactMatch.canonical_exercise || rowObj.exercise, registry);
     const enriched = { ...rowObj,
       canonical_exercise: exactMatch.canonical_exercise,
       muscle_group: fallbackMuscleGroup(exactMatch.muscle_group),
@@ -265,7 +296,7 @@ function enrichLogRow(rowObj, catalogMap) {
   const fuzzy = findFuzzyMatch(key, catalogMap);
   if (fuzzy) {
     if (!fuzzy.entry) {
-      const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise);
+      const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise, registry);
       return {
         enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: fallbackMuscleGroup(), lift_code: resolved.lift_code },
         warnings: [
@@ -275,7 +306,7 @@ function enrichLogRow(rowObj, catalogMap) {
         ]
       };
     }
-    const resolved = resolveOrGenerateLiftCode(fuzzy.entry.lift_code, providedLiftCode, fuzzy.entry.canonical_exercise || rowObj.exercise);
+    const resolved = resolveOrGenerateLiftCode(fuzzy.entry.lift_code, providedLiftCode, fuzzy.entry.canonical_exercise || rowObj.exercise, registry);
     const enriched = { ...rowObj,
       canonical_exercise: fuzzy.entry.canonical_exercise,
       muscle_group: fallbackMuscleGroup(fuzzy.entry.muscle_group),
@@ -290,7 +321,7 @@ function enrichLogRow(rowObj, catalogMap) {
   }
 
   // No match at all -- generate a lift code so the field is never blank.
-  const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise);
+  const resolved = resolveOrGenerateLiftCode('', providedLiftCode, rowObj.exercise, registry);
   return {
     enriched: { ...rowObj, canonical_exercise: rowObj.exercise, muscle_group: fallbackMuscleGroup(), lift_code: resolved.lift_code },
     warnings: [
@@ -320,4 +351,4 @@ function closestExerciseMatches(input, catalogMap, limit = 5) {
     .map(({ key, value }) => ({ normalized_key: key, canonical_exercise: value.canonical_exercise, muscle_group: value.muscle_group, lift_code: value.lift_code }));
 }
 
-module.exports = { normalizeExerciseKey, generateLiftCode, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches };
+module.exports = { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches };

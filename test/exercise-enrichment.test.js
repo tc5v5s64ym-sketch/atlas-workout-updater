@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   normalizeExerciseKey,
   generateLiftCode,
+  makeLiftCodeRegistry,
   buildExerciseCatalogMap,
   enrichLogRow,
   closestExerciseMatches
@@ -130,4 +131,52 @@ test('edge cases: closestExerciseMatches handles empty input or catalog', () => 
   assert.deepEqual(closestExerciseMatches('', fakeCatalog()), []);
   assert.deepEqual(closestExerciseMatches('bench', new Map()), []);
   assert.deepEqual(closestExerciseMatches('bench', null), []);
+});
+
+// Acceptance tests for unique generated lift codes (the collision fix)
+test('lift code uniqueness: two unknown exercises colliding on prefix get distinct codes (01/02)', () => {
+  const map = fakeCatalog(); // or empty; doesn't matter for pure unknowns
+  // clear for safety
+  const reg = makeLiftCodeRegistry();
+  // "Big Press" and "Bar Press" both -> BPX01 base via first letters
+  const ra = enrichLogRow({ exercise: 'Big Press' }, new Map(), reg);
+  const rb = enrichLogRow({ exercise: 'Bar Press' }, new Map(), reg);
+  assert.equal(ra.enriched.lift_code, 'BPX01');
+  assert.equal(rb.enriched.lift_code, 'BPX02');
+  assert.notEqual(ra.enriched.lift_code, rb.enriched.lift_code);
+});
+
+test('lift code uniqueness: single / non-colliding unknown keeps 01', () => {
+  const reg = makeLiftCodeRegistry();
+  const r = enrichLogRow({ exercise: 'Solo Lift' }, new Map(), reg);
+  assert.equal(r.enriched.lift_code, 'SLX01');
+});
+
+test('lift code uniqueness: catalog or row-provided codes win and are untouched', () => {
+  const map = fakeCatalog();
+  const reg = makeLiftCodeRegistry();
+  const cat = enrichLogRow({ exercise: 'Bench Press' }, map, reg);
+  assert.equal(cat.enriched.lift_code, 'BEN01'); // from catalog, not generated
+
+  const prov = enrichLogRow({ exercise: 'Mystery', lift_code: 'MYS42' }, new Map(), reg);
+  assert.equal(prov.enriched.lift_code, 'MYS42');
+});
+
+test('lift code uniqueness: same input set of names yields identical codes across runs (deterministic via name sort)', () => {
+  const names = ['Big Press', 'Bar Press', 'Solo'];
+  const run = () => {
+    const reg = makeLiftCodeRegistry();
+    const items = names.map(n => ({ exercise: n }));
+    // simulate pre-claim sorted
+    const sorted = [...items].sort((a, b) => normalizeExerciseKey(a.exercise).localeCompare(normalizeExerciseKey(b.exercise)));
+    sorted.forEach(it => enrichLogRow(it, new Map(), reg));
+    return names.map(n => enrichLogRow({ exercise: n }, new Map(), reg).enriched.lift_code);
+  };
+  const codesA = run();
+  const codesB = run();
+  assert.deepEqual(codesA, codesB);
+  // names order: Big, Bar, Solo ; Bar lex-first among BPX group so gets 01, Big gets 02
+  assert.equal(codesA[0], 'BPX02'); // Big Press
+  assert.equal(codesA[1], 'BPX01'); // Bar Press (lex smaller)
+  assert.equal(codesA[2], 'SOL01');
 });
