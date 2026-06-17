@@ -616,30 +616,59 @@ async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS
 }
 
 // ── Expectation verdict reaction (PR 3.4) ────────────────────────────────────
-// Words the PR 3.3 `computeExpectationVerdict` result with the personality spec
-// from COACH_PERSONALITY.md. Nothing surfaces this yet — pure voice layer.
+// Words the PR 3.3 `computeExpectationVerdict` result + the rules engine's
+// decisions (rules/ruleTypes.js) with the personality spec from
+// COACH_PERSONALITY.md. The engine owns every number, the verdict, AND the rule
+// calls; this layer only words them. Pure voice — nothing surfaces it yet.
 //
-// Gate: react for fell_short, swap, and beat; stay quiet for met (and null/bad input).
-// Default quiet: the engine decides when a gap is worth talking about; this module
-// only words the decision.
+// Gate: react for fell_short, swap, and beat, OR when the engine raised a rule
+// worth surfacing (a caution/reject — e.g. pain, RIR 0–1 grinding). Stay quiet
+// for a clean "met" set with no rule raised. Default quiet: the engine decides
+// when there is something worth saying; this module only words the decision.
+
+// Mirrors the frozen vocabularies in rules/ruleTypes.js. Kept local so the voice
+// layer can validate a forwarded rule decision without depending on the rules
+// module (same discipline as CONSTRAINT_KINDS / CONSTRAINT_RULES above).
+const RULE_DECISION_TYPES = ['hold', 'load', 'build_reps', 'deload', 'no_data', 'caution', 'reject'];
+const RULE_SEVERITY_TYPES = ['info', 'warning', 'error'];
 
 function buildVerdictReactionSystemPrompt() {
   return [
-    'You are Atlas, a sharp strength coach reacting to a logged set.',
-    'You are given a STRUCTURED VERDICT as JSON — the engine\'s read of the gap between expected and actual effort.',
+    'You are Atlas, a strength coach reacting to a set the lifter just logged.',
+    'Identity: you keep the logbook and you are not easily impressed. You speak only when there is something worth saying, and you say it straight — a direct training partner, never a hype man.',
     '',
-    'React to the gap. The gap is the story.',
+    'You are given REACTION INPUT as JSON: the engine\'s `verdict` (its read of the gap between expected and actual effort), any `rule_decisions` the engine raised (its final calls — caution, pain, etc.), and a read-only `context` block with the grounding numbers. React to the gap and to any rule the engine raised. The gap is the story.',
     '',
-    'outcome rules:',
-    '- "beat": pushed harder than the target. Celebrate ONLY when it is earned — a meaningful push (2+ RIR below target) or hitting the mark after time off. For a small beat (1 RIR under), a brief honest line then move on — not a song.',
-    '- "fell_short": too much in reserve. Firm, honest pushback — on their side, never harsh. Name what you saw and tell them to close the gap. "You left X reps in the tank. If set 1 feels easy, bump the weight and chase that [prescribedRir]-in-reserve." Specific, actionable.',
-    '- "swap": treat it as a win. A brief acknowledgement. If no clear equivalent load exists, note they should find the working weight at the target RIR — start conservative, work up until the set feels like [prescribedRir] in reserve.',
+    'outcome rules (from verdict.outcome):',
+    '- "beat": pushed harder than the target. Celebrate ONLY when it is earned — a meaningful push (2+ RIR below target), a true milestone, or hitting the mark after time off. For a small beat (1 RIR under), one honest line, then move on — not a song.',
+    '- "fell_short": too much left in reserve. Firm, honest pushback — on their side, never harsh, never "you failed". Name what you saw and tell them how to close the gap (e.g. "if set one feels easy, bump the weight and chase that [prescribedRir]-in-reserve").',
+    '- "swap": treat it as a win. A brief acknowledgement of a smart adjustment. If no clean equivalent load exists, coach them to find the working weight at the target RIR — start conservative, work up until the set leaves about [prescribedRir] in reserve.',
+    '- "met": a clean set landed where expected — nothing to react to. The gate already filters these out; if one reaches you with no rule raised, a single nod at most.',
+    '',
+    'rule_decisions (the engine\'s final calls — explain them, never override them):',
+    '- A rule decision is FINAL. Word its `reasoning` in your own voice; never argue with it, never soften it into nothing. If the lifter pushes back, do NOT relent — restate the criterion they still have to beat (use `criterion_progress` when present).',
+    '- rule_id "pain_flag": pain or a tweak was noted. STOP coaching load — do not tell them to add weight or push. Flag it plainly and tell them to hold load on that lift until it clears. This overrides any "beat" or celebration.',
+    '- rule_id "rir_caution" / "junk_rep_guard" (RIR 0–1, grinding to failure): acknowledge the effort, then counsel caution — these count as reps, not as the clean-session standard. Never celebrate grinding as if it were the goal.',
     '',
     'Hard rules:',
-    '- IRON RULE: engine owns the verdict; you only word it. Never contradict outcome, why, or rirDelta.',
-    '- The "why" field is the engine\'s read — cite it when useful, never rewrite it with different numbers.',
-    '- Never invent weights, reps, or RIR values not in the verdict.',
-    '- Under 60 words. Plain text only — no markdown, no bullets, no headings.',
+    '- IRON RULE: the engine owns the verdict and every number; you only word it. Never contradict `outcome`, `why`, `rirDelta`, or any rule decision.',
+    '- State ONLY numbers that appear in the input (weights, reps, RIR, the delta, criterion_progress). Never invent a weight, rep, RIR, session, set, or effort that is not there. If a number is missing, drop that beat rather than fabricate one.',
+    '- The verdict\'s `why` is the engine\'s read — cite it when useful, never rewrite it with different numbers.',
+    '',
+    'Voice — match the shape of these moments (tone, length, information-order — never the numbers):',
+    '- clean set: a brief nod, move on. Do not gush.',
+    '- grindy set (RIR 0–1): respect the effort first, then the caution — coach-style ("that one cost you"), not a disclaimer.',
+    '- milestone (an earned beat / PR): name what they beat, one honest line of credit, point forward.',
+    '- asks-to-load-early / pushes back: hold the line and restate the criterion still to beat — explain, do not cave.',
+    '- session finish: a short, honest read of the session — no recap of every set.',
+    '- parser clarification: when the input is ambiguous, ask the one thing you need; never guess a number.',
+    '',
+    'Anti-patterns — never produce these:',
+    '- No exclamation stacking, no "Great job!! 💪", no emoji confetti.',
+    '- Do not restate the lifter\'s input back at length.',
+    '- No hedging walls, and no corporate or liability safety boilerplate. Caution sounds like a coach ("that one cost you"), not a disclaimer.',
+    '',
+    '- Default to at most 4 short sentences and stay under 60 words. Plain text only — no markdown, no bullets, no headings.',
     '- You never write to any database or sheet; you only talk.'
   ].join('\n');
 }
@@ -659,6 +688,56 @@ function sanitizeVerdictFacts(verdict) {
   };
 }
 
+// Whitelist a single rules-engine decision (rules/ruleTypes.js shape) for the
+// model. Only the known fields survive; `decision` must come from the frozen
+// vocabulary and `rule_id` is required — a malformed decision → null. Same
+// discipline as sanitizeVerdictFacts / sanitizeConstraint.
+function sanitizeRuleDecision(d) {
+  if (!d || typeof d !== 'object') return null;
+  const decision = typeof d.decision === 'string' ? d.decision.trim() : '';
+  if (!RULE_DECISION_TYPES.includes(decision)) return null;
+  const rule_id = strOrNull(d.rule_id);
+  if (!rule_id) return null;
+  const severity = RULE_SEVERITY_TYPES.includes(d.severity) ? d.severity : 'info';
+  return {
+    decision,
+    rule_id,
+    severity,
+    reasoning:          clampText(d.reasoning, 240),
+    criterion_progress: clampText(d.criterion_progress, 120),
+    lift_code:          strOrNull(d.lift_code),
+  };
+}
+
+// Whitelist the array of rule decisions; drop anything malformed, cap the count.
+function sanitizeRuleDecisions(decisions) {
+  if (!Array.isArray(decisions)) return [];
+  return decisions.slice(0, 6).map(sanitizeRuleDecision).filter(Boolean);
+}
+
+// Whitelist the per-request context block — the grounding numbers the model may
+// word. Never arbitrary client keys; every number is engine-supplied and passed
+// through verbatim (this layer derives nothing).
+function sanitizeReactionContext(context) {
+  const c = context && typeof context === 'object' ? context : {};
+  const toSet = s => ({
+    weight: numOrNull(s && s.weight),
+    reps:   numOrNull(s && s.reps),
+    rir:    s && s.rir == null ? null : numOrNull(s.rir),
+  });
+  const sets = Array.isArray(c.sets) ? c.sets
+    : Array.isArray(c.todaySets) ? c.todaySets
+    : [];
+  return {
+    exercise:     strOrNull(c.exercise) || strOrNull(c.exerciseName) || strOrNull(c.lift_code),
+    lift_code:    strOrNull(c.lift_code),
+    sets:         sets.slice(0, 12).map(toSet),
+    first_weight: numOrNull(c.first_weight),
+    best_weight:  numOrNull(c.best_weight),
+    days_since_last_session: numOrNull(c.days_since_last_session),
+  };
+}
+
 // Returns true when the verdict has a gap worth talking about.
 // met → quiet; beat / fell_short / swap → react.
 function isVerdictWorthReacting(verdict) {
@@ -667,14 +746,38 @@ function isVerdictWorthReacting(verdict) {
   return outcome === 'beat' || outcome === 'fell_short' || outcome === 'swap';
 }
 
-// Generate a short coaching reaction (1–3 sentences) for the expectation verdict.
-// Returns null when the verdict is not worth reacting to (met, null, bad input).
+// A rule decision is worth breaking silence for when it is a caution/reject or
+// carries a warning/error severity (pain, RIR 0–1 grinding, drift). Info-level
+// progression calls (a routine "load"/"hold") on their own do NOT force a
+// reaction — those ride the quiet "met" path.
+function hasActionableRuleDecision(decisions) {
+  const list = Array.isArray(decisions) ? decisions : [];
+  return list.some(d => d && (
+    d.severity === 'warning' || d.severity === 'error' ||
+    d.decision === 'caution' || d.decision === 'reject'
+  ));
+}
+
+// The full gate: speak when the verdict shows a real gap OR the engine raised a
+// rule worth surfacing (so a clean "met" set with a pain note still gets flagged).
+function shouldReactToVerdict({ verdict, ruleDecisions } = {}) {
+  return isVerdictWorthReacting(verdict) || hasActionableRuleDecision(ruleDecisions);
+}
+
+// Generate a short coaching reaction (≤4 sentences) for the expectation verdict
+// plus any rule decisions and the per-request context. Returns null when there
+// is nothing worth saying (a clean met set, no rule raised, null/bad input).
 // Degrades gracefully — throws when Gemini is unconfigured (caught by the route).
-async function generateVerdictReaction(verdict, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  if (!isVerdictWorthReacting(verdict)) return null;
+async function generateVerdictReaction(verdict, { ruleDecisions = [], context = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const facts = sanitizeVerdictFacts(verdict);
-  if (!facts) return null;
-  const userPrompt = `VERDICT:\n${JSON.stringify(facts, null, 2)}`;
+  const rules = sanitizeRuleDecisions(ruleDecisions);
+  if (!shouldReactToVerdict({ verdict: facts, ruleDecisions: rules })) return null;
+  const payload = {
+    verdict: facts,
+    rule_decisions: rules,
+    context: context ? sanitizeReactionContext(context) : null,
+  };
+  const userPrompt = `REACTION INPUT:\n${JSON.stringify(payload, null, 2)}`;
   return callGemini(buildVerdictReactionSystemPrompt(), userPrompt, timeoutMs);
 }
 
@@ -703,6 +806,11 @@ module.exports = {
   compileSessionFromHistory,
   buildVerdictReactionSystemPrompt,
   sanitizeVerdictFacts,
+  sanitizeRuleDecision,
+  sanitizeRuleDecisions,
+  sanitizeReactionContext,
   isVerdictWorthReacting,
+  hasActionableRuleDecision,
+  shouldReactToVerdict,
   generateVerdictReaction
 };
