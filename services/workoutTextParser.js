@@ -7,13 +7,13 @@ const NUMBER_WORDS = {
 };
 
 const EXERCISE_ALIASES = [
-  ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db', 'db incline', 'incline press', 'incline']],
+  ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db bench', 'dumbbell incline press']],
   ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
   ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
   ['Deadlift', ['deadlift', 'dead', 'dl']],
   ['RDL', ['romanian deadlift', 'romanian dl', 'rdl']],
   ['Overhead Press', ['overhead press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
-  ['Lat Pulldown', ['lat pulldown', 'lat pull', 'pull down', 'pulldown', 'lats']],
+  ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],
   ['Seated Row', ['seated row', 'cable row', 'machine row']],
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
@@ -30,6 +30,14 @@ const AMBIGUOUS_ALIASES = {
   press: 'Which press - OHP, bench, or incline?',
   row: 'Which row - seated, bent-over, cable, or machine?',
   rows: 'Which row - seated, bent-over, cable, or machine?',
+};
+
+// Contextual aliases only resolve when the exercise's strong alias is already
+// present in the same parsed input. They cannot start a new exercise on their
+// own. Longer aliases are listed first so stripping is applied longest-match-first.
+const CONTEXTUAL_ALIASES = {
+  'Lat Pulldown':    ['lat pull', 'lats'],
+  'Incline DB Press': ['incline press', 'incline'],
 };
 
 function normalizeParserText(value) {
@@ -351,34 +359,45 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
-  if (exercise.canonicalName === 'Hanging Knee Raises') {
-    const bodyweightSets = parseBodyweightReps(exercise.rest);
+  // Strip contextual alias tokens from the rest text. Contextual aliases are
+  // only valid because the strong alias was already matched above — any
+  // remaining occurrence is a set-separator label, not a new exercise name.
+  const contextualAliases = CONTEXTUAL_ALIASES[exercise.canonicalName];
+  const resolvedExercise = contextualAliases && exercise.rest
+    ? { ...exercise, rest: contextualAliases.reduce((text, alias) => {
+        const key = normalizeKey(alias);
+        return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
+      }, exercise.rest) }
+    : exercise;
+
+  if (resolvedExercise.canonicalName === 'Hanging Knee Raises') {
+    const bodyweightSets = parseBodyweightReps(resolvedExercise.rest);
     if (bodyweightSets.length) {
       return buildLogResult({
         rawText,
-        rawName: titleCaseFallback(exercise.rawName),
-        canonicalName: exercise.canonicalName,
+        rawName: titleCaseFallback(resolvedExercise.rawName),
+        canonicalName: resolvedExercise.canonicalName,
         sets: bodyweightSets,
       });
     }
   }
 
-  if (exercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(exercise.rest)) {
-    const reps = extractNumbers(exercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
+  if (resolvedExercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(resolvedExercise.rest)) {
+    const reps = extractNumbers(resolvedExercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
       message: 'Knee raises: do you mean bodyweight reps 20, 15, 15?',
       partial: {
-        exercise: exercise.canonicalName,
-        raw_name: exercise.rawName,
+        exercise: resolvedExercise.canonicalName,
+        raw_name: resolvedExercise.rawName,
         sets: reps,
       },
       warnings: ['missing_weight_or_bodyweight_context'],
     };
   }
 
-  return parseWithExercise(rawText, exercise);
+  return parseWithExercise(rawText, resolvedExercise);
 }
 
 function parseWithExercise(rawText, exercise) {

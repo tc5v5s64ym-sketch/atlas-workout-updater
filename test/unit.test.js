@@ -960,8 +960,8 @@ test('workout parser supports OHP shorthand with implied same weight', () => {
   assert.deepEqual(compactParsedSets(result), [[95, 10, 4], [105, 10, 2], [105, 10, 2]]);
 });
 
-test('workout parser supports xN repeat shorthand for lats, face pulls, and leg curls', () => {
-  const lats = parseWorkoutText('Lats 170 8/2 x3');
+test('workout parser supports xN repeat shorthand for lat pulldown, face pulls, and leg curls', () => {
+  const lats = parseWorkoutText('Lat pulldown 170 8/2 x3');
   assert.equal(lats.canonical_name, 'Lat Pulldown');
   assert.deepEqual(compactParsedSets(lats), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
 
@@ -1014,14 +1014,14 @@ test('kr_bodyweight_slash_plus_x11_refuses', () => {
 });
 
 test('dale_repeat_x3_still_works', () => {
-  const result = parseWorkoutText('Lats 170 8/2 x3');
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x3');
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'Lat Pulldown');
   assert.deepEqual(compactParsedSets(result), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
 });
 
 test('dale_repeat_x10_boundary_allowed', () => {
-  const result = parseWorkoutText('Lats 170 8/2 x10');
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x10');
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'Lat Pulldown');
   assert.equal(result.sets.length, 10);
@@ -1029,14 +1029,14 @@ test('dale_repeat_x10_boundary_allowed', () => {
 });
 
 test('dale_repeat_x11_refuses', () => {
-  const result = parseWorkoutText('Lats 170 8/2 x11');
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x11');
   assert.equal(result.intent, 'needs_clarification');
   assert.equal(result.sets, undefined);
   assert.ok(result.warnings.includes('missing_sets'));
 });
 
 test('dale_repeat_x99_refuses', () => {
-  const result = parseWorkoutText('Lats 170 8/2 x99');
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x99');
   assert.equal(result.intent, 'needs_clarification');
   assert.equal(result.sets, undefined);
   assert.ok(result.warnings.includes('missing_sets'));
@@ -1116,7 +1116,7 @@ test('workout parser supports natural language RIR across sets', () => {
 });
 
 test('workout parser supports dumbbell per-hand notation', () => {
-  const result = parseWorkoutText('Incline DB 65s 10,10,9');
+  const result = parseWorkoutText('Incline DB Press 65s 10,10,9');
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'Incline DB Press');
   assert.deepEqual(compactParsedSets(result), [[65, 10, null], [65, 10, null], [65, 9, null]]);
@@ -1152,7 +1152,7 @@ test('workout parser detects correction, delete, finish, effort, and planning in
 });
 
 test('workout parser keeps press aliases safe and specific', () => {
-  const incline = parseWorkoutText('Incline press 65 10/2 x3');
+  const incline = parseWorkoutText('Incline db press 65 10/2 x3');
   assert.equal(incline.intent, 'log_sets');
   assert.equal(incline.canonical_name, 'Incline DB Press');
   assert.deepEqual(compactParsedSets(incline), [[65, 10, 2], [65, 10, 2], [65, 10, 2]]);
@@ -1229,6 +1229,69 @@ test('bare correction number asks clarification instead of defaulting to RIR', (
   assert.deepEqual(parseWorkoutText('actually call it RIR 1').update, { rir: 1 });
   assert.deepEqual(parseWorkoutText('change reps to 8').update, { reps: 8 });
   assert.deepEqual(parseWorkoutText('change weight to 225').update, { weight: 225 });
+});
+
+// ── Contextual exercise aliases ───────────────────────────────────────────────
+
+test('contextual_alias_lats_standalone_no_set_data_does_not_create_log', () => {
+  // "lats" is contextual-only — cannot start an exercise without a strong alias.
+  // With no set tokens following, the parser should ask for clarification, not log.
+  const result = parseWorkoutText('lats are sore today');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('missing_exercise'));
+  assert.equal(result.sets, undefined);
+});
+
+test('contextual_alias_incline_standalone_no_set_data_does_not_create_log', () => {
+  const result = parseWorkoutText('incline felt weird');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('missing_exercise'));
+  assert.equal(result.sets, undefined);
+});
+
+test('contextual_alias_lats_resolves_within_lat_pulldown_input', () => {
+  // "lats" is a contextual alias: when "lat pulldown" identifies the exercise
+  // first, "lats" appearing later in the same input is treated as a set label
+  // and skipped, allowing both set groups to be parsed as Lat Pulldown.
+  const result = parseWorkoutText('lat pulldown 120 10/2 lats 130 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[120, 10, 2], [130, 8, 2]]);
+});
+
+test('contextual_alias_incline_resolves_within_incline_db_press_input', () => {
+  const result = parseWorkoutText('incline db press 60 10/2 incline 65 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(compactParsedSets(result), [[60, 10, 2], [65, 8, 2]]);
+});
+
+test('new_strong_alias_cable_pulldown_maps_to_lat_pulldown', () => {
+  const result = parseWorkoutText('cable pulldown 120 10/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[120, 10, 2], [120, 10, 2], [120, 10, 2]]);
+});
+
+test('new_strong_alias_lat_pull_down_maps_to_lat_pulldown', () => {
+  const result = parseWorkoutText('lat pull down 120 10/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.deepEqual(compactParsedSets(result), [[120, 10, 2], [120, 10, 2], [120, 10, 2]]);
+});
+
+test('new_strong_alias_incline_db_bench_maps_to_incline_db_press', () => {
+  const result = parseWorkoutText('incline db bench 65 10/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(compactParsedSets(result), [[65, 10, 2], [65, 10, 2], [65, 10, 2]]);
+});
+
+test('new_strong_alias_dumbbell_incline_press_maps_to_incline_db_press', () => {
+  const result = parseWorkoutText('dumbbell incline press 65 10/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(compactParsedSets(result), [[65, 10, 2], [65, 10, 2], [65, 10, 2]]);
 });
 
 test('parse-workout-text dry-run response parses Dale shorthand without writes', () => {

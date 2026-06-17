@@ -617,7 +617,7 @@ test('api smoke: parse-workout-text refuses excessive Dale repeat', async () => 
   const { response, body } = await requestJson('/api/parse-workout-text', {
     method: 'POST',
     body: JSON.stringify({
-      text: 'Lats 170 8/2 x99',
+      text: 'Lat pulldown 170 8/2 x99',
       test_mode: true
     })
   });

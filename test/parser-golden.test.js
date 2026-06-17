@@ -43,16 +43,16 @@ test('golden: bench multiple weight groups', () => {
   assert.deepEqual(sets(result), [[135, 10, 5], [185, 8, 3], [225, 5, 2]]);
 });
 
-test('golden: incline DB — x2 means two total instances of the last set', () => {
+test('golden: incline DB Press — x2 means two total instances of the last set', () => {
   // x2 after a set means that set appears twice in total (one already logged + one copy)
-  const result = parseWorkoutText('Incline db 60 10/2 70 8/2 x2');
+  const result = parseWorkoutText('Incline db press 60 10/2 70 8/2 x2');
   assert.equal(result.canonical_name, 'Incline DB Press');
   assert.deepEqual(sets(result), [[60, 10, 2], [70, 8, 2], [70, 8, 2]]);
   assert.equal(result.sets.length, 3, 'x2 = 2 total, so one original + one copy = 3 sets total');
 });
 
-test('golden: lats x3 repeat shorthand — three total sets', () => {
-  const result = parseWorkoutText('Lats 170 8/2 x3');
+test('golden: lat pulldown x3 repeat shorthand — three total sets', () => {
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x3');
   assert.equal(result.canonical_name, 'Lat Pulldown');
   assert.deepEqual(sets(result), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
 });
@@ -149,9 +149,9 @@ test('golden: slp 70 x 12 @2 — must not explode into 70 rows', () => {
   assert.ok(result.warnings.includes('missing_sets'));
 });
 
-test('golden: Lats 170 8/2 x99 — xN above cap is rejected', () => {
+test('golden: lat pulldown 170 8/2 x99 — xN above cap is rejected', () => {
   // parseDaleShorthand returns null when xN > 10; the whole input clarifies.
-  const result = parseWorkoutText('Lats 170 8/2 x99');
+  const result = parseWorkoutText('Lat pulldown 170 8/2 x99');
   assert.equal(result.intent, 'needs_clarification');
   assert.equal(result.sets, undefined);
   assert.ok(result.warnings.includes('missing_sets'));
@@ -195,7 +195,7 @@ test('golden: Atlas parser handles a wider workout phrase matrix safely', () => 
       expectedSets: [[225, 5, 2], [225, 5, 2], [225, 5, 2]],
     },
     {
-      input: 'lat pull 170 10/2 175 8/2 8/1',
+      input: 'lat pulldown 170 10/2 175 8/2 8/1',
       intent: 'log_sets',
       canonical: 'Lat Pulldown',
       expectedSets: [[170, 10, 2], [175, 8, 2], [175, 8, 1]],
@@ -283,7 +283,7 @@ test('golden: Atlas parser handles a wider workout phrase matrix safely', () => 
 test('golden: fuzz-style parser safety invariants hold across mixed workout phrases', () => {
   const samples = [
     'bench 225 5/2 x3',
-    'lat pull 170 10/2 175 8/2 8/1',
+    'lat pulldown 170 10/2 175 8/2 8/1',
     'face pulls 50 15/2 x3',
     'chin ups 8/2 x3',
     'hang cleans 135 3/2 x5',
