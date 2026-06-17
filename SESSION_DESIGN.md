@@ -117,8 +117,9 @@ Drawn from a real "Fix Blind Spots — Pulling + Core" session the current (pre-
 1. No duplicate lifts. Each lift appears at most once per session. Real bug: Seated Row was programmed twice (190x11 and 190x10). De-dup before prescribing.
 1. Cap per-muscle work (no overcooking). At most one direct isolation per muscle per session, and total work for a muscle respects its weekly ceiling including indirect credit. Real bug: Hammer Curls + Dumbbell Curl stacked on top of biceps already hit by the pulldown and both rows.
 1. Anchor + ramp. A pattern-focused day is built around an anchor (e.g. a Barbell Row anchors a pull day), not a pile of machine/cable accessories; and the lead compound gets a warm-up ramp, not flat sets from set one. Real bug: no anchor, flat sets throughout.
+1. Prescribed load must be physically plausible for the lift. Real bug (2026-06-16): Lateral Raises prescribed at 170 lbs (athlete's actual is ~15). Root cause: the "Lateral Raise" / "Lateral Raises" dual-naming meant the engine couldn't resolve real history and fell back to a bogus weight. Guard, two parts: (a) canonicalize duplicate lift names so history resolves; (b) a per-lift sanity check — if a prescribed load is wildly outside that lift's own logged history (or a sane ceiling for the movement class), never print it; fall back to the lifter's real working weight or ask. A lateral raise must never print 170.
 
-Fixture form: feed a known state, assert the built session (a) includes every pattern its brief names, (b) repeats no lift, (c) has <=1 isolation per muscle and no muscle over ceiling, (d) is anchored and ramps its lead compound. A session that can't satisfy these is de-emphasized, not shipped.
+Fixture form: feed a known state, assert the built session (a) includes every pattern its brief names, (b) repeats no lift, (c) has <=1 isolation per muscle and no muscle over ceiling, (d) is anchored and ramps its lead compound, (e) all prescribed loads fall within a plausible range for the lift and the lifter. A session that can't satisfy these is de-emphasized, not shipped.
 
 ---
 

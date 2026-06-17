@@ -39,8 +39,9 @@ Real gym input is messy and unpredictable. Each is handled conversationally — 
 1. Load ambiguity. "Dips plus 45." "Curls with the 60s." "Two plates." -> know which lifts are bodyweight+load; treat dumbbells as per-hand; confirm the number in the echo when ambiguous; never poison e1RM with a misread load.
 1. Conversational correction / undo. "That bench a few sets ago was 215, not 225." "Delete the last set." "That was last week." -> locate the referenced entry and fix it; state destructive changes out loud.
 1. Mid-session stat questions. "What's my squat progression over the last three months?" "Bench improvement year to date?" -> answer inline from analytics, then return to the logging flow. The question is a detour, not a context reset.
+1. A question is never logged; an unrecognized lift is never saved. Real bug (2026-06-16): "Didn't you suggest 225 5/2 x3" was logged as a phantom set named "Didn't You Suggest," celebrated ("way to push through that set!"), and flagged "didn't catch that lift" — all at once. Required: if intent is a question -> answer it, log nothing. If a lift name can't be confidently resolved -> do NOT save; echo "didn't catch that lift — which one?" and wait. Never log-and-flag in the same breath, and never celebrate a set that wasn't logged.
 
-Acceptance form: feed each as raw composer text; assert Atlas (a) parses to the right structured result or answers the right question, (b) echoes its read in plain language, (c) keeps the session thread intact across detours, (d) saves only real sets, (e) edits the correct prior entry on a conversational correction.
+Acceptance form: feed each as raw composer text; assert Atlas (a) parses to the right structured result or answers the right question, (b) echoes its read in plain language, (c) keeps the session thread intact across detours, (d) saves only real sets, (e) edits the correct prior entry on a conversational correction, (f) never logs or celebrates a phantom set.
 
 ## Guardrails
 
@@ -50,6 +51,7 @@ Acceptance form: feed each as raw composer text; assert Atlas (a) parses to the 
 - Never lose the session thread across a question or correction.
 - Destructive changes are stated out loud, even though no button is required.
 - Engine parses and owns the data; the coach only words it.
+- Never log a phantom set — no save when the message is a question or the lift is unresolved; never celebrate an unlogged set.
 
 ## Implementation prerequisite
 
