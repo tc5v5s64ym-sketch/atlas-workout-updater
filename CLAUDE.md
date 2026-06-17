@@ -53,6 +53,13 @@ Read `docs/INVARIANTS.md` for rules that must never be broken.
 
 ---
 
+## Scope discipline for agents
+A task prompt names the file(s) you should work in. If a fix needs a small edit to an ordinary file outside that list — e.g. wiring a new helper into its one call site — you may make it without asking.
+
+But if the fix needs you to edit a write-path or critical file that your named scope did NOT include — index.js (log/write path, test_mode + proof fields, row enrichment & append), public/app.js (the preview→approve→write trust loop), services/workoutTextParser.js (the slash-notation parser), or anything on the "Critical behaviours — never change without owner approval" list — STOP and flag it as a question before editing. Do not proceed and report afterward, even if the change looks safe. If a task is meant to touch one of these files, it will be named in your scope.
+
+---
+
 ## 12-column row contract
 
 Every row written to `Log_Cleaned` must have exactly these columns in this order:
