@@ -11,6 +11,11 @@
  */
 
 const coachBrain = require('./coachBrain');
+// The rules engine's frozen decision/severity vocabularies — ruleTypes.js is
+// built to be consumed by "(later) the AI coaching layer", i.e. here. Importing
+// (rather than re-declaring) keeps the verdict-reaction whitelist in lockstep
+// with the engine, so a new decision type can never silently drift out of sync.
+const { DECISION_TYPES, SEVERITY_TYPES } = require('../rules/ruleTypes');
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
@@ -626,12 +631,6 @@ async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS
 // for a clean "met" set with no rule raised. Default quiet: the engine decides
 // when there is something worth saying; this module only words the decision.
 
-// Mirrors the frozen vocabularies in rules/ruleTypes.js. Kept local so the voice
-// layer can validate a forwarded rule decision without depending on the rules
-// module (same discipline as CONSTRAINT_KINDS / CONSTRAINT_RULES above).
-const RULE_DECISION_TYPES = ['hold', 'load', 'build_reps', 'deload', 'no_data', 'caution', 'reject'];
-const RULE_SEVERITY_TYPES = ['info', 'warning', 'error'];
-
 function buildVerdictReactionSystemPrompt() {
   return [
     'You are Atlas, a strength coach reacting to a set the lifter just logged.',
@@ -695,10 +694,10 @@ function sanitizeVerdictFacts(verdict) {
 function sanitizeRuleDecision(d) {
   if (!d || typeof d !== 'object') return null;
   const decision = typeof d.decision === 'string' ? d.decision.trim() : '';
-  if (!RULE_DECISION_TYPES.includes(decision)) return null;
+  if (!DECISION_TYPES.includes(decision)) return null;
   const rule_id = strOrNull(d.rule_id);
   if (!rule_id) return null;
-  const severity = RULE_SEVERITY_TYPES.includes(d.severity) ? d.severity : 'info';
+  const severity = SEVERITY_TYPES.includes(d.severity) ? d.severity : 'info';
   return {
     decision,
     rule_id,
