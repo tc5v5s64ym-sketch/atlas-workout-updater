@@ -211,6 +211,19 @@ describe('sanitizeReactionContext — whitelisting', () => {
     assert.deepEqual(clean.sets, []);
     assert.strictEqual(clean.exercise, null);
   });
+
+  it('tolerates null / non-object sets elements without throwing', () => {
+    let clean;
+    assert.doesNotThrow(() => {
+      clean = sanitizeReactionContext({ sets: [null, 'nope', 42, { weight: 225, reps: 5, rir: 1 }] });
+    });
+    assert.deepEqual(clean.sets, [
+      { weight: null, reps: null, rir: null },
+      { weight: null, reps: null, rir: null },
+      { weight: null, reps: null, rir: null },
+      { weight: 225, reps: 5, rir: 1 },
+    ]);
+  });
 });
 
 // ─── hasActionableRuleDecision / shouldReactToVerdict ────────────────────────

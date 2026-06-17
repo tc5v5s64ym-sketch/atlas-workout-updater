@@ -719,11 +719,14 @@ function sanitizeRuleDecisions(decisions) {
 // through verbatim (this layer derives nothing).
 function sanitizeReactionContext(context) {
   const c = context && typeof context === 'object' ? context : {};
-  const toSet = s => ({
-    weight: numOrNull(s && s.weight),
-    reps:   numOrNull(s && s.reps),
-    rir:    s && s.rir == null ? null : numOrNull(s.rir),
-  });
+  // Tolerate a malformed array element (null / non-object) the same way the
+  // function tolerates a null context — guard the element before dereferencing
+  // it, so an untrusted `sets: [null]` can't crash the whitelist.
+  const toSet = s => (s && typeof s === 'object' ? {
+    weight: numOrNull(s.weight),
+    reps:   numOrNull(s.reps),
+    rir:    s.rir == null ? null : numOrNull(s.rir),
+  } : { weight: null, reps: null, rir: null });
   const sets = Array.isArray(c.sets) ? c.sets
     : Array.isArray(c.todaySets) ? c.todaySets
     : [];
