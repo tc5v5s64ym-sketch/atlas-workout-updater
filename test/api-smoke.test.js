@@ -662,6 +662,93 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: log-workout preview attaches substitution block for a swap (no write)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // Prescribed Back Squat (SQ01 — has history in logRows); logged Leg Press instead.
+  // Same squat pattern + quads/glutes → preserved.
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-SUBSTITUTION',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { logged_exercise: 'Leg Press', exercise: 'Back Squat', lift_code: 'SQ01' }
+      ],
+      log_rows: [
+        { exercise: 'Leg Press', set_number: 1, weight: 360, reps: 8, rir: 2, notes: 'rack was taken' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  // Proof fields preserved exactly — the substitution path is read-only.
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  // Substitution block present and engine-decided.
+  assert.ok(Array.isArray(body.data.substitutions), 'substitutions array should be present');
+  assert.equal(body.data.substitutions.length, 1);
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.classification, 'preserved');
+  assert.equal(sub.decision, 'approve');
+  assert.equal(sub.reason_code, 'pattern_and_muscle_match');
+  assert.equal(sub.prescribed.name, 'Back Squat');
+  // No append fired anywhere.
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: log-workout preview emits an abandoned warn for an off-target swap', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // Prescribed Back Squat (SQ01, high cost, has history); logged Bench Press.
+  // Different pattern, ~0 overlap, real weight → abandoned/warn (history read makes
+  // this a real verdict, not baseline).
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-SUBSTITUTION-ABANDON',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { logged_exercise: 'Bench Press', exercise: 'Back Squat', lift_code: 'SQ01' }
+      ],
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.substitutions.length, 1);
+  assert.equal(body.data.substitutions[0].classification, 'abandoned');
+  assert.equal(body.data.substitutions[0].decision, 'warn');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: log-workout preview is unchanged when no prescribed pairs are supplied', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-NO-PRESCRIBED',
+      date: '2026-06-11',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  // No prescribed pairs → no substitutions key at all (additive, opt-in).
+  assert.ok(!('substitutions' in body.data), 'substitutions must be absent without prescribed pairs');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: complete-workout allows effort-only screenshot preview with empty log rows', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {
