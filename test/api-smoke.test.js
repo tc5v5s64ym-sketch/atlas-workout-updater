@@ -726,6 +726,34 @@ test('api smoke: log-workout preview emits an abandoned warn for an off-target s
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: log-workout preview classifies baseline when prescribed lift has no history', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // Prescribed pair with no lift_code → no history lookup key → empty history →
+  // baseline/approve (can't judge intent without data). Also covers the empty-history
+  // path the best-effort read-failure degrades to.
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-SUBSTITUTION-BASELINE',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { logged_exercise: 'Leg Press', exercise: 'Back Squat' }
+      ],
+      log_rows: [
+        { exercise: 'Leg Press', set_number: 1, weight: 360, reps: 8, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.substitutions.length, 1);
+  assert.equal(body.data.substitutions[0].classification, 'baseline');
+  assert.equal(body.data.substitutions[0].decision, 'approve');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: log-workout preview is unchanged when no prescribed pairs are supplied', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/log-workout', {
