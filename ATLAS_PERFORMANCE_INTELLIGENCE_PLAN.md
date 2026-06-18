@@ -92,8 +92,9 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 
 ---
 
-## PR 349 — Coaching Evidence Layer
+## Roadmap Step 349 — Coaching Evidence Layer (GitHub PR #350)
 **Model:** Sonnet
+**Status:** ⏳ In progress (GitHub PR #350)
 
 **Goal:** Coach remarks must cite the historical data used: recent sets, benchmark, date range, confidence.
 
@@ -102,7 +103,7 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 - Extend coach system prompt: when evidence_context is present, coach MUST cite at least one reference ("Based on your last 4 bench sessions…").
 - Evidence is engine-computed, never invented by the LLM.
 
-**Files touched:** `services/coach.js`, `test/coach.test.js`.
+**Files touched:** `services/coach.js` (`sanitizeEvidenceContext` + `sanitizeFacts` + system prompt), `test/coach.test.js` (15 new tests).
 
 **App test hold:** Coach response includes "Based on your recent bench history…" with actual reference sets.
 

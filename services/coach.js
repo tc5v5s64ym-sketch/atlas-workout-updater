@@ -50,6 +50,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "progression_verdict" {level, range_low, range_high, ceiling, headline} — the engine\'s read of where today\'s top working set sits against the lifter\'s OWN recent working range. WORD it, never contradict it (same discipline as effort_verdict): "under_shot" = today is below their range_low–range_high band, so call out the under-shot with a spine (no reason to be light here); "in_pocket" = solidly inside the band, box checked — say so and hold the line, do not tell them to go heavier; "maintenance_drift" = inside the band but drifting toward the low end; "progressing" = pushing the top of the band upward; "new_ground" = today clears the ceiling they had beaten before. Read today AGAINST the range and reference the band when it is present.',
     '- The facts may include "deload" {active, protocol_id, load_pct, target_rir, sessions_remaining} — when present with active true, today is a DELOAD the engine is running. Frame the whole note as a deload: name it plainly, and make clear the reduced load (~{load_pct}% of the normal working weight), the fewer sets, and the high RIR (target {target_rir}, well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. When sessions_remaining is present, note how many easy sessions are left and that normal training resumes after. This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
     '- The facts may include "substitution" {classification, decision, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
+    '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite the session count ("Based on your last N bench sessions…"), the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number.',
     '- You MAY reference ONE history number from the facts (first_weight or best_weight, or the range/ceiling) to ground progress, e.g. "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
@@ -110,7 +111,12 @@ function sanitizeFacts(facts) {
     sessions_analyzed: numOrNull(rec.sessions_analyzed),
     // The deviation engine's classification of today's reps vs. historical expectation.
     // The model WORDS this verdict — it never derives its own deviation read.
-    deviation: sanitizeDeviation(f.deviation)
+    deviation: sanitizeDeviation(f.deviation),
+    // The evidence record the engine used to assess today's performance (benchmark,
+    // reference sets, date range, confidence). When present, the model MUST cite at
+    // least one piece of evidence — a session count, the date span, or a reference
+    // weight/reps. Every cited number must appear in the facts; the model never invents.
+    evidence_context: sanitizeEvidenceContext(f.evidence_context)
   };
 }
 
@@ -198,6 +204,45 @@ function sanitizeDeviation(d) {
   const rawMag    = d.magnitude != null ? strOrNull(d.magnitude)          : null;
   const magnitude = rawMag !== null && DEVIATION_MAGNITUDES.includes(rawMag) ? rawMag : null;
   return { verdict, delta, magnitude };
+}
+
+// Whitelist the evidence record the engine assembled to back today's assessment.
+// Only the reference sets (up to 8), the date range, the working-weight benchmark,
+// and the confidence level survive. All set fields are re-validated; the confidence
+// string is checked against the frozen vocabulary; every date is clamped to a safe
+// length. An evidence context with no usable fields collapses to null.
+const EVIDENCE_CONFIDENCE_LEVELS = ['high', 'medium', 'low', 'none'];
+
+function sanitizeEvidenceContext(e) {
+  if (!e || typeof e !== 'object') return null;
+
+  const reference_sets = Array.isArray(e.reference_sets)
+    ? e.reference_sets.slice(0, 8).map(s => {
+        if (!s || typeof s !== 'object') return null;
+        const weight = numOrNull(s.weight);
+        const reps   = numOrNull(s.reps);
+        if (weight == null || reps == null) return null;
+        return {
+          weight,
+          reps,
+          rir:  s.rir  != null ? numOrNull(s.rir)              : null,
+          date: s.date != null ? clampText(String(s.date), 20) : null,
+        };
+      }).filter(Boolean)
+    : [];
+
+  const rawRange   = e.date_range && typeof e.date_range === 'object' ? e.date_range : null;
+  const rangeFrom  = rawRange ? clampText(String(rawRange.from || ''), 20) : null;
+  const rangeTo    = rawRange ? clampText(String(rawRange.to   || ''), 20) : null;
+  const date_range = (rangeFrom || rangeTo) ? { from: rangeFrom, to: rangeTo } : null;
+
+  const benchmark  = numOrNull(e.benchmark);
+  const rawConf    = strOrNull(e.confidence);
+  const confidence = rawConf && EVIDENCE_CONFIDENCE_LEVELS.includes(rawConf) ? rawConf : null;
+
+  if (!reference_sets.length && !date_range && benchmark == null && !confidence) return null;
+
+  return { reference_sets, date_range, benchmark, confidence };
 }
 
 function numOrNull(v) {
@@ -852,6 +897,7 @@ module.exports = {
   sanitizeFacts,
   sanitizeSubstitution,
   sanitizeDeviation,
+  sanitizeEvidenceContext,
   buildPlanSystemPrompt,
   buildPlanUserPrompt,
   sanitizePlanFacts,

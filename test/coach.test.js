@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -873,4 +873,150 @@ test('coach system prompt binds the substitution beat to the engine decision', (
   assert.match(prompt, /substitution/i, 'must reference the substitution fact');
   assert.match(prompt, /MUST agree with `decision`/i, 'voice must agree with the engine decision');
   assert.match(prompt, /never decide the classification yourself/i, 'voice must not decide the classification');
+});
+
+/* ── sanitizeEvidenceContext ─────────────────────────────────────────────── */
+
+test('sanitizeEvidenceContext: null / non-object returns null', () => {
+  assert.equal(sanitizeEvidenceContext(null),      null);
+  assert.equal(sanitizeEvidenceContext(undefined), null);
+  assert.equal(sanitizeEvidenceContext('string'),  null);
+  assert.equal(sanitizeEvidenceContext(42),        null);
+});
+
+test('sanitizeEvidenceContext: empty object with no usable fields returns null', () => {
+  assert.equal(sanitizeEvidenceContext({}), null);
+});
+
+test('sanitizeEvidenceContext: valid reference_sets survive, fields re-validated', () => {
+  const result = sanitizeEvidenceContext({
+    reference_sets: [
+      { weight: 185, reps: 10, rir: 2, date: '2026-01-15' },
+      { weight: 185, reps: 11, rir: 1, date: '2026-01-22' },
+    ],
+    confidence: 'high',
+  });
+  assert.notEqual(result, null);
+  assert.equal(result.reference_sets.length, 2);
+  assert.equal(result.reference_sets[0].weight, 185);
+  assert.equal(result.reference_sets[0].reps,   10);
+  assert.equal(result.reference_sets[0].rir,    2);
+  assert.equal(result.reference_sets[0].date,   '2026-01-15');
+  assert.equal(result.confidence, 'high');
+});
+
+test('sanitizeEvidenceContext: caps reference_sets at 8', () => {
+  const sets = Array.from({ length: 12 }, (_, i) => ({ weight: 185, reps: 8 + i, rir: 2 }));
+  const result = sanitizeEvidenceContext({ reference_sets: sets, confidence: 'high' });
+  assert.equal(result.reference_sets.length, 8);
+});
+
+test('sanitizeEvidenceContext: filters malformed reference_set entries', () => {
+  const result = sanitizeEvidenceContext({
+    reference_sets: [
+      null,
+      'nope',
+      { weight: 185 },              // missing reps → dropped
+      { reps: 10 },                 // missing weight → dropped
+      { weight: 185, reps: 10 },    // valid → kept
+    ],
+    confidence: 'medium',
+  });
+  assert.equal(result.reference_sets.length, 1);
+  assert.equal(result.reference_sets[0].weight, 185);
+});
+
+test('sanitizeEvidenceContext: reference_set rir is optional (null when absent)', () => {
+  const result = sanitizeEvidenceContext({
+    reference_sets: [{ weight: 185, reps: 10 }],
+    confidence: 'medium',
+  });
+  assert.equal(result.reference_sets[0].rir, null);
+  assert.equal(result.reference_sets[0].date, null);
+});
+
+test('sanitizeEvidenceContext: date_range survives when present', () => {
+  const result = sanitizeEvidenceContext({
+    date_range:  { from: '2026-01-01', to: '2026-01-29' },
+    confidence:  'medium',
+    benchmark:   185,
+    reference_sets: [],
+  });
+  assert.notEqual(result, null);
+  assert.deepEqual(result.date_range, { from: '2026-01-01', to: '2026-01-29' });
+  assert.equal(result.benchmark, 185);
+});
+
+test('sanitizeEvidenceContext: date_range null when absent or non-object', () => {
+  const result = sanitizeEvidenceContext({ benchmark: 185 });
+  assert.equal(result.date_range, null);
+});
+
+test('sanitizeEvidenceContext: empty date_range object collapses to null (both sides null)', () => {
+  const result = sanitizeEvidenceContext({ benchmark: 185, date_range: {} });
+  assert.equal(result.date_range, null);
+});
+
+test('sanitizeEvidenceContext: confidence rejects unknown vocabulary', () => {
+  const result = sanitizeEvidenceContext({
+    reference_sets: [{ weight: 185, reps: 10 }],
+    confidence: 'injected_level',
+  });
+  assert.equal(result.confidence, null);
+});
+
+test('sanitizeEvidenceContext: all four confidence levels are accepted', () => {
+  for (const level of ['high', 'medium', 'low', 'none']) {
+    const result = sanitizeEvidenceContext({ benchmark: 185, confidence: level });
+    assert.equal(result.confidence, level, `expected ${level} to be accepted`);
+  }
+});
+
+test('sanitizeEvidenceContext: benchmark null when absent or non-numeric', () => {
+  const result = sanitizeEvidenceContext({ confidence: 'high', benchmark: 'heavy' });
+  assert.equal(result.benchmark, null);
+});
+
+test('sanitizeFacts forwards evidence_context when present', () => {
+  const facts = sanitizeFacts({
+    exerciseName: 'Bench Press',
+    liftCode: 'BEN01',
+    todaySets: [],
+    rec: { recommendation: 'Hold.' },
+    evidence_context: {
+      reference_sets: [{ weight: 185, reps: 10, rir: 2, date: '2026-01-15' }],
+      date_range: { from: '2026-01-01', to: '2026-01-29' },
+      benchmark:  185,
+      confidence: 'high',
+    },
+  });
+  assert.notEqual(facts.evidence_context, null);
+  assert.equal(facts.evidence_context.benchmark, 185);
+  assert.equal(facts.evidence_context.confidence, 'high');
+  assert.equal(facts.evidence_context.reference_sets.length, 1);
+});
+
+test('sanitizeFacts leaves evidence_context null when absent', () => {
+  const facts = sanitizeFacts({ exerciseName: 'Bench', todaySets: [], rec: { recommendation: 'Hold.' } });
+  assert.equal(facts.evidence_context, null);
+});
+
+test('sanitizeFacts rejects evidence_context with injected confidence', () => {
+  const facts = sanitizeFacts({
+    exerciseName: 'Bench',
+    todaySets: [],
+    rec: { recommendation: 'Hold.' },
+    evidence_context: {
+      reference_sets: [{ weight: 185, reps: 10 }],
+      confidence: 'super_high',
+    },
+  });
+  assert.equal(facts.evidence_context.confidence, null);
+});
+
+test('coach system prompt requires evidence citation when evidence_context is present', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /evidence_context/i, 'prompt must reference the evidence_context field');
+  assert.match(prompt, /MUST ground at least one statement/i, 'prompt must mandate a citation');
+  assert.match(prompt, /never fabricate/i, 'prompt must forbid invented figures');
 });
