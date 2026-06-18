@@ -70,7 +70,7 @@ Note: most are dials on existing behaviour, not new features; the exceptions (pr
 
 ## Future epic
 
-- **Coach intelligence build (COACH_PLAN.md / COACH_INTELLIGENCE_PLAN.md).** Phased build: muscle-coverage data → coverage-aware stalls → proactive suggestions → goal- & coverage-aware workout selection. Active build: `COACH_INTELLIGENCE_PLAN.md` — planned-workout awareness (PR 341 ✅) → substitution quality scoring (PR 342 ✅) → coach-generated recommendations (PR 343) → conversation consolidation design.
+- **Coach intelligence build (COACH_PLAN.md / COACH_INTELLIGENCE_PLAN.md).** Phased build: muscle-coverage data → coverage-aware stalls → proactive suggestions → goal- & coverage-aware workout selection. Active build: `COACH_INTELLIGENCE_PLAN.md` — planned-workout awareness (PR 341 ✅) → substitution quality scoring (PR 342 ✅) → substitution recommendation service (PR 343) → visible constraint integration (PR 344) → conversation consolidation design.
   - ✅ **PR 1.1** — `services/muscleCoverage.js`: `musclesFor` / `liftsForMuscle`, 17-muscle taxonomy, pattern-based, pure data (31 tests).
   - ✅ **PR 1.2** — `services/muscleVolume.js`: `weeklyMuscleVolume`, rolling-window volume per muscle, direct 1.0 + indirect 0.5 credit (16 tests).
   - ✅ **PR 1.3** — `services/movementPattern.js`: `patternFor`; 14-pattern vocabulary (squat/hinge/push/pull/isolation/trunk/carry/other); pattern-based, pure data (20 tests).

@@ -77,8 +77,8 @@ describe('recommendSubstitute — result shape', () => {
 // ─── quality tier selection ───────────────────────────────────────────────────
 
 describe('recommendSubstitute — quality tier selection', () => {
-  it('prefers excellent over acceptable when available (Deadlift → RDL, not Leg Press)', () => {
-    // Catalog: [RDL (excellent), Good Morning (excellent), Leg Press (acceptable)]
+  it('prefers excellent over acceptable when available (Deadlift → RDL)', () => {
+    // Catalog: [RDL (excellent), Good Morning (excellent)]
     const r = recommendSubstitute('Deadlift');
     assert.ok(r);
     assert.strictEqual(r.quality, 'excellent');
