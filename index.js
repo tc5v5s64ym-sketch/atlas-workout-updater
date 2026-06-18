@@ -49,6 +49,7 @@ const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
 const { detectTrend } = require('./services/trendDetector');
+const { computeReadiness } = require('./services/readinessSignal');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1523,6 +1524,8 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     recommendation.benchmark = computeBenchmark(liftCode, allLog);
     recommendation.working_weight = resolveWorkingWeight(liftCode, allLog);
     recommendation.trend = detectTrend(liftCode, allLog);
+    // deviationHistory has no production caller yet — passes empty array (monitoring/none).
+    recommendation.readiness_signal = computeReadiness(recommendation.trend, []);
     return standardSuccess(req, res, 'Recommendation generated', recommendation);
   } catch (error) {
     return standardError(req, res, 'Failed to compute recommendation', error.message, 500);

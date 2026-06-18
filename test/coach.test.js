@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1116,4 +1116,88 @@ test('coach system prompt carries the trend guidance', () => {
   const prompt = buildCoachSystemPrompt();
   assert.match(prompt, /trend.*confidence.*sessions_analyzed/is, 'prompt must document the trend field shape');
   assert.match(prompt, /never claim a trend when the field is absent/i, 'prompt must forbid inventing a trend');
+});
+
+/* ===== sanitizeReadinessSignal ===== */
+
+test('sanitizeReadinessSignal: possible_fatigue passes through', () => {
+  const result = sanitizeReadinessSignal({
+    signal: 'possible_fatigue', confidence: 'medium', note: 'consecutive_below_expected',
+  });
+  assert.deepEqual(result, { signal: 'possible_fatigue', confidence: 'medium', note: 'consecutive_below_expected' });
+});
+
+test('sanitizeReadinessSignal: likely_fatigue passes through', () => {
+  const result = sanitizeReadinessSignal({
+    signal: 'likely_fatigue', confidence: 'high', note: 'sustained_declining_trend',
+  });
+  assert.deepEqual(result, { signal: 'likely_fatigue', confidence: 'high', note: 'sustained_declining_trend' });
+});
+
+test('sanitizeReadinessSignal: monitoring with none confidence collapses to null (no actionable signal)', () => {
+  const result = sanitizeReadinessSignal({ signal: 'monitoring', confidence: 'none', note: null });
+  assert.equal(result, null);
+});
+
+test('sanitizeReadinessSignal: monitoring with low confidence passes through (early watch)', () => {
+  const result = sanitizeReadinessSignal({ signal: 'monitoring', confidence: 'low', note: null });
+  assert.ok(result !== null);
+  assert.equal(result.signal, 'monitoring');
+});
+
+test('sanitizeReadinessSignal: unknown signal vocabulary collapses to null', () => {
+  const result = sanitizeReadinessSignal({ signal: 'fatigue_confirmed', confidence: 'high', note: null });
+  assert.equal(result, null);
+});
+
+test('sanitizeReadinessSignal: null / non-object → null', () => {
+  assert.equal(sanitizeReadinessSignal(null), null);
+  assert.equal(sanitizeReadinessSignal('possible_fatigue'), null);
+});
+
+test('sanitizeReadinessSignal: unknown note collapses to null, signal still passes', () => {
+  const result = sanitizeReadinessSignal({
+    signal: 'possible_fatigue', confidence: 'medium', note: 'INJECTED_NOTE',
+  });
+  assert.ok(result !== null);
+  assert.equal(result.signal, 'possible_fatigue');
+  assert.equal(result.note, null);
+});
+
+/* ===== readiness_signal in sanitizeFacts ===== */
+
+test('sanitizeFacts extracts readiness_signal from rec.readiness_signal', () => {
+  const facts = sanitizeFacts({
+    todaySets: [],
+    rec: {
+      recommendation: 'Hold.',
+      readiness_signal: { signal: 'possible_fatigue', confidence: 'medium', note: 'consecutive_below_expected' },
+    },
+  });
+  assert.ok(facts.readiness_signal !== null);
+  assert.equal(facts.readiness_signal.signal, 'possible_fatigue');
+});
+
+test('sanitizeFacts leaves readiness_signal null when rec.readiness_signal is absent', () => {
+  const facts = sanitizeFacts({ todaySets: [], rec: { recommendation: 'Hold.' } });
+  assert.equal(facts.readiness_signal, null);
+});
+
+test('sanitizeFacts collapses monitoring/none readiness_signal to null', () => {
+  const facts = sanitizeFacts({
+    todaySets: [],
+    rec: {
+      recommendation: 'Hold.',
+      readiness_signal: { signal: 'monitoring', confidence: 'none', note: null },
+    },
+  });
+  assert.equal(facts.readiness_signal, null);
+});
+
+test('coach system prompt carries the readiness_signal guidance', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /readiness_signal/i, 'prompt must reference the readiness_signal field');
+  assert.match(prompt, /possible_fatigue/i, 'prompt must name possible_fatigue signal');
+  assert.match(prompt, /likely_fatigue/i, 'prompt must name likely_fatigue signal');
+  assert.match(prompt, /never diagnose fatigue from a single session/i);
 });
