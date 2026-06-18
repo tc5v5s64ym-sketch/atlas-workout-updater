@@ -952,6 +952,11 @@ test('sanitizeEvidenceContext: date_range null when absent or non-object', () =>
   assert.equal(result.date_range, null);
 });
 
+test('sanitizeEvidenceContext: empty date_range object collapses to null (both sides null)', () => {
+  const result = sanitizeEvidenceContext({ benchmark: 185, date_range: {} });
+  assert.equal(result.date_range, null);
+});
+
 test('sanitizeEvidenceContext: confidence rejects unknown vocabulary', () => {
   const result = sanitizeEvidenceContext({
     reference_sets: [{ weight: 185, reps: 10 }],

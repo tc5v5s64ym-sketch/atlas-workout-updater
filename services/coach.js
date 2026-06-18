@@ -231,10 +231,10 @@ function sanitizeEvidenceContext(e) {
       }).filter(Boolean)
     : [];
 
-  const rawRange  = e.date_range && typeof e.date_range === 'object' ? e.date_range : null;
-  const date_range = rawRange
-    ? { from: clampText(String(rawRange.from || ''), 20), to: clampText(String(rawRange.to || ''), 20) }
-    : null;
+  const rawRange   = e.date_range && typeof e.date_range === 'object' ? e.date_range : null;
+  const rangeFrom  = rawRange ? clampText(String(rawRange.from || ''), 20) : null;
+  const rangeTo    = rawRange ? clampText(String(rawRange.to   || ''), 20) : null;
+  const date_range = (rangeFrom || rangeTo) ? { from: rangeFrom, to: rangeTo } : null;
 
   const benchmark  = numOrNull(e.benchmark);
   const rawConf    = strOrNull(e.confidence);
