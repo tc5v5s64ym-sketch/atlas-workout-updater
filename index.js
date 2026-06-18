@@ -42,6 +42,8 @@ const {
 } = require('./services/analytics');
 const { classifySubstitution } = require('./services/substitutionIntent');
 const { inferPrescribedPairs } = require('./services/planMatcher');
+const { isConstraintMessage } = require('./services/constraintDetector');
+const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
@@ -1089,6 +1091,24 @@ app.post('/api/coach/ask', async (req, res) => {
     confidenceLevel: result.confidenceLevel,
     source: 'training_sme'
   });
+});
+
+// POST /api/suggest-substitute — deterministic substitute recommendation for an
+// unavailable exercise. Returns the best known alternative when the user message
+// signals a constraint (busy, unavailable, etc.) and a known substitute exists.
+// READ-ONLY: no Sheets access, no LLM, no writes.
+// Body: { message: string, current_exercise: string }
+// Response: { recommendation: { recommendation, quality, reason } | null }
+app.post('/api/suggest-substitute', (req, res) => {
+  const { message, current_exercise: currentExercise } = req.body || {};
+  if (!message || !currentExercise) {
+    return standardSuccess(req, res, 'No recommendation', { recommendation: null });
+  }
+  if (!isConstraintMessage(message)) {
+    return standardSuccess(req, res, 'Not a constraint message', { recommendation: null });
+  }
+  const rec = recommendSubstitute(currentExercise);
+  return standardSuccess(req, res, 'Substitute recommendation', { recommendation: rec });
 });
 
 // POST /api/session/compile — extract logged sets from conversation history.

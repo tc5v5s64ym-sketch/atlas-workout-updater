@@ -107,7 +107,9 @@ Atlas: Suggested substitute: Romanian Deadlift
 
 **Files in scope:** `index.js` (new read-only endpoint), `config/routes.js`, `public/app.js` (constraint-detection path + display), `test/api-smoke.test.js` (new smoke tests).
 
-**Status:** Not started — awaiting PR 343 review.
+**Files shipped:** `index.js` (new `POST /api/suggest-substitute`, read-only), `config/routes.js`, `public/app.js` (`checkAndSuggestSubstitute` + submit-handler hook), `public/coach-conversation.js` (`handleSubstituteSuggested` + `atlas:substitute-suggested` listener), `test/api-smoke.test.js` (7 new smoke tests).
+
+**Status:** ⏳ In progress (PR 344)
 
 ---
 

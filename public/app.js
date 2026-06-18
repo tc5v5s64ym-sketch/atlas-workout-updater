@@ -2675,6 +2675,32 @@ async function fetchReaction(liftCode, justLoggedSet) {
   }
 }
 
+// Constraint detection: call the substitute endpoint and dispatch the result.
+// Returns true when a recommendation card was dispatched, false otherwise.
+// Callers use the return value to decide whether to fall back to the coach route
+// — the coach is suppressed only when a card was actually rendered, so an
+// exercise not in the ~14-entry catalog still gets a coach reply.
+async function checkAndSuggestSubstitute(text) {
+  if (!text || !activePlannedSession || !activePlannedSession.exercises.length) return false;
+  const currentEx = activePlannedSession.exercises[activePlannedSession.index];
+  if (!currentEx || !currentEx.name || !getApiKey()) return false;
+  try {
+    const res = await api('/api/suggest-substitute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, current_exercise: currentEx.name })
+    });
+    const rec = res && res.data && res.data.recommendation;
+    if (rec) {
+      document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
+        detail: { prescribed: currentEx.name, ...rec }
+      }));
+      return true;
+    }
+  } catch { /* best-effort */ }
+  return false;
+}
+
 // Did the just-saved session set a PR for this lift? Reads the fresh PR list
 // (which already includes the rows we just wrote) and matches each best set's
 // session_id to the session we saved. Read-only and best-effort — any failure
@@ -3129,8 +3155,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // Text that isn't a loggable workout, with no effort attached, is treated as
     // a question for the coach rather than a parse error — so "was that a good
     // session?" or just "Bench" gets a conversation instead of a red dead-end.
+    // For constraint messages during an active session, try the substitute endpoint
+    // first. If a card was dispatched, skip the coach route (one response per message).
+    // If no recommendation exists in the catalog, fall through to the coach as normal.
     if (pendingChatText && !hasAnyEffortInput()) {
-      routeMessageToCoach(pendingChatText);
+      const suggested = await checkAndSuggestSubstitute(pendingChatText);
+      if (!suggested) routeMessageToCoach(pendingChatText);
       return;
     }
     setStatus(loggerStatus, err.displayMessage || `Could not parse workout text: ${err.message}`, 'error');
