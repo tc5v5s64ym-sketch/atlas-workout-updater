@@ -598,8 +598,7 @@ function sanitizeChatContext(context) {
         targetMin: numOrNull(g && g.targetMin)
       })).filter(g => g.muscle)
     : [];
-  // Whitelist known pattern types and their details shapes.
-  const MEMORY_PATTERN_TYPES = Object.freeze(['consistent_underperformance', 'repeated_substitution']);
+  // Whitelist known pattern types; pick only the expected detail fields per type.
   const memory_patterns = Array.isArray(c.memory_patterns)
     ? c.memory_patterns.slice(0, 5).map(item => {
         if (!item || typeof item !== 'object') return null;
@@ -609,9 +608,14 @@ function sanitizeChatContext(context) {
           ? item.patterns.slice(0, 4).map(p => {
               if (!p || typeof p !== 'object') return null;
               const type = strOrNull(p.type);
-              if (!type || !MEMORY_PATTERN_TYPES.includes(type)) return null;
-              const details = p.details && typeof p.details === 'object' ? p.details : {};
-              return { type, details };
+              const d = p.details && typeof p.details === 'object' ? p.details : {};
+              if (type === 'consistent_underperformance') {
+                return { type, details: { sessions_below: numOrNull(d.sessions_below), sessions_checked: numOrNull(d.sessions_checked) } };
+              }
+              if (type === 'repeated_substitution') {
+                return { type, details: { original: strOrNull(d.original), substitute: strOrNull(d.substitute), count: numOrNull(d.count) } };
+              }
+              return null; // unknown type — drop
             }).filter(Boolean)
           : [];
         return patterns.length ? { liftCode, patterns } : null;
