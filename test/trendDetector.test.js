@@ -146,6 +146,21 @@ test('detectTrend: steadily rising e1RM → improving', () => {
   assert.equal(r.trend, 'improving');
 });
 
+test('detectTrend: large-jump monotonic rise (15 lb/session) → improving, not noisy', () => {
+  // 15-lb jumps drive raw CV ≈ 11.5 % > the 10 % threshold — would be mis-classified
+  // as noisy if CV were checked before direction. Validates direction-first ordering.
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 185, 5),
+    row('2026-01-08', 'S2', BENCH, 200, 5),
+    row('2026-01-15', 'S3', BENCH, 215, 5),
+    row('2026-01-22', 'S4', BENCH, 230, 5),
+    row('2026-01-29', 'S5', BENCH, 245, 5),
+    row('2026-02-05', 'S6', BENCH, 260, 5),
+  ];
+  const r = detectTrend(BENCH, rows);
+  assert.equal(r.trend, 'improving');
+});
+
 test('detectTrend: steadily falling e1RM → declining', () => {
   const rows = [
     row('2026-01-01', 'S1', BENCH, 235, 5),

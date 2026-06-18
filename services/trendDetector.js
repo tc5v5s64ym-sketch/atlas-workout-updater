@@ -113,24 +113,22 @@ function detectTrend(liftCode, rows) {
 
   const confidence = sessions_analyzed >= 6 ? 'high' : 'medium';
 
-  // High variance → noisy: no reliable direction signal.
-  const cv = overallMean > 0 ? stdDevOf(e1rms) / overallMean : 0;
-  if (cv > NOISY_CV_THRESHOLD) {
-    return { trend: 'noisy', confidence, sessions_analyzed };
-  }
-
-  // Direction: first-half mean vs second-half mean.
+  // Direction first: a strong linear trend naturally inflates CV (the spread
+  // around the series mean grows with slope), so checking CV before direction
+  // would misclassify clean novice progressions as noisy. Evaluate direction
+  // first; only fall through to the CV/noisy check when the direction is flat.
   const half       = Math.floor(sessions_analyzed / 2);
   const firstMean  = meanOf(e1rms.slice(0, half));
   const secondMean = meanOf(e1rms.slice(-half));
   const delta      = secondMean - firstMean;
   const threshold  = overallMean * TREND_DELTA_FRACTION;
 
-  let trend;
-  if (delta >= threshold)       trend = 'improving';
-  else if (delta <= -threshold) trend = 'declining';
-  else                          trend = 'flat';
+  if (delta >= threshold)  return { trend: 'improving', confidence, sessions_analyzed };
+  if (delta <= -threshold) return { trend: 'declining', confidence, sessions_analyzed };
 
+  // No clear direction. High variance here means random scatter, not a trend.
+  const cv = overallMean > 0 ? stdDevOf(e1rms) / overallMean : 0;
+  const trend = cv > NOISY_CV_THRESHOLD ? 'noisy' : 'flat';
   return { trend, confidence, sessions_analyzed };
 }
 
