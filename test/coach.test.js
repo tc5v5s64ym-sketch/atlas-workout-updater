@@ -106,7 +106,7 @@ test('coach system prompt binds the opener to the effort verdict and grounds his
   assert.match(prompt, /do NOT praise it as a grind|within reserve/i, 'an easy set must not be praised as hard');
   assert.match(prompt, /far_easy/, 'the prompt must instruct the model on the far-too-easy verdict so the LLM path stays in sync with the engine');
   assert.match(prompt, /add real weight/i, 'far_easy guidance must say to add real weight, not just "room to add"');
-  assert.match(prompt, /first_weight or best_weight/, 'may ground progress in one real history number');
+  assert.match(prompt, /working_weight, first_weight, best_weight/, 'may ground progress in one real history number');
   assert.match(prompt, /Never invent a past number/i);
 });
 
@@ -999,6 +999,31 @@ test('sanitizeFacts forwards evidence_context when present', () => {
 test('sanitizeFacts leaves evidence_context null when absent', () => {
   const facts = sanitizeFacts({ exerciseName: 'Bench', todaySets: [], rec: { recommendation: 'Hold.' } });
   assert.equal(facts.evidence_context, null);
+});
+
+test('sanitizeFacts extracts working_weight from full resolveWorkingWeight object', () => {
+  const facts = sanitizeFacts({
+    exerciseName: 'Bench Press',
+    todaySets: [],
+    rec: {
+      recommendation: 'Hold.',
+      working_weight: { weight: 225, repRange: { min: 4, max: 6 }, rirRange: { min: 1, max: 2 }, confidence: 'high', sampleSize: 5 },
+    },
+  });
+  assert.equal(facts.working_weight, 225);
+});
+
+test('sanitizeFacts accepts working_weight as a plain number', () => {
+  const facts = sanitizeFacts({
+    todaySets: [],
+    rec: { recommendation: 'Hold.', working_weight: 185 },
+  });
+  assert.equal(facts.working_weight, 185);
+});
+
+test('sanitizeFacts leaves working_weight null when absent', () => {
+  const facts = sanitizeFacts({ todaySets: [], rec: { recommendation: 'Hold.' } });
+  assert.equal(facts.working_weight, null);
 });
 
 test('sanitizeFacts rejects evidence_context with injected confidence', () => {

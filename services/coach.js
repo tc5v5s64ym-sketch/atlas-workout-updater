@@ -51,7 +51,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "deload" {active, protocol_id, load_pct, target_rir, sessions_remaining} — when present with active true, today is a DELOAD the engine is running. Frame the whole note as a deload: name it plainly, and make clear the reduced load (~{load_pct}% of the normal working weight), the fewer sets, and the high RIR (target {target_rir}, well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. When sessions_remaining is present, note how many easy sessions are left and that normal training resumes after. This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
     '- The facts may include "substitution" {classification, decision, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
     '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite the session count ("Based on your last N bench sessions…"), the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number.',
-    '- You MAY reference ONE history number from the facts (first_weight or best_weight, or the range/ceiling) to ground progress, e.g. "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
+    '- You MAY reference ONE history number from the facts (working_weight, first_weight, best_weight, or the range/ceiling) to ground progress, e.g. "right at your working weight of {working_weight}" or "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -104,6 +104,13 @@ function sanitizeFacts(facts) {
     substitution: sanitizeSubstitution(f.substitution || rec.substitution),
     target_rir: numOrNull(rec.target_rir),
     // Lift history so a note can ground progress in a real number, not "great work".
+    // working_weight: the RIR-zone–anchored current working weight (from resolveWorkingWeight).
+    // Accepts either the full { weight, ... } object or a pre-extracted number.
+    working_weight: numOrNull(
+      rec.working_weight && typeof rec.working_weight === 'object'
+        ? rec.working_weight.weight
+        : rec.working_weight
+    ),
     first_weight: numOrNull(rec.first_weight),
     best_weight: numOrNull(rec.best_weight),
     days_since_last_session: numOrNull(rec.days_since_last_session),

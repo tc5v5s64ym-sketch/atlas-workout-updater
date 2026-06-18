@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { computeBenchmark } = require('../services/exerciseBenchmark');
+const { computeBenchmark, resolveWorkingWeight } = require('../services/exerciseBenchmark');
 
 /* ===== Helpers ===== */
 
@@ -271,4 +271,182 @@ test('computeBenchmark: workingWeight is rounded to nearest 5 lb', () => {
   const rows = [1,2,3].map(i => row(`2026-01-0${i}`, `S${i}`, BENCH, 222, 5, 2));
   const b = computeBenchmark(BENCH, rows);
   assert.equal(b.workingWeight % 5, 0, 'workingWeight must be a multiple of 5');
+});
+
+/* ===== resolveWorkingWeight ===== */
+
+test('resolveWorkingWeight: null liftCode → nullWorkingWeight shape', () => {
+  const r = resolveWorkingWeight(null, [row('2026-01-01', 'S1', BENCH, 225, 5, 2)]);
+  assert.equal(r.weight, null);
+  assert.equal(r.confidence, 'none');
+  assert.equal(r.sampleSize, 0);
+});
+
+test('resolveWorkingWeight: empty rows → nullWorkingWeight', () => {
+  const r = resolveWorkingWeight(BENCH, []);
+  assert.equal(r.weight, null);
+  assert.equal(r.confidence, 'none');
+});
+
+test('resolveWorkingWeight: null rows → nullWorkingWeight', () => {
+  assert.equal(resolveWorkingWeight(BENCH, null).weight, null);
+});
+
+test('resolveWorkingWeight: wrong lift code → nullWorkingWeight', () => {
+  const rows = [row('2026-01-01', 'S1', SQUAT, 225, 5, 2)];
+  assert.equal(resolveWorkingWeight(BENCH, rows).weight, null);
+});
+
+test('resolveWorkingWeight: header-only rows → nullWorkingWeight', () => {
+  assert.equal(resolveWorkingWeight(BENCH, [HDR]).weight, null);
+});
+
+/* ── Target-zone filtering ── */
+
+test('resolveWorkingWeight: uses only sessions where top-set RIR ∈ [0, 3]', () => {
+  // S1: top set 225@2 (in zone), S2: top set 185@5 (outside zone — too easy)
+  // Working weight should anchor to 225, not average in 185.
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, 2),
+    row('2026-01-08', 'S2', BENCH, 185, 8, 5),
+    row('2026-01-15', 'S3', BENCH, 225, 5, 1),
+    row('2026-01-22', 'S4', BENCH, 225, 5, 2),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 225);
+  assert.equal(r.sampleSize, 3);  // only S1/S3/S4 qualify
+});
+
+test('resolveWorkingWeight: RIR 0 is included (lower boundary)', () => {
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, 0),
+    row('2026-01-08', 'S2', BENCH, 225, 5, 0),
+    row('2026-01-15', 'S3', BENCH, 225, 5, 0),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 225);
+});
+
+test('resolveWorkingWeight: RIR 3 is included (upper boundary)', () => {
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, 3),
+    row('2026-01-08', 'S2', BENCH, 225, 5, 3),
+    row('2026-01-15', 'S3', BENCH, 225, 5, 3),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 225);
+});
+
+test('resolveWorkingWeight: RIR 4 at top-set excludes session from zone (warm-up threshold)', () => {
+  // Sessions with top-set RIR=4 are outside the target zone; should fall back to all sessions.
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 185, 10, 4),
+    row('2026-01-08', 'S2', BENCH, 185, 10, 4),
+    row('2026-01-15', 'S3', BENCH, 185, 10, 4),
+  ];
+  // No target-zone sessions → falls back to all sessions
+  const r = resolveWorkingWeight(BENCH, rows);
+  // 185 lb warm-up sets are excluded by the weight-fraction heuristic relative to session max.
+  // Since all sets in each session are at the same weight, working = all sets, topWeight = 185.
+  // Falls back: all 3 sessions → weight = 185 (rounded to 5 lb).
+  assert.equal(r.weight, 185);
+  assert.equal(r.sampleSize, 3);
+});
+
+test('resolveWorkingWeight: falls back to all sessions when no in-zone RIR data', () => {
+  // All sessions have null RIR (older logs) — fall back uses all sessions.
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, null),
+    row('2026-01-08', 'S2', BENCH, 225, 5, null),
+    row('2026-01-15', 'S3', BENCH, 225, 5, null),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 225);
+  assert.equal(r.sampleSize, 3);
+});
+
+/* ── Mode / median ── */
+
+test('resolveWorkingWeight: mode wins when sessions cluster at same weight', () => {
+  // Four sessions at 225, one at 230 — mode is 225.
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, 2),
+    row('2026-01-08', 'S2', BENCH, 225, 5, 2),
+    row('2026-01-15', 'S3', BENCH, 225, 5, 2),
+    row('2026-01-22', 'S4', BENCH, 225, 5, 2),
+    row('2026-01-29', 'S5', BENCH, 230, 5, 2),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 225);
+});
+
+test('resolveWorkingWeight: median used when all top-set weights are unique', () => {
+  // 5 sessions at 205, 210, 215, 220, 225 → median = 215 → rounds to 215
+  const rows = [205, 210, 215, 220, 225].map((w, i) =>
+    row(`2026-01-${String(i + 1).padStart(2, '0')}`, `S${i + 1}`, BENCH, w, 5, 2)
+  );
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 215);
+});
+
+/* ── Confidence ── */
+
+test('resolveWorkingWeight: confidence high when ≥5 qualifying sessions', () => {
+  const rows = [1, 2, 3, 4, 5].map(i =>
+    row(`2026-01-${String(i).padStart(2, '0')}`, `S${i}`, BENCH, 225, 5, 2)
+  );
+  assert.equal(resolveWorkingWeight(BENCH, rows).confidence, 'high');
+});
+
+test('resolveWorkingWeight: confidence medium when 3–4 qualifying sessions', () => {
+  const rows = [1, 2, 3].map(i =>
+    row(`2026-01-${String(i).padStart(2, '0')}`, `S${i}`, BENCH, 225, 5, 2)
+  );
+  assert.equal(resolveWorkingWeight(BENCH, rows).confidence, 'medium');
+});
+
+test('resolveWorkingWeight: confidence low when 1–2 qualifying sessions', () => {
+  const rows = [row('2026-01-01', 'S1', BENCH, 225, 5, 2)];
+  assert.equal(resolveWorkingWeight(BENCH, rows).confidence, 'low');
+});
+
+/* ── Rep and RIR ranges ── */
+
+test('resolveWorkingWeight: repRange spans qualifying sessions\' working sets', () => {
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 4, 2),
+    row('2026-01-08', 'S2', BENCH, 225, 5, 2),
+    row('2026-01-15', 'S3', BENCH, 225, 6, 1),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.deepEqual(r.repRange, { min: 4, max: 6 });
+});
+
+test('resolveWorkingWeight: rirRange null when no RIR data (fallback path)', () => {
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, null),
+    row('2026-01-08', 'S2', BENCH, 225, 5, null),
+    row('2026-01-15', 'S3', BENCH, 225, 5, null),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.rirRange, null);
+});
+
+/* ── Plan spec golden test ── */
+
+test('resolveWorkingWeight: spec golden — bench 225×5 @2 anchors working weight to 225', () => {
+  // Plan app-test hold: "Bench working weight resolves around 225×5 @2, not the latest random test set."
+  // S3 (245@8) is outside the target RIR zone — only S1/S2/S4/S5/S6 (4 in-zone sessions → medium)
+  // and weight correctly resolves to 225, not the one-off 245 test set.
+  const rows = [
+    row('2026-01-01', 'S1', BENCH, 225, 5, 2),
+    row('2026-01-08', 'S2', BENCH, 225, 5, 2),
+    row('2026-01-15', 'S3', BENCH, 245, 3, 8),  // test set — RIR 8, outside target zone
+    row('2026-01-22', 'S4', BENCH, 225, 5, 2),
+    row('2026-01-29', 'S5', BENCH, 225, 4, 3),
+    row('2026-02-05', 'S6', BENCH, 225, 5, 1),
+  ];
+  const r = resolveWorkingWeight(BENCH, rows);
+  assert.equal(r.weight, 225, 'should anchor to 225, not the one-off 245 test set');
+  assert.equal(r.confidence, 'high');  // 5 in-zone sessions (S1/S2/S4/S5/S6)
 });

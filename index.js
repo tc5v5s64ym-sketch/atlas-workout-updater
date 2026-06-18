@@ -47,7 +47,7 @@ const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
-const { computeBenchmark } = require('./services/exerciseBenchmark');
+const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1520,6 +1520,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
       .map(normalizeAnalyticsLogRow);
     recommendation.rule_decision = holdUntilClean(normalizedRows, liftCode);
     recommendation.benchmark = computeBenchmark(liftCode, allLog);
+    recommendation.working_weight = resolveWorkingWeight(liftCode, allLog);
     return standardSuccess(req, res, 'Recommendation generated', recommendation);
   } catch (error) {
     return standardError(req, res, 'Failed to compute recommendation', error.message, 500);
