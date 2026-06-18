@@ -109,17 +109,19 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 
 ---
 
-## PR 350 — Working Weight Tracking
+## Roadmap Step 350 — Working Weight Tracking (GitHub PR #351)
 **Model:** Sonnet
+**Status:** ⏳ In progress (GitHub PR #351)
 
 **Goal:** Maintain current working weight and target rep/RIR range per lift.
 
 **Approach:**
 - Extend `services/exerciseBenchmark.js` (from PR 346) with a `resolveWorkingWeight(liftCode, rows)` function.
 - Working weight anchors to the mode/median of the lifter's top-set weights from sessions where RIR was in the target zone (0–3).
+- Falls back to all sessions when no in-zone RIR data exists (older logs without RIR recorded).
 - Exposes as `working_weight` in `/api/recommend/next` and in coach facts.
 
-**Files touched:** `services/exerciseBenchmark.js`, `test/exerciseBenchmark.test.js`, wire into recommendation pipeline.
+**Files touched:** `services/exerciseBenchmark.js` (`resolveWorkingWeight` new function), `test/exerciseBenchmark.test.js` (new tests), `index.js` (wire into `/api/recommend/next` response), `services/coach.js` (`working_weight` added to `sanitizeFacts`, prompt updated).
 
 **App test hold:** Bench working weight resolves around 225×5 @2, not the latest random test set.
 

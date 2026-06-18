@@ -31,6 +31,8 @@ const COL_RIR      = 9;
 const WARMUP_RIR_THRESHOLD   = 4;   // rir >= 4 → warm-up
 const WARMUP_WEIGHT_FRACTION = 0.60; // weight < 60 % of session max → warm-up
 const RECENT_SESSION_WINDOW  = 10;
+const TARGET_RIR_MIN = 0;           // target zone for resolveWorkingWeight
+const TARGET_RIR_MAX = 3;           //   sessions where top-set RIR ∈ [0, 3]
 
 function nullBenchmark() {
   return {
@@ -149,4 +151,102 @@ function computeBenchmark(liftCode, rows) {
   return { workingWeight, recentBest, repRange, rirRange, confidence, sampleSize };
 }
 
-module.exports = { computeBenchmark };
+/* Working-weight resolver — RIR-zone–anchored variant of the benchmark.
+ *
+ * Returns the mode (or median) of per-session top-set weights restricted to
+ * sessions where the heaviest working set was logged in the target RIR zone
+ * (0–3: hard work, not warm-up territory). When no session has in-zone RIR
+ * data the function falls back gracefully to all sessions (same behaviour as
+ * computeBenchmark's workingWeight field, without the 5 lb rounding that
+ * computeBenchmark applies globally).
+ *
+ * Return shape:
+ *   weight     – mode/median of qualifying top-set weights, rounded to 5 lb
+ *   repRange   – { min, max } reps across qualifying sessions' working sets
+ *   rirRange   – { min, max } RIR across those sets (null when no RIR data)
+ *   confidence – 'high' (≥5 sessions) | 'medium' (3–4) | 'low' (1–2) | 'none'
+ *   sampleSize – number of sessions used
+ */
+function nullWorkingWeight() {
+  return { weight: null, repRange: null, rirRange: null, confidence: 'none', sampleSize: 0 };
+}
+
+function resolveWorkingWeight(liftCode, rows) {
+  if (!liftCode || !Array.isArray(rows) || !rows.length) return nullWorkingWeight();
+
+  const code = String(liftCode).toUpperCase().trim();
+
+  // Parse all rows for this lift — identical to computeBenchmark's parse step.
+  const parsed = [];
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    if (String(row[COL_DATE] || '') === 'date_clean') continue;
+    if (String(row[COL_LIFT] || '').toUpperCase().trim() !== code) continue;
+    const weight = Number(row[COL_WEIGHT]);
+    const reps   = Number(row[COL_REPS]);
+    if (!Number.isFinite(weight) || weight <= 0) continue;
+    if (!Number.isFinite(reps)   || reps   <= 0) continue;
+    const rirRaw  = row[COL_RIR];
+    const rir     = (rirRaw == null || rirRaw === '') ? null : Number(rirRaw);
+    const sessionId = String(row[COL_SESSION] || '') || String(row[COL_DATE] || '');
+    const date      = String(row[COL_DATE] || '');
+    parsed.push({ sessionId, date, weight, reps, rir });
+  }
+
+  if (!parsed.length) return nullWorkingWeight();
+
+  // Group by session.
+  const sessionMap = new Map();
+  for (const s of parsed) {
+    if (!sessionMap.has(s.sessionId)) sessionMap.set(s.sessionId, { date: s.date, sets: [] });
+    sessionMap.get(s.sessionId).sets.push(s);
+  }
+
+  // Per session: filter warm-ups, find the top-set weight and its RIR.
+  const sessionEntries = [];
+  for (const [, { date, sets }] of sessionMap) {
+    const maxWeight = Math.max(...sets.map(s => s.weight));
+    let working = sets.filter(s =>
+      s.weight >= maxWeight * WARMUP_WEIGHT_FRACTION &&
+      (s.rir === null || !Number.isFinite(s.rir) || s.rir < WARMUP_RIR_THRESHOLD)
+    );
+    if (!working.length) working = sets;
+    const topWeight = Math.max(...working.map(s => s.weight));
+    // Minimum RIR among sets at the top weight = the hardest effort at peak load.
+    const topSetsRir = working
+      .filter(s => s.weight === topWeight)
+      .map(s => s.rir)
+      .filter(r => r !== null && Number.isFinite(r));
+    const topRir = topSetsRir.length ? Math.min(...topSetsRir) : null;
+    sessionEntries.push({ date, working, topWeight, topRir });
+  }
+
+  sessionEntries.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  // Prefer sessions where the top-set RIR is within the target zone [0, 3].
+  // These are genuine hard-work sessions that represent real working capacity.
+  // Fall back to all sessions when no in-zone RIR data exists (e.g. early logs).
+  const targetSessions = sessionEntries.filter(s =>
+    s.topRir !== null && s.topRir >= TARGET_RIR_MIN && s.topRir <= TARGET_RIR_MAX
+  );
+  const sessions = targetSessions.length ? targetSessions : sessionEntries;
+
+  const sampleSize = sessions.length;
+  const confidence =
+    sampleSize >= 5 ? 'high'   :
+    sampleSize >= 3 ? 'medium' :
+    sampleSize >= 1 ? 'low'    : 'none';
+
+  const roundedTops = sessions.map(s => roundTo5(s.topWeight));
+  const weight = modeOf(roundedTops) ?? medianOf(roundedTops);
+
+  const allWorking = sessions.flatMap(s => s.working);
+  const repVals = allWorking.map(s => s.reps);
+  const repRange = repVals.length ? { min: Math.min(...repVals), max: Math.max(...repVals) } : null;
+  const rirVals  = allWorking.map(s => s.rir).filter(r => r !== null && Number.isFinite(r));
+  const rirRange = rirVals.length ? { min: Math.min(...rirVals), max: Math.max(...rirVals) } : null;
+
+  return { weight, repRange, rirRange, confidence, sampleSize };
+}
+
+module.exports = { computeBenchmark, resolveWorkingWeight };
