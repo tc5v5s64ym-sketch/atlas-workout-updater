@@ -514,12 +514,21 @@ test('substitution wiring: plain RDL with no skip notation has no prescribed', (
 });
 
 test('substitution wiring: "Today I skipped deadlift" prose does not extract bogus prescribed name', () => {
-  // EXERCISE_LEAD captures "Today I" before "skipped" without the catalog guard.
-  // The catalog validation must reject non-exercise leads — no prescribed surfaced.
+  // Lead "Today I" contains no exercise → catalog guard rejects it → no prescribed.
   const result = parseWorkoutText('Today I skipped deadlift. RDL 245 7/2 x3');
   assert.equal(result.intent, 'log_sets');
   assert.equal(result.canonical_name, 'RDL');
   assert.ok(!result.prescribed || result.prescribed.length === 0, 'bogus prose lead must not produce prescribed');
+});
+
+test('substitution wiring: "Bench felt great so I skipped deadlift" must not extract Bench as prescribed', () => {
+  // Lead "Bench felt great so I" contains Bench but has extra words after it.
+  // The strict equality guard (lead must be exactly the exercise alias) rejects it.
+  // Must not produce prescribed: Bench — safer to emit nothing.
+  const result = parseWorkoutText('Bench felt great so I skipped deadlift. RDL 245 7/2 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.ok(!result.prescribed || result.prescribed.length === 0, 'exercise in prose lead must not produce prescribed');
 });
 
 // ---------------------------------------------------------------------------

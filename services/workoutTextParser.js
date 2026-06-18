@@ -364,9 +364,11 @@ function stripSkipNoteSentences(text) {
 // Extract prescribed/skipped exercise metadata from skip-note sentences without
 // stripping them (that is stripSkipNoteSentences' job). Returns an array of
 // { exercise, reason } objects — one per detected skip sentence.
-// The captured lead is validated against the known exercise catalog so prose
-// like "Today I skipped deadlift" does not extract "Today I" as the prescribed
-// exercise. Only recognized exercise names are accepted.
+// Only the documented "<Exercise> skipped …" format is supported: the entire
+// lead before "skipped" must be a recognized exercise name with nothing else.
+// This prevents prose like "Bench felt great so I skipped deadlift" from
+// extracting "Bench" as the prescribed exercise. Safer to emit nothing than
+// to emit a wrong prescribed name.
 function extractSkipNotes(text) {
   const SKIP_WORD = /\bskipp?(?:ed|ing)?\b/i;
   const HAS_SET_SLASH = /\d+\/\d+/;
@@ -377,8 +379,12 @@ function extractSkipNotes(text) {
     if (!SKIP_WORD.test(part) || HAS_SET_SLASH.test(part)) continue;
     const m = EXERCISE_LEAD.exec(part.trim());
     if (!m) continue;
-    const knownExercise = findExerciseInText(m[1].trim());
+    const lead = m[1].trim();
+    const knownExercise = findExerciseInText(lead);
     if (!knownExercise || knownExercise.ambiguous) continue;
+    // Require the lead to be exactly the exercise alias — no extra words.
+    // "Back Squat" passes; "Bench felt great so I" does not.
+    if (normalizeKey(lead) !== normalizeKey(knownExercise.rawName)) continue;
     const reasonMatch = REASON_SUFFIX.exec(part.trim());
     skipped.push({
       exercise: knownExercise.canonicalName,
