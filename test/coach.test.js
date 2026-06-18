@@ -1201,3 +1201,74 @@ test('coach system prompt carries the readiness_signal guidance', () => {
   assert.match(prompt, /likely_fatigue/i, 'prompt must name likely_fatigue signal');
   assert.match(prompt, /never diagnose fatigue from a single session/i);
 });
+
+/* ===== plan_state in sanitizeChatContext (PR 357) ===== */
+
+test('sanitizeChatContext forwards plan_state with planned, completed, remaining, isComplete', () => {
+  const clean = sanitizeChatContext({
+    plan_state: {
+      planned:   ['Lat Pulldown', 'Rows'],
+      completed: ['Rows'],
+      remaining: ['Lat Pulldown'],
+      isComplete: false
+    }
+  });
+  assert.ok(clean.plan_state !== null, 'plan_state should be present');
+  assert.deepEqual(clean.plan_state.planned,   ['Lat Pulldown', 'Rows']);
+  assert.deepEqual(clean.plan_state.completed, ['Rows']);
+  assert.deepEqual(clean.plan_state.remaining, ['Lat Pulldown']);
+  assert.equal(clean.plan_state.isComplete, false);
+});
+
+test('sanitizeChatContext: plan_state is null when planned is empty', () => {
+  const clean = sanitizeChatContext({
+    plan_state: { planned: [], completed: [], remaining: [], isComplete: false }
+  });
+  assert.equal(clean.plan_state, null);
+});
+
+test('sanitizeChatContext: plan_state is null when plan_state is absent', () => {
+  const clean = sanitizeChatContext({});
+  assert.equal(clean.plan_state, null);
+});
+
+test('sanitizeChatContext: plan_state is null when plan_state is not an object', () => {
+  const clean = sanitizeChatContext({ plan_state: 'injected' });
+  assert.equal(clean.plan_state, null);
+});
+
+test('sanitizeChatContext: plan_state drops non-string exercise names', () => {
+  const clean = sanitizeChatContext({
+    plan_state: {
+      planned:   ['Bench', null, 42, 'Rows'],
+      completed: [null],
+      remaining: ['Bench', undefined],
+      isComplete: false
+    }
+  });
+  assert.deepEqual(clean.plan_state.planned,   ['Bench', 'Rows']);
+  assert.deepEqual(clean.plan_state.completed, []);
+  assert.deepEqual(clean.plan_state.remaining, ['Bench']);
+});
+
+test('sanitizeChatContext: plan_state caps arrays at 20 entries', () => {
+  const many = Array.from({ length: 25 }, (_, i) => `Exercise ${i}`);
+  const clean = sanitizeChatContext({
+    plan_state: { planned: many, completed: [], remaining: many, isComplete: false }
+  });
+  assert.ok(clean.plan_state.planned.length <= 20);
+  assert.ok(clean.plan_state.remaining.length <= 20);
+});
+
+test('sanitizeChatContext: plan_state isComplete accepts true, coerces non-boolean to false', () => {
+  const withTrue = sanitizeChatContext({ plan_state: { planned: ['Bench'], completed: ['Bench'], remaining: [], isComplete: true } });
+  assert.equal(withTrue.plan_state.isComplete, true);
+  const withStr = sanitizeChatContext({ plan_state: { planned: ['Bench'], completed: [], remaining: ['Bench'], isComplete: 'yes' } });
+  assert.equal(withStr.plan_state.isComplete, false);
+});
+
+test('coach chat system prompt carries plan_state guidance', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /plan_state/i, 'prompt must reference plan_state');
+  assert.match(prompt, /remaining/i,  'prompt must mention remaining exercises');
+});

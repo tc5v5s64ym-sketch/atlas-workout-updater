@@ -1020,6 +1020,23 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     .filter(item => item.patterns.length > 0)
     .slice(0, 5);
 
+  // Session plan state: remaining = planned - completed. Only emitted when the
+  // client explicitly sends plan_completed — if it's absent, plan_state stays
+  // null so the coach isn't told "all exercises still outstanding" using stale
+  // data. Frontend wiring (PR 358) is required before this becomes non-null.
+  const { computePlanState } = require('./services/sessionPlanExecutor');
+  const planNames = Array.isArray(cc.current_plan)
+    ? cc.current_plan.map(e => (e && typeof e === 'object' ? (typeof e.name === 'string' ? e.name.trim() : null) : (typeof e === 'string' ? e.trim() : null))).filter(Boolean)
+    : [];
+  const completedNames = Array.isArray(cc.plan_completed)
+    ? cc.plan_completed.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim())
+    : [];
+  // Gate on plan_completed being explicitly present — avoids stale "all remaining" when
+  // the client sends current_plan but hasn't wired plan_completed yet (pre-PR 358).
+  const plan_state = planNames.length > 0 && Array.isArray(cc.plan_completed)
+    ? computePlanState(planNames, completedNames)
+    : null;
+
   return {
     recommended_label: read.recommended_label || null,
     recommended_focus: read.recommended_reason || null,
@@ -1030,6 +1047,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
     muscle_gaps,
     memory_patterns,
+    plan_state,
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
     session_count: sessions.length,
