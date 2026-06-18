@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1044,4 +1044,76 @@ test('coach system prompt requires evidence citation when evidence_context is pr
   assert.match(prompt, /evidence_context/i, 'prompt must reference the evidence_context field');
   assert.match(prompt, /MUST ground at least one statement/i, 'prompt must mandate a citation');
   assert.match(prompt, /never fabricate/i, 'prompt must forbid invented figures');
+});
+
+/* ===== sanitizeTrend ===== */
+
+test('sanitizeTrend: passes through improving verdict', () => {
+  const result = sanitizeTrend({ trend: 'improving', confidence: 'high', sessions_analyzed: 7 });
+  assert.deepEqual(result, { trend: 'improving', confidence: 'high', sessions_analyzed: 7 });
+});
+
+test('sanitizeTrend: passes through all valid verdicts', () => {
+  for (const t of ['improving', 'flat', 'declining', 'noisy']) {
+    const result = sanitizeTrend({ trend: t, confidence: 'medium', sessions_analyzed: 4 });
+    assert.equal(result.trend, t, `${t} must pass through`);
+  }
+});
+
+test('sanitizeTrend: insufficient_data collapses to null', () => {
+  const result = sanitizeTrend({ trend: 'insufficient_data', confidence: 'none', sessions_analyzed: 2 });
+  assert.equal(result, null);
+});
+
+test('sanitizeTrend: unknown trend vocabulary collapses to null', () => {
+  const result = sanitizeTrend({ trend: 'up', confidence: 'high', sessions_analyzed: 6 });
+  assert.equal(result, null);
+});
+
+test('sanitizeTrend: null / non-object → null', () => {
+  assert.equal(sanitizeTrend(null), null);
+  assert.equal(sanitizeTrend('improving'), null);
+  assert.equal(sanitizeTrend(undefined), null);
+});
+
+test('sanitizeTrend: unknown confidence is kept as null, trend still passes', () => {
+  const result = sanitizeTrend({ trend: 'flat', confidence: 'super_high', sessions_analyzed: 4 });
+  assert.ok(result !== null, 'valid trend must not be dropped due to bad confidence');
+  assert.equal(result.trend, 'flat');
+  assert.equal(result.confidence, null);
+});
+
+/* ===== trend field in sanitizeFacts ===== */
+
+test('sanitizeFacts extracts trend from rec.trend', () => {
+  const facts = sanitizeFacts({
+    todaySets: [],
+    rec: {
+      recommendation: 'Hold.',
+      trend: { trend: 'improving', confidence: 'high', sessions_analyzed: 6 },
+    },
+  });
+  assert.deepEqual(facts.trend, { trend: 'improving', confidence: 'high', sessions_analyzed: 6 });
+});
+
+test('sanitizeFacts leaves trend null when rec.trend absent', () => {
+  const facts = sanitizeFacts({ todaySets: [], rec: { recommendation: 'Hold.' } });
+  assert.equal(facts.trend, null);
+});
+
+test('sanitizeFacts rejects trend with invalid vocabulary via rec.trend', () => {
+  const facts = sanitizeFacts({
+    todaySets: [],
+    rec: {
+      recommendation: 'Hold.',
+      trend: { trend: 'GOING_UP', confidence: 'high', sessions_analyzed: 6 },
+    },
+  });
+  assert.equal(facts.trend, null);
+});
+
+test('coach system prompt carries the trend guidance', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /trend.*confidence.*sessions_analyzed/is, 'prompt must document the trend field shape');
+  assert.match(prompt, /never claim a trend when the field is absent/i, 'prompt must forbid inventing a trend');
 });

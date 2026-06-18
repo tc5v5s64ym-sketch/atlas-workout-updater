@@ -52,6 +52,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "substitution" {classification, decision, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
     '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite the session count ("Based on your last N bench sessions…"), the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number.',
     '- You MAY reference ONE history number from the facts (working_weight, first_weight, best_weight, or the range/ceiling) to ground progress, e.g. "right at your working weight of {working_weight}" or "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
+    '- The facts may include "trend" {trend, confidence, sessions_analyzed} — the engine\'s e1RM trajectory across recent sessions. "improving" = e1RM is clearly rising; "flat" = holding steady; "declining" = e1RM is drifting down; "noisy" = high variance, no clear read. When trend is present and is not "noisy", name the direction once as part of the arc narrative. Never claim a trend when the field is absent, and never contradict the engine\'s verdict.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -123,7 +124,10 @@ function sanitizeFacts(facts) {
     // reference sets, date range, confidence). When present, the model MUST cite at
     // least one piece of evidence — a session count, the date span, or a reference
     // weight/reps. Every cited number must appear in the facts; the model never invents.
-    evidence_context: sanitizeEvidenceContext(f.evidence_context)
+    evidence_context: sanitizeEvidenceContext(f.evidence_context),
+    // The e1RM trend engine's verdict (services/trendDetector.js).
+    // improving/flat/declining/noisy — used to ground the arc narrative.
+    trend: sanitizeTrend(rec.trend)
   };
 }
 
@@ -250,6 +254,20 @@ function sanitizeEvidenceContext(e) {
   if (!reference_sets.length && !date_range && benchmark == null && !confidence) return null;
 
   return { reference_sets, date_range, benchmark, confidence };
+}
+
+// Whitelist the trend engine's output (services/trendDetector.js).
+// 'insufficient_data' collapses to null — nothing actionable to forward to the model.
+// confidence is restricted to the same two-tier vocabulary used by trendDetector.
+const TREND_VERDICTS    = Object.freeze(['improving', 'flat', 'declining', 'noisy']);
+const TREND_CONFIDENCE  = Object.freeze(['high', 'medium', 'none']);
+function sanitizeTrend(t) {
+  if (!t || typeof t !== 'object') return null;
+  const trend = strOrNull(t.trend);
+  if (!trend || !TREND_VERDICTS.includes(trend)) return null;
+  const rawConf = strOrNull(t.confidence);
+  const confidence = rawConf && TREND_CONFIDENCE.includes(rawConf) ? rawConf : null;
+  return { trend, confidence, sessions_analyzed: numOrNull(t.sessions_analyzed) };
 }
 
 function numOrNull(v) {
@@ -905,6 +923,7 @@ module.exports = {
   sanitizeSubstitution,
   sanitizeDeviation,
   sanitizeEvidenceContext,
+  sanitizeTrend,
   buildPlanSystemPrompt,
   buildPlanUserPrompt,
   sanitizePlanFacts,
