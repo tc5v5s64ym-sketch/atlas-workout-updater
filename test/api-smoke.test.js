@@ -2774,3 +2774,74 @@ test('api smoke: explicit prescribed pair wins over plan_exercises for the same 
   assert.equal(body.data.substitutions[0].prescribed.name, 'Back Squat');
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
+
+// ─── /api/suggest-substitute smoke tests ─────────────────────────────────────
+
+test('api smoke: suggest-substitute is registered as read-only and never write-capable', async () => {
+  const { response, body } = await requestJson('/routes');
+  const routeByPath = new Map(body.data.routes.map(r => [r.path, r]));
+  assert.ok(routeByPath.has('/api/suggest-substitute'), 'suggest-substitute route must be in the manifest');
+  const route = routeByPath.get('/api/suggest-substitute');
+  assert.equal(route.writeCapable, false, 'suggest-substitute must never be write-capable');
+  assert.equal(route.readOnly, true, 'suggest-substitute must be read-only');
+});
+
+test('api smoke: suggest-substitute — Deadlift + constraint message → Romanian Deadlift', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Platform busy', current_exercise: 'Deadlift' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'recommendation must not be null');
+  assert.equal(body.data.recommendation.recommendation, 'Romanian Deadlift');
+  assert.equal(body.data.recommendation.quality, 'excellent');
+  assert.ok(typeof body.data.recommendation.reason === 'string' && body.data.recommendation.reason.length > 0);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: suggest-substitute — Back Squat + rack unavailable → Leg Press', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Rack unavailable', current_exercise: 'Back Squat' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'recommendation must not be null');
+  assert.equal(body.data.recommendation.recommendation, 'Leg Press');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: suggest-substitute — unknown exercise → null', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Platform busy', current_exercise: 'Jammer Press' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.recommendation, null);
+});
+
+test('api smoke: suggest-substitute — non-constraint message → null', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Deadlift 315 5/2 x3', current_exercise: 'Deadlift' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.recommendation, null, 'ordinary log notation must not trigger a recommendation');
+});
+
+test('api smoke: suggest-substitute — missing current_exercise → null', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Platform busy' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.recommendation, null);
+});
+
+test('api smoke: suggest-substitute never writes to any sheet', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Platform busy', current_exercise: 'Deadlift' })
+  });
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute must not write any rows');
+});

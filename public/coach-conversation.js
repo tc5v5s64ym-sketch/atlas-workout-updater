@@ -929,6 +929,28 @@
     }
   }
 
+  /* ===== Proactive substitute recommendation (atlas:substitute-suggested) ===== */
+
+  // Renders a deterministic Atlas bubble when a constraint message is detected
+  // during an active planned session. No LLM — all text is derived from the
+  // recommendation engine's quality tier and reason string.
+  async function handleSubstituteSuggested(detail) {
+    const { prescribed, recommendation, quality, reason } = detail || {};
+    if (!prescribed || !recommendation) return;
+
+    const qualityLabel = quality === 'excellent' ? 'Excellent match' : 'Close alternative';
+    const text = [
+      `Equipment unavailable? Best substitute for ${prescribed}:`,
+      '',
+      `${recommendation} (${qualityLabel})`,
+      reason || '',
+    ].filter((line, i) => i === 0 || line !== '').join('\n');
+
+    const handle = appendAtlasBubble();
+    if (!handle) return;
+    await typeOut(handle.body, text);
+  }
+
   /* ===== Coach-nav wiring (avatar → Settings) =====
      The hamburger (#coach-menu-btn) is owned by drawer.js, which opens the
      side panel; navigation there routes through the existing tab controls. */
@@ -978,6 +1000,7 @@
 
   document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
   document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
 
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
 

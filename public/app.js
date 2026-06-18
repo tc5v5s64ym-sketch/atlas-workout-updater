@@ -2675,6 +2675,28 @@ async function fetchReaction(liftCode, justLoggedSet) {
   }
 }
 
+// Constraint detection: if `text` signals unavailable equipment and a planned
+// exercise is active, call the substitute endpoint and dispatch the result.
+// Fire-and-forget — never blocks the main submit flow.
+async function checkAndSuggestSubstitute(text) {
+  if (!text || !activePlannedSession || !activePlannedSession.exercises.length) return;
+  const currentEx = activePlannedSession.exercises[activePlannedSession.index];
+  if (!currentEx || !currentEx.name || !getApiKey()) return;
+  try {
+    const res = await api('/api/suggest-substitute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, current_exercise: currentEx.name })
+    });
+    const rec = res && res.data && res.data.recommendation;
+    if (rec) {
+      document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
+        detail: { prescribed: currentEx.name, ...rec }
+      }));
+    }
+  } catch { /* best-effort — never blocks submit */ }
+}
+
 // Did the just-saved session set a PR for this lift? Reads the fresh PR list
 // (which already includes the rows we just wrote) and matches each best set's
 // session_id to the session we saved. Read-only and best-effort — any failure
@@ -3107,6 +3129,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // Clear the composer immediately — chat.js already captured it for the user
   // bubble, so this just empties the box while Atlas thinks.
   setTimeout(() => { workoutTextInput.value = ''; }, 0);
+
+  // Constraint-detection: fires non-blocking before parse/routing.
+  // The endpoint returns null for non-constraint messages or unknown exercises,
+  // so this is a no-op for ordinary set logs and coach questions.
+  checkAndSuggestSubstitute(pendingChatText);
 
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();

@@ -23,6 +23,7 @@ const routeDefinitions = [
   { path: '/api/coach/message', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/chat', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/coach/ask', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/suggest-substitute', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/session/compile', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/config', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/exercise-match', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
