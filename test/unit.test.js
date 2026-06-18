@@ -4393,38 +4393,38 @@ test('FIX2: coach-conversation.js advances the composer to the full next prescri
 });
 
 // Mid-session substitution wiring (PR #340)
-// These tests verify that the prescribed-pair data produced by the parser for
-// skip-notation inputs ("Deadlift skipped - platform busy. Romanian Deadlift …")
-// flows from emitSetLogged → atlas:set-logged → handleSetLogged → substitution
-// classification → renderSubstitutionNotes.  They fail until the wiring is added.
+// The parser produces lastPrescribed for skip-notation inputs ("Deadlift skipped
+// - platform busy. Romanian Deadlift 245lbs 7/2 x3"). app.js classifies the swap
+// via a test_mode dry-run in the mid-session branch (before emitSetLogged) and
+// passes the engine verdict in the atlas:set-logged event detail. handleSetLogged
+// only words the verdict — it never calls a write path.
 
-test('mid-session substitution: emitSetLogged call site passes lastPrescribed', () => {
+test('mid-session substitution: app.js classifies prescribed pairs before emitSetLogged', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  // The mid-session branch must forward the parser's prescribed pairs so the
-  // event listener can trigger substitution classification without a second parse.
-  assert.match(
-    appSource,
-    /emitSetLogged\(logRows,\s*pendingChatText,\s*lastPrescribed\)/,
-    'mid-session branch must pass lastPrescribed as the third arg to emitSetLogged'
-  );
+  // Isolate the mid-session branch (between the early-return check and emitSetLogged).
+  const branchStart = appSource.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview)');
+  const branchEnd = appSource.indexOf('emitSetLogged(logRows', branchStart) + 60;
+  const branch = appSource.slice(branchStart, branchEnd);
+  assert.match(branch, /lastPrescribed/, 'mid-session branch must consult lastPrescribed');
+  assert.match(branch, /test_mode.*true|true.*test_mode/, 'mid-session branch must use test_mode:true for the classification call');
+  assert.match(branch, /log-workout/, 'mid-session branch must call /api/log-workout to classify the swap');
 });
 
-test('mid-session substitution: emitSetLogged forwards prescribed pairs in atlas:set-logged detail', () => {
+test('mid-session substitution: emitSetLogged forwards substitutions in atlas:set-logged detail', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = appSource.slice(
     appSource.indexOf('function emitSetLogged('),
     appSource.indexOf('function emitSetLogged(') + 1000
   );
-  assert.match(fn, /prescribed/, 'emitSetLogged must accept a prescribed param and include it in the event detail');
+  assert.match(fn, /substitutions/, 'emitSetLogged must forward the classified substitutions in the event detail');
 });
 
-test('mid-session substitution: handleSetLogged reads prescribed pairs and renders substitution notes', () => {
+test('mid-session substitution: handleSetLogged renders substitution notes without calling a write path', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const start = cc.indexOf('async function handleSetLogged(');
-  // Extract up to the next top-level async function so the substitution block is included.
   const end = cc.indexOf('  async function handlePreviewReady(');
   const fn = cc.slice(start, end > start ? end : start + 4000);
-  assert.match(fn, /prescribed/, 'handleSetLogged must destructure prescribed from the event detail');
-  assert.match(fn, /log-workout/, 'handleSetLogged must call /api/log-workout with test_mode to classify the swap');
-  assert.match(fn, /renderSubstitutionNotes/, 'handleSetLogged must render the engine classification via renderSubstitutionNotes');
+  assert.match(fn, /substitutions/, 'handleSetLogged must destructure substitutions from the event detail');
+  assert.match(fn, /renderSubstitutionNotes/, 'handleSetLogged must render the engine verdict via renderSubstitutionNotes');
+  assert.doesNotMatch(fn, /log-workout/, 'handleSetLogged must NOT call /api/log-workout — the coach layer is purely visual');
 });

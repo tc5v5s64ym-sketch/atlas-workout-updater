@@ -777,7 +777,7 @@
   // client-parsed sets; the set text is recorded so the end-of-session compile
   // can reconstruct the full workout.
   async function handleSetLogged(detail) {
-    const { exercises = [], text = '', prescribed = null } = detail || {};
+    const { exercises = [], text = '', substitutions = [] } = detail || {};
     if (!exercises.length) return;
     if (text) chatTurns.push({ role: 'user', text });
 
@@ -813,46 +813,10 @@
       bubble.appendChild(buildNextPrescription(rec));
     }
 
-    // Substitution classification: if the parser flagged a skip ("Deadlift skipped
-    // — platform busy"), classify the swap now and surface the engine's verdict in
-    // the mid-session coaching bubble (same templated + Gemini voice as end-of-session).
-    // Best-effort: any failure is silent so a network hiccup never blocks the set note.
-    if (Array.isArray(prescribed) && prescribed.length > 0 && typeof api === 'function') {
-      try {
-        const loggedExercise = primary.exercise || '';
-        const date = document.getElementById('log-date')?.value?.trim() || '';
-        const sessionId = document.getElementById('log-session-id')?.value?.trim() || '';
-        const logRows = exercises.flatMap((ex, _ei) =>
-          (ex.sets || []).map((s, si) => ({
-            exercise: ex.exercise,
-            set_number: si + 1,
-            weight: s.weight,
-            reps: s.reps,
-            rir: s.rir,
-            notes: ''
-          }))
-        );
-        const classifyPayload = {
-          session_id: sessionId,
-          date,
-          test_mode: true,
-          prescribed: prescribed.map(p => ({
-            exercise: p.exercise,
-            logged_exercise: loggedExercise,
-            ...(p.reason ? { reason: p.reason } : {})
-          })),
-          log_rows: logRows
-        };
-        const classifyResult = await api('/api/log-workout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(classifyPayload)
-        }).catch(() => null);
-        const subs = classifyResult?.data?.substitutions;
-        if (Array.isArray(subs) && subs.length) {
-          await renderSubstitutionNotes(bubble, subs);
-        }
-      } catch { /* substitution note is best-effort */ }
+    // Substitution verdict: app.js ran the dry-run classification before emitting
+    // this event (same pattern as handlePreviewReady). This layer only words it.
+    if (Array.isArray(substitutions) && substitutions.length) {
+      await renderSubstitutionNotes(bubble, substitutions);
     }
 
     // Next-exercise handoff: append a short line pointing at the next exercise
