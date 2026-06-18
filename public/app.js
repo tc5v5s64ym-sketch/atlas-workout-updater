@@ -3268,7 +3268,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (effortRow) payload.effort_row = effortRow;
       if (lastPrescribed && lastPrescribed.length > 0 && logRows.length > 0) {
         const loggedExercise = logRows[0].exercise || '';
-        payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise }));
+        payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
       }
 
       const result = await api('/api/log-workout', {

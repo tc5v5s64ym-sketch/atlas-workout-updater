@@ -877,17 +877,18 @@
   function templatedSubstitutionLine(sub) {
     const p = liftLabel(sub && sub.prescribed, 'the prescribed lift');
     const l = liftLabel(sub && sub.logged, 'what you logged');
+    const reasonSuffix = (sub && sub.reason) ? ` Reason: ${sub.reason}.` : '';
     switch (sub && sub.classification) {
       case 'preserved':
-        return `Swap check: ${l} for ${p} — same job, different tool. Intent preserved.`;
+        return `Swap check: ${l} for ${p} — same job, different tool. Intent preserved.${reasonSuffix}`;
       case 'changed':
-        return `Swap check: ${l} for ${p} — that shifts the target muscle. Slot the real match in next time.`;
+        return `Swap check: ${l} for ${p} — that shifts the target muscle. Slot the real match in next time.${reasonSuffix}`;
       case 'abandoned':
-        return `Swap check: ${l} for ${p} — that left the session's objective untrained. Get the real movement back in this week.`;
+        return `Swap check: ${l} for ${p} — that left the session's objective untrained. Get the real movement back in this week.${reasonSuffix}`;
       case 'baseline':
-        return `Swap check: ${l} for ${p} — no history yet to judge it against. Logging it builds the baseline.`;
+        return `Swap check: ${l} for ${p} — no history yet to judge it against. Logging it builds the baseline.${reasonSuffix}`;
       default:
-        return `Swap check: ${l} for ${p}.`;
+        return `Swap check: ${l} for ${p}.${reasonSuffix}`;
     }
   }
 

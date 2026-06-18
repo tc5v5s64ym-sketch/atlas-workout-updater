@@ -2412,18 +2412,27 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   }
 });
 
+// Keywords that indicate an equipment or availability constraint forced the swap.
+// Matching any word here causes buildSubstitutionPreviews to synthesize a transient
+// equipment constraint so the classifier can upgrade to equipment_constraint_honored.
+const EQUIPMENT_REASON_RE = /\b(platform|rack|machine|equipment|busy|unavailable|occupied|taken|waiting|broken|closed|line)\b/i;
+function reasonIsEquipmentConstraint(reason) {
+  return typeof reason === 'string' && EQUIPMENT_REASON_RE.test(reason);
+}
+
 // Build substitution-intent previews for any logged lift that differs from the
 // prescribed one supplied by the client. READ-ONLY: reads log history (for the
 // baseline-vs-judge decision) and the Constraints tab to classify; never writes,
 // never touches the trust loop. Returns [] when no prescribed pairs are given.
 //
-// `prescribedList` entries: { logged_exercise, exercise, lift_code? }
+// `prescribedList` entries: { logged_exercise, exercise, lift_code?, reason? }
 //   logged_exercise — the logged lift to pair against (matched case-insensitively
 //                     to the enriched row's exercise / canonical_exercise)
 //   exercise        — the prescribed lift name
 //   lift_code       — optional prescribed lift code (history lookup key)
+//   reason          — optional human reason text (e.g. "platform busy")
 //
-// The engine emits the decision; the voice layer (PR 5) only words it later.
+// The engine emits the decision; the voice layer only words it later.
 async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, ruleFlags) {
   // First occurrence of each distinct logged lift, keyed by both raw and canonical name.
   const loggedByName = new Map();
@@ -2463,13 +2472,17 @@ async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, rul
     const history = prescribedLiftCode
       ? allLog.filter(row => String(row[5] || '').toLowerCase() === prescribedLiftCode)
       : [];
-    out.push(classifySubstitution({
+    const reasonConstraints = reasonIsEquipmentConstraint(p.reason)
+      ? [{ kind: 'equipment', target: prescribedName, rule: 'substitute' }]
+      : [];
+    const sub = classifySubstitution({
       prescribed: { name: prescribedName, lift_code: p.lift_code || null },
       logged,
-      constraints,
+      constraints: reasonConstraints.length ? [...constraints, ...reasonConstraints] : constraints,
       painFlag,
       history
-    }));
+    });
+    out.push(p.reason ? { ...sub, reason: String(p.reason).trim().slice(0, 200) } : sub);
   }
   return out;
 }

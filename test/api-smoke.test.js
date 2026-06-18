@@ -777,6 +777,172 @@ test('api smoke: log-workout preview is unchanged when no prescribed pairs are s
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// ── Reason-field wiring (PR #339) ─────────────────────────────────────────────
+
+test('api smoke: equipment reason upgrades cross-pattern swap to equipment_constraint_honored', async () => {
+  // Back Squat (SQ01, has history) → Bench Press is normally abandoned (different
+  // pattern, ~0 muscle overlap). With "rack unavailable" the engine synthesizes a
+  // transient equipment constraint and Rule 3 fires instead: equipment_constraint_honored.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-EQUIP-REASON-UPGRADE',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { exercise: 'Back Squat', logged_exercise: 'Bench Press', lift_code: 'SQ01', reason: 'rack unavailable' }
+      ],
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.substitutions.length, 1);
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.classification, 'preserved');
+  assert.equal(sub.decision, 'approve');
+  assert.equal(sub.reason_code, 'equipment_constraint_honored');
+  assert.equal(sub.reason, 'rack unavailable');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: non-equipment reason does not upgrade — abandoned stays abandoned', async () => {
+  // Same cross-pattern swap with a reason that contains no equipment keywords.
+  // No constraint is synthesized → Rule 5 fires → abandoned/warn.
+  // The reason text still passes through to the result object.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-NON-EQUIP-REASON',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { exercise: 'Back Squat', logged_exercise: 'Bench Press', lift_code: 'SQ01', reason: 'wanted a change' }
+      ],
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.substitutions.length, 1);
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.classification, 'abandoned');
+  assert.equal(sub.decision, 'warn');
+  assert.equal(sub.reason, 'wanted a change');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: reason field passes through on a preserved swap', async () => {
+  // Bench Press (BEN01, has history) → Incline Dumbbell Press: same horizontal_push
+  // pattern + chest overlap → Rule 2 preserved. The reason is not an equipment keyword
+  // but still attaches to the result.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-REASON-PASSTHROUGH',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { exercise: 'Bench Press', logged_exercise: 'Incline Dumbbell Press', lift_code: 'BEN01', reason: 'incline felt better' }
+      ],
+      log_rows: [
+        { exercise: 'Incline Dumbbell Press', set_number: 1, weight: 80, reps: 8, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.substitutions.length, 1);
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.classification, 'preserved');
+  assert.equal(sub.reason_code, 'pattern_and_muscle_match');
+  assert.equal(sub.reason, 'incline felt better');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: no reason field in result when reason was not provided', async () => {
+  // Same swap without a reason → result has no `reason` key.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-NO-REASON',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { exercise: 'Bench Press', logged_exercise: 'Incline Dumbbell Press', lift_code: 'BEN01' }
+      ],
+      log_rows: [
+        { exercise: 'Incline Dumbbell Press', set_number: 1, weight: 80, reps: 8, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.substitutions.length, 1);
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.classification, 'preserved');
+  assert.ok(!('reason' in sub), 'reason must not appear in result when none was provided');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: reason passes through on baseline swap (no lift history)', async () => {
+  // Deadlift → Romanian Deadlift: no lift_code → no history → Rule 1 baseline fires
+  // before constraint synthesis. The reason field still attaches to the result.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-BASELINE-REASON',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { exercise: 'Deadlift', logged_exercise: 'Romanian Deadlift', reason: 'platform busy' }
+      ],
+      log_rows: [
+        { exercise: 'Romanian Deadlift', set_number: 1, weight: 245, reps: 7, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.substitutions.length, 1);
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.classification, 'baseline');
+  assert.equal(sub.reason, 'platform busy');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: no prescribed pairs → no substitutions key (reason-wiring regression)', async () => {
+  // Regression guard: sending a workout without prescribed pairs must not produce a
+  // substitutions key after the reason-wiring change.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-REASON-REGRESSION',
+      date: '2026-06-11',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Romanian Deadlift', set_number: 1, weight: 245, reps: 7, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.ok(!('substitutions' in body.data), 'substitutions must be absent without prescribed pairs');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: complete-workout allows effort-only screenshot preview with empty log rows', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {
