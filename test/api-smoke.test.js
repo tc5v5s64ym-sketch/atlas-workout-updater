@@ -565,6 +565,34 @@ test('api smoke: coach/chat accepts plan_completed in context and returns 200 â€
   }
 });
 
+test('api smoke: coach/chat with plan_completed containing ALL plan exercises â€” session complete, no crash (PR 358)', async () => {
+  // Acceptance path: all 4 acceptance-test exercises logged; server must
+  // compute isComplete:true and return 200. Proves the complete-session path
+  // is handled without errors and does not stall the coach reply.
+  fakeCoachState.configured = true;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'nice work today',
+        context: {
+          current_plan: [
+            { name: 'Deadlift',      weight: 315, reps: 5,  sets: 3, rir: 2 },
+            { name: 'Rows',          weight: 190, reps: 10, sets: 3, rir: 2 },
+            { name: 'Lateral Raise', weight: 15,  reps: 12, sets: 3, rir: 2 },
+            { name: 'Lat Pulldown',  weight: 160, reps: 10, sets: 3, rir: 2 }
+          ],
+          plan_completed: ['Deadlift', 'Rows', 'Lateral Raise', 'Lat Pulldown']
+        }
+      })
+    });
+    assert.equal(response.status, 200, 'complete-session context must not crash the endpoint');
+    assert.equal(body.data.message, fakeCoachState.chatMessage, 'reply returned normally');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 test('api smoke: coach/chat returns null propose_edit when none proposed', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.chatEditProposal = null;
