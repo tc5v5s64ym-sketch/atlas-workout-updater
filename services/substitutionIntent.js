@@ -118,7 +118,49 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   const prescribedInfo = buildLiftInfo(prescribed, prescribedPatternResult, prescribedMuscleResult);
   const loggedInfo     = buildLiftInfo(logged,     loggedPatternResult,     loggedMuscleResult);
 
-  // --- Rule 1: baseline — no history means we cannot judge intent
+  const constraintMatched = hasMatchingConstraint(prescribed, constraints);
+  const hasPain           = Boolean(painFlag);
+
+  // --- Equipment / injury constraint: evaluated before the history gate.
+  // Spec: a constraint-justified redirect is `preserved` only when the substitute
+  // "keeps a defensible portion of the intended muscle/pattern within what the
+  // constraint allows" (SUBSTITUTION_SPEC.md). A constraint upgrades a borderline
+  // result; it cannot rescue a zero-overlap abandon of an unrelated stimulus.
+  if (constraintMatched) {
+    const muscle_overlap = computePrimaryMuscleOverlap(
+      prescribedMuscleResult.primary, loggedMuscleResult.primary
+    );
+    const cPatternsMatch = (
+      prescribedPatternResult.pattern === loggedPatternResult.pattern &&
+      prescribedPatternResult.pattern !== 'other'
+    );
+    const cPrescribedRegion = BROAD_REGION[prescribedPatternResult.pattern] || 'other';
+    const cLoggedRegion     = BROAD_REGION[loggedPatternResult.pattern]     || 'other';
+    const cSharedRegion     = cPrescribedRegion === cLoggedRegion && cPrescribedRegion !== 'other';
+    const isDefensible      = (cPatternsMatch || cSharedRegion) && muscle_overlap >= OVERLAP_THRESHOLD;
+
+    if (isDefensible) {
+      const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched: true };
+      return {
+        classification: 'preserved',
+        decision:       'approve',
+        reason_code:    'equipment_constraint_honored',
+        prescribed:     prescribedInfo,
+        logged:         loggedInfo,
+        muscle_overlap,
+        evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'equipment_constraint_honored' }),
+      };
+    }
+    // Constraint matched but the substitute is unrelated (zero overlap, different region).
+    // Fall through to normal classification — a constraint can rescue a borderline swap
+    // but cannot endorse skipping the prescribed stimulus for an unrelated movement.
+  }
+
+  // --- Rule 1: baseline — no history and no constraint → cannot judge intent.
+  // Pain deliberately stays behind this gate: pain is a session-level signal that
+  // does not identify which lift caused it or which specific swap it justifies.
+  // A constraint is different — its target is matched to the prescribed lift and
+  // the defensibility check provides the context needed to judge without history.
   const hasHistory = Array.isArray(history) ? history.length > 0 : Boolean(history);
   if (!hasHistory) {
     return {
@@ -132,7 +174,7 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
     };
   }
 
-  // --- Compute signals
+  // --- Compute signals (history present, no constraint)
   const muscle_overlap  = computePrimaryMuscleOverlap(prescribedMuscleResult.primary, loggedMuscleResult.primary);
 
   // Patterns match only when both resolve to the same known pattern (not 'other').
@@ -145,17 +187,13 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   const loggedRegion     = BROAD_REGION[loggedPatternResult.pattern]     || 'other';
   const sharedBroadRegion = prescribedRegion === loggedRegion && prescribedRegion !== 'other';
 
-  const constraintMatched   = hasMatchingConstraint(prescribed, constraints);
-  const hasPain             = Boolean(painFlag);
-  const isJustified         = constraintMatched || hasPain;
-
-  const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched };
+  const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched: false };
 
   // --- Rule 2: preserved — pattern/region AND muscle match (equipment swap within intent)
   // Accepts either an exact sub-pattern match (squat→squat, hinge→hinge) OR a shared
   // broad region (vertical_pull + horizontal_pull both map to 'pull'), provided the
-  // primary-muscle overlap meets the threshold. This handles pull/pull and push/push
-  // cross-sub-pattern swaps that are valid substitutions.
+  // primary-muscle overlap meets the threshold. Pain is present on both paths below
+  // but cannot downgrade a genuine match — Rule 2 is intentionally checked first.
   if ((patternsMatch || sharedBroadRegion) && muscle_overlap >= OVERLAP_THRESHOLD) {
     return {
       classification: 'preserved',
@@ -168,20 +206,22 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
     };
   }
 
-  // --- Rule 3: preserved — pain or equipment constraint justified the redirect
-  // Override ordering: a matching constraint/pain can only upgrade toward preserved.
-  // It cannot downgrade a genuine match (rule 2 is checked first) and cannot excuse
-  // a non-justified abandon (isJustified must be true for this branch to fire).
-  if (isJustified) {
-    const reason_code = hasPain ? 'pain_redirect' : 'equipment_constraint_honored';
+  // --- Rule 3: preserved — pain justified the redirect (constraint is handled above)
+  // Pain carries no defensibility gate by design. The scope of what is allowed is
+  // defined by the injury: any movement outside the painful zone is a valid redirect,
+  // even if it is cross-pattern and zero-overlap (spec core example: shoulder pain →
+  // non-shoulder pivot). Contrast with constraint, which requires the substitute to
+  // stay within the same stimulus category (same pattern or region, overlap ≥ threshold).
+  // Pain fires after the history gate: without history we cannot judge intent.
+  if (hasPain) {
     return {
       classification: 'preserved',
       decision:       'approve',
-      reason_code,
+      reason_code:    'pain_redirect',
       prescribed:     prescribedInfo,
       logged:         loggedInfo,
       muscle_overlap,
-      evidence:       buildEvidence({ ...evidenceArgs, reason_code }),
+      evidence:       buildEvidence({ ...evidenceArgs, painFlag: true, reason_code: 'pain_redirect' }),
     };
   }
 

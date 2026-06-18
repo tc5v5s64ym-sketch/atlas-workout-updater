@@ -179,6 +179,7 @@ function sanitizeSubstitution(s) {
     evidence: Array.isArray(s.evidence)
       ? s.evidence.slice(0, 8).map(e => clampText(e, 160)).filter(Boolean)
       : [],
+    ...(s.reason != null ? { reason: clampText(String(s.reason), 200) } : {}),
   };
 }
 
@@ -681,7 +682,7 @@ function buildVerdictReactionSystemPrompt() {
     'substitution (context.substitution — the engine\'s read of a swapped exercise; present only on a swap):',
     '- It carries a `classification` (preserved / changed / abandoned / baseline), a `decision` (approve / warn), the engine\'s `reason_code`, and the `prescribed` / `logged` lift names. The engine OWNS this call.',
     '- Your read MUST agree with `decision`: "approve" = a sound pivot that kept the session\'s intent (preserved or baseline) — acknowledge it as a smart adjustment; "warn" = the intent was changed or abandoned (wrong muscle, or the objective went untrained) — push back honestly and tell them to get the real movement back in.',
-    '- You may name the `prescribed` and `logged` lifts and restate the engine\'s `reason_code` in plain words. You must NEVER decide the classification yourself, never relabel or contradict it, and never name a reason the engine did not give. Never invent a movement-pattern or muscle claim that is not in the facts.',
+    '- You may name the `prescribed` and `logged` lifts, restate the engine\'s `reason_code` in plain words, and if `reason` is present, incorporate that stated reason naturally (e.g. "the rack was unavailable, so you pivoted to..."). You must NEVER decide the classification yourself, never relabel or contradict it, and never name a reason the engine did not give. Never invent a movement-pattern or muscle claim that is not in the facts.',
     '',
     'rule_decisions (the engine\'s final calls — explain them, never override them):',
     '- A rule decision is FINAL. Word its `reasoning` in your own voice; never argue with it, never soften it into nothing. If the lifter pushes back, do NOT relent — restate the criterion they still have to beat (use `criterion_progress` when present).',
