@@ -65,41 +65,53 @@ Logged:   Romanian Deadlift 245 7/2 x3
 
 **Deliverables:** Data layer first. Then scoring logic. Then tests.
 
-**Status:** ⏳ In progress (PR 342)
+**Status:** ✅ Merged (PR 342)
 
 ---
 
-## PR 343 — Coach-Generated Substitution Recommendations
+## PR 343 — Substitution Recommendation Service
 
-**Goal:** Atlas recommends substitutions before the user decides.
+**Goal (scoped):** Pure recommendation engine — `recommendSubstitute()` returns the best known alternative for a prescribed exercise, scored by `scoreSubstitutionQuality`. Includes a constraint-message detector (`isConstraintMessage`) for use by the visible integration in PR 344.
+
+**Scope decision:** The visible integration (new API endpoint in `index.js` + constraint-detection + display wiring in `public/app.js`) touches two critical files and is larger than a single-concern PR. Deferred to PR 344.
+
+**Deliverables shipped:**
+- `services/substitutionRecommender.js` — curated catalog + quality-scored selection; catalog disciplined (no cross-pattern hinge→squat or compound→isolation entries).
+- `services/constraintDetector.js` — pure keyword detector for unavailability messages.
+- `test/substitutionRecommender.test.js` — 29 golden fixtures.
+- `test/constraintDetector.test.js` — 24 fixtures covering required pipeline scenarios (all 6 from spec) + detector accuracy + quality floor.
+
+**Status:** ⏳ In progress (PR 343)
+
+---
+
+## PR 344 — Visible Constraint Recommendation Integration
+
+**Goal:** Atlas surfaces a substitute suggestion when the user types a constraint message ("Platform busy", "Rack unavailable") during an active planned session.
 
 **Example:**
 ```
-User: "Platform busy."
+User: "Platform busy"
 Atlas: Suggested substitute: Romanian Deadlift
-       Reason: Maintains hip hinge pattern and posterior-chain stimulus.
+       Reason: Maintains the hip hinge pattern and training stimulus.
 ```
 
 **Requirements:**
-- Deterministic recommendation rules.
-- Reuse substitution quality data from PR 342.
-- No LLM-generated exercise selection.
-- Atlas must explain why the recommendation was chosen.
-- Do not change workout logging, write path, or approval flow.
+- Use `isConstraintMessage` (PR 343) to detect constraint messages.
+- Use `recommendSubstitute` (PR 343) to select the substitute.
+- No LLM exercise selection.
+- No write path changes. No sheet writes. No approval flow changes.
+- If no active planned exercise, do not recommend.
+- If `recommendSubstitute` returns null, do not invent a recommendation.
+- Keep response concise.
 
-**Required tests:**
-1. Deadlift constraint → RDL recommendation.
-2. Squat constraint → Leg Press recommendation.
-3. Unknown constraint → no recommendation.
-4. Existing substitution logic unchanged.
+**Files in scope:** `index.js` (new read-only endpoint), `config/routes.js`, `public/app.js` (constraint-detection path + display), `test/api-smoke.test.js` (new smoke tests).
 
-**Deliverables:** Recommendation data layer. Recommendation engine. Tests. Documentation.
-
-**Status:** Not started — awaiting PR 342 review.
+**Status:** Not started — awaiting PR 343 review.
 
 ---
 
-## After PR 343 — Coach Conversation Consolidation (Design Only)
+## After PR 344 — Coach Conversation Consolidation (Design Only)
 
 **Goal:** Atlas feels like one coach speaking rather than multiple systems emitting separate cards.
 
@@ -119,4 +131,4 @@ Atlas: Suggested substitute: Romanian Deadlift
 
 **No implementation. Plan only.**
 
-**Status:** Not started — awaiting PR 343 review.
+**Status:** Not started — awaiting PR 344 review.
