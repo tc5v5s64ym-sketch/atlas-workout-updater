@@ -148,6 +148,39 @@ describe('inferPrescribedPairs — multiple exercises', () => {
     );
     assert.strictEqual(pairs.length, 1);
   });
+
+  it('broad-region fallback claims first matching lift in plan order — documents why mid-session must send only current step', () => {
+    // Plan: [Deadlift, Back Squat] — Deadlift=hinge→lower, Back Squat=squat→lower.
+    // Only Leg Press logged (squat pattern → lower region).
+    // Fine-grained pass: Deadlift (hinge) vs Leg Press (squat) → miss.
+    // Region fallback: Deadlift (lower) vs Leg Press (lower) → CLAIMS Leg Press.
+    // Back Squat never gets a turn; Leg Press is already claimed.
+    // Result: Deadlift → Leg Press (wrong attribution — user substituted Back Squat).
+    // The fix lives in app.js: mid-session sends only exercises[activePlannedSession.index],
+    // not the full plan, so only one planned lift competes per logged set.
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Deadlift' }, { name: 'Back Squat' }],
+      [{ name: 'Leg Press' }]
+    );
+    assert.strictEqual(pairs.length, 1);
+    assert.strictEqual(pairs[0].exercise, 'Deadlift', 'region fallback attributes to first plan lift in order');
+    assert.strictEqual(pairs[0].logged_exercise, 'Leg Press');
+  });
+
+  it('broad-region fallback triggers when no same-pattern logged exercise exists', () => {
+    // Plan: [Deadlift, Good Morning] — both hinge.
+    // Only Hip Thrust logged (hip_isolation → lower broad region, not hinge).
+    // Fine-grained pass misses both. Region fallback claims Deadlift (first in plan).
+    // Documents: when mid-session sends the full plan, plan order determines which
+    // lift gets attributed. The fix (app.js sends only exercises[index]) avoids this.
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Deadlift' }, { name: 'Good Morning' }],
+      [{ name: 'Hip Thrust' }]
+    );
+    assert.strictEqual(pairs.length, 1);
+    assert.strictEqual(pairs[0].exercise, 'Deadlift', 'first planned lift claims via region fallback');
+    assert.strictEqual(pairs[0].logged_exercise, 'Hip Thrust');
+  });
 });
 
 // ─── no plausible match ───────────────────────────────────────────────────────

@@ -3242,10 +3242,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
           log_rows: logRows
         };
         if (hasPlan) {
-          subPayload.plan_exercises = activePlannedSession.exercises.map(ex => ({
-            name: ex.name,
-            ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
-          }));
+          // Send only the current plan step, not the full plan. Sending all
+          // exercises with a single logged set causes the broad-region fallback
+          // to claim the wrong planned lift when plan order differs from the
+          // substituted exercise (e.g. Deadlift before Squat when Leg Press is logged).
+          const currentEx = activePlannedSession.exercises[activePlannedSession.index];
+          if (currentEx) {
+            subPayload.plan_exercises = [{
+              name: currentEx.name,
+              ...(currentEx.liftCode ? { lift_code: currentEx.liftCode } : {})
+            }];
+          }
         }
         const subResult = await api('/api/log-workout', {
           method: 'POST',

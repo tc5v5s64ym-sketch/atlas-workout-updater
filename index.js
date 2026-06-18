@@ -2560,19 +2560,21 @@ app.post('/api/log-workout', async (req, res) => {
     // plan_exercises: [{name, lift_code?}] supplied by the client when a plan is active.
     // Pairs are merged after explicit skip-notation pairs so explicit wiring wins.
     if (Array.isArray(payload.plan_exercises) && payload.plan_exercises.length > 0) {
-      const loggedNames = enrichedRowObjects.map(r => ({
-        name: r.canonical_exercise || r.exercise || '',
-        lift_code: r.lift_code || null,
-      }));
-      const inferredPairs = inferPrescribedPairs(payload.plan_exercises, loggedNames);
-      const explicitExercises = new Set(
-        prescribedList.map(p => String(p.exercise || '').toLowerCase())
-      );
-      for (const pair of inferredPairs) {
-        if (!explicitExercises.has(String(pair.exercise || '').toLowerCase())) {
-          prescribedList.push(pair);
+      try {
+        const loggedNames = enrichedRowObjects.map(r => ({
+          name: r.canonical_exercise || r.exercise || '',
+          lift_code: r.lift_code || null,
+        }));
+        const inferredPairs = inferPrescribedPairs(payload.plan_exercises, loggedNames);
+        const explicitExercises = new Set(
+          prescribedList.map(p => String(p.exercise || '').toLowerCase())
+        );
+        for (const pair of inferredPairs) {
+          if (!explicitExercises.has(String(pair.exercise || '').toLowerCase())) {
+            prescribedList.push(pair);
+          }
         }
-      }
+      } catch { /* best-effort — inference failure must never block a dry-run preview */ }
     }
     if (prescribedList.length > 0) {
       try {
