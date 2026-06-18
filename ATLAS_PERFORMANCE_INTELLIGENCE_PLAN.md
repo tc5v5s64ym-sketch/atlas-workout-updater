@@ -74,8 +74,9 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 
 ---
 
-## PR 348 — Performance Deviation Detection
+## Roadmap Step 348 — Performance Deviation Detection (GitHub PR #349)
 **Model:** Sonnet
+**Status:** ⏳ In progress (GitHub PR #349)
 
 **Goal:** Classify logged performance as above expectation, on target, below expectation, or insufficient data.
 
@@ -85,7 +86,7 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 - Threshold: ≥2 reps above = above; ≤-2 reps = below; else on_target.
 - Wire into `sanitizeFacts` / coach prompt so the LLM can reference it.
 
-**Files touched:** `services/performanceDeviation.js` (new), `test/performanceDeviation.test.js` (new), wire into coach facts.
+**Files touched:** `services/performanceDeviation.js` (new), `test/performanceDeviation.test.js` (new), wire into coach facts (`sanitizeFacts` + `sanitizeDeviation` in `services/coach.js`).
 
 **App test hold:** Bench 185×8 @2 should flag below expected if history supports 185×10–12 @2.
 

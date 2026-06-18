@@ -107,7 +107,10 @@ function sanitizeFacts(facts) {
     best_weight: numOrNull(rec.best_weight),
     days_since_last_session: numOrNull(rec.days_since_last_session),
     e1rm_trend: strOrNull(rec.e1rm_trend),
-    sessions_analyzed: numOrNull(rec.sessions_analyzed)
+    sessions_analyzed: numOrNull(rec.sessions_analyzed),
+    // The deviation engine's classification of today's reps vs. historical expectation.
+    // The model WORDS this verdict — it never derives its own deviation read.
+    deviation: sanitizeDeviation(f.deviation)
   };
 }
 
@@ -181,6 +184,20 @@ function sanitizeSubstitution(s) {
       : [],
     ...(s.reason != null ? { reason: clampText(String(s.reason), 200) } : {}),
   };
+}
+
+// Whitelist the deviation engine's classification (services/performanceDeviation.js).
+// Only the verdict, the rep delta, and the magnitude survive — never arbitrary caller data.
+const DEVIATION_VERDICTS   = ['above_expected', 'on_target', 'below_expected', 'insufficient_data'];
+const DEVIATION_MAGNITUDES = ['significant', 'slight'];
+function sanitizeDeviation(d) {
+  if (!d || typeof d !== 'object') return null;
+  const verdict = strOrNull(d.verdict);
+  if (!DEVIATION_VERDICTS.includes(verdict)) return null;
+  const delta     = d.delta     != null ? numOrNull(d.delta)              : null;
+  const rawMag    = d.magnitude != null ? strOrNull(d.magnitude)          : null;
+  const magnitude = rawMag !== null && DEVIATION_MAGNITUDES.includes(rawMag) ? rawMag : null;
+  return { verdict, delta, magnitude };
 }
 
 function numOrNull(v) {
@@ -834,6 +851,7 @@ module.exports = {
   buildCoachUserPrompt,
   sanitizeFacts,
   sanitizeSubstitution,
+  sanitizeDeviation,
   buildPlanSystemPrompt,
   buildPlanUserPrompt,
   sanitizePlanFacts,
