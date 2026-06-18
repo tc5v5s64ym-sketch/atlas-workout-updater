@@ -65,7 +65,7 @@ Logged:   Romanian Deadlift 245 7/2 x3
 
 **Deliverables:** Data layer first. Then scoring logic. Then tests.
 
-**Status:** ⏳ In progress (PR 342)
+**Status:** ✅ Merged (PR 342)
 
 ---
 
@@ -95,7 +95,7 @@ Atlas: Suggested substitute: Romanian Deadlift
 
 **Deliverables:** Recommendation data layer. Recommendation engine. Tests. Documentation.
 
-**Status:** Not started — awaiting PR 342 review.
+**Status:** ⏳ In progress (PR 343)
 
 ---
 
