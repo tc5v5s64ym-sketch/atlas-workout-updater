@@ -814,15 +814,34 @@
     // addresses it in one integrated response — no separate sub-note box needed.
     // Additional substitutions beyond the first are appended as inline text.
     const primarySub = substitutions.length ? substitutions[0] : undefined;
+
+    const loggedName = primarySub && primarySub.logged && typeof primarySub.logged.name === 'string'
+      ? primarySub.logged.name : '';
+    const suggestMatch = lastSuggestion
+      && typeof lastSuggestion.recommendation === 'string'
+      && loggedName !== ''
+      && loggedName.toLowerCase() === lastSuggestion.recommendation.toLowerCase();
+    if (suggestMatch) lastSuggestion = null;
+
     const note = await getInWorkoutNote({
       liftCode: code,
       exerciseName: primary.exercise,
       todaySets: primary.sets,
       rec,
-      substitution: primarySub
+      substitution: suggestMatch ? undefined : primarySub
     });
     await typeOut(body, note);
     chatTurns.push({ role: 'atlas', text: note });
+
+    if (suggestMatch && loggedName) {
+      const ack = document.createElement('div');
+      ack.className = 'coach-msg';
+      const ackText = (primarySub && primarySub.classification === 'preserved')
+        ? `Good call — you went with ${loggedName}. Intent preserved.`
+        : `You went with ${loggedName}.`;
+      await typeOut(ack, ackText);
+      bubble.appendChild(ack);
+    }
 
     if (rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
@@ -887,6 +906,11 @@
     bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort));
   }
 
+  // Tracks the last substitute suggestion so handleSetLogged can acknowledge it
+  // rather than re-voice the same quality rationale through the LLM.
+  // Consumed on first match — one acknowledgment per suggestion per session.
+  let lastSuggestion = null;
+
   /* ===== Proactive substitute recommendation (atlas:substitute-suggested) ===== */
 
   // Renders a coach-voice Atlas bubble when a constraint message is detected
@@ -898,6 +922,10 @@
     const handle = appendAtlasBubble();
     if (!handle) return;
     await typeOut(handle.body, text);
+    const { prescribed, recommendation } = detail || {};
+    if (prescribed && typeof recommendation === 'string') {
+      lastSuggestion = { prescribed, recommendation };
+    }
   }
 
   /* ===== Coach-nav wiring (avatar → Settings) =====

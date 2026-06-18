@@ -185,6 +185,6 @@ Scope: `services/coach.js` (prompt extension), `index.js` (sanitizeSubstitution 
 
 ### Smallest safe PR sequence
 
-1. **PR 345** — Suggestion acknowledgment. Pure client-side, lowest risk, directly addresses the most user-visible duplication. File: `public/coach-conversation.js`.
-2. **PR 346** — Combined LLM call. Server prompt + client wiring. Bigger change but bounded to the coach voice path. Files: `services/coach.js`, `coach-conversation.js`, `test/coach.test.js`. Skippable if the latency of two calls is not felt in practice.
+1. **PR 345** — Suggestion acknowledgment. Pure client-side, lowest risk, directly addresses the most user-visible duplication. File: `public/coach-conversation.js`. **Status: ⏳ In progress.**
+2. **PR 346** — Combined LLM call. Deferred — pay this complexity tax only if double-LLM latency is felt in practice.
 3. **No PR for friction point 3** — the tri-path rendering is a refactor with no user-visible benefit today. Re-evaluate when a fourth substitution surface is added.
