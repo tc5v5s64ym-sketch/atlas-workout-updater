@@ -15,7 +15,6 @@
 //       reason: 'Maintains the hip hinge pattern and training stimulus.' }
 
 const { scoreSubstitutionQuality } = require('./substitutionQuality');
-const { patternFor }               = require('./movementPattern');
 
 // Human-readable labels for the 14-pattern vocabulary.
 const PATTERN_LABEL = {
