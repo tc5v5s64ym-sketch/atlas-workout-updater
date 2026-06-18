@@ -1275,7 +1275,7 @@ test('coach chat system prompt carries plan_state guidance', () => {
 
 /* ===== plan_state complete-session scenario (PR 358) ===== */
 
-test('sanitizeChatContext: plan_state.isComplete is true when all plan exercises are completed', () => {
+test('sanitizeChatContext: plan_state with isComplete:true and empty remaining round-trips through sanitize (PR 358)', () => {
   const clean = sanitizeChatContext({
     plan_state: {
       planned:   ['Lat Pulldown', 'Rows', 'Lateral Raise', 'Lat Pulldown'],
@@ -1288,7 +1288,7 @@ test('sanitizeChatContext: plan_state.isComplete is true when all plan exercises
   assert.deepEqual(clean.plan_state.remaining, []);
 });
 
-test('sanitizeChatContext: plan_state.isComplete false when one exercise remains', () => {
+test('sanitizeChatContext: plan_state with isComplete:false and one remaining exercise round-trips through sanitize (PR 358)', () => {
   const clean = sanitizeChatContext({
     plan_state: {
       planned:   ['Deadlift', 'Rows', 'Lat Pulldown'],
