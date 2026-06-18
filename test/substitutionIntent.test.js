@@ -393,10 +393,10 @@ describe('equipment constraint honored — spec override ordering', () => {
       history:     SOME_HISTORY,
       constraints,
     });
-    // Leg Press already matches pattern+muscle, so it is preserved regardless of the constraint.
-    // Constraint matching doesn't hurt; pattern match is the reason_code here.
+    // Constraint fires before pattern-match check; reason_code is equipment_constraint_honored.
     assert.strictEqual(r.classification, 'preserved');
     assert.strictEqual(r.decision,       'approve');
+    assert.strictEqual(r.reason_code,    'equipment_constraint_honored');
   });
 
   it('Bench Press + equipment constraint → preserved even with low muscle overlap', () => {
@@ -522,14 +522,29 @@ describe('override ordering invariants', () => {
     assert.strictEqual(r.reason_code, 'pattern_and_muscle_match');
   });
 
-  it('constraint present + good match: reason_code stays pattern_and_muscle_match', () => {
+  it('constraint present + good match: reason_code is equipment_constraint_honored (constraint beats pattern match)', () => {
     const r = classifySubstitution({
       prescribed:  { name: 'Back Squat' },
       logged:      { name: 'Leg Press' },
       history:     SOME_HISTORY,
       constraints: [{ kind: 'equipment', target: 'squat', rule: 'avoid' }],
     });
-    assert.strictEqual(r.reason_code, 'pattern_and_muscle_match');
+    // Constraint fires before Rule 2 (pattern match); reason_code is equipment_constraint_honored.
+    assert.strictEqual(r.reason_code, 'equipment_constraint_honored');
+  });
+
+  it('constraint bypasses baseline: no history but constraint present → equipment_constraint_honored', () => {
+    // Without a constraint, no history → baseline. With a matching constraint the engine
+    // has deterministic knowledge to evaluate the swap; constraint fires before Rule 1.
+    const r = classifySubstitution({
+      prescribed:  { name: 'Deadlift' },
+      logged:      { name: 'Romanian Deadlift' },
+      history:     [],
+      constraints: [{ kind: 'equipment', target: 'Deadlift', rule: 'substitute' }],
+    });
+    assert.strictEqual(r.classification, 'preserved');
+    assert.strictEqual(r.decision,       'approve');
+    assert.strictEqual(r.reason_code,    'equipment_constraint_honored');
   });
 
   it('pain absent + pattern match: still preserved (pain absence cannot condemn)', () => {

@@ -118,7 +118,31 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   const prescribedInfo = buildLiftInfo(prescribed, prescribedPatternResult, prescribedMuscleResult);
   const loggedInfo     = buildLiftInfo(logged,     loggedPatternResult,     loggedMuscleResult);
 
-  // --- Rule 1: baseline — no history means we cannot judge intent
+  const constraintMatched = hasMatchingConstraint(prescribed, constraints);
+  const hasPain           = Boolean(painFlag);
+
+  // --- Equipment / injury constraint: evaluated before the history gate.
+  // A recognised constraint means Atlas can classify the swap using existing
+  // deterministic knowledge (movement patterns + muscle coverage) without prior
+  // load history. Constraint takes priority over pattern_and_muscle_match so
+  // the user sees WHY the swap was approved, not just that the muscles lined up.
+  if (constraintMatched) {
+    const muscle_overlap = computePrimaryMuscleOverlap(
+      prescribedMuscleResult.primary, loggedMuscleResult.primary
+    );
+    const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched: true };
+    return {
+      classification: 'preserved',
+      decision:       'approve',
+      reason_code:    'equipment_constraint_honored',
+      prescribed:     prescribedInfo,
+      logged:         loggedInfo,
+      muscle_overlap,
+      evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'equipment_constraint_honored' }),
+    };
+  }
+
+  // --- Rule 1: baseline — no history and no constraint → cannot judge intent
   const hasHistory = Array.isArray(history) ? history.length > 0 : Boolean(history);
   if (!hasHistory) {
     return {
@@ -132,7 +156,7 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
     };
   }
 
-  // --- Compute signals
+  // --- Compute signals (history present, no constraint)
   const muscle_overlap  = computePrimaryMuscleOverlap(prescribedMuscleResult.primary, loggedMuscleResult.primary);
 
   // Patterns match only when both resolve to the same known pattern (not 'other').
@@ -145,17 +169,13 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   const loggedRegion     = BROAD_REGION[loggedPatternResult.pattern]     || 'other';
   const sharedBroadRegion = prescribedRegion === loggedRegion && prescribedRegion !== 'other';
 
-  const constraintMatched   = hasMatchingConstraint(prescribed, constraints);
-  const hasPain             = Boolean(painFlag);
-  const isJustified         = constraintMatched || hasPain;
-
-  const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched };
+  const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched: false };
 
   // --- Rule 2: preserved — pattern/region AND muscle match (equipment swap within intent)
   // Accepts either an exact sub-pattern match (squat→squat, hinge→hinge) OR a shared
   // broad region (vertical_pull + horizontal_pull both map to 'pull'), provided the
-  // primary-muscle overlap meets the threshold. This handles pull/pull and push/push
-  // cross-sub-pattern swaps that are valid substitutions.
+  // primary-muscle overlap meets the threshold. Pain is present on both paths below
+  // but cannot downgrade a genuine match — Rule 2 is intentionally checked first.
   if ((patternsMatch || sharedBroadRegion) && muscle_overlap >= OVERLAP_THRESHOLD) {
     return {
       classification: 'preserved',
@@ -168,20 +188,17 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
     };
   }
 
-  // --- Rule 3: preserved — pain or equipment constraint justified the redirect
-  // Override ordering: a matching constraint/pain can only upgrade toward preserved.
-  // It cannot downgrade a genuine match (rule 2 is checked first) and cannot excuse
-  // a non-justified abandon (isJustified must be true for this branch to fire).
-  if (isJustified) {
-    const reason_code = hasPain ? 'pain_redirect' : 'equipment_constraint_honored';
+  // --- Rule 3: preserved — pain justified the redirect (constraint is handled above)
+  // Pain can only upgrade cross-pattern swaps that Rule 2 did not already approve.
+  if (hasPain) {
     return {
       classification: 'preserved',
       decision:       'approve',
-      reason_code,
+      reason_code:    'pain_redirect',
       prescribed:     prescribedInfo,
       logged:         loggedInfo,
       muscle_overlap,
-      evidence:       buildEvidence({ ...evidenceArgs, reason_code }),
+      evidence:       buildEvidence({ ...evidenceArgs, painFlag: true, reason_code: 'pain_redirect' }),
     };
   }
 
