@@ -3318,6 +3318,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
       }
       if (activePlannedSession && activePlannedSession.exercises.length > 0) {
+        // Sends the full plan (contrast: mid-session path above sends only exercises[index]).
+        // On a partial log, inferPrescribedPairs sees all planned lifts competing for
+        // fewer logged exercises; the broad-region fallback can attribute to the wrong lift.
+        // Dry-run only — no data risk. Fix deferred (see BACKLOG.md).
         payload.plan_exercises = activePlannedSession.exercises.map(ex => ({
           name: ex.name,
           ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
