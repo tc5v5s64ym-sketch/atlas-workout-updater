@@ -3225,20 +3225,28 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // the event so coach-conversation.js only words it — never calls a write path.
     // Best-effort: any failure is silent and never blocks the mid-session set note.
     let midSessionSubstitutions = [];
-    if (Array.isArray(lastPrescribed) && lastPrescribed.length > 0) {
+    const hasPrescribed = Array.isArray(lastPrescribed) && lastPrescribed.length > 0;
+    const hasPlan = activePlannedSession && activePlannedSession.exercises.length > 0;
+    if (hasPrescribed || hasPlan) {
       try {
         const loggedExercise = logRows[0] ? logRows[0].exercise || '' : '';
         const subPayload = {
           session_id: sessionId,
           date,
           test_mode: 'true',
-          prescribed: lastPrescribed.map(p => ({
+          prescribed: hasPrescribed ? lastPrescribed.map(p => ({
             exercise: p.exercise,
             logged_exercise: loggedExercise,
             ...(p.reason ? { reason: p.reason } : {})
-          })),
+          })) : [],
           log_rows: logRows
         };
+        if (hasPlan) {
+          subPayload.plan_exercises = activePlannedSession.exercises.map(ex => ({
+            name: ex.name,
+            ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
+          }));
+        }
         const subResult = await api('/api/log-workout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3301,6 +3309,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (lastPrescribed && lastPrescribed.length > 0 && logRows.length > 0) {
         const loggedExercise = logRows[0].exercise || '';
         payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
+      }
+      if (activePlannedSession && activePlannedSession.exercises.length > 0) {
+        payload.plan_exercises = activePlannedSession.exercises.map(ex => ({
+          name: ex.name,
+          ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
+        }));
       }
 
       const result = await api('/api/log-workout', {
