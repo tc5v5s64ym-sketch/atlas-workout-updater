@@ -1530,9 +1530,10 @@ test('api smoke: recommend-next returns stable read shape', async () => {
   assert.equal(body.data.liftCode, 'BEN01');
   assert.ok(body.data.recommendation);
   assert.ok(body.data.rule_decision);
-  // benchmark and working_weight are always present (may be nullBenchmark / nullWorkingWeight).
+  // benchmark, working_weight, and trend are always present (may be null/nullTrend).
   assert.ok('benchmark'      in body.data, 'benchmark field must be present in recommend/next response');
   assert.ok('working_weight' in body.data, 'working_weight field must be present in recommend/next response');
+  assert.ok('trend'          in body.data, 'trend field must be present in recommend/next response');
 });
 
 test('api smoke: plan-today returns stable read shape', async () => {

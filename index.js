@@ -48,6 +48,7 @@ const { buildRecommendation, parseRecommendationConstraints } = require('./servi
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
+const { detectTrend } = require('./services/trendDetector');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1521,6 +1522,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     recommendation.rule_decision = holdUntilClean(normalizedRows, liftCode);
     recommendation.benchmark = computeBenchmark(liftCode, allLog);
     recommendation.working_weight = resolveWorkingWeight(liftCode, allLog);
+    recommendation.trend = detectTrend(liftCode, allLog);
     return standardSuccess(req, res, 'Recommendation generated', recommendation);
   } catch (error) {
     return standardError(req, res, 'Failed to compute recommendation', error.message, 500);

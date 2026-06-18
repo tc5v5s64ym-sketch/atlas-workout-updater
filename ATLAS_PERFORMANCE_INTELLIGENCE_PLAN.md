@@ -127,19 +127,23 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 
 ---
 
-## PR 351 — Trend Detection
+## PR 351 — Trend Detection (GitHub PR #352)
 **Model:** Sonnet
+**Status:** ⏳ In progress
 
 **Goal:** Detect improving, flat, declining, or noisy performance trends across recent exposures.
 
 **Approach:**
-- New `services/trendDetector.js`: `detectTrend(sessions[])` → `{ trend, confidence, sessions_analyzed }`.
-- `trend` ∈ `improving | flat | declining | noisy`.
-- Uses e1RM trajectory across last 6–8 sessions with a minimum 4 data points.
-- `noisy` when coefficient of variation > threshold (high variance, no clear direction).
-- Wire into coach facts.
+- New `services/trendDetector.js`: `detectTrend(liftCode, rows)` → `{ trend, confidence, sessions_analyzed }`.
+- `trend` ∈ `improving | flat | declining | noisy | insufficient_data`.
+- Epley e1RM computed per session across working sets (same warm-up heuristic as exerciseBenchmark.js).
+- Session window: last 8 sessions; minimum 4 required before emitting a trend verdict.
+- `noisy` when coefficient of variation > 10 % (high variance, no clear direction).
+- Direction: first-half mean vs second-half mean e1RM, threshold 2.5 % of overall mean.
+- Wired into `GET /api/recommend/next` (`recommendation.trend`) and `sanitizeFacts` (`trend` field via `sanitizeTrend`).
+- Coach system prompt updated: trend bullet instructs model to name the direction when present.
 
-**Files touched:** `services/trendDetector.js` (new), `test/trendDetector.test.js` (new).
+**Files touched:** `services/trendDetector.js` (new), `test/trendDetector.test.js` (new), `services/coach.js` (`sanitizeTrend` + `sanitizeFacts` + system prompt), `index.js` (read-only route), `test/coach.test.js`, `test/api-smoke.test.js`.
 
 **App test hold:** Repeated lower-than-expected bench sessions show declining or fatigue trend only after enough data.
 
