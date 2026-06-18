@@ -39,6 +39,7 @@ PRs 345–355. Start numbering at 345 because PR 344 already merged.
 
 ## PR 346 — Exercise Benchmark Engine
 **Model:** Sonnet
+**Status:** ✅ Merged
 
 **Goal:** Create deterministic per-exercise benchmarks from historical logs: working weight, recent best, rep range, RIR range, confidence.
 
@@ -57,6 +58,7 @@ PRs 345–355. Start numbering at 345 because PR 344 already merged.
 
 ## PR 347 — Expected Performance Engine
 **Model:** Sonnet
+**Status:** ⏳ In progress
 
 **Goal:** Given today's weight/reps/RIR, estimate expected performance from recent history.
 
