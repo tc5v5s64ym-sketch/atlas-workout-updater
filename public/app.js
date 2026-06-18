@@ -2675,23 +2675,15 @@ async function fetchReaction(liftCode, justLoggedSet) {
   }
 }
 
-// Client-side mirror of services/constraintDetector.js CONSTRAINT_PATTERNS.
-// Must stay in sync when the server-side pattern list changes.
-// Used synchronously in the submit handler to gate the coach-chat route without
-// waiting for the async API call to complete.
-const CONSTRAINT_RE = /\b(busy|unavailable|taken|occupied|broken)\b|out of order|not available|not working|\bis\s+closed\b/i;
-function looksLikeConstraintWithPlan(text) {
-  if (!activePlannedSession || !activePlannedSession.exercises.length) return false;
-  return CONSTRAINT_RE.test(String(text || ''));
-}
-
-// Constraint detection: if `text` signals unavailable equipment and a planned
-// exercise is active, call the substitute endpoint and dispatch the result.
-// Fire-and-forget — never blocks the main submit flow.
+// Constraint detection: call the substitute endpoint and dispatch the result.
+// Returns true when a recommendation card was dispatched, false otherwise.
+// Callers use the return value to decide whether to fall back to the coach route
+// — the coach is suppressed only when a card was actually rendered, so an
+// exercise not in the ~14-entry catalog still gets a coach reply.
 async function checkAndSuggestSubstitute(text) {
-  if (!text || !activePlannedSession || !activePlannedSession.exercises.length) return;
+  if (!text || !activePlannedSession || !activePlannedSession.exercises.length) return false;
   const currentEx = activePlannedSession.exercises[activePlannedSession.index];
-  if (!currentEx || !currentEx.name || !getApiKey()) return;
+  if (!currentEx || !currentEx.name || !getApiKey()) return false;
   try {
     const res = await api('/api/suggest-substitute', {
       method: 'POST',
@@ -2703,8 +2695,10 @@ async function checkAndSuggestSubstitute(text) {
       document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
         detail: { prescribed: currentEx.name, ...rec }
       }));
+      return true;
     }
-  } catch { /* best-effort — never blocks submit */ }
+  } catch { /* best-effort */ }
+  return false;
 }
 
 // Did the just-saved session set a PR for this lift? Reads the fresh PR list
@@ -3140,11 +3134,6 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // bubble, so this just empties the box while Atlas thinks.
   setTimeout(() => { workoutTextInput.value = ''; }, 0);
 
-  // Constraint-detection: fires non-blocking before parse/routing.
-  // The endpoint returns null for non-constraint messages or unknown exercises,
-  // so this is a no-op for ordinary set logs and coach questions.
-  checkAndSuggestSubstitute(pendingChatText);
-
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();
 
@@ -3166,11 +3155,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // Text that isn't a loggable workout, with no effort attached, is treated as
     // a question for the coach rather than a parse error — so "was that a good
     // session?" or just "Bench" gets a conversation instead of a red dead-end.
-    // Exception: if a substitute card is already in flight for this message
-    // (constraint + active plan), skip the LLM coach route to avoid a redundant
-    // second response to the same input.
+    // For constraint messages during an active session, try the substitute endpoint
+    // first. If a card was dispatched, skip the coach route (one response per message).
+    // If no recommendation exists in the catalog, fall through to the coach as normal.
     if (pendingChatText && !hasAnyEffortInput()) {
-      if (!looksLikeConstraintWithPlan(pendingChatText)) routeMessageToCoach(pendingChatText);
+      const suggested = await checkAndSuggestSubstitute(pendingChatText);
+      if (!suggested) routeMessageToCoach(pendingChatText);
       return;
     }
     setStatus(loggerStatus, err.displayMessage || `Could not parse workout text: ${err.message}`, 'error');
