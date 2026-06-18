@@ -94,14 +94,17 @@ Evaluated deterministically, in order.
 
 ### baseline
 
-If there is no usable history for the prescribed/logged lift, classify `baseline` → `approve` (`no_history_calibration`). Do not pretend to judge intent without data.
+If there is no usable history for the prescribed/logged lift **and no defensible equipment constraint is present**, classify `baseline` → `approve` (`no_history_calibration`). Do not pretend to judge intent without data.
+
+Exception: a matching equipment constraint is evaluated *before* the history gate. When a defensible constraint is present (same pattern or broad region, primary-muscle overlap ≥ threshold), Atlas has enough deterministic knowledge — movement patterns and muscle coverage — to classify the swap without load history. See `equipment_constraint_honored` below.
 
 ### preserved → approve
 
 Classify `preserved` when **either**:
 
 * **Pattern + muscle match.** Same movement pattern AND primary-muscle overlap at or above the match threshold. (Equipment swap within the same intent.)
-* **Constraint-justified redirect.** A present pain signal or matching equipment constraint justified the pivot, AND the substitute keeps a defensible portion of the intended muscle/pattern within what the constraint allows.
+* **Equipment-constraint-justified redirect** (`equipment_constraint_honored`). A matching constraint targeted the prescribed lift, AND the substitute keeps a defensible portion of the intended stimulus: same movement pattern or broad region, primary-muscle overlap ≥ threshold. This check fires *before* the history gate — prior load history is not required when a constraint explains why the prescribed lift could not be performed, provided the alternative is demonstrably related.
+* **Pain-justified redirect** (`pain_redirect`). A present pain signal redirected the session away from the painful movement. Pain can justify *any* non-painful redirect regardless of pattern or overlap — the scope of what is allowed is defined by the affected movement, not the prescribed stimulus (see core example: shoulder pain → non-shoulder pivot). Pain fires *after* the history gate: without history Atlas cannot determine whether the session's objective was preserved, only that pain was present.
 
 ### changed → warn
 
@@ -118,13 +121,14 @@ Classify `abandoned` when the substitute trains a **different stimulus entirely*
 
 ## OVERRIDE ORDERING
 
-The pain / constraint signal interacts with the pattern/muscle decision in one direction only.
+Signals interact with the pattern/muscle decision in one direction only, but their scope differs.
 
-* A **present and matching** pain or equipment constraint may only ever **upgrade** a borderline result toward `preserved · approve`. A defensible redirect away from a painful or unavailable movement is a preserved pivot, not an abandonment.
-* A pain or constraint signal must **never downgrade** a genuine pattern + muscle match.
-* The absence of a constraint **never upgrades** anything. An unjustified abandon stays `warn` even when the lifter felt good and the work was hard — feeling good is not a license to change the objective.
+* A **defensible equipment constraint** (target matches the prescribed lift, substitute shares the same pattern or broad region, overlap ≥ threshold) fires **before the history gate** and before the pattern/muscle check. A constraint can rescue a no-history case and override `pattern_and_muscle_match` so the reason code reflects *why* the swap was approved. A constraint that is not defensible (zero overlap, unrelated stimulus) falls through to normal rules — it cannot endorse abandoning the prescribed stimulus.
+* A **present pain signal** fires *after* the history gate and after the pattern/muscle check. Pain can justify any non-painful redirect regardless of pattern or overlap — the injury defines what movements are off-limits; anything outside that scope is valid. Pain cannot rescue a no-history case: without history Atlas cannot judge whether the session's objective was preserved.
+* Neither a constraint nor a pain signal may **downgrade** a genuine pattern + muscle match.
+* The absence of both a constraint and a pain signal **never upgrades** anything. An unjustified abandon stays `warn` even when the lifter felt good and the work was hard.
 
-In short: constraints can rescue a swap; they can never condemn one, and their absence can never excuse one.
+In short: a defensible constraint can rescue any swap (including no-history); pain can rescue any swap with history; neither can condemn one, and their absence can never excuse one.
 
 ---
 
@@ -134,12 +138,14 @@ These are the spec made concrete. The classifier's golden fixtures must reproduc
 
 | Prescribed → Logged | Pattern | Muscle | Constraint / Pain | Classification | Decision |
 |---|---|---|---|---|---|
-| Squat → Leg Press | both lower | quads/glutes overlap | rack busy | `preserved` | `approve` |
-| Bench → Incline Dumbbell Bench | push = push | chest/delts overlap | station full | `preserved` | `approve` |
+| Squat → Leg Press | both lower | quads/glutes overlap | rack busy | `preserved` (`equipment_constraint_honored`) | `approve` |
+| Deadlift → Romanian Deadlift | both hinge | hamstrings/glutes overlap | platform busy, **no history** | `preserved` (`equipment_constraint_honored`) | `approve` |
+| Bench → Incline Dumbbell Bench | push = push | chest/delts overlap | station full | `preserved` (`equipment_constraint_honored`) | `approve` |
+| Squat → Bench Press | lower → push | **≈ zero overlap** | rack busy (constraint not defensible) | `abandoned` | `warn` |
 | Hamstring Curl → Leg Extension | knee flexion → knee extension | **opposite muscle** | none | `changed` | `warn` |
 | Squat → Treadmill + Curls | lower → conditioning/isolation | **≈ zero overlap** | none (excuse, not constraint) | `abandoned` | `warn` |
-| (Shoulder pain) Pressing → non-shoulder pivot | push → lower / non-shoulder | shoulder deloaded by design | pain redirect | `preserved` | `approve` |
-| Brand-new user, no history | n/a | n/a | n/a | `baseline` | `approve` |
+| (Shoulder pain) Pressing → non-shoulder pivot | push → lower / non-shoulder | shoulder deloaded by design | pain redirect | `preserved` (`pain_redirect`) | `approve` |
+| No history, no constraint | n/a | n/a | n/a | `baseline` | `approve` |
 
 ---
 

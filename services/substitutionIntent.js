@@ -207,7 +207,12 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   }
 
   // --- Rule 3: preserved — pain justified the redirect (constraint is handled above)
-  // Pain can only upgrade cross-pattern swaps that Rule 2 did not already approve.
+  // Pain carries no defensibility gate by design. The scope of what is allowed is
+  // defined by the injury: any movement outside the painful zone is a valid redirect,
+  // even if it is cross-pattern and zero-overlap (spec core example: shoulder pain →
+  // non-shoulder pivot). Contrast with constraint, which requires the substitute to
+  // stay within the same stimulus category (same pattern or region, overlap ≥ threshold).
+  // Pain fires after the history gate: without history we cannot judge intent.
   if (hasPain) {
     return {
       classification: 'preserved',
