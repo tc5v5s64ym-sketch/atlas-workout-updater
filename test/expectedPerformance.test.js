@@ -221,8 +221,7 @@ test('computeExpectedPerformance: uses at most 6 most recent sessions', () => {
   // 8 sessions; the oldest 2 should be ignored
   const rows = [];
   for (let i = 1; i <= 8; i++) {
-    const date = `2026-0${i < 10 ? '0' + i : i}-01`.replace('0-01', `${String(i).padStart(2,'0')}-01`);
-    rows.push(row(`2026-0${String(i).padStart(2,'0')}-01`, `S${i}`, BENCH, 185, i + 4, 2));
+    rows.push(row(`2026-${String(i).padStart(2, '0')}-01`, `S${i}`, BENCH, 185, i + 4, 2));
   }
   const r = computeExpectedPerformance(BENCH, rows, 185);
   assert.notEqual(r, null);

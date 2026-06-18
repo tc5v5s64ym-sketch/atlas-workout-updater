@@ -103,9 +103,7 @@ function computeExpectedPerformance(liftCode, rows, todayWeight) {
     : null;
 
   const wVals = recent.map(s => s.weight);
-  const confidence =
-    recent.length >= 5 ? 'high' :
-    recent.length >= 3 ? 'medium' : 'low';
+  const confidence = recent.length >= 5 ? 'high' : 'medium';
 
   return {
     expectedReps,
