@@ -156,7 +156,11 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
     // but cannot endorse skipping the prescribed stimulus for an unrelated movement.
   }
 
-  // --- Rule 1: baseline — no history and no constraint → cannot judge intent
+  // --- Rule 1: baseline — no history and no constraint → cannot judge intent.
+  // Pain deliberately stays behind this gate: pain is a session-level signal that
+  // does not identify which lift caused it or which specific swap it justifies.
+  // A constraint is different — its target is matched to the prescribed lift and
+  // the defensibility check provides the context needed to judge without history.
   const hasHistory = Array.isArray(history) ? history.length > 0 : Boolean(history);
   if (!hasHistory) {
     return {
