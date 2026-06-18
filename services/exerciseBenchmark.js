@@ -157,8 +157,7 @@ function computeBenchmark(liftCode, rows) {
  * sessions where the heaviest working set was logged in the target RIR zone
  * (0–3: hard work, not warm-up territory). When no session has in-zone RIR
  * data the function falls back gracefully to all sessions (same behaviour as
- * computeBenchmark's workingWeight field, without the 5 lb rounding that
- * computeBenchmark applies globally).
+ * computeBenchmark's workingWeight field).
  *
  * Return shape:
  *   weight     – mode/median of qualifying top-set weights, rounded to 5 lb
