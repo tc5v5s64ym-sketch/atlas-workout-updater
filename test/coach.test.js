@@ -762,6 +762,62 @@ test('a valid engine substitution verdict survives sanitization intact', () => {
   });
 });
 
+test('sanitizeSubstitution: reason is preserved and clamped to 200 chars', () => {
+  // reason is the one piece of user-supplied free text forwarded to the LLM prompt.
+  // This test pins the whitelist entry so any future sanitizeSubstitution change that
+  // accidentally drops or mangles reason is caught at the security boundary.
+  const shortReason = 'platform busy';
+  const clean = sanitizeSubstitution({
+    classification: 'preserved',
+    decision: 'approve',
+    reason_code: 'equipment_constraint_honored',
+    prescribed: { name: 'Deadlift' },
+    logged: { name: 'Romanian Deadlift' },
+    evidence: [],
+    reason: shortReason,
+  });
+  assert.equal(clean.reason, shortReason, 'short reason must survive unchanged');
+
+  // Over-length reason is clamped to exactly 200 chars.
+  const longReason = 'x'.repeat(250);
+  const cleanLong = sanitizeSubstitution({
+    classification: 'preserved',
+    decision: 'approve',
+    reason_code: 'equipment_constraint_honored',
+    prescribed: { name: 'Deadlift' },
+    logged: { name: 'Romanian Deadlift' },
+    evidence: [],
+    reason: longReason,
+  });
+  assert.equal(cleanLong.reason.length, 200, 'reason must be clamped to 200 chars');
+  assert.ok(!JSON.stringify(cleanLong).includes('x'.repeat(201)), 'clamped reason must not exceed 200 chars');
+});
+
+test('sanitizeSubstitution: reason key absent (not null) when not provided', () => {
+  // reason is spread-conditional: absent when input has no reason, so it never
+  // null-pollutes the object passed to the LLM.
+  const withoutReason = sanitizeSubstitution({
+    classification: 'preserved',
+    decision: 'approve',
+    reason_code: 'pattern_and_muscle_match',
+    prescribed: { name: 'Bench Press' },
+    logged: { name: 'Incline Dumbbell Press' },
+    evidence: [],
+  });
+  assert.ok(!('reason' in withoutReason), 'reason must be absent (not null) when not provided');
+
+  const withNullReason = sanitizeSubstitution({
+    classification: 'preserved',
+    decision: 'approve',
+    reason_code: 'pattern_and_muscle_match',
+    prescribed: { name: 'Bench Press' },
+    logged: { name: 'Incline Dumbbell Press' },
+    evidence: [],
+    reason: null,
+  });
+  assert.ok(!('reason' in withNullReason), 'reason must be absent (not null) when input is null');
+});
+
 test('sanitizeFacts forwards the engine substitution verdict and cannot be overridden by junk', () => {
   const clean = sanitizeFacts({
     exerciseName: 'Leg Press',
