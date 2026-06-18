@@ -921,6 +921,33 @@ test('api smoke: reason passes through on baseline swap (no lift history)', asyn
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: broad-language reasons do not trigger equipment upgrade (false-positive guard)', async () => {
+  // "busy", "taken", "waiting" are common English words that appear in fatigue/schedule
+  // reasons, not equipment reasons. They must NOT upgrade an abandoned swap to approved.
+  fakeSheetsState.appendCalls.length = 0;
+  for (const reason of ['busy week, short on time', 'legs were taken out from yesterday', 'waiting to feel recovered']) {
+    const { body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'API-SMOKE-FP-GUARD',
+        date: '2026-06-11',
+        test_mode: true,
+        prescribed: [
+          { exercise: 'Back Squat', logged_exercise: 'Bench Press', lift_code: 'SQ01', reason }
+        ],
+        log_rows: [
+          { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+        ]
+      })
+    });
+    const sub = body.data.substitutions[0];
+    assert.equal(sub.classification, 'abandoned', `"${reason}" must not upgrade to preserved`);
+    assert.equal(sub.decision, 'warn', `"${reason}" must not suppress the warn`);
+    assert.notEqual(sub.reason_code, 'equipment_constraint_honored', `"${reason}" must not trigger equipment constraint`);
+  }
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: no prescribed pairs → no substitutions key (reason-wiring regression)', async () => {
   // Regression guard: sending a workout without prescribed pairs must not produce a
   // substitutions key after the reason-wiring change.

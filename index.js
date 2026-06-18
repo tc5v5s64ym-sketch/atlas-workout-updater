@@ -2415,7 +2415,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 // Keywords that indicate an equipment or availability constraint forced the swap.
 // Matching any word here causes buildSubstitutionPreviews to synthesize a transient
 // equipment constraint so the classifier can upgrade to equipment_constraint_honored.
-const EQUIPMENT_REASON_RE = /\b(platform|rack|machine|equipment|busy|unavailable|occupied|taken|waiting|broken|closed|line)\b/i;
+const EQUIPMENT_REASON_RE = /\b(platform|rack|machine|equipment|unavailable|occupied|broken|closed)\b/i;
 function reasonIsEquipmentConstraint(reason) {
   return typeof reason === 'string' && EQUIPMENT_REASON_RE.test(reason);
 }
