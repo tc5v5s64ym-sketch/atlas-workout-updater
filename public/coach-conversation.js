@@ -944,7 +944,7 @@
       '',
       `${recommendation} (${qualityLabel})`,
       reason || '',
-    ].filter((line, i) => i === 0 || line !== '').join('\n');
+    ].filter((line, i) => i < 3 || line !== '').join('\n');
 
     const handle = appendAtlasBubble();
     if (!handle) return;
