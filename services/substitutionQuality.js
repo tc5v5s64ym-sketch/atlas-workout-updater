@@ -54,21 +54,24 @@ function scoreSubstitutionQuality(prescribed, logged) {
     };
   }
 
-  const pResult = patternFor(prescribedName);
-  const lResult = patternFor(loggedName);
+  const pResult     = patternFor(prescribedName);
+  const lResult     = patternFor(loggedName);
+  const pCostResult = costFor(prescribedName);
+  const lCostResult = costFor(loggedName);
 
   const prescribedPattern = pResult.pattern;
   const loggedPattern     = lResult.pattern;
-  const prescribedCost    = costFor(prescribedName).cost;
-  const loggedCost        = costFor(loggedName).cost;
+  const prescribedCost    = pCostResult.cost;
+  const loggedCost        = lCostResult.cost;
 
   const info = {
     prescribed: { name: prescribedName, pattern: prescribedPattern, cost: prescribedCost },
     logged:     { name: loggedName,     pattern: loggedPattern,     cost: loggedCost },
   };
 
-  // Either exercise unrecognised → cannot score.
-  if (pResult.needsReview || lResult.needsReview) {
+  // Either exercise unrecognised in pattern OR cost catalog → cannot score.
+  // The two catalogs are maintained independently and can drift, so both are checked.
+  if (pResult.needsReview || lResult.needsReview || pCostResult.needsReview || lCostResult.needsReview) {
     return { quality: 'unknown', reason: 'unrecognized_exercise', ...info };
   }
 

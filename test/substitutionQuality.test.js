@@ -169,6 +169,16 @@ describe('scoreSubstitutionQuality — unknown tier', () => {
     const r = scoreSubstitutionQuality('Jammer Press', 'Landmine Rotation');
     assert.strictEqual(r.quality, 'unknown');
   });
+
+  it('patternFor recognizes exercise but costFor does not → unknown (catalog drift guard)', () => {
+    // "Farmer's Walk" matches the carry pattern in movementPattern.js (needsReview:false)
+    // but has no entry in liftCost.js (needsReview:true, cost:'low').
+    // Without the costFor.needsReview guard it would silently score as 'low'
+    // and downgrade the pair to 'poor' instead of 'unknown'.
+    const r = scoreSubstitutionQuality("Farmer's Walk", 'Deadlift');
+    assert.strictEqual(r.quality, 'unknown');
+    assert.strictEqual(r.reason, 'unrecognized_exercise');
+  });
 });
 
 // ─── object input ─────────────────────────────────────────────────────────────
