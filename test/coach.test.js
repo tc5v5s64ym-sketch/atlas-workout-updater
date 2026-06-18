@@ -1278,7 +1278,7 @@ test('coach chat system prompt carries plan_state guidance', () => {
 test('sanitizeChatContext: plan_state with isComplete:true and empty remaining round-trips through sanitize (PR 358)', () => {
   const clean = sanitizeChatContext({
     plan_state: {
-      planned:   ['Lat Pulldown', 'Rows', 'Lateral Raise', 'Lat Pulldown'],
+      planned:   ['Lat Pulldown', 'Rows', 'Lateral Raise'],
       completed: ['Lat Pulldown', 'Rows', 'Lateral Raise'],
       remaining: [],
       isComplete: true
