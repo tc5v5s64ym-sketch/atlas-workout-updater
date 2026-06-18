@@ -128,6 +128,22 @@ describe('isConstraintMessage — non-constraint messages', () => {
   it('normal question → false', () => {
     assert.ok(!isConstraintMessage('What weight should I use for deadlift?'));
   });
+
+  it('"Full ROM squats 225 5/2" → false (full is not a constraint keyword)', () => {
+    assert.ok(!isConstraintMessage('Full ROM squats 225 5/2'));
+  });
+
+  it('"Fullbody day" → false', () => {
+    assert.ok(!isConstraintMessage('Fullbody day'));
+  });
+
+  it('"mistaken" → false (taken requires word boundary, not substring)', () => {
+    assert.ok(!isConstraintMessage('mistaken'));
+  });
+
+  it('"I closed my grip at the top" → false (closed excluded)', () => {
+    assert.ok(!isConstraintMessage('I closed my grip at the top'));
+  });
 });
 
 // ─── required: quality floor and catalog discipline ───────────────────────────
