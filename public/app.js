@@ -3231,7 +3231,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         const subPayload = {
           session_id: sessionId,
           date,
-          test_mode: true,
+          test_mode: 'true',
           prescribed: lastPrescribed.map(p => ({
             exercise: p.exercise,
             logged_exercise: loggedExercise,
