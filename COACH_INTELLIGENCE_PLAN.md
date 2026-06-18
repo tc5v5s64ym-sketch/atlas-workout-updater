@@ -173,8 +173,8 @@ Three code paths for one concept. The voicing inputs differ enough that full uni
 
 ### Proposed architecture
 
-**PR 345 — Substitute suggestion acknowledgment** (`public/coach-conversation.js` only, ~25 lines)
-Add a session-level variable `lastSuggestion = null` in coach-conversation.js. On `atlas:substitute-suggested`, store `{ prescribed, recommendation }`. In `renderSubstitutionNotes`, check whether the incoming substitution's logged exercise matches `lastSuggestion.recommendation`. If it does, replace the Gemini `voiceSubstitution` call with a short deterministic acknowledgment ("You went with the suggestion — [reason]. Intent preserved.") and clear `lastSuggestion`. The Gemini path is unchanged for un-suggested substitutions.
+**PR 345 — Substitute suggestion acknowledgment** (`public/coach-conversation.js` only)
+Add a session-level variable `lastSuggestion = null` in coach-conversation.js. On `atlas:substitute-suggested`, store `{ prescribed, recommendation }`. In `handleSetLogged`, before passing the primary substitution to `getInWorkoutNote`, check whether both the logged exercise matches `lastSuggestion.recommendation` AND the prescribed exercise matches `lastSuggestion.prescribed`. If both match: omit the substitution from the LLM facts (clean set reaction only) and append a short deterministic ack ("Good call — you went with [logged]. Intent preserved.") after the note types out; clear `lastSuggestion`. Non-matching substitutions go through the normal LLM path unchanged. Note: `renderSubstitutionNotes` was removed by main's consolidation PR (PR #345 in the performance-intelligence series); the integration point shifted accordingly to `handleSetLogged`.
 
 Scope: pure `coach-conversation.js`. No server changes, no trust loop, no schema change. One concern: `lastSuggestion` is session-scoped (in-memory), so a page reload clears it — acceptable; the suggestion card was only visible in that session anyway.
 

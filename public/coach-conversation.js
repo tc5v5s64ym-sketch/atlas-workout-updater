@@ -817,10 +817,17 @@
 
     const loggedName = primarySub && primarySub.logged && typeof primarySub.logged.name === 'string'
       ? primarySub.logged.name : '';
+    const rawPrescribed = primarySub && primarySub.prescribed;
+    const prescribedName = rawPrescribed && typeof rawPrescribed === 'object'
+      ? (typeof rawPrescribed.name === 'string' ? rawPrescribed.name : '')
+      : (typeof rawPrescribed === 'string' ? rawPrescribed : '');
     const suggestMatch = lastSuggestion
       && typeof lastSuggestion.recommendation === 'string'
+      && typeof lastSuggestion.prescribed === 'string'
       && loggedName !== ''
-      && loggedName.toLowerCase() === lastSuggestion.recommendation.toLowerCase();
+      && prescribedName !== ''
+      && loggedName.toLowerCase() === lastSuggestion.recommendation.toLowerCase()
+      && prescribedName.toLowerCase() === lastSuggestion.prescribed.toLowerCase();
     if (suggestMatch) lastSuggestion = null;
 
     const note = await getInWorkoutNote({
