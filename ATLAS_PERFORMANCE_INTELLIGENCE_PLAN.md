@@ -172,6 +172,7 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 
 ## PR 353 — Coach Memory
 **Model:** Sonnet
+**Status:** ⏳ In progress
 
 **Goal:** Detect recurring patterns like repeated substitutions, missed lifts, or consistent underperformance.
 

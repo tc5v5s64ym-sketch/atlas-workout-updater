@@ -1010,6 +1010,16 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     .slice(0, 6)
     .map(r => ({ muscle: r.muscle, currentEffectiveSets: r.currentEffectiveSets, targetMin: r.targetRange.min }));
 
+  // Coach memory: compute recurring patterns for any lift that shows one.
+  // Empty-pattern results are filtered out, so context stays compact.
+  const { detectPatterns } = require('./services/coachMemory');
+  const COL_LIFT_IDX = 5;
+  const uniqueLifts = [...new Set((Array.isArray(logRows) ? logRows : []).map(r => r[COL_LIFT_IDX]).filter(Boolean))];
+  const memory_patterns = uniqueLifts
+    .map(liftCode => ({ liftCode, ...detectPatterns(liftCode, logRows) }))
+    .filter(item => item.patterns.length > 0)
+    .slice(0, 5);
+
   return {
     recommended_label: read.recommended_label || null,
     recommended_focus: read.recommended_reason || null,
@@ -1019,6 +1029,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     })),
     stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
     muscle_gaps,
+    memory_patterns,
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
     session_count: sessions.length,

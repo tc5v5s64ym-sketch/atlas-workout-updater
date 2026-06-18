@@ -435,6 +435,7 @@ function buildChatSystemPrompt(context) {
     'You are Atlas, a sharp, encouraging strength coach having a conversation with the lifter.',
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
+    "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
     '',
     coachBrain.buildPrinciplesFragment(),
     '',
@@ -597,6 +598,29 @@ function sanitizeChatContext(context) {
         targetMin: numOrNull(g && g.targetMin)
       })).filter(g => g.muscle)
     : [];
+  // Whitelist known pattern types; pick only the expected detail fields per type.
+  const memory_patterns = Array.isArray(c.memory_patterns)
+    ? c.memory_patterns.slice(0, 5).map(item => {
+        if (!item || typeof item !== 'object') return null;
+        const liftCode = strOrNull(item.liftCode);
+        if (!liftCode) return null;
+        const patterns = Array.isArray(item.patterns)
+          ? item.patterns.slice(0, 4).map(p => {
+              if (!p || typeof p !== 'object') return null;
+              const type = strOrNull(p.type);
+              const d = p.details && typeof p.details === 'object' ? p.details : {};
+              if (type === 'consistent_underperformance') {
+                return { type, details: { sessions_below: numOrNull(d.sessions_below), sessions_checked: numOrNull(d.sessions_checked) } };
+              }
+              if (type === 'repeated_substitution') {
+                return { type, details: { original: strOrNull(d.original), substitute: strOrNull(d.substitute), count: numOrNull(d.count) } };
+              }
+              return null; // unknown type — drop
+            }).filter(Boolean)
+          : [];
+        return patterns.length ? { liftCode, patterns } : null;
+      }).filter(Boolean)
+    : [];
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -604,6 +628,7 @@ function sanitizeChatContext(context) {
     recent_sessions,
     stalls,
     muscle_gaps,
+    memory_patterns,
     current_preview,
     current_plan,
     session_count,
