@@ -37,7 +37,6 @@ const PATTERN_LABEL = {
 // Curated substitute candidates per exercise, ordered by preference.
 // The quality scorer selects the best among them; list order breaks ties
 // (first listed wins among equal-quality candidates).
-// Substitution candidates per exercise, ordered by preference.
 // Catalog discipline: only include candidates with a clear pattern connection.
 //   - Same fine-grained pattern preferred (excellent tier).
 //   - Same broad region, different pattern is acceptable when closely related.
