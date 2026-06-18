@@ -2615,7 +2615,7 @@ function buildRowsFromSessionLog() {
   });
 }
 
-function emitSetLogged(logObjs, text) {
+function emitSetLogged(logObjs, text, substitutions) {
   const byExercise = [];
   const seen = new Map();
   for (const o of (logObjs || [])) {
@@ -2632,7 +2632,11 @@ function emitSetLogged(logObjs, text) {
   if (byExercise.length) {
     try {
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
-        detail: { exercises: byExercise, text: text || '' }
+        detail: {
+          exercises: byExercise,
+          text: text || '',
+          ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
+        }
       }));
     } catch { /* narration is optional */ }
   }
@@ -3215,7 +3219,35 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // invariant — the preview/approve/write surface is unreachable from logging a
   // set, by construction (not just hidden by styling).
   if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview) {
-    emitSetLogged(logRows, pendingChatText);
+    // Substitution classification: if the parser extracted a skip-notation pair
+    // ("Deadlift skipped - platform busy"), classify it here where lastPrescribed
+    // and the log rows are already assembled, then pass the engine's verdict into
+    // the event so coach-conversation.js only words it — never calls a write path.
+    // Best-effort: any failure is silent and never blocks the mid-session set note.
+    let midSessionSubstitutions = [];
+    if (Array.isArray(lastPrescribed) && lastPrescribed.length > 0) {
+      try {
+        const loggedExercise = logRows[0] ? logRows[0].exercise || '' : '';
+        const subPayload = {
+          session_id: sessionId,
+          date,
+          test_mode: 'true',
+          prescribed: lastPrescribed.map(p => ({
+            exercise: p.exercise,
+            logged_exercise: loggedExercise,
+            ...(p.reason ? { reason: p.reason } : {})
+          })),
+          log_rows: logRows
+        };
+        const subResult = await api('/api/log-workout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(subPayload)
+        }).catch(() => null);
+        midSessionSubstitutions = subResult?.data?.substitutions || [];
+      } catch { /* best-effort — classification never blocks the set note */ }
+    }
+    emitSetLogged(logRows, pendingChatText, midSessionSubstitutions);
     return;
   }
   sessionCompiledAwaitingPreview = false;

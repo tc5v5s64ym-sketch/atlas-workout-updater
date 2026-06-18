@@ -777,7 +777,7 @@
   // client-parsed sets; the set text is recorded so the end-of-session compile
   // can reconstruct the full workout.
   async function handleSetLogged(detail) {
-    const { exercises = [], text = '' } = detail || {};
+    const { exercises = [], text = '', substitutions = [] } = detail || {};
     if (!exercises.length) return;
     if (text) chatTurns.push({ role: 'user', text });
 
@@ -811,6 +811,12 @@
 
     if (rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
+    }
+
+    // Substitution verdict: app.js ran the dry-run classification before emitting
+    // this event (same pattern as handlePreviewReady). This layer only words it.
+    if (Array.isArray(substitutions) && substitutions.length) {
+      await renderSubstitutionNotes(bubble, substitutions);
     }
 
     // Next-exercise handoff: append a short line pointing at the next exercise

@@ -4391,3 +4391,40 @@ test('FIX2: coach-conversation.js advances the composer to the full next prescri
   assert.match(cc, /formatNextPlaceholder\(nextRec\)/, 'the placeholder comes from the formatter');
   assert.match(cc, /Moving on — next up: \$\{nextEx\}/, 'the handoff line stays name-only');
 });
+
+// Mid-session substitution wiring (PR #340)
+// The parser produces lastPrescribed for skip-notation inputs ("Deadlift skipped
+// - platform busy. Romanian Deadlift 245lbs 7/2 x3"). app.js classifies the swap
+// via a test_mode dry-run in the mid-session branch (before emitSetLogged) and
+// passes the engine verdict in the atlas:set-logged event detail. handleSetLogged
+// only words the verdict — it never calls a write path.
+
+test('mid-session substitution: app.js classifies prescribed pairs before emitSetLogged', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // Isolate the mid-session branch (between the early-return check and emitSetLogged).
+  const branchStart = appSource.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview)');
+  const branchEnd = appSource.indexOf('emitSetLogged(logRows', branchStart) + 60;
+  const branch = appSource.slice(branchStart, branchEnd);
+  assert.match(branch, /lastPrescribed/, 'mid-session branch must consult lastPrescribed');
+  assert.match(branch, /test_mode.*true|true.*test_mode/, 'mid-session branch must use test_mode:true for the classification call');
+  assert.match(branch, /log-workout/, 'mid-session branch must call /api/log-workout to classify the swap');
+});
+
+test('mid-session substitution: emitSetLogged forwards substitutions in atlas:set-logged detail', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('function emitSetLogged('),
+    appSource.indexOf('function emitSetLogged(') + 1000
+  );
+  assert.match(fn, /substitutions/, 'emitSetLogged must forward the classified substitutions in the event detail');
+});
+
+test('mid-session substitution: handleSetLogged renders substitution notes without calling a write path', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSetLogged(');
+  const end = cc.indexOf('  async function handlePreviewReady(');
+  const fn = cc.slice(start, end > start ? end : start + 4000);
+  assert.match(fn, /substitutions/, 'handleSetLogged must destructure substitutions from the event detail');
+  assert.match(fn, /renderSubstitutionNotes/, 'handleSetLogged must render the engine verdict via renderSubstitutionNotes');
+  assert.doesNotMatch(fn, /log-workout/, 'handleSetLogged must NOT call /api/log-workout — the coach layer is purely visual');
+});
