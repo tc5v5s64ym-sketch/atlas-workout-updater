@@ -1647,20 +1647,6 @@ a.lift-link:hover { text-decoration: underline; }
   padding: 11px 14px;
   margin-bottom: var(--s2);
 }
-/* Read-only substitution-intent note (the engine decided; the voice only words it). */
-.sub-note {
-  font-size: 0.82rem;
-  line-height: 1.4;
-  border-radius: 12px;
-  padding: 10px 13px;
-  margin-top: 10px;
-  border: 1px solid var(--border);
-}
-.sub-note.sub-ok { background: var(--card); color: var(--text); }
-.sub-note.sub-warn {
-  background: color-mix(in srgb, var(--warn, #b8860b) 12%, var(--card));
-  border-color: color-mix(in srgb, var(--warn, #b8860b) 45%, var(--border));
-}
 .rb-h {
   font-family: var(--disp);
   font-weight: 500;

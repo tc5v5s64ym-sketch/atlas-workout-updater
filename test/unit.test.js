@@ -4419,12 +4419,15 @@ test('mid-session substitution: emitSetLogged forwards substitutions in atlas:se
   assert.match(fn, /substitutions/, 'emitSetLogged must forward the classified substitutions in the event detail');
 });
 
-test('mid-session substitution: handleSetLogged renders substitution notes without calling a write path', () => {
+test('mid-session substitution: handleSetLogged passes substitution into coach facts without calling a write path', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const start = cc.indexOf('async function handleSetLogged(');
   const end = cc.indexOf('  async function handlePreviewReady(');
   const fn = cc.slice(start, end > start ? end : start + 4000);
   assert.match(fn, /substitutions/, 'handleSetLogged must destructure substitutions from the event detail');
-  assert.match(fn, /renderSubstitutionNotes/, 'handleSetLogged must render the engine verdict via renderSubstitutionNotes');
+  // PR 345: substitution is folded into the main LLM facts object rather than
+  // rendered as a separate sub-note card — check for the facts key, not the old helper.
+  assert.match(fn, /substitution.*primarySub|substitution:\s*primarySub/, 'handleSetLogged must forward substitution into the getInWorkoutNote facts');
+  assert.doesNotMatch(fn, /renderSubstitutionNotes/, 'handleSetLogged must NOT call renderSubstitutionNotes — removed in PR 345');
   assert.doesNotMatch(fn, /log-workout/, 'handleSetLogged must NOT call /api/log-workout — the coach layer is purely visual');
 });
