@@ -2615,7 +2615,7 @@ function buildRowsFromSessionLog() {
   });
 }
 
-function emitSetLogged(logObjs, text) {
+function emitSetLogged(logObjs, text, prescribed) {
   const byExercise = [];
   const seen = new Map();
   for (const o of (logObjs || [])) {
@@ -2632,7 +2632,11 @@ function emitSetLogged(logObjs, text) {
   if (byExercise.length) {
     try {
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
-        detail: { exercises: byExercise, text: text || '' }
+        detail: {
+          exercises: byExercise,
+          text: text || '',
+          ...(Array.isArray(prescribed) && prescribed.length ? { prescribed } : {})
+        }
       }));
     } catch { /* narration is optional */ }
   }
@@ -3215,7 +3219,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // invariant — the preview/approve/write surface is unreachable from logging a
   // set, by construction (not just hidden by styling).
   if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview) {
-    emitSetLogged(logRows, pendingChatText);
+    emitSetLogged(logRows, pendingChatText, lastPrescribed);
     return;
   }
   sessionCompiledAwaitingPreview = false;

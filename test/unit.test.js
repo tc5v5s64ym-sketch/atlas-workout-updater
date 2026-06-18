@@ -4391,3 +4391,40 @@ test('FIX2: coach-conversation.js advances the composer to the full next prescri
   assert.match(cc, /formatNextPlaceholder\(nextRec\)/, 'the placeholder comes from the formatter');
   assert.match(cc, /Moving on — next up: \$\{nextEx\}/, 'the handoff line stays name-only');
 });
+
+// Mid-session substitution wiring (PR #340)
+// These tests verify that the prescribed-pair data produced by the parser for
+// skip-notation inputs ("Deadlift skipped - platform busy. Romanian Deadlift …")
+// flows from emitSetLogged → atlas:set-logged → handleSetLogged → substitution
+// classification → renderSubstitutionNotes.  They fail until the wiring is added.
+
+test('mid-session substitution: emitSetLogged call site passes lastPrescribed', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The mid-session branch must forward the parser's prescribed pairs so the
+  // event listener can trigger substitution classification without a second parse.
+  assert.match(
+    appSource,
+    /emitSetLogged\(logRows,\s*pendingChatText,\s*lastPrescribed\)/,
+    'mid-session branch must pass lastPrescribed as the third arg to emitSetLogged'
+  );
+});
+
+test('mid-session substitution: emitSetLogged forwards prescribed pairs in atlas:set-logged detail', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('function emitSetLogged('),
+    appSource.indexOf('function emitSetLogged(') + 1000
+  );
+  assert.match(fn, /prescribed/, 'emitSetLogged must accept a prescribed param and include it in the event detail');
+});
+
+test('mid-session substitution: handleSetLogged reads prescribed pairs and renders substitution notes', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSetLogged(');
+  // Extract up to the next top-level async function so the substitution block is included.
+  const end = cc.indexOf('  async function handlePreviewReady(');
+  const fn = cc.slice(start, end > start ? end : start + 4000);
+  assert.match(fn, /prescribed/, 'handleSetLogged must destructure prescribed from the event detail');
+  assert.match(fn, /log-workout/, 'handleSetLogged must call /api/log-workout with test_mode to classify the swap');
+  assert.match(fn, /renderSubstitutionNotes/, 'handleSetLogged must render the engine classification via renderSubstitutionNotes');
+});
