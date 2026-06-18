@@ -65,16 +65,17 @@ describe('scoreSubstitutionQuality — excellent tier', () => {
     assert.strictEqual(r.quality, 'excellent');
   });
 
-  it('squat → squat: Squat → Goblet Squat (HIGH → MEDIUM one tier, Goblet is MEDIUM)', () => {
-    // Goblet Squat is explicitly MEDIUM in liftCost — one tier drop but still compound.
-    const r = scoreSubstitutionQuality('Squat', 'Goblet Squat');
-    assert.strictEqual(r.quality, 'acceptable');
-  });
 });
 
 // ─── acceptable tier ──────────────────────────────────────────────────────────
 
 describe('scoreSubstitutionQuality — acceptable tier', () => {
+  it('squat → squat, HIGH → MEDIUM: Squat → Goblet Squat', () => {
+    // Goblet Squat is explicitly MEDIUM in liftCost — one tier drop but still compound.
+    const r = scoreSubstitutionQuality('Squat', 'Goblet Squat');
+    assert.strictEqual(r.quality, 'acceptable');
+  });
+
   it('same pattern, HIGH → MEDIUM: Back Squat → Leg Press', () => {
     const r = scoreSubstitutionQuality('Back Squat', 'Leg Press');
     assert.strictEqual(r.quality, 'acceptable');
