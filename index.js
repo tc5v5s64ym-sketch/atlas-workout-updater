@@ -2555,7 +2555,7 @@ app.post('/api/log-workout', async (req, res) => {
     // Substitution-intent classification (read-only). Best-effort: a failure here
     // must never block a dry-run preview, and it never changes the no-write proof.
     let substitutions = [];
-    const prescribedList = Array.isArray(payload.prescribed) ? payload.prescribed : [];
+    const prescribedList = Array.isArray(payload.prescribed) ? [...payload.prescribed] : [];
     // Infer additional prescribed pairs from any active planned session.
     // plan_exercises: [{name, lift_code?}] supplied by the client when a plan is active.
     // Pairs are merged after explicit skip-notation pairs so explicit wiring wins.

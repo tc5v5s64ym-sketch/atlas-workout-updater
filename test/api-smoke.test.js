@@ -2665,3 +2665,112 @@ test('api smoke: deload begin returns an actionable 503 when the Deload_State ta
     fakeSheetsState.hideDeloadStateTab = false;
   }
 });
+
+// ── PR 341 — Planned Workout Awareness (API integration) ──────────────────────
+// These tests prove that plan_exercises wiring reaches through /api/log-workout
+// to classifySubstitution, not only through the planMatcher unit.
+
+test('api smoke: plan_exercises Deadlift + logged RDL → substitution inferred via /api/log-workout', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-PLAN-DEADLIFT',
+      date: '2026-06-11',
+      test_mode: true,
+      plan_exercises: [{ name: 'Deadlift' }],
+      log_rows: [
+        { exercise: 'Romanian Deadlift', set_number: 1, weight: 245, reps: 7, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.ok(Array.isArray(body.data.substitutions), 'substitutions array must be present');
+  assert.equal(body.data.substitutions.length, 1, 'one inferred substitution');
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.prescribed.name, 'Deadlift');
+  assert.equal(sub.logged.name, 'Romanian Deadlift');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: plan_exercises Back Squat + logged Leg Press → substitution inferred via /api/log-workout', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-PLAN-SQUAT',
+      date: '2026-06-11',
+      test_mode: true,
+      plan_exercises: [{ name: 'Back Squat' }],
+      log_rows: [
+        { exercise: 'Leg Press', set_number: 1, weight: 360, reps: 8, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.ok(Array.isArray(body.data.substitutions), 'substitutions array must be present');
+  assert.equal(body.data.substitutions.length, 1, 'one inferred substitution');
+  const sub = body.data.substitutions[0];
+  assert.equal(sub.prescribed.name, 'Back Squat');
+  assert.equal(sub.logged.name, 'Leg Press');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: plan_exercises Bench Press + logged Bench Press → no substitution (exact match)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-PLAN-BENCH-EXACT',
+      date: '2026-06-11',
+      test_mode: true,
+      plan_exercises: [{ name: 'Bench Press' }],
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  const subs = body.data.substitutions || [];
+  assert.equal(subs.length, 0, 'exact plan match must not produce a substitution');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: explicit prescribed pair wins over plan_exercises for the same lift (no duplicate)', async () => {
+  // Both payload.prescribed and plan_exercises name Back Squat as prescribed.
+  // The explicit pair should be classified; no duplicate substitution for the same lift.
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-PLAN-EXPLICIT-WINS',
+      date: '2026-06-11',
+      test_mode: true,
+      prescribed: [
+        { exercise: 'Back Squat', logged_exercise: 'Leg Press', lift_code: 'SQ01' }
+      ],
+      plan_exercises: [{ name: 'Back Squat' }],
+      log_rows: [
+        { exercise: 'Leg Press', set_number: 1, weight: 360, reps: 8, rir: 2, notes: '' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.ok(Array.isArray(body.data.substitutions), 'substitutions must be present');
+  assert.equal(body.data.substitutions.length, 1, 'explicit pair must not be duplicated by plan inference');
+  assert.equal(body.data.substitutions[0].prescribed.name, 'Back Squat');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
