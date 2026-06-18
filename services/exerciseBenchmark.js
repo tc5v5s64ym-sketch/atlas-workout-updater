@@ -135,7 +135,7 @@ function computeBenchmark(liftCode, rows) {
 
   // Recent best: highest top-set weight in the most recent window.
   const recentSessions = sessionEntries.slice(-RECENT_SESSION_WINDOW);
-  const recentBest = Math.max(...recentSessions.map(s => s.topWeight));
+  const recentBest = roundTo5(Math.max(...recentSessions.map(s => s.topWeight)));
 
   // Rep and RIR ranges across all working sets.
   const allWorking = sessionEntries.flatMap(s => s.working);
