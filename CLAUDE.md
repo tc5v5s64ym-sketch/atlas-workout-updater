@@ -10,6 +10,7 @@ Atlas is a personal workout logging assistant for one owner (Dale). It parses na
 
 Read `docs/CONSTITUTION.md` for mission and scope.
 Read `docs/INVARIANTS.md` for rules that must never be broken.
+Read `docs/DOCS_INDEX.md` to understand which docs are active, reference-only, historical, or archived.
 
 ---
 
@@ -18,6 +19,8 @@ Read `docs/INVARIANTS.md` for rules that must never be broken.
 `BACKLOG.md` (repo root) is the single source of truth for open and deferred work.
 
 - At the start of any work session, read `BACKLOG.md`.
+- If selecting or executing the next roadmap PR, also read `docs/ACTIVE_ROADMAP.md` before changing direction.
+- Do not follow older plan docs as active execution queues unless `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md` explicitly links that step.
 - Whenever you defer a task, discover a follow-up, or decide something is out of scope, append it to `BACKLOG.md` in the same PR — never rely on memory or chat history to carry it.
 - When an item ships, mark it done or remove it in the same PR.
 
@@ -138,43 +141,3 @@ Unless the owner explicitly requests it, do not add:
 - Big refactors "to clean things up"
 
 When in doubt, do less and ask.
-
----
-
-## Security — hard stops
-
-- Never commit `.env`, API keys, Google credentials, screenshots, or workout data.
-- Never print `ATLAS_API_KEY` in any log or response.
-- Never change `GOOGLE_SHEETS_ID` in a routine PR.
-- Never change Render environment variables without explicit owner approval.
-- Never call a real Google Sheets write during tests.
-
----
-
-## Useful entry points
-
-| File | Purpose |
-|---|---|
-| `index.js` | All Express routes and request handlers |
-| `sheets.js` | Google Sheets client — read, append, delete |
-| `services/workoutTextParser.js` | Natural-language parser (sacred) |
-| `services/analytics.js` | Recovery curve, intent scoring, stalls, session/progress builders |
-| `services/vision.js` | Apple Watch screenshot parsing + LLM provider selection |
-| `services/coach.js` | Gemini coaching voice (set / plan / chat) — read-only |
-| `services/idempotency.js` | `write_id` dedup (in-memory, 24h TTL) for every write path |
-| `services/exerciseEnrichment.js` | Catalog match, fuzzy lookup, lift-code generation |
-| `public/app.js` | Single-page frontend — owns the trust loop (preview → approve → write) |
-| `public/coach-conversation.js` | Visual coaching/chat layer — types replies, never writes |
-| `public/chat.js` | Paints user bubbles; never calls the API |
-| `config/routes.js` | Route manifest for `/routes` endpoint |
-| `config/columns.js` | Column definitions for Log_Cleaned / Effort / Exercise_Catalog |
-| `rules/` | Pre-write bounds, safety flags, progression rules |
-| `test/api-smoke.test.js` | Full API smoke suite with stubbed Sheets |
-| `test/coach.test.js` | Coach prompt guardrails + fact/context sanitizers |
-| `tests/e2e/` | Playwright end-to-end suite (Coach shell + approve flow) |
-| `docs/CONSTITUTION.md` | Mission, scope, product laws |
-| `docs/INVARIANTS.md` | Safety rules |
-
-### Write paths (all `write_id`-idempotent)
-
-`POST /api/log-workout`, `POST /api/log-workout/undo-last`, `POST /api/complete-workout` (screenshot/effort), `POST /api/bodyweight`, `POST /api/coaching-notes`, and `POST /api/constraints`. Each uses `beginWrite`/`completeWrite`/`failWrite`; a repeated `write_id` replays the original response instead of writing twice. Everything else is read-only.

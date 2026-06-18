@@ -4,6 +4,8 @@ This is the current execution queue after the June 2026 app test findings.
 
 BACKLOG.md remains the source of truth. This file is the detailed active queue that should be linked or summarized from BACKLOG.md.
 
+Use `docs/DOCS_INDEX.md` to understand which older docs are active reference, historical context, or archived plans.
+
 ## Why priority changed
 
 The performance intelligence layer has mostly been built, but app testing exposed session-execution trust failures:
