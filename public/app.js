@@ -2675,6 +2675,16 @@ async function fetchReaction(liftCode, justLoggedSet) {
   }
 }
 
+// Client-side mirror of services/constraintDetector.js CONSTRAINT_PATTERNS.
+// Must stay in sync when the server-side pattern list changes.
+// Used synchronously in the submit handler to gate the coach-chat route without
+// waiting for the async API call to complete.
+const CONSTRAINT_RE = /\b(busy|unavailable|taken|occupied|broken)\b|out of order|not available|not working|\bis\s+closed\b/i;
+function looksLikeConstraintWithPlan(text) {
+  if (!activePlannedSession || !activePlannedSession.exercises.length) return false;
+  return CONSTRAINT_RE.test(String(text || ''));
+}
+
 // Constraint detection: if `text` signals unavailable equipment and a planned
 // exercise is active, call the substitute endpoint and dispatch the result.
 // Fire-and-forget — never blocks the main submit flow.
@@ -3156,8 +3166,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // Text that isn't a loggable workout, with no effort attached, is treated as
     // a question for the coach rather than a parse error — so "was that a good
     // session?" or just "Bench" gets a conversation instead of a red dead-end.
+    // Exception: if a substitute card is already in flight for this message
+    // (constraint + active plan), skip the LLM coach route to avoid a redundant
+    // second response to the same input.
     if (pendingChatText && !hasAnyEffortInput()) {
-      routeMessageToCoach(pendingChatText);
+      if (!looksLikeConstraintWithPlan(pendingChatText)) routeMessageToCoach(pendingChatText);
       return;
     }
     setStatus(loggerStatus, err.displayMessage || `Could not parse workout text: ${err.message}`, 'error');
