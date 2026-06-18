@@ -514,6 +514,31 @@ test('api smoke: coach/chat passes propose_edit through to the client', async ()
   }
 });
 
+test('api smoke: coach/chat accepts plan_completed in context and returns 200 — plan_state does not break the chat path', async () => {
+  // PR 357 acceptance path: client sends current_plan + plan_completed so the
+  // backend can compute remaining exercises for the coach.
+  fakeCoachState.configured = true;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'lat pulldown machine is busy, doing rows next',
+        context: {
+          current_plan: [
+            { name: 'Lat Pulldown', weight: 160, reps: 10, sets: 3, rir: 2 },
+            { name: 'Rows',         weight: 190, reps: 10, sets: 3, rir: 2 }
+          ],
+          plan_completed: ['Rows']
+        }
+      })
+    });
+    assert.equal(response.status, 200, 'plan_completed in context must not crash the endpoint');
+    assert.equal(body.data.message, fakeCoachState.chatMessage, 'reply returned normally');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 test('api smoke: coach/chat returns null propose_edit when none proposed', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.chatEditProposal = null;

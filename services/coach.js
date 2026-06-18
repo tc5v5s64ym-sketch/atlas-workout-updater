@@ -436,6 +436,7 @@ function buildChatSystemPrompt(context) {
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
+    "- `plan_state` (if present) is the authoritative session plan. `plan_state.remaining` lists exercises still to complete. Never drop, replace, or suggest removing a remaining exercise unless the lifter explicitly asks. When the lifter reorders (e.g. 'doing X next because machine is busy'), confirm the change and name what is still in the session — the rest of the plan stays intact. Only call the session complete when `plan_state.isComplete` is true.",
     '',
     coachBrain.buildPrinciplesFragment(),
     '',
@@ -621,6 +622,17 @@ function sanitizeChatContext(context) {
         return patterns.length ? { liftCode, patterns } : null;
       }).filter(Boolean)
     : [];
+  // Plan state: remaining exercises must survive sanitization intact so the coach
+  // can see exactly what is still to be done. Only string entries survive; cap at 20.
+  const rawPs = c.plan_state && typeof c.plan_state === 'object' ? c.plan_state : null;
+  const plan_state = rawPs && Array.isArray(rawPs.planned) && rawPs.planned.length > 0
+    ? {
+        planned:    rawPs.planned.slice(0, 20).map(strOrNull).filter(Boolean),
+        completed:  Array.isArray(rawPs.completed)  ? rawPs.completed.slice(0, 20).map(strOrNull).filter(Boolean)  : [],
+        remaining:  Array.isArray(rawPs.remaining)  ? rawPs.remaining.slice(0, 20).map(strOrNull).filter(Boolean)  : [],
+        isComplete: rawPs.isComplete === true
+      }
+    : null;
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -629,6 +641,7 @@ function sanitizeChatContext(context) {
     stalls,
     muscle_gaps,
     memory_patterns,
+    plan_state,
     current_preview,
     current_plan,
     session_count,
