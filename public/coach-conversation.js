@@ -630,9 +630,19 @@
   // In-workout note: conversational prose only. The structured readback already
   // shows the sets and the .nextp card shows the prescription, so the templated
   // fallback is just the one-line reaction (no set/next repetition).
+  // When a substitution is present, it is passed in facts so the LLM addresses
+  // it in one integrated response. The fallback appends the templated line after
+  // the opener so no separate substitution box is needed.
   async function getInWorkoutNote(facts) {
     const llm = await getLlmCoachingMessage(facts).catch(() => null);
-    return (llm && llm.trim()) ? llm : coachOpener(facts.todaySets || [], facts.rec);
+    if (llm && llm.trim()) return llm;
+    const opener = coachOpener(facts.todaySets || [], facts.rec);
+    const sub = facts.substitution;
+    if (sub && sub.classification) {
+      const subLine = coachVoiceTemplates.templatedSubstitutionLine(sub);
+      if (subLine) return opener + '\n\n' + subLine;
+    }
+    return opener;
   }
 
   async function getLlmCoachingMessage(facts) {
@@ -800,11 +810,16 @@
       try { if (typeof fetchReaction === 'function') rec = await fetchReaction(code, justLogged); } catch { /* best effort */ }
     }
 
+    // Pass the first substitution (if any) into the facts so the main LLM call
+    // addresses it in one integrated response — no separate sub-note box needed.
+    // Additional substitutions beyond the first are appended as inline text.
+    const primarySub = substitutions.length ? substitutions[0] : undefined;
     const note = await getInWorkoutNote({
       liftCode: code,
       exerciseName: primary.exercise,
       todaySets: primary.sets,
-      rec
+      rec,
+      substitution: primarySub
     });
     await typeOut(body, note);
     chatTurns.push({ role: 'atlas', text: note });
@@ -813,10 +828,14 @@
       bubble.appendChild(buildNextPrescription(rec));
     }
 
-    // Substitution verdict: app.js ran the dry-run classification before emitting
-    // this event (same pattern as handlePreviewReady). This layer only words it.
-    if (Array.isArray(substitutions) && substitutions.length) {
-      await renderSubstitutionNotes(bubble, substitutions);
+    // If the input had more than one substitution (unusual), append each extra
+    // inline below the prescription — still no separate box.
+    for (const sub of substitutions.slice(1)) {
+      if (!sub || !sub.classification) continue;
+      const extra = document.createElement('div');
+      extra.className = 'coach-msg';
+      await typeOut(extra, coachVoiceTemplates.templatedSubstitutionLine(sub));
+      bubble.appendChild(extra);
     }
 
     // Next-exercise handoff: append a short line pointing at the next exercise
@@ -855,97 +874,27 @@
     const handle = appendAtlasBubble();
     if (!handle) return;
     const { bubble, body } = handle;
-    const intro = effort
+    let intro = effort
       ? "Here's your effort and the full session — give it a look before it goes to your sheet:"
       : "Solid session. Here's everything from our conversation — give it a look before it goes to your sheet:";
+    // Fold substitution verdicts into the intro paragraph so the coach reads as
+    // one voice — no stacked diagnostic boxes below the review card.
+    const subLines = (substitutions || [])
+      .filter(s => s && s.classification)
+      .map(s => coachVoiceTemplates.templatedSubstitutionLine(s));
+    if (subLines.length) intro += '\n\n' + subLines.join('\n');
     await typeOut(body, intro);
     bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort));
-    // Read-only substitution-intent note(s): the engine already decided
-    // preserved/changed/abandoned/baseline (data.substitutions from the dry-run).
-    // The voice only words it; this never writes or gates the Save.
-    if (Array.isArray(substitutions) && substitutions.length) {
-      await renderSubstitutionNotes(bubble, substitutions);
-    }
-  }
-
-  /* ===== Substitution-intent note (read-only) ===== */
-
-  // Templated line keyed off the engine's classification — this ALWAYS surfaces
-  // the engine verdict, so it stands on its own when the Gemini voice is down.
-  // Pure (no DOM, no closure deps) for unit-testability.
-  // The preview carries prescribed/logged as the full classifier objects
-  // ({ name, ... }); the sanitized voice path uses bare name strings. Handle both.
-  function liftLabel(ref, fallback) {
-    if (ref && typeof ref === 'object') return ref.name || fallback;
-    return (typeof ref === 'string' && ref) ? ref : fallback;
-  }
-
-  function templatedSubstitutionLine(sub) {
-    const p = liftLabel(sub && sub.prescribed, 'the prescribed lift');
-    const l = liftLabel(sub && sub.logged, 'what you logged');
-    const reasonSuffix = (sub && sub.reason) ? ` Reason: ${sub.reason}.` : '';
-    switch (sub && sub.classification) {
-      case 'preserved':
-        return `Swap check: ${l} for ${p} — same job, different tool. Intent preserved.${reasonSuffix}`;
-      case 'changed':
-        return `Swap check: ${l} for ${p} — that shifts the target muscle. Slot the real match in next time.${reasonSuffix}`;
-      case 'abandoned':
-        return `Swap check: ${l} for ${p} — that left the session's objective untrained. Get the real movement back in this week.${reasonSuffix}`;
-      case 'baseline':
-        return `Swap check: ${l} for ${p} — no history yet to judge it against. Logging it builds the baseline.${reasonSuffix}`;
-      default:
-        return `Swap check: ${l} for ${p}.${reasonSuffix}`;
-    }
-  }
-
-  // approve → calm note; warn → flagged note. Drives the read-only styling only.
-  function substitutionTone(sub) {
-    return (sub && sub.decision === 'warn') ? 'warn' : 'ok';
-  }
-
-  // Gemini path: ask the read-only coach endpoint to word the engine's verdict.
-  // Returns null on outage / no key / timeout so the caller falls back to the
-  // templated line. Mirrors getLlmPlanMessage's prefer-Gemini-then-template shape.
-  async function voiceSubstitution(sub) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
-    const timeoutMs = (typeof COACH_LLM_TIMEOUT_MS !== 'undefined') ? COACH_LLM_TIMEOUT_MS : 6000;
-    const timeout = new Promise(resolve => setTimeout(() => resolve(null), timeoutMs));
-    const request = api('/api/coach/message', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'set', facts: { substitution: sub } })
-    }).then(res => (res && res.data && res.data.message) || null).catch(() => null);
-    return Promise.race([request, timeout]);
-  }
-
-  async function renderSubstitutionNotes(bubble, subs) {
-    for (const sub of subs) {
-      if (!sub || !sub.classification) continue;
-      const note = elc('div', `sub-note sub-${substitutionTone(sub)}`);
-      bubble.appendChild(note);
-      // Prefer Gemini's voiced line; fall back to the templated engine verdict.
-      const voiced = await voiceSubstitution(sub);
-      await typeOut(note, voiced || templatedSubstitutionLine(sub));
-    }
   }
 
   /* ===== Proactive substitute recommendation (atlas:substitute-suggested) ===== */
 
-  // Renders a deterministic Atlas bubble when a constraint message is detected
+  // Renders a coach-voice Atlas bubble when a constraint message is detected
   // during an active planned session. No LLM — all text is derived from the
-  // recommendation engine's quality tier and reason string.
+  // recommendation engine's quality tier and reason string via formatSubstituteCoachLine.
   async function handleSubstituteSuggested(detail) {
-    const { prescribed, recommendation, quality, reason } = detail || {};
-    if (!prescribed || !recommendation) return;
-
-    const qualityLabel = quality === 'excellent' ? 'Excellent match' : 'Close alternative';
-    const text = [
-      `Equipment unavailable? Best substitute for ${prescribed}:`,
-      '',
-      `${recommendation} (${qualityLabel})`,
-      reason || '',
-    ].filter((line, i) => i < 3 || line !== '').join('\n');
-
+    const text = coachVoiceTemplates.formatSubstituteCoachLine(detail || {});
+    if (!text) return;
     const handle = appendAtlasBubble();
     if (!handle) return;
     await typeOut(handle.body, text);

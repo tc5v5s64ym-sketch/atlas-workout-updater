@@ -1,0 +1,212 @@
+# Atlas Performance Intelligence — Execution Plan
+
+PRs 345–355. Start numbering at 345 because PR 344 already merged.
+
+**Global rules**
+- One PR at a time. Stop after every PR. Do not merge. Do not continue without owner approval.
+- Default model: Sonnet. Stop for Opus decision when noted.
+- No write-path changes unless explicitly stated.
+- No sheet schema changes unless explicitly approved.
+- Add tests before declaring complete.
+- App-test hold point after every user-visible PR.
+
+---
+
+## PR 345 — Coach Conversation Cleanup
+**Model:** Sonnet  
+**Status:** ⏳ In progress
+
+**Goal:** Fold substitution/recommendation cards into one coach-style response so Atlas feels like one coach talking.
+
+**Problem:** After a set is logged, the conversation bubble stacks separate diagnostic boxes:
+- `.nextp` card ("→ Next" prescription)
+- `.sub-note.sub-ok/warn` (substitution verdict — a separate colored box)
+- Proactive substitute recommendation (`atlas:substitute-suggested`) renders in a clinical header-body format
+
+**Approach:**
+1. Extract pure text-formatting functions to `public/coachVoiceTemplates.js` (UMD — testable in Node, usable in browser).
+2. Pass `substitution` facts into the main LLM call so the coach addresses it in one voice (in-workout path). Fallback appends templated line after the opener.
+3. Fold substitution text into the typed intro paragraph of the preview bubble (no separate box).
+4. Rewrite `handleSubstituteSuggested` as coach-voice prose — not a structured header/body card.
+5. Remove `renderSubstitutionNotes`, `voiceSubstitution`, `substitutionTone` (no longer needed).
+6. Remove `.sub-note` CSS rules (no longer rendered).
+
+**Files touched:** `public/coachVoiceTemplates.js` (new), `public/index.html`, `public/coach-conversation.js`, `public/styles.css`, `test/coachConversation.test.js` (new), `tests/e2e/app-smoke.spec.js`
+
+**App test hold:** Substitution flow shows one clean coach response in the bubble body — no stacked diagnostic boxes.
+
+---
+
+## PR 346 — Exercise Benchmark Engine
+**Model:** Sonnet
+
+**Goal:** Create deterministic per-exercise benchmarks from historical logs: working weight, recent best, rep range, RIR range, confidence.
+
+**Approach:**
+- New `services/exerciseBenchmark.js`: `computeBenchmark(liftCode, rows)` → `{ workingWeight, recentBest, repRange, rirRange, confidence, sampleSize }`.
+- Uses the last N sessions of `Log_Cleaned` rows for the lift.
+- Working weight: mode/median of top-set weights after excluding outliers (warm-ups identified by RIR ≥ 4 or weight < 60% of max).
+- Confidence: `high` (≥5 sessions), `medium` (3–4), `low` (1–2), `none` (0).
+- No write path, no LLM, no sheet schema change.
+
+**Files touched:** `services/exerciseBenchmark.js` (new), `test/exerciseBenchmark.test.js` (new), wire into `/api/recommend/next` response.
+
+**App test hold:** Bench history should identify 225×5 @2 as stronger benchmark than 185×8 @2.
+
+---
+
+## PR 347 — Expected Performance Engine
+**Model:** Sonnet
+
+**Goal:** Given today's weight/reps/RIR, estimate expected performance from recent history.
+
+**Approach:**
+- New `services/expectedPerformance.js`: `computeExpectedPerformance(liftCode, rows, todayWeight)` → `{ expectedReps, expectedRirRange, basis }`.
+- Reads last 4–6 top sets at or near `todayWeight` (±10%).
+- Returns null/`insufficient_data` when fewer than 3 data points.
+- Pure function, no writes.
+
+**Files touched:** `services/expectedPerformance.js` (new), `test/expectedPerformance.test.js` (new).
+
+**App test hold:** Bench 185×8 @2 should know 185 historically expects closer to 10–12 reps @2 if data supports it.
+
+---
+
+## PR 348 — Performance Deviation Detection
+**Model:** Sonnet
+
+**Goal:** Classify logged performance as above expectation, on target, below expectation, or insufficient data.
+
+**Approach:**
+- New `services/performanceDeviation.js`: `classifyDeviation(logged, expected)` → `{ verdict, delta, magnitude }`.
+- `verdict` ∈ `above_expected | on_target | below_expected | insufficient_data`.
+- Threshold: ≥2 reps above = above; ≤-2 reps = below; else on_target.
+- Wire into `sanitizeFacts` / coach prompt so the LLM can reference it.
+
+**Files touched:** `services/performanceDeviation.js` (new), `test/performanceDeviation.test.js` (new), wire into coach facts.
+
+**App test hold:** Bench 185×8 @2 should flag below expected if history supports 185×10–12 @2.
+
+---
+
+## PR 349 — Coaching Evidence Layer
+**Model:** Sonnet
+
+**Goal:** Coach remarks must cite the historical data used: recent sets, benchmark, date range, confidence.
+
+**Approach:**
+- Extend `sanitizeFacts` to include `evidence_context` with: `reference_sets[]`, `date_range`, `benchmark`, `confidence`.
+- Extend coach system prompt: when evidence_context is present, coach MUST cite at least one reference ("Based on your last 4 bench sessions…").
+- Evidence is engine-computed, never invented by the LLM.
+
+**Files touched:** `services/coach.js`, `test/coach.test.js`.
+
+**App test hold:** Coach response includes "Based on your recent bench history…" with actual reference sets.
+
+---
+
+## PR 350 — Working Weight Tracking
+**Model:** Sonnet
+
+**Goal:** Maintain current working weight and target rep/RIR range per lift.
+
+**Approach:**
+- Extend `services/exerciseBenchmark.js` (from PR 346) with a `resolveWorkingWeight(liftCode, rows)` function.
+- Working weight anchors to the mode/median of the lifter's top-set weights from sessions where RIR was in the target zone (0–3).
+- Exposes as `working_weight` in `/api/recommend/next` and in coach facts.
+
+**Files touched:** `services/exerciseBenchmark.js`, `test/exerciseBenchmark.test.js`, wire into recommendation pipeline.
+
+**App test hold:** Bench working weight resolves around 225×5 @2, not the latest random test set.
+
+---
+
+## PR 351 — Trend Detection
+**Model:** Sonnet
+
+**Goal:** Detect improving, flat, declining, or noisy performance trends across recent exposures.
+
+**Approach:**
+- New `services/trendDetector.js`: `detectTrend(sessions[])` → `{ trend, confidence, sessions_analyzed }`.
+- `trend` ∈ `improving | flat | declining | noisy`.
+- Uses e1RM trajectory across last 6–8 sessions with a minimum 4 data points.
+- `noisy` when coefficient of variation > threshold (high variance, no clear direction).
+- Wire into coach facts.
+
+**Files touched:** `services/trendDetector.js` (new), `test/trendDetector.test.js` (new).
+
+**App test hold:** Repeated lower-than-expected bench sessions show declining or fatigue trend only after enough data.
+
+---
+
+## PR 352 — Readiness Signals
+**Model:** Sonnet (stop for Opus decision if logic gets philosophical)
+
+**Goal:** Infer possible fatigue/readiness issues from deviations without overreacting to one bad session.
+
+**Approach:**
+- New `services/readinessSignal.js`: `computeReadiness(trend, deviationHistory)` → `{ signal, confidence, note }`.
+- `signal` ∈ `monitoring | possible_fatigue | likely_fatigue`.
+- One bad session alone = `monitoring`. Two consecutive below-expected = `monitoring` still. Three+ = `possible_fatigue`. Sustained with trend `declining` = `likely_fatigue`.
+- Never emits a strong signal from a single session.
+- Wire into coach facts as `readiness_signal`.
+
+**Files touched:** `services/readinessSignal.js` (new), `test/readinessSignal.test.js` (new).
+
+**App test hold:** One bad bench day says "monitoring," not "strength loss confirmed."
+
+---
+
+## PR 353 — Coach Memory
+**Model:** Sonnet
+
+**Goal:** Detect recurring patterns like repeated substitutions, missed lifts, or consistent underperformance.
+
+**Approach:**
+- New `services/coachMemory.js`: `detectPatterns(liftCode, rows)` → `{ patterns[] }`.
+- Patterns: `repeated_substitution` (same swap ≥3 times in last 10 sessions), `consistent_underperformance` (below_expected ≥3 of last 5), `missed_lift` (planned but skipped ≥3 times).
+- Returns empty array when no pattern — never noisy.
+- Wire into coach chat context (not into the per-set note — this is a bigger picture signal).
+
+**Files touched:** `services/coachMemory.js` (new), `test/coachMemory.test.js` (new), wire into `buildChatContext`.
+
+**App test hold:** Repeated Deadlift platform substitutions noticed after multiple occurrences.
+
+---
+
+## PR 354 — Suggested Workout Engine
+**Model:** STOP before implementation — ask whether to use Opus
+
+**Goal:** Generate suggested workouts using recovery, recent training, benchmarks, trends, and program needs.
+
+**Note:** This PR integrates PRs 346–353's signals into workout generation. The interaction between trend, readiness, memory, and program needs may require philosophical design decisions about how to weight competing signals. Stop and consult owner before writing any code.
+
+**Scope to clarify before starting:**
+- How to weight recovery vs. readiness vs. program need?
+- What to do when trend=declining but program says increase?
+- How to present uncertainty to the user?
+
+**App test hold:** Suggested workout must explain why it chose the session.
+
+---
+
+## PR 355 — Coach Voice Polish
+**Model:** Sonnet
+
+**Goal:** Make final coach responses feel conversational, concise, and human while preserving evidence and deterministic logic.
+
+**Approach:**
+- Audit coach system prompt for any remaining clinical/robotic phrasing.
+- Add rotating phrasings for common patterns (like the existing `VERDICT_VARIANTS` in coach-conversation.js).
+- Ensure all new signals from PRs 349–353 are worded naturally when they appear.
+- Add golden-output tests to the rubric.
+
+**Files touched:** `services/coach.js`, `test/coach.test.js`.
+
+**App test hold:** Atlas sounds like one coach, not a diagnostic report.
+
+---
+
+## Deferred / follow-up
+
+Items discovered during implementation that don't belong in a specific PR above will be appended to `BACKLOG.md` in the same PR.

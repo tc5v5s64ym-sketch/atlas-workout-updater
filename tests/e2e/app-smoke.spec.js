@@ -491,12 +491,12 @@ test('Session review surfaces the substitution verdict as a read-only note, and 
 
   await runToReview(page);
 
-  // Engine verdict surfaces. Gemini is unconfigured in CI (coach/message → null),
-  // so the templated fallback line renders — proving the fallback path works.
-  const note = page.locator('.sub-note');
-  await expect(note).toBeVisible();
-  await expect(note).toContainText('objective untrained');
-  await expect(note).toHaveClass(/sub-warn/);
+  // Engine verdict is folded into the coach-message body — no separate sub-note
+  // box. Gemini is unconfigured in CI (coach/message → null), so the templated
+  // fallback fires and the text appears in the intro paragraph of the review bubble.
+  const introBody = page.locator('.chat-bubble-atlas .coach-msg').last();
+  await expect(introBody).toBeVisible();
+  await expect(introBody).toContainText('objective untrained');
   expect(capture.writeRequests).toHaveLength(0);   // displaying the verdict never writes
 
   // Approval still works with the note present — Save drives the single write.
