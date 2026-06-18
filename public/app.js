@@ -2635,19 +2635,6 @@ function emitSetLogged(logObjs, text, substitutions) {
     // Track unique exercise names for plan_completed wiring in routeMessageToCoach.
     if (!sessionCompleted.includes(o.exercise)) sessionCompleted.push(o.exercise);
   }
-  // Auto-advance the active session banner when the current plan exercise is
-  // logged — keeps "Step X of N" accurate without a manual "Next →" tap.
-  if (activePlannedSession && byExercise.length) {
-    const cur = activePlannedSession.exercises[activePlannedSession.index];
-    if (cur && byExercise.some(e => e.exercise.toLowerCase() === (cur.name || '').toLowerCase())) {
-      if (activePlannedSession.index < activePlannedSession.exercises.length - 1) {
-        activePlannedSession.index += 1;
-        renderActiveSessionBanner();
-      } else {
-        endPlannedSession();
-      }
-    }
-  }
   if (byExercise.length) {
     try {
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
