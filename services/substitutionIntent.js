@@ -122,24 +122,38 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   const hasPain           = Boolean(painFlag);
 
   // --- Equipment / injury constraint: evaluated before the history gate.
-  // A recognised constraint means Atlas can classify the swap using existing
-  // deterministic knowledge (movement patterns + muscle coverage) without prior
-  // load history. Constraint takes priority over pattern_and_muscle_match so
-  // the user sees WHY the swap was approved, not just that the muscles lined up.
+  // Spec: a constraint-justified redirect is `preserved` only when the substitute
+  // "keeps a defensible portion of the intended muscle/pattern within what the
+  // constraint allows" (SUBSTITUTION_SPEC.md). A constraint upgrades a borderline
+  // result; it cannot rescue a zero-overlap abandon of an unrelated stimulus.
   if (constraintMatched) {
     const muscle_overlap = computePrimaryMuscleOverlap(
       prescribedMuscleResult.primary, loggedMuscleResult.primary
     );
-    const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched: true };
-    return {
-      classification: 'preserved',
-      decision:       'approve',
-      reason_code:    'equipment_constraint_honored',
-      prescribed:     prescribedInfo,
-      logged:         loggedInfo,
-      muscle_overlap,
-      evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'equipment_constraint_honored' }),
-    };
+    const cPatternsMatch = (
+      prescribedPatternResult.pattern === loggedPatternResult.pattern &&
+      prescribedPatternResult.pattern !== 'other'
+    );
+    const cPrescribedRegion = BROAD_REGION[prescribedPatternResult.pattern] || 'other';
+    const cLoggedRegion     = BROAD_REGION[loggedPatternResult.pattern]     || 'other';
+    const cSharedRegion     = cPrescribedRegion === cLoggedRegion && cPrescribedRegion !== 'other';
+    const isDefensible      = (cPatternsMatch || cSharedRegion) && muscle_overlap >= OVERLAP_THRESHOLD;
+
+    if (isDefensible) {
+      const evidenceArgs = { prescribedInfo, loggedInfo, muscle_overlap, painFlag: hasPain, constraintMatched: true };
+      return {
+        classification: 'preserved',
+        decision:       'approve',
+        reason_code:    'equipment_constraint_honored',
+        prescribed:     prescribedInfo,
+        logged:         loggedInfo,
+        muscle_overlap,
+        evidence:       buildEvidence({ ...evidenceArgs, reason_code: 'equipment_constraint_honored' }),
+      };
+    }
+    // Constraint matched but the substitute is unrelated (zero overlap, different region).
+    // Fall through to normal classification — a constraint can rescue a borderline swap
+    // but cannot endorse skipping the prescribed stimulus for an unrelated movement.
   }
 
   // --- Rule 1: baseline — no history and no constraint → cannot judge intent

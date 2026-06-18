@@ -779,10 +779,12 @@ test('api smoke: log-workout preview is unchanged when no prescribed pairs are s
 
 // ── Reason-field wiring (PR #339) ─────────────────────────────────────────────
 
-test('api smoke: equipment reason upgrades cross-pattern swap to equipment_constraint_honored', async () => {
-  // Back Squat (SQ01, has history) → Bench Press is normally abandoned (different
-  // pattern, ~0 muscle overlap). With "rack unavailable" the engine synthesizes a
-  // transient equipment constraint and Rule 3 fires instead: equipment_constraint_honored.
+test('api smoke: equipment reason cannot rescue a zero-overlap abandon (Back Squat → Bench Press, rack unavailable)', async () => {
+  // Spec: a constraint upgrades a borderline result but cannot endorse skipping the
+  // prescribed stimulus for an unrelated movement (SUBSTITUTION_SPEC.md — constraint
+  // must keep "a defensible portion of the intended muscle/pattern"). Back Squat →
+  // Bench Press has ~0 muscle overlap and no shared broad region; the synthesized
+  // equipment constraint falls through and the swap stays abandoned.
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/log-workout', {
     method: 'POST',
@@ -803,9 +805,9 @@ test('api smoke: equipment reason upgrades cross-pattern swap to equipment_const
   assert.equal(body.data.no_write_confirmed, true);
   assert.equal(body.data.substitutions.length, 1);
   const sub = body.data.substitutions[0];
-  assert.equal(sub.classification, 'preserved');
-  assert.equal(sub.decision, 'approve');
-  assert.equal(sub.reason_code, 'equipment_constraint_honored');
+  assert.equal(sub.classification, 'abandoned');
+  assert.equal(sub.decision, 'warn');
+  assert.notEqual(sub.reason_code, 'equipment_constraint_honored');
   assert.equal(sub.reason, 'rack unavailable');
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });

@@ -368,13 +368,34 @@ describe('pain redirect — spec override ordering', () => {
 // ─── constraint override ──────────────────────────────────────────────────────
 
 describe('equipment constraint honored — spec override ordering', () => {
-  it('Overhead Press + injury constraint → preserved (spec B17 redirect)', () => {
+  it('injury constraint on cross-pattern redirect without pain → falls through to abandoned', () => {
+    // Spec: constraint-justified redirect requires the substitute to "keep a defensible
+    // portion of the intended muscle/pattern." OHP (vertical_push, front/side delts) →
+    // Back Squat (squat, quads/glutes) has zero overlap and no shared region, so the
+    // constraint falls through. Without painFlag the normal rules fire → abandoned.
+    // For a true cross-pattern pain-justified redirect, use painFlag:true (pain_redirect).
     const constraints = [
       { kind: 'injury', target: 'overhead press', rule: 'avoid', note: 'shoulder impingement' },
     ];
     const r = classifySubstitution({
       prescribed:  { name: 'Overhead Press' },
       logged:      { name: 'Back Squat' },
+      history:     SOME_HISTORY,
+      constraints,
+    });
+    assert.strictEqual(r.classification, 'abandoned');
+    assert.strictEqual(r.decision,       'warn');
+  });
+
+  it('injury constraint + defensible swap → equipment_constraint_honored', () => {
+    // Wrist injury on barbell bench; user does Incline DB Press (same horizontal_push
+    // pattern, chest overlap ≥ threshold). The constraint fires and upgrade is defensible.
+    const constraints = [
+      { kind: 'injury', target: 'bench', rule: 'avoid', note: 'wrist strain' },
+    ];
+    const r = classifySubstitution({
+      prescribed:  { name: 'Bench Press' },
+      logged:      { name: 'Incline Dumbbell Press' },
       history:     SOME_HISTORY,
       constraints,
     });
@@ -399,11 +420,10 @@ describe('equipment constraint honored — spec override ordering', () => {
     assert.strictEqual(r.reason_code,    'equipment_constraint_honored');
   });
 
-  it('Bench Press + equipment constraint → preserved even with low muscle overlap', () => {
+  it('Bench Press + equipment constraint → preserved (defensible swap)', () => {
     // Bench occupied; user did Dips instead (chest overlap in primary).
     // Dips: primary ['chest', 'triceps']; Bench: primary ['chest'].
-    // Overlap = 1/1 = 1.0 → pattern_and_muscle_match already fires, but
-    // include constraint to confirm constraint never *downgrade* a match.
+    // Overlap = 1/1 = 1.0, shared horizontal_push pattern → defensible → constraint fires.
     const constraints = [
       { kind: 'equipment', target: 'bench', rule: 'avoid' },
     ];
@@ -432,14 +452,17 @@ describe('equipment constraint honored — spec override ordering', () => {
     assert.strictEqual(r.decision,       'warn');
   });
 
-  it('evidence mentions constraint when a constraint matched', () => {
-    const constraints = [{ kind: 'injury', target: 'overhead press', rule: 'avoid' }];
+  it('evidence mentions constraint when a defensible constraint swap matched', () => {
+    // Use a defensible swap (same squat pattern, good overlap) so the constraint branch
+    // fires; non-defensible pairs fall through and evidence does not mention constraint.
+    const constraints = [{ kind: 'equipment', target: 'squat', rule: 'avoid' }];
     const r = classifySubstitution({
-      prescribed:  { name: 'Overhead Press' },
-      logged:      { name: 'Back Squat' },
+      prescribed:  { name: 'Back Squat' },
+      logged:      { name: 'Leg Press' },
       history:     SOME_HISTORY,
       constraints,
     });
+    assert.strictEqual(r.reason_code, 'equipment_constraint_honored');
     assert.ok(r.evidence.some(e => /constraint/i.test(e)), 'evidence must mention constraint');
   });
 });
