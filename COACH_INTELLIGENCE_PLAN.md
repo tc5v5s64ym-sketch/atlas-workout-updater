@@ -37,7 +37,7 @@ Logged:   Romanian Deadlift 245 7/2 x3
 
 **Deliverables:** Failing tests first. Minimal implementation. Passing tests. Explanation of detection flow.
 
-**Status:** ⏳ In progress
+**Status:** ✅ Merged (PR 341)
 
 ---
 
@@ -65,7 +65,7 @@ Logged:   Romanian Deadlift 245 7/2 x3
 
 **Deliverables:** Data layer first. Then scoring logic. Then tests.
 
-**Status:** Not started — awaiting PR 341 review.
+**Status:** ⏳ In progress (PR 342)
 
 ---
 
