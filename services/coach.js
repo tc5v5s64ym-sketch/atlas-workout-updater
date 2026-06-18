@@ -53,6 +53,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite the session count ("Based on your last N bench sessions…"), the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number.',
     '- You MAY reference ONE history number from the facts (working_weight, first_weight, best_weight, or the range/ceiling) to ground progress, e.g. "right at your working weight of {working_weight}" or "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- The facts may include "trend" {trend, confidence, sessions_analyzed} — the engine\'s e1RM trajectory across recent sessions. "improving" = e1RM is clearly rising; "flat" = holding steady; "declining" = e1RM is drifting down; "noisy" = high variance, no clear read. When trend is present and is not "noisy", name the direction once as part of the arc narrative. Never claim a trend when the field is absent, and never contradict the engine\'s verdict.',
+    '- The facts may include "readiness_signal" {signal, confidence, note} — the engine\'s fatigue inference from the recent deviation streak. "monitoring" = watching, no fatigue signal; "possible_fatigue" = 3+ consecutive below-expected sessions; "likely_fatigue" = sustained streak + declining e1RM trend. When monitoring, say nothing about fatigue. When possible_fatigue, gently name the pattern without catastrophising. When likely_fatigue, be direct and honest: name the trend and suggest the lifter consider a recovery week. Never diagnose fatigue from a single session and never contradict the engine\'s verdict.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -127,7 +128,10 @@ function sanitizeFacts(facts) {
     evidence_context: sanitizeEvidenceContext(f.evidence_context),
     // The e1RM trend engine's verdict (services/trendDetector.js).
     // improving/flat/declining/noisy — used to ground the arc narrative.
-    trend: sanitizeTrend(rec.trend)
+    trend: sanitizeTrend(rec.trend),
+    // The readiness/fatigue inference engine's verdict (services/readinessSignal.js).
+    // monitoring/possible_fatigue/likely_fatigue from recent deviation streak + trend.
+    readiness_signal: sanitizeReadinessSignal(rec.readiness_signal)
   };
 }
 
@@ -268,6 +272,24 @@ function sanitizeTrend(t) {
   const rawConf = strOrNull(t.confidence);
   const confidence = rawConf && TREND_CONFIDENCE.includes(rawConf) ? rawConf : null;
   return { trend, confidence, sessions_analyzed: numOrNull(t.sessions_analyzed) };
+}
+
+// Whitelist the readiness engine's output (services/readinessSignal.js).
+// 'monitoring' with 'none' confidence collapses to null — nothing actionable to say.
+const READINESS_SIGNALS    = Object.freeze(['monitoring', 'possible_fatigue', 'likely_fatigue']);
+const READINESS_CONFIDENCE = Object.freeze(['none', 'low', 'medium', 'high']);
+const READINESS_NOTES      = Object.freeze(['consecutive_below_expected', 'sustained_declining_trend']);
+function sanitizeReadinessSignal(r) {
+  if (!r || typeof r !== 'object') return null;
+  const signal = strOrNull(r.signal);
+  if (!signal || !READINESS_SIGNALS.includes(signal)) return null;
+  // Suppress trivial monitoring — only surface when there is a genuine concern.
+  if (signal === 'monitoring' && (r.confidence === 'none' || r.confidence == null)) return null;
+  const rawConf = strOrNull(r.confidence);
+  const confidence = rawConf && READINESS_CONFIDENCE.includes(rawConf) ? rawConf : null;
+  const rawNote = strOrNull(r.note);
+  const note = rawNote && READINESS_NOTES.includes(rawNote) ? rawNote : null;
+  return { signal, confidence, note };
 }
 
 function numOrNull(v) {
@@ -924,6 +946,7 @@ module.exports = {
   sanitizeDeviation,
   sanitizeEvidenceContext,
   sanitizeTrend,
+  sanitizeReadinessSignal,
   buildPlanSystemPrompt,
   buildPlanUserPrompt,
   sanitizePlanFacts,

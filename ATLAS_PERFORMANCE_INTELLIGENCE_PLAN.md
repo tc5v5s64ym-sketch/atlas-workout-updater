@@ -149,19 +149,22 @@ Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may dif
 
 ---
 
-## PR 352 — Readiness Signals
-**Model:** Sonnet (stop for Opus decision if logic gets philosophical)
+## PR 352 — Readiness Signals (GitHub PR #353)
+**Model:** Sonnet
+**Status:** ⏳ In progress
 
 **Goal:** Infer possible fatigue/readiness issues from deviations without overreacting to one bad session.
 
 **Approach:**
 - New `services/readinessSignal.js`: `computeReadiness(trend, deviationHistory)` → `{ signal, confidence, note }`.
-- `signal` ∈ `monitoring | possible_fatigue | likely_fatigue`.
-- One bad session alone = `monitoring`. Two consecutive below-expected = `monitoring` still. Three+ = `possible_fatigue`. Sustained with trend `declining` = `likely_fatigue`.
-- Never emits a strong signal from a single session.
-- Wire into coach facts as `readiness_signal`.
+- `signal` ∈ `monitoring | possible_fatigue | likely_fatigue`. `note` ∈ `null | 'consecutive_below_expected' | 'sustained_declining_trend'`.
+- streak 0 → monitoring/none. streak 1–2 → monitoring/low. streak 3+ → possible_fatigue/medium. streak 3+ + declining trend → likely_fatigue/high.
+- `insufficient_data` entries break the streak (not enough info to count as below_expected).
+- `sanitizeReadinessSignal` in coach.js whitelists vocab; monitoring/none collapses to null.
+- Wired into `GET /api/recommend/next` (`recommendation.readiness_signal`) and `sanitizeFacts` via `rec.readiness_signal`.
+- deviationHistory passed as empty array for now (no production deviation caller yet).
 
-**Files touched:** `services/readinessSignal.js` (new), `test/readinessSignal.test.js` (new).
+**Files touched:** `services/readinessSignal.js` (new), `test/readinessSignal.test.js` (new), `services/coach.js` (`sanitizeReadinessSignal` + `sanitizeFacts` + system prompt), `index.js` (read-only route), `test/coach.test.js`, `test/api-smoke.test.js`.
 
 **App test hold:** One bad bench day says "monitoring," not "strength loss confirmed."
 
