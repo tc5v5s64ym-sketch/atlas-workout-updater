@@ -4431,3 +4431,50 @@ test('mid-session substitution: handleSetLogged passes substitution into coach f
   assert.doesNotMatch(fn, /renderSubstitutionNotes/, 'handleSetLogged must NOT call renderSubstitutionNotes — removed in PR 345');
   assert.doesNotMatch(fn, /log-workout/, 'handleSetLogged must NOT call /api/log-workout — the coach layer is purely visual');
 });
+
+// Suggestion acknowledgment (PR 347 / coach-intelligence PR 345)
+// When Atlas surfaced a substitute suggestion and the user logs that exact exercise,
+// handleSetLogged suppresses the sub from the LLM facts and appends a short ack
+// instead. The match requires both logged name AND prescribed name to agree with
+// the stored lastSuggestion — preventing stale suggestions from misfiring on
+// unrelated substitutions later in the session.
+
+test('suggestion acknowledgment: handleSubstituteSuggested stores prescribed and recommendation from detail', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSubstituteSuggested(');
+  const fn = cc.slice(start, start + 600);
+  assert.match(fn, /lastSuggestion\s*=/, 'handleSubstituteSuggested must assign lastSuggestion');
+  assert.match(fn, /prescribed/, 'handleSubstituteSuggested must store prescribed from detail');
+  assert.match(fn, /recommendation/, 'handleSubstituteSuggested must store recommendation from detail');
+  assert.match(fn, /typeof recommendation.*string|typeof.*recommendation.*===.*string/, 'handleSubstituteSuggested must type-guard recommendation before storing');
+});
+
+test('suggestion acknowledgment: handleSetLogged guards lastSuggestion types before comparing', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSetLogged(');
+  const end = cc.indexOf('  async function handlePreviewReady(');
+  const fn = cc.slice(start, end > start ? end : start + 4000);
+  assert.match(fn, /typeof lastSuggestion\.recommendation.*string/, 'must guard lastSuggestion.recommendation is a string');
+  assert.match(fn, /typeof lastSuggestion\.prescribed.*string/, 'must guard lastSuggestion.prescribed is a string');
+  assert.match(fn, /prescribedName/, 'must extract prescribedName from the substitution object');
+});
+
+test('suggestion acknowledgment: handleSetLogged scopes match to both logged and prescribed names', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSetLogged(');
+  const end = cc.indexOf('  async function handlePreviewReady(');
+  const fn = cc.slice(start, end > start ? end : start + 4000);
+  assert.match(fn, /lastSuggestion\.recommendation/, 'suggestMatch must compare against lastSuggestion.recommendation');
+  assert.match(fn, /lastSuggestion\.prescribed/, 'suggestMatch must also compare against lastSuggestion.prescribed');
+  assert.match(fn, /prescribedName\.toLowerCase\(\)/, 'prescribedName comparison must be case-insensitive');
+});
+
+test('suggestion acknowledgment: handleSetLogged suppresses substitution from LLM on match and appends ack', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('async function handleSetLogged(');
+  const end = cc.indexOf('  async function handlePreviewReady(');
+  const fn = cc.slice(start, end > start ? end : start + 4000);
+  assert.match(fn, /suggestMatch\s*\?\s*undefined\s*:\s*primarySub/, 'must suppress substitution from LLM facts when suggestMatch is true');
+  assert.match(fn, /Good call.*you went with|you went with.*Intent preserved/, 'must append deterministic ack text on match');
+  assert.match(fn, /if\s*\(\s*suggestMatch/, 'ack must be gated on suggestMatch');
+});

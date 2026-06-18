@@ -133,4 +133,58 @@ Atlas: Suggested substitute: Romanian Deadlift
 
 **No implementation. Plan only.**
 
-**Status:** Not started — awaiting PR 344 review.
+**Status:** ✅ Design complete (below)
+
+---
+
+### UI Audit — Current bubble inventory (post PR 344)
+
+Six distinct Atlas surfaces exist in the conversation thread:
+
+| Surface | Trigger | LLM? | Frequency |
+|---|---|---|---|
+| Suggested workout card | Tile click → `typeSuggestedWorkout` (cc.js:575) | Yes — plan voice | Once per session |
+| Set readback + coaching | `atlas:set-logged` → `handleSetLogged` (cc.js:784) | Yes — set reaction | Per logged set |
+| Substitution audit note | `renderSubstitutionNotes` (cc.js:921) inside set-logged or preview-ready | Yes — `voiceSubstitution` | Per detected substitution |
+| End-of-session review | `atlas:preview-ready` → `handlePreviewReady` (cc.js:855) | No | Once per save |
+| Substitute suggestion (PR 344) | `atlas:substitute-suggested` → `handleSubstituteSuggested` (cc.js:932) | No | Per constraint message |
+| Coach chat reply | `atlas:chat-message` → `handleChatMessage` (cc.js:1221) | Yes — Gemini chat | Per chat turn |
+
+### Friction points identified
+
+**1. Suggestion → audit duplication (highest impact)**
+Flow: User says "Platform busy" → substitute card appears ("Romanian Deadlift, Excellent match. Maintains hip hinge pattern."). User then logs RDL → audit appears ("Romanian Deadlift replaced Deadlift. Intent preserved."). The audit repeats what the suggestion card already said. Atlas sounds like two systems comparing notes rather than one coach following through.
+
+**2. Two sequential LLM calls in one `handleSetLogged` bubble (latency + coherence)**
+When a logged set includes a substitution, `handleSetLogged` fires `getInWorkoutNote` (set reaction → `/api/coach/message`) and then `renderSubstitutionNotes` → `voiceSubstitution` (substitution voicing → another `/api/coach/message`). Two round-trips produce two separately-voiced segments in one bubble — the set reaction and the substitution note can clash in tone. A single call with both facts would produce coherent prose and cut latency.
+
+**3. Substitution concept rendered three ways (maintenance burden)**
+- Pre-logging: deterministic `handleSubstituteSuggested` card
+- Mid-session audit: `renderSubstitutionNotes` with optional Gemini voicing
+- End-of-session audit: same `renderSubstitutionNotes` code, different context
+Three code paths for one concept. The voicing inputs differ enough that full unification isn't warranted, but the framing could share a template.
+
+### Keep / evaluate verdicts
+
+- **Keep:** user message bubble, parsed workout trust card (preview/approve), end-of-session review, freestyle greeting, plan narration card (already one coherent structured block).
+- **Evaluate for PR 345:** friction point 1 — suggestion acknowledgment in audit.
+- **Evaluate for PR 346:** friction point 2 — collapse two LLM calls into one.
+- **Defer:** friction point 3 — tri-path substitution rendering is a refactor, not a user-visible problem.
+
+### Proposed architecture
+
+**PR 345 — Substitute suggestion acknowledgment** (`public/coach-conversation.js` only)
+Add a session-level variable `lastSuggestion = null` in coach-conversation.js. On `atlas:substitute-suggested`, store `{ prescribed, recommendation }`. In `handleSetLogged`, before passing the primary substitution to `getInWorkoutNote`, check whether both the logged exercise matches `lastSuggestion.recommendation` AND the prescribed exercise matches `lastSuggestion.prescribed`. If both match: omit the substitution from the LLM facts (clean set reaction only) and append a short deterministic ack ("Good call — you went with [logged]. Intent preserved.") after the note types out; clear `lastSuggestion`. Non-matching substitutions go through the normal LLM path unchanged. Note: `renderSubstitutionNotes` was removed by main's consolidation PR (PR #345 in the performance-intelligence series); the integration point shifted accordingly to `handleSetLogged`.
+
+Scope: pure `coach-conversation.js`. No server changes, no trust loop, no schema change. One concern: `lastSuggestion` is session-scoped (in-memory), so a page reload clears it — acceptable; the suggestion card was only visible in that session anyway.
+
+**PR 346 — Collapse set + substitution into one LLM call** (`coach-conversation.js` + minor `index.js` extension)
+Extend the `/api/coach/message` `set` kind to accept an optional `substitution` field alongside `set` in `facts`. When both are present, the coach prompt produces a single voiced response covering the set reaction and the substitution acknowledgment. In `handleSetLogged`, detect whether substitutions are present and, if so, pass both to the combined call instead of making two separate requests.
+
+Scope: `services/coach.js` (prompt extension), `index.js` (sanitizeSubstitution whitelist check — already whitelisted), `coach-conversation.js` (combined call logic). Does NOT touch the write path. Requires a new test in `test/coach.test.js` for the combined facts shape.
+
+### Smallest safe PR sequence
+
+1. **PR 345** — Suggestion acknowledgment. Pure client-side, lowest risk, directly addresses the most user-visible duplication. File: `public/coach-conversation.js`. **Status: ⏳ In progress.**
+2. **PR 346** — Combined LLM call. Deferred — pay this complexity tax only if double-LLM latency is felt in practice.
+3. **No PR for friction point 3** — the tri-path rendering is a refactor with no user-visible benefit today. Re-evaluate when a fourth substitution surface is added.
