@@ -1,6 +1,6 @@
 # Atlas Performance Intelligence — Execution Plan
 
-PRs 345–355. Start numbering at 345 because PR 344 already merged.
+Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may differ). Start numbering at 345 because PR 344 already merged.
 
 **Global rules**
 - One PR at a time. Stop after every PR. Do not merge. Do not continue without owner approval.
@@ -56,9 +56,9 @@ PRs 345–355. Start numbering at 345 because PR 344 already merged.
 
 ---
 
-## PR 347 — Expected Performance Engine
+## Roadmap Step 347 — Expected Performance Engine (GitHub PR #348)
 **Model:** Sonnet
-**Status:** ⏳ In progress
+**Status:** ⏳ In progress (GitHub PR #348)
 
 **Goal:** Given today's weight/reps/RIR, estimate expected performance from recent history.
 
