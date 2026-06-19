@@ -51,6 +51,7 @@ const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseB
 const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
+const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1044,18 +1045,9 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   // client explicitly sends plan_completed — if it's absent, plan_state stays
   // null so the coach isn't told "all exercises still outstanding" using stale
   // data. Frontend wiring (PR 358) is required before this becomes non-null.
-  const { computePlanState } = require('./services/sessionPlanExecutor');
-  const planNames = Array.isArray(cc.current_plan)
-    ? cc.current_plan.map(e => (e && typeof e === 'object' ? (typeof e.name === 'string' ? e.name.trim() : null) : (typeof e === 'string' ? e.trim() : null))).filter(Boolean)
-    : [];
-  const completedNames = Array.isArray(cc.plan_completed)
-    ? cc.plan_completed.filter(n => typeof n === 'string' && n.trim()).map(n => n.trim())
-    : [];
-  // Gate on plan_completed being explicitly present — avoids stale "all remaining" when
-  // the client sends current_plan but hasn't wired plan_completed yet (pre-PR 358).
-  const plan_state = planNames.length > 0 && Array.isArray(cc.plan_completed)
-    ? computePlanState(planNames, completedNames)
-    : null;
+  // The gate lives in planStateFromContext so the LLM-down session-close fallback
+  // (Step 377) decides "is there an authoritative session state?" identically.
+  const plan_state = planStateFromContext(cc);
 
   return {
     recommended_label: read.recommended_label || null,
@@ -1087,9 +1079,17 @@ app.post('/api/coach/chat', async (req, res) => {
   if (!message) {
     return standardError(req, res, 'message string is required', null, 400);
   }
+  // Step 377: when the LLM is down, a session-close question ("Ok so we are
+  // done?") still gets a deterministic engine answer from computePlanState rather
+  // than dead-ending at "Coach is unavailable". This needs no Sheets access — the
+  // plan state rides in on the client context.
   if (!coach.isConfigured()) {
-    return standardSuccess(req, res, 'Coach chat unavailable — Gemini not configured', {
-      message: null, configured: false, model: coach.coachModel()
+    const closeAnswer = buildSessionCloseAnswer(message, planStateFromContext(req.body && req.body.context));
+    return standardSuccess(req, res, closeAnswer
+      ? 'Coach chat unavailable — deterministic session-status answer'
+      : 'Coach chat unavailable — Gemini not configured', {
+      message: closeAnswer, configured: false, model: coach.coachModel(),
+      ...(closeAnswer ? { source: 'engine' } : {})
     });
   }
   try {
@@ -1114,9 +1114,19 @@ app.post('/api/coach/chat', async (req, res) => {
       message: reply, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
     });
   } catch (error) {
-    // Degrade gracefully — the client shows a templated fallback, never an error bubble.
-    return standardSuccess(req, res, 'Coach chat failed — use fallback', {
-      message: null, configured: true, model: coach.coachModel(), error: error.message
+    // Degrade gracefully — the client shows a templated fallback, never an error
+    // bubble. Step 377: a session-close question still resolves deterministically.
+    // plan_state derives purely from the client context (no Sheets needed), so we
+    // recompute it here rather than relying on buildChatContext — that way a read
+    // failure (Promise.all rejects before context is built) still resolves, exactly
+    // like the unconfigured path above. Whatever the throw's origin, the LLM-down
+    // session-close question is never a dead end.
+    const closeAnswer = buildSessionCloseAnswer(message, planStateFromContext(req.body && req.body.context));
+    return standardSuccess(req, res, closeAnswer
+      ? 'Coach chat failed — deterministic session-status answer'
+      : 'Coach chat failed — use fallback', {
+      message: closeAnswer, configured: true, model: coach.coachModel(),
+      ...(closeAnswer ? { source: 'engine' } : { error: error.message })
     });
   }
 });

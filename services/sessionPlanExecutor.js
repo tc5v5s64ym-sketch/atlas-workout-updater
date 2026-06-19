@@ -217,4 +217,104 @@ function clampCursorAfterRemoval(index, removedIdx, newLength) {
   return Math.max(0, next);
 }
 
-module.exports = { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution, clampCursorAfterRemoval };
+/**
+ * planStateFromContext(context) → plan_state | null   (Step 377)
+ *
+ * Pure extraction of the authoritative plan_state from a raw chat-context object
+ * ({ current_plan, plan_completed }). This is the SINGLE gate shared by the
+ * /api/coach/chat snapshot builder (buildChatContext) and the LLM-down fallback
+ * path, so both decide "do we have an authoritative session state?" identically:
+ *
+ *   - current_plan supplies the planned exercise names (strings or { name }), and
+ *   - plan_completed MUST be present as an array (even []). When it is absent the
+ *     client hasn't wired completed-tracking, so we return null rather than tell
+ *     the coach "all exercises still outstanding" from stale data (the Step 375
+ *     gate). An empty array is honored — that means "session started, nothing
+ *     logged yet", which is authoritative.
+ *
+ * Returns the computePlanState result, or null when there is no authoritative
+ * session state. Pure — no I/O.
+ */
+function planStateFromContext(context) {
+  const cc = context && typeof context === 'object' ? context : {};
+  const planNames = Array.isArray(cc.current_plan)
+    ? cc.current_plan
+        .map(e => (e && typeof e === 'object'
+          ? (typeof e.name === 'string' ? e.name.trim() : null)
+          : (typeof e === 'string' ? e.trim() : null)))
+        .filter(Boolean)
+    : [];
+  if (planNames.length === 0 || !Array.isArray(cc.plan_completed)) return null;
+  const completedNames = cc.plan_completed
+    .filter(n => typeof n === 'string' && n.trim())
+    .map(n => n.trim());
+  return computePlanState(planNames, completedNames);
+}
+
+// Step 377 — Session-close question detection (deterministic).
+//
+// When the LLM coach is down or unconfigured, a question like "Ok so we are
+// done?" used to dead-end at "Coach is unavailable". The engine already knows the
+// answer from computePlanState, so we recognize the family of session-CLOSE
+// questions here and answer them deterministically. Scoped tight on purpose:
+// done / finished / complete / "that's it" / "that's everything" framings — NOT
+// the separate "what should I do today?" planning ask.
+const SESSION_CLOSE_PATTERNS = [
+  /\bwe(?:'re| are)?\s+(?:all\s+)?done\b/,   // "we done", "we're done", "we are done", "are we done"
+  /\b(?:i'?m|am i)\s+(?:all\s+)?done\b/,     // "i'm done", "am i done"
+  /\ball done\b/,                            // "all done"
+  /\b(?:i'?m|we'?re|are we)\s+(?:all\s+)?finished\b/,
+  /\bthat'?s? (?:it|all|everything)\b/,      // "that's it", "thats everything", "that all"
+  /\bis that (?:it|all|everything)\b/,       // "is that it", "is that everything"
+  /\bwrapp?ed up\b/,                         // "wrapped up", "wraped up"
+  /\bdone (?:for (?:the day|today)|here|now)\b/, // "done for the day", "done here"
+  // A message that is essentially just the close word — "done?", "ok done",
+  // "so all finished?", "complete". Anchored whole-message so it never fires on
+  // "I'm not done" or "done a set" mid-sentence.
+  /^\s*(?:ok(?:ay)?,?\s+)?(?:so\s+)?(?:all\s+)?(?:done|finished|complete)\b[\s.!?]*$/,
+];
+function detectSessionCloseQuestion(message) {
+  const t = String(message || '').toLowerCase();
+  if (!t.trim()) return false;
+  return SESSION_CLOSE_PATTERNS.some(re => re.test(t));
+}
+
+/**
+ * buildSessionCloseAnswer(message, planState) → string | null   (Step 377)
+ *
+ * Deterministic answer to a session-close question. Returns null (so the caller's
+ * generic fallback runs) unless BOTH hold:
+ *   1. the message is a recognized session-close question, AND
+ *   2. planState carries an authoritative, non-empty plan.
+ *
+ * When it fires:
+ *   - plan complete  → confirm the session is done and point at the save step.
+ *   - work remaining → say it's not done and name what is still on the list.
+ *
+ * The engine owns the count and the names; this only words them — it never writes
+ * and never triggers the save (the lifter still says "log it"). Pure.
+ */
+function buildSessionCloseAnswer(message, planState) {
+  if (!detectSessionCloseQuestion(message)) return null;
+  if (!planState || !Array.isArray(planState.planned) || planState.planned.length === 0) return null;
+
+  if (planState.isComplete) {
+    const n = planState.planned.length;
+    return `That's your plan done — ${n} exercise${n === 1 ? '' : 's'} complete. Say "log it" to save.`;
+  }
+
+  const remaining = Array.isArray(planState.remaining) ? planState.remaining : [];
+  const left = remaining.length;
+  return `Not done yet — ${left} still on your list: ${remaining.join(', ')}. Knock ${left === 1 ? 'it' : 'those'} out, then say "log it" to save.`;
+}
+
+module.exports = {
+  computePlanState,
+  nextExerciseFromPlan,
+  isPlanComplete,
+  applySubstitution,
+  clampCursorAfterRemoval,
+  planStateFromContext,
+  detectSessionCloseQuestion,
+  buildSessionCloseAnswer,
+};
