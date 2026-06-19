@@ -906,15 +906,15 @@
     // detail.planIsComplete is computed in emitSetLogged (public/app.js);
     // keep in sync with services/sessionCloseout.js.
     if (detail.planIsComplete) {
-      const session = typeof getActivePlannedSession === ‘function’ ? getActivePlannedSession() : null;
+      const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
       const count = session ? session.exercises.length : null;
-      const closeout = document.createElement(‘div’);
-      closeout.className = ‘session-closeout’;
+      const closeout = document.createElement('div');
+      closeout.className = 'session-closeout';
       closeout.textContent = count
-        ? `That’s your plan done — ${count} exercise${count !== 1 ? ‘s’ : ‘’} complete. Say “done” or take a screenshot to save.`
-        : ‘Plan complete. Say “done” or take a screenshot to save.’;
+        ? `That's your plan done — ${count} exercise${count !== 1 ? 's' : ''} complete. Say "done" or take a screenshot to save.`
+        : 'Plan complete. Say "done" or take a screenshot to save.';
       bubble.appendChild(closeout);
-      setWorkoutPlaceholder(‘Say “done” to save your session’);
+      setWorkoutPlaceholder('Say "done" to save your session');
     } else {
       // Next-exercise handoff: append a short line pointing at the next exercise
       // in the plan. The engine owns the ordering — we only word it. Anchor on the
@@ -923,8 +923,8 @@
       const lastLogged = exercises[exercises.length - 1];
       const nextEx = await getNextExerciseInPlan(lastLogged.exercise);
       if (nextEx) {
-        const handoff = document.createElement(‘div’);
-        handoff.className = ‘next-exercise-handoff’;
+        const handoff = document.createElement('div');
+        handoff.className = 'next-exercise-handoff';
         handoff.textContent = `Moving on — next up: ${nextEx}.`;
         bubble.appendChild(handoff);
         // Advance the composer placeholder to the next exercise’s FULL prescription
@@ -932,7 +932,7 @@
         // the plan. Falls back to the bare name if the plan entry has no numbers.
         let placeholder = nextEx;
         try {
-          const map = (typeof getPlanTodayByName === ‘function’) ? await getPlanTodayByName() : null;
+          const map = (typeof getPlanTodayByName === 'function') ? await getPlanTodayByName() : null;
           const nextRec = map ? map.get(String(nextEx).toLowerCase()) : null;
           placeholder = formatNextPlaceholder(nextRec) || nextEx;
         } catch { /* best effort — fall back to the name */ }
