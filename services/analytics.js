@@ -1805,15 +1805,23 @@ function buildRecentSessions(logRows, effortRows, options = {}) {
         date: r.date_clean,
         exercises: new Set(),
         sets_count: 0,
-        total_volume: 0
+        total_volume: 0,
+        lift_sets: {}
       });
     }
     const s = sessionMap.get(r.session_id);
     if (r.date_clean > s.date) s.date = r.date_clean;
-    if (r.canonical_exercise || r.exercise) s.exercises.add(r.canonical_exercise || r.exercise);
+    const exerciseName = r.canonical_exercise || r.exercise;
+    if (exerciseName) s.exercises.add(exerciseName);
     if (isPositiveFinite(r.weight) && isPositiveFinite(r.reps)) {
       s.sets_count++;
       s.total_volume += r.weight * r.reps;
+      if (exerciseName) {
+        if (!s.lift_sets[exerciseName]) s.lift_sets[exerciseName] = [];
+        if (s.lift_sets[exerciseName].length < 12) {
+          s.lift_sets[exerciseName].push({ weight: r.weight, reps: r.reps, rir: r.rir != null ? r.rir : null });
+        }
+      }
     }
   });
 
@@ -1826,6 +1834,7 @@ function buildRecentSessions(logRows, effortRows, options = {}) {
       exercises: [...s.exercises],
       sets_count: s.sets_count,
       total_volume: Math.round(s.total_volume),
+      lift_sets: s.lift_sets,
       effort: effortBySession.get(s.session_id) || null
     }));
 

@@ -443,6 +443,7 @@ function buildChatSystemPrompt(context) {
     modeFragment,
     '',
     'Hard rules:',
+    '- HISTORY RULE: when the lifter asks what they did in a past workout — "what did I bench last session?", "what were my squat sets?", "how did June 11 go?" — answer ONLY from `recent_sessions[*].lift_sets` (the actual logged sets). Each entry lists the real sets per exercise in order: weight × reps @ RIR N. Never substitute prescription, current_plan, recommendation, benchmark, or working-weight data for actual logged history. If the lift or session is not in the snapshot, say so plainly.',
     '- Ground every specific in the SNAPSHOT. Never invent or change weights, reps, RIR, dates, PRs, trends, or session counts that are not in the snapshot.',
     "- If the snapshot does not contain what you need, say you don't have that data yet — never guess a number.",
     '- General training, form, and programming advice is fine, but tie any specifics back to the snapshot.',
@@ -550,12 +551,33 @@ function sanitizeConstraint(v) {
 // Forward ONLY a known, bounded snapshot — never arbitrary client object keys.
 function sanitizeChatContext(context) {
   const c = context && typeof context === 'object' ? context : {};
-  const recent_sessions = Array.isArray(c.recent_sessions) ? c.recent_sessions.slice(0, 6).map(s => ({
-    date: strOrNull(s && s.date),
-    exercises: Array.isArray(s && s.exercises) ? s.exercises.slice(0, 12).map(strOrNull).filter(Boolean) : [],
-    sets: numOrNull(s && s.sets),
-    volume: numOrNull(s && s.volume)
-  })) : [];
+  const recent_sessions = Array.isArray(c.recent_sessions) ? c.recent_sessions.slice(0, 6).map(s => {
+    const rawLiftSets = s && s.lift_sets && typeof s.lift_sets === 'object' ? s.lift_sets : {};
+    const lift_sets = {};
+    let exerciseCount = 0;
+    for (const rawName of Object.keys(rawLiftSets)) {
+      if (exerciseCount >= 8) break;
+      const name = strOrNull(rawName);
+      if (!name) continue;
+      const sets = Array.isArray(rawLiftSets[rawName])
+        ? rawLiftSets[rawName].slice(0, 12).map(set => {
+            if (!set || typeof set !== 'object') return null;
+            const weight = numOrNull(set.weight);
+            const reps = numOrNull(set.reps);
+            if (weight == null || weight <= 0 || reps == null || reps <= 0) return null;
+            return { weight, reps, rir: set.rir != null ? numOrNull(set.rir) : null };
+          }).filter(Boolean)
+        : [];
+      if (sets.length) { lift_sets[name] = sets; exerciseCount++; }
+    }
+    return {
+      date: strOrNull(s && s.date),
+      exercises: Array.isArray(s && s.exercises) ? s.exercises.slice(0, 12).map(strOrNull).filter(Boolean) : [],
+      sets: numOrNull(s && s.sets),
+      volume: numOrNull(s && s.volume),
+      lift_sets
+    };
+  }) : [];
   const readiness = Array.isArray(c.readiness) ? c.readiness.slice(0, 8).map(r => ({
     pattern: strOrNull(r && r.pattern),
     status: strOrNull(r && r.status),
