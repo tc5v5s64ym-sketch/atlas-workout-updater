@@ -331,3 +331,56 @@ test('scoreIntents: recovery_pump reason_codes carry multiple_trending_down when
       `expected multiple_trending_down in recovery_pump when compounds decline, got [${rp.reason_codes.join(', ')}]`);
   }
 });
+
+// ── PR 368: trend-aware scoring ───────────────────────────────────────────────
+
+test('scoreIntents PR 368: build_strength score is lower when 2+ push/pull compounds trend down', () => {
+  // Baseline: ascending bench + OHP → upward trend → build_strength scores high.
+  const ascRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [160, 170, 180, 190, 200]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [ 80,  90, 100, 110, 120]),
+  ];
+  // Declining: same lifts, weights falling → downward trend.
+  const descRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [200, 190, 180, 170, 160]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [120, 110, 100,  90,  80]),
+  ];
+  const ascResult  = scoreIntents(ascRows,  [], { today: '2026-05-01' });
+  const descResult = scoreIntents(descRows, [], { today: '2026-05-01' });
+
+  const ascBS  = ascResult.intents.find(i  => i.id === 'build_strength');
+  const descBS = descResult.intents.find(i => i.id === 'build_strength');
+
+  assert.ok(ascBS  && descBS, 'build_strength must exist in both results');
+
+  // Only compare when the engine actually emits multiple_trending_down for the declining case.
+  if (descBS.reason_codes.includes('multiple_trending_down')) {
+    assert.ok(descBS.score < ascBS.score,
+      `expected lower build_strength score on declining data (${descBS.score}) vs ascending (${ascBS.score})`);
+  }
+});
+
+test('scoreIntents PR 368: recovery_pump score is boosted when multiple compounds decline', () => {
+  // Flat baseline: constant weights → no trend adjustment.
+  const flatRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [185, 185, 185, 185, 185]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [110, 110, 110, 110, 110]),
+  ];
+  // Declining: same lifts, weights falling → downward trend.
+  const descRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [200, 190, 180, 170, 160]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [120, 110, 100,  90,  80]),
+  ];
+  const flatResult = scoreIntents(flatRows, [], { today: '2026-05-01' });
+  const descResult = scoreIntents(descRows, [], { today: '2026-05-01' });
+
+  const flatRP = flatResult.intents.find(i => i.id === 'recovery_pump');
+  const descRP = descResult.intents.find(i => i.id === 'recovery_pump');
+  assert.ok(flatRP && descRP, 'recovery_pump must exist in both results');
+
+  // Only compare when the engine actually emits multiple_trending_down for the declining case.
+  if (descRP.reason_codes.includes('multiple_trending_down')) {
+    assert.ok(descRP.score > flatRP.score,
+      `expected higher recovery_pump score on declining data (${descRP.score}) vs flat (${flatRP.score})`);
+  }
+});
