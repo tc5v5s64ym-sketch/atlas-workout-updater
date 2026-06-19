@@ -166,7 +166,7 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 376 — Suppress cross-lift history contamination
 
-**Status:** ✅ complete (GitHub PR #395)  
+**Status:** ✅ complete (GitHub PR #399)  
 **Type:** Trust-critical
 
 **Exact failure prevented:** Leg Extension commentary claimed today's 60 was below a recent working range of 105–170 — numbers from an unrelated lift. Almost certainly the pre-override `liftCode` history-merge gap (BACKLOG SESSION_DESIGN AC5a). If same-lift evidence is not clean, suppress the claim rather than cite foreign history.
