@@ -784,10 +784,9 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     : null;
 
   // Load sanity guard: prevent impossible prescriptions from reaching the UI.
-  // Only applied to history-derived targets; the just-logged path reflects what
-  // the lifter actually lifted and is trusted as-is.
-  const fromJustLogged = justLogged && isPositiveFinite(Number(justLogged.weight));
-  if (!fromJustLogged && Number.isFinite(nextWeight)) {
+  // Applied unconditionally — the just-logged weight is trusted as the lifter's
+  // actual set, but the *next target* must still be physically plausible.
+  if (Number.isFinite(nextWeight)) {
     const sanity = sanitizeLoad(exercise_name, nextWeight, best_weight);
     if (sanity.sanitized) {
       nextWeight = sanity.weight;

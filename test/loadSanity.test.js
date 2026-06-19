@@ -217,6 +217,31 @@ test('recommendNextSet: GOLDEN FIXTURE — lateral raises never prescribed at 17
   }
 });
 
+test('recommendNextSet: GOLDEN FIXTURE — justLoggedSet at 170 lb lateral raise still blocked', () => {
+  const { recommendNextSet } = require('../services/analytics');
+
+  // The in-workout path passes justLoggedSet. Even when the lifter's just-logged set
+  // is at a corrupt/colliding weight, the *next target* must still pass the ceiling.
+  const liftCode = 'LRA01';
+  const rows = [
+    ['2026-05-01', 'S1', 'Lateral Raises', 'Lateral Raises', 'Shoulders', liftCode, '1', '170', '5', '2', ''],
+    ['2026-05-08', 'S2', 'Lateral Raises', 'Lateral Raises', 'Shoulders', liftCode, '1', '170', '5', '2', ''],
+  ];
+
+  const rec = recommendNextSet(rows, liftCode, {
+    today: '2026-06-01',
+    justLoggedSet: { weight: 170, reps: 5, rir: 2 },
+  });
+
+  if (rec.next_target !== null) {
+    assert.ok(
+      rec.next_target.weight <= 100,
+      `Expected next_target.weight ≤ 100 lb (ceiling), got ${rec.next_target.weight}`
+    );
+    assert.notEqual(rec.next_target.weight, 170, 'Lateral Raises must never be prescribed at 170 lb via justLoggedSet path');
+  }
+});
+
 test('recommendNextSet: normal lateral raise history (15 lb) prescribes plausible weight', () => {
   const { recommendNextSet } = require('../services/analytics');
 
