@@ -690,6 +690,126 @@ test('step-375: current_plan WITHOUT plan_completed leaves plan_state null (gate
   }
 });
 
+test('step-377: coach/chat unconfigured + session-close question returns a deterministic engine answer (not null)', async () => {
+  // The exact failure Step 377 prevents: "Ok so we are done?" used to dead-end at
+  // "Coach is unavailable" when the LLM was down. The engine knows the answer from
+  // the plan_state riding in on the client context — answer it deterministically.
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'Ok so we are done?',
+      context: {
+        current_plan: [
+          { name: 'Deadlift',     weight: 315, reps: 5,  sets: 3, rir: 2 },
+          { name: 'Lat Pulldown', weight: 160, reps: 10, sets: 3, rir: 2 }
+        ],
+        plan_completed: ['Deadlift']
+      }
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, false);
+  assert.equal(body.data.source, 'engine', 'a deterministic engine answer is flagged as such');
+  assert.ok(body.data.message, 'message is non-null — no more "Coach is unavailable" dead end');
+  assert.match(body.data.message, /not done/i, 'reports the session is not finished');
+  assert.match(body.data.message, /Lat Pulldown/, 'names the outstanding lift');
+});
+
+test('step-377: coach/chat unconfigured + session-complete close question confirms done and points at save', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'are we done?',
+      context: {
+        current_plan: [{ name: 'Deadlift' }, { name: 'Lat Pulldown' }],
+        plan_completed: ['Deadlift', 'Lat Pulldown']
+      }
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.source, 'engine');
+  assert.match(body.data.message, /done/i);
+  assert.match(body.data.message, /log it/i, 'points the lifter at the save step');
+});
+
+test('step-377: coach/chat unconfigured + close question but NO plan_completed still hands back null (client fallback)', async () => {
+  // Without an authoritative plan_state the engine must not guess — the generic
+  // client fallback runs instead, same stale-data guard as the snapshot path.
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'are we done?',
+      context: { current_plan: [{ name: 'Deadlift' }] } // plan_completed absent
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.message, null, 'no authoritative state → null, client falls back');
+  assert.equal(body.data.configured, false);
+});
+
+test('step-377: coach/chat unconfigured + non-close question is unaffected (still null)', async () => {
+  // Guard against over-firing: a normal question with full plan context must NOT
+  // get a session-status answer — only close questions do.
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'how is my bench trending?',
+      context: {
+        current_plan: [{ name: 'Deadlift' }, { name: 'Lat Pulldown' }],
+        plan_completed: ['Deadlift']
+      }
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.message, null, 'non-close question → no engine answer');
+});
+
+test('step-377: coach/chat throws mid-session on a close question → deterministic engine answer from plan_state', async () => {
+  // The error path: Gemini configured but fails (timeout/500) AFTER buildChatContext
+  // computed plan_state. A close question must still resolve from the engine rather
+  // than collapsing to the generic "use fallback" null.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = 'Gemini request failed (503)';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: "that's everything right?",
+        context: {
+          current_plan: [{ name: 'Deadlift' }, { name: 'Lat Pulldown' }],
+          plan_completed: ['Deadlift']
+        }
+      })
+    });
+    assert.equal(response.status, 200, 'a coach failure must not surface as an HTTP error');
+    assert.equal(body.data.source, 'engine');
+    assert.match(body.data.message, /Lat Pulldown/, 'names the outstanding lift from the computed plan_state');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.throwError = null;
+  }
+});
+
+test('step-377: coach/chat session-close fallback never appends to a sheet', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = false;
+  await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'are we done?',
+      context: {
+        current_plan: [{ name: 'Deadlift' }],
+        plan_completed: ['Deadlift']
+      }
+    })
+  });
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'the deterministic close answer is read-only');
+});
+
 test('api smoke: coach/chat returns null propose_edit when none proposed', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.chatEditProposal = null;

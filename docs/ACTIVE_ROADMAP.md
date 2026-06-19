@@ -181,10 +181,18 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 377 — Deterministic fallback for session-close questions
 
-**Status:** queued  
+**Status:** ✅ complete (GitHub PR #TBD)  
 **Type:** Correctness
 
-**Exact failure prevented:** "Ok so we are done?" returned coach-unavailable instead of resolving session status. Investigate API/model failure vs malformed payload vs missing fallback; add a deterministic engine-computed session-status answer (from `computePlanState`) when the LLM is down.
+**Exact failure prevented:** "Ok so we are done?" returned coach-unavailable instead of resolving session status.
+
+**Root cause (three gaps, no malformed payload):** `/api/coach/chat` returns `message:null` both when Gemini is unconfigured (`index.js`, the early return) and when it errors/times out (the catch block) — and the client's `chatFallback` (`public/coach-conversation.js`) has no branch for session-close questions, so "Ok so we are done?" (no greeting, no digits) fell through to the generic "Coach is unavailable right now." The authoritative `plan_state` rides in on the client context (Step 375) but neither LLM-down path consulted it.
+
+**Scope:** `services/sessionPlanExecutor.js` + `index.js` (read-only `/api/coach/chat` route only — no write path). Added three pure engine functions: `detectSessionCloseQuestion(message)` (recognizes "are we done?", "that's it?", "all finished?", etc. — tight, never fires on planning/logging asks), `buildSessionCloseAnswer(message, planState)` (confirms a complete plan and points at the save step, or names the outstanding lifts — engine owns the count/names, never writes, never triggers the save), and `planStateFromContext(context)` (the SINGLE plan_state gate now shared by `buildChatContext` and both fallback paths, so all three decide "is there authoritative session state?" identically). Both LLM-down paths in the chat route now answer session-close questions from the engine (`source:'engine'`) and fall back to `message:null` otherwise. No schema, no parser, no LLM, no trust-loop (`public/app.js`) change.
+
+**Tests:** 11 engine unit tests in `test/sessionPlanExecutor.test.js` (gate, detector positive/negative, complete/remaining/singular grammar, null guards) + 6 integration tests in `test/api-smoke.test.js` (unconfigured close→engine answer; complete→done+save; no plan_completed→null; non-close→null; throw mid-session→engine answer; read-only/no append).
+
+**Deferred (BACKLOG):** the pure client-side timeout edge (client `COACH_LLM_TIMEOUT_MS` 9s firing before the server responds) — the server's deterministic answer wins in the normal LLM-outage case (server Gemini timeout 8s < client 9s), so a client-only mirror of `computePlanState` (a keep-in-sync anti-pattern) is intentionally NOT added here.
 
 ---
 

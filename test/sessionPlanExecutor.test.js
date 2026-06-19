@@ -1,7 +1,7 @@
 'use strict';
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution } = require('../services/sessionPlanExecutor');
+const { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution, planStateFromContext, detectSessionCloseQuestion, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
 
 /* ===== Shape ===== */
 
@@ -401,4 +401,111 @@ test('clampCursorAfterRemoval: empty result clamps to 0', () => {
 
 test('clampCursorAfterRemoval: non-integer index defaults to 0', () => {
   assert.equal(clampCursorAfterRemoval(undefined, 0, 1), 0);
+});
+
+/* ===== Step 377 — planStateFromContext (shared gate) ===== */
+
+test('step-377: planStateFromContext returns plan_state when current_plan + plan_completed ([]) are present', () => {
+  const ps = planStateFromContext({
+    current_plan: [{ name: 'Deadlift' }, { name: 'Lat Pulldown' }],
+    plan_completed: []
+  });
+  assert.ok(ps, 'an empty plan_completed is authoritative — not null');
+  assert.deepEqual(ps.remaining, ['Deadlift', 'Lat Pulldown']);
+  assert.equal(ps.isComplete, false);
+});
+
+test('step-377: planStateFromContext gates to null when plan_completed is ABSENT (stale-data guard)', () => {
+  const ps = planStateFromContext({
+    current_plan: [{ name: 'Deadlift' }, { name: 'Lat Pulldown' }]
+    // plan_completed intentionally missing
+  });
+  assert.equal(ps, null, 'no completed-tracking wired → no authoritative state');
+});
+
+test('step-377: planStateFromContext returns null when current_plan is empty', () => {
+  assert.equal(planStateFromContext({ current_plan: [], plan_completed: [] }), null);
+  assert.equal(planStateFromContext({}), null);
+  assert.equal(planStateFromContext(null), null);
+});
+
+test('step-377: planStateFromContext accepts string plan entries and drops completed lifts', () => {
+  const ps = planStateFromContext({
+    current_plan: ['Deadlift', 'Lat Pulldown'],
+    plan_completed: ['Deadlift']
+  });
+  assert.deepEqual(ps.remaining, ['Lat Pulldown']);
+  assert.deepEqual(ps.completed, ['Deadlift']);
+});
+
+/* ===== Step 377 — detectSessionCloseQuestion ===== */
+
+test('step-377: detectSessionCloseQuestion matches the named failure and close-question variants', () => {
+  const yes = [
+    'Ok so we are done?',
+    'are we done?',
+    'we done?',
+    "we're done right",
+    "I'm done",
+    'am i done',
+    'all done?',
+    "that's it?",
+    'thats everything',
+    'is that all?',
+    'is that everything',
+    'are we finished?',
+    'wrapped up?',
+    'done for the day?'
+  ];
+  for (const m of yes) assert.equal(detectSessionCloseQuestion(m), true, `should detect: ${m}`);
+});
+
+test('step-377: detectSessionCloseQuestion does NOT fire on planning / logging messages', () => {
+  const no = [
+    'what should I do today?',
+    'how is my bench trending?',
+    'Bench 225 5/2 5/2',
+    'lat pulldown machine is busy, doing rows next',
+    'should I deload?',
+    '',
+    null
+  ];
+  for (const m of no) assert.equal(detectSessionCloseQuestion(m), false, `should NOT detect: ${m}`);
+});
+
+/* ===== Step 377 — buildSessionCloseAnswer ===== */
+
+test('step-377: buildSessionCloseAnswer confirms a complete session and points at the save step', () => {
+  const ps = computePlanState(['Deadlift', 'Lat Pulldown'], ['Deadlift', 'Lat Pulldown']);
+  const ans = buildSessionCloseAnswer('Ok so we are done?', ps);
+  assert.match(ans, /done/i);
+  assert.match(ans, /2 exercises complete/i, 'names the completed count');
+  assert.match(ans, /log it/i, 'points at the save step');
+});
+
+test('step-377: buildSessionCloseAnswer names the outstanding lifts when work remains', () => {
+  const ps = computePlanState(['Deadlift', 'Lat Pulldown', 'Bench'], ['Deadlift']);
+  const ans = buildSessionCloseAnswer('are we done?', ps);
+  assert.match(ans, /not done/i);
+  assert.match(ans, /Lat Pulldown/);
+  assert.match(ans, /Bench/);
+  assert.ok(!/Deadlift/.test(ans), 'completed lift is not listed as remaining');
+});
+
+test('step-377: buildSessionCloseAnswer singular grammar for one remaining / one complete', () => {
+  const oneLeft = buildSessionCloseAnswer('done?', computePlanState(['Deadlift', 'Bench'], ['Deadlift']));
+  assert.match(oneLeft, /1 still on your list/i);
+  assert.match(oneLeft, /Knock it out/i);
+  const oneDone = buildSessionCloseAnswer('done?', computePlanState(['Deadlift'], ['Deadlift']));
+  assert.match(oneDone, /1 exercise complete/i, 'singular "exercise" for a one-lift plan');
+});
+
+test('step-377: buildSessionCloseAnswer returns null when the question is not a close question', () => {
+  const ps = computePlanState(['Deadlift'], []);
+  assert.equal(buildSessionCloseAnswer('what should I do today?', ps), null);
+});
+
+test('step-377: buildSessionCloseAnswer returns null when there is no authoritative plan state', () => {
+  assert.equal(buildSessionCloseAnswer('are we done?', null), null);
+  assert.equal(buildSessionCloseAnswer('are we done?', computePlanState([], [])), null, 'empty plan → no answer');
 });
