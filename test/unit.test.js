@@ -494,6 +494,50 @@ test('Step 373: currentPlanForChat reads the live planned session before the cac
   assert.match(fn, /ex\.canonicalName \|\| ex\.name/, 'plan name key must match resolveCompletedIdentity');
 });
 
+test('Step 373b: a declared swap is recorded and applied to the live session at log time', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // State + helper exist, and the helper is the keep-in-sync mirror of the engine.
+  assert.match(appSource, /let pendingSubstitution = null/, 'must declare pendingSubstitution state');
+  assert.match(appSource, /function applySessionSubstitution\(/, 'must define the live-session substitution helper');
+  assert.match(appSource, /keep in sync with applySubstitution in services\/sessionPlanExecutor\.js/,
+    'helper must carry the keep-in-sync marker to the engine');
+
+  // The swap is recorded when the lifter declares it (substitute suggestion path).
+  const suggestFn = appSource.slice(
+    appSource.indexOf('async function checkAndSuggestSubstitute'),
+    appSource.indexOf('async function checkAndSuggestSubstitute') + 900
+  );
+  assert.match(suggestFn, /pendingSubstitution = \{ prescribed:/, 'must record the prescribed lift on a declared swap');
+
+  // emitSetLogged applies the swap BEFORE the identity-resolution loop so the
+  // substitute (not the swapped-out lift) is what gets marked done.
+  const emitFn = appSource.slice(
+    appSource.indexOf('function emitSetLogged('),
+    appSource.indexOf('function emitSetLogged(') + 1400
+  );
+  const applyIdx = emitFn.indexOf('applySessionSubstitution(');
+  const loopIdx = emitFn.indexOf('for (const o of (logObjs');
+  assert.ok(applyIdx !== -1, 'emitSetLogged must apply the pending substitution');
+  assert.ok(applyIdx < loopIdx, 'substitution must be applied before resolveCompletedIdentity runs');
+
+  // The helper mutates the live session and re-renders the banner, and dedupes.
+  const helper = appSource.slice(
+    appSource.indexOf('function applySessionSubstitution('),
+    appSource.indexOf('function applySessionSubstitution(') + 1700
+  );
+  assert.match(helper, /renderActiveSessionBanner\(\)/, 'must re-render the banner after a swap');
+  assert.match(helper, /dupElsewhere/, 'must guard against duplicating an already-planned substitute');
+  assert.match(helper, /if \(subKey === prescKey\) return/, 'logging the prescribed lift itself must be a no-op');
+
+  // The declaration is cleared when the session ends.
+  const endFn = appSource.slice(
+    appSource.indexOf('function endPlannedSession()'),
+    appSource.indexOf('function endPlannedSession()') + 160
+  );
+  assert.match(endFn, /pendingSubstitution = null/, 'ending the session must clear any pending swap');
+});
+
 test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
   const convSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
 

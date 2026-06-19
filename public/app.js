@@ -1136,10 +1136,52 @@ function normalizePlanExercise(raw) {
  * No persistence; logging/preview/save stays exactly as it was. */
 let activePlannedSession = null;
 
+// Step 373b: when the lifter declares a swap for the current step ("Lat bar is
+// taken, I'll do seated rows instead"), we record the prescribed (swapped-out)
+// lift here. The NEXT logged exercise is treated as the substitute and replaces
+// that slot in the live session. Gated on an explicit swap declaration so it
+// never misfires on ordinary added work.
+let pendingSubstitution = null;
+
 // Read-only accessor for coach-conversation.js (coach layer must never mutate
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
 function getActivePlannedSession() { return activePlannedSession; }
+
+// Step 373b: replace a prescribed slot in the LIVE planned session with the
+// actually-logged substitute, so the swapped-out lift leaves remaining and the
+// substitute is what gets marked done. Inline mirror of applySubstitution in
+// services/sessionPlanExecutor.js (the browser can't require() the service).
+// keep in sync with applySubstitution in services/sessionPlanExecutor.js
+function applySessionSubstitution(prescribedName, subName, subLiftCode) {
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return;
+  if (!prescribedName || !subName) return;
+  const exs = activePlannedSession.exercises;
+  const prescKey = String(prescribedName).toLowerCase();
+  const subKey = String(subName).toLowerCase();
+  if (subKey === prescKey) return; // nothing to swap
+  const idx = exs.findIndex(e =>
+    (e.canonicalName || e.name || '').toLowerCase() === prescKey ||
+    (e.name || '').toLowerCase() === prescKey);
+  if (idx === -1) return;
+  const subCode = String(subLiftCode || '').toLowerCase();
+  // Dedupe: if the substitute is already a slot elsewhere, drop the prescribed
+  // slot instead of duplicating it (one logged set must not close two slots).
+  const dupElsewhere = exs.some((e, i) => i !== idx && (
+    (e.canonicalName || e.name || '').toLowerCase() === subKey ||
+    (subCode && (e.liftCode || '').toLowerCase() === subCode)
+  ));
+  if (dupElsewhere) {
+    exs.splice(idx, 1);
+    if (activePlannedSession.index > idx) activePlannedSession.index -= 1;
+  } else {
+    exs[idx] = {
+      name: subName, canonicalName: subName, liftCode: subLiftCode || '',
+      weight: null, reps: null, sets: null, rir: null, reason: 'substituted'
+    };
+  }
+  renderActiveSessionBanner();
+}
 
 function startPlannedSession(intent) {
   const exercises = (intent.exercises || []).map(normalizePlanExercise).filter(ex => ex.name);
@@ -1181,6 +1223,8 @@ function renderActiveSessionBanner() {
 
 function advancePlannedSession() {
   if (!activePlannedSession) return;
+  // Step 373b: a pending swap is tied to the current step — moving on invalidates it.
+  pendingSubstitution = null;
   if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
   activePlannedSession.index += 1;
   renderActiveSessionBanner();
@@ -1190,6 +1234,7 @@ function advancePlannedSession() {
 
 function endPlannedSession() {
   activePlannedSession = null;
+  pendingSubstitution = null;
   renderActiveSessionBanner();
 }
 
@@ -2665,6 +2710,16 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (Array.isArray(enrichment)) {
     for (const e of enrichment) { if (e && e.exercise) enrichMap.set(e.exercise, e); }
   }
+  // Step 373b: if a swap was declared for the current step, the first logged
+  // exercise is the substitute — apply it to the live session BEFORE resolving
+  // completed identities, so the substitute (not the swapped-out lift) is what
+  // gets marked done and what leaves remaining.
+  if (pendingSubstitution && activePlannedSession && Array.isArray(logObjs) && logObjs.length && logObjs[0].exercise) {
+    const primaryRaw = logObjs[0].exercise;
+    const enr = enrichMap.get(primaryRaw) || {};
+    applySessionSubstitution(pendingSubstitution.prescribed, enr.canonical_exercise || primaryRaw, enr.lift_code || '');
+    pendingSubstitution = null;
+  }
   for (const o of (logObjs || [])) {
     if (!o.exercise) continue;
     if (!seen.has(o.exercise)) { const g = { exercise: o.exercise, sets: [] }; seen.set(o.exercise, g); byExercise.push(g); }
@@ -2755,6 +2810,10 @@ async function checkAndSuggestSubstitute(text) {
     });
     const rec = res && res.data && res.data.recommendation;
     if (rec) {
+      // Step 373b: the lifter declared a swap for the current step. Record the
+      // prescribed (swapped-out) lift so the NEXT logged exercise replaces this
+      // slot in the live session (applied in emitSetLogged).
+      pendingSubstitution = { prescribed: currentEx.canonicalName || currentEx.name };
       document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
         detail: { prescribed: currentEx.name, ...rec }
       }));
