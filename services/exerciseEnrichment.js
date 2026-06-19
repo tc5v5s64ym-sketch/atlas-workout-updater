@@ -351,4 +351,14 @@ function closestExerciseMatches(input, catalogMap, limit = 5) {
     .map(({ key, value }) => ({ normalized_key: key, canonical_exercise: value.canonical_exercise, muscle_group: value.muscle_group, lift_code: value.lift_code }));
 }
 
-module.exports = { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches };
+// Returns the canonical liftCode for a known exercise name using the override table,
+// or null for exercises not in the table.
+// Used to normalize liftCodes when resolving history across name variants
+// (e.g. "Lateral Raise" and "Lateral Raises" both map to "LRA01").
+function canonicalLiftCodeFor(exerciseName) {
+  if (!exerciseName || typeof exerciseName !== 'string') return null;
+  const norm = normalizeExerciseKey(exerciseName);
+  return knownLiftCodeOverrides.get(norm) || null;
+}
+
+module.exports = { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches, canonicalLiftCodeFor };
