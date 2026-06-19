@@ -13,6 +13,7 @@ When these two disagree, stop and ask the owner before changing direction.
 
 ## Agent entry points
 
+- `docs/GOVERNANCE.md` — **read first**. Defines how Dream, Vision, Constitution, Roadmap, and Backlog relate and where to file new ideas.
 - `CLAUDE.md` — operating brief for Claude Code and other AI agents.
 - `CODEX.md` — operating brief for Codex/coding agents.
 - `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Claude Code + CODEX Review + GitHub workflow.
