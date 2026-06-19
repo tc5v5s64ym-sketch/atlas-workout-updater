@@ -2649,7 +2649,8 @@ function resolveCompletedIdentity(rawName, enrichmentRow, plannedSession) {
     const canonical = (enrichmentRow && enrichmentRow.canonical_exercise) || '';
     if (canonical) {
       const key = canonical.toLowerCase();
-      const match = plannedSession.exercises.find(e => (e.name || '').toLowerCase() === key);
+      const match = plannedSession.exercises.find(e =>
+        (e.canonicalName || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
       if (match) return planName(match);
     }
   }
