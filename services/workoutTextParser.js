@@ -18,7 +18,8 @@ const EXERCISE_ALIASES = [
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   ['Face Pull', ['face pulls', 'face pull']],
-  // Single-Leg Leg Curl must appear before Leg Curl so the longer alias wins.
+  // findExerciseInText sorts aliases by key length descending, so "single-leg leg curl" (19 chars)
+  // wins over "leg curl" (8 chars) regardless of array order here.
   ['Single-Leg Leg Curl', ['single-leg leg curl', 'single leg leg curl', 'sl leg curl']],
   ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
   ['Leg Extension', ['leg extension', 'leg extensions', 'leg ext', 'knee extension']],
