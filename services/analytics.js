@@ -1,6 +1,7 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
 const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps, recommendedTargetRir } = require('./liftRole');
 const { classifySubstitution } = require('./substitutionIntent');
+const { sanitizeLoad } = require('./loadSanity');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -782,13 +783,31 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     ? progressionVerdict(progressionTop, band)
     : null;
 
+  // Load sanity guard: prevent impossible prescriptions from reaching the UI.
+  // Only applied to history-derived targets; the just-logged path reflects what
+  // the lifter actually lifted and is trusted as-is.
+  const fromJustLogged = justLogged && isPositiveFinite(Number(justLogged.weight));
+  if (!fromJustLogged && Number.isFinite(nextWeight)) {
+    const sanity = sanitizeLoad(exercise_name, nextWeight, best_weight);
+    if (sanity.sanitized) {
+      nextWeight = sanity.weight;
+      if (nextWeight != null) {
+        recommendation = `Use your recorded working weight: ${nextWeight} × ${nextReps} reps.`;
+        reasoning = `${sanity.reason}; reverting to recorded working weight.`;
+      } else {
+        recommendation = 'No valid load could be determined — check this lift\'s log history.';
+        reasoning = sanity.reason;
+      }
+    }
+  }
+
   return {
     liftCode: normalizedCode,
     exercise_name,
     last_working_sets: lastSets,
     recommendation,
     reasoning,
-    next_target: { weight: nextWeight, reps: nextReps, sets: 3 },
+    next_target: nextWeight != null ? { weight: nextWeight, reps: nextReps, sets: 3 } : null,
     e1rm_trend: e1rmTrend,
     sessions_analyzed: sessions.length,
     confidence,
