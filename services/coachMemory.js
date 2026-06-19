@@ -36,6 +36,9 @@ const SUBSTITUTION_SESSION_WINDOW  = 10;
 const SUBSTITUTION_MIN_COUNT       = 3;
 const UNDERPERFORMANCE_WINDOW      = 5;
 const UNDERPERFORMANCE_MIN         = 3;
+// Missed-lift pattern: fire after ≥ this many misses across the window.
+const MISSED_LIFT_WINDOW           = 10;
+const MISSED_LIFT_MIN_COUNT        = 1;
 // e1RM deficit threshold — session e1RM below this fraction of benchmark e1RM
 // counts as "below expected" for the consistent_underperformance pattern.
 const UNDERPERFORMANCE_E1RM_DEFICIT = 0.05; // 5 %
@@ -151,10 +154,37 @@ function detectRepeatedSubstitutions(substitutionHistory) {
   return patterns;
 }
 
+// Detect missed_lift: the same exercise appears in missedLiftHistory
+// ≥ MISSED_LIFT_MIN_COUNT times across the last MISSED_LIFT_WINDOW entries.
+// Returns array of pattern objects (one per qualifying exercise).
+function detectMissedLifts(missedLiftHistory) {
+  if (!Array.isArray(missedLiftHistory) || !missedLiftHistory.length) return [];
+
+  const window = missedLiftHistory.slice(-MISSED_LIFT_WINDOW);
+  const counts = new Map();
+  for (const entry of window) {
+    if (!entry || typeof entry !== 'object') continue;
+    const exercise = typeof entry.exercise === 'string' ? entry.exercise.trim().toLowerCase() : null;
+    if (!exercise) continue;
+    counts.set(exercise, (counts.get(exercise) || 0) + 1);
+  }
+
+  const patterns = [];
+  for (const [exercise, count] of counts) {
+    if (count >= MISSED_LIFT_MIN_COUNT) {
+      patterns.push({ type: 'missed_lift', details: { exercise, count } });
+    }
+  }
+  return patterns;
+}
+
 /**
  * detectPatterns(liftCode, rows, options?) → { patterns[] }
  *
  * options.substitutionHistory – array of { original, substitute } events (optional).
+ * options.missedLiftHistory   – array of { exercise, date } missed-lift events (optional).
+ *   Full cross-session detection requires a persistent session plan store; callers may
+ *   pass single-session data to surface current-session misses.
  */
 function detectPatterns(liftCode, rows, options) {
   const patterns = [];
@@ -168,9 +198,11 @@ function detectPatterns(liftCode, rows, options) {
   const subs = detectRepeatedSubstitutions(opts.substitutionHistory);
   patterns.push(...subs);
 
-  // missed_lift deferred — needs planned-session data.
+  // Missed lift — requires caller-supplied history from planned session data.
+  const missed = detectMissedLifts(opts.missedLiftHistory);
+  patterns.push(...missed);
 
   return { patterns };
 }
 
-module.exports = { detectPatterns };
+module.exports = { detectPatterns, detectMissedLifts };
