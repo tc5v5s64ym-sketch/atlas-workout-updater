@@ -70,9 +70,11 @@ A finding is **P0** if the diff does any of the following:
 1. **Trust-loop deviation.** Any change to the preview → approve → write loop
    (`public/app.js`) that weakens explicit-approval-before-write, or a write that
    bypasses the dry-run preview.
-2. **Scope creep / more than one concern per PR.** Violates Invariant PR1 (tiny
-   PRs, one concern). A docs PR touching production code or vice versa (PR2). A
-   new route without a `config/routes.js` update (PR3).
+2. **Process-consistency violations.** A docs-only PR that also changes
+   production code, tests, or config (Invariant PR2). A new Express route without
+   the matching `config/routes.js` entry (Invariant PR3). *(PR bundling / number
+   of concerns is NOT a blocking finding — Invariant PR1 is advisory; see "What
+   the guard must NOT do" below.)*
 3. **Missing tests.** Parser changes without golden tests (P2 invariant);
    write-path changes without live-path / closest-integration coverage; tests
    that reach a real spreadsheet instead of stubs (T1–T3).
@@ -91,3 +93,9 @@ build it inside the current PR.
   non-executed or errored run as RED.
 - Must not invent findings to appear useful; absence of P0/P1 is a valid GREEN.
 - Must not expand scope, write to Google Sheets, or print secrets.
+- Must not block a PR for bundling multiple concerns or for size. Invariant PR1
+  (focused PRs) is advisory, not gate-enforced — the owner's roadmap workflow
+  intentionally batches related items. Judge the whole diff on its safety and
+  correctness regardless of how many concerns it covers. (This does **not** relax
+  "scope creep" in the sense of accidental future-PR work, which `CODEX.md` still
+  flags.)

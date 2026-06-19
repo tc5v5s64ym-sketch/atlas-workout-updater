@@ -60,7 +60,7 @@ Violating any of them requires explicit owner approval before merging.
 
 ## 5. PR Scope Invariants
 
-**PR1. Tiny PRs only.** Each PR changes one thing. A backend endpoint, a UI component, a test suite, or a doc file — not all of them together.
+**PR1. Prefer focused PRs (advisory — not gate-enforced).** Aim to keep a PR scoped to one logical change. Bundling several related roadmap items in one PR is acceptable when they share a branch and are reviewed together — the automated contract guard does **not** block on PR size or number of concerns. Safety and correctness are judged on the diff regardless of how it is packaged.
 
 **PR2. Docs PRs touch only `docs/` and root markdown files.** No production code, no tests, no config changes in a documentation PR.
 

@@ -28,8 +28,7 @@ Build order now:
 
 ## Global rules
 
-- Tiny PRs.
-- One concern per PR.
+- Prefer focused PRs, but bundling related roadmap items in one PR is acceptable — the contract guard does not block on PR size or number of concerns.
 - Stop after every PR for owner review.
 - Deterministic engine first, AI voice second.
 - Do not touch write paths unless the PR explicitly says so.

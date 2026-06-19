@@ -46,7 +46,7 @@ See `docs/AGENT_WORKFLOW.md` for the full workflow.
 
 - Develop on the branch specified in your task brief (typically prefixed `claude/`).
 - Never push directly to `main`.
-- PRs must be tiny — one concern per PR (see Invariant PR1).
+- Prefer focused PRs, but bundling related roadmap items in one PR is acceptable (see Invariant PR1) — the contract guard does not block on PR size or number of concerns.
 
 ---
 

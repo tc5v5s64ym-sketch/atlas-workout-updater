@@ -31,8 +31,10 @@ Classify every finding exactly as `AGENTS.md` defines it:
   migration, write-path missing `beginWrite`/`completeWrite`/`failWrite`,
   read-only path writing to Sheets or inventing numbers, secret/credential
   exposure, `GOOGLE_SHEETS_ID` changed in a routine PR). Always blocking.
-- **P1** — correctness / process violation (trust-loop deviation, scope creep
-  or more than one concern per PR, missing tests, bugs). Blocking.
+- **P1** — correctness / process violation (trust-loop deviation, missing tests,
+  correctness bugs, a docs-only PR that also changes code, or a new route missing
+  its `config/routes.js` entry). Blocking. **Do NOT block on PR bundling or
+  number of concerns** — Invariant PR1 is advisory and is not gate-enforced.
 - **P2** — non-blocking note (style, cleanup, future-scope observation).
 
 Be specific and contract-grounded. A finding must cite the rule it violates.
