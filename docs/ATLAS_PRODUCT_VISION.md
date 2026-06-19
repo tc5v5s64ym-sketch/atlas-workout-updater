@@ -511,6 +511,16 @@ In this vision, Atlas could power:
 - Third-party fitness apps.
 - Future licensing or API products.
 
+**Tenets — the filter for future decisions:**
+
+Each Roadmap step and product decision can be checked against these:
+
+1. **Understand, don't just collect.** Atlas understands what happened in a session — intent, substitutions, deviation from plan, progression justification. Raw logs are the input; session understanding is the product.
+2. **Engine owns the numbers.** Every weight, volume, and progression figure derives from deterministic computation over real history. AI words facts; it never invents them.
+3. **Intelligence over surface.** The training engine is the product. Apps, platforms, wearables, and APIs are skins on the engine — valuable, but secondary. A step that adds surface without deepening the engine serves the app, not the dream.
+4. **Earn the next step.** Atlas recommends only what the athlete's history actually justifies. No template numbers, no invented progressions.
+5. **Trust loop at any scale.** Approve-before-save and no-blind-writes are preserved regardless of how many surfaces or users Atlas eventually serves.
+
 **Guardrails for this vision:**
 
 - This is a long-term dream, not active roadmap scope.
