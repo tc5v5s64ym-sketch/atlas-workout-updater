@@ -98,3 +98,24 @@ promotion and confirm the merge button is disabled by the failing check.
 
 > Keep logging real-world Codex/Claude disagreements here during the parallel-run
 > proving period (Phase 6). They are telemetry, not blockers.
+
+---
+
+## Proving Log (Phase 6 — parallel-run proving period)
+
+**Exit criteria reminder:** 5 real (non-canary) PRs must show Codex correct and
+no false positives before retiring the parallel Claude review and promoting Codex
+to sole gatekeeper (Phase 6 complete). Only PRs where Codex actually ran to
+completion (`review_completed: true`) count toward the threshold.
+
+| PR # | Date | Codex result | Was Codex correct? | Codex vs. Claude | Running clean-PR count |
+|------|------|--------------|--------------------|-----------------|------------------------|
+| — | — | — | — | — | 0 / 5 |
+
+> **What increments the count:** A clean real PR — one where Codex returns
+> `verdict: "pass"` with no P0/P1 findings AND that verdict is confirmed correct
+> (no bug shipped, no contract violation missed). Canary PRs (`canary/` prefix)
+> do not count. A PR where Codex catches a real violation also does not count
+> (it's good signal, but the count measures sustained clean-PR reliability).
+> Log every real PR here regardless of outcome — the count only moves on confirmed
+> correct passes.
