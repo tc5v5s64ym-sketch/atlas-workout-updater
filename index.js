@@ -1092,7 +1092,6 @@ app.post('/api/coach/chat', async (req, res) => {
       ...(closeAnswer ? { source: 'engine' } : {})
     });
   }
-  let context = null;
   try {
     const [allLog, allEffort, notesRows, constraintRows] = await Promise.all([
       getSheetRows(logSheetName),
@@ -1108,7 +1107,7 @@ app.post('/api/coach/chat', async (req, res) => {
         ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
         : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
       .filter(c => c.kind && c.target && c.rule);
-    context = buildChatContext(allLog, allEffort, req.body && req.body.context, coachingNotes, constraints);
+    const context = buildChatContext(allLog, allEffort, req.body && req.body.context, coachingNotes, constraints);
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
     const { reply, propose_edit, propose_note, propose_constraint } = await coach.generateChatReply({ message, context, history });
     return standardSuccess(req, res, 'Coach chat reply', {
@@ -1116,10 +1115,13 @@ app.post('/api/coach/chat', async (req, res) => {
     });
   } catch (error) {
     // Degrade gracefully — the client shows a templated fallback, never an error
-    // bubble. Step 377: a session-close question still resolves deterministically
-    // from the authoritative plan_state computed above (when the throw happened
-    // after buildChatContext) so an LLM outage mid-session is not a dead end.
-    const closeAnswer = buildSessionCloseAnswer(message, context && context.plan_state);
+    // bubble. Step 377: a session-close question still resolves deterministically.
+    // plan_state derives purely from the client context (no Sheets needed), so we
+    // recompute it here rather than relying on buildChatContext — that way a read
+    // failure (Promise.all rejects before context is built) still resolves, exactly
+    // like the unconfigured path above. Whatever the throw's origin, the LLM-down
+    // session-close question is never a dead end.
+    const closeAnswer = buildSessionCloseAnswer(message, planStateFromContext(req.body && req.body.context));
     return standardSuccess(req, res, closeAnswer
       ? 'Coach chat failed — deterministic session-status answer'
       : 'Coach chat failed — use fallback', {
