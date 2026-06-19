@@ -2683,10 +2683,21 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   }
   if (byExercise.length) {
     try {
+      // Detect plan completion: all planned exercises must be in sessionCompleted
+      // (which resolveCompletedIdentity already normalised to planned canonical/display names).
+      // keep in sync with computeCloseout in services/sessionCloseout.js
+      const planIsComplete = !!(
+        activePlannedSession && activePlannedSession.exercises.length > 0 &&
+        activePlannedSession.exercises.every(ex => {
+          const n = String(ex.canonicalName || ex.name || '').toLowerCase();
+          return n && sessionCompleted.some(c => String(c).toLowerCase() === n);
+        })
+      );
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
         detail: {
           exercises: byExercise,
           text: text || '',
+          planIsComplete,
           ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
         }
       }));

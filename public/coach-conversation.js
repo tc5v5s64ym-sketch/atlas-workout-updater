@@ -921,6 +921,19 @@
         placeholder = formatNextPlaceholder(nextRec) || nextEx;
       } catch { /* best effort — fall back to the name */ }
       setWorkoutPlaceholder(placeholder);
+    } else if (detail.planIsComplete) {
+      // All planned exercises are done. Show a wrap-up prompt instead of
+      // staying silent. Does NOT trigger a write — the user must still say
+      // "done" or take a screenshot to save.
+      const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
+      const count = session ? session.exercises.length : null;
+      const closeout = document.createElement('div');
+      closeout.className = 'session-closeout';
+      closeout.textContent = count
+        ? `That's your plan done — ${count} exercise${count !== 1 ? 's' : ''} complete. Say "done" or take a screenshot to save.`
+        : 'Plan complete. Say "done" or take a screenshot to save.';
+      bubble.appendChild(closeout);
+      setWorkoutPlaceholder('Say "done" to save your session');
     }
   }
 
