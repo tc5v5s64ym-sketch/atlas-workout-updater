@@ -614,3 +614,73 @@ test('reorder safety: continuation shorthand still works when activeExercise is 
   assert.equal(result.canonical_name, 'Deadlift');
   assert.deepEqual(result.sets.map(s => [s.weight, s.reps, s.rir]), [[15, 12, 2], [15, 12, 2], [15, 12, 2]]);
 });
+
+// ---------------------------------------------------------------------------
+// Step 374 — Planned exercise names are always loggable.
+//
+// Any name Atlas can prescribe in a session plan must parse back to the same
+// canonical name when the user logs it later.  These tests lock the round-trip
+// so a plan-prescribed name never returns unknown_exercise.
+// ---------------------------------------------------------------------------
+
+test('step-374: Single-Leg Leg Curl resolves to its own canonical name — not to Leg Curl', () => {
+  // Regression: previously the "leg curl" alias matched inside "single-leg leg curl"
+  // via word-boundary regex, silently collapsing the name to "Leg Curl".  The plan
+  // slot stayed remaining because the name never matched.
+  const result = parseWorkoutText('Single-Leg Leg Curl 60 12/2');
+  assert.equal(result.canonical_name, 'Single-Leg Leg Curl');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'), 'must not fire unknown_exercise');
+  assert.deepEqual(sets(result), [[60, 12, 2]]);
+});
+
+test('step-374: single leg leg curl (no hyphen) also resolves to Single-Leg Leg Curl', () => {
+  const result = parseWorkoutText('single leg leg curl 55 10/2 x3');
+  assert.equal(result.canonical_name, 'Single-Leg Leg Curl');
+  assert.deepEqual(sets(result), [[55, 10, 2], [55, 10, 2], [55, 10, 2]]);
+});
+
+test('step-374: plain Leg Curl still resolves to Leg Curl (regression guard)', () => {
+  const result = parseWorkoutText('Leg Curl 60 12/2');
+  assert.equal(result.canonical_name, 'Leg Curl');
+  assert.deepEqual(sets(result), [[60, 12, 2]]);
+});
+
+test('step-374: Leg Extension resolves to Leg Extension', () => {
+  const result = parseWorkoutText('Leg Extension 70 15/2 x3');
+  assert.equal(result.canonical_name, 'Leg Extension');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+  assert.deepEqual(sets(result), [[70, 15, 2], [70, 15, 2], [70, 15, 2]]);
+});
+
+test('step-374: leg ext shorthand resolves to Leg Extension', () => {
+  const result = parseWorkoutText('leg ext 70 12/2');
+  assert.equal(result.canonical_name, 'Leg Extension');
+  assert.deepEqual(sets(result), [[70, 12, 2]]);
+});
+
+test('step-374: Pull-Up resolves to Pull-Up', () => {
+  const result = parseWorkoutText('Pull-Up 25 5/2 x3');
+  assert.equal(result.canonical_name, 'Pull-Up');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+  assert.deepEqual(sets(result), [[25, 5, 2], [25, 5, 2], [25, 5, 2]]);
+});
+
+test('step-374: pullup (no hyphen) resolves to Pull-Up', () => {
+  const result = parseWorkoutText('pullup 25 5/2');
+  assert.equal(result.canonical_name, 'Pull-Up');
+  assert.deepEqual(sets(result), [[25, 5, 2]]);
+});
+
+test('step-374: Chin-Up resolves to Chin-Up', () => {
+  const result = parseWorkoutText('Chin-Up 45 8/2');
+  assert.equal(result.canonical_name, 'Chin-Up');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+  assert.deepEqual(sets(result), [[45, 8, 2]]);
+});
+
+test('step-374: Hip Thrust resolves to Hip Thrust', () => {
+  const result = parseWorkoutText('Hip Thrust 135 10/2 x3');
+  assert.equal(result.canonical_name, 'Hip Thrust');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+  assert.deepEqual(sets(result), [[135, 10, 2], [135, 10, 2], [135, 10, 2]]);
+});
