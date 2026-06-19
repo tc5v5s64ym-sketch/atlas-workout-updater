@@ -184,7 +184,8 @@ const fakeCoachState = {
   chatEditProposal: null, // set to an edit object in tests that exercise the edit path
   chatNoteProposal: null, // set to a note object in tests that exercise the note path
   chatConstraintProposal: null, // set to a constraint object in tests that exercise the constraint path
-  throwError: null
+  throwError: null,
+  lastChatContext: null // captures the context passed to generateChatReply for assertions
 };
 const fakeCoach = {
   isConfigured: () => fakeCoachState.configured,
@@ -197,7 +198,8 @@ const fakeCoach = {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return fakeCoachState.planMessage;
   },
-  generateChatReply: async () => {
+  generateChatReply: async (args) => {
+    fakeCoachState.lastChatContext = args && args.context ? args.context : null;
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal, propose_constraint: fakeCoachState.chatConstraintProposal };
   },
@@ -590,6 +592,101 @@ test('api smoke: coach/chat with plan_completed containing ALL plan exercises �
     assert.equal(body.data.message, fakeCoachState.chatMessage, 'reply returned normally');
   } finally {
     fakeCoachState.configured = false;
+  }
+});
+
+test('step-375: empty plan_completed ([]) still yields plan_state with ALL exercises remaining — not null', async () => {
+  // The Step 375 gate fix: app.js now sends plan_completed even when empty (no
+  // set logged yet). The server must compute an authoritative plan_state so the
+  // coach can answer "what's left?" early in a session instead of falling back
+  // to current_plan. An empty array must NOT be treated like an absent field.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: "what's left?",
+        context: {
+          current_plan: [
+            { name: 'Deadlift',     weight: 315, reps: 5,  sets: 3, rir: 2 },
+            { name: 'Lat Pulldown', weight: 160, reps: 10, sets: 3, rir: 2 }
+          ],
+          plan_completed: []
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const ps = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.plan_state;
+    assert.ok(ps, 'plan_state must be computed from an empty plan_completed, not left null');
+    assert.deepEqual(ps.remaining, ['Deadlift', 'Lat Pulldown'], 'all planned exercises remain');
+    assert.deepEqual(ps.completed, [], 'nothing completed yet');
+    assert.equal(ps.isComplete, false);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('step-375: partial plan_completed drives remaining — completed lift drops out of remaining', async () => {
+  // After logging one of two planned lifts, "what's left?" must reflect only the
+  // outstanding one. This is the exact failure Step 375 prevents: the coach
+  // previously reported completed lifts as still remaining.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: "what's left?",
+        context: {
+          current_plan: [
+            { name: 'Deadlift',     weight: 315, reps: 5,  sets: 3, rir: 2 },
+            { name: 'Lat Pulldown', weight: 160, reps: 10, sets: 3, rir: 2 }
+          ],
+          plan_completed: ['Deadlift']
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const ps = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.plan_state;
+    assert.ok(ps, 'plan_state present');
+    assert.deepEqual(ps.remaining, ['Lat Pulldown'], 'completed Deadlift is gone from remaining');
+    assert.deepEqual(ps.completed, ['Deadlift']);
+    assert.equal(ps.isComplete, false);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('step-375: current_plan WITHOUT plan_completed leaves plan_state null (gate intact for stale-data guard)', async () => {
+  // The original gate protected against a client that sends current_plan but has
+  // not wired plan_completed at all. That guard must survive: plan_state stays
+  // null so the coach is told it lacks authoritative state rather than reporting
+  // every exercise as remaining from stale data.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: "what's left?",
+        context: {
+          current_plan: [
+            { name: 'Deadlift',     weight: 315, reps: 5, sets: 3, rir: 2 },
+            { name: 'Lat Pulldown', weight: 160, reps: 10, sets: 3, rir: 2 }
+          ]
+          // plan_completed intentionally absent
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const ps = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.plan_state;
+    assert.equal(ps, null, 'no plan_completed → plan_state stays null');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
   }
 });
 

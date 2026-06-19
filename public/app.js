@@ -3234,7 +3234,11 @@ function routeMessageToCoach(text) {
   const context = {};
   if (preview.length) context.current_preview = preview;
   if (plan.length) context.current_plan = plan;
-  if (sessionCompleted.length) context.plan_completed = [...sessionCompleted];
+  // Step 375: send plan_completed whenever a session is active — even when it's
+  // still empty ([]) — so the server always computes an authoritative plan_state.
+  // Gating on sessionCompleted.length left plan_state null until the first set
+  // was logged, so "what's left?" early in a session had no authoritative source.
+  if (activePlannedSession) context.plan_completed = [...sessionCompleted];
   // Defer one tick so chat.js's submit listener paints the user bubble first —
   // without this, the Atlas "Thinking…" bubble appends before the user bubble.
   setTimeout(() => {
