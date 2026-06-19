@@ -1306,6 +1306,21 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       }));
   }
 
+  // Reduce dose by one set for exercises whose muscle-group pattern is fatigued.
+  // Only training intents (not recovery_pump / short_session / test_progress / deload) call this.
+  function applyReadinessDose(exercises) {
+    return exercises.map(ex => {
+      if (!ex || !ex.lift_code) return ex;
+      const pattern = allRecs.find(r => r.liftCode === ex.lift_code)?.pattern;
+      if (!pattern || rm[pattern]?.status !== 'fatigued') return ex;
+      return {
+        ...ex,
+        target_sets:    Math.max(2, (ex.target_sets ?? 3) - 1),
+        readiness_note: 'volume_reduced_fatigued',
+      };
+    });
+  }
+
   // Standard pivot rules for an exercise list
   function pivotFor(exercises) {
     return exercises.slice(0, 2).flatMap(ex => [
@@ -1369,7 +1384,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       score += 10;
       why.push('Legs are well rested — lead with a heavy lower-body compound');
     }
-    const exercises = exForPatterns(strengthPatterns);
+    const exercises = applyReadinessDose(exForPatterns(strengthPatterns));
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
     for (const s of eligibleStalls.slice(0, 2)) {
@@ -1422,7 +1437,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (upwardLifts.length === 0) score += 8;
     if (daysSinceLast === 0) score -= 10;
 
-    const { exercises } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'core'], allRecs, underCoverageData });
+    const { exercises: rawBuildMuscle } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'core'], allRecs, underCoverageData });
+    const exercises = applyReadinessDose(rawBuildMuscle);
     intents.push({
       id: 'build_muscle',
       label: 'Build Muscle',
@@ -1456,7 +1472,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const freshIds = freshPatterns.map(p => p.pattern);
     const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];
     const session = buildIntentSession({ patterns: targetPatterns, allRecs, underCoverageData });
-    const exercises = session.exercises;
+    const exercises = applyReadinessDose(session.exercises);
 
     // AC1: only mention patterns that actually have exercises in today's session.
     const scheduledFresh = freshPatterns.filter(p => session.coveredPatterns.has(p.pattern));
@@ -1500,7 +1516,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (freshPatterns.length) score -= 10;
     if (fatigue.status === 'normal') score += 10;
 
-    const { exercises } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'hinge', 'core'], allRecs, underCoverageData });
+    const { exercises: rawBalanced } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'hinge', 'core'], allRecs, underCoverageData });
+    const exercises = applyReadinessDose(rawBalanced);
     intents.push({
       id: 'balanced',
       label: 'Balanced Day',

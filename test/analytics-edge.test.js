@@ -385,3 +385,49 @@ test('scoreIntents PR 368: recovery_pump score is boosted when multiple compound
   assert.ok(descRP.score > flatRP.score,
     `expected higher recovery_pump score on declining data (${descRP.score}) vs flat (${flatRP.score})`);
 });
+
+// ── PR 369: readiness-aware dose ──────────────────────────────────────────────
+
+test('scoreIntents PR 369: build_strength exercises for a fatigued pattern have target_sets reduced', () => {
+  // Bench press trained TODAY (daysSince=0 → recovery=0 → fatigued push).
+  // Squat trained 10 days ago (daysSince=10 → recovery ≈ 0.99 → fresh lower).
+  // today is '2026-05-01'; bench session must be on the same date.
+  const benchToday = [
+    ['2026-05-01', 'ST1', 'Bench Press', 'Bench Press', 'chest', 'BPR01', '1', '185', '5', '2', '', ''],
+    ['2026-05-01', 'ST1', 'Bench Press', 'Bench Press', 'chest', 'BPR01', '2', '185', '5', '3', '', ''],
+    ['2026-05-01', 'ST1', 'Bench Press', 'Bench Press', 'chest', 'BPR01', '3', '185', '4', '3', '', ''],
+  ];
+  const rows = [
+    ...makeRows('Bench Press', 'chest', 'BPR01', [165, 170, 175, 180, 185], '2026-03-15'),
+    ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-15'),
+    ...benchToday,
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-01' });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength must exist');
+
+  // Any push exercise in build_strength must have a reduced dose.
+  const pushExercises = bs.exercises.filter(ex => ex.lift_code === 'BPR01');
+  assert.ok(pushExercises.length > 0, 'build_strength must include a push exercise for this fixture');
+  for (const ex of pushExercises) {
+    assert.equal(ex.readiness_note, 'volume_reduced_fatigued',
+      `expected readiness_note 'volume_reduced_fatigued' on fatigued push exercise, got '${ex.readiness_note}'`);
+    assert.ok(ex.target_sets <= 2,
+      `expected target_sets ≤ 2 for fatigued push, got ${ex.target_sets}`);
+  }
+});
+
+test('scoreIntents PR 369: non-fatigued exercises carry no readiness_note', () => {
+  // Squat trained 10 days ago → fresh lower (no dose reduction needed).
+  const rows = [
+    ...makeRows('Squat', 'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-15'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-01' });
+  const balanced = result.intents.find(i => i.id === 'balanced');
+  assert.ok(balanced, 'balanced intent must exist');
+
+  for (const ex of balanced.exercises) {
+    assert.ok(ex.readiness_note == null || ex.readiness_note !== 'volume_reduced_fatigued',
+      `non-fatigued exercise '${ex.exercise}' must not carry volume_reduced_fatigued note`);
+  }
+});
