@@ -1315,12 +1315,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         target_reps: r.next_target.reps,
         target_sets: r.next_target.sets,
         reason: r.recommendation,
-        confidence_factors: {
-          sessions:        r.sessions_analyzed,
-          data_age_days:   r.days_since_last_session,
-          trend:           r.e1rm_trend,
-          lift_confidence: r.confidence,
-        },
+        confidence_factors: cfFor(r),
       }));
   }
 
@@ -1659,12 +1654,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       target_reps: r.next_target.reps,
       target_sets: 1,
       reason: `PR attempt — ${r.recommendation}`,
-      confidence_factors: {
-        sessions:        r.sessions_analyzed,
-        data_age_days:   r.days_since_last_session,
-        trend:           r.e1rm_trend,
-        lift_confidence: r.confidence,
-      },
+      confidence_factors: cfFor(r),
     }));
     intents.push({
       id: 'test_progress',
