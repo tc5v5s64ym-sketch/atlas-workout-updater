@@ -1292,6 +1292,18 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const daysSinceLast = lastDate ? Math.floor((isoDateAtUtcNoon(todayStr).getTime() - isoDateAtUtcNoon(lastDate).getTime()) / 86400000) : null;
 
   // Build exercise list filtered by allowed movement patterns
+  // Build confidence_factors from a rec object; null-fills when rec is unavailable
+  // (e.g. stall-sourced deload exercises whose lift code has no recommendation).
+  const recByCode = new Map(allRecs.map(r => [r.liftCode, r]));
+  function cfFor(r) {
+    return {
+      sessions:        r?.sessions_analyzed  ?? null,
+      data_age_days:   r?.days_since_last_session ?? null,
+      trend:           r?.e1rm_trend         ?? null,
+      lift_confidence: r?.confidence         ?? null,
+    };
+  }
+
   function exForPatterns(patterns, max = 6) {
     return allRecs
       .filter(r => patterns.includes(r.pattern))
@@ -1302,7 +1314,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         target_weight: r.next_target.weight,
         target_reps: r.next_target.reps,
         target_sets: r.next_target.sets,
-        reason: r.recommendation
+        reason: r.recommendation,
+        confidence_factors: cfFor(r),
       }));
   }
 
@@ -1640,7 +1653,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       target_weight: r.next_target.weight,
       target_reps: r.next_target.reps,
       target_sets: 1,
-      reason: `PR attempt — ${r.recommendation}`
+      reason: `PR attempt — ${r.recommendation}`,
+      confidence_factors: cfFor(r),
     }));
     intents.push({
       id: 'test_progress',
@@ -1690,7 +1704,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
           target_weight: held ? stalledWeightByCode.get(r.liftCode) : r.next_target.weight,
           target_reps: r.next_target.reps,
           target_sets: r.next_target.sets,
-          reason: held ? 'Reset — hold the load, chase clean reps' : r.recommendation
+          reason: held ? 'Reset — hold the load, chase clean reps' : r.recommendation,
+          confidence_factors: cfFor(r),
         });
       };
 
@@ -1708,7 +1723,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         exercises.push(guardAccessoryReps({
           exercise: stallName(s.liftCode), lift_code: s.liftCode,
           target_weight: s.last_best_weight, target_reps: 12, target_sets: 3,
-          reason: 'Reset — hold the load, chase clean reps'
+          reason: 'Reset — hold the load, chase clean reps',
+          confidence_factors: cfFor(recByCode.get(s.liftCode)),
         }));
       }
       // 2) Fill the rest with the owner's RESTED, non-compound movements only —
@@ -1781,7 +1797,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         target_weight: roundLoad(s.last_best_weight),
         target_reps: 5,
         target_sets: 2,
-        reason: 'Deload — same weight, fewer sets, well short of failure (RIR 4–5)'
+        reason: 'Deload — same weight, fewer sets, well short of failure (RIR 4–5)',
+        confidence_factors: cfFor(recByCode.get(s.liftCode)),
       }));
       // A deload is still a full session — round it out to ~4–6 movements with the
       // owner's RESTED, non-compound accessories at moderate effort, so it's never
@@ -1798,7 +1815,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
           target_weight: deloadFillerWeight(r),
           target_reps: r.next_target.reps,
           target_sets: Math.max(1, r.next_target.sets - 1),
-          reason: 'Accessory volume — near-normal weight, a set lighter, moderate effort'
+          reason: 'Accessory volume — near-normal weight, a set lighter, moderate effort',
+          confidence_factors: cfFor(r),
         }));
       }
 
