@@ -435,9 +435,21 @@ test('scoreIntents PR 369: non-fatigued exercises carry no readiness_note', () =
 // ── PR 370: confidence_factors ────────────────────────────────────────────────
 
 test('scoreIntents PR 370: each exercise carries a confidence_factors object with required fields', () => {
+  // Include a stall fixture so deload_reset fires and its exercises are also inspected.
+  // Bench + OHP stalled at the same weight for 4 sessions, far in the past → fully rested.
+  const stallBench = Array.from({ length: 4 }, (_, i) => {
+    const d = new Date('2026-01-07'); d.setDate(d.getDate() + i * 7);
+    return [d.toISOString().split('T')[0], `SB${i+1}`, 'Bench Press', 'Bench Press', 'chest', 'BPR01', '1', '185', '5', '2', '', ''];
+  });
+  const stallOhp = Array.from({ length: 4 }, (_, i) => {
+    const d = new Date('2026-01-07'); d.setDate(d.getDate() + i * 7);
+    return [d.toISOString().split('T')[0], `SO${i+1}`, 'Overhead Press', 'Overhead Press', 'shoulders', 'OHP01', '1', '135', '5', '2', '', ''];
+  });
   const rows = [
     ...makeRows('Bench Press', 'chest', 'BPR01', [165, 170, 175, 180, 185], '2026-03-01'),
     ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-01'),
+    ...stallBench,
+    ...stallOhp,
   ];
   const result = scoreIntents(rows, [], { today: '2026-04-19' });
 
@@ -446,14 +458,15 @@ test('scoreIntents PR 370: each exercise carries a confidence_factors object wit
       const cf = ex.confidence_factors;
       assert.ok(cf && typeof cf === 'object',
         `intent '${intent.id}' exercise '${ex.exercise}' must have confidence_factors object`);
-      assert.ok(Number.isFinite(cf.sessions) && cf.sessions >= 0,
-        `confidence_factors.sessions must be a non-negative number, got ${cf.sessions}`);
+      // sessions and data_age_days may be null for stall-sourced entries with no matching rec.
+      assert.ok(cf.sessions === null || (Number.isFinite(cf.sessions) && cf.sessions >= 0),
+        `confidence_factors.sessions must be non-negative or null, got ${cf.sessions}`);
       assert.ok(cf.data_age_days === null || Number.isFinite(cf.data_age_days),
         `confidence_factors.data_age_days must be numeric or null, got ${cf.data_age_days}`);
-      assert.ok(typeof cf.trend === 'string',
-        `confidence_factors.trend must be a string, got ${cf.trend}`);
-      assert.ok(typeof cf.lift_confidence === 'string',
-        `confidence_factors.lift_confidence must be a string, got ${cf.lift_confidence}`);
+      assert.ok(cf.trend === null || typeof cf.trend === 'string',
+        `confidence_factors.trend must be a string or null, got ${cf.trend}`);
+      assert.ok(cf.lift_confidence === null || typeof cf.lift_confidence === 'string',
+        `confidence_factors.lift_confidence must be a string or null, got ${cf.lift_confidence}`);
     }
   }
 });
