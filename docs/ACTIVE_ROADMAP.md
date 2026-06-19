@@ -115,13 +115,16 @@ Build order: engine/correctness fixes first (378–379), then deload consolidati
 
 **Type:** Correctness
 
-**Exact failure prevented:** A null or undefined element in any of the live coach/chat array inputs (`today_sets`, `last_working_sets`, `current_preview`) causes an uncaught throw in `sanitizeFacts` or `sanitizeChatContext` (`services/coach.js`), breaking the entire coach response for that request. The same guard was applied to `sanitizeReactionContext` in PR 3.4 but not propagated to the sibling sanitizers.
+**What this addresses:** The BACKLOG item "Harden null-element tolerance in the coach sanitizers" was written before PR 3.4 propagated the `s && typeof s === 'object'` null-element guard to all three arrays. Verification against current `services/coach.js` confirms the guards are already present: `today_sets` via `toSet` (line 71), `last_working_sets` via inline guard (lines 83–87), `current_preview` via inline guard (line 592). No uncaught throw exists today.
 
-**Scope:** `services/coach.js` only. Add the same `s && typeof s === 'object'` null-element guard already established in `sanitizeReactionContext` to `sanitizeFacts` and `sanitizeChatContext`. Add a `[null]`-element test to each. No change to coach wording, system prompt, LLM model, write path, schema, or recommendation logic.
+**Opportunity:** The BACKLOG item was never marked done and has no regression tests pinning the guards. The implementer should verify each guard holds, add a `[null]`-element test for each array, and mark the BACKLOG item resolved. If re-verification finds a genuinely unguarded array, add the guard too.
+
+**Scope:** `services/coach.js` (guards only, if any are missing) + `test/coach.test.js` (null-element tests). No change to coach wording, system prompt, LLM model, write path, schema, or recommendation logic.
 
 **Acceptance criteria:**
-- Passing a `null` element in `today_sets`, `last_working_sets`, or `current_preview` does not throw; the element is silently dropped.
-- A regression test for each array proves the null case no longer crashes or leaks bad facts.
+- Re-verify all three arrays (`today_sets`, `last_working_sets`, `current_preview`) against current `services/coach.js` before writing any code.
+- A `[null]`-element test for each array proves the guard holds and cannot silently drift.
+- If a guard is confirmed missing, add it; otherwise tests only.
 - No coach wording, prompt rule, or recommendation behavior is altered.
 
 **Expected tests:** three null-element tests in `test/coach.test.js` (one per sanitizer, each covering a `[null]` input element).
