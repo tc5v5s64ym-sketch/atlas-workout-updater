@@ -1,7 +1,7 @@
-// Training volume for a single logged set: weight (lb) x reps x sets.
-// Feeds the Log_Cleaned `volume_calc` column (weight x reps).
-function setVolume(weight, reps, sets = 1) {
-  return weight * reps * sets;
+// Training volume for a single logged set: weight (lb) x reps.
+// Matches the Log_Cleaned `volume_calc` contract (weight x reps, one row per set).
+function setVolume(weight, reps) {
+  return weight * reps;
 }
 
 module.exports = { setVolume };
