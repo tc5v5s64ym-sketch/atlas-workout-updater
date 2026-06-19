@@ -50,6 +50,7 @@ const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
 const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
+const { enrichCoachFacts } = require('./services/liveIntelligence');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -964,8 +965,8 @@ app.get('/api/health/gemini', (req, res) => {
 // never touches Google Sheets. When Gemini is unconfigured or fails, it returns
 // message:null so the client falls back to its templated copy — never blocked.
 app.post('/api/coach/message', async (req, res) => {
-  const facts = req.body && req.body.facts;
-  if (!facts || typeof facts !== 'object') {
+  const rawFacts = req.body && req.body.facts;
+  if (!rawFacts || typeof rawFacts !== 'object') {
     return standardError(req, res, 'facts object is required', null, 400);
   }
   const kind = req.body.kind === 'plan' ? 'plan' : 'set';
@@ -974,6 +975,20 @@ app.post('/api/coach/message', async (req, res) => {
       message: null, configured: false, model: coach.coachModel()
     });
   }
+
+  // Server-side intelligence enrichment: when a liftCode is present compute
+  // working_weight, trend, readiness_signal, deviation, and evidence_context
+  // from the lift's history. Failure is best-effort — never blocks the response.
+  let facts = rawFacts;
+  if (rawFacts.liftCode) {
+    try {
+      const allLog = await getSheetRows(logSheetName);
+      facts = enrichCoachFacts(rawFacts, allLog);
+    } catch (_) {
+      // Keep client facts as-is if Sheets read or enrichment fails.
+    }
+  }
+
   try {
     const message = kind === 'plan'
       ? await coach.generatePlanMessage(facts)
