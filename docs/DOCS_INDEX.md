@@ -5,9 +5,11 @@ This file explains which docs are active instructions, which are reference/spec 
 ## Source of truth
 
 - `BACKLOG.md` — single source of truth for open and deferred work.
-- `docs/ACTIVE_ROADMAP.md` — current critical path and PR 355-371 execution queue.
+- `docs/ACTIVE_ROADMAP.md` — current critical path; Roadmap Steps 355–370 are complete, Step 371 (Coach Voice Polish) is next.
 
-When these disagree, stop and ask the owner before changing direction.
+When these two disagree, stop and ask the owner before changing direction.
+
+> **Warning for agents:** Do NOT use any historical or archived doc as an active execution queue. The sections below mark which docs are stale. Treating a stale doc as current will cause you to re-build completed work or diverge from the owner's direction.
 
 ## Agent entry points
 
@@ -51,17 +53,17 @@ These describe specific systems or constraints. Use them when your PR touches th
 
 ## Historical / archived plans
 
-These are useful history, but they are not the current execution queue unless `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md` explicitly points to a step.
+**DO NOT TREAT THESE AS THE ACTIVE EXECUTION QUEUE.** They are useful history but must not be used to select or sequence PRs. If any of these conflict with `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md`, the latter two win.
 
-- `FIX_PLAN.md` — archived; already marked as superseded by `BACKLOG.md`.
-- `COACH_PLAN.md` — historical coach intelligence build plan; much of it has shipped.
-- `COACH_INTELLIGENCE_PLAN.md` — historical PR 341-344 substitution/intelligence plan; much has shipped.
-- `ATLAS_PERFORMANCE_INTELLIGENCE_PLAN.md` — historical performance-intelligence plan; steps 345-353 largely shipped, remaining wiring is folded into `docs/ACTIVE_ROADMAP.md` PR 362-365.
+- `FIX_PLAN.md` — archived; superseded by `BACKLOG.md`.
+- `COACH_PLAN.md` — historical coach intelligence build plan; much has shipped.
+- `COACH_INTELLIGENCE_PLAN.md` — historical PR 341–344 substitution/intelligence plan; much has shipped.
+- `ATLAS_PERFORMANCE_INTELLIGENCE_PLAN.md` — historical performance-intelligence plan; Steps 345–353 largely shipped; remaining wiring folded into `docs/ACTIVE_ROADMAP.md` Steps 362–370 (now ✅ complete).
 - `docs/COACH_NEXT_LEVEL_BUILD_PLAN.md` — future/reference; do not execute ahead of active roadmap.
 - `docs/ROADMAP.md` — historical milestone roadmap; not the active execution queue.
 - `docs/PRODUCT_PLAN.md` — product reference; not the active PR queue.
 - `docs/WORKFLOW.md` — historical workflow reference; current process lives in `docs/AGENT_WORKFLOW.md`.
-- `docs/CODEX_SESSION_STARTER.md` — historical prompt starter; update against active docs before reuse.
+- `docs/CODEX_SESSION_STARTER.md` — historical prompt starter; verify against active docs before reuse.
 
 ## Operations / release / security docs
 

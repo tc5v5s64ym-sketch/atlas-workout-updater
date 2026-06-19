@@ -157,3 +157,59 @@ Unless the owner explicitly requests it, do not add:
 - Big refactors "to clean things up"
 
 When in doubt, do less and ask.
+
+---
+
+## Atlas PR Execution Contract
+
+Every PR must follow these rules without exception:
+
+- **One concern per PR.** Tiny PRs only. If a fix expands into two concerns, split it.
+- **Deterministic logic first.** Build the engine, data, or service layer before adding any LLM voice or coaching wording.
+- **LLM wording second.** The LLM only words facts the engine already emits. It never invents numbers, verdicts, or rules.
+- **Read existing code before changing it.** Understand what is there. Do not assume.
+- **If a premise is wrong, stop and report with evidence.** Do not work around a false assumption. Surface it.
+- **Do not build future roadmap steps early.** Implement only what the current PR scope names.
+- **Do not refactor unrelated systems.** Fix only what is broken or in scope.
+- **Future discoveries go to `BACKLOG.md`.** Never carry them in memory or chat history. Append them in the same PR.
+- **Stop for owner review after every PR.** Open the PR. Do not merge. Do not start the next PR.
+
+---
+
+## Investigation Reporting
+
+When investigating bugs, reviewing code, or preparing a PR:
+
+- **Investigate silently.** Read files, trace logic, grep for patterns.
+- **Do not stream file-by-file narration.** Do not narrate speculative reasoning mid-investigation.
+- **Report findings, evidence, blockers, and decisions.** Not the investigation process.
+
+For debugging, code review, or prep work, the report must include only:
+
+- root cause
+- affected files
+- fix
+- tests
+- deferred items
+- blockers, if any
+
+Architecture reviews, audits, roadmap planning, and owner-requested analysis may include higher-level tradeoffs.
+
+---
+
+## Model Recommendation Gate
+
+Before implementing any PR, the pre-coding report must include:
+
+- **Recommended model** — Sonnet 4.6 or Opus 4.8
+- **One-line reason**
+- **Risk level** — low / medium / high
+
+| Model | Use when |
+|---|---|
+| Sonnet 4.6 | Mechanical, docs-only, pure-data, low-risk refactor, isolated tests, no behavior change |
+| Opus 4.8 | Behavior-changing, correctness-sensitive, trust-path, parser / session-state / write-path / recommendation logic, or anything that could silently corrupt workout data |
+
+**After reporting the model recommendation, STOP and wait for owner confirmation before editing files.**
+
+This is a workflow gate only. Do not change any app model, LLM behavior, API model, prompt model, or runtime model.

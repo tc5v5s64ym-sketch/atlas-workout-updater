@@ -114,17 +114,69 @@ ChatGPT interprets app-test results with Dale.
 
 Only Dale can approve continuing to the next phase.
 
-## Prompt compression target
+## Compact Atlas Prompt Mode
 
-Once this workflow is in place, Dale's standard Claude Code prompt should be:
+Future owner prompts may be short because agents are expected to read the repo docs first. A compact prompt is valid only when the agent reads `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, `docs/DOCS_INDEX.md`, and this file before acting.
+
+Reading those five files is mandatory before any compact prompt is honored. If the agent has not read them, it must do so first.
+
+### Compact prompt examples
+
+**Continue next roadmap item**
 
 ```text
-Read CLAUDE.md, BACKLOG.md, docs/ACTIVE_ROADMAP.md, docs/DOCS_INDEX.md, and docs/AGENT_WORKFLOW.md.
-
-Execute the next incomplete PR only.
-
-Open the PR and stop.
+Use compact Atlas prompt mode.
+Continue the next active roadmap item.
+Include the model recommendation gate.
+Stop for owner confirmation before implementation.
+Open one small PR.
+Do not merge.
 ```
+
+**Create bugfix from latest app-test failure**
+
+```text
+Use compact Atlas prompt mode.
+Create a narrow bugfix PR for the latest app-test failure.
+Include the model recommendation gate.
+Stop for owner confirmation before implementation.
+If related future work is discovered, add it to BACKLOG.md.
+Open one small PR.
+Do not merge.
+```
+
+**Update backlog only**
+
+```text
+Use compact Atlas prompt mode.
+Update BACKLOG.md only with the latest deferred item or app-test finding.
+No code changes.
+Open one docs-only PR.
+Do not merge.
+```
+
+**Review open PR**
+
+```text
+Use compact Atlas prompt mode.
+Review the open PR against CLAUDE.md, BACKLOG.md, docs/ACTIVE_ROADMAP.md, docs/DOCS_INDEX.md, and docs/AGENT_WORKFLOW.md.
+Report merge / fix / park.
+Do not change code unless explicitly asked.
+```
+
+**Pre-edit report (use before any implementation PR)**
+
+Before editing files, report:
+
+- which docs currently contain repeated rules
+- which docs need changes
+- whether any docs conflict
+- smallest docs-only fix
+- model recommendation
+- one-line model reason
+- risk level
+
+Then STOP and wait for owner confirmation before editing. After owner confirms, create one PR and stop for review.
 
 ## Non-negotiables
 
