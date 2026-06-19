@@ -176,3 +176,81 @@ test('enrichCoachFacts: evidence_context null when no todaySets', () => {
   const result = enrichCoachFacts(facts, rows);
   assert.equal(result.evidence_context, null);
 });
+
+// ── Step 376: cross-lift history contamination guard ────────────────────────────
+
+test('step-376: a colliding liftCode never leaks a foreign lift\'s working range', () => {
+  // Two genuinely different exercises share one liftCode (the live bug: Leg
+  // Extension worked at 60 lb, but a foreign lift logged 150 under the same code).
+  // The coach must see only Leg Extension's numbers, not the foreign 150 range.
+  const liftCode = 'LEX01';
+  const rows = [
+    row('2026-04-01', 'S1', 'Leg Extension', liftCode, 60, 12, 2),
+    row('2026-04-08', 'S2', 'Leg Extension', liftCode, 60, 12, 2),
+    row('2026-04-15', 'S3', 'Leg Extension', liftCode, 60, 12, 2),
+    row('2026-04-22', 'S4', 'Leg Extension', liftCode, 60, 12, 2),
+    row('2026-04-29', 'S5', 'Leg Extension', liftCode, 60, 12, 2),
+    // Foreign rows that wrongly carry the same liftCode:
+    row('2026-04-02', 'F1', 'Leg Press', liftCode, 150, 10, 2),
+    row('2026-04-09', 'F2', 'Leg Press', liftCode, 160, 10, 2),
+    row('2026-04-16', 'F3', 'Leg Press', liftCode, 170, 10, 2),
+  ];
+  const facts = { liftCode, exerciseName: 'Leg Extension', todaySets: [{ weight: 60, reps: 12, rir: 2 }] };
+  const result = enrichCoachFacts(facts, rows);
+  assert.equal(result.evidence_context.benchmark, 60, 'benchmark must reflect Leg Extension (60), not the foreign 150–170 rows');
+  assert.equal(result.rec.working_weight.weight, 60, 'working weight must come from the target lift only');
+  assert.ok(result.rec.working_weight.weight < 100, 'foreign 150–170 history must not leak in');
+});
+
+test('step-376: contamination with an unidentifiable target lift suppresses the claim', () => {
+  // The same liftCode covers two foreign lifts and today\'s exercise matches
+  // neither stored name (cannot confidently isolate clean evidence). Rather than
+  // cite foreign history, all same-code evidence is dropped → benchmark null.
+  const liftCode = 'XYZ01';
+  const rows = [
+    row('2026-04-01', 'S1', 'Leg Press', liftCode, 150, 10, 2),
+    row('2026-04-08', 'S2', 'Leg Press', liftCode, 160, 10, 2),
+    row('2026-04-15', 'S3', 'Hack Squat', liftCode, 200, 8, 2),
+    row('2026-04-22', 'S4', 'Hack Squat', liftCode, 210, 8, 2),
+  ];
+  const facts = { liftCode, exerciseName: 'Leg Extension', todaySets: [{ weight: 60, reps: 12, rir: 2 }] };
+  const result = enrichCoachFacts(facts, rows);
+  assert.equal(result.evidence_context, null, 'no clean same-lift evidence → no benchmark/deviation claim');
+  assert.equal(result.rec.working_weight.weight, null, 'working weight suppressed when evidence is foreign');
+});
+
+test('step-376: clean single-exercise history is unchanged when exerciseName is supplied', () => {
+  // No contamination (all rows are the same lift): supplying exerciseName must
+  // NOT over-filter — the full benchmark still computes as before.
+  const liftCode = 'LRA01';
+  const rows = [
+    row('2026-04-01', 'S1', 'Lateral Raises', liftCode, 15, 12, 2),
+    row('2026-04-08', 'S2', 'Lateral Raises', liftCode, 15, 12, 2),
+    row('2026-04-15', 'S3', 'Lateral Raises', liftCode, 15, 12, 2),
+    row('2026-04-22', 'S4', 'Lateral Raises', liftCode, 15, 12, 2),
+    row('2026-04-29', 'S5', 'Lateral Raises', liftCode, 15, 12, 2),
+  ];
+  const facts = { liftCode, exerciseName: 'Lateral Raise', todaySets: [{ weight: 15, reps: 12, rir: 2 }] };
+  const result = enrichCoachFacts(facts, rows);
+  assert.equal(result.evidence_context.benchmark, 15, 'clean history yields the full benchmark');
+  assert.equal(result.rec.working_weight.weight, 15);
+  assert.ok(['high', 'medium'].includes(result.evidence_context.confidence), 'all 5 sessions still counted');
+});
+
+test('step-376: name variants sharing a canonical liftCode are kept under contamination', () => {
+  // "Lateral Raise" and "Lateral Raises" both map to LRA01 via the override table.
+  // When a foreign lift contaminates the code, the plural/singular variants of the
+  // real lift must survive (matched by canonicalLiftCodeFor), not be dropped.
+  const liftCode = 'LRA01';
+  const rows = [
+    row('2026-04-01', 'S1', 'Lateral Raise',  liftCode, 15, 12, 2),
+    row('2026-04-08', 'S2', 'Lateral Raises', liftCode, 15, 12, 2),
+    row('2026-04-15', 'S3', 'Laterals',       liftCode, 15, 12, 2),
+    // Foreign contamination under the same code:
+    row('2026-04-20', 'F1', 'Leg Press',      liftCode, 200, 8, 2),
+  ];
+  const facts = { liftCode, exerciseName: 'Lateral Raise', todaySets: [{ weight: 15, reps: 12, rir: 2 }] };
+  const result = enrichCoachFacts(facts, rows);
+  assert.equal(result.evidence_context.benchmark, 15, 'all lateral-raise name variants kept; foreign 200 dropped');
+  assert.equal(result.rec.working_weight.weight, 15);
+});
