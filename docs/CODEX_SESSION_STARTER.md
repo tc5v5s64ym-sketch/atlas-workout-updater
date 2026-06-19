@@ -1,5 +1,8 @@
 # Codex Session Starter
 
+> Historical starter prompt. Before reusing this, update it against `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, `docs/DOCS_INDEX.md`, and `docs/AGENT_WORKFLOW.md`.
+> Do not treat the PR status below as current work.
+
 Paste this at the start of future Codex sessions.
 
 ```text
@@ -39,12 +42,8 @@ Before starting:
 - Fetch latest main.
 - If I name a prerequisite PR, verify it is merged before branching.
 - Branch from current origin/main, not stale local main.
-
-Current recent PR status:
-- PR #24 merged: no-write safety plus sheet contract/catalog regression tests.
-- PR #26 merged: Mission Control reliability.
-- PR #27 merged: docs/runbooks/roadmap.
-- PR #25 closed as superseded.
+- Read BACKLOG.md, docs/ACTIVE_ROADMAP.md, docs/DOCS_INDEX.md, and docs/AGENT_WORKFLOW.md.
+- Do not use CODEX.md or this starter prompt as the active roadmap.
 
 Report back:
 - branch

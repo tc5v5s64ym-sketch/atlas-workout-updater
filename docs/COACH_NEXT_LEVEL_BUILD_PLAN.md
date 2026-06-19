@@ -1,11 +1,13 @@
 # Atlas Coach — "Next-Level" Build Plan
 
+> Future/reference-only. Do not execute ahead of `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md`.
+> Use `docs/AGENT_WORKFLOW.md` for the Dale + ChatGPT + Claude Code + CODEX Review + GitHub process.
+
 A handoff for Claude Code. Six coaching upgrades, organized into **three model phases**
 with **one model switch** (Sonnet → Opus at HOLD 1) and a **rebase/merge checkpoint**
 at HOLD 2 (no model change — Phase 3 stays on Opus 4.8). Each task is its own PR.
 
-This document is the canonical roadmap for the next-level coach work. It persists across
-sessions and the one model switch (Sonnet → Opus at HOLD 1); update it as tasks land.
+This document was written as the roadmap for next-level coach work. It is now future/reference material unless `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md` explicitly promotes a step.
 
 ---
 

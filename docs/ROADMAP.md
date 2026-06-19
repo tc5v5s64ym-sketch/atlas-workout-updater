@@ -1,5 +1,8 @@
 # Atlas Roadmap
 
+> Historical/reference-only. This is not the active execution queue.
+> Use `BACKLOG.md` for priorities, `docs/ACTIVE_ROADMAP.md` for the current queue, and `docs/AGENT_WORKFLOW.md` for the agent process.
+
 For the finished product north star, read [ATLAS_PRODUCT_VISION.md](ATLAS_PRODUCT_VISION.md).
 
 ## Milestone 1: Stability and Safety

@@ -1,5 +1,8 @@
 # Atlas Performance Intelligence — Execution Plan
 
+> Historical/reference-only. Do not execute this plan as the active roadmap.
+> Remaining applicable work has been folded into `BACKLOG.md` and `docs/ACTIVE_ROADMAP.md`; use `docs/AGENT_WORKFLOW.md` for process.
+
 Roadmap steps 345–355 (internal sequence numbers — GitHub PR numbers may differ). Start numbering at 345 because PR 344 already merged.
 
 **Global rules**

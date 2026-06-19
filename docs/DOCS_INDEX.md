@@ -33,8 +33,6 @@ These are reference docs. Use them when relevant, but do not treat them as the a
 - `docs/INVARIANTS.md`
 - `docs/SHEET_CONTRACT.md`
 - `docs/SAFETY_RULES.md`
-- `docs/WORKFLOW.md`
-- `docs/ROADMAP.md`
 - `docs/MISSION_CONTROL.md`
 
 ## Current/valid specs
@@ -60,7 +58,10 @@ These are useful history, but they are not the current execution queue unless `B
 - `COACH_INTELLIGENCE_PLAN.md` — historical PR 341-344 substitution/intelligence plan; much has shipped.
 - `ATLAS_PERFORMANCE_INTELLIGENCE_PLAN.md` — historical performance-intelligence plan; steps 345-353 largely shipped, remaining wiring is folded into `docs/ACTIVE_ROADMAP.md` PR 362-365.
 - `docs/COACH_NEXT_LEVEL_BUILD_PLAN.md` — future/reference; do not execute ahead of active roadmap.
+- `docs/ROADMAP.md` — historical milestone roadmap; not the active execution queue.
 - `docs/PRODUCT_PLAN.md` — product reference; not the active PR queue.
+- `docs/WORKFLOW.md` — historical workflow reference; current process lives in `docs/AGENT_WORKFLOW.md`.
+- `docs/CODEX_SESSION_STARTER.md` — historical prompt starter; update against active docs before reuse.
 
 ## Operations / release / security docs
 

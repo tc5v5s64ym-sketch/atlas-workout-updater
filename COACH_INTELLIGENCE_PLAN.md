@@ -1,5 +1,8 @@
 # Coach Intelligence Plan
 
+> Historical/reference-only. Do not execute this plan as the active roadmap.
+> Use `BACKLOG.md` for priorities, `docs/ACTIVE_ROADMAP.md` for current execution, and `docs/AGENT_WORKFLOW.md` for process.
+
 Phased build: planned-workout awareness → substitution quality scoring → coach-generated substitution recommendations → conversation consolidation design.
 
 Operating rules for every PR: tiny single-concern PRs; verify before changing; reuse existing substitution infrastructure; golden fixtures hand-written; data before behavior; no write-path changes unless explicitly required; no sheet schema changes; no parser rewrites unless explicitly required; stop after opening each PR.

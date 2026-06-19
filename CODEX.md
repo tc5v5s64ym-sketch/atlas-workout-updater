@@ -1,6 +1,6 @@
 # Atlas Agent Instructions
 
-These instructions are for Codex and any coding agent working in this repository.
+These instructions define Codex behavior in this repository. They are not the Atlas roadmap.
 
 ## Product North Star
 
@@ -13,6 +13,30 @@ Approve-before-save is a product principle. The current Google Sheets, Render, G
 ## Atlas Summary
 
 Atlas is a personal fitness platform. This repository contains the Node/Express backend that parses, validates, enriches, and writes workout data to Google Sheets. Render deploys production from GitHub `main`. GitHub Actions Mission Control validates production safely.
+
+## Current Execution Sources
+
+Use the active docs in this order:
+
+1. `BACKLOG.md`
+2. `docs/ACTIVE_ROADMAP.md`
+3. `docs/AGENT_WORKFLOW.md`
+
+Document responsibilities:
+
+- `CLAUDE.md` defines Claude Code and implementation-agent operating instructions.
+- `CODEX.md` defines Codex reviewer / agent behavior.
+- `BACKLOG.md` defines priorities and is the source of truth for open and deferred work.
+- `docs/ACTIVE_ROADMAP.md` defines the current execution queue.
+- `docs/DOCS_INDEX.md` defines document status and separates active docs from historical/reference docs.
+- `docs/AGENT_WORKFLOW.md` defines the Dale + ChatGPT + Claude Code + CODEX Review + GitHub process.
+
+Rules:
+
+- Do not use `CODEX.md` as a roadmap.
+- Do not select the next implementation PR from `CODEX.md`.
+- If `CODEX.md` appears to conflict with `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, or `docs/AGENT_WORKFLOW.md`, follow the execution source and update this file in a docs-only PR.
+- Historical plans and old PR notes are context only unless the backlog or active roadmap explicitly points to them.
 
 ## Current Production State
 
@@ -108,6 +132,8 @@ Dashboard:
 - Open PRs.
 - Run GitHub Actions Mission Control when asked.
 - Summarize risks and blockers.
+- Perform CODEX Review after Claude Code opens a PR.
+- Flag roadmap drift, scope creep, and trust-contract risk.
 
 ## What Codex Must Never Do
 
@@ -119,38 +145,42 @@ Dashboard:
 - Do not restore Dashboard as required.
 - Do not merge PRs without explicit owner approval.
 - Do not delete old or cleaned sheets.
+- Do not begin the next roadmap PR unless the owner explicitly asks.
+- Do not convert historical/reference docs into active execution plans without owner approval.
 
-## Current PR Status And Priority
+## CODEX Review
 
-As of this instruction refresh, the recent merged UI/product sequence is:
+CODEX Review is the roadmap-fit, trust-contract, and scope-control review that happens after Claude Code opens a PR. It does not replace GitHub checks or Dale's merge decision.
 
-1. PR #96: merged - two-surface Coach/Progress shell with design tokens.
-2. PR #98: merged - Coach chat thread, composer send, and in-thread preview card.
-3. PR #99: merged - trust loop as in-thread card states.
-4. PR #100: merged - Progress surface v1.
-5. PR #101: merged - frontend sends `write_id` for duplicate protection.
-6. PR #102: merged - Coach declutter, bottom-docked composer, and service-worker cache bump.
-7. PR #103: merged - glanceable dashboard with friendly one-liners first and full data one tap deeper.
+CODEX Review checks:
 
-At handoff, no open PRs were visible.
+- roadmap fit
+- scope creep
+- Atlas trust contract
+- live-path test coverage
+- write-path/schema safety
+- accidental future-PR work
+- whether the original failure is actually fixed
 
-If another AI agent may have run out mid-build and no PR is open yet, assume there may be unpushed local or session-only work. In that situation, avoid recently touched UI files unless the owner gives explicit direction.
+CODEX Review outcomes:
 
-Current safe next lanes after interrupted UI work:
+- `BLOCKING`
+- `NON-BLOCKING`
+- `READY FOR OWNER MERGE`
 
-1. Docs-only status refresh work.
-2. Parser golden tests or other isolated tests-only work.
-3. Small isolated backend work outside likely interrupted UI files.
+If a finding is future-scope work, do not ask Claude Code to build it inside the current PR. Route it to `BACKLOG.md`, an issue, or owner decision instead.
 
-Verify current GitHub state before relying on any PR/status summary in this file.
+## Workflow Alignment
 
-## Interrupted Agent Work Rule
+Atlas now uses this workflow:
 
-When an AI coding session runs out mid-build and no PR is open, do not guess and continue the same feature.
+- Dale + ChatGPT = planning, roadmap, app testing, and product decisions.
+- Claude Code = implementation.
+- GitHub = CI/checks and PR handoff.
+- CODEX Review = roadmap fit, trust contract, and scope control.
+- Dale = final merge.
 
-1. First check open PRs and recent PRs.
-2. Avoid files likely touched by the interrupted agent, especially recent UI files.
-3. Prefer docs-only, tests-only, or isolated backend work until the owner confirms the unfinished branch state.
+Codex may help with implementation when explicitly asked, but the default alignment role after Claude Code opens a PR is review, not starting adjacent roadmap work.
 
 ## Morning Summary Format
 
