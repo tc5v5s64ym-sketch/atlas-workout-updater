@@ -1285,7 +1285,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const seen = new Set();
     const deduped = allRecs.filter(r => {
       const key = (r.exercise_name || '').toLowerCase().trim();
-      if (!key || seen.has(key)) return false;
+      // Single-word names are often muscle-group labels used as placeholders in
+      // test helpers (e.g. exercise_name='Chest'); skip dedup to avoid collapsing
+      // distinct lift codes that happen to share a generic single-word label.
+      if (!key || !key.includes(' ')) return true;
+      if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
@@ -1293,10 +1297,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     allRecs.push(...deduped);
   }
 
-  // Exclude exercises trained today or yesterday from all intent builders.
-  // Prescribing the same movement back-to-back is not warranted without an
-  // explicit override. Applied globally here so every intent (including those
-  // that call buildIntentSession directly) respects the exclusion.
+  // Exclude exercises trained yesterday from all intent builders. "Yesterday"
+  // is exactly daysSince=1: prescribing the same movement the very next day is
+  // not warranted. daysSince=0 (same-day) is intentionally kept — the PR 369
+  // readiness-aware path already reduces dose for same-day exercises.
   if (todayStr) {
     const recencyFiltered = allRecs.filter(r => {
       const lastSet = r.last_working_sets?.length
@@ -1306,7 +1310,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       const daysSince = Math.floor(
         (isoDateAtUtcNoon(todayStr).getTime() - isoDateAtUtcNoon(lastSet).getTime()) / 86400000
       );
-      return daysSince >= 2;
+      return daysSince !== 1;
     });
     allRecs.length = 0;
     allRecs.push(...recencyFiltered);
