@@ -579,3 +579,38 @@ test('dumbbell: contextual alias safety — "incline felt weird" must not create
   assert.notEqual(result.intent, 'log_sets', 'must not log without set data');
   assert.equal(result.intent, 'needs_clarification');
 });
+
+// ---------------------------------------------------------------------------
+// Reorder / coach-message safety — stale activeExercise must not propagate
+// after the user sends a non-parse message (reorder, equipment note, question).
+//
+// Regression for: user logged Deadlift, then said "leg extension is taken,
+// gonna do laterals first" (routed to coach → activeExercise cleared to null),
+// then logged "15 12/2 x3" — which silently attached to Deadlift.
+// ---------------------------------------------------------------------------
+
+test('reorder safety: bare shorthand with no activeExercise context asks for clarification', () => {
+  // Simulates the state AFTER a coach/reorder message cleared activeExercise.
+  // The parser must refuse to guess rather than attach to a stale lift.
+  const result = parseWorkoutText('15 12/2 x3', { activeExercise: null });
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('missing_exercise'), 'must warn missing_exercise');
+  assert.match(result.message, /which exercise/i);
+});
+
+test('reorder safety: bare shorthand with no context never attaches to a previously logged exercise', () => {
+  // The exact symptom: "15 12/2 x3" must not become Deadlift just because
+  // Deadlift was logged earlier in the same session.
+  const result = parseWorkoutText('15 12/2 x3');
+  assert.notEqual(result.intent, 'log_sets', 'must not silently log without an exercise name');
+  assert.equal(result.intent, 'needs_clarification');
+});
+
+test('reorder safety: continuation shorthand still works when activeExercise is correctly set', () => {
+  // Existing happy-path behavior must not regress: after parsing "Deadlift 245 7/2 x3"
+  // the frontend sets activeExercise = "Deadlift", and bare follow-ups must inherit it.
+  const result = parseWorkoutText('15 12/2 x3', { activeExercise: 'Deadlift' });
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Deadlift');
+  assert.deepEqual(result.sets.map(s => [s.weight, s.reps, s.rir]), [[15, 12, 2], [15, 12, 2], [15, 12, 2]]);
+});

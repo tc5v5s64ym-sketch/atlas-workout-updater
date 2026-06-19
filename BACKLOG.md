@@ -52,6 +52,8 @@ Note: most are dials on existing behaviour, not new features; the exceptions (pr
 
 ## Near-term
 
+- **Deferred (reorder-logging bugfix)** — `activePlannedSession.index` is not advanced or re-pointed by coach reorder messages (e.g. "leg extension is taken, gonna do laterals first"). `advancePlannedSession()` is wired only to the "Next exercise →" button, so after a conversational reorder the session index still points to the skipped exercise. This means `checkAndSuggestSubstitute` sends the wrong `current_exercise` to the substitute endpoint on subsequent messages in that session. The data-integrity fix (clearing `activeExercise` after coach routing) ships in the same bugfix PR; this index-staleness is narration-only and deferred.
+
 - **[#291](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/291) — Deload prescription consolidation (one model).** **BUMPED** — it's on the Coach's Pick surface the user starts from, not a secondary screen. Anchor on `computePrescription` as the single prescription source; point **both** the next-set card **and** the Coach's Pick / insights overview at it; retire the volume-first `suggestDeloads` path.
 - **NEW — Deload trigger nuance: don't trigger a deload off accessory or deprioritized lifts.** Live example: it flagged Dumbbell Curl as stalled while its e1RM was progressing 40 → 53, and flagged Shrugs, which the user barely trains directly. The trigger should weigh what actually counts, not flag every flat lift.
 - **[#289](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/issues/289) — Frontend deload lifecycle wiring.** State machine is built but dark — the client never calls `/api/deload/begin|advance|resolve`, so saving a workout doesn't advance the machine.
