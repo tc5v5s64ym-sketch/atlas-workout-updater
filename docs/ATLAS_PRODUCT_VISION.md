@@ -1,5 +1,7 @@
 # Atlas Product Vision
 
+> **Governance layer:** Vision + Dream — see [`docs/GOVERNANCE.md`](GOVERNANCE.md) for the full hierarchy.
+
 ## One-Sentence Vision
 
 Atlas is a personal AI fitness companion that helps the owner log workouts naturally, capture Apple Watch effort data, safely review and save structured training history, and receive increasingly intelligent coaching based on real progress.

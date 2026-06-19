@@ -1,5 +1,7 @@
 # Atlas Active Roadmap
 
+> **Governance layer:** Roadmap — see [`docs/GOVERNANCE.md`](GOVERNANCE.md) for the full hierarchy.
+
 This is the current execution queue after the June 2026 app test findings.
 
 `BACKLOG.md` remains the single source of truth for open and deferred work. This file is the detailed active queue. When these two files disagree, stop and ask the owner before changing direction.

@@ -1,5 +1,7 @@
 # Atlas Product Constitution
 
+> **Governance layer:** Constitution — see [`docs/GOVERNANCE.md`](GOVERNANCE.md) for the full hierarchy.
+
 ## Mission
 
 **Track Less. Understand More.**
