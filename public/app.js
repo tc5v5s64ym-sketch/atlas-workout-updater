@@ -1133,6 +1133,11 @@ function normalizePlanExercise(raw) {
  * No persistence; logging/preview/save stays exactly as it was. */
 let activePlannedSession = null;
 
+// Read-only accessor for coach-conversation.js (coach layer must never mutate
+// the session directly — only app.js advances/ends it via advancePlannedSession
+// and endPlannedSession).
+function getActivePlannedSession() { return activePlannedSession; }
+
 function startPlannedSession(intent) {
   const exercises = (intent.exercises || []).map(normalizePlanExercise).filter(ex => ex.name);
   if (!exercises.length) return;
