@@ -1033,7 +1033,10 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   const COL_LIFT_IDX = 5;
   const uniqueLifts = [...new Set((Array.isArray(logRows) ? logRows : []).map(r => r[COL_LIFT_IDX]).filter(Boolean))];
   const memory_patterns = uniqueLifts
-    .map(liftCode => ({ liftCode, ...detectPatterns(liftCode, logRows, { substitutionHistory }) }))
+    .map(liftCode => {
+      const liftSubHistory = substitutionHistory.filter(e => e.liftCode === liftCode);
+      return { liftCode, ...detectPatterns(liftCode, logRows, { substitutionHistory: liftSubHistory }) };
+    })
     .filter(item => item.patterns.length > 0)
     .slice(0, 5);
 

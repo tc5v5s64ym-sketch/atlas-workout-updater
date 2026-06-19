@@ -50,6 +50,7 @@ test('buildSubstitutionHistory: GOLDEN FIXTURE — detects substitution when usu
   assert.equal(result[0].original.toLowerCase(), 'bench press');
   assert.equal(result[0].substitute.toLowerCase(), 'incline press');
   assert.equal(result[0].date, '2026-03-29');
+  assert.equal(result[0].liftCode, 'BPR01', 'event must carry the usual lift\'s liftCode for per-lift filtering');
 });
 
 test('buildSubstitutionHistory: no event when usual lift IS present', () => {
@@ -129,7 +130,7 @@ test('GOLDEN FIXTURE — repeated_substitution fires when 3+ substitutions detec
   ];
 
   const substitutionHistory = buildSubstitutionHistory(rows);
-  // The pattern is liftCode-agnostic in substitutionHistory; pass liftCode for context
+  // In production buildChatContext filters by liftCode; here all events are BPR01 so unfiltered is equivalent.
   const { patterns } = detectPatterns(liftCode, rows, { substitutionHistory });
 
   const subPattern = patterns.find(p => p.type === 'repeated_substitution');
@@ -152,4 +153,36 @@ test('repeated_substitution does NOT fire when fewer than 3 substitutions', () =
   const { patterns } = detectPatterns(liftCode, rows, { substitutionHistory });
   const subPattern = patterns.find(p => p.type === 'repeated_substitution');
   assert.equal(subPattern, undefined, 'should not fire with only 2 substitutions');
+});
+
+test('per-lift filtering: Bench substitution history must NOT bleed into unrelated lifts', () => {
+  // 4 baseline Bench + 3 substitutions → repeated_substitution fires for BPR01.
+  // An unrelated lift (Deadlift / DLT01) present in the same log must NOT inherit
+  // the Bench pattern when its substitutionHistory is filtered to DLT01 only.
+  const rows = [
+    row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-22', 'S4', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-12', 'S7', 'Incline Press', 'chest', 'IPR01'),
+    // Deadlift rows — unrelated muscle group, always present
+    row('2026-03-01', 'S1', 'Deadlift', 'back', 'DLT01'),
+    row('2026-03-08', 'S2', 'Deadlift', 'back', 'DLT01'),
+  ];
+  const substitutionHistory = buildSubstitutionHistory(rows);
+
+  // Simulate buildChatContext per-lift filtering
+  const benchHistory = substitutionHistory.filter(e => e.liftCode === 'BPR01');
+  const deadliftHistory = substitutionHistory.filter(e => e.liftCode === 'DLT01');
+
+  const { patterns: benchPatterns } = detectPatterns('BPR01', rows, { substitutionHistory: benchHistory });
+  const { patterns: deadliftPatterns } = detectPatterns('DLT01', rows, { substitutionHistory: deadliftHistory });
+
+  const benchSub = benchPatterns.find(p => p.type === 'repeated_substitution');
+  assert.ok(benchSub, 'BPR01 must detect the Bench→Incline repeated substitution');
+
+  const deadliftSub = deadliftPatterns.find(p => p.type === 'repeated_substitution');
+  assert.equal(deadliftSub, undefined, 'DLT01 must NOT inherit the Bench substitution pattern');
 });

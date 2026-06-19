@@ -116,7 +116,7 @@ function buildSubstitutionHistory(logRows) {
         if (!topSub || count > topSub.count) topSub = { exercise, count };
       }
       if (topSub) {
-        events.push({ original: usual.exercise, substitute: topSub.exercise, date });
+        events.push({ original: usual.exercise, substitute: topSub.exercise, date, liftCode: usual.liftCode });
       }
     }
   }
