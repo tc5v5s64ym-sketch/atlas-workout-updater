@@ -74,6 +74,7 @@ All steps below are merged. Recorded here for traceability; do not re-execute.
 | 369 | Readiness-Aware Recommendations | ✅ complete |
 | 370 | Coach Confidence Layer (`confidence_factors`) | ✅ complete |
 | 371 | Coach Voice Polish (remove e1rm_trend ambiguity) | ✅ complete |
+| 372 | Substitution updates session state (`applySubstitution`) | ✅ complete |
 
 Deferred items from each completed step are recorded in `BACKLOG.md`.
 
@@ -98,9 +99,8 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 372 — Substitution updates authoritative session state (engine)
 
-**Status:** NEXT — ready to implement  
-**Type:** Trust-critical  
-**GitHub PR:** TBD (will differ from the Roadmap Step number)
+**Status:** ✅ complete (GitHub PR #388)  
+**Type:** Trust-critical
 
 **Exact failure prevented:** User says "Lat bar is taken so I'll do seated rows instead"; Atlas acknowledges the swap but keeps Lat Pulldown on the remaining list. The planned session state must mark Lat Pulldown as substituted and Seated Row as the active slot once accepted, and complete it once logged.
 
@@ -117,14 +117,25 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 **Out-of-scope (→ Step 373):** wiring `applySubstitution` into `public/app.js` `activePlannedSession` and the `coach-conversation.js` swap-acknowledgment path; parsing "X is taken, I'll do Y" into (prescribed, substitute).
 
-### Roadmap Step 373 — One authoritative session state feeds the coach
+### Roadmap Step 373 — Coach reads the authoritative live session
+
+**Status:** in progress (this PR)  
+**Type:** Trust-critical (touches `public/app.js` — trust-loop file, named scope)
+
+**Exact failure prevented:** The coach's `current_plan` was a fresh re-fetch from `/api/plan/intent-recommendation`, independent of the live session — so completed lifts showed as still remaining (name drift) and the coach narrated a different plan than the banner. Remaining/completed must derive from ONE authoritative session state.
+
+**Scope (this PR):** `currentPlanForChat` derives `current_plan` from the live `activePlannedSession` (its exercises + cursor) when a session is active, keyed `canonicalName || name` to match `resolveCompletedIdentity`/`sessionCompleted` so the server's `computePlanState` reconciles completed↔remaining. Falls back to the cached recommendation only when no session is active. No write-path, no schema, no LLM.
+
+**Out-of-scope:** applying an accepted substitution INTO `activePlannedSession` (→ Step 373b); parser changes (Step 374); history intelligence (Step 376).
+
+### Roadmap Step 373b — Apply an accepted substitution into the live session
 
 **Status:** queued  
-**Type:** Trust-critical (touches `public/app.js` + `public/coach-conversation.js` — trust-loop files, named scope)
+**Type:** Trust-critical (touches `public/app.js` — trust-loop file, named scope)
 
-**Exact failure prevented:** After logging substituted Rows, Atlas still thinks Lat Pulldown remains; the coach's `current_plan` is a fresh re-fetch independent of the live session. Remaining/completed must derive from ONE authoritative session state.
+**Exact failure prevented:** When the lifter swaps (logs Seated Row in place of planned Lat Pulldown), `activePlannedSession` still lists Lat Pulldown, so the now-authoritative coach view (Step 373) still shows it remaining. The accepted substitute must replace the prescribed slot in the live session.
 
-**Scope:** Wire Step 372's `applySubstitution` into `activePlannedSession`; make `currentPlanForChat` derive `current_plan`/remaining from the live session (with substitutions applied) instead of re-fetching the recommended intent. Keep-in-sync inline copy pattern where the browser can't `require()`.
+**Scope:** at log time, when the logged exercise classifies as a substitute for a remaining planned slot, apply Step 372's `applySubstitution` to `activePlannedSession.exercises` (inline keep-in-sync mirror, since the browser can't `require()` the service). Re-render the banner. Pure mapping kept in `services/sessionPlanExecutor.js`; classification reuses `classifyPlanAction`'s logic mirrored inline.
 
 **Out-of-scope:** parser changes (Step 374), history intelligence (Step 376).
 

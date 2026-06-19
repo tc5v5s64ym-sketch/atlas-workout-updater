@@ -3121,10 +3121,29 @@ function currentPreviewRowsForChat() {
   return rows;
 }
 
-// Returns today's recommended exercises as {name, rationale} objects for the
-// coach context, so the model can answer "why in this order?" without claiming
-// it lacks the sequence. Falls back to [] when no plan has loaded.
+// Returns today's plan exercises as {name, rationale} objects for the coach
+// context, so the model can answer "why in this order?" and "what's left?"
+// without claiming it lacks the sequence.
+//
+// AUTHORITATIVE SOURCE (Roadmap Step 373): when a planned session is live, the
+// coach must see the SAME plan the lifter is actually running — including any
+// accepted substitutions and the live cursor — not a separately re-fetched
+// recommendation. The name key is `canonicalName || name`, matching exactly what
+// resolveCompletedIdentity writes into sessionCompleted, so the server's
+// name-based computePlanState reconciles completed↔remaining instead of drifting.
+// Only when no session is active do we fall back to the cached recommendation.
 function currentPlanForChat() {
+  if (activePlannedSession && Array.isArray(activePlannedSession.exercises) && activePlannedSession.exercises.length) {
+    return activePlannedSession.exercises.slice(0, 10).map(ex => ({
+      name: ex.canonicalName || ex.name || null,
+      rationale: ex.reason || null,
+      weight: ex.weight ?? null,
+      reps: ex.reps ?? null,
+      sets: ex.sets ?? null,
+      rir: ex.rir ?? null
+    })).filter(e => e.name);
+  }
+  // Fallback: the cached recommended intent (no active session yet).
   if (!lastIntentData) return [];
   const intents = lastIntentData.intents || [];
   const recommended = intents.find(i => i.recommended);

@@ -476,6 +476,24 @@ test('two-way chat: non-loggable text routes to the coach instead of erroring', 
   assert.doesNotMatch(routeBlock, /\/api\/log-workout|\/api\/complete-workout|approve/);
 });
 
+test('Step 373: currentPlanForChat reads the live planned session before the cached recommendation', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  const fn = appSource.slice(
+    appSource.indexOf('function currentPlanForChat()'),
+    appSource.indexOf('function currentPlanForChat()') + 1100
+  );
+  // The authoritative branch reads activePlannedSession.exercises FIRST...
+  const sessionIdx = fn.indexOf('activePlannedSession.exercises');
+  const fallbackIdx = fn.indexOf('lastIntentData');
+  assert.ok(sessionIdx !== -1, 'must derive the plan from the live activePlannedSession');
+  assert.ok(fallbackIdx !== -1, 'must keep the cached-recommendation fallback');
+  assert.ok(sessionIdx < fallbackIdx, 'the live session must be preferred over the cached recommendation');
+  // ...and keys names as canonicalName||name so they reconcile with
+  // resolveCompletedIdentity / sessionCompleted on the server.
+  assert.match(fn, /ex\.canonicalName \|\| ex\.name/, 'plan name key must match resolveCompletedIdentity');
+});
+
 test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
   const convSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
 
