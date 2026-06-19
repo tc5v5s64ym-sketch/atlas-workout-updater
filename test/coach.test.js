@@ -26,6 +26,30 @@ test('coach model defaults to gemini 2.5 flash-lite and is env-overridable', () 
   else process.env.GEMINI_COACH_MODEL = original;
 });
 
+// Step 378 — null-element guards: each array sanitizer must not throw and must
+// return a well-shaped object when a null element appears in the input.
+test('sanitizeFacts: null element in today_sets produces a zero-valued set, not a throw', () => {
+  const clean = sanitizeFacts({ todaySets: [null, { weight: 185, reps: 5, rir: 2 }] });
+  assert.equal(clean.today_sets.length, 2);
+  assert.deepEqual(clean.today_sets[0], { weight: null, reps: null, rir: null });
+  assert.deepEqual(clean.today_sets[1], { weight: 185, reps: 5, rir: 2 });
+});
+
+test('sanitizeFacts: null element in last_working_sets produces a zero-valued set, not a throw', () => {
+  const clean = sanitizeFacts({ rec: { last_working_sets: [null, { weight: 225, reps: 5, rir: 1 }] } });
+  assert.equal(clean.last_working_sets.length, 2);
+  assert.deepEqual(clean.last_working_sets[0], { weight: null, reps: null, rir: null });
+  assert.deepEqual(clean.last_working_sets[1], { weight: 225, reps: 5, rir: 1 });
+});
+
+test('sanitizeChatContext: null element in current_preview is silently dropped, not a throw', () => {
+  const clean = sanitizeChatContext({
+    current_preview: [null, { exercise: 'Bench Press', weight: 185, reps: 5, rir: 2 }]
+  });
+  assert.equal(clean.current_preview.length, 1, 'null element must be filtered out');
+  assert.equal(clean.current_preview[0].exercise, 'Bench Press');
+});
+
 test('sanitizeFacts whitelists known fields and coerces numbers', () => {
   const clean = sanitizeFacts({
     exerciseName: 'Bench Press',

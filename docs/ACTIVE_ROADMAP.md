@@ -111,7 +111,7 @@ Build order: engine/correctness fixes first (378–379), then deload consolidati
 
 ### Roadmap Step 378 — Coach sanitizer null guard
 
-**Status:** pending
+**Status:** complete (PR #405)
 
 **Type:** Correctness
 
