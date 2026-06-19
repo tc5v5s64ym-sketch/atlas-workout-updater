@@ -1,7 +1,7 @@
 'use strict';
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { computePlanState } = require('../services/sessionPlanExecutor');
+const { computePlanState, nextExerciseFromPlan } = require('../services/sessionPlanExecutor');
 
 /* ===== Shape ===== */
 
@@ -128,5 +128,110 @@ test('computePlanState: single exercise plan, not yet done → isComplete false'
 
 test('computePlanState: single exercise plan, completed → isComplete true', () => {
   const s = computePlanState(['Deadlift'], ['Deadlift']);
+  assert.equal(s.isComplete, true);
+});
+
+// ---------------------------------------------------------------------------
+// Fix #1 — API plan authority (PR 360 review)
+//
+// nextExerciseFromPlan replicates the lookup block in getNextExerciseInPlan
+// (public/coach-conversation.js). When an exercise IS found in the API plan,
+// that match is authoritative: the last entry returns null (no handoff) and
+// the fallback to activePlannedSession must NOT be consulted. Only when no
+// match exists (found:false) should the caller use its fallback.
+// ---------------------------------------------------------------------------
+
+test('Fix #1: final exercise in API plan → found:true, next:null (no spurious handoff)', () => {
+  // Regression for the bug where idx===keys.length-1 fell through to the
+  // activePlannedSession fallback and could announce a false "Moving on" prompt.
+  const map = new Map([
+    ['bench press',   { exercise_name: 'Bench Press' }],
+    ['lat pulldown',  { exercise_name: 'Lat Pulldown' }],
+    ['lateral raise', { exercise_name: 'Lateral Raise' }],
+  ]);
+  const result = nextExerciseFromPlan(map, 'lateral raise');
+  assert.equal(result.found, true, 'last exercise must be found');
+  assert.equal(result.next, null, 'last exercise must produce no handoff (null next)');
+});
+
+test('Fix #1: middle exercise in API plan → found:true, next is the following entry', () => {
+  const map = new Map([
+    ['bench press',   { exercise_name: 'Bench Press' }],
+    ['lat pulldown',  { exercise_name: 'Lat Pulldown' }],
+    ['lateral raise', { exercise_name: 'Lateral Raise' }],
+  ]);
+  const result = nextExerciseFromPlan(map, 'bench press');
+  assert.equal(result.found, true);
+  assert.equal(result.next, 'Lat Pulldown');
+});
+
+test('Fix #1: exercise NOT in API plan → found:false (fallback must run)', () => {
+  // When no match exists, getNextExerciseInPlan must fall back to
+  // activePlannedSession. The found:false signal triggers that branch.
+  const map = new Map([
+    ['bench press',   { exercise_name: 'Bench Press' }],
+    ['lat pulldown',  { exercise_name: 'Lat Pulldown' }],
+  ]);
+  const result = nextExerciseFromPlan(map, 'deadlift');
+  assert.equal(result.found, false, 'unmatched exercise must signal fallback');
+  assert.equal('next' in result, false, 'no next field when not found');
+});
+
+test('Fix #1: empty map → found:false (fallback must run)', () => {
+  const result = nextExerciseFromPlan(new Map(), 'Bench Press');
+  assert.equal(result.found, false);
+});
+
+test('Fix #1: null map → found:false (fallback must run)', () => {
+  const result = nextExerciseFromPlan(null, 'Bench Press');
+  assert.equal(result.found, false);
+});
+
+// ---------------------------------------------------------------------------
+// Fix #2 — Completion identity alignment (PR 360 review)
+//
+// currentPlanForChat() emits {name: canonical_exercise || exercise} — canonical
+// name first. The server's buildChatContext uses those names as planNames for
+// computePlanState. resolveCompletedIdentity must write the SAME canonical name
+// into sessionCompleted so computePlanState can match them.
+//
+// Scenario: plan entry display name = "Rows", canonical_exercise = "Barbell Row".
+//   currentPlanForChat emits:  { name: 'Barbell Row' }   (canonical_exercise wins)
+//   resolveCompletedIdentity returns: 'Barbell Row'       (canonicalName || name)
+//   sessionCompleted = ['Barbell Row']
+//   computePlanState(['Barbell Row'], ['Barbell Row']) → isComplete:true
+//
+// The test below validates the computePlanState side of this chain — that when
+// planned names use canonical_exercise, a matching completed entry marks it done.
+// ---------------------------------------------------------------------------
+
+test('Fix #2: canonical name in plan_names matches canonical name in plan_completed → isComplete true', () => {
+  // currentPlanForChat emits canonical_exercise ('Barbell Row'), not display name ('Rows').
+  // sessionCompleted must carry the same canonical string.
+  const planNames     = ['Barbell Row'];   // from currentPlanForChat → canonical_exercise
+  const sessionCompleted = ['Barbell Row']; // from resolveCompletedIdentity → canonicalName
+  const s = computePlanState(planNames, sessionCompleted);
+  assert.deepEqual(s.remaining, [], 'canonical names must match end-to-end');
+  assert.equal(s.isComplete, true);
+});
+
+test('Fix #2: display name in plan_completed does NOT match canonical name in plan_names (the bug this fixes)', () => {
+  // Before the fix, resolveCompletedIdentity returned match.name (display name: 'Rows')
+  // while currentPlanForChat emitted canonical_exercise ('Barbell Row').
+  // Those strings don't match → exercise never marked complete.
+  const planNames        = ['Barbell Row'];  // canonical (from currentPlanForChat)
+  const sessionCompleted = ['Rows'];         // display name (pre-fix value) — WRONG
+  const s = computePlanState(planNames, sessionCompleted);
+  assert.deepEqual(s.remaining, ['Barbell Row'], 'display name must NOT match canonical — this was the bug');
+  assert.equal(s.isComplete, false);
+});
+
+test('Fix #2: lift_code match bridges display-name vs canonical-name mismatch in computePlanState', () => {
+  // When both plan entry and completed entry carry the same lift_code, computePlanState
+  // can bridge the name mismatch. This is the object-input path (PR 358b).
+  const planned   = [{ name: 'Rows', liftCode: 'barbell_row' }];
+  const completed = [{ name: 'Barbell Row', liftCode: 'barbell_row' }];
+  const s = computePlanState(planned, completed);
+  assert.deepEqual(s.remaining, []);
   assert.equal(s.isComplete, true);
 });

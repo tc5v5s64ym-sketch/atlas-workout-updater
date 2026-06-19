@@ -71,4 +71,37 @@ function computePlanState(planned, completed) {
   };
 }
 
-module.exports = { computePlanState };
+/**
+ * nextExerciseFromPlan(map, exerciseName)
+ *
+ * Pure lookup: given an ordered Map<lowercase-name, record> from the API plan,
+ * returns the next exercise entry (or null for the last exercise).
+ *
+ * Return shape:
+ *   { found: true,  next: string|null } — exercise was in the plan; next is the
+ *                                          following entry's display name, or null
+ *                                          when the matched exercise is the last.
+ *   { found: false }                    — exercise was NOT in the plan; caller
+ *                                          should use its fallback (e.g. activePlannedSession).
+ *
+ * Matching: exact lowercase first, then bidirectional substring.
+ * When found, the result is AUTHORITATIVE — the caller must NOT consult any
+ * fallback, because the API plan is the source of truth for plan order.
+ *
+ * This replicates the lookup block inside getNextExerciseInPlan
+ * (public/coach-conversation.js) so the algorithm can be tested in Node.js
+ * without a browser environment.
+ */
+function nextExerciseFromPlan(map, exerciseName) {
+  if (!map || !map.size) return { found: false };
+  const key = String(exerciseName || '').toLowerCase();
+  const keys = Array.from(map.keys());
+  let idx = keys.indexOf(key);
+  if (idx === -1) idx = keys.findIndex(k => k.includes(key) || key.includes(k));
+  if (idx === -1) return { found: false };
+  if (idx >= keys.length - 1) return { found: true, next: null };
+  const nextRec = map.get(keys[idx + 1]);
+  return { found: true, next: (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null };
+}
+
+module.exports = { computePlanState, nextExerciseFromPlan };
