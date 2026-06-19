@@ -61,8 +61,11 @@ function buildSuggestedWorkout(logRows, effortRows = [], options = {}) {
   const intents = scoreResult && Array.isArray(scoreResult.intents) ? scoreResult.intents : null;
   if (!intents || !intents.length) return null;
 
-  // Pick the highest-scoring intent (stable: first wins on tie).
-  const topIntent = intents.reduce((best, i) => (!best || (i.score > best.score)) ? i : best, null);
+  // Exclude 'custom' (scoreIntents never recommends it) then prefer the engine's own
+  // recommended flag; fall back to highest score on tie.
+  const candidates = intents.filter(i => i.id !== 'custom');
+  const topIntent = candidates.find(i => i.recommended)
+    || candidates.reduce((best, i) => (!best || (i.score > best.score)) ? i : best, null);
   if (!topIntent) return null;
 
   const rows = Array.isArray(logRows) ? logRows : [];
