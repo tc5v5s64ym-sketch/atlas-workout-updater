@@ -1,7 +1,7 @@
 'use strict';
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { computePlanState, nextExerciseFromPlan, isPlanComplete } = require('../services/sessionPlanExecutor');
+const { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution } = require('../services/sessionPlanExecutor');
 
 /* ===== Shape ===== */
 
@@ -272,4 +272,102 @@ test('PR 364: isPlanComplete — plan [A,B,C] with only A and C done → false',
 
 test('PR 364: isPlanComplete — empty planned list → false (no closeout without a plan)', () => {
   assert.equal(isPlanComplete([], ['A', 'B', 'C']), false);
+});
+
+/* ===== Step 372: applySubstitution — in-session swap updates session state ===== */
+
+// The headline app-test failure: planned Lat Pulldown, user says "Lat bar is
+// taken so I'll do seated rows instead". Once accepted, the planned session
+// state must mark Lat Pulldown as substituted and Seated Row as the active slot.
+test('applySubstitution: Lat Pulldown → Seated Row is accepted and recorded', () => {
+  const planned = ['Bench Press', 'Lat Pulldown', 'Leg Curl'];
+  const r = applySubstitution(planned, 'Lat Pulldown', 'Seated Row');
+  assert.equal(r.applied, true);
+  assert.deepEqual(r.substituted, [{ from: 'Lat Pulldown', to: 'Seated Row' }]);
+  // Seated Row occupies the prescribed slot, order preserved.
+  assert.deepEqual(r.planned.map(p => p.name), ['Bench Press', 'Seated Row', 'Leg Curl']);
+});
+
+test('applySubstitution: prescribed exercise is no longer shown as remaining', () => {
+  const r = applySubstitution(['Bench Press', 'Lat Pulldown', 'Leg Curl'], 'Lat Pulldown', 'Seated Row');
+  const state = computePlanState(r.planned, []);
+  assert.ok(!state.remaining.includes('Lat Pulldown'), 'Lat Pulldown must drop out of remaining');
+  assert.ok(state.remaining.includes('Seated Row'), 'Seated Row must appear in remaining until logged');
+});
+
+test('applySubstitution: logging the substitute advances the session correctly', () => {
+  const r = applySubstitution(['Bench Press', 'Lat Pulldown', 'Leg Curl'], 'Lat Pulldown', 'Seated Row');
+  // User logs the Seated Row → it is completed; the swapped-out lift never returns.
+  const after = computePlanState(r.planned, ['Seated Row']);
+  assert.ok(!after.remaining.includes('Seated Row'), 'logged substitute must leave remaining');
+  assert.ok(!after.remaining.includes('Lat Pulldown'), 'swapped-out lift must never reappear');
+  assert.deepEqual(after.remaining, ['Bench Press', 'Leg Curl']);
+  assert.equal(after.isComplete, false);
+});
+
+test('applySubstitution: substitute liftCode rides along so a differently-named log still matches', () => {
+  // Plan slot becomes Seated Row w/ code CSR01; user later logs it canonicalised
+  // as "Cable Seated Row" carrying the same code → computePlanState marks it done.
+  const r = applySubstitution(['Lat Pulldown'], 'Lat Pulldown', { name: 'Seated Row', liftCode: 'CSR01' });
+  assert.equal(r.applied, true);
+  const after = computePlanState(r.planned, [{ name: 'Cable Seated Row', liftCode: 'CSR01' }]);
+  assert.equal(after.isComplete, true, 'liftCode identity must close the substituted slot');
+});
+
+test('applySubstitution: matches the prescribed slot by liftCode when names differ', () => {
+  const planned = [{ name: 'Rows', liftCode: 'LPD01' }];
+  const r = applySubstitution(planned, { name: 'Lat Pulldown', liftCode: 'LPD01' }, 'Seated Row');
+  assert.equal(r.applied, true);
+  assert.deepEqual(r.planned.map(p => p.name), ['Seated Row']);
+});
+
+test('applySubstitution: prescribed not in plan → no-op (this is an add, not a swap)', () => {
+  const r = applySubstitution(['Bench Press', 'Leg Curl'], 'Lat Pulldown', 'Seated Row');
+  assert.equal(r.applied, false);
+  assert.deepEqual(r.substituted, []);
+  assert.deepEqual(r.planned.map(p => p.name), ['Bench Press', 'Leg Curl']);
+});
+
+test('applySubstitution: substitute identical to prescribed → no-op', () => {
+  const r = applySubstitution(['Lat Pulldown'], 'Lat Pulldown', 'lat pulldown');
+  assert.equal(r.applied, false);
+  assert.deepEqual(r.substituted, []);
+});
+
+test('applySubstitution: blank prescribed or substitute → no-op', () => {
+  assert.equal(applySubstitution(['Bench'], '', 'Rows').applied, false);
+  assert.equal(applySubstitution(['Bench'], 'Bench', '').applied, false);
+});
+
+test('applySubstitution: does not mutate the input planned array', () => {
+  const planned = ['Bench Press', 'Lat Pulldown'];
+  const snapshot = JSON.parse(JSON.stringify(planned));
+  applySubstitution(planned, 'Lat Pulldown', 'Seated Row');
+  assert.deepEqual(planned, snapshot, 'input array must be untouched');
+});
+
+test('applySubstitution: sequential swaps compose (two slots substituted)', () => {
+  const r1 = applySubstitution(['Lat Pulldown', 'Leg Curl'], 'Lat Pulldown', 'Seated Row');
+  const r2 = applySubstitution(r1.planned, 'Leg Curl', 'Nordic Curl');
+  assert.equal(r2.applied, true);
+  assert.deepEqual(r2.planned.map(p => p.name), ['Seated Row', 'Nordic Curl']);
+});
+
+test('applySubstitution: substituting to an already-planned exercise does not duplicate it', () => {
+  // CODEX Step 372 review: plan [Bench, Lat Pulldown], swap Lat Pulldown → Bench
+  // must not yield [Bench, Bench] (one logged Bench would falsely close two slots).
+  const r = applySubstitution(['Bench Press', 'Lat Pulldown'], 'Lat Pulldown', 'Bench Press');
+  assert.equal(r.applied, true);
+  assert.deepEqual(r.substituted, [{ from: 'Lat Pulldown', to: 'Bench Press' }]);
+  assert.deepEqual(r.planned.map(p => p.name), ['Bench Press'], 'prescribed slot dropped, no duplicate');
+  const state = computePlanState(r.planned, ['Bench Press']);
+  assert.equal(state.isComplete, true);
+  assert.deepEqual(state.remaining, []);
+});
+
+test('applySubstitution: dedupe guard also matches an existing slot by liftCode', () => {
+  const planned = [{ name: 'Cable Row', liftCode: 'CSR01' }, { name: 'Lat Pulldown', liftCode: 'LPD01' }];
+  const r = applySubstitution(planned, 'Lat Pulldown', { name: 'Seated Row', liftCode: 'CSR01' });
+  assert.equal(r.applied, true);
+  assert.deepEqual(r.planned.map(p => p.name), ['Cable Row'], 'liftCode dup dropped the prescribed slot');
 });
