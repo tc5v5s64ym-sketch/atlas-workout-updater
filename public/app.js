@@ -2604,6 +2604,10 @@ function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions) {
 // session save (done / effort / screenshot) is built from THIS — never from a
 // Gemini compile or a re-parse — so it's reliable and identical across triggers.
 let sessionLog = [];
+// Unique exercise names logged this session. Sent in chat context as
+// plan_completed so the server can compute which planned exercises remain.
+// Cleared alongside sessionLog at save and on startOver.
+let sessionCompleted = [];
 
 // Editor-ready rows from the buffer, numbering sets per exercise.
 function buildRowsFromSessionLog() {
@@ -2628,6 +2632,8 @@ function emitSetLogged(logObjs, text, substitutions) {
     });
     // Accumulate the raw set into the session buffer for the end-of-session save.
     sessionLog.push({ exercise: o.exercise, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
+    // Track unique exercise names for plan_completed wiring in routeMessageToCoach.
+    if (!sessionCompleted.includes(o.exercise)) sessionCompleted.push(o.exercise);
   }
   if (byExercise.length) {
     try {
@@ -2911,6 +2917,7 @@ function startOverWorkout() {
   workoutTextInput.value = '';
   lastParsedWorkoutText = '';
   sessionLog = [];
+  sessionCompleted = [];
   setsTableBody.innerHTML = '';
   parsedRowsEditor.hidden = true;
   const effortDetails = document.getElementById('effort-details');
@@ -3084,6 +3091,7 @@ function routeMessageToCoach(text) {
   const context = {};
   if (preview.length) context.current_preview = preview;
   if (plan.length) context.current_plan = plan;
+  if (sessionCompleted.length) context.plan_completed = [...sessionCompleted];
   // Defer one tick so chat.js's submit listener paints the user bubble first —
   // without this, the Atlas "Thinking…" bubble appends before the user bubble.
   setTimeout(() => {
@@ -3775,6 +3783,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     lastWrite = pendingLastWrite;
     // The session is saved — start the next session's buffer fresh.
     if (pendingLastWrite) sessionLog = [];
+    if (pendingLastWrite) sessionCompleted = [];
     if (pendingLastWrite) {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);

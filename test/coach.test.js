@@ -1272,3 +1272,31 @@ test('coach chat system prompt carries plan_state guidance', () => {
   assert.match(prompt, /plan_state/i, 'prompt must reference plan_state');
   assert.match(prompt, /remaining/i,  'prompt must mention remaining exercises');
 });
+
+/* ===== plan_state complete-session scenario (PR 358) ===== */
+
+test('sanitizeChatContext: plan_state with isComplete:true and empty remaining round-trips through sanitize (PR 358)', () => {
+  const clean = sanitizeChatContext({
+    plan_state: {
+      planned:   ['Lat Pulldown', 'Rows', 'Lateral Raise'],
+      completed: ['Lat Pulldown', 'Rows', 'Lateral Raise'],
+      remaining: [],
+      isComplete: true
+    }
+  });
+  assert.equal(clean.plan_state.isComplete, true);
+  assert.deepEqual(clean.plan_state.remaining, []);
+});
+
+test('sanitizeChatContext: plan_state with isComplete:false and one remaining exercise round-trips through sanitize (PR 358)', () => {
+  const clean = sanitizeChatContext({
+    plan_state: {
+      planned:   ['Deadlift', 'Rows', 'Lat Pulldown'],
+      completed: ['Deadlift', 'Rows'],
+      remaining: ['Lat Pulldown'],
+      isComplete: false
+    }
+  });
+  assert.equal(clean.plan_state.isComplete, false);
+  assert.deepEqual(clean.plan_state.remaining, ['Lat Pulldown']);
+});
