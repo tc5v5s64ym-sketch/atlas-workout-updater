@@ -166,10 +166,18 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 376 — Suppress cross-lift history contamination
 
-**Status:** queued  
+**Status:** ✅ complete (GitHub PR #399)  
 **Type:** Trust-critical
 
 **Exact failure prevented:** Leg Extension commentary claimed today's 60 was below a recent working range of 105–170 — numbers from an unrelated lift. Almost certainly the pre-override `liftCode` history-merge gap (BACKLOG SESSION_DESIGN AC5a). If same-lift evidence is not clean, suppress the claim rather than cite foreign history.
+
+**Root cause:** `enrichCoachFacts` (`services/liveIntelligence.js`) pools history by `liftCode` alone — every analytics call (`computeBenchmark`, `resolveWorkingWeight`, `detectTrend`, `computeExpectedPerformance`) keeps rows where column 5 matches. When two genuinely different exercises share a `liftCode` (a generated-code collision from the pre-override era, or a catalog data-entry slip), their rows merge and the coach can cite a foreign lift's working range. `facts.exerciseName` was already forwarded by the frontend but never used to scope the history.
+
+**Scope:** `services/liveIntelligence.js` only — added `cleanLogForLift(allLog, liftCode, exerciseName)`, called once before the analytics run. It intervenes **only when contamination is visible**: rows carrying the target `liftCode` disagree on `canonical_exercise`. Then it keeps only rows whose exercise matches today's lift (normalized name, or canonical `liftCode` via `canonicalLiftCodeFor` for known variants like "Lateral Raise"/"Lateral Raises"); if the target's own rows can't be confidently identified, all same-`liftCode` rows are dropped so the analytics degrade to null and the coach suppresses the claim. When the same-`liftCode` rows agree on one canonical name (the normal case), `allLog` is returned unchanged — a no-op except under real contamination. No write-path, schema, parser, or LLM change.
+
+**Tests:** 4 golden-fixture tests in `test/liveIntelligence.test.js` — foreign-range leak blocked (benchmark reflects 60, not 150–170); unidentifiable-target suppression (benchmark null); clean single-exercise history unchanged when `exerciseName` is supplied (no over-filtering regression); name variants sharing a canonical `liftCode` survive contamination.
+
+**Deferred (BACKLOG):** the inverse split — same exercise under *different* liftCodes (pre-override generated code missing from merged history, SESSION_DESIGN AC5a) — is a separate read-time normalization and remains deferred; this PR addresses contamination (foreign history leaking in), not the merge gap (own history missing).
 
 ### Roadmap Step 377 — Deterministic fallback for session-close questions
 
