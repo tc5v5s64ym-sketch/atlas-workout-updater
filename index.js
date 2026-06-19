@@ -1034,7 +1034,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   const uniqueLifts = [...new Set((Array.isArray(logRows) ? logRows : []).map(r => r[COL_LIFT_IDX]).filter(Boolean))];
   const memory_patterns = uniqueLifts
     .map(liftCode => {
-      const liftSubHistory = substitutionHistory.filter(e => e.liftCode === liftCode);
+      const liftSubHistory = substitutionHistory.filter(e => String(e.liftCode).toUpperCase() === String(liftCode).toUpperCase());
       return { liftCode, ...detectPatterns(liftCode, logRows, { substitutionHistory: liftSubHistory }) };
     })
     .filter(item => item.patterns.length > 0)

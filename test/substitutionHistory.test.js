@@ -67,6 +67,21 @@ test('buildSubstitutionHistory: no event when usual lift IS present', () => {
   assert.deepEqual(buildSubstitutionHistory(rows), []);
 });
 
+test('buildSubstitutionHistory: exercise rotation — no event when lifts alternate roughly equally', () => {
+  // Bench and Incline alternate every session — intentional rotation.
+  // Bench appears 4×, Incline 3×; ratio 4:3 < DOMINANCE_RATIO(2), so neither is "usual".
+  const rows = [
+    row('2026-03-01', 'S1', 'Bench Press',  'chest', 'BPR01'),
+    row('2026-03-08', 'S2', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-03-15', 'S3', 'Bench Press',  'chest', 'BPR01'),
+    row('2026-03-22', 'S4', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-03-29', 'S5', 'Bench Press',  'chest', 'BPR01'),
+    row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-12', 'S7', 'Bench Press',  'chest', 'BPR01'),
+  ];
+  assert.deepEqual(buildSubstitutionHistory(rows), [], 'alternating rotation must not emit substitution events');
+});
+
 test('buildSubstitutionHistory: program change — no event when usual lift never returns', () => {
   // 3 sessions of Bench establishes it as usual, then 3 sessions of Incline only.
   // Because Bench never returns, this is a program change — NOT a substitution.

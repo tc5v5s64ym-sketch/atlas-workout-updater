@@ -36,6 +36,12 @@ const COL_LIFT     = 5;
 // from generating noisy substitution signals.
 const MIN_SESSIONS_FOR_USUAL = 3;
 
+// The "usual" lift must appear in at least DOMINANCE_RATIO × the next-most-common
+// lift's session count. This filters out intentional rotation programs (Bench and
+// Incline alternating equally) where neither lift is clearly "usual" — without this
+// guard every absence in an alternating program would fire as a substitution.
+const DOMINANCE_RATIO = 2.0;
+
 function buildSubstitutionHistory(logRows) {
   if (!Array.isArray(logRows) || !logRows.length) return [];
 
@@ -83,17 +89,25 @@ function buildSubstitutionHistory(logRows) {
   }
 
   // Step 3: For each muscle group, find the "usual" lift (highest session count,
-  //   minimum MIN_SESSIONS_FOR_USUAL).
+  //   minimum MIN_SESSIONS_FOR_USUAL, and dominant over competitors by DOMINANCE_RATIO).
   const usualLift = new Map(); // muscle -> {liftCode, exercise}
   for (const [muscle, tally] of muscleLiftSessions) {
     let best = null;
+    let maxCompetitor = 0; // highest session count among all non-best lifts
     for (const [liftCode, { sessionCount, exercise }] of tally) {
-      if (sessionCount < MIN_SESSIONS_FOR_USUAL) continue;
       if (!best || sessionCount > best.sessionCount) {
+        if (best) maxCompetitor = Math.max(maxCompetitor, best.sessionCount);
         best = { liftCode, exercise, sessionCount };
+      } else {
+        maxCompetitor = Math.max(maxCompetitor, sessionCount);
       }
     }
-    if (best) usualLift.set(muscle, best);
+    if (!best || best.sessionCount < MIN_SESSIONS_FOR_USUAL) continue;
+    // Dominance check: if a competitor exists, the usual lift must appear in
+    // ≥ DOMINANCE_RATIO × competitor sessions. Prevents rotation programs from
+    // triggering substitution events (e.g. Bench/Incline alternating 4:3 fails 2× check).
+    if (maxCompetitor > 0 && best.sessionCount < maxCompetitor * DOMINANCE_RATIO) continue;
+    usualLift.set(muscle, best);
   }
 
   if (!usualLift.size) return [];
