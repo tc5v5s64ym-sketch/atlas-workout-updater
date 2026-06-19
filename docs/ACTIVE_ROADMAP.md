@@ -2,7 +2,7 @@
 
 > **Governance layer:** Roadmap — see [`docs/GOVERNANCE.md`](GOVERNANCE.md) for the full hierarchy.
 
-This is the current execution queue after the June 2026 app test findings.
+This is the current execution queue after completing the June 2026 session-state trust-repair series (Steps 372–377).
 
 `BACKLOG.md` remains the single source of truth for open and deferred work. This file is the detailed active queue. When these two files disagree, stop and ask the owner before changing direction.
 
@@ -14,8 +14,8 @@ These are separate things. A Roadmap Step is a logical build unit defined here. 
 
 Use terminology like:
 
-- **Roadmap Step 361** — the logical unit of work defined in this file
-- **GitHub PR #366** — the actual pull request on GitHub
+- **Roadmap Step 381** — the logical unit of work defined in this file
+- **GitHub PR #392** — the actual pull request on GitHub
 
 Do not assume they match. BACKLOG.md records both where they diverge (e.g. "Roadmap Step 364 / GitHub PR #366").
 
@@ -30,14 +30,15 @@ The performance intelligence layer has mostly been built, but app testing expose
 - reorder vs substitute confusion
 - no clean session closeout
 
-The test changed priority, not direction.
+Steps 372–377 repaired session-state trust. Steps 378–382 harden the coach surface, fix residual session-cursor staleness, and bring the deload system to a consistent and correctly triggered state.
 
 Build order:
 
-1. Fix session execution and trust failures.
-2. Wire existing intelligence into the live coach path.
-3. Use intelligence for suggested workouts.
-4. Polish coach voice last.
+1. Fix session execution and trust failures. ✅ (372–377)
+2. Wire existing intelligence into the live coach path. ✅ (372–377)
+3. Harden the coach surface against runtime failures. (378)
+4. Fix residual session-cursor staleness from reorders. (379)
+5. Consolidate and correct the deload recommendation system. (380–382)
 
 ## Global rules
 
@@ -76,8 +77,13 @@ All steps below are merged. Recorded here for traceability; do not re-execute.
 | 369 | Readiness-Aware Recommendations | ✅ complete |
 | 370 | Coach Confidence Layer (`confidence_factors`) | ✅ complete |
 | 371 | Coach Voice Polish (remove e1rm_trend ambiguity) | ✅ complete |
-| 372 | Substitution updates session state (`applySubstitution`) | ✅ complete |
-| 373 | Coach reads the authoritative live session | ✅ complete |
+| 372 | Substitution updates authoritative session state (`applySubstitution`) | ✅ complete (GitHub PR #388) |
+| 373 | Coach reads the authoritative live session | ✅ complete (GitHub PR #389) |
+| 373b | Apply accepted substitution into the live session | ✅ complete |
+| 374 | Planned exercise names are always loggable | ✅ complete (GitHub PR #392) |
+| 375 | Coach "what's left" reads authoritative state | ✅ complete (GitHub PR #394) |
+| 376 | Suppress cross-lift history contamination | ✅ complete (GitHub PR #399) |
+| 377 | Deterministic fallback for session-close questions | ✅ complete (GitHub PR #400) |
 
 Deferred items from each completed step are recorded in `BACKLOG.md`.
 
@@ -94,111 +100,147 @@ The original roadmap named Steps 358–360 and 364 differently from the numbers 
 
 ---
 
-## Active queue — Session-state trust repair (Steps 372–377)
+## Active queue — Coach hardening + deload correctness (Steps 378–382)
 
-This series fixes the session-execution trust failures surfaced by the June 2026 app test (planned vs. completed drift during a live workout). The root cause is that the app has **no single authoritative session state**: `activePlannedSession` (the banner plan + cursor), `sessionCompleted` (logged names), and the coach's `current_plan` (re-fetched fresh from `/api/plan/intent-recommendation` each message) drift apart. Substitutions update none of them.
+This series addresses two clusters of open work following the session-state trust repair:
 
-Build order is deterministic-engine-first, then live wiring, then coach narration — one concern per PR, stop after each.
+1. **Steps 378–379:** Two focused correctness fixes — a runtime null-throw risk in the live coach surface and a session-cursor staleness bug left by the 372–377 reorder wiring.
+2. **Steps 380–382:** The deload system is the most prominent coaching surface (Coach's Pick). It has confirmed live failures: wrong lifts triggering deloads and two competing prescription models disagreeing. Fix trigger correctness and consolidate prescriptions before wiring the lifecycle.
 
-### Roadmap Step 372 — Substitution updates authoritative session state (engine)
+Build order: engine/correctness fixes first (378–379), then deload consolidation (380–381), then lifecycle wiring (382). Hold points separate the two clusters for app-testing.
 
-**Status:** ✅ complete (GitHub PR #388)  
-**Type:** Trust-critical
+### Roadmap Step 378 — Coach sanitizer null guard
 
-**Exact failure prevented:** User says "Lat bar is taken so I'll do seated rows instead"; Atlas acknowledges the swap but keeps Lat Pulldown on the remaining list. The planned session state must mark Lat Pulldown as substituted and Seated Row as the active slot once accepted, and complete it once logged.
+**Status:** pending
 
-**Scope:** Pure deterministic engine only — `services/sessionPlanExecutor.js`. No frontend, no write-path, no schema, no LLM. Adds `applySubstitution(planned, prescribed, substitute)` returning the updated planned list (prescribed slot replaced in place, order preserved, substitute liftCode carried so a later differently-named log still matches in `computePlanState`).
+**Type:** Correctness
+
+**Exact failure prevented:** A null or undefined element in any of the live coach/chat array inputs (`today_sets`, `last_working_sets`, `current_preview`) causes an uncaught throw in `sanitizeFacts` or `sanitizeChatContext` (`services/coach.js`), breaking the entire coach response for that request. The same guard was applied to `sanitizeReactionContext` in PR 3.4 but not propagated to the sibling sanitizers.
+
+**Scope:** `services/coach.js` only. Add the same `s && typeof s === 'object'` null-element guard already established in `sanitizeReactionContext` to `sanitizeFacts` and `sanitizeChatContext`. Add a `[null]`-element test to each. No change to coach wording, system prompt, LLM model, write path, schema, or recommendation logic.
 
 **Acceptance criteria:**
-- `applySubstitution` replaces the prescribed slot with the substitute, preserving order.
-- After substitution, `computePlanState` shows the prescribed lift gone from `remaining` and the substitute present until logged.
-- Logging the substitute completes the slot and never resurfaces the swapped-out lift.
-- Substitute liftCode rides along so a log under a different canonical name closes the slot.
-- No-op when prescribed is absent / blank / identical to substitute. Inputs never mutated.
+- Passing a `null` element in `today_sets`, `last_working_sets`, or `current_preview` does not throw; the element is silently dropped.
+- A regression test for each array proves the null case no longer crashes or leaks bad facts.
+- No coach wording, prompt rule, or recommendation behavior is altered.
 
-**Expected tests:** golden fixtures in `test/sessionPlanExecutor.test.js` proving each criterion (the Lat Pulldown → Seated Row scenario explicitly).
+**Expected tests:** three null-element tests in `test/coach.test.js` (one per sanitizer, each covering a `[null]` input element).
 
-**Out-of-scope (→ Step 373):** wiring `applySubstitution` into `public/app.js` `activePlannedSession` and the `coach-conversation.js` swap-acknowledgment path; parsing "X is taken, I'll do Y" into (prescribed, substitute).
+**Out-of-scope:** prompt changes, voice changes, write-path changes, schema changes, recommendation changes.
 
-### Roadmap Step 373 — Coach reads the authoritative live session
+### Roadmap Step 379 — Reorder session index bugfix
 
-**Status:** ✅ complete (GitHub PR #389)  
-**Type:** Trust-critical (touches `public/app.js` — trust-loop file, named scope)
+**Status:** pending
 
-**Exact failure prevented:** The coach's `current_plan` was a fresh re-fetch from `/api/plan/intent-recommendation`, independent of the live session — so completed lifts showed as still remaining (name drift) and the coach narrated a different plan than the banner. Remaining/completed must derive from ONE authoritative session state.
+**Type:** Correctness (session execution)
 
-**Scope (this PR):** `currentPlanForChat` derives `current_plan` from the live `activePlannedSession` (its exercises + cursor) when a session is active, keyed `canonicalName || name` to match `resolveCompletedIdentity`/`sessionCompleted` so the server's `computePlanState` reconciles completed↔remaining. Falls back to the cached recommendation only when no session is active. No write-path, no schema, no LLM.
+**Exact failure prevented:** When the user says something like "leg extension is taken, gonna do laterals first" and the coach routes accordingly, `activePlannedSession.index` is not advanced by the conversational reorder — only the "Next exercise →" button does so. On subsequent messages in the same session, `checkAndSuggestSubstitute` sends the wrong `current_exercise` to the substitute endpoint because the cursor still points at the skipped/taken exercise. The session-state model from Steps 372–373 is authoritative, but the index cursor lags behind it.
 
-**Out-of-scope:** applying an accepted substitution INTO `activePlannedSession` (→ Step 373b); parser changes (Step 374); history intelligence (Step 376).
+**Scope:** `public/coach-conversation.js` and `public/app.js` (coach-routing branch only — no write-path or preview-panel change). After a coach reorder is acknowledged, clear or re-point `activeExercise` so subsequent substitution/current-exercise checks use the correct planned slot. No write-path, no schema, no LLM change.
 
-### Roadmap Step 373b — Apply an accepted substitution into the live session
+**Acceptance criteria:**
+- A conversational reorder ("X is taken, doing Y first") advances or re-points the authoritative session cursor.
+- Subsequent `checkAndSuggestSubstitute` calls send the correct `current_exercise`.
+- The "what's next / what's left" coach answer still reads from the authoritative state (Step 373/375), not the stale cursor.
+- No write-path or schema change is present.
 
-**Status:** in progress (this PR)  
-**Type:** Trust-critical (touches `public/app.js` — trust-loop file, named scope)
+**Expected tests:** integration or unit tests proving that after a simulated reorder message, the session index points at the correct next exercise and the substitute-check sends the right exercise name.
 
-**Exact failure prevented:** When the lifter swaps (logs Seated Row in place of planned Lat Pulldown), `activePlannedSession` still lists Lat Pulldown, so the now-authoritative coach view (Step 373) still shows it remaining. The accepted substitute must replace the prescribed slot in the live session.
+**Out-of-scope:** parser changes, schema changes, write-path changes.
 
-**Scope (this PR):** an explicit swap declaration ("X is taken, I'll do Y") records the prescribed step in `pendingSubstitution`; the next logged exercise is applied as the substitute via `applySessionSubstitution` (inline keep-in-sync mirror of Step 372's `applySubstitution`) before completed-identity resolution, so the swapped-out lift leaves remaining and the substitute is marked done. Gated on the explicit declaration so it never misfires on ordinary added work; cleared on cursor advance and session end.
+> **Note on `public/app.js`:** This file contains the preview→approve→write trust loop and is a restricted file per `CLAUDE.md`. The fix touches the coach-routing branch only. It must be named in scope before editing begins.
 
-**Deferred (→ later):** swaps NOT preceded by a recognized constraint message (e.g. exercise outside the substitute catalog), and multi-exercise batch swaps — these don't set `pendingSubstitution` yet. Tracked in `BACKLOG.md`.
+---
 
-**Out-of-scope:** parser changes (Step 374), history intelligence (Step 376).
+### Hold point — App-test: reorder, "what's left," and substitution
 
-### Roadmap Step 374 — Planned exercise names are always loggable
+After Steps 378–379 are merged, pause for owner review and optional app-test before deload work begins.
 
-**Status:** ✅ complete (GitHub PR #392)  
-**Type:** Correctness
+**Focus test:** active session reorder ("X is taken, doing Y first"), "what's next / what's left" response accuracy after a reorder, and substitution/current-exercise behavior on subsequent messages.
 
-**Exact failure prevented:** Atlas suggested "Single-Leg Leg Curl" but later rejected that exact wording with "Didn't catch that lift." Any name Atlas prescribes in a plan must be recognizable when logged later (alias registration / canonicalization round-trip).
+---
 
-**Scope:** Added six new canonical entries to `EXERCISE_ALIASES` in `services/workoutTextParser.js`: Single-Leg Leg Curl, Leg Extension, Pull-Up, Chin-Up, Hip Thrust. Each entry lists the canonical name the plan uses as the alias key so the parser returns that exact name — ensuring `computePlanState` name-matches correctly. "Single-Leg Leg Curl" is placed before "Leg Curl" so its longer alias wins in the sorted match. Nine golden regression tests in `test/parser-golden.test.js` lock the round-trip and guard against "Leg Curl" absorbing the single-leg variant again.
+### Roadmap Step 380 — Deload prescription consolidation (#291)
 
-### Roadmap Step 375 — Coach "what's left" reads authoritative state
+**Status:** pending
 
-**Status:** ✅ complete (GitHub PR #394)  
-**Type:** Trust-critical
+**Type:** Correctness (recommendation logic) — BUMPED priority; on the Coach's Pick surface
 
-**Exact failure prevented:** After completed lifts, Atlas told the user everything (Deadlift, Leg Extension, Leg Curl, Lat Pulldown, Bench, Dips) was still remaining. Coach answers about "what's left" must read the authoritative completed/remaining state from Step 373, not separate memory.
+**Exact failure prevented:** Two prescription paths currently coexist — `computePrescription` (the canonical engine) and the older volume-first `suggestDeloads` path. The Coach's Pick surface and next-set card may route through different models and can show contradictory prescriptions. Both surfaces must derive from a single canonical source.
 
-**Root cause (two gaps):** (1) `routeMessageToCoach` (`public/app.js`) only sent `plan_completed` when `sessionCompleted.length > 0`, so before the first logged set the server's gate left `plan_state` null and the coach answered "what's left?" from `current_plan` (the whole session). (2) `buildChatSystemPrompt` (`services/coach.js`) had no rule telling the model to answer "what's left?" from `plan_state.remaining` rather than `current_plan` or prior chat turns.
+**Scope:** Service-layer consolidation. Point both the next-set card and Coach's Pick/insights overview at `computePrescription` as the single prescription source. Retire or bypass the `suggestDeloads` volume-first path where it conflicts. Pure service-layer refactor — no write-path, no schema, no LLM change.
 
-**Scope:** `public/app.js` — send `plan_completed` (even `[]`) whenever `activePlannedSession` is active, so the server always computes an authoritative `plan_state`. `services/coach.js` — add a WHAT'S-LEFT RULE to the chat system prompt: answer remaining/next/done questions ONLY from `plan_state.remaining`/`isComplete`; never derive remaining work from `current_plan` or conversation turns; say there's no authoritative state when `plan_state` is absent. No write-path, schema, or trust-loop (preview→approve→write) change. Tests: 3 integration tests in `test/api-smoke.test.js` (empty/partial `plan_completed` drives `plan_state`; absent `plan_completed` keeps the stale-data guard) + 1 prompt-rule test in `test/coach.test.js`.
+**Acceptance criteria:**
+- Both the next-set card and Coach's Pick surfaces read from `computePrescription` only.
+- `suggestDeloads` is either retired or explicitly subordinated so it cannot produce a contradictory recommendation on any live surface.
+- Tests prove both surfaces agree (same prescription model, same output shape) when given identical inputs.
+- All five `DELOAD_SPEC.md` behaviors remain pinned in golden fixtures.
+- No write-path or schema change is present.
 
-### Roadmap Step 376 — Suppress cross-lift history contamination
+**Expected tests:** golden fixtures in the deload/prescription test suite covering all five spec behaviors; an integration test proving Coach's Pick and next-set card return consistent prescriptions from the same model.
 
-**Status:** ✅ complete (GitHub PR #399)  
-**Type:** Trust-critical
+**Out-of-scope:** frontend lifecycle wiring (→ Step 382), trigger-logic changes (→ Step 381), LLM prompt changes, schema changes.
 
-**Exact failure prevented:** Leg Extension commentary claimed today's 60 was below a recent working range of 105–170 — numbers from an unrelated lift. Almost certainly the pre-override `liftCode` history-merge gap (BACKLOG SESSION_DESIGN AC5a). If same-lift evidence is not clean, suppress the claim rather than cite foreign history.
+### Roadmap Step 381 — Deload trigger nuance: no accessory/deprioritized false positives
 
-**Root cause:** `enrichCoachFacts` (`services/liveIntelligence.js`) pools history by `liftCode` alone — every analytics call (`computeBenchmark`, `resolveWorkingWeight`, `detectTrend`, `computeExpectedPerformance`) keeps rows where column 5 matches. When two genuinely different exercises share a `liftCode` (a generated-code collision from the pre-override era, or a catalog data-entry slip), their rows merge and the coach can cite a foreign lift's working range. `facts.exerciseName` was already forwarded by the frontend but never used to scope the history.
+**Status:** pending
 
-**Scope:** `services/liveIntelligence.js` only — added `cleanLogForLift(allLog, liftCode, exerciseName)`, called once before the analytics run. It intervenes **only when contamination is visible**: rows carrying the target `liftCode` disagree on `canonical_exercise`. Then it keeps only rows whose exercise matches today's lift (normalized name, or canonical `liftCode` via `canonicalLiftCodeFor` for known variants like "Lateral Raise"/"Lateral Raises"); if the target's own rows can't be confidently identified, all same-`liftCode` rows are dropped so the analytics degrade to null and the coach suppresses the claim. When the same-`liftCode` rows agree on one canonical name (the normal case), `allLog` is returned unchanged — a no-op except under real contamination. No write-path, schema, parser, or LLM change.
+**Type:** Correctness (recommendation logic)
 
-**Tests:** 4 golden-fixture tests in `test/liveIntelligence.test.js` — foreign-range leak blocked (benchmark reflects 60, not 150–170); unidentifiable-target suppression (benchmark null); clean single-exercise history unchanged when `exerciseName` is supplied (no over-filtering regression); name variants sharing a canonical `liftCode` survive contamination.
+**Exact failure prevented:** Confirmed live failures: Dumbbell Curl was flagged as stalled while its e1RM was actively progressing (40→53 lb); Shrugs was flagged despite being barely trained as a direct lift. The trigger evaluates all flat lifts equally regardless of their role in the program. A deload recommendation triggered by a secondary or accessory lift when primary compounds are progressing normally is worse than no recommendation — it erodes trust in every subsequent deload signal.
 
-**Deferred (BACKLOG):** the inverse split — same exercise under *different* liftCodes (pre-override generated code missing from merged history, SESSION_DESIGN AC5a) — is a separate read-time normalization and remains deferred; this PR addresses contamination (foreign history leaking in), not the merge gap (own history missing).
+**Scope:** Isolated change to the deload-trigger evaluation logic. The trigger should weigh primary-lift evidence; accessories and deprioritized lifts should be downgraded or excluded as trigger sources when primary-compound signals do not corroborate. No change to what a deload prescribes, only when the trigger fires. No write-path, no schema, no LLM change.
 
-### Roadmap Step 377 — Deterministic fallback for session-close questions
+**Acceptance criteria:**
+- Dumbbell Curl with a progressing e1RM (40→53 lb) does not trigger a deload.
+- Shrugs alone does not trigger a deload when compound lifts are progressing normally.
+- Main compound lifts that are genuinely stalling continue to trigger correctly.
+- Golden fixtures pin all five `DELOAD_SPEC.md` behaviors and the live false-positive examples.
+- No write-path or schema change is present.
 
-**Status:** ✅ complete (GitHub PR #400)  
-**Type:** Correctness
+**Expected tests:** golden-fixture tests in the deload trigger suite covering the Dumbbell Curl progressing case, the Shrugs case, and at least two genuine-stall cases where the trigger must fire.
 
-**Exact failure prevented:** "Ok so we are done?" returned coach-unavailable instead of resolving session status.
+**Out-of-scope:** prescription model changes (→ Step 380), frontend lifecycle wiring (→ Step 382), LLM prompt changes, schema changes.
 
-**Root cause (three gaps, no malformed payload):** `/api/coach/chat` returns `message:null` both when Gemini is unconfigured (`index.js`, the early return) and when it errors/times out (the catch block) — and the client's `chatFallback` (`public/coach-conversation.js`) has no branch for session-close questions, so "Ok so we are done?" (no greeting, no digits) fell through to the generic "Coach is unavailable right now." The authoritative `plan_state` rides in on the client context (Step 375) but neither LLM-down path consulted it.
+---
 
-**Scope:** `services/sessionPlanExecutor.js` + `index.js` (read-only `/api/coach/chat` route only — no write path). Added three pure engine functions: `detectSessionCloseQuestion(message)` (recognizes "are we done?", "that's it?", "all finished?", etc. — tight, never fires on planning/logging asks), `buildSessionCloseAnswer(message, planState)` (confirms a complete plan and points at the save step, or names the outstanding lifts — engine owns the count/names, never writes, never triggers the save), and `planStateFromContext(context)` (the SINGLE plan_state gate now shared by `buildChatContext` and both fallback paths, so all three decide "is there authoritative session state?" identically). Both LLM-down paths in the chat route now answer session-close questions from the engine (`source:'engine'`) and fall back to `message:null` otherwise. No schema, no parser, no LLM, no trust-loop (`public/app.js`) change.
+### Hold point — App-test: deload trigger + prescription
 
-**Tests:** 11 engine unit tests in `test/sessionPlanExecutor.test.js` (gate, detector positive/negative, complete/remaining/singular grammar, null guards) + 6 integration tests in `test/api-smoke.test.js` (unconfigured close→engine answer; complete→done+save; no plan_completed→null; non-close→null; throw mid-session→engine answer; read-only/no append).
+After Steps 380–381 are merged, pause for owner review and app-test before frontend lifecycle wiring (Step 382).
 
-**Deferred (BACKLOG):** the pure client-side timeout edge (client `COACH_LLM_TIMEOUT_MS` 9s firing before the server responds) — the server's deterministic answer wins in the normal LLM-outage case (server Gemini timeout 8s < client 9s), so a client-only mirror of `computePlanState` (a keep-in-sync anti-pattern) is intentionally NOT added here.
+**Focus test:** Coach's Pick deload recommendation, next-set card deload prescription, deload trigger accuracy on accessory vs. primary lifts, and consistency between both prescription surfaces.
+
+---
+
+### Roadmap Step 382 — Frontend deload lifecycle wiring (#289)
+
+**Status:** pending
+
+**Type:** Correctness (write-path-adjacent) — HIGH RISK; explicit scope required before editing
+
+**Exact failure prevented:** The deload state machine (`services/deloadState.js`, `Deload_State` tab) is fully built server-side but the client never calls `/api/deload/begin|advance|resolve`. Saving a workout does not advance the machine. `deload_sessions_remaining` never decrements, `deload_exit_criteria` is never evaluated, and the system accumulates no real state transitions — it is effectively dark.
+
+**Scope:** Frontend lifecycle wiring only. Wire the `begin`, `advance`, and `resolve` calls in `public/app.js` at the correct approved lifecycle moments (begin on deload start, advance on session save, resolve on exit criteria met). No new schema columns. No `Log_Cleaned` or workout-row involvement. `Deload_State` tab writes only, per the existing 7-column append-only schema. No LLM change.
+
+**Acceptance criteria:**
+- `begin` is called only when a deload is explicitly started (not on every save).
+- `advance` is called only on a successful session write, not on dry-run/test_mode.
+- `resolve` is called only when exit criteria are met, not preemptively.
+- None of the lifecycle calls alter `Log_Cleaned`, workout rows, or the preview→approve→write trust loop.
+- Tests prove `begin`/`advance`/`resolve` calls happen only at the correct lifecycle moments and that `test_mode: true` dry-runs do not trigger them.
+- `sheet_write`, `sheet_written`, `log_rows_written`, and `no_write_confirmed` proof fields are unaffected.
+
+**Expected tests:** integration tests in `test/api-smoke.test.js` proving the lifecycle boundary conditions (dry-run does not call advance; approve calls advance exactly once per save; `Log_Cleaned` row count is unchanged by lifecycle calls).
+
+> **`public/app.js` restriction:** This file contains the preview→approve→write trust loop and is a restricted file per `CLAUDE.md`. It must be named in scope before editing begins. The deload lifecycle calls are system-state writes to `Deload_State` only — they are NOT logged sets and do NOT route through the preview trust loop.
+
+**Out-of-scope:** prescription model changes (→ Step 380), trigger-logic changes (→ Step 381), schema migrations, LLM prompt changes.
 
 ---
 
 ## Origin
 
-Steps 372–377 were sequenced from the June 2026 app-test failures (six findings, priority-ordered). Owner granted full implement-and-merge authority for the series. Each PR stays tiny and one-concern; deferred discoveries go to `BACKLOG.md` in the same PR.
+Steps 372–377 were sequenced from the June 2026 app-test failures (six findings, priority-ordered). Steps 378–382 follow from BACKLOG.md near-term items and residual deferred findings from the 372–377 series. Owner granted full implement-and-merge authority for the series. Each PR stays tiny and one-concern; deferred discoveries go to `BACKLOG.md` in the same PR.
 
 ## New chat / agent instruction
 
