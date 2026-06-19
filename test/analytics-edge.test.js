@@ -498,3 +498,55 @@ test('scoreIntents PR 370: confidence_factors reflect data quality — sessions 
   assert.ok(Number.isFinite(cf.data_age_days) && cf.data_age_days >= 0,
     `data_age_days must be a non-negative number, got ${cf.data_age_days}`);
 });
+
+// ─── Issue #402: same-day / yesterday exclusion + lift-code dedup ─────────────
+// Uses makeRows() defined above. startDate '2026-05-21' + 4 weekly steps = '2026-06-18'
+// (yesterday for today='2026-06-19').
+
+test('#402: exercise trained yesterday is excluded from recommendations', () => {
+  const rows = [
+    // Seated Row (ROW01): 5 weekly sessions; last one lands on 2026-06-18 (yesterday)
+    ...makeRows('Seated Row', 'Back', 'ROW01', [185, 187, 188, 189, 190], '2026-05-21'),
+    // Bench Press: older history so push pattern is available for intents to fire
+    ...makeRows('Bench Press', 'Chest', 'BEN01', [185, 190, 195, 200, 205], '2026-04-01'),
+  ];
+
+  const result = scoreIntents(rows, [], { today: '2026-06-19' });
+  assert.ok(Array.isArray(result.intents) && result.intents.length > 0,
+    'scoreIntents must return at least one intent');
+
+  for (const intent of result.intents) {
+    const exercises = intent.exercises || [];
+    const hasSeatedRow = exercises.some(ex =>
+      (ex.exercise || '').toLowerCase().includes('seated row') || ex.lift_code === 'ROW01'
+    );
+    assert.ok(!hasSeatedRow,
+      `Intent "${intent.id}" must not recommend Seated Row (trained yesterday); got: [${exercises.map(e => e.exercise).join(', ')}]`
+    );
+  }
+});
+
+test('#402: same exercise under multiple lift codes appears at most once per intent', () => {
+  const rows = [
+    // ROW01 sessions — older (2026-04-10 to 2026-04-24)
+    ...makeRows('Seated Row', 'Back', 'ROW01', [185, 187, 188], '2026-04-10'),
+    // SR01 sessions — same exercise name, more recent but still well outside recency window
+    ...makeRows('Seated Row', 'Back', 'SR01', [190, 192, 193], '2026-05-15'),
+    // Bench Press to give intents variety
+    ...makeRows('Bench Press', 'Chest', 'BEN01', [185, 190, 195, 200, 205], '2026-04-01'),
+  ];
+
+  const result = scoreIntents(rows, [], { today: '2026-06-19' });
+  assert.ok(Array.isArray(result.intents) && result.intents.length > 0,
+    'scoreIntents must return at least one intent');
+
+  for (const intent of result.intents) {
+    const exercises = intent.exercises || [];
+    const seatedRowCount = exercises.filter(ex =>
+      (ex.exercise || '').toLowerCase() === 'seated row'
+    ).length;
+    assert.ok(seatedRowCount <= 1,
+      `Intent "${intent.id}" must include Seated Row at most once; found ${seatedRowCount} entries`
+    );
+  }
+});

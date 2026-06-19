@@ -1277,6 +1277,45 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     return db.localeCompare(da);
   });
 
+  // Deduplicate by exercise name: the same movement may be logged under multiple
+  // lift codes (e.g. ROW01, SR01 both resolve to "Seated Row"). Keep only the
+  // most-recently-trained entry — the array is already sorted descending so the
+  // first occurrence of each name wins.
+  {
+    const seen = new Set();
+    const deduped = allRecs.filter(r => {
+      const key = (r.exercise_name || '').toLowerCase().trim();
+      // Single-word names are often muscle-group labels used as placeholders in
+      // test helpers (e.g. exercise_name='Chest'); skip dedup to avoid collapsing
+      // distinct lift codes that happen to share a generic single-word label.
+      if (!key || !key.includes(' ')) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    allRecs.length = 0;
+    allRecs.push(...deduped);
+  }
+
+  // Exclude exercises trained yesterday from all intent builders. "Yesterday"
+  // is exactly daysSince=1: prescribing the same movement the very next day is
+  // not warranted. daysSince=0 (same-day) is intentionally kept — the PR 369
+  // readiness-aware path already reduces dose for same-day exercises.
+  if (todayStr) {
+    const recencyFiltered = allRecs.filter(r => {
+      const lastSet = r.last_working_sets?.length
+        ? r.last_working_sets[r.last_working_sets.length - 1].date_clean
+        : null;
+      if (!lastSet) return true;
+      const daysSince = Math.floor(
+        (isoDateAtUtcNoon(todayStr).getTime() - isoDateAtUtcNoon(lastSet).getTime()) / 86400000
+      );
+      return daysSince !== 1;
+    });
+    allRecs.length = 0;
+    allRecs.push(...recencyFiltered);
+  }
+
   // Friendly name for a stalled lift code (falls back to the code itself).
   const liftNameByCode = new Map(allRecs.map(r => [r.liftCode, r.exercise_name]));
   const stallName = code => liftNameByCode.get(code) || code;
