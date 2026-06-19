@@ -75,6 +75,7 @@ All steps below are merged. Recorded here for traceability; do not re-execute.
 | 370 | Coach Confidence Layer (`confidence_factors`) | ✅ complete |
 | 371 | Coach Voice Polish (remove e1rm_trend ambiguity) | ✅ complete |
 | 372 | Substitution updates session state (`applySubstitution`) | ✅ complete |
+| 373 | Coach reads the authoritative live session | ✅ complete |
 
 Deferred items from each completed step are recorded in `BACKLOG.md`.
 
@@ -119,7 +120,7 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 373 — Coach reads the authoritative live session
 
-**Status:** in progress (this PR)  
+**Status:** ✅ complete (GitHub PR #389)  
 **Type:** Trust-critical (touches `public/app.js` — trust-loop file, named scope)
 
 **Exact failure prevented:** The coach's `current_plan` was a fresh re-fetch from `/api/plan/intent-recommendation`, independent of the live session — so completed lifts showed as still remaining (name drift) and the coach narrated a different plan than the banner. Remaining/completed must derive from ONE authoritative session state.
@@ -130,12 +131,14 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 373b — Apply an accepted substitution into the live session
 
-**Status:** queued  
+**Status:** in progress (this PR)  
 **Type:** Trust-critical (touches `public/app.js` — trust-loop file, named scope)
 
 **Exact failure prevented:** When the lifter swaps (logs Seated Row in place of planned Lat Pulldown), `activePlannedSession` still lists Lat Pulldown, so the now-authoritative coach view (Step 373) still shows it remaining. The accepted substitute must replace the prescribed slot in the live session.
 
-**Scope:** at log time, when the logged exercise classifies as a substitute for a remaining planned slot, apply Step 372's `applySubstitution` to `activePlannedSession.exercises` (inline keep-in-sync mirror, since the browser can't `require()` the service). Re-render the banner. Pure mapping kept in `services/sessionPlanExecutor.js`; classification reuses `classifyPlanAction`'s logic mirrored inline.
+**Scope (this PR):** an explicit swap declaration ("X is taken, I'll do Y") records the prescribed step in `pendingSubstitution`; the next logged exercise is applied as the substitute via `applySessionSubstitution` (inline keep-in-sync mirror of Step 372's `applySubstitution`) before completed-identity resolution, so the swapped-out lift leaves remaining and the substitute is marked done. Gated on the explicit declaration so it never misfires on ordinary added work; cleared on cursor advance and session end.
+
+**Deferred (→ later):** swaps NOT preceded by a recognized constraint message (e.g. exercise outside the substitute catalog), and multi-exercise batch swaps — these don't set `pendingSubstitution` yet. Tracked in `BACKLOG.md`.
 
 **Out-of-scope:** parser changes (Step 374), history intelligence (Step 376).
 

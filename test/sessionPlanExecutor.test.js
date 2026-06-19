@@ -371,3 +371,34 @@ test('applySubstitution: dedupe guard also matches an existing slot by liftCode'
   assert.equal(r.applied, true);
   assert.deepEqual(r.planned.map(p => p.name), ['Cable Row'], 'liftCode dup dropped the prescribed slot');
 });
+
+/* ===== Step 373b: clampCursorAfterRemoval — live-session cursor follows a spliced slot ===== */
+
+const { clampCursorAfterRemoval } = require('../services/sessionPlanExecutor');
+
+test('clampCursorAfterRemoval: removing the current+last slot clamps the cursor in-bounds', () => {
+  // The crash case: index === removedIdx === last (len 3 → newLength 2).
+  // Naive `> idx` decrement misses (equal, not greater) → out of bounds.
+  assert.equal(clampCursorAfterRemoval(2, 2, 2), 1);
+});
+
+test('clampCursorAfterRemoval: cursor after the removed slot shifts left by one', () => {
+  assert.equal(clampCursorAfterRemoval(3, 1, 3), 2);
+});
+
+test('clampCursorAfterRemoval: cursor before the removed slot is unchanged', () => {
+  assert.equal(clampCursorAfterRemoval(0, 2, 2), 0);
+});
+
+test('clampCursorAfterRemoval: cursor equal to a non-last removed slot is unchanged (next entry slides in)', () => {
+  // plan [A,B,C], cursor on B (idx1), remove B → [A,C]; cursor 1 now points at C.
+  assert.equal(clampCursorAfterRemoval(1, 1, 2), 1);
+});
+
+test('clampCursorAfterRemoval: empty result clamps to 0', () => {
+  assert.equal(clampCursorAfterRemoval(0, 0, 0), 0);
+});
+
+test('clampCursorAfterRemoval: non-integer index defaults to 0', () => {
+  assert.equal(clampCursorAfterRemoval(undefined, 0, 1), 0);
+});
