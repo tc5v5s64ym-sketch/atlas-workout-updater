@@ -4,7 +4,7 @@ name: Codex Contract Guard
 #
 # NOT a required status check yet. It becomes required only after the Phase 3
 # canaries prove RED/GREEN behaviour and the owner promotes it (Phase 4).
-# See docs/CANARY.md.
+# The Phase 3 canary runbook will live in docs/CANARY.md (added in Phase 3).
 #
 # Design notes:
 #  - No `paths:` / `paths-ignore:` filters and no job-level skip `if:` — the
@@ -47,11 +47,11 @@ jobs:
 
       # Runs last among the "work" steps and read-only. openai-api-key comes from
       # secrets; safety-strategy drops sudo; sandbox is read-only (a review never
-      # needs to write the repo). Consider pinning @v1 to a release SHA for
-      # supply-chain hardening once a known-good SHA is recorded.
+      # needs to write the repo). Pinned to the v1 release commit SHA for
+      # supply-chain hardening.
       - name: Codex contract review
         id: codex
-        uses: openai/codex-action@v1
+        uses: openai/codex-action@e0fdf01220eb9a88167c4898839d273e3f2609d1 # v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/codex/contract-review-prompt.md
