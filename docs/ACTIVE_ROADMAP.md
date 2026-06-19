@@ -153,10 +153,14 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 375 — Coach "what's left" reads authoritative state
 
-**Status:** queued  
+**Status:** ✅ complete (GitHub PR #393)  
 **Type:** Trust-critical
 
 **Exact failure prevented:** After completed lifts, Atlas told the user everything (Deadlift, Leg Extension, Leg Curl, Lat Pulldown, Bench, Dips) was still remaining. Coach answers about "what's left" must read the authoritative completed/remaining state from Step 373, not separate memory.
+
+**Root cause (two gaps):** (1) `routeMessageToCoach` (`public/app.js`) only sent `plan_completed` when `sessionCompleted.length > 0`, so before the first logged set the server's gate left `plan_state` null and the coach answered "what's left?" from `current_plan` (the whole session). (2) `buildChatSystemPrompt` (`services/coach.js`) had no rule telling the model to answer "what's left?" from `plan_state.remaining` rather than `current_plan` or prior chat turns.
+
+**Scope:** `public/app.js` — send `plan_completed` (even `[]`) whenever `activePlannedSession` is active, so the server always computes an authoritative `plan_state`. `services/coach.js` — add a WHAT'S-LEFT RULE to the chat system prompt: answer remaining/next/done questions ONLY from `plan_state.remaining`/`isComplete`; never derive remaining work from `current_plan` or conversation turns; say there's no authoritative state when `plan_state` is absent. No write-path, schema, or trust-loop (preview→approve→write) change. Tests: 3 integration tests in `test/api-smoke.test.js` (empty/partial `plan_completed` drives `plan_state`; absent `plan_completed` keeps the stale-data guard) + 1 prompt-rule test in `test/coach.test.js`.
 
 ### Roadmap Step 376 — Suppress cross-lift history contamination
 

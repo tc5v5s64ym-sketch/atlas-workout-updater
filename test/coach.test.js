@@ -379,6 +379,14 @@ test('chat system prompt instructs model to use actual logged sets for history q
   assert.match(prompt, /current_plan/i, 'must explicitly name current_plan as a forbidden source for history answers');
 });
 
+test('step-375: chat system prompt forces "what\'s left" answers to read plan_state.remaining, not current_plan', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /WHAT'S-LEFT RULE/i, 'must have an explicit what\'s-left rule');
+  assert.match(prompt, /plan_state\.remaining/i, 'must point the model to plan_state.remaining as the authoritative source');
+  assert.match(prompt, /Never derive remaining work from `current_plan`/i, 'must forbid deriving remaining work from current_plan');
+  assert.match(prompt, /conversation turns/i, 'must forbid using earlier conversation turns as the remaining source');
+});
+
 test('sanitizeChatHistory maps roles, bounds to the last 8 turns, and drops empties', () => {
   const history = [];
   for (let i = 0; i < 12; i += 1) history.push({ role: i % 2 ? 'atlas' : 'user', text: `turn ${i}` });
