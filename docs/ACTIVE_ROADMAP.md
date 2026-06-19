@@ -2,9 +2,20 @@
 
 This is the current execution queue after the June 2026 app test findings.
 
-BACKLOG.md remains the source of truth. This file is the detailed active queue that should be linked or summarized from BACKLOG.md.
+`BACKLOG.md` remains the single source of truth for open and deferred work. This file is the detailed active queue. When these two files disagree, stop and ask the owner before changing direction.
 
 Use `docs/DOCS_INDEX.md` to understand which older docs are active reference, historical context, or archived plans.
+
+## Roadmap Step numbers vs GitHub PR numbers
+
+These are separate things. A Roadmap Step is a logical build unit defined here. A GitHub PR is a pull request opened on GitHub, which gets its own number from GitHub's sequence. They will often differ.
+
+Use terminology like:
+
+- **Roadmap Step 361** — the logical unit of work defined in this file
+- **GitHub PR #366** — the actual pull request on GitHub
+
+Do not assume they match. BACKLOG.md records both where they diverge (e.g. "Roadmap Step 364 / GitHub PR #366").
 
 ## Why priority changed
 
@@ -19,7 +30,7 @@ The performance intelligence layer has mostly been built, but app testing expose
 
 The test changed priority, not direction.
 
-Build order now:
+Build order:
 
 1. Fix session execution and trust failures.
 2. Wire existing intelligence into the live coach path.
@@ -37,78 +48,87 @@ Build order now:
 - Tests must prove the previous failure cannot recur.
 - Tests must cover the live path or closest integration path, not only new helpers.
 
+---
+
+## Completed steps
+
+All steps below are merged. Recorded here for traceability; do not re-execute.
+
+| Roadmap Step | Description | Status |
+|---|---|---|
+| 355 | Session Plan Executor | ✅ complete |
+| 356 | Confirmation Card Consistency | ✅ complete |
+| 357 | Reorder vs Substitute vs Skip vs Add Intent | ✅ complete |
+| 358a | plan_completed wiring | ✅ complete |
+| 358b | Readback card consistency | ✅ complete |
+| 359 | Plan Action Classifier (`classifyPlanAction`) | ✅ complete |
+| 360 | Session Closeout Flow | ✅ complete |
+| 361 | Load Sanity Bounds (`loadSanity.js`) | ✅ complete |
+| 362 | Live Intelligence Wiring | ✅ complete |
+| 363 | Historical Context Reactions (system-prompt rules) | ✅ complete |
+| 364 | Out-of-order closeout trust bug (GitHub PR #366) | ✅ complete |
+| 365 | Missed Lift / Planned-vs-Completed Memory | ✅ complete |
+| 366 | Suggested Workout Engine (`suggestedWorkout.js`) | ✅ complete |
+| 367 | Workout Recommendation Evidence (`reason_codes`) | ✅ complete |
+| 368 | Trend-Aware Recommendations | ✅ complete |
+| 369 | Readiness-Aware Recommendations | ✅ complete |
+| 370 | Coach Confidence Layer (`confidence_factors`) | ✅ complete |
+
+Deferred items from each completed step are recorded in `BACKLOG.md`.
+
+---
+
 ## Active queue
 
-### PR 355 - Session Plan Executor
+### Roadmap Step 371 — Coach Voice Polish
 
-Make the active workout plan authoritative. Track planned, current, completed, remaining, reordered, substituted, skipped, added, and complete states.
+**Status:** NEXT — ready to implement  
+**Type:** Polish  
+**Trust-critical:** No  
+**GitHub PR:** TBD (will be assigned when opened; will differ from Roadmap Step 371)
 
-Boundary: PR 355 may implement only the minimum deterministic handling required to preserve planned exercises during simple reorders. Full reorder/substitute/skip/add classification belongs in PR 357.
+**What this fixes:** Steps 362–370 wired intelligence into the live coach path. The coaching voice wording has not been updated to reflect these facts. Coach may word deviation, trend, confidence_factors, and reason_codes awkwardly, repeat itself, or use phrasing patterns written before those signals existed.
 
-### PR 356 - Confirmation Card Consistency
+**Exact failure prevented:** Wording that ignores or contradicts live engine signals (e.g. says "hard to say" when `trend` is present, or celebrates a set the deviation signal flagged as fell_short).
 
-Every successfully parsed workout log gets the same confirmation/preview card before Atlas advances session state.
+**Scope:** Presentation-only. No new engine logic. No new workout decisions. No write-path changes. No new endpoints.
 
-### PR 357 - Reorder vs Substitute vs Skip vs Add Intent
+**Acceptance criteria:**
+- Coach voice wording updated to reference available facts: `deviation`, `trend`, `confidence_factors`, `reason_codes`.
+- Wording passes tonal review against `docs/COACH_VOICE_VALIDATION.md`.
+- No new engine signals added in this step.
+- No changes to scoring, recommendation, or write paths.
+- No changes to `index.js` log/write path or `services/workoutTextParser.js`.
 
-Classify in-session plan changes as reorder, substitute, skip, or add. If uncertain, ask clarification rather than changing the plan.
+**Expected tests:**
+- Existing `test/coachPromptRules.test.js` must pass without modification.
+- If system prompt changes: update prompt-rule tests to cover new rules. Do not delete existing rules.
+- No golden-fixture regressions in `test/liveIntelligence.test.js`, `test/analytics-edge.test.js`, or `test/sessionPlanExecutor.test.js`.
 
-### PR 358 - Session Closeout Flow
+**Explicit out-of-scope:**
+- New engine signals or scoring changes.
+- New coach chat endpoints.
+- Substitution-quality voice (blocked on `scoreSubstitutionQuality` fix — see BACKLOG.md).
+- Verbosity/chattiness dial (needs design — see Settings epic in BACKLOG.md).
+- Load sanity, deload, or write-path changes.
+- Any feature from the "What not to build" list in `CLAUDE.md`.
 
-When planned work is complete, stop suggesting more work and provide a clean session wrap-up plus next action.
+**Hold points:** None before this step — intelligence wiring confirmed complete (Steps 362–370 ✅). Owner app-tests coach wording after this step before the next phase begins.
 
-### PR 359 - Exercise Order Guardrails
+---
 
-Prevent bad default exercise order: compounds before accessories, bench before laterals, rows before face pulls.
+## After Step 371
 
-### PR 360 - Warm-Up / Ramp-Up Logic
+The next phase is not yet sequenced. Owner + ChatGPT review BACKLOG.md after Step 371 ships and the owner app-tests.
 
-Heavy compounds should include ramp-up guidance before top working sets. Warm-ups should not count as working volume.
+Candidates visible in BACKLOG.md (not yet approved for sequencing):
 
-### PR 361 - Load Sanity Bounds
-
-Block impossible or absurd load suggestions, especially 170 lb lateral raises. If app testing repeats early, this may be promoted immediately after PR 358.
-
-### PR 362 - Live Intelligence Wiring
-
-Wire expected performance, deviation, evidence_context, working_weight, trend, and readiness_signal into the live coach facts.
-
-### PR 363 - Historical Context Reactions
-
-Coach reactions should compare today against history when facts support it. Respect RIR. Do not call 2 RIR failure or edge unless the engine says so.
-
-### PR 364 - Substitution History Builder
-
-Build the missing substitution history source so repeated_substitution memory can fire from real stored events.
-
-### PR 365 - Missed Lift / Planned-vs-Completed Memory
-
-Track planned lifts that were missed, skipped, substituted, reordered, or completed. Feed missed-lift patterns into coach memory.
-
-### PR 366 - Suggested Workout Engine
-
-Use recent sessions, muscle gaps, stalls, benchmarks, deviations, working weight, trends, readiness, memory, constraints, and goals to choose suggested workouts deterministically.
-
-### PR 367 - Workout Recommendation Evidence
-
-Every workout recommendation should expose deterministic reason codes and readable evidence.
-
-### PR 368 - Trend-Aware Recommendations
-
-Use trend direction to adjust recommendation aggressiveness.
-
-### PR 369 - Readiness-Aware Recommendations
-
-Use readiness signals to adjust workout dose.
-
-### PR 370 - Coach Confidence Layer
-
-Expose confidence based on sample size, recency, consistency, benchmark quality, trend quality, deviation history, and exercise familiarity.
-
-### PR 371 - Coach Voice Polish
-
-Presentation-only pass after intelligence is wired and trustworthy. No new engine logic or workout decisions.
+- Deload prescription consolidation (#291) — BUMPED to high priority
+- Frontend deload lifecycle wiring (#289)
+- AC8 — phantom-set suppression (credibility floor)
+- Coaching Depth / Verbosity setting (needs design)
+- Conversational input robustness (behavior-changing — Opus 4.8 when time to build)
 
 ## New chat / agent instruction
 
-Read this file before changing roadmap direction. Preserve the roadmap. Execute the next PR only. Stop for owner review.
+Read this file before changing roadmap direction. Execute the next step only. Stop for owner review after every PR. Do not merge.
