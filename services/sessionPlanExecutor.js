@@ -91,6 +91,7 @@ function computePlanState(planned, completed) {
  * This replicates the lookup block inside getNextExerciseInPlan
  * (public/coach-conversation.js) so the algorithm can be tested in Node.js
  * without a browser environment.
+ * keep in sync with the "keep in sync" block in getNextExerciseInPlan (coach-conversation.js)
  */
 function nextExerciseFromPlan(map, exerciseName) {
   if (!map || !map.size) return { found: false };

@@ -759,6 +759,7 @@
     if (typeof getPlanTodayByName === 'function') {
       let map;
       try { map = await getPlanTodayByName(); } catch { map = null; }
+      // keep in sync with nextExerciseFromPlan in services/sessionPlanExecutor.js
       if (map && map.size) {
         const keys = Array.from(map.keys());
         let idx = keys.indexOf(key);
