@@ -284,3 +284,32 @@ test('buildWeeklyReport: object-shaped rows produce same totals as array-shaped 
   assert.equal(fromObject.total_sets, fromArray.total_sets, 'total_sets matches array');
   assert.equal(fromObject.total_volume, fromArray.total_volume, 'total_volume matches array');
 });
+
+// ── PR 367: reason_codes — direct scoreIntents assertions ─────────────────────
+// These tests verify reason_codes on specific intents regardless of which intent
+// wins the scoring — avoids vacuous guards.
+
+function makeRows(exercise, muscle, liftCode, weights, startDate = '2026-03-01') {
+  return weights.map((w, i) => {
+    const d = new Date(startDate);
+    d.setDate(d.getDate() + i * 7);
+    return [d.toISOString().split('T')[0], `S${i + 1}`, exercise, exercise, muscle, liftCode, '1', String(w), '5', '2', '', ''];
+  });
+}
+
+test('scoreIntents: fix_blind_spots reason_codes carry *_overdue codes for neglected patterns', () => {
+  // Squat trained ~173 days before today, bench ~49 days before today.
+  // All session dates are strictly before today='2026-04-19' so the readiness model
+  // sees both patterns as overdue ("fresh") rather than recently trained.
+  const rows = [
+    ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2025-10-01'),
+    ...makeRows('Bench Press', 'chest', 'BPR01', [185, 190, 195, 200, 205], '2026-02-01'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-04-19' });
+  const fbs = result.intents.find(i => i.id === 'fix_blind_spots');
+  assert.ok(fbs, 'fix_blind_spots intent must exist');
+  assert.ok(Array.isArray(fbs.reason_codes), 'fix_blind_spots must have reason_codes array');
+  const hasOverdue = fbs.reason_codes.some(c => c.endsWith('_overdue'));
+  assert.ok(hasOverdue,
+    `expected an *_overdue code in fix_blind_spots.reason_codes, got [${fbs.reason_codes.join(', ')}]`);
+});

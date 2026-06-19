@@ -117,6 +117,50 @@ test('buildSuggestedWorkout: respects goal option', () => {
   assert.ok(typeof muscleResult.intent   === 'string');
 });
 
+test('buildSuggestedWorkout: reason_codes are short machine-readable strings, not prose', () => {
+  const logRows = baseline('Bench Press', 'chest', 'BPR01', 6, '2026-03-01');
+  const result = buildSuggestedWorkout(logRows, [], { today: '2026-04-19' });
+
+  assert.ok(result !== null);
+  assert.ok(Array.isArray(result.reason_codes), 'reason_codes must be an array');
+  for (const code of result.reason_codes) {
+    assert.ok(typeof code === 'string', 'each reason_code must be a string');
+    // Machine-readable codes: lowercase, underscores allowed, no spaces, ≤ 30 chars
+    assert.match(code, /^[a-z][a-z0-9_]*$/, `reason_code '${code}' must match snake_case pattern`);
+    assert.ok(code.length <= 30, `reason_code '${code}' must be ≤ 30 chars`);
+  }
+});
+
+test('buildSuggestedWorkout: well_rested code fires when last session was ≥ 2 days ago', () => {
+  // 6 sessions of bench press, last session 2026-04-05, today 2026-04-19 → 14 days since last.
+  // Only push/pull data → build_strength is the highest scorer; assert intent explicitly
+  // so a future scoring change fails loudly rather than letting the test pass vacuously.
+  const logRows = baseline('Bench Press', 'chest', 'BPR01', 6, '2026-03-01');
+  const result = buildSuggestedWorkout(logRows, [], { today: '2026-04-19' });
+
+  assert.ok(result !== null);
+  assert.equal(result.intent, 'build_strength',
+    `expected build_strength to win; got '${result.intent}' — fixture or scoring changed`);
+  assert.ok(result.reason_codes.includes('well_rested'),
+    `expected well_rested in reason_codes, got [${result.reason_codes.join(', ')}]`);
+});
+
+test('buildSuggestedWorkout: goal_alignment fires when a matching goal is set', () => {
+  const logRows = [
+    ...baseline('Bench Press', 'chest', 'BPR01', 6, '2026-03-01'),
+    ...baseline('Squat',       'lower', 'SQT01', 6, '2026-03-01'),
+  ];
+  // goal=strength adds +20 to build_strength in the GOAL_BONUS table — it must win.
+  // Assert intent explicitly so a scoring regression fails loudly.
+  const result = buildSuggestedWorkout(logRows, [], { today: '2026-04-19', goal: 'strength' });
+
+  assert.ok(result !== null);
+  assert.equal(result.intent, 'build_strength',
+    `expected build_strength to win with goal=strength; got '${result.intent}'`);
+  assert.ok(result.reason_codes.includes('goal_alignment'),
+    `expected goal_alignment in reason_codes for goal=strength, got [${result.reason_codes.join(', ')}]`);
+});
+
 test('buildSuggestedWorkout: exercises each have required fields', () => {
   const logRows = baseline('Bench Press', 'chest', 'BPR01', 6, '2026-03-01');
   const result = buildSuggestedWorkout(logRows, [], { today: '2026-04-19' });
