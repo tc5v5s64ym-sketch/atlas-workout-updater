@@ -323,13 +323,13 @@ test('scoreIntents: recovery_pump reason_codes carry multiple_trending_down when
   const result = scoreIntents(rows, [], { today: '2026-05-01' });
   const rp = result.intents.find(i => i.id === 'recovery_pump');
   assert.ok(rp, 'recovery_pump intent must exist');
-  // Only assert the code when the engine actually detects downward trends.
-  // If both lifts trend down, multiple_trending_down must appear.
-  const bothDown = result.intents.find(i => i.id === 'build_strength')?.reason_codes.includes('multiple_trending_down');
-  if (bothDown) {
-    assert.ok(rp.reason_codes.includes('multiple_trending_down'),
-      `expected multiple_trending_down in recovery_pump when compounds decline, got [${rp.reason_codes.join(', ')}]`);
-  }
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength intent must exist');
+  // The fixture has clearly declining weights — the engine must emit multiple_trending_down.
+  assert.ok(bs.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in build_strength, got [${bs.reason_codes.join(', ')}]`);
+  assert.ok(rp.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in recovery_pump when compounds decline, got [${rp.reason_codes.join(', ')}]`);
 });
 
 // ── PR 368: trend-aware scoring ───────────────────────────────────────────────
@@ -353,11 +353,12 @@ test('scoreIntents PR 368: build_strength score is lower when 2+ push/pull compo
 
   assert.ok(ascBS  && descBS, 'build_strength must exist in both results');
 
-  // Only compare when the engine actually emits multiple_trending_down for the declining case.
-  if (descBS.reason_codes.includes('multiple_trending_down')) {
-    assert.ok(descBS.score < ascBS.score,
-      `expected lower build_strength score on declining data (${descBS.score}) vs ascending (${ascBS.score})`);
-  }
+  // Declining fixture must produce the multiple_trending_down code — assert unconditionally
+  // so any regression that stops emitting the code fails loudly.
+  assert.ok(descBS.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in declining build_strength, got [${descBS.reason_codes.join(', ')}]`);
+  assert.ok(descBS.score < ascBS.score,
+    `expected lower build_strength score on declining data (${descBS.score}) vs ascending (${ascBS.score})`);
 });
 
 test('scoreIntents PR 368: recovery_pump score is boosted when multiple compounds decline', () => {
@@ -378,9 +379,9 @@ test('scoreIntents PR 368: recovery_pump score is boosted when multiple compound
   const descRP = descResult.intents.find(i => i.id === 'recovery_pump');
   assert.ok(flatRP && descRP, 'recovery_pump must exist in both results');
 
-  // Only compare when the engine actually emits multiple_trending_down for the declining case.
-  if (descRP.reason_codes.includes('multiple_trending_down')) {
-    assert.ok(descRP.score > flatRP.score,
-      `expected higher recovery_pump score on declining data (${descRP.score}) vs flat (${flatRP.score})`);
-  }
+  // Declining fixture must produce multiple_trending_down — assert unconditionally.
+  assert.ok(descRP.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in declining recovery_pump, got [${descRP.reason_codes.join(', ')}]`);
+  assert.ok(descRP.score > flatRP.score,
+    `expected higher recovery_pump score on declining data (${descRP.score}) vs flat (${flatRP.score})`);
 });
