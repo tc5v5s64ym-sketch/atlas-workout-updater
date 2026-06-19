@@ -368,6 +368,14 @@ Safety is a product feature, not just an engineering task.
 - Weak point detection.
 - Weekly summary.
 
+### Future Signature Programs
+
+Someday, Atlas may support themed program experiences such as "Train Like..." modes, classic bodybuilding-style training blocks, strength-athlete-style blocks, approved creator/influencer partnerships, or creator-built 3-week, 5-session, and 12-week programs.
+
+This is future product exploration, not active roadmap work. Any real-person, creator, influencer, athlete, brand, likeness, or paid-program reference requires explicit licensing or approval. Without secured rights, Atlas should frame those modes generically, for example as "inspired by classic bodybuilding style."
+
+The program supplies the structure and theme. Atlas still owns personalization, load sanity, substitutions, safety constraints, available-equipment handling, recovery-aware adjustments, approve-before-save behavior, and logging trust.
+
 ### Bodyweight and Nutrition
 
 - Bodyweight logging.
