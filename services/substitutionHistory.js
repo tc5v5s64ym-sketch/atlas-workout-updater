@@ -7,12 +7,18 @@
  * appears in the most sessions (must appear ≥ MIN_SESSIONS_FOR_USUAL sessions
  * to be considered established). Then walk sessions chronologically: when the
  * usual lift is absent from a session but a different lift IS present for the
- * same muscle group, record a substitution event.
+ * same muscle group, record a substitution event — BUT only when the usual lift
+ * also appears in at least one LATER session. That later return confirms the
+ * absence was a one-off deviation, not a permanent program change.
+ *
+ * Without the "returns later" guard, three consecutive sessions of Incline Press
+ * after a Bench Press baseline would fire repeated_substitution even though the
+ * athlete simply switched programs — an invented coaching fact.
  *
  * Only one substitution event is emitted per (session × muscle group) pair
  * to avoid flooding from a single workout where many exercises were swapped.
  *
- * Returns [{original, substitute, date}] sorted chronologically.
+ * Returns [{original, substitute, date, liftCode}] sorted chronologically.
  * Returns [] when rows is empty or no pattern is detectable.
  *
  * Pure function — no I/O, no LLM, no Sheets writes.
@@ -100,16 +106,40 @@ function buildSubstitutionHistory(logRows) {
     return da < db ? -1 : da > db ? 1 : 0;
   });
 
+  // For each muscle, record which sorted-session indices had the usual lift.
+  // Used in Step 5 to confirm a substitution by checking for a later return.
+  const usualLiftIndices = new Map(); // muscle -> Set<number>
+  for (let i = 0; i < sortedSessions.length; i++) {
+    const [, muscleMap] = sortedSessions[i];
+    for (const [muscle, liftMap] of muscleMap) {
+      const usual = usualLift.get(muscle);
+      if (usual && liftMap.has(usual.liftCode)) {
+        if (!usualLiftIndices.has(muscle)) usualLiftIndices.set(muscle, new Set());
+        usualLiftIndices.get(muscle).add(i);
+      }
+    }
+  }
+
+  // Step 5: Emit substitution events where:
+  //   (a) the usual lift is absent this session, AND
+  //   (b) the usual lift reappears in at least one LATER session.
+  // The later-return requirement distinguishes a one-off substitution from a
+  // permanent program change (where the usual lift never comes back).
   const events = [];
-  for (const [sessionId, muscleMap] of sortedSessions) {
+  for (let i = 0; i < sortedSessions.length; i++) {
+    const [sessionId, muscleMap] = sortedSessions[i];
     const date = sessionDates.get(sessionId) || '';
     for (const [muscle, liftMap] of muscleMap) {
       const usual = usualLift.get(muscle);
       if (!usual) continue;
       if (liftMap.has(usual.liftCode)) continue; // usual lift was done — not a substitution
 
-      // Usual lift absent; emit ONE event for the substitute with the most sets
-      // this session (most sets = likely the main working exercise, not a warm-up addition).
+      // Only emit if the usual lift appears again in a later session.
+      const indices = usualLiftIndices.get(muscle) || new Set();
+      const usualReturnsLater = [...indices].some(idx => idx > i);
+      if (!usualReturnsLater) continue;
+
+      // Emit ONE event for the substitute with the most sets this session.
       let topSub = null;
       for (const [liftCode, { exercise, count }] of liftMap) {
         if (liftCode === usual.liftCode) continue;

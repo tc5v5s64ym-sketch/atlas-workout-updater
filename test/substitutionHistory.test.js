@@ -36,14 +36,16 @@ test('buildSubstitutionHistory: fewer than MIN_SESSIONS_FOR_USUAL → no events'
   assert.deepEqual(result, []);
 });
 
-test('buildSubstitutionHistory: GOLDEN FIXTURE — detects substitution when usual lift absent', () => {
-  // 4 sessions of Bench Press, then one session with Incline Press instead
+test('buildSubstitutionHistory: GOLDEN FIXTURE — detects substitution when usual lift absent and later returns', () => {
+  // 4 sessions of Bench Press, one Incline substitution, then Bench returns.
+  // The return to Bench (S6) confirms S5 was a deviation, not a program change.
   const rows = [
     row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-22', 'S4', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'), // substitution
+    row('2026-04-05', 'S6', 'Bench Press',   'chest', 'BPR01'), // return to usual → confirms S5
   ];
   const result = buildSubstitutionHistory(rows);
   assert.equal(result.length, 1, 'one substitution event expected');
@@ -65,16 +67,33 @@ test('buildSubstitutionHistory: no event when usual lift IS present', () => {
   assert.deepEqual(buildSubstitutionHistory(rows), []);
 });
 
-test('buildSubstitutionHistory: multiple substitutions across sessions → multiple events', () => {
-  // 4 baseline sessions then 3 substitutions
+test('buildSubstitutionHistory: program change — no event when usual lift never returns', () => {
+  // 3 sessions of Bench establishes it as usual, then 3 sessions of Incline only.
+  // Because Bench never returns, this is a program change — NOT a substitution.
   const rows = [
     row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
-    row('2026-03-22', 'S4', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-22', 'S4', 'Incline Press', 'chest', 'IPR01'),
     row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'),
     row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-04-12', 'S7', 'Incline Press', 'chest', 'IPR01'),
+  ];
+  assert.deepEqual(buildSubstitutionHistory(rows), [], 'program change must not emit substitution events');
+});
+
+test('buildSubstitutionHistory: multiple substitutions across sessions → multiple events', () => {
+  // 4 baseline sessions then 3 confirmed substitutions (Bench returns between each).
+  const rows = [
+    row('2026-03-01', 'S1',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-08', 'S2',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-15', 'S3',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-22', 'S4',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-29', 'S5',  'Incline Press', 'chest', 'IPR01'), // sub 1
+    row('2026-04-05', 'S6',  'Bench Press',   'chest', 'BPR01'), // return → confirms S5
+    row('2026-04-12', 'S7',  'Incline Press', 'chest', 'IPR01'), // sub 2
+    row('2026-04-19', 'S8',  'Bench Press',   'chest', 'BPR01'), // return → confirms S7
+    row('2026-04-26', 'S9',  'Incline Press', 'chest', 'IPR01'), // sub 3
+    row('2026-05-03', 'S10', 'Bench Press',   'chest', 'BPR01'), // return → confirms S9
   ];
   const result = buildSubstitutionHistory(rows);
   assert.equal(result.length, 3, 'three substitution events expected');
@@ -87,8 +106,10 @@ test('buildSubstitutionHistory: returns events sorted chronologically', () => {
     row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
-    row('2026-03-22', 'S4', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-03-22', 'S4', 'Incline Press', 'chest', 'IPR01'), // sub 1
+    row('2026-03-29', 'S5', 'Bench Press',   'chest', 'BPR01'), // return → confirms S4
+    row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'), // sub 2
+    row('2026-04-12', 'S7', 'Bench Press',   'chest', 'BPR01'), // return → confirms S6
   ];
   const result = buildSubstitutionHistory(rows);
   assert.equal(result.length, 2);
@@ -96,14 +117,16 @@ test('buildSubstitutionHistory: returns events sorted chronologically', () => {
 });
 
 test('buildSubstitutionHistory: emits only one event per session × muscle group', () => {
-  // Two different substitutes present in S5 — should only emit one event
+  // Two different substitutes present in S5 — should only emit one event.
+  // Bench returns in S6 confirming S5 was a substitution session.
   const rows = [
     row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-22', 'S4', 'Bench Press', 'chest', 'BPR01'),
     row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-03-29', 'S5', 'Cable Fly',    'chest', 'CFY01'), // second chest exercise
+    row('2026-03-29', 'S5', 'Cable Fly',     'chest', 'CFY01'), // second chest exercise
+    row('2026-04-05', 'S6', 'Bench Press',   'chest', 'BPR01'), // return → confirms S5
   ];
   const result = buildSubstitutionHistory(rows);
   // Both Incline and Cable Fly are substitutes for the same session × muscle group —
@@ -119,14 +142,17 @@ test('GOLDEN FIXTURE — repeated_substitution fires when 3+ substitutions detec
   const liftCode = 'BPR01';
   const rows = [
     // 4 baseline Bench Press sessions (chest)
-    row('2026-03-01', 'S1', 'Bench Press', 'chest', liftCode),
-    row('2026-03-08', 'S2', 'Bench Press', 'chest', liftCode),
-    row('2026-03-15', 'S3', 'Bench Press', 'chest', liftCode),
-    row('2026-03-22', 'S4', 'Bench Press', 'chest', liftCode),
-    // 3 sessions where Incline Press substitutes for Bench Press
-    row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-04-12', 'S7', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-03-01', 'S1',  'Bench Press', 'chest', liftCode),
+    row('2026-03-08', 'S2',  'Bench Press', 'chest', liftCode),
+    row('2026-03-15', 'S3',  'Bench Press', 'chest', liftCode),
+    row('2026-03-22', 'S4',  'Bench Press', 'chest', liftCode),
+    // 3 confirmed substitutions (Bench returns between each to confirm deviation)
+    row('2026-03-29', 'S5',  'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-05', 'S6',  'Bench Press',   'chest', liftCode), // return → confirms S5
+    row('2026-04-12', 'S7',  'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-19', 'S8',  'Bench Press',   'chest', liftCode), // return → confirms S7
+    row('2026-04-26', 'S9',  'Incline Press', 'chest', 'IPR01'),
+    row('2026-05-03', 'S10', 'Bench Press',   'chest', liftCode), // return → confirms S9
   ];
 
   const substitutionHistory = buildSubstitutionHistory(rows);
@@ -147,7 +173,10 @@ test('repeated_substitution does NOT fire when fewer than 3 substitutions', () =
     row('2026-03-08', 'S2', 'Bench Press', 'chest', liftCode),
     row('2026-03-15', 'S3', 'Bench Press', 'chest', liftCode),
     row('2026-03-22', 'S4', 'Incline Press', 'chest', 'IPR01'), // sub 1
-    row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'), // sub 2 (not 3)
+    row('2026-03-29', 'S5', 'Bench Press',   'chest', liftCode), // return → confirms S4
+    row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'), // sub 2
+    row('2026-04-12', 'S7', 'Bench Press',   'chest', liftCode), // return → confirms S6
+    // Only 2 confirmed substitutions, not 3
   ];
   const substitutionHistory = buildSubstitutionHistory(rows);
   const { patterns } = detectPatterns(liftCode, rows, { substitutionHistory });
@@ -156,17 +185,20 @@ test('repeated_substitution does NOT fire when fewer than 3 substitutions', () =
 });
 
 test('per-lift filtering: Bench substitution history must NOT bleed into unrelated lifts', () => {
-  // 4 baseline Bench + 3 substitutions → repeated_substitution fires for BPR01.
+  // 4 baseline Bench + 3 confirmed substitutions (Bench returns between each).
   // An unrelated lift (Deadlift / DLT01) present in the same log must NOT inherit
   // the Bench pattern when its substitutionHistory is filtered to DLT01 only.
   const rows = [
-    row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
-    row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
-    row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
-    row('2026-03-22', 'S4', 'Bench Press', 'chest', 'BPR01'),
-    row('2026-03-29', 'S5', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-04-05', 'S6', 'Incline Press', 'chest', 'IPR01'),
-    row('2026-04-12', 'S7', 'Incline Press', 'chest', 'IPR01'),
+    row('2026-03-01', 'S1',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-08', 'S2',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-15', 'S3',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-22', 'S4',  'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-29', 'S5',  'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-05', 'S6',  'Bench Press',   'chest', 'BPR01'), // return → confirms S5
+    row('2026-04-12', 'S7',  'Incline Press', 'chest', 'IPR01'),
+    row('2026-04-19', 'S8',  'Bench Press',   'chest', 'BPR01'), // return → confirms S7
+    row('2026-04-26', 'S9',  'Incline Press', 'chest', 'IPR01'),
+    row('2026-05-03', 'S10', 'Bench Press',   'chest', 'BPR01'), // return → confirms S9
     // Deadlift rows — unrelated muscle group, always present
     row('2026-03-01', 'S1', 'Deadlift', 'back', 'DLT01'),
     row('2026-03-08', 'S2', 'Deadlift', 'back', 'DLT01'),
