@@ -105,4 +105,16 @@ function nextExerciseFromPlan(map, exerciseName) {
   return { found: true, next: (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null };
 }
 
-module.exports = { computePlanState, nextExerciseFromPlan };
+/**
+ * isPlanComplete(planned, completed) → boolean
+ *
+ * Convenience wrapper: true when planned is non-empty and every entry has a
+ * match in completed (same rules as computePlanState). Used by regression tests
+ * and any future server-side caller; the browser replicates the name-match logic
+ * inline (no require() in classic scripts).
+ */
+function isPlanComplete(planned, completed) {
+  return computePlanState(planned, completed).isComplete;
+}
+
+module.exports = { computePlanState, nextExerciseFromPlan, isPlanComplete };

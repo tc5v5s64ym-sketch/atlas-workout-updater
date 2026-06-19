@@ -1,7 +1,7 @@
 'use strict';
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { computePlanState, nextExerciseFromPlan } = require('../services/sessionPlanExecutor');
+const { computePlanState, nextExerciseFromPlan, isPlanComplete } = require('../services/sessionPlanExecutor');
 
 /* ===== Shape ===== */
 
@@ -234,4 +234,42 @@ test('Fix #2: lift_code match bridges display-name vs canonical-name mismatch in
   const s = computePlanState(planned, completed);
   assert.deepEqual(s.remaining, []);
   assert.equal(s.isComplete, true);
+});
+
+// ---------------------------------------------------------------------------
+// PR 364 — Out-of-order session closeout
+//
+// Bug: plan [A, B, C], user logs A then C (skipping B) then B. After B the
+// full plan is done, but `getNextExerciseInPlan('B')` returns C (next in plan
+// order) — a completed exercise — and Atlas showed "Moving on — next up: C"
+// instead of the session closeout.
+//
+// Fix: check planNowComplete (all planned names present in sessionCompleted)
+// BEFORE the handoff. These tests verify the computePlanState / isPlanComplete
+// side of that contract; the browser-side check in coach-conversation.js
+// mirrors this logic inline.
+// ---------------------------------------------------------------------------
+
+test('PR 364: out-of-order A→C→B: after all three, plan [A,B,C] is complete', () => {
+  const s = computePlanState(['A', 'B', 'C'], ['A', 'C', 'B']);
+  assert.deepEqual(s.remaining, []);
+  assert.equal(s.isComplete, true);
+});
+
+test('PR 364: out-of-order A→C: plan [A,B,C] is NOT yet complete', () => {
+  const s = computePlanState(['A', 'B', 'C'], ['A', 'C']);
+  assert.deepEqual(s.remaining, ['B']);
+  assert.equal(s.isComplete, false);
+});
+
+test('PR 364: isPlanComplete — plan [A,B,C] completed out of order as [A,C,B] → true', () => {
+  assert.equal(isPlanComplete(['A', 'B', 'C'], ['A', 'C', 'B']), true);
+});
+
+test('PR 364: isPlanComplete — plan [A,B,C] with only A and C done → false', () => {
+  assert.equal(isPlanComplete(['A', 'B', 'C'], ['A', 'C']), false);
+});
+
+test('PR 364: isPlanComplete — empty planned list → false (no closeout without a plan)', () => {
+  assert.equal(isPlanComplete([], ['A', 'B', 'C']), false);
 });
