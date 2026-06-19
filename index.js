@@ -1042,7 +1042,8 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     recommended_focus: read.recommended_reason || null,
     readiness: (read.patterns || []).map(p => ({ pattern: p.label || p.pattern, status: p.status, detail: p.detail })),
     recent_sessions: sessions.map(s => ({
-      date: s.date, exercises: s.exercises, sets: s.sets_count, volume: s.total_volume
+      date: s.date, exercises: s.exercises, sets: s.sets_count, volume: s.total_volume,
+      lift_sets: s.lift_sets || {}
     })),
     stalls: stalls.map(s => ({ exercise: s.exercise || s.liftCode, weight: s.last_best_weight, sessions_stalled: s.sessions_stalled })),
     muscle_gaps,

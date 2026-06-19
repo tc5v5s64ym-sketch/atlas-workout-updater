@@ -2692,6 +2692,63 @@ test('session history: buildRecentSessions respects limit', () => {
   assert.equal(result.count, 5);
 });
 
+// Regression: issue #359 — historical lift retrieval must use actual logged sets.
+// Golden fixture: the exact June 11 bench session from the bug report.
+// These ensure the snapshot carries real per-set data so the model cannot
+// answer a history question from prescription/benchmark data instead.
+test('session history: buildRecentSessions includes lift_sets with per-set data (issue #359 golden fixture)', () => {
+  const jun11Rows = [
+    ['2026-06-11', '20260611-PM-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '12', '4', ''],
+    ['2026-06-11', '20260611-PM-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '185', '10', '2', ''],
+    ['2026-06-11', '20260611-PM-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '3', '225', '6',  '1', ''],
+    ['2026-06-11', '20260611-PM-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '4', '225', '5',  '1', ''],
+    ['2026-06-11', '20260611-PM-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '5', '225', '5',  '0', ''],
+  ];
+  const result = buildRecentSessions(jun11Rows, []);
+  assert.equal(result.sessions.length, 1);
+  const session = result.sessions[0];
+  assert.equal(session.date, '2026-06-11');
+  assert.ok(session.lift_sets && typeof session.lift_sets === 'object', 'lift_sets must be present');
+  const benchSets = session.lift_sets['Bench Press'];
+  assert.ok(Array.isArray(benchSets), 'Bench Press must have a set array');
+  assert.equal(benchSets.length, 5, 'all 5 sets must be preserved');
+  assert.deepEqual(benchSets[0], { weight: 135, reps: 12, rir: 4 }, 'set 1: 135×12 @RIR4');
+  assert.deepEqual(benchSets[1], { weight: 185, reps: 10, rir: 2 }, 'set 2: 185×10 @RIR2');
+  assert.deepEqual(benchSets[2], { weight: 225, reps: 6,  rir: 1 }, 'set 3: 225×6  @RIR1');
+  assert.deepEqual(benchSets[3], { weight: 225, reps: 5,  rir: 1 }, 'set 4: 225×5  @RIR1');
+  assert.deepEqual(benchSets[4], { weight: 225, reps: 5,  rir: 0 }, 'set 5: 225×5  @RIR0 — RIR 0 must not be dropped');
+});
+
+test('session history: buildRecentSessions lift_sets includes null rir when not logged', () => {
+  const rows = [
+    ['2026-06-11', 'S1', 'Deadlift', 'Deadlift', 'Back', 'DL01', '1', '315', '3', '', ''],
+  ];
+  const result = buildRecentSessions(rows, []);
+  const dlSets = result.sessions[0].lift_sets['Deadlift'];
+  assert.equal(dlSets.length, 1);
+  assert.equal(dlSets[0].rir, null, 'missing RIR must be null, not fabricated');
+});
+
+test('session history: buildRecentSessions lift_sets excludes rows with no weight/reps', () => {
+  const rows = [
+    ['2026-06-11', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '225', '5', '2', ''],
+    ['2026-06-11', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '',    '',  '',  ''],
+  ];
+  const result = buildRecentSessions(rows, []);
+  const benchSets = result.sessions[0].lift_sets['Bench Press'];
+  assert.equal(benchSets.length, 1, 'row without weight/reps must not appear in lift_sets');
+});
+
+test('session history: buildRecentSessions lift_sets caps at 12 sets per exercise', () => {
+  const rows = [];
+  for (let i = 1; i <= 15; i++) {
+    rows.push(['2026-06-11', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', String(i), '135', '5', '3', '']);
+  }
+  const result = buildRecentSessions(rows, []);
+  const benchSets = result.sessions[0].lift_sets['Bench Press'];
+  assert.equal(benchSets.length, 12, 'lift_sets must cap at 12 sets per exercise');
+});
+
 test('progress summary: returns correct structure for normal data', () => {
   const rows = [
     ['2026-05-26', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '200', '5', '2', ''],
