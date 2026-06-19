@@ -1028,10 +1028,15 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   // Coach memory: compute recurring patterns for any lift that shows one.
   // Empty-pattern results are filtered out, so context stays compact.
   const { detectPatterns } = require('./services/coachMemory');
+  const { buildSubstitutionHistory } = require('./services/substitutionHistory');
+  const substitutionHistory = buildSubstitutionHistory(logRows);
   const COL_LIFT_IDX = 5;
   const uniqueLifts = [...new Set((Array.isArray(logRows) ? logRows : []).map(r => r[COL_LIFT_IDX]).filter(Boolean))];
   const memory_patterns = uniqueLifts
-    .map(liftCode => ({ liftCode, ...detectPatterns(liftCode, logRows) }))
+    .map(liftCode => {
+      const liftSubHistory = substitutionHistory.filter(e => String(e.liftCode).toUpperCase() === String(liftCode).toUpperCase());
+      return { liftCode, ...detectPatterns(liftCode, logRows, { substitutionHistory: liftSubHistory }) };
+    })
     .filter(item => item.patterns.length > 0)
     .slice(0, 5);
 

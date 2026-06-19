@@ -36,6 +36,12 @@ const SUBSTITUTION_SESSION_WINDOW  = 10;
 const SUBSTITUTION_MIN_COUNT       = 3;
 const UNDERPERFORMANCE_WINDOW      = 5;
 const UNDERPERFORMANCE_MIN         = 3;
+// Missed-lift pattern: fire after ≥ this many misses across the window.
+// detectMissedLifts is a standalone utility — NOT wired into detectPatterns because
+// missed lifts are exercise-name events (not lift-code-specific) and would contaminate
+// per-lift patterns if mixed in. Call it directly when session-level context is needed.
+const MISSED_LIFT_WINDOW           = 10;
+const MISSED_LIFT_MIN_COUNT        = 1;
 // e1RM deficit threshold — session e1RM below this fraction of benchmark e1RM
 // counts as "below expected" for the consistent_underperformance pattern.
 const UNDERPERFORMANCE_E1RM_DEFICIT = 0.05; // 5 %
@@ -151,10 +157,39 @@ function detectRepeatedSubstitutions(substitutionHistory) {
   return patterns;
 }
 
+// Detect missed_lift: the same exercise appears in missedLiftHistory
+// ≥ MISSED_LIFT_MIN_COUNT times across the last MISSED_LIFT_WINDOW entries.
+// Returns array of pattern objects (one per qualifying exercise).
+function detectMissedLifts(missedLiftHistory) {
+  if (!Array.isArray(missedLiftHistory) || !missedLiftHistory.length) return [];
+
+  const window = missedLiftHistory.slice(-MISSED_LIFT_WINDOW);
+  const counts = new Map();
+  for (const entry of window) {
+    if (!entry || typeof entry !== 'object') continue;
+    const exercise = typeof entry.exercise === 'string' ? entry.exercise.trim().toLowerCase() : null;
+    if (!exercise) continue;
+    counts.set(exercise, (counts.get(exercise) || 0) + 1);
+  }
+
+  const patterns = [];
+  for (const [exercise, count] of counts) {
+    if (count >= MISSED_LIFT_MIN_COUNT) {
+      patterns.push({ type: 'missed_lift', details: { exercise, count } });
+    }
+  }
+  return patterns;
+}
+
 /**
  * detectPatterns(liftCode, rows, options?) → { patterns[] }
  *
- * options.substitutionHistory – array of { original, substitute } events (optional).
+ * options.substitutionHistory – array of { original, substitute, liftCode } events (optional).
+ *   Caller is responsible for filtering to the relevant liftCode before passing.
+ *
+ * NOTE: detectMissedLifts is NOT wired here. Missed-lift events are exercise-name-based
+ * (not lift-code-specific) and must be evaluated at the session level by the caller,
+ * not per-lift — mixing them in would attribute missed Row events to Bench, Deadlift, etc.
  */
 function detectPatterns(liftCode, rows, options) {
   const patterns = [];
@@ -164,13 +199,11 @@ function detectPatterns(liftCode, rows, options) {
   const underperf = detectUnderperformance(liftCode, rows);
   if (underperf) patterns.push(underperf);
 
-  // Repeated substitution — requires caller-supplied history.
+  // Repeated substitution — requires caller-supplied history filtered to this liftCode.
   const subs = detectRepeatedSubstitutions(opts.substitutionHistory);
   patterns.push(...subs);
-
-  // missed_lift deferred — needs planned-session data.
 
   return { patterns };
 }
 
-module.exports = { detectPatterns };
+module.exports = { detectPatterns, detectMissedLifts };
