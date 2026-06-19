@@ -45,21 +45,22 @@ jobs:
       - name: Fetch base branch for diffing
         run: git fetch --no-tags origin main
 
-      # Preflight: turn a missing OPENAI_API_KEY into a clear, instant failure
-      # instead of the cryptic "Failed to read server info" the proxy emits when
-      # it has no key. Diagnostic value: if this PASSES but the Codex step still
-      # fails, the secret IS set and the problem is OpenAI-side (revoked key,
-      # Codex/Responses access disabled, or billing/quota). Prints presence and
-      # length only — never the secret value.
-      - name: Preflight — require OPENAI_API_KEY
+      # Preflight: turn a missing OpenAI key into a clear, instant failure instead
+      # of the cryptic "Failed to read server info" the proxy emits with no key.
+      # NOTE: the repo secret is named OPEN_API_KEY (not the conventional
+      # OPENAI_API_KEY) — referenced by its actual name here. Diagnostic value: if
+      # this PASSES but the Codex step still fails, the key IS set and the problem
+      # is OpenAI-side (revoked key, Codex/Responses access disabled, or billing).
+      # Prints presence and length only — never the secret value.
+      - name: Preflight — require the OpenAI API key
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPEN_API_KEY }}
         run: |
           if [ -z "${OPENAI_API_KEY}" ]; then
-            echo "::error::OPENAI_API_KEY is not set (or is empty) as a repository Actions secret. Add it under Settings -> Secrets and variables -> Actions. The Codex proxy cannot authenticate without it; the guard fails closed (RED)."
+            echo "::error::The OpenAI API key secret (repo secret name: OPEN_API_KEY) is not set or is empty. Add/enable it under Settings -> Secrets and variables -> Actions. The Codex proxy cannot authenticate without it; the guard fails closed (RED)."
             exit 1
           fi
-          echo "OPENAI_API_KEY is present (length ${#OPENAI_API_KEY})."
+          echo "OpenAI API key present (length ${#OPENAI_API_KEY})."
 
       # Runs last among the "work" steps and read-only. openai-api-key comes from
       # secrets; safety-strategy drops sudo; sandbox is read-only (a review never
@@ -69,7 +70,7 @@ jobs:
         id: codex
         uses: openai/codex-action@e0fdf01220eb9a88167c4898839d273e3f2609d1 # v1
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          openai-api-key: ${{ secrets.OPEN_API_KEY }} # repo secret name (not OPENAI_API_KEY)
           prompt-file: .github/codex/contract-review-prompt.md
           # output-schema-file maps to `codex exec --output-schema`
           output-schema-file: .github/codex/contract-review-schema.json
