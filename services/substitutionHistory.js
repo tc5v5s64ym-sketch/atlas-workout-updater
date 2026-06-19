@@ -134,11 +134,32 @@ function buildSubstitutionHistory(logRows) {
     }
   }
 
-  // Step 5: Emit substitution events where:
+  // Step 5: Precompute co-occurrence: for each muscle group, which non-usual lift codes
+  // appear in the SAME session as the usual lift? Those are accessories — they must NOT
+  // be treated as substitutes when the usual lift is absent (they appear alongside it
+  // in normal sessions, so their presence without the usual lift is not a substitution).
+  const coOccurrence = new Map(); // muscle -> Set<liftCode> of accessories
+  for (let i = 0; i < sortedSessions.length; i++) {
+    const [, muscleMap] = sortedSessions[i];
+    for (const [muscle, liftMap] of muscleMap) {
+      const usual = usualLift.get(muscle);
+      if (!usual || !liftMap.has(usual.liftCode)) continue;
+      if (!coOccurrence.has(muscle)) coOccurrence.set(muscle, new Set());
+      const coSet = coOccurrence.get(muscle);
+      for (const [liftCode] of liftMap) {
+        if (liftCode !== usual.liftCode) coSet.add(liftCode);
+      }
+    }
+  }
+
+  // Step 6: Emit substitution events where:
   //   (a) the usual lift is absent this session, AND
-  //   (b) the usual lift reappears in at least one LATER session.
+  //   (b) the usual lift reappears in at least one LATER session, AND
+  //   (c) the substitute does NOT co-occur with the usual lift (not an accessory).
   // The later-return requirement distinguishes a one-off substitution from a
   // permanent program change (where the usual lift never comes back).
+  // The co-occurrence check prevents accessory exercises from being classified as
+  // substitutes (a Cable Fly that normally appears WITH Bench is not a Bench substitute).
   const events = [];
   for (let i = 0; i < sortedSessions.length; i++) {
     const [sessionId, muscleMap] = sortedSessions[i];
@@ -153,11 +174,15 @@ function buildSubstitutionHistory(logRows) {
       const usualReturnsLater = [...indices].some(idx => idx > i);
       if (!usualReturnsLater) continue;
 
-      // Emit ONE event for the substitute with the most sets this session.
+      const coSet = coOccurrence.get(muscle) || new Set();
+
+      // Emit ONE event for the substitute with the most sets this session,
+      // skipping any lifts that co-occur with the usual (they are accessories).
       let topSub = null;
       for (const [liftCode, { exercise, count }] of liftMap) {
         if (liftCode === usual.liftCode) continue;
-        if (!topSub || count > topSub.count) topSub = { exercise, count };
+        if (coSet.has(liftCode)) continue; // accessory — not a substitute
+        if (!topSub || count > topSub.count) topSub = { liftCode, exercise, count };
       }
       if (topSub) {
         events.push({ original: usual.exercise, substitute: topSub.exercise, date, liftCode: usual.liftCode });

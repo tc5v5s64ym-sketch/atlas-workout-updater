@@ -151,6 +151,24 @@ test('buildSubstitutionHistory: emits only one event per session × muscle group
   assert.equal(chestEvents.length, 1, 'only one event per session × muscle group');
 });
 
+test('buildSubstitutionHistory: accessory that co-occurs with usual lift is NOT a substitute', () => {
+  // Cable Fly appears in S1–S4 alongside Bench (it is an accessory).
+  // In S5 Bench is absent but Cable Fly is present; S6 Bench returns.
+  // Cable Fly must NOT fire as a substitute because it co-occurs with Bench.
+  const rows = [
+    row('2026-03-01', 'S1', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-01', 'S1', 'Cable Fly',   'chest', 'CFY01'), // accessory
+    row('2026-03-08', 'S2', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-08', 'S2', 'Cable Fly',   'chest', 'CFY01'), // accessory
+    row('2026-03-15', 'S3', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-15', 'S3', 'Cable Fly',   'chest', 'CFY01'), // accessory
+    row('2026-03-22', 'S4', 'Bench Press', 'chest', 'BPR01'),
+    row('2026-03-29', 'S5', 'Cable Fly',   'chest', 'CFY01'), // Bench absent — but CFY is an accessory
+    row('2026-04-05', 'S6', 'Bench Press', 'chest', 'BPR01'), // return
+  ];
+  assert.deepEqual(buildSubstitutionHistory(rows), [], 'accessory co-occurring with usual must not emit a substitution event');
+});
+
 // ── Integration: buildSubstitutionHistory → detectPatterns ────────────────────
 
 test('GOLDEN FIXTURE — repeated_substitution fires when 3+ substitutions detected', () => {
