@@ -1113,11 +1113,14 @@ function wireStartSessionBtn(data) {
 // also tolerate a next_target shape just in case. `rir` is carried through so
 // the suggested-workout display can show it (and never silently drop it).
 function normalizePlanExercise(raw) {
-  if (!raw) return { name: '', liftCode: '', weight: null, reps: null, sets: null, rir: null, reason: '' };
+  if (!raw) return { name: '', canonicalName: '', liftCode: '', weight: null, reps: null, sets: null, rir: null, reason: '' };
   const t = raw.next_target || {};
   const pick = (a, b) => (a != null ? a : (b != null ? b : null));
   return {
     name: raw.exercise || raw.exercise_name || raw.lift_code || raw.liftCode || '',
+    // canonicalName mirrors currentPlanForChat's preference (canonical_exercise first)
+    // so resolveCompletedIdentity and current_plan[].name always agree.
+    canonicalName: raw.canonical_exercise || raw.canonicalExercise || '',
     liftCode: raw.lift_code || raw.liftCode || '',
     weight: pick(raw.target_weight, t.weight),
     reps: pick(raw.target_reps, t.reps),
@@ -2626,24 +2629,28 @@ function buildRowsFromSessionLog() {
 
 // Resolve the best stable identity for plan_completed tracking. When both the
 // server enrichment and the active planned session are present, prefer the
-// PLANNED exercise name (so the server's name-based computePlanState keeps
-// working even when the logged canonical name differs from the plan entry,
-// e.g. "Barbell Row" logged for planned "Rows"). Priority:
-//   1. lift_code match against planned session → use planned exercise name
-//   2. canonical_exercise name match → use planned exercise name
+// PLANNED exercise name so the server's name-based computePlanState can match
+// it against current_plan[].name (e.g. "Barbell Row" logged for planned "Rows").
+//
+// Returns the same string that currentPlanForChat emits for the matched plan
+// entry: canonicalName (canonical_exercise) if present, else name (exercise).
+// Priority:
+//   1. lift_code match against planned session → planned canonical/display name
+//   2. canonical_exercise exact match → planned canonical/display name
 //   3. fall back to raw logged exercise name
 function resolveCompletedIdentity(rawName, enrichmentRow, plannedSession) {
   if (plannedSession) {
+    const planName = m => m.canonicalName || m.name;
     const loggedCode = enrichmentRow && enrichmentRow.lift_code;
     if (loggedCode) {
       const match = plannedSession.exercises.find(e => e.liftCode && e.liftCode.toLowerCase() === loggedCode.toLowerCase());
-      if (match) return match.name;
+      if (match) return planName(match);
     }
     const canonical = (enrichmentRow && enrichmentRow.canonical_exercise) || '';
     if (canonical) {
       const key = canonical.toLowerCase();
       const match = plannedSession.exercises.find(e => (e.name || '').toLowerCase() === key);
-      if (match) return match.name;
+      if (match) return planName(match);
     }
   }
   return rawName;
