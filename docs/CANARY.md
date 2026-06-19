@@ -110,7 +110,7 @@ completion (`review_completed: true`) count toward the threshold.
 
 | PR # | Date | Codex result | Was Codex correct? | Codex vs. Claude | Running clean-PR count |
 |------|------|--------------|--------------------|-----------------|------------------------|
-| — | — | — | — | — | 0 / 5 |
+| #375 | 2026-06-19 | 🟢 PASS | Yes — docs-only, no contract surface touched | Agreement (both PASS) | 1 / 5 |
 
 > **What increments the count:** A clean real PR — one where Codex returns
 > `verdict: "pass"` with no P0/P1 findings AND that verdict is confirmed correct
