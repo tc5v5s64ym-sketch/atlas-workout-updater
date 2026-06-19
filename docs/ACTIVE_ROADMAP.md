@@ -73,6 +73,7 @@ All steps below are merged. Recorded here for traceability; do not re-execute.
 | 368 | Trend-Aware Recommendations | ✅ complete |
 | 369 | Readiness-Aware Recommendations | ✅ complete |
 | 370 | Coach Confidence Layer (`confidence_factors`) | ✅ complete |
+| 371 | Coach Voice Polish (remove e1rm_trend ambiguity) | ✅ complete |
 
 Deferred items from each completed step are recorded in `BACKLOG.md`.
 
@@ -89,56 +90,77 @@ The original roadmap named Steps 358–360 and 364 differently from the numbers 
 
 ---
 
-## Active queue
+## Active queue — Session-state trust repair (Steps 372–377)
 
-### Roadmap Step 371 — Coach Voice Polish
+This series fixes the session-execution trust failures surfaced by the June 2026 app test (planned vs. completed drift during a live workout). The root cause is that the app has **no single authoritative session state**: `activePlannedSession` (the banner plan + cursor), `sessionCompleted` (logged names), and the coach's `current_plan` (re-fetched fresh from `/api/plan/intent-recommendation` each message) drift apart. Substitutions update none of them.
+
+Build order is deterministic-engine-first, then live wiring, then coach narration — one concern per PR, stop after each.
+
+### Roadmap Step 372 — Substitution updates authoritative session state (engine)
 
 **Status:** NEXT — ready to implement  
-**Type:** Polish  
-**Trust-critical:** No  
-**GitHub PR:** TBD (will be assigned when opened; will differ from Roadmap Step 371)
+**Type:** Trust-critical  
+**GitHub PR:** TBD (will differ from the Roadmap Step number)
 
-**What this fixes:** Steps 362–370 wired intelligence into the live coach path. The coaching voice wording has not been updated to reflect these facts. Coach may word deviation, trend, confidence_factors, and reason_codes awkwardly, repeat itself, or use phrasing patterns written before those signals existed.
+**Exact failure prevented:** User says "Lat bar is taken so I'll do seated rows instead"; Atlas acknowledges the swap but keeps Lat Pulldown on the remaining list. The planned session state must mark Lat Pulldown as substituted and Seated Row as the active slot once accepted, and complete it once logged.
 
-**Exact failure prevented:** Wording that ignores or contradicts live engine signals (e.g. says "hard to say" when `trend` is present, or celebrates a set the deviation signal flagged as fell_short).
-
-**Scope:** Presentation-only. No new engine logic. No new workout decisions. No write-path changes. No new endpoints.
+**Scope:** Pure deterministic engine only — `services/sessionPlanExecutor.js`. No frontend, no write-path, no schema, no LLM. Adds `applySubstitution(planned, prescribed, substitute)` returning the updated planned list (prescribed slot replaced in place, order preserved, substitute liftCode carried so a later differently-named log still matches in `computePlanState`).
 
 **Acceptance criteria:**
-- Coach voice wording updated to reference available facts: `deviation`, `trend`, `confidence_factors`, `reason_codes`.
-- Wording passes tonal review against `docs/COACH_VOICE_VALIDATION.md`.
-- No new engine signals added in this step.
-- No changes to scoring, recommendation, or write paths.
-- No changes to `index.js` log/write path or `services/workoutTextParser.js`.
+- `applySubstitution` replaces the prescribed slot with the substitute, preserving order.
+- After substitution, `computePlanState` shows the prescribed lift gone from `remaining` and the substitute present until logged.
+- Logging the substitute completes the slot and never resurfaces the swapped-out lift.
+- Substitute liftCode rides along so a log under a different canonical name closes the slot.
+- No-op when prescribed is absent / blank / identical to substitute. Inputs never mutated.
 
-**Expected tests:**
-- Existing `test/coachPromptRules.test.js` must pass without modification.
-- If system prompt changes: update prompt-rule tests to cover new rules. Do not delete existing rules.
-- No golden-fixture regressions in `test/liveIntelligence.test.js`, `test/analytics-edge.test.js`, or `test/sessionPlanExecutor.test.js`.
+**Expected tests:** golden fixtures in `test/sessionPlanExecutor.test.js` proving each criterion (the Lat Pulldown → Seated Row scenario explicitly).
 
-**Explicit out-of-scope:**
-- New engine signals or scoring changes.
-- New coach chat endpoints.
-- Substitution-quality voice (blocked on `scoreSubstitutionQuality` fix — see BACKLOG.md).
-- Verbosity/chattiness dial (needs design — see Settings epic in BACKLOG.md).
-- Load sanity, deload, or write-path changes.
-- Any feature from the "What not to build" list in `CLAUDE.md`.
+**Out-of-scope (→ Step 373):** wiring `applySubstitution` into `public/app.js` `activePlannedSession` and the `coach-conversation.js` swap-acknowledgment path; parsing "X is taken, I'll do Y" into (prescribed, substitute).
 
-**Hold points:** None before this step — intelligence wiring confirmed complete (Steps 362–370 ✅). Owner app-tests coach wording after this step before the next phase begins.
+### Roadmap Step 373 — One authoritative session state feeds the coach
+
+**Status:** queued  
+**Type:** Trust-critical (touches `public/app.js` + `public/coach-conversation.js` — trust-loop files, named scope)
+
+**Exact failure prevented:** After logging substituted Rows, Atlas still thinks Lat Pulldown remains; the coach's `current_plan` is a fresh re-fetch independent of the live session. Remaining/completed must derive from ONE authoritative session state.
+
+**Scope:** Wire Step 372's `applySubstitution` into `activePlannedSession`; make `currentPlanForChat` derive `current_plan`/remaining from the live session (with substitutions applied) instead of re-fetching the recommended intent. Keep-in-sync inline copy pattern where the browser can't `require()`.
+
+**Out-of-scope:** parser changes (Step 374), history intelligence (Step 376).
+
+### Roadmap Step 374 — Planned exercise names are always loggable
+
+**Status:** queued  
+**Type:** Correctness
+
+**Exact failure prevented:** Atlas suggested "Single-Leg Leg Curl" but later rejected that exact wording with "Didn't catch that lift." Any name Atlas prescribes in a plan must be recognizable when logged later (alias registration / canonicalization round-trip).
+
+### Roadmap Step 375 — Coach "what's left" reads authoritative state
+
+**Status:** queued  
+**Type:** Trust-critical
+
+**Exact failure prevented:** After completed lifts, Atlas told the user everything (Deadlift, Leg Extension, Leg Curl, Lat Pulldown, Bench, Dips) was still remaining. Coach answers about "what's left" must read the authoritative completed/remaining state from Step 373, not separate memory.
+
+### Roadmap Step 376 — Suppress cross-lift history contamination
+
+**Status:** queued  
+**Type:** Trust-critical
+
+**Exact failure prevented:** Leg Extension commentary claimed today's 60 was below a recent working range of 105–170 — numbers from an unrelated lift. Almost certainly the pre-override `liftCode` history-merge gap (BACKLOG SESSION_DESIGN AC5a). If same-lift evidence is not clean, suppress the claim rather than cite foreign history.
+
+### Roadmap Step 377 — Deterministic fallback for session-close questions
+
+**Status:** queued  
+**Type:** Correctness
+
+**Exact failure prevented:** "Ok so we are done?" returned coach-unavailable instead of resolving session status. Investigate API/model failure vs malformed payload vs missing fallback; add a deterministic engine-computed session-status answer (from `computePlanState`) when the LLM is down.
 
 ---
 
-## After Step 371
+## Origin
 
-The next phase is not yet sequenced. Owner + ChatGPT review BACKLOG.md after Step 371 ships and the owner app-tests.
-
-Candidates visible in BACKLOG.md (not yet approved for sequencing):
-
-- Deload prescription consolidation (#291) — BUMPED to high priority
-- Frontend deload lifecycle wiring (#289)
-- AC8 — phantom-set suppression (credibility floor)
-- Coaching Depth / Verbosity setting (needs design)
-- Conversational input robustness (behavior-changing — Opus 4.8 when time to build)
+Steps 372–377 were sequenced from the June 2026 app-test failures (six findings, priority-ordered). Owner granted full implement-and-merge authority for the series. Each PR stays tiny and one-concern; deferred discoveries go to `BACKLOG.md` in the same PR.
 
 ## New chat / agent instruction
 

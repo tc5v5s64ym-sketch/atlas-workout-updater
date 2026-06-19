@@ -117,4 +117,66 @@ function isPlanComplete(planned, completed) {
   return computePlanState(planned, completed).isComplete;
 }
 
-module.exports = { computePlanState, nextExerciseFromPlan, isPlanComplete };
+/**
+ * applySubstitution(planned, prescribed, substitute) → { planned, substituted, applied }
+ *
+ * Records an in-session swap on the planned list: the `prescribed` exercise's
+ * slot is replaced, IN PLACE (order preserved), by the `substitute` exercise.
+ * This is how an accepted "X is taken, I'll do Y instead" swap updates the
+ * authoritative session state so the prescribed exercise stops showing as
+ * remaining and the substitute takes its place. (Roadmap Step 372.)
+ *
+ * Inputs (entries may be a string name or { name, liftCode }):
+ *   planned    – ordered planned list
+ *   prescribed – the planned exercise being swapped OUT (string or record)
+ *   substitute – the exercise swapped IN (string or record). Its liftCode, when
+ *                present, rides along so a later log under a different canonical
+ *                name (e.g. plan "Rows" logged as "Barbell Row") still matches by
+ *                code in computePlanState.
+ *
+ * Returns:
+ *   planned     – updated ordered list as { name, liftCode } records (stable shape;
+ *                 computePlanState accepts records directly)
+ *   substituted – array of { from, to } applied swaps (empty when none applied)
+ *   applied     – true when the prescribed slot was found and replaced
+ *
+ * No-op (applied:false, planned returned as records unchanged) when:
+ *   - prescribed or substitute is blank / non-resolvable, OR
+ *   - prescribed is not found in planned (by name or liftCode) — that is an
+ *     'add', not a substitution; the caller decides what to do, OR
+ *   - substitute resolves to the same NAME as prescribed (nothing to swap).
+ *
+ * Pure function. Never mutates its inputs.
+ */
+function applySubstitution(planned, prescribed, substitute) {
+  const planRecs = toRecords(planned);
+  const presc = toRecord(prescribed);
+  const sub   = toRecord(substitute);
+
+  if (!presc || !sub) return { planned: planRecs, substituted: [], applied: false };
+  if (presc.name.toLowerCase() === sub.name.toLowerCase()) {
+    return { planned: planRecs, substituted: [], applied: false };
+  }
+
+  const prescKey  = presc.name.toLowerCase();
+  const prescCode = presc.liftCode.toLowerCase();
+
+  const idx = planRecs.findIndex(r => {
+    if (r.name.toLowerCase() === prescKey) return true;
+    if (prescCode && r.liftCode.toLowerCase() === prescCode) return true;
+    return false;
+  });
+  if (idx === -1) return { planned: planRecs, substituted: [], applied: false };
+
+  const fromName = planRecs[idx].name;
+  const updated = planRecs.slice();
+  updated[idx] = { name: sub.name, liftCode: sub.liftCode };
+
+  return {
+    planned: updated,
+    substituted: [{ from: fromName, to: sub.name }],
+    applied: true,
+  };
+}
+
+module.exports = { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution };
