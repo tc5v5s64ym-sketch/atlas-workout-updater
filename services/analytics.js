@@ -1277,6 +1277,41 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     return db.localeCompare(da);
   });
 
+  // Deduplicate by exercise name: the same movement may be logged under multiple
+  // lift codes (e.g. ROW01, SR01 both resolve to "Seated Row"). Keep only the
+  // most-recently-trained entry — the array is already sorted descending so the
+  // first occurrence of each name wins.
+  {
+    const seen = new Set();
+    const deduped = allRecs.filter(r => {
+      const key = (r.exercise_name || '').toLowerCase().trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    allRecs.length = 0;
+    allRecs.push(...deduped);
+  }
+
+  // Exclude exercises trained today or yesterday from all intent builders.
+  // Prescribing the same movement back-to-back is not warranted without an
+  // explicit override. Applied globally here so every intent (including those
+  // that call buildIntentSession directly) respects the exclusion.
+  if (todayStr) {
+    const recencyFiltered = allRecs.filter(r => {
+      const lastSet = r.last_working_sets?.length
+        ? r.last_working_sets[r.last_working_sets.length - 1].date_clean
+        : null;
+      if (!lastSet) return true;
+      const daysSince = Math.floor(
+        (isoDateAtUtcNoon(todayStr).getTime() - isoDateAtUtcNoon(lastSet).getTime()) / 86400000
+      );
+      return daysSince >= 2;
+    });
+    allRecs.length = 0;
+    allRecs.push(...recencyFiltered);
+  }
+
   // Friendly name for a stalled lift code (falls back to the code itself).
   const liftNameByCode = new Map(allRecs.map(r => [r.liftCode, r.exercise_name]));
   const stallName = code => liftNameByCode.get(code) || code;
