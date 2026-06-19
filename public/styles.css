@@ -1657,6 +1657,7 @@ a.lift-link:hover { text-decoration: underline; }
   margin-bottom: 7px;
 }
 .rb-ck { color: var(--ok); }
+.rb-step { color: var(--muted); font-weight: 400; font-size: 0.72rem; margin-left: auto; }
 .rb-s { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); line-height: 1.8; }
 
 /* Adjusted-next prescription */

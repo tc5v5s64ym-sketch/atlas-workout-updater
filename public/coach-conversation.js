@@ -118,16 +118,33 @@
     });
   }
 
-  function buildReadback(name, sets) {
+  function buildReadback(name, sets, planStep) {
     const rb = elc('div', 'readback');
     const h = elc('div', 'rb-h');
     h.appendChild(elc('span', 'rb-ck', '✓'));
     h.appendChild(document.createTextNode(' ' + name));
+    if (planStep) h.appendChild(elc('span', 'rb-step', planStep));
     rb.appendChild(h);
     const s = elc('div', 'rb-s');
     appendSetReadout(s, sets);
     rb.appendChild(s);
     return rb;
+  }
+
+  // Case-insensitive plan-step lookup: returns "X of N" when exerciseName matches
+  // any entry in the active session's exercises list, null otherwise.
+  function planStepFor(exerciseName, session) {
+    if (!session) return null;
+    const { exercises } = session;
+    const key = String(exerciseName).toLowerCase();
+    let idx = exercises.findIndex(e => String(e.name || '').toLowerCase() === key);
+    if (idx === -1) {
+      idx = exercises.findIndex(e => {
+        const n = String(e.name || '').toLowerCase();
+        return n.includes(key) || key.includes(n);
+      });
+    }
+    return idx !== -1 ? `${idx + 1} of ${exercises.length}` : null;
   }
 
   function buildNextPrescription(rec) {
@@ -733,25 +750,43 @@
   }
 
   // Given an exercise name just logged, look up the next exercise in the
-  // ordered plan (insertion order from getPlanTodayByName = plan order).
-  // Returns the display name of the N+1 entry, or null when the exercise is
-  // last (or not found) in the plan. Best-effort — never throws.
+  // ordered plan. Primary: API plan from getPlanTodayByName (canonical names +
+  // full prescription). Fallback: activePlannedSession exercises — handles API
+  // failures and name mismatches (e.g. "Bench" vs "Barbell Bench Press").
+  // Returns the display name of the N+1 entry, or null. Best-effort, never throws.
   async function getNextExerciseInPlan(exerciseName) {
-    if (typeof getPlanTodayByName !== 'function') return null;
-    let map;
-    try { map = await getPlanTodayByName(); } catch { return null; }
-    if (!map || !map.size) return null;
     const key = String(exerciseName).toLowerCase();
-    // Find the logged exercise in the plan's ordered keys.
-    const keys = Array.from(map.keys());
-    let idx = keys.indexOf(key);
-    if (idx === -1) {
-      // Fuzzy: "bench" ↔ "bench press"
-      idx = keys.findIndex(k => k.includes(key) || key.includes(k));
+    if (typeof getPlanTodayByName === 'function') {
+      let map;
+      try { map = await getPlanTodayByName(); } catch { map = null; }
+      // keep in sync with nextExerciseFromPlan in services/sessionPlanExecutor.js
+      if (map && map.size) {
+        const keys = Array.from(map.keys());
+        let idx = keys.indexOf(key);
+        if (idx === -1) idx = keys.findIndex(k => k.includes(key) || key.includes(k));
+        if (idx !== -1) {
+          // Found in the API plan — it is authoritative. Last entry → no handoff.
+          if (idx >= keys.length - 1) return null;
+          const nextRec = map.get(keys[idx + 1]);
+          return (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null;
+        }
+      }
     }
-    if (idx === -1 || idx >= keys.length - 1) return null; // last or not found
-    const nextRec = map.get(keys[idx + 1]);
-    return (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null;
+    // Fallback: use the in-memory active planned session only when the API plan
+    // is unavailable or the logged name doesn't match any API plan entry.
+    const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
+    if (session) {
+      const { exercises } = session;
+      let idx = exercises.findIndex(e => String(e.name || '').toLowerCase() === key);
+      if (idx === -1) {
+        idx = exercises.findIndex(e => {
+          const n = String(e.name || '').toLowerCase();
+          return n.includes(key) || key.includes(n);
+        });
+      }
+      if (idx !== -1 && idx < exercises.length - 1) return exercises[idx + 1].name || null;
+    }
+    return null;
   }
 
   // Build the composer placeholder for the next plan exercise: the prescription
@@ -795,8 +830,9 @@
     if (!handle) return;
     const { bubble, body } = handle;
 
+    const activeSession = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
     for (const ex of exercises) {
-      bubble.insertBefore(buildReadback(ex.exercise, ex.sets), body);
+      bubble.insertBefore(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession)), body);
     }
 
     const primary = exercises[0];
