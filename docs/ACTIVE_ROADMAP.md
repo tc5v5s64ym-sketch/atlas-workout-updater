@@ -153,7 +153,7 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 375 — Coach "what's left" reads authoritative state
 
-**Status:** ✅ complete (GitHub PR #393)  
+**Status:** ✅ complete (GitHub PR #394)  
 **Type:** Trust-critical
 
 **Exact failure prevented:** After completed lifts, Atlas told the user everything (Deadlift, Leg Extension, Leg Curl, Lat Pulldown, Bench, Dips) was still remaining. Coach answers about "what's left" must read the authoritative completed/remaining state from Step 373, not separate memory.
