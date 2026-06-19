@@ -30,15 +30,16 @@ The performance intelligence layer has mostly been built, but app testing expose
 - reorder vs substitute confusion
 - no clean session closeout
 
-Steps 372–377 repaired session-state trust. Steps 378–382 harden the coach surface, fix residual session-cursor staleness, and bring the deload system to a consistent and correctly triggered state.
+Steps 372-377 repaired session-state trust. Step 378 re-verified coach sanitizer null guards. Steps 379-385 now follow a trust-first order: fix the residual session cursor bug, repair history and recommendation trust failures from app testing, then return to deload consolidation and lifecycle wiring.
 
 Build order:
 
-1. Fix session execution and trust failures. ✅ (372–377)
-2. Wire existing intelligence into the live coach path. ✅ (372–377)
-3. Harden the coach surface against runtime failures. (378)
+1. Fix session execution and trust failures. Done (372-377)
+2. Wire existing intelligence into the live coach path. Done (372-377)
+3. Re-verify coach surface runtime guards. Done (378)
 4. Fix residual session-cursor staleness from reorders. (379)
-5. Consolidate and correct the deload recommendation system. (380–382)
+5. Repair history, recommendation, and save-boundary trust failures from app testing. (380-382)
+6. Consolidate and correct the deload recommendation system. (383-385)
 
 ## Global rules
 
@@ -101,131 +102,61 @@ The original roadmap named Steps 358–360 and 364 differently from the numbers 
 
 ---
 
-## Active queue - Roadmap refill (Steps 383-387)
+## Active queue - Trust-first roadmap refill (Steps 379-385)
 
 This sequence is intentionally small. It refills the active roadmap from `BACKLOG.md` and recent app-test findings after the session-state trust-repair series.
 
 Build order:
 
-1. Restore prescription trust where a lift's historical identity can be split across old and canonical lift codes.
-2. Consolidate deload logic before changing deload behavior.
-3. Correct deload triggers on the most visible coach surface.
-4. Point visible deload prescriptions at one source of truth.
-5. Wire deload lifecycle only after trigger and prescription trust are repaired.
+1. Fix the residual reorder cursor bug before more session-state work builds on it.
+2. Repair history QA so Atlas answers from actual logged sets.
+3. Repair recommendation identity/exclusion so recently trained movements are not repeated without justification.
+4. Repair the recommendation preview/save boundary so planned work never looks like completed work.
+5. Return to deload consolidation only after the new trust failures are filed.
 
-### Roadmap Step 383 - Lift-code history merge for prescribed load sanity
-
-**Status:** pending
-
-**Recommended model:** Sonnet 4.6 if verification confirms no canonical-code regression; Opus 4.8 if the fix touches recommendation behavior beyond normalization.
-
-**Risk level:** Medium.
-
-**Failure or opportunity addressed:** Old rows written before `knownLiftCodeOverrides` can carry generated lift codes that differ from the current canonical code. That splits one lift's history, causing Atlas to miss the owner's real working weights and weakening the prescribed-load sanity guard. This is the remaining `SESSION_DESIGN AC5a` gap after the per-lift ceiling guard shipped.
-
-**Why it belongs now:** Load trust is upstream of every coaching and recommendation surface. A bad or history-blind prescribed weight poisons the coach's next explanation even when the voice layer behaves correctly.
-
-**Vision / Dream fit:** Atlas earns the next step from real history. Merging split lift identity helps the engine understand what the owner actually did instead of treating old and new names as separate athletes.
-
-**Constitution / trust guardrails:** Engine owns numbers; AI only words facts. No parser change. No write-path or Sheet schema change. Tests must prove old rows normalize to the canonical lift code without contaminating distinct exercises.
-
-**Scope:** Isolated normalization/read-path fix, likely `services/exerciseEnrichment.js` plus focused tests. No UI, no write path, no LLM prompt.
-
-**Acceptance criteria:**
-- Old rows for a lift with a canonical override resolve to the canonical `lift_code`.
-- Distinct exercises do not merge accidentally.
-- Existing load-sanity fixtures still pass, including the lateral raise guard.
-- No write-path or schema change is present.
-
----
-
-### Roadmap Step 384 - Deload policy housing
+### Roadmap Step 379 - Reorder session index bugfix
 
 **Status:** pending
 
-**Recommended model:** Sonnet 4.6.
-
-**Risk level:** Low-medium.
-
-**Failure or opportunity addressed:** Deload decision code is scattered across `analytics.js` and `coach.js`; `services/deloadPolicy.js` does not exist. That makes the next deload changes harder to reason about and easier to regress.
-
-**Why it belongs now:** Extracting the policy before changing trigger behavior keeps the deload series reviewable. It separates the "where does this logic live?" problem from "what should the trigger decide?"
-
-**Vision / Dream fit:** Atlas's coaching should be explainable and consistent. A single deterministic policy module is a better foundation for a training-intelligence engine than scattered heuristics.
-
-**Constitution / trust guardrails:** Behavior-preserving extraction only. Golden fixtures must pin the current `DELOAD_SPEC.md` behaviors. No LLM decision-making, no write path, no Sheet schema change.
-
-**Scope:** Pure service-layer refactor and tests. Do not alter visible deload behavior in this step.
-
-**Acceptance criteria:**
-- Deload policy logic lives in one focused module.
-- Existing behavior is unchanged under golden fixtures.
-- Callers route through the new module.
-- No write-path, schema, UI, or prompt change is present.
-
----
-
-### Roadmap Step 385 - Deload trigger nuance: no accessory/deprioritized false positives
-
-**Status:** pending
+**Type:** Correctness (session execution)
 
 **Recommended model:** Opus 4.8.
 
 **Risk level:** Medium.
 
-**Failure or opportunity addressed:** Live app testing showed deloads triggered from Dumbbell Curl while e1RM was progressing 40 -> 53 lb, and from Shrugs even though the owner barely trains them directly. The trigger currently treats every flat lift as equally meaningful.
+**Exact failure prevented:** When the user says something like "leg extension is taken, gonna do laterals first" and the coach routes accordingly, `activePlannedSession.index` is not advanced by the conversational reorder - only the "Next exercise ->" button does so. On subsequent messages in the same session, `checkAndSuggestSubstitute` sends the wrong `current_exercise` to the substitute endpoint because the cursor still points at the skipped/taken exercise. The session-state model from Steps 372-373 is authoritative, but the index cursor lags behind it.
 
-**Why it belongs now:** Coach's Pick is the surface the owner starts from. False deloads on low-priority accessories erode trust faster than missing a marginal deload.
+**Why it belongs now:** The bug sits directly in the active session flow. More history and recommendation work should not build on a stale current-exercise cursor.
 
-**Vision / Dream fit:** Atlas should understand what actually matters in training, not just collect flat signals. The engine should distinguish primary training evidence from accessory noise.
+**Vision / Dream fit:** Atlas must understand what the owner is actually doing in the session, including real-world reorders, so the coach can adapt without losing the plan.
 
-**Constitution / trust guardrails:** Deterministic trigger logic only. Coach voice may word the engine result but must not invent the reason. No write path, no schema change, no LLM prompt change.
+**Constitution / trust guardrails:** No write-path or Sheet schema change. The engine/session state decides; AI only explains. `public/app.js` is restricted and must be named in scope before editing.
 
-**Scope:** Isolated deload-trigger evaluation change after Step 384. No prescription-surface consolidation and no lifecycle wiring in this step.
-
-**Acceptance criteria:**
-- Progressing Dumbbell Curl does not trigger a deload.
-- Shrugs alone do not trigger a deload when primary compounds are progressing normally.
-- Genuine primary-lift stalls still trigger correctly.
-- Tests cover the two live false-positive examples and at least two true-positive stall cases.
-
----
-
-### Roadmap Step 386 - Deload prescription consolidation (#291)
-
-**Status:** pending
-
-**Recommended model:** Opus 4.8.
-
-**Risk level:** Medium.
-
-**Failure or opportunity addressed:** `computePrescription` and the older volume-first `suggestDeloads` path can produce competing deload advice. Coach's Pick and the next-set card must not disagree about the same training state.
-
-**Why it belongs now:** After the trigger is trustworthy, visible prescription surfaces need one canonical source before the frontend starts advancing deload state.
-
-**Vision / Dream fit:** The finished Atlas coach should feel calm and coherent. One engine verdict with readable evidence supports the dream of a reusable training-intelligence layer.
-
-**Constitution / trust guardrails:** Anchor on deterministic `computePrescription`; do not let AI choose numbers. No write path, no Sheet schema change. Tests must prove both surfaces agree.
-
-**Scope:** Service/surface consolidation. Retire or subordinate `suggestDeloads` where it can conflict. No lifecycle wiring.
+**Scope:** `public/coach-conversation.js` and `public/app.js` (coach-routing branch only - no write-path or preview-panel change). After a coach reorder is acknowledged, clear or re-point `activeExercise` so subsequent substitution/current-exercise checks use the correct planned slot. No write-path, no schema, no LLM change.
 
 **Acceptance criteria:**
-- Coach's Pick and next-set deload card derive from the same prescription source.
-- Contradictory deload prescriptions cannot appear on live surfaces.
-- `DELOAD_SPEC.md` behavior fixtures remain pinned.
+- A conversational reorder ("X is taken, doing Y first") advances or re-points the authoritative session cursor.
+- Subsequent `checkAndSuggestSubstitute` calls send the correct `current_exercise`.
+- The "what's next / what's left" coach answer still reads from the authoritative state (Step 373/375), not the stale cursor.
 - No write-path or schema change is present.
 
----
+**Expected tests:** integration or unit tests proving that after a simulated reorder message, the session index points at the correct next exercise and the substitute-check sends the right exercise name.
 
-### Hold point - App-test: deload trigger + prescription
+**Out-of-scope:** parser changes, schema changes, write-path changes.
 
-After Steps 384-386 are merged, pause for owner review and app-test before frontend lifecycle wiring.
-
-**Focus test:** Coach's Pick deload recommendation, next-set deload prescription, accessory-vs-primary trigger accuracy, and consistency between visible prescription surfaces.
+> **Note on `public/app.js`:** This file contains the preview->approve->write trust loop and is a restricted file per `CLAUDE.md`. The fix touches the coach-routing branch only. It must be named in scope before editing begins.
 
 ---
 
-### Roadmap Step 387 - Frontend deload lifecycle wiring (#289)
+### Hold point - App-test reorder / "what's left" / substitution
+
+After Step 379 is merged, pause for owner review and optional app-test before history/recommendation trust work begins.
+
+**Focus test:** active session reorder ("X is taken, doing Y first"), "what's next / what's left" response accuracy after a reorder, and substitution/current-exercise behavior on subsequent messages.
+
+---
+
+### Roadmap Step 380 - GitHub issue #359: Historical lift retrieval must use actual logged sets
 
 **Status:** pending
 
@@ -233,7 +164,169 @@ After Steps 384-386 are merged, pause for owner review and app-test before front
 
 **Risk level:** High.
 
-**Failure or opportunity addressed:** The deload state machine exists server-side, but the client never calls `/api/deload/begin|advance|resolve`. Saving a workout does not advance the machine, so `deload_sessions_remaining` and exit criteria remain dark.
+**Failure or opportunity addressed:** Atlas must answer prior-workout questions from actual `Log_Cleaned` rows. Historical lift answers must preserve per-set weight, reps, and RIR. They must not substitute planned, prescribed, recommendation, or benchmark-style summaries for what was actually logged.
+
+**Why it belongs now:** If Atlas cannot accurately answer "what did I do last time?", every downstream coach response and recommendation loses credibility.
+
+**Vision / Dream fit:** The Dream depends on Atlas understanding actual training history, not just planned intent or derived summaries. Raw logs are the input; session understanding is the product.
+
+**Constitution / trust guardrails:** Google Sheets is the source of truth. Engine/data retrieval owns the facts. AI may word them but must not invent or replace logged set details. No write-path or Sheet schema change.
+
+**Scope:** History retrieval / coach-history QA only. No recommendation logic, no parser changes, no writes.
+
+**Acceptance criteria:**
+- Prior-lift answers are based on actual `Log_Cleaned` rows.
+- Each returned/logged set preserves weight, reps, and RIR when present.
+- Planned sets, prescriptions, benchmarks, and recommendation summaries are not substituted for logged sets.
+- No write-path or schema change is present.
+
+---
+
+### Roadmap Step 381 - GitHub issue #402A: Recent-lift exclusion / Seated Row identity normalization
+
+**Status:** pending
+
+**Recommended model:** Opus 4.8.
+
+**Risk level:** High.
+
+**Failure or opportunity addressed:** Exact failure: Atlas prescribed Seated Row after Seated Row was logged on 2026-06-18. Investigate exercise identity / lift-code normalization across Seated Row variants such as `ROW01`, `BOR01`, and `SR01` if present. Recently trained movements should not be recommended again unless explicitly justified.
+
+**Why it belongs now:** This is a current recommendation-trust failure. The owner should not see a movement repeated as if it were fresh right after logging it.
+
+**Vision / Dream fit:** Atlas should remember recent work and recommend the next justified step from real training history, not from fragmented identity records.
+
+**Constitution / trust guardrails:** Engine owns recommendation facts. Do not invent justification in the LLM. No write path, no Sheet schema change, and no recommendation should bypass real logged history.
+
+**Scope:** Recommendation identity / recent-lift exclusion investigation and fix. No deload work, no parser work, no writes.
+
+**Acceptance criteria:**
+- Seated Row logged on 2026-06-18 is recognized as recently trained for recommendation purposes.
+- Seated Row variants / lift codes are normalized or grouped correctly where they represent the same movement.
+- Recently trained movements are not recommended again unless the engine exposes an explicit justification.
+- No write-path or schema change is present.
+
+---
+
+### Roadmap Step 382 - GitHub issue #402B: Suggested workout preview must not look save-ready
+
+**Status:** pending
+
+**Recommended model:** Opus 4.8.
+
+**Risk level:** Medium.
+
+**Failure or opportunity addressed:** Exact failure: the suggested workout screen showed save-oriented copy like "Say 'log it' to save your session" even though no actual sets were performed/logged. Recommendation previews must remain distinct from completed workout sessions.
+
+**Why it belongs now:** This is a save-boundary trust failure. Suggested work must not create phantom-save pressure or imply that unperformed sets are ready to commit.
+
+**Vision / Dream fit:** Atlas should reduce gym friction while staying clear about what happened versus what is only suggested. The owner approves actual training data, not hypothetical plans.
+
+**Constitution / trust guardrails:** No blind writes. No phantom sets. Recommendation previews are not completed workout sessions. AI can suggest and preview; the owner approves only actual logged work before production writes.
+
+**Scope:** Suggested workout preview copy/state boundary only. Do not change write semantics, Sheet schema, or production behavior outside this boundary.
+
+**Acceptance criteria:**
+- Suggested workout previews do not show completed-session or save-ready copy.
+- Recommendation preview state remains distinct from performed/logged session state.
+- The UI does not pressure the owner to save sets that were never performed.
+- No write-path or schema change is present.
+
+---
+
+### Hold point - App-test history / recommendation / save-boundary trust
+
+After Steps 380-382 are merged, pause for owner review and app-test before deload work resumes.
+
+**Focus test:** prior-lift history QA, today's workout recommendation after recent logs, and confirmation that recommendation preview does not create phantom-save pressure.
+
+---
+
+### Roadmap Step 383 - GitHub issue #291: Deload prescription consolidation
+
+**Status:** pending
+
+**Recommended model:** Opus 4.8.
+
+**Risk level:** Medium.
+
+**Type:** Correctness (recommendation logic) - BUMPED priority; on the Coach's Pick surface
+
+**Failure or opportunity addressed:** Two prescription paths currently coexist - `computePrescription` (the canonical engine) and the older volume-first `suggestDeloads` path. The Coach's Pick surface and next-set card may route through different models and can show contradictory prescriptions. Both surfaces must derive from a single canonical source.
+
+**Why it belongs now:** After the new history/recommendation trust failures are filed, visible deload prescription surfaces still need one canonical source before the frontend starts advancing deload state.
+
+**Vision / Dream fit:** The finished Atlas coach should feel calm and coherent. One engine verdict with readable evidence supports the dream of a reusable training-intelligence layer.
+
+**Constitution / trust guardrails:** Anchor on deterministic `computePrescription`; do not let AI choose numbers. No write path, no Sheet schema change. Tests must prove both surfaces agree.
+
+**Scope:** Service-layer consolidation. Point both the next-set card and Coach's Pick/insights overview at `computePrescription` as the single prescription source. Retire or bypass the `suggestDeloads` volume-first path where it conflicts. Pure service-layer refactor - no write-path, no schema, no LLM change.
+
+**Acceptance criteria:**
+- Both the next-set card and Coach's Pick surfaces read from `computePrescription` only.
+- `suggestDeloads` is either retired or explicitly subordinated so it cannot produce a contradictory recommendation on any live surface.
+- Tests prove both surfaces agree (same prescription model, same output shape) when given identical inputs.
+- All five `DELOAD_SPEC.md` behaviors remain pinned in golden fixtures.
+- No write-path or schema change is present.
+
+**Expected tests:** golden fixtures in the deload/prescription test suite covering all five spec behaviors; an integration test proving Coach's Pick and next-set card return consistent prescriptions from the same model.
+
+**Out-of-scope:** frontend lifecycle wiring (-> Step 385), trigger-logic changes (-> Step 384), LLM prompt changes, schema changes.
+
+---
+
+### Roadmap Step 384 - Deload trigger nuance: no accessory/deprioritized false positives
+
+**Status:** pending
+
+**Type:** Correctness (recommendation logic)
+
+**Recommended model:** Opus 4.8.
+
+**Risk level:** Medium.
+
+**Failure or opportunity addressed:** Confirmed live failures: Dumbbell Curl was flagged as stalled while its e1RM was actively progressing (40 -> 53 lb); Shrugs was flagged despite being barely trained as a direct lift. The trigger evaluates all flat lifts equally regardless of their role in the program. A deload recommendation triggered by a secondary or accessory lift when primary compounds are progressing normally is worse than no recommendation - it erodes trust in every subsequent deload signal.
+
+**Why it belongs now:** Coach's Pick is the surface the owner starts from. False deloads on low-priority accessories erode trust faster than missing a marginal deload.
+
+**Vision / Dream fit:** Atlas should understand what actually matters in training, not just collect flat signals. The engine should distinguish primary training evidence from accessory noise.
+
+**Constitution / trust guardrails:** Deterministic trigger logic only. Coach voice may word the engine result but must not invent the reason. No write path, no schema change, no LLM prompt change.
+
+**Scope:** Isolated change to the deload-trigger evaluation logic. The trigger should weigh primary-lift evidence; accessories and deprioritized lifts should be downgraded or excluded as trigger sources when primary-compound signals do not corroborate. No change to what a deload prescribes, only when the trigger fires. No write-path, no schema, no LLM change.
+
+**Acceptance criteria:**
+- Dumbbell Curl with a progressing e1RM (40 -> 53 lb) does not trigger a deload.
+- Shrugs alone does not trigger a deload when compound lifts are progressing normally.
+- Main compound lifts that are genuinely stalling continue to trigger correctly.
+- Golden fixtures pin all five `DELOAD_SPEC.md` behaviors and the live false-positive examples.
+- No write-path or schema change is present.
+
+**Expected tests:** golden-fixture tests in the deload trigger suite covering the Dumbbell Curl progressing case, the Shrugs case, and at least two genuine-stall cases where the trigger must fire.
+
+**Out-of-scope:** prescription model changes (-> Step 383), frontend lifecycle wiring (-> Step 385), LLM prompt changes, schema changes.
+
+---
+
+### Hold point - App-test deload trigger + prescription
+
+After Steps 383-384 are merged, pause for owner review and app-test before frontend lifecycle wiring.
+
+**Focus test:** Coach's Pick deload recommendation, next-set card deload prescription, deload trigger accuracy on accessory vs. primary lifts, and consistency between both prescription surfaces.
+
+---
+
+### Roadmap Step 385 - GitHub issue #289: Frontend deload lifecycle wiring
+
+**Status:** pending
+
+**Type:** Correctness (write-path-adjacent) - HIGH RISK; explicit scope required before editing
+
+**Recommended model:** Opus 4.8.
+
+**Risk level:** High.
+
+**Failure or opportunity addressed:** The deload state machine (`services/deloadState.js`, `Deload_State` tab) is fully built server-side but the client never calls `/api/deload/begin|advance|resolve`. Saving a workout does not advance the machine. `deload_sessions_remaining` never decrements, `deload_exit_criteria` is never evaluated, and the system accumulates no real state transitions - it is effectively dark.
 
 **Why it belongs now:** Lifecycle writes should happen only after the deload trigger and prescription are trustworthy. Wiring state transitions before that would persist questionable decisions.
 
@@ -241,14 +334,21 @@ After Steps 384-386 are merged, pause for owner review and app-test before front
 
 **Constitution / trust guardrails:** This is write-path-adjacent and requires explicit scope before editing `public/app.js`. Deload lifecycle calls write only to append-only `Deload_State`; they must never alter `Log_Cleaned`, `Effort`, workout rows, or dry-run proof fields. No Sheet schema change.
 
-**Scope:** Frontend lifecycle wiring only. Begin on explicit deload start, advance only after successful session write, resolve only when exit criteria are met.
+**Scope:** Frontend lifecycle wiring only. Wire the `begin`, `advance`, and `resolve` calls in `public/app.js` at the correct approved lifecycle moments (begin on deload start, advance on session save, resolve on exit criteria met). No new schema columns. No `Log_Cleaned` or workout-row involvement. `Deload_State` tab writes only, per the existing 7-column append-only schema. No LLM change.
 
 **Acceptance criteria:**
-- `begin` is called only when a deload is explicitly started.
-- `advance` is called only after a successful live session write, never during `test_mode=true`.
-- `resolve` is called only when exit criteria are met.
-- Preview->approve->write proof fields remain unchanged.
-- Tests prove lifecycle calls do not touch `Log_Cleaned` or `Effort`.
+- `begin` is called only when a deload is explicitly started (not on every save).
+- `advance` is called only on a successful session write, not on dry-run/test_mode.
+- `resolve` is called only when exit criteria are met, not preemptively.
+- None of the lifecycle calls alter `Log_Cleaned`, workout rows, or the preview->approve->write trust loop.
+- Tests prove `begin`/`advance`/`resolve` calls happen only at the correct lifecycle moments and that `test_mode: true` dry-runs do not trigger them.
+- `sheet_write`, `sheet_written`, `log_rows_written`, and `no_write_confirmed` proof fields are unaffected.
+
+**Expected tests:** integration tests in `test/api-smoke.test.js` proving the lifecycle boundary conditions (dry-run does not call advance; approve calls advance exactly once per save; `Log_Cleaned` row count is unchanged by lifecycle calls).
+
+> **`public/app.js` restriction:** This file contains the preview->approve->write trust loop and is a restricted file per `CLAUDE.md`. It must be named in scope before editing begins. The deload lifecycle calls are system-state writes to `Deload_State` only - they are NOT logged sets and do NOT route through the preview trust loop.
+
+**Out-of-scope:** prescription model changes (-> Step 383), trigger-logic changes (-> Step 384), schema migrations, LLM prompt changes.
 
 ---
 
@@ -256,22 +356,22 @@ After Steps 384-386 are merged, pause for owner review and app-test before front
 
 Do not start these from this roadmap refill unless the owner explicitly promotes them:
 
-- Reorder session index bugfix from the prior active queue.
 - Coach / Deep Coach verbosity tiers.
 - Conversational input robustness and elasticity.
 - Settings / user-preferences panel.
 - Preference learning from edits.
 - Substitution-history and missed-lift memory expansion beyond shipped state.
-- Suggested workout engine expansion and new routes.
+- Suggested workout engine expansion and new routes beyond the filed #402A/#402B trust fixes.
 - Friendly errors / contradictory panel polish.
 - Pending-exercise queue persistence decision.
+- Lift-code history merge for pre-override rows (`SESSION_DESIGN AC5a`) unless separately promoted.
 - Nutrition, bodyweight expansion, signature programs, auth/productization, multi-user, and platform/API work.
 
 ---
 
 ## Origin
 
-Steps 372–377 were sequenced from the June 2026 app-test failures (six findings, priority-ordered). Steps 383–387 refill the active roadmap from `BACKLOG.md`, the product Vision/Dream, and the remaining trust-sensitive app-test findings. Each implementation PR stays tiny and one-concern; deferred discoveries go to `BACKLOG.md` in the same PR.
+Steps 372-377 were sequenced from the June 2026 app-test failures (six findings, priority-ordered). Step 378 re-verified pre-existing coach sanitizer guards. Steps 379-385 refill the active roadmap from `BACKLOG.md`, the product Vision/Dream, GitHub issues #359, #402A, #402B, #291, and #289, and the remaining trust-sensitive app-test findings. Each implementation PR stays tiny and one-concern; deferred discoveries go to `BACKLOG.md` in the same PR.
 
 ## New chat / agent instruction
 
