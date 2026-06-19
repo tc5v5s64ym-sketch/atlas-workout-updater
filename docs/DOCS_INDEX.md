@@ -13,6 +13,7 @@ When these disagree, stop and ask the owner before changing direction.
 
 - `CLAUDE.md` — operating brief for Claude Code and other AI agents.
 - `CODEX.md` — operating brief for Codex/coding agents.
+- `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Claude Code + CODEX Review + GitHub workflow.
 - `docs/ACTIVE_ROADMAP.md` — current queue; read before selecting the next PR.
 - `BACKLOG.md` — open/deferred work and owner decisions.
 
