@@ -37,6 +37,9 @@ const SUBSTITUTION_MIN_COUNT       = 3;
 const UNDERPERFORMANCE_WINDOW      = 5;
 const UNDERPERFORMANCE_MIN         = 3;
 // Missed-lift pattern: fire after ≥ this many misses across the window.
+// detectMissedLifts is a standalone utility — NOT wired into detectPatterns because
+// missed lifts are exercise-name events (not lift-code-specific) and would contaminate
+// per-lift patterns if mixed in. Call it directly when session-level context is needed.
 const MISSED_LIFT_WINDOW           = 10;
 const MISSED_LIFT_MIN_COUNT        = 1;
 // e1RM deficit threshold — session e1RM below this fraction of benchmark e1RM
@@ -181,10 +184,12 @@ function detectMissedLifts(missedLiftHistory) {
 /**
  * detectPatterns(liftCode, rows, options?) → { patterns[] }
  *
- * options.substitutionHistory – array of { original, substitute } events (optional).
- * options.missedLiftHistory   – array of { exercise, date } missed-lift events (optional).
- *   Full cross-session detection requires a persistent session plan store; callers may
- *   pass single-session data to surface current-session misses.
+ * options.substitutionHistory – array of { original, substitute, liftCode } events (optional).
+ *   Caller is responsible for filtering to the relevant liftCode before passing.
+ *
+ * NOTE: detectMissedLifts is NOT wired here. Missed-lift events are exercise-name-based
+ * (not lift-code-specific) and must be evaluated at the session level by the caller,
+ * not per-lift — mixing them in would attribute missed Row events to Bench, Deadlift, etc.
  */
 function detectPatterns(liftCode, rows, options) {
   const patterns = [];
@@ -194,13 +199,9 @@ function detectPatterns(liftCode, rows, options) {
   const underperf = detectUnderperformance(liftCode, rows);
   if (underperf) patterns.push(underperf);
 
-  // Repeated substitution — requires caller-supplied history.
+  // Repeated substitution — requires caller-supplied history filtered to this liftCode.
   const subs = detectRepeatedSubstitutions(opts.substitutionHistory);
   patterns.push(...subs);
-
-  // Missed lift — requires caller-supplied history from planned session data.
-  const missed = detectMissedLifts(opts.missedLiftHistory);
-  patterns.push(...missed);
 
   return { patterns };
 }

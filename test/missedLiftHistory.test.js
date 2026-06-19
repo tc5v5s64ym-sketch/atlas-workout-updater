@@ -146,16 +146,22 @@ test('detectMissedLifts: only looks at last 10 entries (MISSED_LIFT_WINDOW)', ()
   assert.ok(rowPattern, 'Row must appear in the window');
 });
 
-// ── Integration: buildMissedLiftHistory → detectPatterns ─────────────────────
+// ── Integration: buildMissedLiftHistory → detectMissedLifts ──────────────────
+//
+// detectMissedLifts is a STANDALONE utility — it is NOT wired into detectPatterns.
+// Missed-lift events are exercise-name-based (not lift-code-specific); mixing them
+// into detectPatterns would contaminate per-lift patterns (a missed Row would appear
+// under Bench, Deadlift, etc.). Callers must invoke detectMissedLifts separately at
+// the session level, not per-lift.
 
-test('GOLDEN FIXTURE — missed_lift pattern fires via detectPatterns', () => {
+test('GOLDEN FIXTURE — detectMissedLifts fires directly (not via detectPatterns)', () => {
   const sessions = [{
     planned:   ['Bench Press', 'Squat', 'Row'],
     completed: ['Bench Press', 'Squat'],
     date: '2026-04-01',
   }];
   const missedLiftHistory = buildMissedLiftHistory(sessions);
-  const { patterns } = detectPatterns('BPR01', [], { missedLiftHistory });
+  const patterns = detectMissedLifts(missedLiftHistory);
 
   const missedPattern = patterns.find(p => p.type === 'missed_lift');
   assert.ok(missedPattern, 'missed_lift pattern must fire');
@@ -170,7 +176,21 @@ test('missed_lift does NOT fire when all planned exercises completed', () => {
     date: '2026-04-01',
   }];
   const missedLiftHistory = buildMissedLiftHistory(sessions);
-  const { patterns } = detectPatterns('BPR01', [], { missedLiftHistory });
+  const patterns = detectMissedLifts(missedLiftHistory);
   const missedPattern = patterns.find(p => p.type === 'missed_lift');
   assert.equal(missedPattern, undefined, 'must not fire when plan was fully completed');
+});
+
+test('detectPatterns does NOT accept missedLiftHistory (isolation check)', () => {
+  // Passing missedLiftHistory to detectPatterns must be silently ignored — it is not
+  // a supported option. The caller must invoke detectMissedLifts separately.
+  const sessions = [{
+    planned:   ['Bench Press', 'Squat', 'Row'],
+    completed: ['Bench Press', 'Squat'],
+    date: '2026-04-01',
+  }];
+  const missedLiftHistory = buildMissedLiftHistory(sessions);
+  const { patterns } = detectPatterns('BPR01', [], { missedLiftHistory });
+  const missedPattern = patterns.find(p => p.type === 'missed_lift');
+  assert.equal(missedPattern, undefined, 'detectPatterns must not process missedLiftHistory');
 });
