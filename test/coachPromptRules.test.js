@@ -88,3 +88,12 @@ test('system prompt: deviation instruction placed before readiness_signal', () =
   const readinessIdx = prompt.indexOf('"readiness_signal"');
   assert.ok(deviationIdx < readinessIdx, 'deviation rule must precede readiness_signal rule');
 });
+
+// ── trend object is the authoritative e1RM signal ──────────────────────────────
+
+test('system prompt: trend rule identifies trend object as the authoritative e1RM trajectory signal', () => {
+  assert.ok(
+    prompt.includes('authoritative e1RM trajectory signal'),
+    'trend rule must mark the trend object as authoritative to prevent the model using a legacy trend string'
+  );
+});
