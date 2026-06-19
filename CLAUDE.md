@@ -8,6 +8,7 @@ This file is the first thing an AI agent (Claude Code, Codex, or any other) shou
 
 Atlas is a personal workout logging assistant for one owner (Dale). It parses natural-language gym input, previews rows, and writes to Google Sheets on explicit approval. There is no database — Google Sheets is the permanent record.
 
+Read `docs/GOVERNANCE.md` to understand how Dream, Vision, Constitution, Roadmap, and Backlog relate and where to file new ideas from owner conversations.
 Read `docs/CONSTITUTION.md` for mission and scope.
 Read `docs/INVARIANTS.md` for rules that must never be broken.
 Read `docs/DOCS_INDEX.md` to understand which docs are active, reference-only, historical, or archived.
@@ -24,6 +25,7 @@ Read `docs/AGENT_WORKFLOW.md` to understand the Dale + ChatGPT + Claude Code + C
 - Do not follow older plan docs as active execution queues unless `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md` explicitly links that step.
 - Whenever you defer a task, discover a follow-up, or decide something is out of scope, append it to `BACKLOG.md` in the same PR — never rely on memory or chat history to carry it.
 - When an item ships, mark it done or remove it in the same PR.
+- When the owner brainstorms a meaningful product, strategy, or build idea in conversation, consult `docs/GOVERNANCE.md` to identify the correct layer and place the idea there in the same PR — do not leave it only in chat history.
 
 ---
 
