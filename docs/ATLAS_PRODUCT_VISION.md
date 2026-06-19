@@ -482,6 +482,47 @@ Atlas should develop in this order:
 ⏳ Full mobile app
 ⏳ Database/backend evolution
 
+## The Dream
+
+Atlas's long-term ambition is to become the trusted training-intelligence engine for fitness.
+
+Today Atlas is a personal workout logger with one owner. The dream is something larger: a training-intelligence layer that can sit underneath, plug into, or power an entire ecosystem.
+
+**What Atlas understands that others don't:**
+
+- What the user actually did, versus what was planned.
+- What the session intended, and whether substitutions preserved or abandoned that intent.
+- What changed in the real world — unavailable equipment, fatigue, injury — and how the session adapted.
+- What training history says about this athlete's real working weights, trends, and recovery patterns.
+- What progression is actually justified, not what looks good on a plan.
+- What the coach should explain to earn trust — not just numbers, but the reasoning behind them.
+
+**The endgame:**
+
+Programs, apps, wearables, gyms, and coaches provide the surface area.
+Atlas provides the trust-first adaptive training intelligence underneath.
+
+In this vision, Atlas could power:
+
+- Its own consumer app.
+- Creator programs and coach/trainer platforms.
+- Gym software and wearable integrations.
+- Nutrition and fitness ecosystems.
+- Third-party fitness apps.
+- Future licensing or API products.
+
+**Guardrails for this vision:**
+
+- This is a long-term dream, not active roadmap scope.
+- The current v1 focus — one owner, one sheet, one trust loop — is not weakened by this vision.
+- Atlas does not become a generic fitness API prematurely.
+- No multi-user or platform work is active until the owner explicitly directs it.
+- The trust contract is preserved in any future form: the engine owns facts and numbers; AI only words them.
+
+The dream does not change what to build today. It shapes how to think about the decisions being made now.
+
+---
+
 ## North Star
 
 Atlas succeeds if the owner can walk into the gym, train normally, capture the session with almost no friction, approve a clean structured log, and get better guidance next time because Atlas remembers the full training story.

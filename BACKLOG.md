@@ -161,3 +161,21 @@ _Not active queue. Guiding principle: Atlas infers from data and behaviour; it d
 - Nutrition (Fuel) — real macro tracking, eventually diet↔performance correlation. Way down the road.
 - Signature Programs / "Train Like..." mode — future themed workout experiences, not active roadmap work. Possible forms: classic bodybuilding-style blocks, strength-athlete-style blocks, approved creator/influencer partnerships, or creator-built 3-week / 5-session / 12-week programs. Guardrails: do not use real person names, likeness, branding, or paid creator programs unless licensed/approved; famous-athlete references must stay "inspired by classic bodybuilding style" unless rights are secured; creator programs require opt-in partnership and explicit permission. Program themes provide structure only — Atlas still owns personalization, load sanity, substitutions, safety constraints, recovery-aware adjustments, and logging trust.
 - Minor / if-ever: session search, import-export & backup, light/dark, settings layer. (Auth stays out — personal single-user tool.)
+
+---
+
+## Strategic direction — deferred brainstorms
+
+These are not engineering items. They are owner-decision hold points: questions to revisit at specific milestones before choosing a direction. Do not act on them; do not add them to the active roadmap. Revisit only when the trigger condition is reached.
+
+- **After workout session authority / substitution state is stable:**
+  Brainstorm what must be separated architecturally for Atlas to become a training-intelligence engine that other surfaces (apps, platforms, APIs) could consume. What is tightly coupled today that would need to be a clean, versioned contract?
+
+- **After first private beta users:**
+  Brainstorm monetization paths: Pro tier, trainer portal, creator programs, paid onboarding, shareable reports, partnerships. No commitment until the owner has real usage data.
+
+- **After 100 users:**
+  Reassess product direction: consumer app vs trainer platform vs creator-program engine vs licensing/API layer. Each path has different architecture, business model, and trust-contract implications.
+
+- **After 1,000 users:**
+  Reassess partnership and acquisition positioning. Evaluate whether Atlas should expose an engine/API layer and what that requires architecturally, legally, and operationally.
