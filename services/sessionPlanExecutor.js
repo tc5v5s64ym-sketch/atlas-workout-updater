@@ -197,4 +197,24 @@ function applySubstitution(planned, prescribed, substitute) {
   };
 }
 
-module.exports = { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution };
+/**
+ * clampCursorAfterRemoval(index, removedIdx, newLength) → number
+ *
+ * When a dedupe-substitution splices the prescribed slot out of a LIVE session
+ * (Step 373b), the session cursor must follow the removed entry:
+ *   - shift left by one if the cursor was AFTER the removed slot, and
+ *   - never point past the end (removing the current+last slot would otherwise
+ *     leave the cursor out of bounds and crash the banner render).
+ *
+ * Pure helper so the browser's applySessionSubstitution cursor math is covered
+ * by tests (the engine applySubstitution is index-free). Returns a valid index
+ * in [0, newLength-1], or 0 when the list is now empty.
+ */
+function clampCursorAfterRemoval(index, removedIdx, newLength) {
+  let next = Number.isInteger(index) ? index : 0;
+  if (next > removedIdx) next -= 1;
+  if (next >= newLength) next = Math.max(0, newLength - 1);
+  return Math.max(0, next);
+}
+
+module.exports = { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution, clampCursorAfterRemoval };

@@ -1173,7 +1173,13 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode) {
   ));
   if (dupElsewhere) {
     exs.splice(idx, 1);
-    if (activePlannedSession.index > idx) activePlannedSession.index -= 1;
+    // Cursor must follow the removed slot, clamped so it never points past the
+    // end (removing the current+last slot would otherwise crash the banner).
+    // keep in sync with clampCursorAfterRemoval in services/sessionPlanExecutor.js
+    let next = activePlannedSession.index;
+    if (next > idx) next -= 1;
+    if (next >= exs.length) next = Math.max(0, exs.length - 1);
+    activePlannedSession.index = Math.max(0, next);
   } else {
     exs[idx] = {
       name: subName, canonicalName: subName, liftCode: subLiftCode || '',
