@@ -763,14 +763,16 @@
         const keys = Array.from(map.keys());
         let idx = keys.indexOf(key);
         if (idx === -1) idx = keys.findIndex(k => k.includes(key) || key.includes(k));
-        if (idx !== -1 && idx < keys.length - 1) {
+        if (idx !== -1) {
+          // Found in the API plan — it is authoritative. Last entry → no handoff.
+          if (idx >= keys.length - 1) return null;
           const nextRec = map.get(keys[idx + 1]);
           return (nextRec && (nextRec.exercise_name || nextRec.exercise)) || null;
         }
       }
     }
-    // Fallback: use the in-memory active planned session when the API plan is
-    // unavailable or the logged name doesn't match any API plan entry.
+    // Fallback: use the in-memory active planned session only when the API plan
+    // is unavailable or the logged name doesn't match any API plan entry.
     const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
     if (session) {
       const { exercises } = session;
