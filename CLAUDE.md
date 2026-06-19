@@ -11,6 +11,7 @@ Atlas is a personal workout logging assistant for one owner (Dale). It parses na
 Read `docs/CONSTITUTION.md` for mission and scope.
 Read `docs/INVARIANTS.md` for rules that must never be broken.
 Read `docs/DOCS_INDEX.md` to understand which docs are active, reference-only, historical, or archived.
+Read `docs/AGENT_WORKFLOW.md` to understand the Dale + ChatGPT + Claude Code + CODEX Review + GitHub workflow.
 
 ---
 
@@ -23,6 +24,21 @@ Read `docs/DOCS_INDEX.md` to understand which docs are active, reference-only, h
 - Do not follow older plan docs as active execution queues unless `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md` explicitly links that step.
 - Whenever you defer a task, discover a follow-up, or decide something is out of scope, append it to `BACKLOG.md` in the same PR — never rely on memory or chat history to carry it.
 - When an item ships, mark it done or remove it in the same PR.
+
+---
+
+## Agent review workflow
+
+Atlas uses GitHub as the handoff bus.
+
+- Claude Code implements one PR at a time, opens the PR, and stops.
+- Claude Code Review checks code-level correctness when enabled.
+- CODEX Review checks roadmap fit, scope creep, Atlas trust contract, live-path test coverage, write-path/schema safety, and accidental future-PR work.
+- If CODEX Review returns `BLOCKING` and the finding is in scope for the current PR, Claude Code fixes only that finding, pushes updates, and stops again.
+- If CODEX Review finds future-scope work, Claude Code must not build it inside the current PR; add it to `BACKLOG.md` or an issue and stop.
+- Dale merges only after GitHub checks are green and CODEX Review is `READY FOR OWNER MERGE` or `NON-BLOCKING`.
+
+See `docs/AGENT_WORKFLOW.md` for the full workflow.
 
 ---
 
