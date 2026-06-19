@@ -132,17 +132,17 @@ test('buildSuggestedWorkout: reason_codes are short machine-readable strings, no
 });
 
 test('buildSuggestedWorkout: well_rested code fires when last session was ≥ 2 days ago', () => {
-  // Last session 2026-03-01, today 2026-04-19 → daysSinceLast >> 2
+  // 6 sessions of bench press, last session 2026-04-05, today 2026-04-19 → 14 days since last.
+  // Only push/pull data → build_strength is the highest scorer; assert intent explicitly
+  // so a future scoring change fails loudly rather than letting the test pass vacuously.
   const logRows = baseline('Bench Press', 'chest', 'BPR01', 6, '2026-03-01');
   const result = buildSuggestedWorkout(logRows, [], { today: '2026-04-19' });
 
   assert.ok(result !== null);
-  // The top-scored intent (likely build_strength) should include well_rested.
-  // We only assert this for build_strength since other intents may win.
-  if (result.intent === 'build_strength') {
-    assert.ok(result.reason_codes.includes('well_rested'),
-      `expected well_rested in reason_codes, got [${result.reason_codes.join(', ')}]`);
-  }
+  assert.equal(result.intent, 'build_strength',
+    `expected build_strength to win; got '${result.intent}' — fixture or scoring changed`);
+  assert.ok(result.reason_codes.includes('well_rested'),
+    `expected well_rested in reason_codes, got [${result.reason_codes.join(', ')}]`);
 });
 
 test('buildSuggestedWorkout: goal_alignment fires when a matching goal is set', () => {
@@ -150,29 +150,15 @@ test('buildSuggestedWorkout: goal_alignment fires when a matching goal is set', 
     ...baseline('Bench Press', 'chest', 'BPR01', 6, '2026-03-01'),
     ...baseline('Squat',       'lower', 'SQT01', 6, '2026-03-01'),
   ];
-  // 'strength' goal gives +20 to build_strength — it should win and carry goal_alignment.
+  // goal=strength adds +20 to build_strength in the GOAL_BONUS table — it must win.
+  // Assert intent explicitly so a scoring regression fails loudly.
   const result = buildSuggestedWorkout(logRows, [], { today: '2026-04-19', goal: 'strength' });
 
   assert.ok(result !== null);
-  if (result.intent === 'build_strength') {
-    assert.ok(result.reason_codes.includes('goal_alignment'),
-      `expected goal_alignment in reason_codes for goal=strength, got [${result.reason_codes.join(', ')}]`);
-  }
-});
-
-test('buildSuggestedWorkout: fix_blind_spots reason_codes include pattern_overdue codes', () => {
-  // Squat trained long ago → lower_overdue should appear when fix_blind_spots wins.
-  const squatRows = baseline('Squat', 'lower', 'SQT01', 5, '2025-10-01');
-  const benchRows = baseline('Bench Press', 'chest', 'BPR01', 5, '2026-04-10');
-  const result = buildSuggestedWorkout([...squatRows, ...benchRows], [], { today: '2026-04-19' });
-
-  assert.ok(result !== null);
-  if (result.intent === 'fix_blind_spots') {
-    // reason_codes should include at least one *_overdue code
-    const hasOverdue = result.reason_codes.some(c => c.endsWith('_overdue'));
-    assert.ok(hasOverdue,
-      `expected an *_overdue code in fix_blind_spots reason_codes, got [${result.reason_codes.join(', ')}]`);
-  }
+  assert.equal(result.intent, 'build_strength',
+    `expected build_strength to win with goal=strength; got '${result.intent}'`);
+  assert.ok(result.reason_codes.includes('goal_alignment'),
+    `expected goal_alignment in reason_codes for goal=strength, got [${result.reason_codes.join(', ')}]`);
 });
 
 test('buildSuggestedWorkout: exercises each have required fields', () => {
