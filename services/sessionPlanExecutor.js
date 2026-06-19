@@ -169,8 +169,26 @@ function applySubstitution(planned, prescribed, substitute) {
   if (idx === -1) return { planned: planRecs, substituted: [], applied: false };
 
   const fromName = planRecs[idx].name;
+
+  // Dedupe guard: if the substitute is ALREADY planned in another slot, drop the
+  // prescribed slot instead of replacing it — otherwise the list would carry the
+  // substitute twice and computePlanState would close both slots from a single
+  // logged set.
+  const subKey  = sub.name.toLowerCase();
+  const subCode = sub.liftCode.toLowerCase();
+  const dupElsewhere = planRecs.some((r, i) =>
+    i !== idx && (
+      r.name.toLowerCase() === subKey ||
+      (subCode && r.liftCode.toLowerCase() === subCode)
+    )
+  );
+
   const updated = planRecs.slice();
-  updated[idx] = { name: sub.name, liftCode: sub.liftCode };
+  if (dupElsewhere) {
+    updated.splice(idx, 1);
+  } else {
+    updated[idx] = { name: sub.name, liftCode: sub.liftCode };
+  }
 
   return {
     planned: updated,

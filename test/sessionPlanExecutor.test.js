@@ -352,3 +352,22 @@ test('applySubstitution: sequential swaps compose (two slots substituted)', () =
   assert.equal(r2.applied, true);
   assert.deepEqual(r2.planned.map(p => p.name), ['Seated Row', 'Nordic Curl']);
 });
+
+test('applySubstitution: substituting to an already-planned exercise does not duplicate it', () => {
+  // CODEX Step 372 review: plan [Bench, Lat Pulldown], swap Lat Pulldown → Bench
+  // must not yield [Bench, Bench] (one logged Bench would falsely close two slots).
+  const r = applySubstitution(['Bench Press', 'Lat Pulldown'], 'Lat Pulldown', 'Bench Press');
+  assert.equal(r.applied, true);
+  assert.deepEqual(r.substituted, [{ from: 'Lat Pulldown', to: 'Bench Press' }]);
+  assert.deepEqual(r.planned.map(p => p.name), ['Bench Press'], 'prescribed slot dropped, no duplicate');
+  const state = computePlanState(r.planned, ['Bench Press']);
+  assert.equal(state.isComplete, true);
+  assert.deepEqual(state.remaining, []);
+});
+
+test('applySubstitution: dedupe guard also matches an existing slot by liftCode', () => {
+  const planned = [{ name: 'Cable Row', liftCode: 'CSR01' }, { name: 'Lat Pulldown', liftCode: 'LPD01' }];
+  const r = applySubstitution(planned, 'Lat Pulldown', { name: 'Seated Row', liftCode: 'CSR01' });
+  assert.equal(r.applied, true);
+  assert.deepEqual(r.planned.map(p => p.name), ['Cable Row'], 'liftCode dup dropped the prescribed slot');
+});
