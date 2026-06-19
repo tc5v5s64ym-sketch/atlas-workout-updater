@@ -1192,6 +1192,8 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode) {
 function startPlannedSession(intent) {
   const exercises = (intent.exercises || []).map(normalizePlanExercise).filter(ex => ex.name);
   if (!exercises.length) return;
+  // Lifecycle symmetry (Step 373b): a new session never inherits a stale swap.
+  pendingSubstitution = null;
   activePlannedSession = {
     label: intent.label || 'Recommended session',
     // The plan intent id (e.g. 'deload_reset') rides along so the in-workout

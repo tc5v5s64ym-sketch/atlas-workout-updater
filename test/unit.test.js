@@ -536,6 +536,13 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
     appSource.indexOf('function endPlannedSession()') + 160
   );
   assert.match(endFn, /pendingSubstitution = null/, 'ending the session must clear any pending swap');
+
+  // Lifecycle symmetry: starting a session must not inherit a stale swap.
+  const startFn = appSource.slice(
+    appSource.indexOf('function startPlannedSession('),
+    appSource.indexOf('function startPlannedSession(') + 320
+  );
+  assert.match(startFn, /pendingSubstitution = null/, 'starting a session must clear any stale pending swap');
 });
 
 test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
@@ -2120,7 +2127,7 @@ test('reaction layer: fetchReaction exists and fails quietly', () => {
 test('deload narration: a planned session records its intent id for the in-workout reaction', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const start = appSource.indexOf('function startPlannedSession(');
-  const fn = appSource.slice(start, start + 500);
+  const fn = appSource.slice(start, start + 700);
   // The intent id (e.g. 'deload_reset') is stored on the active session so
   // fetchReaction can forward it — without it, a deload set mis-reads as too light.
   assert.match(fn, /intentId: intent\.id \|\| null/, 'must store the plan intent id on the active session');
