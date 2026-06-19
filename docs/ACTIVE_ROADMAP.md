@@ -181,7 +181,7 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 377 — Deterministic fallback for session-close questions
 
-**Status:** ✅ complete (GitHub PR #TBD)  
+**Status:** ✅ complete (GitHub PR #400)  
 **Type:** Correctness
 
 **Exact failure prevented:** "Ok so we are done?" returned coach-unavailable instead of resolving session status.
