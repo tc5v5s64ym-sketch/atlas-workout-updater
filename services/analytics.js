@@ -1302,7 +1302,13 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         target_weight: r.next_target.weight,
         target_reps: r.next_target.reps,
         target_sets: r.next_target.sets,
-        reason: r.recommendation
+        reason: r.recommendation,
+        confidence_factors: {
+          sessions:        r.sessions_analyzed,
+          data_age_days:   r.days_since_last_session,
+          trend:           r.e1rm_trend,
+          lift_confidence: r.confidence,
+        },
       }));
   }
 
@@ -1640,7 +1646,13 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       target_weight: r.next_target.weight,
       target_reps: r.next_target.reps,
       target_sets: 1,
-      reason: `PR attempt — ${r.recommendation}`
+      reason: `PR attempt — ${r.recommendation}`,
+      confidence_factors: {
+        sessions:        r.sessions_analyzed,
+        data_age_days:   r.days_since_last_session,
+        trend:           r.e1rm_trend,
+        lift_confidence: r.confidence,
+      },
     }));
     intents.push({
       id: 'test_progress',

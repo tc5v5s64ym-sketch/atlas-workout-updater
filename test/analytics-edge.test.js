@@ -431,3 +431,57 @@ test('scoreIntents PR 369: non-fatigued exercises carry no readiness_note', () =
       `non-fatigued exercise '${ex.exercise}' must not carry volume_reduced_fatigued note`);
   }
 });
+
+// ── PR 370: confidence_factors ────────────────────────────────────────────────
+
+test('scoreIntents PR 370: each exercise carries a confidence_factors object with required fields', () => {
+  const rows = [
+    ...makeRows('Bench Press', 'chest', 'BPR01', [165, 170, 175, 180, 185], '2026-03-01'),
+    ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-01'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-04-19' });
+
+  for (const intent of result.intents) {
+    for (const ex of intent.exercises) {
+      const cf = ex.confidence_factors;
+      assert.ok(cf && typeof cf === 'object',
+        `intent '${intent.id}' exercise '${ex.exercise}' must have confidence_factors object`);
+      assert.ok(Number.isFinite(cf.sessions) && cf.sessions >= 0,
+        `confidence_factors.sessions must be a non-negative number, got ${cf.sessions}`);
+      assert.ok(cf.data_age_days === null || Number.isFinite(cf.data_age_days),
+        `confidence_factors.data_age_days must be numeric or null, got ${cf.data_age_days}`);
+      assert.ok(typeof cf.trend === 'string',
+        `confidence_factors.trend must be a string, got ${cf.trend}`);
+      assert.ok(typeof cf.lift_confidence === 'string',
+        `confidence_factors.lift_confidence must be a string, got ${cf.lift_confidence}`);
+    }
+  }
+});
+
+test('scoreIntents PR 370: confidence_factors reflect data quality — sessions count and trend populated', () => {
+  // 6 sessions of bench with a steadily increasing weight → rising e1RM trend.
+  // Asserts that confidence_factors expose the actual engine values without
+  // locking in specific confidence ratings (those depend on recency vs. real clock).
+  const rows = makeRows('Bench Press', 'chest', 'BPR01', [155, 160, 165, 170, 175, 180], '2026-03-05');
+  const result = scoreIntents(rows, [], { today: '2026-04-19' });
+
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength must exist');
+
+  const benchEx = bs.exercises.find(ex => ex.lift_code === 'BPR01');
+  assert.ok(benchEx, 'Bench Press must be in build_strength exercises');
+
+  const cf = benchEx.confidence_factors;
+  // sessions must reflect the full 6-session history.
+  assert.equal(cf.sessions, 6,
+    `expected sessions=6 for this fixture, got ${cf.sessions}`);
+  // trend must be 'up' — weights increased every session so e1RM trend is up.
+  assert.equal(cf.trend, 'up',
+    `expected trend='up' for steadily increasing weights, got '${cf.trend}'`);
+  // lift_confidence must be one of the four valid engine values.
+  assert.ok(['high', 'medium', 'low', 'none'].includes(cf.lift_confidence),
+    `lift_confidence '${cf.lift_confidence}' must be a valid confidence value`);
+  // data_age_days must be a non-negative number (computed vs. real clock, so just shape-check).
+  assert.ok(Number.isFinite(cf.data_age_days) && cf.data_age_days >= 0,
+    `data_age_days must be a non-negative number, got ${cf.data_age_days}`);
+});

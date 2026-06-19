@@ -108,6 +108,12 @@ function buildIntentSession({
       reason: rec.recommendation,
       is_anchor: true,
       warmup_sets: buildWarmupRamp(rec.next_target.weight),
+      confidence_factors: {
+        sessions:        rec.sessions_analyzed,
+        data_age_days:   rec.days_since_last_session,
+        trend:           rec.e1rm_trend,
+        lift_confidence: rec.confidence,
+      },
     });
     seen.add(rec.exercise_name.toLowerCase());
     seenCodes.add(rec.liftCode);
@@ -147,6 +153,12 @@ function buildIntentSession({
       target_sets: rec.next_target.sets,
       reason: rec.recommendation,
       is_anchor: false,
+      confidence_factors: {
+        sessions:        rec.sessions_analyzed,
+        data_age_days:   rec.days_since_last_session,
+        trend:           rec.e1rm_trend,
+        lift_confidence: rec.confidence,
+      },
     });
     seen.add(nameLower);
     seenCodes.add(rec.liftCode);
@@ -171,6 +183,12 @@ function buildIntentSession({
           target_sets: balanceRec.next_target.sets,
           reason: `Balance — ${muscle} is under-served this week`,
           is_anchor: false,
+          confidence_factors: {
+            sessions:        balanceRec.sessions_analyzed,
+            data_age_days:   balanceRec.days_since_last_session,
+            trend:           balanceRec.e1rm_trend,
+            lift_confidence: balanceRec.confidence,
+          },
         });
         seen.add(balanceRec.exercise_name.toLowerCase());
         seenCodes.add(balanceRec.liftCode);
