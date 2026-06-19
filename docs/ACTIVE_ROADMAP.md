@@ -144,7 +144,7 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 374 — Planned exercise names are always loggable
 
-**Status:** ✅ complete (GitHub PR #391)  
+**Status:** ✅ complete (GitHub PR #392)  
 **Type:** Correctness
 
 **Exact failure prevented:** Atlas suggested "Single-Leg Leg Curl" but later rejected that exact wording with "Didn't catch that lift." Any name Atlas prescribes in a plan must be recognizable when logged later (alias registration / canonicalization round-trip).
