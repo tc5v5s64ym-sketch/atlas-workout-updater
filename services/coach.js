@@ -16,6 +16,7 @@ const coachBrain = require('./coachBrain');
 // (rather than re-declaring) keeps the verdict-reaction whitelist in lockstep
 // with the engine, so a new decision type can never silently drift out of sync.
 const { DECISION_TYPES, SEVERITY_TYPES } = require('../rules/ruleTypes');
+const { appendRows } = require('../sheets');
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
@@ -763,6 +764,8 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
   const raw = await callGeminiContents(buildChatSystemPrompt(snapshot), contents, { timeoutMs, maxOutputTokens: 450 });
+  // Persist every coaching conversation to a Sheet so we can analyze chat usage.
+  await appendRows('Coach_Analytics', [[new Date().toISOString(), userMessage, raw]]);
   return parseReplyWithProposals(raw);
 }
 
