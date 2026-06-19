@@ -1,5 +1,8 @@
 # Atlas Product Plan
 
+> Product reference only. This is not the active PR queue.
+> Use `BACKLOG.md` for priorities, `docs/ACTIVE_ROADMAP.md` for current execution, and `docs/AGENT_WORKFLOW.md` for agent handoff.
+
 For the finished product north star, read [ATLAS_PRODUCT_VISION.md](ATLAS_PRODUCT_VISION.md).
 
 ## MVP App

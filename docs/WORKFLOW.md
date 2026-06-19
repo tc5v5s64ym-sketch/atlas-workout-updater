@@ -1,5 +1,8 @@
 # Atlas Workflow
 
+> Historical workflow reference. The current agent process lives in `docs/AGENT_WORKFLOW.md`.
+> Use that file for Dale + ChatGPT + Claude Code + CODEX Review + GitHub responsibilities.
+
 ## Roles
 
 - ChatGPT = PM, architect, and release manager.

@@ -1,6 +1,9 @@
 # COACH_PLAN.md — Coach Intelligence Build Plan
 
-> **How to use this file:** commit it to the repo root as `COACH_PLAN.md`, then execute **PR 1.1 only** and stop for review. Do not proceed to any later PR without explicit approval. Work top to bottom; honor every hold point and the model switches.
+> Historical/reference-only. Do not execute this plan as the active roadmap.
+> Use `BACKLOG.md` for priorities, `docs/ACTIVE_ROADMAP.md` for current execution, and `docs/AGENT_WORKFLOW.md` for process.
+
+> **Historical use:** this file originally drove the PR 1.1 coach-intelligence sequence. Keep it for context only; do not execute from it unless `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md` explicitly reactivates a step.
 
 The arc, end to end: **build the knowledge → measure it → let it judge stalls → let it speak → let it choose and shape the workout.** Each layer is pure data before anything consumes it.
 
