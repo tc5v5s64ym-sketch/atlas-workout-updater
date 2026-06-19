@@ -1383,6 +1383,17 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence: score >= 75 ? 'high' : score >= 55 ? 'medium' : 'low',
       confidence_reasons: confReasons.length ? confReasons : ['Training data available'],
       why_today: why.length ? why : ['Good time for heavy compound work'],
+      reason_codes: [
+        fatigue.status === 'high'  && 'high_fatigue',
+        daysSinceLast === 0        && 'trained_today',
+        daysSinceLast >= 2         && 'well_rested',
+        isFatigued('lower')        && 'lower_fatigued',
+        isFatigued('push')         && 'push_fatigued',
+        upPush.length > 0          && 'trending_up',
+        isFresh('pull')            && 'pull_overdue',
+        goal === 'strength' && isFresh('lower') && 'goal_strength',
+        eligibleStalls.some(s => exercises.some(ex => ex.lift_code === s.liftCode)) && 'stall_detected',
+      ].filter(Boolean),
       data_points: data,
       what_it_protects: protects.length ? protects : ['Strength trajectory'],
       watch_for: ['Shoulder pain above 3/10', 'Warmups feeling unusually heavy'],
@@ -1411,6 +1422,12 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence: score >= 65 ? 'medium' : 'low',
       confidence_reasons: ['Volume-focused training available'],
       why_today: why.length ? why : ['Build volume across recovered muscle groups'],
+      reason_codes: [
+        fatigue.status === 'normal'   && 'normal_fatigue',
+        fatigue.status === 'high'     && 'high_fatigue',
+        readyPatterns.length >= 2     && 'multiple_groups_ready',
+        daysSinceLast === 0           && 'trained_today',
+      ].filter(Boolean),
       data_points: fatigue.ratio ? [{ label: 'Weekly load', value: `${fatigue.ratio}× baseline`, context: fatigue.status }] : [],
       what_it_protects: ['Muscle tissue development', 'Volume accumulation'],
       watch_for: ['Track RIR on high-rep sets', 'Avoid if feeling systemically fatigued'],
@@ -1455,6 +1472,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
           ? ['Neglected patterns found but no matching exercises available today']
           : ['No clear gaps detected'],
       why_today: why.length ? why : ['Check for any movements not done recently'],
+      reason_codes: scheduledFresh.map(p => `${p.pattern}_overdue`),
       data_points: data,
       what_it_protects: ['Movement pattern balance', 'Injury prevention via balanced training'],
       watch_for: ['Ease back into a rested pattern — do not max effort after a long gap'],
@@ -1482,6 +1500,12 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence: allModerate ? 'medium' : 'low',
       confidence_reasons: allModerate ? ['Balanced readiness across patterns'] : ['Some patterns may not be ready'],
       why_today: why.length ? why : ['A mix of movements when no single pattern stands out'],
+      reason_codes: [
+        allModerate                && 'balanced_readiness',
+        fatiguedPatterns.length > 0 && 'some_fatigued',
+        freshPatterns.length > 0   && 'pattern_overdue',
+        fatigue.status === 'normal' && 'normal_fatigue',
+      ].filter(Boolean),
       data_points: [],
       what_it_protects: ['Training consistency', 'Pattern balance'],
       watch_for: ['Adjust volume if any pattern feels heavier than expected'],
@@ -1515,6 +1539,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence: fatigue.status === 'high' ? 'high' : 'low',
       confidence_reasons: fatigue.status === 'high' ? ['High weekly volume detected'] : ['Best reserved for genuine fatigue'],
       why_today: why.length ? why : ['Use when you want to move but not add training stress'],
+      reason_codes: [
+        fatigue.status === 'high'    && 'high_fatigue',
+        fatiguedPatterns.length >= 2 && 'multiple_groups_fatigued',
+        daysSinceLast === 0          && 'trained_today',
+      ].filter(Boolean),
       data_points: fatigue.ratio ? [{ label: 'Weekly fatigue', value: `${fatigue.ratio}× baseline`, context: fatigue.status }] : [],
       what_it_protects: ['Recovery from accumulated load', 'Movement quality'],
       watch_for: ['If warmups feel great, upgrade to Build Muscle instead'],
@@ -1540,6 +1569,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence: 'medium',
       confidence_reasons: ['Always viable — adapts to any situation'],
       why_today: why.length ? why : ['Quick session when time or energy is limited'],
+      reason_codes: [
+        fatigue.status === 'high' && 'high_fatigue',
+        daysSinceLast >= 3        && 'few_days_off',
+      ].filter(Boolean),
       data_points: [],
       what_it_protects: ['Training habit', 'Consistency without overloading'],
       watch_for: ['If you start feeling good, extend to Build Strength or Build Muscle'],
@@ -1584,6 +1617,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence: trendingFresh.length > 0 && fatigue.status !== 'high' ? 'high' : 'low',
       confidence_reasons: trendingFresh.length > 0 ? ['Upward e1RM trend detected'] : ['No clear upward trend found'],
       why_today: why.length ? why : ['Best when a lift has trended up for 3+ sessions and fatigue is low'],
+      reason_codes: [
+        trendingFresh.length > 0           && 'trending_up',
+        daysSinceLast >= 3                 && 'well_rested',
+        fatigue.status === 'high'          && 'high_fatigue',
+      ].filter(Boolean),
       data_points: data,
       what_it_protects: [],
       watch_for: ['Warmup must feel smooth before going heavy', 'Abort PR attempt if set 1 is harder than expected', 'Do not test when overall fatigue is high'],
@@ -1663,6 +1701,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
           'On the stalled ones, reset the load and chase 10–20 crisp reps, or rotate the variation if they stay stuck.'
         ],
         data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: "reset, don't grind" })),
+        reason_codes: [
+          eligibleStalls.length >= 1 && 'stall_detected',
+          fatigue.status === 'high'  && 'high_fatigue',
+        ].filter(Boolean),
         what_it_protects: ['Keeps momentum without digging a recovery hole', 'Saves the heavy-lift reset for when the main lifts actually slip'],
         watch_for: ["If a main lift starts grinding next session, that's the real signal to pull back"],
         pivot_logic: [],
@@ -1736,6 +1778,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         why_today: why,
         proposal,
         data_points: top.map(s => ({ label: stallName(s.liftCode), value: `${s.sessions_stalled} sessions flat`, context: 'no progression' })),
+        reason_codes: [
+          eligibleStalls.length >= 1 && 'stall_detected',
+          fatigue.status === 'high'  && 'high_fatigue',
+        ].filter(Boolean),
         what_it_protects: ['Avoids grinding through a plateau', 'Lowers injury risk from repeated max-effort grinding'],
         watch_for: ['If a deloaded set still feels heavy, take a full rest day instead'],
         pivot_logic: [],
@@ -1749,6 +1795,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     id: 'custom', label: 'Custom', score: 50, focus: 'You decide',
     confidence: null, confidence_reasons: [],
     why_today: ['Define your own intent for today'],
+    reason_codes: [],
     data_points: [], what_it_protects: [], watch_for: [], pivot_logic: [], exercises: []
   });
 
@@ -1769,7 +1816,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const goalBonuses = (goal && GOAL_BONUS[goal]) ?? {};
   for (const intent of intents) {
     const bonus = goalBonuses[intent.id] ?? 0;
-    if (bonus !== 0) intent.score += bonus;
+    if (bonus !== 0) {
+      intent.score += bonus;
+      if (bonus > 0 && Array.isArray(intent.reason_codes)) intent.reason_codes.push('goal_alignment');
+    }
   }
 
   // ── Coverage-gap bonus ────────────────────────────────────────────────────

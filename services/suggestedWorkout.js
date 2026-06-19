@@ -95,7 +95,7 @@ function buildSuggestedWorkout(logRows, effortRows = [], options = {}) {
     intent_score:  topIntent.score,
     focus:         topIntent.focus || '',
     exercises,
-    reason_codes:  Array.isArray(topIntent.why_today) ? topIntent.why_today : [],
+    reason_codes:  Array.isArray(topIntent.reason_codes) ? topIntent.reason_codes : [],
     evidence: {
       data_points:  Array.isArray(topIntent.data_points)  ? topIntent.data_points  : [],
       filtered_out: filteredOut,
