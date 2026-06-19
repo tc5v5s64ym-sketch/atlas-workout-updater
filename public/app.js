@@ -2637,23 +2637,11 @@ function buildRowsFromSessionLog() {
 // Priority:
 //   1. lift_code match against planned session → planned canonical/display name
 //   2. canonical_exercise exact match → planned canonical/display name
-//   3. fall back to raw logged exercise name
+//   3. raw logged name exact match → planned canonical/display name
+//   4. fall back to raw logged exercise name
 function resolveCompletedIdentity(rawName, enrichmentRow, plannedSession) {
-  if (plannedSession) {
-    const planName = m => m.canonicalName || m.name;
-    const loggedCode = enrichmentRow && enrichmentRow.lift_code;
-    if (loggedCode) {
-      const match = plannedSession.exercises.find(e => e.liftCode && e.liftCode.toLowerCase() === loggedCode.toLowerCase());
-      if (match) return planName(match);
-    }
-    const canonical = (enrichmentRow && enrichmentRow.canonical_exercise) || '';
-    if (canonical) {
-      const key = canonical.toLowerCase();
-      const match = plannedSession.exercises.find(e =>
-        (e.canonicalName || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
-      if (match) return planName(match);
-    }
-  }
+  const helper = globalThis.sessionPlanIdentity && globalThis.sessionPlanIdentity.resolveCompletedIdentity;
+  if (typeof helper === 'function') return helper(rawName, enrichmentRow, plannedSession);
   return rawName;
 }
 
