@@ -12,6 +12,8 @@ Use `docs/DOCS_INDEX.md` to understand which older docs are active reference, hi
 
 These are separate things. A Roadmap Step is a logical build unit defined here. A GitHub PR is a pull request opened on GitHub, which gets its own number from GitHub's sequence. They will often differ.
 
+GitHub issue numbers are a third namespace. A Roadmap Step may reference a GitHub issue, but they are not the same number; for example, Roadmap Step 380 may reference GitHub issue #359, which is not Roadmap Step 359.
+
 Use terminology like:
 
 - **Roadmap Step 381** — the logical unit of work defined in this file
