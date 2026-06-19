@@ -84,6 +84,7 @@ All steps below are merged. Recorded here for traceability; do not re-execute.
 | 375 | Coach "what's left" reads authoritative state | ✅ complete (GitHub PR #394) |
 | 376 | Suppress cross-lift history contamination | ✅ complete (GitHub PR #399) |
 | 377 | Deterministic fallback for session-close questions | ✅ complete (GitHub PR #400) |
+| 378 | Coach sanitizer null guard — re-verification (guards + tests already present) | ✅ complete (pre-existing) |
 
 Deferred items from each completed step are recorded in `BACKLOG.md`.
 
@@ -100,36 +101,14 @@ The original roadmap named Steps 358–360 and 364 differently from the numbers 
 
 ---
 
-## Active queue — Coach hardening + deload correctness (Steps 378–382)
+## Active queue — Session-cursor fix + deload correctness (Steps 379–382)
 
 This series addresses two clusters of open work following the session-state trust repair:
 
-1. **Steps 378–379:** Two focused correctness fixes — a runtime null-throw risk in the live coach surface and a session-cursor staleness bug left by the 372–377 reorder wiring.
+1. **Step 379:** Session-cursor staleness bug left by the 372–377 reorder wiring. Step 378 closed pre-existing (guards and tests were already present).
 2. **Steps 380–382:** The deload system is the most prominent coaching surface (Coach's Pick). It has confirmed live failures: wrong lifts triggering deloads and two competing prescription models disagreeing. Fix trigger correctness and consolidate prescriptions before wiring the lifecycle.
 
-Build order: engine/correctness fixes first (378–379), then deload consolidation (380–381), then lifecycle wiring (382). Hold points separate the two clusters for app-testing.
-
-### Roadmap Step 378 — Coach sanitizer null guard
-
-**Status:** pending
-
-**Type:** Correctness
-
-**What this addresses:** The BACKLOG item "Harden null-element tolerance in the coach sanitizers" was written before PR 3.4 propagated the `s && typeof s === 'object'` null-element guard to all three arrays. Verification against current `services/coach.js` confirms the guards are already present: `today_sets` via `toSet` (line 71), `last_working_sets` via inline guard (lines 83–87), `current_preview` via inline guard (line 592). No uncaught throw exists today.
-
-**Opportunity:** The BACKLOG item was never marked done and has no regression tests pinning the guards. The implementer should verify each guard holds, add a `[null]`-element test for each array, and mark the BACKLOG item resolved. If re-verification finds a genuinely unguarded array, add the guard too.
-
-**Scope:** `services/coach.js` (guards only, if any are missing) + `test/coach.test.js` (null-element tests). No change to coach wording, system prompt, LLM model, write path, schema, or recommendation logic.
-
-**Acceptance criteria:**
-- Re-verify all three arrays (`today_sets`, `last_working_sets`, `current_preview`) against current `services/coach.js` before writing any code.
-- A `[null]`-element test for each array proves the guard holds and cannot silently drift.
-- If a guard is confirmed missing, add it; otherwise tests only.
-- No coach wording, prompt rule, or recommendation behavior is altered.
-
-**Expected tests:** three null-element tests in `test/coach.test.js` (one per sanitizer, each covering a `[null]` input element).
-
-**Out-of-scope:** prompt changes, voice changes, write-path changes, schema changes, recommendation changes.
+Build order: session-cursor fix first (379), then deload consolidation (380–381), then lifecycle wiring (382). Hold points separate the clusters for app-testing.
 
 ### Roadmap Step 379 — Reorder session index bugfix
 
