@@ -2624,9 +2624,39 @@ function buildRowsFromSessionLog() {
   });
 }
 
-function emitSetLogged(logObjs, text, substitutions) {
+// Resolve the best stable identity for plan_completed tracking. When both the
+// server enrichment and the active planned session are present, prefer the
+// PLANNED exercise name (so the server's name-based computePlanState keeps
+// working even when the logged canonical name differs from the plan entry,
+// e.g. "Barbell Row" logged for planned "Rows"). Priority:
+//   1. lift_code match against planned session → use planned exercise name
+//   2. canonical_exercise name match → use planned exercise name
+//   3. fall back to raw logged exercise name
+function resolveCompletedIdentity(rawName, enrichmentRow, plannedSession) {
+  if (plannedSession) {
+    const loggedCode = enrichmentRow && enrichmentRow.lift_code;
+    if (loggedCode) {
+      const match = plannedSession.exercises.find(e => e.liftCode && e.liftCode.toLowerCase() === loggedCode.toLowerCase());
+      if (match) return match.name;
+    }
+    const canonical = (enrichmentRow && enrichmentRow.canonical_exercise) || '';
+    if (canonical) {
+      const key = canonical.toLowerCase();
+      const match = plannedSession.exercises.find(e => (e.name || '').toLowerCase() === key);
+      if (match) return match.name;
+    }
+  }
+  return rawName;
+}
+
+function emitSetLogged(logObjs, text, substitutions, enrichment) {
   const byExercise = [];
   const seen = new Map();
+  // Build a lookup from raw exercise name → enrichment row for identity resolution.
+  const enrichMap = new Map();
+  if (Array.isArray(enrichment)) {
+    for (const e of enrichment) { if (e && e.exercise) enrichMap.set(e.exercise, e); }
+  }
   for (const o of (logObjs || [])) {
     if (!o.exercise) continue;
     if (!seen.has(o.exercise)) { const g = { exercise: o.exercise, sets: [] }; seen.set(o.exercise, g); byExercise.push(g); }
@@ -2637,8 +2667,11 @@ function emitSetLogged(logObjs, text, substitutions) {
     });
     // Accumulate the raw set into the session buffer for the end-of-session save.
     sessionLog.push({ exercise: o.exercise, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
-    // Track unique exercise names for plan_completed wiring in routeMessageToCoach.
-    if (!sessionCompleted.includes(o.exercise)) sessionCompleted.push(o.exercise);
+    // Track the best available planned identity for plan_completed wiring so the
+    // server's name-based computePlanState can mark the exercise as done even
+    // when the logged canonical name differs from the plan entry name.
+    const completedName = resolveCompletedIdentity(o.exercise, enrichMap.get(o.exercise), activePlannedSession);
+    if (!sessionCompleted.includes(completedName)) sessionCompleted.push(completedName);
   }
   if (byExercise.length) {
     try {
@@ -3268,6 +3301,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // the event so coach-conversation.js only words it — never calls a write path.
     // Best-effort: any failure is silent and never blocks the mid-session set note.
     let midSessionSubstitutions = [];
+    let midSessionEnrichment = null;
     const hasPrescribed = Array.isArray(lastPrescribed) && lastPrescribed.length > 0;
     const hasPlan = activePlannedSession && activePlannedSession.exercises.length > 0;
     if (hasPrescribed || hasPlan) {
@@ -3303,9 +3337,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
           body: JSON.stringify(subPayload)
         }).catch(() => null);
         midSessionSubstitutions = subResult?.data?.substitutions || [];
+        // Enrichment gives us canonical_exercise + lift_code per row so that
+        // resolveCompletedIdentity can map the logged name back to the planned
+        // exercise name (e.g. "Barbell Row" → "Rows" via matching lift_code).
+        midSessionEnrichment = subResult?.data?.enrichment || null;
       } catch { /* best-effort — classification never blocks the set note */ }
     }
-    emitSetLogged(logRows, pendingChatText, midSessionSubstitutions);
+    emitSetLogged(logRows, pendingChatText, midSessionSubstitutions, midSessionEnrichment);
     return;
   }
   sessionCompiledAwaitingPreview = false;

@@ -1300,3 +1300,56 @@ test('sanitizeChatContext: plan_state with isComplete:false and one remaining ex
   assert.equal(clean.plan_state.isComplete, false);
   assert.deepEqual(clean.plan_state.remaining, ['Lat Pulldown']);
 });
+
+/* ===== computePlanState lift_code identity matching (PR 358b) ===== */
+{
+  const { computePlanState } = require('../services/sessionPlanExecutor');
+
+  test('computePlanState: string inputs still work (backward compat)', () => {
+    const r = computePlanState(['Rows', 'Lat Pulldown'], ['Rows']);
+    assert.deepEqual(r.planned, ['Rows', 'Lat Pulldown']);
+    assert.deepEqual(r.completed, ['Rows']);
+    assert.deepEqual(r.remaining, ['Lat Pulldown']);
+    assert.equal(r.isComplete, false);
+  });
+
+  test('computePlanState: lift_code match — planned "Rows" completed by logged "Barbell Row" sharing lift_code', () => {
+    const planned   = [{ name: 'Rows', liftCode: 'barbell_row' }];
+    const completed = [{ name: 'Barbell Row', liftCode: 'barbell_row' }];
+    const r = computePlanState(planned, completed);
+    assert.deepEqual(r.remaining, [], 'shared lift_code must mark the exercise done');
+    assert.equal(r.isComplete, true);
+  });
+
+  test('computePlanState: no false match when lift_codes differ and names differ', () => {
+    const planned   = [{ name: 'Rows', liftCode: 'barbell_row' }];
+    const completed = [{ name: 'Lat Pulldown', liftCode: 'lat_pulldown' }];
+    const r = computePlanState(planned, completed);
+    assert.deepEqual(r.remaining, ['Rows']);
+    assert.equal(r.isComplete, false);
+  });
+
+  test('computePlanState: output planned/completed are always string arrays even when input has objects', () => {
+    const r = computePlanState(
+      [{ name: 'Bench', liftCode: 'bench' }],
+      [{ name: 'Bench Press', liftCode: 'bench' }]
+    );
+    assert.ok(r.planned.every(n => typeof n === 'string'), 'planned must be strings');
+    assert.ok(r.completed.every(n => typeof n === 'string'), 'completed must be strings');
+    assert.equal(r.isComplete, true);
+  });
+
+  test('computePlanState: mixed session — one name match, one lift_code match', () => {
+    const planned = [
+      { name: 'Squat', liftCode: 'squat' },
+      { name: 'Rows',  liftCode: 'barbell_row' }
+    ];
+    const completed = [
+      { name: 'Squat', liftCode: 'squat' },
+      { name: 'Barbell Row', liftCode: 'barbell_row' }
+    ];
+    const r = computePlanState(planned, completed);
+    assert.deepEqual(r.remaining, []);
+    assert.equal(r.isComplete, true);
+  });
+}
