@@ -152,7 +152,7 @@ Unless the owner explicitly requests it, do not add:
 
 - Nutrition tracking
 - Voice interface
-- Multi-user support
+- Multi-user support (not this phase — see "The Dream" in `docs/ATLAS_PRODUCT_VISION.md` for where Atlas may eventually grow)
 - A secondary database (SQLite, Postgres, etc.)
 - An "Atlas Brain" autonomous agent mode
 - A Dashboard tab restoration

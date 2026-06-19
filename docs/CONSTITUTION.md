@@ -14,7 +14,7 @@ Atlas is Dale's personal training intelligence. It exists to reduce the friction
 - A **personal intelligence layer** over a single owner's training history, backed by one spreadsheet as the permanent record.
 - A **fast, opinionated tool** optimised for the moment between sets — one input, one confirmation, done.
 
-## What Atlas Is Not
+## What Atlas Is Not (this phase)
 
 - A nutrition tracker.
 - A voice interface.
@@ -23,7 +23,7 @@ Atlas is Dale's personal training intelligence. It exists to reduce the friction
 - An "Atlas Brain" autonomous agent.
 - A generic fitness API or white-label product.
 
-None of the above will be built unless the owner explicitly requests it.
+None of the above will be built in the current phase. "Multi-user platform" and "generic fitness API" are current-phase constraints, not permanent limits — see "The Dream" in `docs/ATLAS_PRODUCT_VISION.md` for where Atlas may eventually grow. Do not build any of these until the owner explicitly directs it.
 
 ## The Magic Moment
 
