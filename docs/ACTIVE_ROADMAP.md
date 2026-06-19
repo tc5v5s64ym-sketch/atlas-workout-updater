@@ -144,10 +144,12 @@ Build order is deterministic-engine-first, then live wiring, then coach narratio
 
 ### Roadmap Step 374 — Planned exercise names are always loggable
 
-**Status:** queued  
+**Status:** ✅ complete (GitHub PR #392)  
 **Type:** Correctness
 
 **Exact failure prevented:** Atlas suggested "Single-Leg Leg Curl" but later rejected that exact wording with "Didn't catch that lift." Any name Atlas prescribes in a plan must be recognizable when logged later (alias registration / canonicalization round-trip).
+
+**Scope:** Added six new canonical entries to `EXERCISE_ALIASES` in `services/workoutTextParser.js`: Single-Leg Leg Curl, Leg Extension, Pull-Up, Chin-Up, Hip Thrust. Each entry lists the canonical name the plan uses as the alias key so the parser returns that exact name — ensuring `computePlanState` name-matches correctly. "Single-Leg Leg Curl" is placed before "Leg Curl" so its longer alias wins in the sorted match. Nine golden regression tests in `test/parser-golden.test.js` lock the round-trip and guard against "Leg Curl" absorbing the single-leg variant again.
 
 ### Roadmap Step 375 — Coach "what's left" reads authoritative state
 

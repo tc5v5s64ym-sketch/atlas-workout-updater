@@ -18,10 +18,17 @@ const EXERCISE_ALIASES = [
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   ['Face Pull', ['face pulls', 'face pull']],
+  // findExerciseInText sorts aliases by key length descending, so "single-leg leg curl" (19 chars)
+  // wins over "leg curl" (8 chars) regardless of array order here.
+  ['Single-Leg Leg Curl', ['single-leg leg curl', 'single leg leg curl', 'sl leg curl']],
   ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
+  ['Leg Extension', ['leg extension', 'leg extensions', 'leg ext', 'knee extension']],
   ['Shrug', ['shrugs', 'shrug', 'db shrugs', 'dumbbell shrugs', 'barbell shrugs']],
   ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
   ['Leg Press', ['leg press', 'machine leg press']],
+  ['Pull-Up', ['pull-up', 'pull up', 'pullup', 'pullups', 'pull-ups']],
+  ['Chin-Up', ['chin-up', 'chin up', 'chinup', 'chinups', 'chin-ups']],
+  ['Hip Thrust', ['hip thrust', 'hip thrusts', 'barbell hip thrust']],
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
