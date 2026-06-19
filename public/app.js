@@ -2822,6 +2822,19 @@ async function checkAndSuggestSubstitute(text) {
       // prescribed (swapped-out) lift so the NEXT logged exercise replaces this
       // slot in the live session (applied in emitSetLogged).
       pendingSubstitution = { prescribed: currentEx.canonicalName || currentEx.name };
+      // Step 379: advance the authoritative session cursor past the taken/swapped
+      // exercise. Otherwise the cursor stays on the lift the lifter just moved off,
+      // and a subsequent conversational message would send that stale name as
+      // current_exercise to /api/suggest-substitute (and the banner would keep
+      // showing the taken exercise). The deferred swap is applied by NAME in
+      // emitSetLogged, so it is unaffected by this cursor move. We deliberately do
+      // NOT call advancePlannedSession(): that clears pendingSubstitution and
+      // restarts the logger input mid-conversation. Clamp so we never overrun the
+      // plan (no premature session-end on the last slot).
+      if (activePlannedSession.index < activePlannedSession.exercises.length - 1) {
+        activePlannedSession.index += 1;
+        renderActiveSessionBanner();
+      }
       document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
         detail: { prescribed: currentEx.name, ...rec }
       }));

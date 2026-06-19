@@ -118,7 +118,7 @@ Build order:
 
 ### Roadmap Step 379 - Reorder session index bugfix
 
-**Status:** pending
+**Status:** complete
 
 **Type:** Correctness (session execution)
 

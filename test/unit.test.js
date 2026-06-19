@@ -545,6 +545,41 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   assert.match(startFn, /pendingSubstitution = null/, 'starting a session must clear any stale pending swap');
 });
 
+test('Step 379: a declared swap advances the session cursor so subsequent checks use the next slot', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  const suggestFn = appSource.slice(
+    appSource.indexOf('async function checkAndSuggestSubstitute'),
+    appSource.indexOf('async function checkAndSuggestSubstitute') + 2200
+  );
+
+  // current_exercise is sourced from the cursor — so the cursor must move once a
+  // swap is declared, or the next conversational message re-sends the taken lift.
+  const currentExIdx = suggestFn.indexOf('activePlannedSession.exercises[activePlannedSession.index]');
+  const recordIdx = suggestFn.indexOf('pendingSubstitution = { prescribed:');
+  const advanceIdx = suggestFn.indexOf('activePlannedSession.index += 1');
+  assert.ok(currentExIdx !== -1, 'current_exercise must be read from the cursor slot');
+  assert.ok(recordIdx !== -1, 'must record the prescribed lift before advancing');
+  assert.ok(advanceIdx !== -1, 'must advance the authoritative session cursor after a declared swap');
+  // Order matters: the prescribed (taken) lift is recorded against the PRE-advance
+  // slot, then the cursor moves on. Reversing it would record the wrong slot.
+  assert.ok(recordIdx < advanceIdx, 'the swap must be recorded before the cursor advances');
+
+  // The advance must be clamped so the last slot does not overrun / end the session,
+  // and must re-render the banner so the displayed step matches the new cursor.
+  const advanceBlock = suggestFn.slice(recordIdx, advanceIdx + 120);
+  assert.match(advanceBlock, /activePlannedSession\.index < activePlannedSession\.exercises\.length - 1/,
+    'the cursor advance must be clamped to the plan length');
+  assert.match(advanceBlock, /renderActiveSessionBanner\(\)/, 'must re-render the banner after advancing');
+
+  // Must NOT reuse advancePlannedSession(): that clears pendingSubstitution (so the
+  // deferred swap would be lost) and restarts the logger input mid-conversation. The
+  // advance is an inline, clamped index bump — assert no actual call statement exists
+  // (the explanatory comment names the function, so match an invocation, not the name).
+  assert.doesNotMatch(suggestFn, /^\s*advancePlannedSession\(\);?\s*$/m,
+    'must not call advancePlannedSession() — it would clear the pending swap and restart the logger');
+});
+
 test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
   const convSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
 
