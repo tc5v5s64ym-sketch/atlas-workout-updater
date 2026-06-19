@@ -313,3 +313,75 @@ test('scoreIntents: fix_blind_spots reason_codes carry *_overdue codes for negle
   assert.ok(hasOverdue,
     `expected an *_overdue code in fix_blind_spots.reason_codes, got [${fbs.reason_codes.join(', ')}]`);
 });
+
+test('scoreIntents: recovery_pump reason_codes carry multiple_trending_down when 2+ lifts decline', () => {
+  // Weights decreasing across sessions → e1rm_trend should be 'down' for both lifts.
+  const rows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [200, 190, 180, 170, 160]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [120, 110, 100,  90,  80]),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-01' });
+  const rp = result.intents.find(i => i.id === 'recovery_pump');
+  assert.ok(rp, 'recovery_pump intent must exist');
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength intent must exist');
+  // The fixture has clearly declining weights — the engine must emit multiple_trending_down.
+  assert.ok(bs.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in build_strength, got [${bs.reason_codes.join(', ')}]`);
+  assert.ok(rp.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in recovery_pump when compounds decline, got [${rp.reason_codes.join(', ')}]`);
+});
+
+// ── PR 368: trend-aware scoring ───────────────────────────────────────────────
+
+test('scoreIntents PR 368: build_strength score is lower when 2+ push/pull compounds trend down', () => {
+  // Baseline: ascending bench + OHP → upward trend → build_strength scores high.
+  const ascRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [160, 170, 180, 190, 200]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [ 80,  90, 100, 110, 120]),
+  ];
+  // Declining: same lifts, weights falling → downward trend.
+  const descRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [200, 190, 180, 170, 160]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [120, 110, 100,  90,  80]),
+  ];
+  const ascResult  = scoreIntents(ascRows,  [], { today: '2026-05-01' });
+  const descResult = scoreIntents(descRows, [], { today: '2026-05-01' });
+
+  const ascBS  = ascResult.intents.find(i  => i.id === 'build_strength');
+  const descBS = descResult.intents.find(i => i.id === 'build_strength');
+
+  assert.ok(ascBS  && descBS, 'build_strength must exist in both results');
+
+  // Declining fixture must produce the multiple_trending_down code — assert unconditionally
+  // so any regression that stops emitting the code fails loudly.
+  assert.ok(descBS.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in declining build_strength, got [${descBS.reason_codes.join(', ')}]`);
+  assert.ok(descBS.score < ascBS.score,
+    `expected lower build_strength score on declining data (${descBS.score}) vs ascending (${ascBS.score})`);
+});
+
+test('scoreIntents PR 368: recovery_pump score is boosted when multiple compounds decline', () => {
+  // Flat baseline: constant weights → no trend adjustment.
+  const flatRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [185, 185, 185, 185, 185]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [110, 110, 110, 110, 110]),
+  ];
+  // Declining: same lifts, weights falling → downward trend.
+  const descRows = [
+    ...makeRows('Bench Press',    'chest',     'BPR01', [200, 190, 180, 170, 160]),
+    ...makeRows('Overhead Press', 'shoulders', 'OHP01', [120, 110, 100,  90,  80]),
+  ];
+  const flatResult = scoreIntents(flatRows, [], { today: '2026-05-01' });
+  const descResult = scoreIntents(descRows, [], { today: '2026-05-01' });
+
+  const flatRP = flatResult.intents.find(i => i.id === 'recovery_pump');
+  const descRP = descResult.intents.find(i => i.id === 'recovery_pump');
+  assert.ok(flatRP && descRP, 'recovery_pump must exist in both results');
+
+  // Declining fixture must produce multiple_trending_down — assert unconditionally.
+  assert.ok(descRP.reason_codes.includes('multiple_trending_down'),
+    `expected multiple_trending_down in declining recovery_pump, got [${descRP.reason_codes.join(', ')}]`);
+  assert.ok(descRP.score > flatRP.score,
+    `expected higher recovery_pump score on declining data (${descRP.score}) vs flat (${flatRP.score})`);
+});

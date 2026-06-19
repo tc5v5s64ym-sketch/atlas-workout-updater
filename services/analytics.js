@@ -1281,7 +1281,9 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const liftNameByCode = new Map(allRecs.map(r => [r.liftCode, r.exercise_name]));
   const stallName = code => liftNameByCode.get(code) || code;
 
-  const upwardLifts = allRecs.filter(r => r.e1rm_trend === 'up');
+  const upwardLifts   = allRecs.filter(r => r.e1rm_trend === 'up');
+  const downwardLifts = allRecs.filter(r => r.e1rm_trend === 'down');
+  const downCompounds = downwardLifts.filter(r => r.pattern === 'push' || r.pattern === 'pull');
   const fatiguedPatterns = readiness.filter(r => r.status === 'fatigued');
   const freshPatterns = readiness.filter(r => r.status === 'fresh');
   const readyPatterns = readiness.filter(r => ['ready', 'fresh'].includes(r.status));
@@ -1350,6 +1352,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       why.push(`${upPush[0].exercise_name} is trending up — good time to push strength`);
       data.push({ label: upPush[0].exercise_name, value: `→ ${upPush[0].next_target.weight} × ${upPush[0].next_target.reps}`, context: 'trending up' });
     }
+    // Downward trend on push/pull compounds is a signal to pull back on strength aggressiveness.
+    if (downCompounds.length >= 2) {
+      score -= 15;
+      why.push(`${downCompounds.length} key lifts are trending down — hold intensity, don't chase new maxes`);
+    }
     if (isFresh('pull')) { why.push('Pulling work is overdue — important for shoulder balance'); protects.push('Shoulder health via pulling rotation'); }
     if (rm.lower?.daysSince) data.push({ label: 'Lower body', value: `${rm.lower.daysSince}d since last session`, context: rm.lower.status });
 
@@ -1372,6 +1379,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (stalls.length) score -= Math.min(stalls.length * 8, 24);
     const confReasons = [];
     if (upPush.length) confReasons.push('Pressing trend is upward');
+    if (downCompounds.length >= 2) confReasons.push('Key lifts trending downward');
     if (isFatigued('lower')) confReasons.push('Clear lower-body fatigue signal');
     if (allRecs.filter(r => r.pattern === 'push').length) confReasons.push('Recent pressing data available');
 
@@ -1384,13 +1392,14 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence_reasons: confReasons.length ? confReasons : ['Training data available'],
       why_today: why.length ? why : ['Good time for heavy compound work'],
       reason_codes: [
-        fatigue.status === 'high'  && 'high_fatigue',
-        daysSinceLast === 0        && 'trained_today',
-        daysSinceLast >= 2         && 'well_rested',
-        isFatigued('lower')        && 'lower_fatigued',
-        isFatigued('push')         && 'push_fatigued',
-        upPush.length > 0          && 'trending_up',
-        isFresh('pull')            && 'pull_overdue',
+        fatigue.status === 'high'    && 'high_fatigue',
+        daysSinceLast === 0          && 'trained_today',
+        daysSinceLast >= 2           && 'well_rested',
+        isFatigued('lower')          && 'lower_fatigued',
+        isFatigued('push')           && 'push_fatigued',
+        upPush.length > 0            && 'trending_up',
+        downCompounds.length >= 2    && 'multiple_trending_down',
+        isFresh('pull')              && 'pull_overdue',
         goal === 'strength' && isFresh('lower') && 'goal_strength',
         eligibleStalls.some(s => exercises.some(ex => ex.lift_code === s.liftCode)) && 'stall_detected',
       ].filter(Boolean),
@@ -1523,6 +1532,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (fatiguedPatterns.length >= 2) { score += 20; why.push(`${fatiguedPatterns.length} muscle groups are still recovering`); }
     if (daysSinceLast === 0) { score += 15; why.push('Already trained today — this is a light second session'); }
     if (fatigue.status === 'low') score -= 20;
+    // Multiple declining trends on key push/pull compounds signal the body needs a down-regulated session.
+    if (downCompounds.length >= 2) { score += 15; why.push(`${downCompounds.length} key lifts are trending down — light work to let the body reset`); }
 
     const baseExercises = exForPatterns(['push', 'pull', 'core'], 4);
     const exercises = baseExercises.map(ex => ({
@@ -1543,6 +1554,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         fatigue.status === 'high'    && 'high_fatigue',
         fatiguedPatterns.length >= 2 && 'multiple_groups_fatigued',
         daysSinceLast === 0          && 'trained_today',
+        downCompounds.length >= 2    && 'multiple_trending_down',
       ].filter(Boolean),
       data_points: fatigue.ratio ? [{ label: 'Weekly fatigue', value: `${fatigue.ratio}× baseline`, context: fatigue.status }] : [],
       what_it_protects: ['Recovery from accumulated load', 'Movement quality'],
@@ -1559,6 +1571,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
 
     if (fatigue.status === 'high') { score += 15; why.push('Fatigue is elevated — a shorter session manages total stress'); }
     if (daysSinceLast >= 3) { score += 10; why.push('Been a few days — a short session gets training back on track'); }
+    if (downCompounds.length >= 2) score += 8;
 
     const exercises = exForPatterns(['push', 'pull'], 3).map(ex => ({ ...ex, target_sets: Math.min(ex.target_sets, 2) }));
     intents.push({
@@ -1570,8 +1583,9 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence_reasons: ['Always viable — adapts to any situation'],
       why_today: why.length ? why : ['Quick session when time or energy is limited'],
       reason_codes: [
-        fatigue.status === 'high' && 'high_fatigue',
-        daysSinceLast >= 3        && 'few_days_off',
+        fatigue.status === 'high'  && 'high_fatigue',
+        daysSinceLast >= 3         && 'few_days_off',
+        downCompounds.length >= 2  && 'multiple_trending_down',
       ].filter(Boolean),
       data_points: [],
       what_it_protects: ['Training habit', 'Consistency without overloading'],
@@ -1600,6 +1614,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (fatigue.status === 'high') score -= 25;
     if (daysSinceLast != null && daysSinceLast <= 1) score -= 20;
     if (fatiguedPatterns.length >= 2) score -= 15;
+    // Downward-trending push/pull compounds make a PR attempt risky — dampen aggressiveness.
+    if (downCompounds.length >= 2) score -= 15;
 
     const exercises = trendingFresh.slice(0, 3).map(r => ({
       exercise: r.exercise_name,
@@ -1618,9 +1634,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       confidence_reasons: trendingFresh.length > 0 ? ['Upward e1RM trend detected'] : ['No clear upward trend found'],
       why_today: why.length ? why : ['Best when a lift has trended up for 3+ sessions and fatigue is low'],
       reason_codes: [
-        trendingFresh.length > 0           && 'trending_up',
-        daysSinceLast >= 3                 && 'well_rested',
-        fatigue.status === 'high'          && 'high_fatigue',
+        trendingFresh.length > 0     && 'trending_up',
+        daysSinceLast >= 3           && 'well_rested',
+        fatigue.status === 'high'    && 'high_fatigue',
+        downCompounds.length >= 2    && 'multiple_trending_down',
       ].filter(Boolean),
       data_points: data,
       what_it_protects: [],
