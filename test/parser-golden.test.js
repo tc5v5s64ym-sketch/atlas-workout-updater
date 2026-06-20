@@ -684,3 +684,47 @@ test('step-374: Hip Thrust resolves to Hip Thrust', () => {
   assert.ok(!(result.warnings || []).includes('unknown_exercise'));
   assert.deepEqual(sets(result), [[135, 10, 2], [135, 10, 2], [135, 10, 2]]);
 });
+
+// ── AC8 phantom-set credibility floor (wired) ────────────────────────────────
+
+test('AC8: the 2026-06-16 phantom-set bug — a question is not logged', () => {
+  // "Didn't you suggest 225 5/2 x3" used to parse into a logged, celebrated set
+  // named "Didnt You Suggest". It must now be a question, nothing logged.
+  const result = parseWorkoutText("Didn't you suggest 225 5/2 x3");
+  assert.equal(result.intent, 'question');
+  assert.ok((result.warnings || []).includes('logged_nothing_question'));
+  assert.notEqual(result.intent, 'log_sets');
+});
+
+test('AC8: a bare stat question logs nothing', () => {
+  const result = parseWorkoutText('what should I bench today?');
+  assert.equal(result.intent, 'question');
+});
+
+test('AC8: a real resolved set still logs (never suppressed)', () => {
+  const result = parseWorkoutText('Bench 225 5/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(sets(result), [[225, 5, 2]]);
+});
+
+test('AC8: a resolved set that also asks a question still logs (both-case)', () => {
+  // Resolved lift + set tokens wins over the question signal.
+  const result = parseWorkoutText('Bench 235 8/2, should I go up?');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Bench Press');
+});
+
+test('AC8: a bare past-tense log is not mistaken for a question', () => {
+  // "did" must not trip the question guard — this is a continuation log.
+  const result = parseWorkoutText('Squat 315 5/2', { activeExercise: 'Back Squat' });
+  assert.equal(result.intent, 'log_sets');
+});
+
+test('AC8: a non-question unresolved lift keeps its existing flagged-log path', () => {
+  // Rule (b) is intentionally NOT changed here: an unrecognised lift that is not
+  // a question still logs as unknown_exercise for catalogue review (deferred).
+  const result = parseWorkoutText('zercher thrust 95 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.ok((result.warnings || []).includes('unknown_exercise'));
+});
