@@ -41,11 +41,14 @@ function rowDate(row) {
   return null;
 }
 
-function latestSessionMs(logRows) {
+// Most recent session date AT OR BEFORE today. Future-dated rows (data-entry
+// errors) are ignored so a stray future date can't mask a real layoff by
+// clamping the gap to 0.
+function latestSessionMs(logRows, todayMs) {
   let latest = null;
   for (const r of (Array.isArray(logRows) ? logRows : [])) {
     const ms = utcNoon(rowDate(r));
-    if (ms != null && (latest == null || ms > latest)) latest = ms;
+    if (ms != null && ms <= todayMs && (latest == null || ms > latest)) latest = ms;
   }
   return latest;
 }
@@ -71,7 +74,7 @@ function todayUtcNoon(today) {
 function assessLayoff(logRows, options = {}) {
   const todayMs = todayUtcNoon(options && options.today);
 
-  const latest = latestSessionMs(logRows);
+  const latest = latestSessionMs(logRows, todayMs);
   if (latest == null) {
     return {
       days_since_last_session: null,

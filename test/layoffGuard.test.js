@@ -77,8 +77,16 @@ describe('assessLayoff — input shapes', () => {
     assert.equal(assessLayoff(null, { today: '2026-06-20' }).volume_factor, 1.0);
   });
 
-  it('future/zero diff clamps to 0', () => {
+  it('a lone future-dated row is ignored → no valid session', () => {
     const r = assessLayoff([row('2026-06-25')], { today: '2026-06-20' });
-    assert.equal(r.days_since_last_session, 0);
+    assert.equal(r.days_since_last_session, null);
+    assert.equal(r.returning_from_layoff, false);
+  });
+
+  it('a stray future-dated row does NOT mask a real layoff', () => {
+    // 30-day gap from the real last session; a bad future row must not clamp to 0.
+    const r = assessLayoff([row('2026-05-21'), row('2026-06-25')], { today: '2026-06-20' });
+    assert.equal(r.days_since_last_session, 30);
+    assert.equal(r.severity, 'extended');
   });
 });
