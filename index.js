@@ -15,6 +15,7 @@ const {
   getLogCompositeKeys,
   getRecentRows,
   getSheetRows: getSheetRowsRaw,
+  getHeaderRow,
   getSpreadsheetTabs,
   logSheetName,
   effortSheetName
@@ -215,9 +216,54 @@ function invalidateSheetRowsCache() {
 
 const { routeDefinitions } = require('./config/routes');
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
-const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus } = require('./config/sheetContract');
+const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
 
+// --- Header-drift guard (trust-critical write protection) --------------------
+// Atlas appends rows to Google Sheets purely by column position. If the owner
+// hand-edits the sheet and reorders a column, every future write would silently
+// land in the wrong field and corrupt the permanent record. Before any live
+// append we read row 1 of each target tab and confirm it still matches the
+// column contract; on mismatch we refuse the write instead of misrouting data.
 
+async function checkSheetHeaderContract(tabName, expectedColumns, aliases) {
+  const header = await getHeaderRow(tabName);
+  // An empty header row (uninitialized tab) is not a drift signal — appendRows
+  // will seed it. Only a populated, mismatched header blocks the write.
+  if (!Array.isArray(header) || header.length === 0) {
+    return { ok: true, tab: tabName, mismatches: [] };
+  }
+  const { ok, mismatches } = validateHeaderRow(header, expectedColumns, aliases);
+  return { ok, tab: tabName, mismatches };
+}
+
+// Returns an array of failed contracts (empty = all good). Reads only the tabs
+// a given write will actually touch.
+async function assertWriteHeaderContracts({ checkLog, checkEffort }) {
+  const failures = [];
+  if (checkLog) {
+    const result = await checkSheetHeaderContract(logSheetName, logCleanedColumns, logRowFieldAliases);
+    if (!result.ok) failures.push(result);
+  }
+  if (checkEffort) {
+    const result = await checkSheetHeaderContract(effortSheetName, effortColumns, effortRowFieldAliases);
+    if (!result.ok) failures.push(result);
+  }
+  return failures;
+}
+
+function schemaDriftDetails(failures) {
+  return {
+    sheet_write: 'blocked_schema_drift',
+    sheet_written: false,
+    no_write_confirmed: true,
+    header_mismatches: failures.map(f => ({ tab: f.tab, mismatches: f.mismatches }))
+  };
+}
+
+function schemaDriftMessage(failures) {
+  const tabs = failures.map(f => f.tab).join(', ');
+  return `Sheet header does not match the expected column contract (${tabs}); write blocked to prevent misrouted data. Restore the original column order and retry.`;
+}
 
 function ensureNotes(value) {
   return value === undefined || value === null ? '' : value;
@@ -2342,6 +2388,25 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         return standardSuccess(req, res, dupMessage, { status: 'ok', message: dupMessage, data: duplicateData }, record.status === 'completed' ? 200 : 409);
       }
 
+      // Header-drift guard: confirm the target tabs still match the column
+      // contract before any append. A mismatch releases the write_id (nothing
+      // was written) and refuses the write.
+      try {
+        const headerFailures = await assertWriteHeaderContracts({
+          checkLog: rowsToWrite.length > 0,
+          checkEffort: true
+        });
+        if (headerFailures.length > 0) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+          return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
+        }
+      } catch (error) {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+        return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
+      }
+
       try {
         if (rowsToWrite.length > 0) {
           await appendRows(logSheetName, rowsToWrite);
@@ -2739,6 +2804,23 @@ app.post('/api/log-workout', async (req, res) => {
       if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
+  }
+
+  // Header-drift guard: confirm the target tabs still match the column contract
+  // before any append. A mismatch releases the write_id (nothing was written)
+  // and refuses the write rather than misroute values into the wrong columns.
+  try {
+    const headerFailures = await assertWriteHeaderContracts({
+      checkLog: formattedLogRows.length > 0,
+      checkEffort: Boolean(formattedEffortRow)
+    });
+    if (headerFailures.length > 0) {
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
+    }
+  } catch (error) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
   }
 
   // The two appends are split so a failure between them cannot release the
