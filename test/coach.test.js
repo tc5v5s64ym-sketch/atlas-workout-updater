@@ -303,6 +303,31 @@ test('sanitizeChatContext whitelists the snapshot and drops unknown keys + bound
   assert.ok(!JSON.stringify(clean).includes('IGNORE ALL RULES'), 'injected text never reaches the model');
 });
 
+test('sanitizeChatContext bounds extra_work and only keeps it when something is extra', () => {
+  const clean = sanitizeChatContext({
+    extra_work: {
+      has_extra: true,
+      extra_sets: [{ exercise: 'Bench Press', prescribed_sets: 3, logged_sets: 6, extra: 3, injected: 'HACK' }],
+      extra_exercises: [{ exercise: 'Bicep Curl' }, { name: 'no-exercise-key' }],
+    },
+  });
+  assert.equal(clean.extra_work.has_extra, true);
+  assert.deepEqual(clean.extra_work.extra_sets[0], { exercise: 'Bench Press', prescribed_sets: 3, logged_sets: 6, extra: 3 });
+  assert.ok(!JSON.stringify(clean.extra_work).includes('HACK'), 'unknown keys never reach the model');
+  assert.equal(clean.extra_work.extra_exercises.length, 1, 'entries without an exercise name are dropped');
+
+  // Nothing extra → null, so the coach has no fact to volunteer.
+  assert.equal(sanitizeChatContext({ extra_work: { has_extra: false, extra_sets: [], extra_exercises: [] } }).extra_work, null);
+  assert.equal(sanitizeChatContext({}).extra_work, null);
+});
+
+test('chat prompt keeps extra_work on-ask and recovery-gated (no proactive nagging)', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /extra_work/i, 'must reference the extra_work signal');
+  assert.match(prompt, /on-ask|when the lifter asks/i, 'extra work is answered on-ask, not volunteered');
+  assert.match(prompt, /recovery|today's recommendation/i, 'only raised unprompted when it affects recovery / the recommendation');
+});
+
 test('sanitizeChatContext is defensive about missing / malformed input', () => {
   const empty = sanitizeChatContext(null);
   assert.deepEqual(empty.readiness, []);

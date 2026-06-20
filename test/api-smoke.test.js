@@ -523,6 +523,36 @@ test('api smoke: coach/chat returns Gemini prose when configured', async () => {
   }
 });
 
+test('api smoke: coach/chat computes extra_work from the live plan vs preview', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'did I do extra today?',
+        context: {
+          current_plan: [{ name: 'Bench Press', sets: 3 }],
+          // 5 logged Bench sets (2 over the prescribed 3) + an unplanned Bicep Curl.
+          current_preview: [
+            { exercise: 'Bench Press' }, { exercise: 'Bench Press' }, { exercise: 'Bench Press' },
+            { exercise: 'Bench Press' }, { exercise: 'Bench Press' }, { exercise: 'Bicep Curl' },
+          ],
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const xw = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.extra_work;
+    assert.ok(xw && xw.has_extra === true, 'extra_work must be computed and present');
+    const bench = xw.extra_sets.find(s => s.exercise === 'Bench Press');
+    assert.ok(bench && bench.extra === 2, 'engine must report 2 extra bench sets (5 logged vs 3 prescribed)');
+    assert.ok(xw.extra_exercises.some(e => e.exercise === 'Bicep Curl'), 'unplanned Bicep Curl must surface as extra');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 test('api smoke: coach/chat degrades to null when the coach throws — never an error bubble', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.throwError = 'gemini exploded';

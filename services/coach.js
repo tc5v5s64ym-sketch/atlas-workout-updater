@@ -458,6 +458,7 @@ function buildChatSystemPrompt(context) {
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
+    "- `extra_work` (if present) is the engine's read of work done BEYOND today's plan: `extra_sets` (a planned lift logged for more sets than prescribed) and `extra_exercises` (logged but never planned). Keep this ON-ASK and brief — answer it plainly when the lifter asks (e.g. 'did I overdo it?'), state the fact and, if it matters, the why and next action. Do NOT volunteer it for ordinary extra work, and never praise it as compliance. ONLY raise it unprompted when it actually works against recovery or today's recommendation (e.g. extra volume on a pattern the snapshot flags fatigued/under-recovered) — then name it honestly without alarmism. Use only the numbers in `extra_work`; invent nothing.",
     "- `plan_state` (if present) is the authoritative session plan. `plan_state.remaining` lists exercises still to complete. Never drop, replace, or suggest removing a remaining exercise unless the lifter explicitly asks. When the lifter reorders (e.g. 'doing X next because machine is busy'), confirm the change and name what is still in the session — the rest of the plan stays intact. Only call the session complete when `plan_state.isComplete` is true.",
     "- WHAT'S-LEFT RULE: when the lifter asks what remains, what's next, or whether they're done — 'what's left?', 'what else?', 'what's next?', 'are we done?' — and `plan_state` is present, answer ONLY from `plan_state.remaining` (and `plan_state.isComplete` for done/not-done). Never derive remaining work from `current_plan`, the recommendation, or earlier conversation turns — those list the whole session, not what is still outstanding, and would falsely report completed lifts as remaining. If `plan_state` is absent, say you don't have an authoritative session state rather than guessing from `current_plan`.",
     '',
@@ -678,6 +679,26 @@ function sanitizeChatContext(context) {
         isComplete: rawPs.isComplete === true
       }
     : null;
+  // Unprogrammed extra-work signal (engine: services/extraWorkDetector.js). Bounded
+  // to the engine's shape; counts coerced to numbers, names to strings. Null when
+  // there is nothing extra so the coach has no fact to volunteer.
+  const rawXw = c.extra_work && typeof c.extra_work === 'object' ? c.extra_work : null;
+  const extra_work = rawXw && rawXw.has_extra === true
+    ? {
+        extra_sets: Array.isArray(rawXw.extra_sets)
+          ? rawXw.extra_sets.slice(0, 8).map(s => ({
+              exercise: strOrNull(s && s.exercise),
+              prescribed_sets: numOrNull(s && s.prescribed_sets),
+              logged_sets: numOrNull(s && s.logged_sets),
+              extra: numOrNull(s && s.extra)
+            })).filter(s => s.exercise)
+          : [],
+        extra_exercises: Array.isArray(rawXw.extra_exercises)
+          ? rawXw.extra_exercises.slice(0, 8).map(e => ({ exercise: strOrNull(e && e.exercise) })).filter(e => e.exercise)
+          : [],
+        has_extra: true
+      }
+    : null;
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -689,6 +710,7 @@ function sanitizeChatContext(context) {
     plan_state,
     current_preview,
     current_plan,
+    extra_work,
     session_count,
     coaching_notes,
     constraints
