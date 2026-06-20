@@ -23,6 +23,7 @@ const {
   validateHeaderRow
 } = require('../config/sheetContract');
 const { logRowFieldAliases, effortRowFieldAliases } = require('../config/columns');
+const { isTransientAppendError, retryWithBackoff } = require('../sheets');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
 const { generateSessionId, nextAvailableSessionId, formatDateForSessionId, formatAmPmSuffix } = require('../services/sessionId');
@@ -52,6 +53,84 @@ test('sheet contract reports each missing required tab', () => {
     assert.deepEqual(getMissingRequiredTabs(tabs), [tab]);
   }
   assert.ok(!getMissingRequiredTabs(requiredSheetTabs).includes('Dashboard'));
+});
+
+test('isTransientAppendError retries only request-rejected-before-write errors', () => {
+  // Safe to retry — Google rejected the request before touching the sheet.
+  assert.equal(isTransientAppendError({ code: 429 }), true);
+  assert.equal(isTransientAppendError({ code: 503 }), true);
+  assert.equal(isTransientAppendError({ response: { status: 503 } }), true);
+  // Real gaxios-7 GaxiosError shape: numeric HTTP status on .status/.response.status,
+  // .code is the (here absent) transport cause. The fast-path must fire on .status.
+  assert.equal(isTransientAppendError({ status: 503, response: { status: 503 }, code: undefined }), true);
+  assert.equal(isTransientAppendError({ status: 429, response: { status: 429 } }), true);
+  assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'rateLimitExceeded' }] }), true);
+  assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'userRateLimitExceeded' }] }), true);
+
+  // Must NOT retry — ambiguous (rows may already be written) or non-transient.
+  assert.equal(isTransientAppendError({ code: 500 }), false); // could have written, then failed
+  // A 500 whose reason/message is backendError/unavailable must STILL be non-retryable:
+  // the status gate wins so the reason text cannot re-classify an ambiguous 500.
+  assert.equal(isTransientAppendError({ code: 500, errors: [{ reason: 'backendError' }] }), false);
+  assert.equal(isTransientAppendError({ code: 500, response: { data: { error: { message: 'backend unavailable' } } } }), false);
+  assert.equal(isTransientAppendError({ code: 'ETIMEDOUT' }), false); // post-send timeout: ambiguous
+  assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'forbidden' }] }), false); // auth, not quota
+  assert.equal(isTransientAppendError({ code: 400 }), false);
+  assert.equal(isTransientAppendError(null), false);
+});
+
+test('retryWithBackoff succeeds on the first attempt without sleeping', async () => {
+  let calls = 0;
+  let slept = 0;
+  const result = await retryWithBackoff(
+    async () => { calls += 1; return 'ok'; },
+    { isRetryable: () => true, sleep: async () => { slept += 1; } }
+  );
+  assert.equal(result, 'ok');
+  assert.equal(calls, 1);
+  assert.equal(slept, 0);
+});
+
+test('retryWithBackoff retries transient failures then succeeds, with exponential delays', async () => {
+  let calls = 0;
+  const delays = [];
+  const result = await retryWithBackoff(
+    async () => {
+      calls += 1;
+      if (calls < 3) throw { code: 503 };
+      return 'written';
+    },
+    { isRetryable: isTransientAppendError, sleep: async ms => { delays.push(ms); } }
+  );
+  assert.equal(result, 'written');
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [500, 1000]); // 500 * 2^0, 500 * 2^1
+});
+
+test('retryWithBackoff throws immediately on a non-retryable error (no double-append risk)', async () => {
+  let calls = 0;
+  let slept = 0;
+  await assert.rejects(
+    retryWithBackoff(
+      async () => { calls += 1; throw { code: 500 }; },
+      { isRetryable: isTransientAppendError, sleep: async () => { slept += 1; } }
+    ),
+    err => err.code === 500
+  );
+  assert.equal(calls, 1); // not retried — a 500 might mean the rows already landed
+  assert.equal(slept, 0);
+});
+
+test('retryWithBackoff gives up after maxAttempts on a persistent transient error', async () => {
+  let calls = 0;
+  await assert.rejects(
+    retryWithBackoff(
+      async () => { calls += 1; throw { code: 429 }; },
+      { isRetryable: isTransientAppendError, sleep: async () => {} }
+    ),
+    err => err.code === 429
+  );
+  assert.equal(calls, 4); // 1 initial + 3 retries
 });
 
 test('normalizeHeaderToken collapses header variants to one token', () => {
