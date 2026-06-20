@@ -35,7 +35,8 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 
 ## Active roadmap / queue
 
-- `docs/ACTIVE_ROADMAP.md` — active PR 355-371 path after June 2026 app testing.
+- `docs/ACTIVE_ROADMAP.md` — active queue; current workstream is the Trust-Critical Coach Interaction Layer (P0–P4) after June 2026 live testing.
+- `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md` — active diagnosis doc for the Trust-Critical Coach Interaction Layer (P0 active-session context, P1 substitution-signal visibility). Read before implementing any P0/P1 fix.
 
 ## Product and architecture reference
 
