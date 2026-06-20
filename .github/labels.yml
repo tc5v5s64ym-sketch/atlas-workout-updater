@@ -25,7 +25,7 @@
   color: "e99695"   # light red (distinct from blocked's strong red)
   description: "Touches Sheet writes, test_mode/live-write, proof fields, append."
 - name: approval-path
-  color: "d93f0b"   # orange-red
+  color: "e36209"   # deep orange (distinct from owner-decision)
   description: "Touches the preview -> approve -> write trust loop (public/app.js)."
 - name: coach-behavior
   color: "1d76db"   # blue

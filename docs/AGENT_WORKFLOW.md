@@ -91,8 +91,10 @@ If CODEX Review returns `READY FOR OWNER MERGE`:
 7. Blocking in-scope findings go back to Claude Code.
 8. Future-scope findings go to `BACKLOG.md` or a GitHub issue.
 9. Repeat until checks are green and reviews are ready/non-blocking.
-10. Dale merges.
-11. At hold points, Dale app-tests before the next phase continues.
+10. The PR is merged once merge-ready. Under the automation-first workflow Claude Code holds full merge authority and merges (`docs/AUTOMATION_PROTOCOL.md`); Dale can merge directly or revoke that authority.
+11. App tests are owner-initiated (see "Hold points" below); they do not automatically pause the loop.
+
+> Steps 2–3 and 10–11 describe the legacy human-driven cadence; the **Autonomous Build Loop** and **Roadmap Refill Loop** below are the operative automation-first workflow.
 
 ## Autonomous Build Loop
 

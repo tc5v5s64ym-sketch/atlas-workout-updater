@@ -41,7 +41,7 @@ jobs:
               { name: 'blocked',         color: 'b60205', description: 'Required signal failed/errored/skipped or contract violation open.' },
               { name: 'trust-sensitive', color: '5319e7', description: 'Touches the trust contract or an INVARIANTS rule.' },
               { name: 'write-path',      color: 'e99695', description: 'Touches Sheet writes, test_mode/live-write, proof fields, append.' },
-              { name: 'approval-path',   color: 'd93f0b', description: 'Touches the preview -> approve -> write trust loop (public/app.js).' },
+              { name: 'approval-path',   color: 'e36209', description: 'Touches the preview -> approve -> write trust loop (public/app.js).' },
               { name: 'coach-behavior',  color: '1d76db', description: 'Touches what the coach says or how it decides to speak.' },
               { name: 'parser-behavior', color: '0052cc', description: 'Touches the slash-notation / set-extraction parser.' },
               { name: 'infrastructure',  color: 'c5def5', description: 'CI/workflows/templates/labels/scripts; no app behavior change.' },

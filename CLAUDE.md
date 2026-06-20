@@ -38,7 +38,7 @@ Atlas uses GitHub as the handoff bus.
 - CODEX Review checks roadmap fit, scope creep, Atlas trust contract, live-path test coverage, write-path/schema safety, and accidental future-PR work.
 - If CODEX Review returns `BLOCKING` and the finding is in scope for the current PR, Claude Code fixes only that finding, pushes updates, and stops again.
 - If CODEX Review finds future-scope work, Claude Code must not build it inside the current PR; add it to `BACKLOG.md` or an issue and stop.
-- Dale merges only after GitHub checks are green and CODEX Review is `READY FOR OWNER MERGE` or `NON-BLOCKING`.
+- Merges happen once a PR is merge-ready (GitHub checks green, reviews passed, CODEX Review `READY FOR OWNER MERGE` or `NON-BLOCKING`). Under the automation-first workflow Claude Code holds full merge authority and merges merge-ready PRs (`docs/AUTOMATION_PROTOCOL.md`); Dale can merge directly or revoke that authority at any time.
 
 See `docs/AGENT_WORKFLOW.md` for the full workflow.
 
