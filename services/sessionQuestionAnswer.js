@@ -92,14 +92,28 @@ function formatAnswer(liftName, attrs, target) {
   return `${name}: ${parts.join(', ')}.`;
 }
 
+// Fill any attribute the primary target is missing from the fallback target.
+// Primary (client context) wins wherever it has a value.
+function mergeTargets(primary, fallback) {
+  if (!primary) return fallback;
+  if (!fallback) return primary;
+  return {
+    exercise_name: primary.exercise_name || fallback.exercise_name,
+    weight: primary.weight ?? fallback.weight,
+    reps: primary.reps ?? fallback.reps,
+    sets: primary.sets ?? fallback.sets,
+    rir: primary.rir ?? fallback.rir
+  };
+}
+
 /**
  * @param {string} message
  * @param {object} opts
  * @param {Array}  opts.history        prior chat turns [{role,text}]
  * @param {object} opts.clientContext  the client-sent context (current_plan/current_preview)
  * @param {(liftName:string)=>({exercise_name?,weight?,reps?,sets?,rir?}|null)} opts.resolveTarget
- *        engine target lookup (e.g. recommendNextSet); only called when the
- *        client context has no target for the lift.
+ *        engine target lookup (e.g. recommendNextSet); consulted when the client
+ *        context has no target for the lift, or its target lacks the asked attribute.
  * @returns {string|null} a deterministic answer, or null to defer to the caller's fallback.
  */
 function buildSessionQuestionAnswer(message, { history = [], clientContext = null, resolveTarget = null } = {}) {
@@ -109,8 +123,17 @@ function buildSessionQuestionAnswer(message, { history = [], clientContext = nul
   const liftName = resolveLiftName(message, history, clientContext);
   if (!liftName) return null;
 
-  let target = targetFromContext(liftName, clientContext);
-  if (!target && typeof resolveTarget === 'function') target = resolveTarget(liftName);
+  const ctxTarget = targetFromContext(liftName, clientContext);
+  // Consult the engine whenever the client context can't cover EVERY asked
+  // attribute (e.g. the plan carries rir but the user asked "sets?"), then merge
+  // with context values winning — so a partial context target never shadows a
+  // fuller engine answer.
+  const contextMissingAsked = !ctxTarget || attrs.some(a => ctxTarget[a] == null);
+  let target = ctxTarget;
+  if (contextMissingAsked && typeof resolveTarget === 'function') {
+    const engineTarget = resolveTarget(liftName);
+    if (engineTarget) target = mergeTargets(ctxTarget, engineTarget);
+  }
   if (!target) return null;
 
   return formatAnswer(liftName, attrs, target);

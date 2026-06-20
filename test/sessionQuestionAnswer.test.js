@@ -41,6 +41,25 @@ test('resolves the lift from the client preview/plan and prefers its target (no 
   assert.equal(ans, 'Overhead Press: RIR 2.');
 });
 
+test('falls back to the engine when the context target lacks the asked attribute', () => {
+  // Plan carries the lift with rir/reps/weight but NO sets; user asks "sets?".
+  // Should consult the engine for the set count instead of dead-ending.
+  const ans = buildSessionQuestionAnswer('sets?', {
+    clientContext: { current_plan: [{ name: 'Bench Press', weight: 225, reps: 5, sets: null, rir: 2 }] },
+    resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 })
+  });
+  assert.equal(ans, 'Bench Press: 3 sets.');
+});
+
+test('context values win over the engine where both are present', () => {
+  // Asks weight (context has it) + sets (only engine has it) → context weight, engine sets.
+  const ans = buildSessionQuestionAnswer('weight and sets?', {
+    clientContext: { current_plan: [{ name: 'Bench Press', weight: 225, reps: 5, sets: null, rir: 2 }] },
+    resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 999, reps: 5, sets: 3, rir: 2 })
+  });
+  assert.equal(ans, 'Bench Press: 225 lbs, 3 sets.');
+});
+
 test('returns null when no session attribute is asked (defers to caller fallback)', () => {
   assert.equal(buildSessionQuestionAnswer('what should we do about my deadlift form', { resolveTarget: resolveBench }), null);
 });
