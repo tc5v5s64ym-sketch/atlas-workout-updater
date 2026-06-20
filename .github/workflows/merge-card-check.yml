@@ -1,0 +1,65 @@
+name: Merge card check
+
+# Enforces the merge card standard (docs/AUTOMATION_PROTOCOL.md §2:
+# "an empty field is a failure"). Fails the PR if the body is missing the
+# Atlas Merge Card section or still contains template placeholders.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check:
+    name: Merge card present and filled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate merge card
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = (context.payload.pull_request && context.payload.pull_request.body) || '';
+            const problems = [];
+
+            if (!/Atlas Merge Card/i.test(body)) {
+              problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
+            }
+
+            // Sentinels that only exist in the UNFILLED template — leaving any
+            // of them means a merge-card field was not completed. Covers the
+            // table fields AND the prose sections (concern, current-state
+            // verdict, model recommendation, tests). The Trust/scope safety
+            // checkboxes are NOT enforced here (several are "or owner-flagged",
+            // so an unchecked box can be legitimate) — they are reviewed, not
+            // gated.
+            const sentinels = [
+              // table
+              'number, filled after open',
+              'one line -->',
+              'e.g. docs-only',
+              'low / medium / high -->',
+              'pass / fail / not-run',
+              'READY FOR OWNER MERGE / NON-BLOCKING / BLOCKING',
+              'review passed / changes-requested',
+              'which check-in criterion 1',
+              'steps for the owner if owner-live-test',
+              'merge-ready / fix-then-merge / hold-for-owner -->',
+              // prose
+              'One sentence: the single concern',
+              'STILL BROKEN / ALREADY FIXED',
+              'Sonnet 4.6 or Opus 4.8',
+              'command + result',
+            ];
+            for (const s of sentinels) {
+              if (body.includes(s)) {
+                problems.push(`Merge card field left as template placeholder: "${s}"`);
+              }
+            }
+
+            if (problems.length) {
+              core.setFailed('Incomplete merge card:\n- ' + problems.join('\n- '));
+            } else {
+              core.info('Merge card present and filled.');
+            }

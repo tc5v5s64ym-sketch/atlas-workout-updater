@@ -6,10 +6,10 @@ This document defines the Atlas build workflow between Dale, ChatGPT, Claude Cod
 
 ### Dale
 
-- Owns product direction, phase approval, hands-on app testing, and final merge.
-- Starts each phase.
-- Merges only after checks and reviews are clean.
-- App-tests at planned hold points or when review flags product risk.
+- Owns product direction, phase approval, and hands-on app testing.
+- Starts each phase; initiates app tests (owner-initiated, not an automatic stop).
+- Can merge directly, and has granted Claude Code full merge authority for merge-ready PRs under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`); can revoke at any time.
+- App-tests when he chooses to call a hold, or when review flags product risk.
 
 ### ChatGPT
 
@@ -91,8 +91,46 @@ If CODEX Review returns `READY FOR OWNER MERGE`:
 7. Blocking in-scope findings go back to Claude Code.
 8. Future-scope findings go to `BACKLOG.md` or a GitHub issue.
 9. Repeat until checks are green and reviews are ready/non-blocking.
-10. Dale merges.
-11. At hold points, Dale app-tests before the next phase continues.
+10. The PR is merged once merge-ready. Under the automation-first workflow Claude Code holds full merge authority and merges (`docs/AUTOMATION_PROTOCOL.md`); Dale can merge directly or revoke that authority.
+11. App tests are owner-initiated (see "Hold points" below); they do not automatically pause the loop.
+
+> Steps 2–3 and 10–11 describe the legacy human-driven cadence; the **Autonomous Build Loop** and **Roadmap Refill Loop** below are the operative automation-first workflow.
+
+## Autonomous Build Loop
+
+Atlas is automation-first. The standard loop above describes the roles; this is the **loop the builder runs without owner involvement** until an owner check-in criterion is met. It is governed by `docs/AUTOMATION_PROTOCOL.md` (the automation contract), `docs/OWNER_CHECKIN_RULES.md` (when to stop for the owner), and `docs/RISK_LABELS.md` (risk classification).
+
+For each unit of work, the builder:
+
+1. **Read the roadmap** — `BACKLOG.md` (source of truth) and `docs/ACTIVE_ROADMAP.md` (current queue).
+2. **Select the next approved task** — the next roadmap/backlog item; run the Current-State Verification Gate and Model Recommendation Gate (below) before editing.
+3. **Build** — implement one concern only; file discovered future work in `BACKLOG.md` in the same PR.
+4. **Run tests** — `npm test` + lint; cover the live path or closest integration path, not only new helpers.
+5. **Run review** — open the PR; Claude Code Review (GitHub Actions) and CODEX Review run.
+6. **Fix failures** — fix failing tests and in-scope BLOCKING / P0–P1 review findings only; do not broaden scope.
+7. **Re-run tests** — confirm green after fixes.
+8. **Re-run review** — confirm Claude Code Review and CODEX Review pass after fixes.
+9. **Classify risk** — apply exactly one primary risk label + any category labels (`docs/RISK_LABELS.md`).
+10. **Generate the merge card** — fill the PR template completely (`.github/PULL_REQUEST_TEMPLATE.md`).
+11. **Keep going until the owner says stop, or an owner-decision criterion is met** (`docs/OWNER_CHECKIN_RULES.md` criteria 2–8: write-path / approval-gate / coach / trust-contract change, roadmap/vision change, model-recommendation change, or "automation cannot determine safety"). Live app testing (criterion 1) is **owner-initiated** — the builder flags `owner-live-test` and includes a live test script, but does **not** halt for it; the owner calls app-test holds explicitly. Otherwise the PR is marked merge-ready and proceeds; the next approved task is started without blocking on the owner.
+
+**Pass/fail principle (non-negotiable):** a review or check that was skipped, errored, was unavailable, timed out, or returned incomplete is a **failure, not a pass** (`docs/AUTOMATION_PROTOCOL.md` §2). The loop never treats a missing signal as green.
+
+A PR is **merge-ready** only when: tests pass · required reviews pass · no open P0/P1 finding · no unresolved contract violation · risk classification done · merge card generated. Any skipped or failed required review blocks readiness.
+
+## Roadmap Refill Loop (continuous autonomy)
+
+Atlas does not idle when the active roadmap is exhausted. When the active queue in `docs/ACTIVE_ROADMAP.md` is empty (every step complete), the builder — automatically, without waiting for the owner:
+
+1. **Reviews `BACKLOG.md`** — the single source of truth for open and deferred work.
+2. **Re-reads the Vision and the Dream** (`docs/ATLAS_PRODUCT_VISION.md`) and the Constitution (`docs/CONSTITUTION.md`, `docs/INVARIANTS.md`), so the refill serves the product direction and stays inside the trust contract (layering: `docs/GOVERNANCE.md`).
+3. **Repopulates `docs/ACTIVE_ROADMAP.md`** — sequences the next priority-ordered, already-filed backlog items that advance the Vision/Dream into a fresh active queue (tiny, one concern each; model recommendation per item).
+4. **Executes** the new queue through the Autonomous Build Loop above.
+5. **Repeats** — when the queue empties again, refill again. Keep going until the owner says stop.
+
+This refill draws **only** from work already in `BACKLOG.md` (which the owner curates) and orders it to serve the Vision/Dream — it is not a license to invent product direction.
+
+**Keep an eye on the Vision and the Dream.** Each refill checks that the selected steps trace upward to the Vision and do not drift from the Dream. If the backlog no longer holds Vision-serving work — or the next meaningful direction needs a Dream/Vision/Constitution decision, or means promoting an owner-gated backlog item (`Someday / future scope`, `NEEDS DESIGN`, `Strategic direction — deferred brainstorm`, or trust-sensitive new scope) — the builder **stops and asks the owner** (`docs/OWNER_CHECKIN_RULES.md` criteria 6/8) rather than inventing scope.
 
 ## Merge gate
 
@@ -106,13 +144,17 @@ A PR is not ready for Dale to merge unless:
 
 ## Hold points
 
-At hold points, Claude Code must stop even if all PRs are green.
+Under the automation-first workflow, hold points are **owner-initiated**, not automatic. Claude Code does not halt the build loop for an app test on its own — it flags `owner-live-test` and includes a live test script in the merge card, then keeps going. The owner calls an app-test hold when they want one and says stop; until then, work continues.
+
+When the owner does call a hold:
 
 Dale app-tests.
 
 ChatGPT interprets app-test results with Dale.
 
-Only Dale can approve continuing to the next phase.
+Only Dale resumes the held phase.
+
+(Owner-decision criteria 2–8 in `docs/OWNER_CHECKIN_RULES.md` still stop the loop automatically — only the live-app-test stop is owner-initiated.)
 
 ## Compact Atlas Prompt Mode
 
@@ -176,7 +218,7 @@ Before editing files, report:
 - one-line model reason
 - risk level
 
-Then STOP and wait for owner confirmation before editing. After owner confirms, create one PR and stop for review.
+Record this report on the merge card. Stop for owner confirmation before editing only when an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md` — e.g. trust/write-path/coach/roadmap-sensitive work, or a model-recommendation change); otherwise proceed, open one PR, and continue through the Autonomous Build Loop.
 
 ## Current-State Verification Gate
 

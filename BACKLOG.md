@@ -186,6 +186,22 @@ A category the backlog has not modelled. Atlas's source of truth is Google Sheet
 - ✅ **Parser substitution priority fix** — `Leg Press` added to `EXERCISE_ALIASES`; `extractSetParagraphs` strips explanatory prose paragraphs (no set tokens) before normalization so the performed exercise header/sets win over skipped/mentioned exercises in substitution sentences. 4 golden tests added.
 - **API key in `localStorage`** `[housekeeping]` (`public/app.js:9`): XSS exposure risk; safe for single-user Dale, becomes a real item at multi-user/productization. Logged here so it's not a surprise. See [FIX_PLAN.md "Additional verified items"](./FIX_PLAN.md). Suggested PR type: future security hardening (not urgent for single-user tool; revisit at productization).
 
+## Automation framework follow-ups
+
+The automation-first contract shipped as documentation + templates + label manifest + working GitHub Actions enforcement (`docs/AUTOMATION_PROTOCOL.md`, `docs/OWNER_CHECKIN_RULES.md`, `docs/RISK_LABELS.md`, `docs/AUTOMATION_AUDIT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/labels.yml`, and the workflows below). Source: `docs/AUTOMATION_AUDIT.md`.
+
+Shipped in the framework PR (#422):
+
+- ✅ **Label sync workflow** `[infrastructure]` — `.github/workflows/labels.yml` upserts the risk labels onto the repo from the manifest (github-script; no external action).
+- ✅ **Merge-card completeness check** `[infrastructure]` — `.github/workflows/merge-card-check.yml` fails a PR whose body is missing the Atlas Merge Card or still contains template placeholders (`AUTOMATION_PROTOCOL.md` §2).
+- ✅ **Auto-label by path** `[infrastructure]` — `.github/workflows/labeler.yml` + `.github/labeler.yml` apply category labels from touched paths (`actions/labeler@v5`). Primary risk label stays a builder decision.
+
+Remaining (owner-decision — change repo settings; not built in #422):
+
+- **Branch-protection / required-checks as code** `[infrastructure]` `owner-decision` — encode the merge gate as GitHub branch-protection required status checks (incl. merge-card-check) so "merge-ready" is machine-enforced, not convention. Owner decision. Supersedes/absorbs the existing "Branch protection on `main`" housekeeping item above.
+- **CODEX Review as a check** `[infrastructure]` `owner-decision` — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today convention-enforced). Owner decision.
+- **Reconcile INVARIANTS PR1/PR2 with the `infrastructure` PR category** `[trust-sensitive]` `owner-decision` — the automation framework (`docs/RISK_LABELS.md`) recognizes an `infrastructure` PR class (CI/workflows/templates/labels, no app behavior change) and treats it as `auto-safe`, but `docs/INVARIANTS.md` PR2 still reads "docs PRs touch only `docs/` and root markdown — no config changes" and PR1 is "one concern per PR." Amend PR1/PR2 to explicitly recognize the infrastructure category (distinct from docs and from app-code PRs) so the standing invariants and the new contract do not disagree. **Owner-gated** because it edits `docs/INVARIANTS.md` (Constitution layer — OWNER_CHECKIN_RULES criterion 5); not self-amended in #422. Surfaced by automated review of #422.
+
 ## Someday / future scope
 
 _Not active queue. Guiding principle: Atlas infers from data and behaviour; it does not interrogate the user._

@@ -1,0 +1,38 @@
+# Atlas risk classification labels — canonical manifest.
+# Documented in docs/RISK_LABELS.md. A label-sync workflow that applies these
+# to the repo is a listed follow-up (see docs/AUTOMATION_AUDIT.md). Until then
+# these names are applied by hand / by the builder when opening a PR.
+#
+# Primary risk labels — exactly ONE per PR.
+- name: auto-safe
+  color: "0e8a16"   # green
+  description: "Automation can take to merge-ready; no owner involvement needed."
+- name: owner-live-test
+  color: "fbca04"   # yellow
+  description: "Live app test advised (advisory, not a halt); owner initiates it."
+- name: owner-decision
+  color: "d93f0b"   # orange-red
+  description: "Product/trust/roadmap/model judgment only the owner can make."
+- name: blocked
+  color: "b60205"   # red
+  description: "Required signal failed/errored/skipped or contract violation open."
+
+# Category labels — zero or more per PR; describe what is touched.
+- name: trust-sensitive
+  color: "5319e7"   # purple
+  description: "Touches the trust contract or an INVARIANTS rule."
+- name: write-path
+  color: "e99695"   # light red (distinct from blocked's strong red)
+  description: "Touches Sheet writes, test_mode/live-write, proof fields, append."
+- name: approval-path
+  color: "e36209"   # deep orange (distinct from owner-decision)
+  description: "Touches the preview -> approve -> write trust loop (public/app.js)."
+- name: coach-behavior
+  color: "1d76db"   # blue
+  description: "Touches what the coach says or how it decides to speak."
+- name: parser-behavior
+  color: "0052cc"   # dark blue
+  description: "Touches the slash-notation / set-extraction parser."
+- name: infrastructure
+  color: "c5def5"   # light blue
+  description: "CI/workflows/templates/labels/scripts; no app behavior change."

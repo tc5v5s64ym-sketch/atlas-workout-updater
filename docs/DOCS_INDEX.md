@@ -22,6 +22,16 @@ When these two disagree, stop and ask the owner before changing direction.
 
 Agents should not start from old plan docs.
 
+## Automation framework (active)
+
+The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
+
+- `docs/AUTOMATION_PROTOCOL.md` — the automation contract: roles (Claude builder, Codex contract guard, GitHub Actions enforcement, owner exception-handler), the skipped/errored/incomplete-review-is-a-failure principle, and merge eligibility.
+- `docs/OWNER_CHECKIN_RULES.md` — the exhaustive list of owner-required situations; everything else proceeds automatically.
+- `docs/RISK_LABELS.md` — risk classification labels and when each applies (manifest: `.github/labels.yml`).
+- `docs/AUTOMATION_AUDIT.md` — snapshot of existing automation, gaps, and next automation PRs.
+- `.github/PULL_REQUEST_TEMPLATE.md` — the one-screen merge card every PR must produce.
+
 ## Active roadmap / queue
 
 - `docs/ACTIVE_ROADMAP.md` — active PR 355-371 path after June 2026 app testing.

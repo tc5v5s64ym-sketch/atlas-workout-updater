@@ -33,12 +33,12 @@ Read `docs/AGENT_WORKFLOW.md` to understand the Dale + ChatGPT + Claude Code + C
 
 Atlas uses GitHub as the handoff bus.
 
-- Claude Code implements one PR at a time, opens the PR, and stops.
+- Claude Code implements one concern per PR and opens the PR. Under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`) it then proceeds autonomously — building, testing, running review, classifying risk, and producing the merge card — and stops for the owner only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`).
 - Claude Code Review checks code-level correctness when enabled.
 - CODEX Review checks roadmap fit, scope creep, Atlas trust contract, live-path test coverage, write-path/schema safety, and accidental future-PR work.
 - If CODEX Review returns `BLOCKING` and the finding is in scope for the current PR, Claude Code fixes only that finding, pushes updates, and stops again.
 - If CODEX Review finds future-scope work, Claude Code must not build it inside the current PR; add it to `BACKLOG.md` or an issue and stop.
-- Dale merges only after GitHub checks are green and CODEX Review is `READY FOR OWNER MERGE` or `NON-BLOCKING`.
+- Merges happen once a PR is merge-ready (GitHub checks green, reviews passed, CODEX Review `READY FOR OWNER MERGE` or `NON-BLOCKING`). Under the automation-first workflow Claude Code holds full merge authority and merges merge-ready PRs (`docs/AUTOMATION_PROTOCOL.md`); Dale can merge directly or revoke that authority at any time.
 
 See `docs/AGENT_WORKFLOW.md` for the full workflow.
 
@@ -176,7 +176,7 @@ Every PR must follow these rules without exception:
 - **Do not build future roadmap steps early.** Implement only what the current PR scope names.
 - **Do not refactor unrelated systems.** Fix only what is broken or in scope.
 - **Future discoveries go to `BACKLOG.md`.** Never carry them in memory or chat history. Append them in the same PR.
-- **Stop for owner review after every PR.** Open the PR. Do not merge. Do not start the next PR.
+- **Stop for the owner only when an owner check-in criterion is met** (`docs/OWNER_CHECKIN_RULES.md`). Atlas is automation-first (`docs/AUTOMATION_PROTOCOL.md`): open the PR, run tests and review, classify risk, and generate the merge card. If no check-in criterion applies and the PR is merge-ready, merge it and proceed to the next approved task without blocking on the owner. Claude Code holds **full merge authority** under this automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`); keep going until the owner says stop.
 
 ---
 
@@ -214,6 +214,6 @@ Before implementing any PR, the pre-coding report must include:
 | Sonnet 4.6 | Mechanical, docs-only, pure-data, low-risk refactor, isolated tests, no behavior change |
 | Opus 4.8 | Behavior-changing, correctness-sensitive, trust-path, parser / session-state / write-path / recommendation logic, or anything that could silently corrupt workout data |
 
-**After reporting the model recommendation, STOP and wait for owner confirmation before editing files.**
+**The model recommendation is required on every PR's merge card.** Stop for owner confirmation of the model only when the work meets an owner check-in criterion (`docs/OWNER_CHECKIN_RULES.md`) — in particular a model-recommendation change, or trust / write-path / approval-gate / coach / roadmap-sensitive work. For automation-safe work (no check-in criterion met), report the recommendation on the merge card and proceed.
 
 This is a workflow gate only. Do not change any app model, LLM behavior, API model, prompt model, or runtime model.

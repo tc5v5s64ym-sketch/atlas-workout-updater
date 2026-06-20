@@ -1,0 +1,62 @@
+name: Sync labels
+
+# Creates / updates the Atlas risk-classification labels on the repo so the
+# names in docs/RISK_LABELS.md actually exist. The label set is mirrored from
+# .github/labels.yml (the human-readable manifest); keep the two in sync.
+#
+# Runs on main (the operative set), on this workflow/manifest changing, and on
+# any PR that touches them — so labels are seeded the moment this lands, before
+# the path-labeler needs them. Labels are repo-global, so any run populates all.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/labels.yml'
+      - '.github/workflows/labels.yml'
+  pull_request:
+    paths:
+      - '.github/labels.yml'
+      - '.github/workflows/labels.yml'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    name: Upsert risk labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync labels from manifest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            // Mirrors .github/labels.yml — keep in sync.
+            const labels = [
+              { name: 'auto-safe',       color: '0e8a16', description: 'Automation can take to merge-ready; no owner involvement needed.' },
+              { name: 'owner-live-test', color: 'fbca04', description: 'Live app test advised (advisory, not a halt); owner initiates it.' },
+              { name: 'owner-decision',  color: 'd93f0b', description: 'Product/trust/roadmap/model judgment only the owner can make.' },
+              { name: 'blocked',         color: 'b60205', description: 'Required signal failed/errored/skipped or contract violation open.' },
+              { name: 'trust-sensitive', color: '5319e7', description: 'Touches the trust contract or an INVARIANTS rule.' },
+              { name: 'write-path',      color: 'e99695', description: 'Touches Sheet writes, test_mode/live-write, proof fields, append.' },
+              { name: 'approval-path',   color: 'e36209', description: 'Touches the preview -> approve -> write trust loop (public/app.js).' },
+              { name: 'coach-behavior',  color: '1d76db', description: 'Touches what the coach says or how it decides to speak.' },
+              { name: 'parser-behavior', color: '0052cc', description: 'Touches the slash-notation / set-extraction parser.' },
+              { name: 'infrastructure',  color: 'c5def5', description: 'CI/workflows/templates/labels/scripts; no app behavior change.' },
+            ];
+            for (const l of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: l.name });
+                await github.rest.issues.updateLabel({ owner, repo, name: l.name, new_name: l.name, color: l.color, description: l.description });
+                core.info(`updated ${l.name}`);
+              } catch (e) {
+                if (e.status === 404) {
+                  await github.rest.issues.createLabel({ owner, repo, name: l.name, color: l.color, description: l.description });
+                  core.info(`created ${l.name}`);
+                } else {
+                  throw e;
+                }
+              }
+            }
