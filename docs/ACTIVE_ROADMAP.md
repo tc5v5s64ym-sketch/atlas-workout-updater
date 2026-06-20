@@ -246,7 +246,7 @@ After Steps 380-382 are merged, pause for owner review and app-test before deloa
 
 ### Roadmap Step 383 - GitHub issue #291: Deload prescription consolidation
 
-**Status:** pending — **premise corrected after investigation (see below); scope shrank.**
+**Status:** complete. DRY cleanup: added `computePrescription` to the `deloadProtocols` import in `index.js` and replaced the 9-line inline load-cut math at ~line 1569 with a single `computePrescription(protocol, { working_weight: nt.weight })` call — identical arithmetic, one canonical source. The path becomes user-visible once Step 385 wires the lifecycle. No behavioral change.
 
 **Recommended model:** Opus 4.8.
 
@@ -324,7 +324,7 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 ### Roadmap Step 385 - GitHub issue #289: Frontend deload lifecycle wiring
 
-**Status:** pending
+**Status:** complete. Wired `begin`/`advance`/`resolve` in `public/app.js`. `begin` fires fire-and-forget when a `deload_reset` planned session starts (409 absorbed — already-in-deload is valid). `advance` fires after a confirmed live log write when the active session is `deload_reset` and was not a duplicate-blocked replay. When `advance` returns `training_state: POST_DELOAD_EVALUATION`, `resolve` fires immediately (auto-resolve after the final deload session). None of the calls touch `Log_Cleaned`, workout rows, or proof fields. Source-introspection tests added to `test/unit.test.js`.
 
 **Type:** Correctness (write-path-adjacent) - HIGH RISK; explicit scope required before editing
 

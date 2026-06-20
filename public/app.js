@@ -1208,6 +1208,15 @@ function startPlannedSession(intent) {
   document.getElementById('coach-empty')?.setAttribute('hidden', '');
   document.getElementById('suggested-tiles')?.setAttribute('hidden', '');
   renderActiveSessionBanner();
+  // Step 385: begin the deload state machine when a deload_reset session starts.
+  // Fire-and-forget — never block the session UI. 409 = already in deload, fine.
+  if (intent.id === 'deload_reset') {
+    api('/api/deload/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ focus: 'strength', reason: 'owner started deload session' })
+    }).catch(() => {});
+  }
   const first = exercises[0];
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
 }
@@ -1246,6 +1255,19 @@ function advancePlannedSession() {
 }
 
 function endPlannedSession() {
+  // Step 385: advance the deload machine exactly once per session (not per write).
+  // The deloadWritten flag is set in the approve handler on the first confirmed
+  // live write; firing here instead of per-write keeps the session-count correct.
+  if (activePlannedSession?.intentId === 'deload_reset' && activePlannedSession?.deloadWritten) {
+    api('/api/deload/advance', { method: 'POST' })
+      .then(r => {
+        const state = r?.data?.state;
+        if (state?.training_state === 'POST_DELOAD_EVALUATION') {
+          api('/api/deload/resolve', { method: 'POST' }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }
   activePlannedSession = null;
   pendingSubstitution = null;
   renderActiveSessionBanner();
@@ -3932,6 +3954,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           session_id: realPayload.session_id,
           log_rows_written: writeData.log_rows_written
         };
+      }
+      // Step 385: mark that this deload session had a confirmed live write so
+      // endPlannedSession knows to advance the state machine exactly once.
+      if (activePlannedSession?.intentId === 'deload_reset' && !duplicateBlocked) {
+        activePlannedSession.deloadWritten = true;
       }
     }
     invalidatePreview();
