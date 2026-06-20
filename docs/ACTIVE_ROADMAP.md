@@ -212,7 +212,7 @@ After Step 379 is merged, pause for owner review and optional app-test before hi
 
 ### Roadmap Step 382 - GitHub issue #402B: Suggested workout preview must not look save-ready
 
-**Status:** pending
+**Status:** complete (PR #410). Root cause: `public/nav.js` rotated the composer placeholder through `PLACEHOLDER_HINTS` (incl. "Say 'log it' to save your session") every 4.5s and only stopped on `atlas:set-logged` — so a *displayed suggested workout* (nothing performed yet) kept getting overwritten with the save-ready hint. Fix: `setWorkoutPlaceholder` (`public/coach-conversation.js`) now dispatches `atlas:placeholder-owned` whenever coach-conversation sets a contextual placeholder (suggestion, freestyle, plan-complete); `nav.js` suppresses the generic rotation on that event. The suggestion's own closing copy was already non-save-ready. Frontend-only; no write-path/schema/parser/LLM change. Source-introspection test added (`test/unit.test.js` "Step 382").
 
 **Recommended model:** Opus 4.8.
 
