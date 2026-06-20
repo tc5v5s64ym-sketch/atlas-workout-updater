@@ -18,6 +18,56 @@ function getPrivateKey() {
   return privateKeyRaw.replace(/\\n/g, '\n');
 }
 
+// Append is NOT idempotent — each successful call inserts another row, and the
+// write_id idempotency guard lives one layer up in index.js (it dedupes across
+// separate HTTP requests, not inside this retry loop). So we may only retry on
+// errors where Google rejected the request *before* touching the spreadsheet:
+// HTTP 429 (rate limit) / 503 (backend unavailable), and the equivalent
+// rate-limit/quota reason codes Google sometimes returns as 403. A post-send
+// timeout or a 500 is ambiguous — the rows might already be written — so those
+// propagate and are never retried, to avoid a silent double-append.
+function isTransientAppendError(error) {
+  if (!error) return false;
+  const status = Number(
+    error.code != null ? error.code
+      : error.status != null ? error.status
+        : (error.response && error.response.status)
+  );
+  if (status === 429 || status === 503) return true;
+  // Quota/rate-limit errors can arrive as 403 with a telling reason string.
+  const reason = (error.errors && error.errors[0] && error.errors[0].reason)
+    || (error.response && error.response.data && error.response.data.error
+      && (error.response.data.error.status || error.response.data.error.message))
+    || '';
+  return /rateLimit|userRateLimit|quota|backendError|unavailable/i.test(String(reason));
+}
+
+// Bounded exponential backoff. `sleep` is injectable so tests run instantly and
+// don't depend on wall-clock time. Retries only while `isRetryable(error)` is
+// true; any non-retryable error throws immediately, and the last error throws
+// once attempts are exhausted.
+async function retryWithBackoff(operation, options = {}) {
+  const maxAttempts = options.maxAttempts || 4; // 1 initial + 3 retries
+  const baseDelayMs = options.baseDelayMs || 500; // 500 / 1000 / 2000
+  const isRetryable = options.isRetryable || (() => false);
+  const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  const onRetry = options.onRetry || (() => {});
+
+  let attempt = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      attempt += 1;
+      if (attempt >= maxAttempts || !isRetryable(error)) throw error;
+      const delay = baseDelayMs * 2 ** (attempt - 1);
+      onRetry(error, attempt, delay);
+      await sleep(delay);
+    }
+  }
+}
+
 async function getSheetsClient() {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -43,15 +93,23 @@ async function appendRows(tabName, rows) {
   const range = `${tabName}!A1`;
   console.log(`[sheets.js] Using range: ${range}`);
   
-  const response = await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: range,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: {
-      values: rows
+  const response = await retryWithBackoff(
+    () => sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: range,
+      valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: rows
+      }
+    }),
+    {
+      isRetryable: isTransientAppendError,
+      onRetry: (error, attempt, delay) => {
+        console.warn(`[sheets.js] Transient append error on "${tabName}" (attempt ${attempt}): ${error.message}. Retrying in ${delay}ms`);
+      }
     }
-  });
+  );
 
   console.log(`[sheets.js] Appended to "${tabName}": ${response.data.updates?.updatedRows} row(s) at ${response.data.updates?.updatedRange}`);
   return response;
@@ -212,6 +270,8 @@ module.exports = {
   getSheetRows,
   getHeaderRow,
   getSpreadsheetTabs,
+  isTransientAppendError,
+  retryWithBackoff,
   logSheetName,
   effortSheetName
 };
