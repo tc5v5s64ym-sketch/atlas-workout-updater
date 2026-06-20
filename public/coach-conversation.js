@@ -1129,10 +1129,20 @@
     // coach below. Education ("what does RIR mean?") and anything ambiguous are NOT
     // session-shaped, so they keep the existing SME-first routing untouched.
     const ctx = context || {};
+    // An active workout is signalled by a started plan, a live preview, or a
+    // started planned session (plan_completed present). But a *free-form coaching
+    // conversation* — the lifter chatting with the coach mid-workout without having
+    // started a planned session or run a dry-run preview — carries none of those
+    // client flags, even though the server-side coach has full training context.
+    // Live testing (2026-06-20) showed "RIR?" leaking to SME education in exactly
+    // that state. Treat an in-progress conversation (prior turns exist) as active
+    // context too, so session shorthand still routes to the session-aware coach.
+    const inCoachingConversation = Array.isArray(history) && history.length > 0;
     const hasActiveWorkout =
       (Array.isArray(ctx.current_plan) && ctx.current_plan.length > 0) ||
       (Array.isArray(ctx.current_preview) && ctx.current_preview.length > 0) ||
-      Array.isArray(ctx.plan_completed); // present whenever an activePlannedSession exists
+      Array.isArray(ctx.plan_completed) || // present whenever an activePlannedSession exists
+      inCoachingConversation;
     const sessionShaped = typeof sessionQuestion !== 'undefined'
       && sessionQuestion.isSessionStateQuestion(message);
     const skipSme = hasActiveWorkout && sessionShaped;

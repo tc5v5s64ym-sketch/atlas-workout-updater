@@ -99,6 +99,12 @@ test('getChatReply gates the SME on active-session + session-shaped message', ()
   assert.match(src, /current_plan/, 'active-workout signal should consider current_plan');
   assert.match(src, /current_preview/, 'active-workout signal should consider current_preview');
   assert.match(src, /plan_completed/, 'active-workout signal should consider plan_completed');
+  // A free-form coaching conversation (prior turns exist) also counts as active
+  // context — otherwise session shorthand leaks to SME mid-conversation (the
+  // 2026-06-20 "RIR?" live-test failure).
+  assert.match(src, /inCoachingConversation/, 'an ongoing conversation should count as active context');
+  assert.match(src, /Array\.isArray\(history\)\s*&&\s*history\.length\s*>\s*0/,
+    'inCoachingConversation should be derived from a non-empty history');
 
   // The SME call is skipped only when both conditions hold.
   assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*sessionShaped/,
