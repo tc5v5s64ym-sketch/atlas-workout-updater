@@ -1988,6 +1988,38 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
   }
 });
 
+// A client-supplied volume_calc must NEVER be written verbatim — the server
+// always recomputes weight × reps so column 12 cannot disagree with the set
+// (BACKLOG ME-4).
+test('api smoke: live log-workout ignores a client-supplied volume_calc and recomputes it', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'ME4-VOLUME-01',
+        date: '2026-06-11',
+        write_id: 'me4-volume-01',
+        log_rows: [
+          // Bogus volume_calc (and volume alias) that disagree with weight × reps.
+          { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '', volume_calc: 99999, volume: 88888 }
+        ]
+      })
+    });
+
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.sheet_write, 'success');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+    const row = fakeSheetsState.appendCalls[0].rows[0];
+    // Column 12 is weight × reps, not the client's 99999/88888.
+    assert.equal(Number(row[11]), 1350);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 // ── header-drift guard (trust-critical) ─────────────────────────────────────
 // A hand-edited column reorder must block the live write, not misroute values.
 test('api smoke: live log-workout is blocked when Log_Cleaned header is reordered', async () => {
