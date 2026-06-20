@@ -49,6 +49,41 @@ test('deload holds working weight (185 stall → 185, volume-first)', () => {
   assert.equal(deloads[0].suggested_deload_weight % 5, 0, 'deload weight must be rackable');
 });
 
+// Step 384: the deload-suggestions surface (suggestDeloads → /api/coaching/insights)
+// must not flag a flat ACCESSORY whose primary muscle is already covered by other
+// lifts — the live Shrugs / Dumbbell-Curl false-positive. The coverage-aware
+// downgrade (annotateStallsForDeload), previously wired only into scoreIntents,
+// now also gates this surface. A genuinely stalled MAIN compound still surfaces.
+test('Step 384: suggestDeloads excludes a covered flat accessory but keeps a stalled compound', () => {
+  const r = (date, session, name, muscle, code, weight, reps, set) =>
+    [date, session, name, name, muscle, code, String(set), String(weight), String(reps), '2', ''];
+  const setsFor = (date, session, name, muscle, code, weight, reps, count) =>
+    Array.from({ length: count }, (_, i) => r(date, session, name, muscle, code, weight, reps, i + 1));
+
+  const rows = [
+    // Shrugs: flat across 4 sessions → a stall; primary muscle = traps.
+    ...setsFor('2026-06-08', 'A1', 'Shrugs', 'Traps', 'SHR01', 135, 12, 3),
+    ...setsFor('2026-06-10', 'A2', 'Shrugs', 'Traps', 'SHR01', 135, 12, 3),
+    ...setsFor('2026-06-12', 'A3', 'Shrugs', 'Traps', 'SHR01', 135, 12, 3),
+    ...setsFor('2026-06-14', 'A4', 'Shrugs', 'Traps', 'SHR01', 135, 12, 3),
+    // Deadlift in the recent window covers traps (0.5/set × 6 sets = 3.0 eff ≥ 2).
+    // Only 2 sessions, so Deadlift itself is never flagged as a stall.
+    ...setsFor('2026-06-13', 'D1', 'Deadlift', 'Back', 'DL01', 405, 5, 3),
+    ...setsFor('2026-06-14', 'D2', 'Deadlift', 'Back', 'DL01', 405, 5, 3),
+    // Bench Press: flat across 4 sessions → a stall; a MAIN compound, never downgraded.
+    ...setsFor('2026-06-08', 'B1', 'Bench Press', 'Chest', 'BEN01', 200, 5, 1),
+    ...setsFor('2026-06-10', 'B2', 'Bench Press', 'Chest', 'BEN01', 200, 5, 1),
+    ...setsFor('2026-06-12', 'B3', 'Bench Press', 'Chest', 'BEN01', 200, 5, 1),
+    ...setsFor('2026-06-14', 'B4', 'Bench Press', 'Chest', 'BEN01', 200, 5, 1),
+  ];
+
+  const codes = suggestDeloads(rows, 4).map(d => d.liftCode);
+  assert.ok(codes.includes('BEN01'), 'a stalled main compound must still surface a deload suggestion');
+  assert.ok(!codes.includes('SHR01'),
+    'a flat accessory whose muscle is covered by other lifts must NOT surface a deload suggestion');
+  assert.ok(!codes.includes('DL01'), 'a lift with too few sessions is not a stall and must not appear');
+});
+
 const logRows = [
   ['2026-06-02', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '185', '5', '2', 'solid'],
   ['2026-06-02', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '185', '5', '2', 'solid'],
