@@ -1,0 +1,102 @@
+name: Codex Decision Desk
+
+# Answers Claude's decision panels. When Claude posts a "Codex Decision Request"
+# (docs/DECISION_ROUTING.md), this responds with structured Codex answers so the
+# owner is not asked. Reuses the existing CLAUDE_CODE_OAUTH_TOKEN (Claude Max/Pro
+# subscription) — NO new paid API — with the agent playing the Codex contract-
+# guard role. An OpenAI-backed responder is an optional future drop-in.
+#
+# Trigger: a new comment containing the Decision Request marker, on a PR or issue.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  answer:
+    name: Codex answers the decision panel
+    # Only fire on an actual Decision Request, and never on the desk's own answers.
+    if: |
+      contains(github.event.comment.body, 'Codex Decision Request') &&
+      !contains(github.event.comment.body, 'Codex Decision Answers')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Codex Decision Desk
+        id: codex
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            ISSUE/PR NUMBER: ${{ github.event.issue.number }}
+
+            You are the **Codex Decision Desk** for Atlas — the contract-guard
+            role that ANSWERS Claude's decision panels so the owner does not have
+            to. A "Codex Decision Request" comment was just posted. Your job is to
+            answer every question in it.
+
+            First read these for the project's rules and current direction:
+              - CLAUDE.md, CODEX.md
+              - docs/DECISION_ROUTING.md   (this protocol)
+              - docs/AUTOMATION_PROTOCOL.md, docs/OWNER_CHECKIN_RULES.md
+              - BACKLOG.md, docs/ACTIVE_ROADMAP.md
+              - docs/CONSTITUTION.md, docs/INVARIANTS.md, docs/ATLAS_PRODUCT_VISION.md
+
+            Read the Decision Request comment body here:
+            ${{ github.event.comment.body }}
+
+            Answer as Codex — ground each choice in roadmap fit, scope control,
+            the Atlas trust contract, and write-path/schema safety. For EACH
+            numbered question, pick exactly one option and give a one-line reason.
+
+            Escalation: mark a question `Escalate-to-owner` ONLY if it genuinely
+            requires an owner product/trust/vision/model decision per
+            docs/OWNER_CHECKIN_RULES.md (Dream/Vision/Constitution change, a real
+            production-data-write authorization, secret/GOOGLE_SHEETS_ID/Render
+            change, or model-recommendation change). Everything else you decide
+            yourself — do not punt routine scope/approach/roadmap-fit calls to the
+            owner.
+
+            Post exactly ONE comment, in this format, and nothing else:
+
+            ## Codex Decision Answers
+            1. <option> — <one-line reason>
+            2. <option> — <one-line reason>
+            Escalate-to-owner: none        # or e.g. [Q2: needs an owner Vision call because …]
+
+            Use `gh issue comment ${{ github.event.issue.number }}` (works for PRs
+            too) to post. Do not return the answer as a chat message.
+
+          claude_args: |
+            --model claude-opus-4-8
+            --allowedTools "Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(cat:*),Bash(ls:*)"
+
+      # A skipped/errored responder is a FAILURE, not an implicit yes
+      # (docs/AUTOMATION_PROTOCOL.md §2). Fail the job so Claude does not treat a
+      # non-answer as approval. (A missing execution file means the action was
+      # skipped — e.g. this workflow editing its own PR — and is left alone.)
+      - name: Ensure the desk actually answered
+        if: always()
+        run: |
+          f="${{ steps.codex.outputs.execution_file }}"
+          if [ -z "$f" ] || [ ! -f "$f" ]; then
+            echo "No execution file - action skipped. Nothing to enforce."
+            exit 0
+          fi
+          is_error=$(jq -r 'if type=="array" then .[] else . end | select(.type=="result") | .is_error' "$f" 2>/dev/null | tail -n1)
+          if [ "$is_error" != "false" ]; then
+            echo "::error::Codex Decision Desk did not complete (is_error=${is_error:-unknown}). The decision request is unanswered — do not proceed as if approved."
+            exit 1
+          fi
+          echo "Codex Decision Desk answered."

@@ -1,7 +1,6 @@
 # Atlas risk classification labels — canonical manifest.
-# Documented in docs/RISK_LABELS.md. A label-sync workflow that applies these
-# to the repo is a listed follow-up (see docs/AUTOMATION_AUDIT.md). Until then
-# these names are applied by hand / by the builder when opening a PR.
+# Documented in docs/RISK_LABELS.md. Synced to the repo by
+# .github/workflows/labels.yml (keep that workflow's inline list in sync).
 #
 # Primary risk labels — exactly ONE per PR.
 - name: auto-safe
@@ -36,3 +35,8 @@
 - name: infrastructure
   color: "c5def5"   # light blue
   description: "CI/workflows/templates/labels/scripts; no app behavior change."
+
+# Workflow labels.
+- name: codex-decision
+  color: "8a63d2"   # violet
+  description: "A decision panel routed to the Codex Decision Desk to answer."

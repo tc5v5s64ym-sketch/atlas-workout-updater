@@ -23,10 +23,11 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 - **Refills the roadmap** when the active queue empties: reviews `BACKLOG.md`, re-checks the Vision/Dream/Constitution, repopulates `docs/ACTIVE_ROADMAP.md` from already-filed, priority-ordered, Vision-serving backlog items, and keeps going (the Roadmap Refill Loop, `docs/AGENT_WORKFLOW.md`). Does not invent product direction or promote owner-gated scope.
 - **Stops** only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`); otherwise keeps going until the owner says stop.
 
-### Codex — Contract Guard
+### Codex — Contract Guard & Decision Desk
 
 - Performs **CODEX Review** after a PR is opened: roadmap fit, scope creep, Atlas trust contract, live-path test coverage, write-path/schema safety, accidental future-PR work, and whether the original failure is actually fixed.
 - Returns exactly one verdict: `BLOCKING`, `NON-BLOCKING`, or `READY FOR OWNER MERGE`.
+- **Answers Claude's decision panels** (the Codex Decision Desk, `docs/DECISION_ROUTING.md`): when Claude posts a Codex Decision Request, Codex answers every question grounded in roadmap fit / scope / trust contract, so the owner is not asked. It escalates only the reserved items (`docs/OWNER_CHECKIN_RULES.md` — Vision/Dream/Constitution, model-recommendation, INVARIANT amendments, or anything it genuinely cannot resolve).
 - Routes future-scope findings to `BACKLOG.md` / an issue — never asks the builder to expand the current PR.
 - Does not merge. Does not start adjacent roadmap work.
 
@@ -35,10 +36,11 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 - Runs and **enforces** the required checks: unit tests, lint, secret scan, E2E, and the Claude Code Review job.
 - A check is the source of truth for whether something passed. Agent self-report is not.
 - The review enforcement step (`claude-code-review.yml` → "Ensure the review actually ran") already fails the job if the review errored rather than completing. This contract generalizes that rule (see §3).
+- Runs the **Codex Decision Desk** (`codex-decision-desk.yml`) so decision panels are answered in GitHub, and applies the risk/category and `codex-decision` labels.
 
 ### Owner (Dale) — Exception Handler Only
 
-- Involved **only** when an owner check-in criterion in `docs/OWNER_CHECKIN_RULES.md` is met.
+- Involved **only** when **Codex escalates** a reserved decision (`docs/DECISION_ROUTING.md`, `docs/OWNER_CHECKIN_RULES.md`) or the owner interjects. Claude's decision panels go to Codex, not the owner.
 - Owns: trust-sensitive product decisions, roadmap/vision changes, model-recommendation changes, and unresolved review conflicts.
 - **Initiates live app testing** — app tests are owner-initiated, not an automatic stop. The builder flags `owner-live-test` and supplies a live test script, but keeps going; the owner calls the hold and says stop when they want to test. The loop runs until the owner says stop or an owner-decision criterion (2–8) is hit.
 - Has **granted the builder (Claude) full merge authority** under this automation-first workflow; automation merges merge-ready PRs. The owner can still merge directly and can revoke this at any time, but routine merges are automated, not owner-gated.

@@ -134,6 +134,7 @@ Dashboard:
 - Summarize risks and blockers.
 - Perform CODEX Review after Claude Code opens a PR.
 - Flag roadmap drift, scope creep, and trust-contract risk.
+- Run the **Codex Decision Desk**: answer Claude's decision panels (`docs/DECISION_ROUTING.md`) so the owner is not asked. Answer every question in a `Codex Decision Request` grounded in roadmap fit, scope, and the trust contract; escalate to the owner only the reserved items (Vision/Dream/Constitution, model-recommendation, INVARIANT amendments, or anything you cannot resolve). Do not punt routine scope/approach/roadmap-fit calls to the owner.
 
 ## What Codex Must Never Do
 

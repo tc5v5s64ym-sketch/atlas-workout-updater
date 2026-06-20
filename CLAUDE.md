@@ -44,6 +44,14 @@ See `docs/AGENT_WORKFLOW.md` for the full workflow.
 
 ---
 
+## Decision routing — do not ask the owner; ask Codex
+
+When you would otherwise present the owner a **panel of questions on how to proceed** (the `AskUserQuestion`-style choices — which approach, is this in scope, how to read ambiguous feedback, how to sequence), **do not ask the owner. Route the whole panel to Codex and proceed on Codex's answers.** Post a `## 🧭 Codex Decision Request` per `docs/DECISION_ROUTING.md`; the Codex Decision Desk answers all of it. The owner is engaged only when **Codex escalates** a specific item, or the owner interjects.
+
+This covers procedural decisions only. It does **not** relax the absolute data-safety rules: no real Sheets write without explicit owner approval, the preview→approve→write trust loop, and the proof fields are unchanged — those are not "decision panels."
+
+---
+
 ## Branch strategy
 
 - Develop on the branch specified in your task brief (typically prefixed `claude/`).

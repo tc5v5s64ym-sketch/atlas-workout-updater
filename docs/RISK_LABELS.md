@@ -32,6 +32,12 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 | **`parser-behavior`** | Touches `services/workoutTextParser.js` (slash-notation, set extraction, intent). Correctness-sensitive. |
 | **`infrastructure`** | CI/workflows, templates, labels, scripts, automation, repo config. No production application behavior change. |
 
+### Workflow label
+
+| Label | Meaning / when applied |
+|---|---|
+| **`codex-decision`** | Applied to a PR/issue carrying a **Codex Decision Request** — a decision panel routed to the Codex Decision Desk to answer (`docs/DECISION_ROUTING.md`). Applied by the decision-desk flow, not a risk classification. |
+
 A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR could be `write-path` + `approval-path` + `trust-sensitive`, with primary `owner-decision`). Category labels make the surface area visible at a glance; the primary label decides who must act.
 
 ---
