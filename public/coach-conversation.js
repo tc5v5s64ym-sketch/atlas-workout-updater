@@ -1121,11 +1121,27 @@
   async function getChatReply(message, history, context) {
     if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null, propose_note: null };
 
+    // P0 — Active Session Context Integrity: during an active workout, short
+    // workout-state questions ("RIR?", "reps?", "how much", "what next") must be
+    // answered from the live session prescription, not intercepted by the generic
+    // training-knowledge SME. When an active session/plan/preview exists AND the
+    // message is session-shaped, skip the SME and go straight to the session-aware
+    // coach below. Education ("what does RIR mean?") and anything ambiguous are NOT
+    // session-shaped, so they keep the existing SME-first routing untouched.
+    const ctx = context || {};
+    const hasActiveWorkout =
+      (Array.isArray(ctx.current_plan) && ctx.current_plan.length > 0) ||
+      (Array.isArray(ctx.current_preview) && ctx.current_preview.length > 0) ||
+      Array.isArray(ctx.plan_completed); // present whenever an activePlannedSession exists
+    const sessionShaped = typeof sessionQuestion !== 'undefined'
+      && sessionQuestion.isSessionStateQuestion(message);
+    const skipSme = hasActiveWorkout && sessionShaped;
+
     // SME first: a training-knowledge question gets a deterministic, LLM-free answer
     // from /api/coach/ask. Anything it has no card for (depth log_only / no answer) —
     // including data questions about the lifter's own history — falls through to the
     // Gemini coach below. READ-ONLY either way; a slow/failed SME never blocks the chat.
-    try {
+    if (!skipSme) try {
       const sme = await Promise.race([
         api('/api/coach/ask', {
           method: 'POST',
