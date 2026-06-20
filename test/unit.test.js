@@ -18,8 +18,11 @@ const {
   requiredSheetTabs,
   optionalSheetTabs,
   getMissingRequiredTabs,
-  buildSheetContractStatus
+  buildSheetContractStatus,
+  normalizeHeaderToken,
+  validateHeaderRow
 } = require('../config/sheetContract');
+const { logRowFieldAliases, effortRowFieldAliases } = require('../config/columns');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
 const { generateSessionId, nextAvailableSessionId, formatDateForSessionId, formatAmPmSuffix } = require('../services/sessionId');
@@ -49,6 +52,64 @@ test('sheet contract reports each missing required tab', () => {
     assert.deepEqual(getMissingRequiredTabs(tabs), [tab]);
   }
   assert.ok(!getMissingRequiredTabs(requiredSheetTabs).includes('Dashboard'));
+});
+
+test('normalizeHeaderToken collapses header variants to one token', () => {
+  assert.equal(normalizeHeaderToken('Session ID'), 'sessionid');
+  assert.equal(normalizeHeaderToken('session_id'), 'sessionid');
+  assert.equal(normalizeHeaderToken('sessionId'), 'sessionid');
+  assert.equal(normalizeHeaderToken(null), '');
+  assert.equal(normalizeHeaderToken(undefined), '');
+});
+
+test('validateHeaderRow accepts a header matching the Log_Cleaned contract in order', () => {
+  const { logCleanedColumns } = require('../config/columns');
+  const result = validateHeaderRow(logCleanedColumns, logCleanedColumns, logRowFieldAliases);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mismatches, []);
+});
+
+test('validateHeaderRow accepts accepted aliases and casing/spacing variants', () => {
+  const { logCleanedColumns } = require('../config/columns');
+  // A plausible hand-typed header row: title-case, spaces, and the 'date'/'volume' aliases.
+  const variant = ['Date', 'Session ID', 'Exercise', 'Canonical Exercise', 'Muscle Group',
+    'Lift Code', 'Set Number', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume'];
+  const result = validateHeaderRow(variant, logCleanedColumns, logRowFieldAliases);
+  assert.equal(result.ok, true, JSON.stringify(result.mismatches));
+});
+
+test('validateHeaderRow flags a reordered column as a mismatch', () => {
+  const { logCleanedColumns } = require('../config/columns');
+  // Swap weight (index 7) and reps (index 8) — the exact silent-misroute risk.
+  const swapped = [...logCleanedColumns];
+  [swapped[7], swapped[8]] = [swapped[8], swapped[7]];
+  const result = validateHeaderRow(swapped, logCleanedColumns, logRowFieldAliases);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.mismatches.map(m => m.index), [7, 8]);
+  assert.equal(result.mismatches[0].expected, 'weight');
+  assert.equal(result.mismatches[0].actual, 'reps');
+});
+
+test('validateHeaderRow flags a too-short header with null actual', () => {
+  const result = validateHeaderRow(['date_clean', 'session_id'], ['date_clean', 'session_id', 'exercise']);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.mismatches, [{ index: 2, expected: 'exercise', actual: null }]);
+});
+
+test('validateHeaderRow ignores extra trailing columns beyond the contract', () => {
+  const result = validateHeaderRow(
+    ['date_clean', 'session_id', 'extra_user_column'],
+    ['date_clean', 'session_id']
+  );
+  assert.equal(result.ok, true);
+});
+
+test('validateHeaderRow validates the Effort contract with its aliases', () => {
+  const { effortColumns } = require('../config/columns');
+  assert.equal(validateHeaderRow(effortColumns, effortColumns, effortRowFieldAliases).ok, true);
+  const broken = [...effortColumns];
+  [broken[5], broken[6]] = [broken[6], broken[5]]; // average_hr <-> peak_hr swap
+  assert.equal(validateHeaderRow(broken, effortColumns, effortRowFieldAliases).ok, false);
 });
 
 test('column contracts match cleaned sheet headers', () => {
