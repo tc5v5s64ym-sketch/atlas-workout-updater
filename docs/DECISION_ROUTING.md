@@ -53,6 +53,8 @@ GitHub is the handoff bus. When Claude hits a decision panel:
 
 3. **Claude proceeds** on Codex's answers. For any item Codex marks `Escalate-to-owner`, only that item goes to the owner (the rest still proceed).
 
+> **Security:** the desk only triggers for a trusted author (repo owner/member/collaborator), and the untrusted comment body is handed to the responder as a **file read as data**, never interpolated into its prompt as instructions — so a stray comment cannot prompt-inject a fabricated answer.
+
 4. **Automation** — `.github/workflows/codex-decision-desk.yml` operationalizes the handoff: it labels the request `codex-decision` and generates and posts Codex's answers automatically. When the responder is **not** configured, it posts a clear "Codex responder not configured" notice — which, per `docs/AUTOMATION_PROTOCOL.md` §2, is an **unavailable review = failure**, so Claude does not silently proceed as if answered; the request waits for a Codex answer (automated or from the external Codex agent).
 
 ## Pass/fail still applies
