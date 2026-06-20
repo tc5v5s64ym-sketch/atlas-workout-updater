@@ -173,11 +173,19 @@ describe('scoreSubstitutionQuality — isolation muscle overlap', () => {
     assert.strictEqual(r.reason, 'same_pattern_same_muscle');
   });
 
-  it('conservative fall-through when muscle data is missing for one side', () => {
-    // Tricep Pushdown has no primary muscle mapped yet — can't assess overlap,
-    // so the pair keeps the same-pattern/same-cost grade rather than a guessed
-    // downgrade. (Muscle-data gap is tracked separately in BACKLOG.)
+  it('same pattern isolation, different muscle (now mapped): Bicep Curl → Tricep Pushdown = poor', () => {
+    // Triceps is now in the coverage map, so this is a genuine different-muscle
+    // isolation swap (biceps vs triceps), not a data gap.
     const r = scoreSubstitutionQuality('Bicep Curl', 'Tricep Pushdown');
+    assert.strictEqual(r.quality, 'poor');
+    assert.strictEqual(r.reason, 'isolation_different_muscle');
+  });
+
+  it('conservative fall-through when muscle data is missing for one side', () => {
+    // Reverse Fly has no primary muscle mapped yet (delt_isolation/LOW), so the
+    // overlap can't be assessed — the pair keeps the same-pattern/same-cost grade
+    // rather than a guessed downgrade. (Muscle-data gaps tracked in BACKLOG.)
+    const r = scoreSubstitutionQuality('Reverse Fly', 'Lateral Raise');
     assert.strictEqual(r.quality, 'excellent');
     assert.strictEqual(r.reason, 'same_pattern_same_cost');
   });

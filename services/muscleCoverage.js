@@ -162,6 +162,15 @@ const MUSCLE_MAP = [
     primary: ['obliques'],
     secondary: [],
   },
+  // Triceps isolation — pushdown/pressdown, skullcrusher, tricep extension.
+  // Compound presses and dips above already claim their names, so this only
+  // catches genuine triceps-isolation work.
+  {
+    pattern: /triceps?|push[\s-]*down|press[\s-]*down|skull[\s-]*crusher/i,
+    matchPattern: 'triceps_isolation',
+    primary: ['triceps'],
+    secondary: [],
+  },
   // General curl (dumbbell, barbell, cable, ez-bar…)
   // Must come after hammer curl and leg curl entries above.
   {

@@ -98,13 +98,14 @@ test('multi-primary accessory: feeds unless ALL primaries are covered', () => {
 /* ─── unknown / non-catalog accessory → safe default ───────────────────────── */
 
 test('an accessory unknown to the coverage map keeps feeding (never guessed)', () => {
-  // "Tricep Pushdown" is an accessory by liftRole, but has no muscleCoverage
-  // pattern → needsReview → must not be downgraded on a guess.
+  // "Calf Raise" is an accessory by liftRole, but has no muscleCoverage pattern
+  // → needsReview → must not be downgraded on a guess. (Tricep Pushdown is now
+  // mapped to triceps, so it no longer serves as the "unknown" example.)
   const logRows = [
-    ...sets('2026-06-11', 'B1', 'Bench Press', 'Chest', 'BP01', 225, 5, 6), // lots of triceps secondary
+    ...sets('2026-06-11', 'B1', 'Bench Press', 'Chest', 'BP01', 225, 5, 6),
     ...sets('2026-06-12', 'B2', 'Bench Press', 'Chest', 'BP01', 225, 5, 6),
   ];
-  const [out] = annotateStallsForDeload([stall('TPD01', 'Tricep Pushdown')], logRows);
+  const [out] = annotateStallsForDeload([stall('CR01', 'Calf Raise')], logRows);
   assert.equal(out.ignored_for_deload, false);
 });
 
