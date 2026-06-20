@@ -1152,7 +1152,12 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
       ? { exercise: String(e.name || e.exercise || '').trim(), target_sets: typeof e.sets === 'number' ? e.sets : undefined }
       : { exercise: String(e || '').trim() }))
     .filter(e => e.exercise);
-  const extra_work = detectExtraWork(prescribedForExtra, [...loggedCounts.values()]);
+  // Gate on a real prescribed plan: with no plan there is nothing to exceed, so
+  // detectExtraWork([], logged) would wrongly flag every logged lift as an
+  // "extra_exercise". No plan → no-extra shape (sanitizeChatContext → null).
+  const extra_work = prescribedForExtra.length > 0
+    ? detectExtraWork(prescribedForExtra, [...loggedCounts.values()])
+    : { extra_sets: [], extra_exercises: [], has_extra: false };
 
   return {
     recommended_label: read.recommended_label || null,
