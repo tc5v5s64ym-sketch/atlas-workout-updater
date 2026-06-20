@@ -10,7 +10,8 @@ const {
   computeMuscleGroupVolume, searchSessions, detectRecentPrs,
   buildBodyweightHistory, previewTestRows, detectStalls,
   buildWeeklyReport, buildProgressSummary, buildExerciseDetail, buildRecentSessions,
-  classifyMuscleGroup, buildMuscleGroupReadiness, scoreIntents
+  classifyMuscleGroup, buildMuscleGroupReadiness, scoreIntents,
+  localTodayIso
 } = require('../services/analytics');
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('../services/validation');
 const { logCleanedColumns, effortColumns, exerciseCatalogColumns } = require('../config/columns');
@@ -53,6 +54,31 @@ test('sheet contract reports each missing required tab', () => {
     assert.deepEqual(getMissingRequiredTabs(tabs), [tab]);
   }
   assert.ok(!getMissingRequiredTabs(requiredSheetTabs).includes('Dashboard'));
+});
+
+test('localTodayIso defaults to UTC when no timezone is configured', () => {
+  // An instant just after UTC midnight resolves to the UTC date with no zone.
+  const instant = new Date('2026-06-20T00:30:00Z');
+  assert.equal(localTodayIso(instant, undefined), '2026-06-20');
+  assert.equal(localTodayIso(instant, ''), '2026-06-20');
+});
+
+test('localTodayIso resolves the LOCAL day for a configured zone (fixes the midnight off-by-one)', () => {
+  // 03:00 UTC on Jun 20 is still 20:00 on Jun 19 in Los Angeles (PDT, UTC-7).
+  // UTC would say "Jun 20"; the owner's local day is "Jun 19" — the exact case
+  // that made a just-logged set look like it was "trained yesterday".
+  const instant = new Date('2026-06-20T03:00:00Z');
+  assert.equal(localTodayIso(instant, 'America/Los_Angeles'), '2026-06-19');
+  assert.equal(localTodayIso(instant, undefined), '2026-06-20'); // UTC basis differs
+  // A zone ahead of UTC pushes the local day forward.
+  assert.equal(localTodayIso(new Date('2026-06-19T23:00:00Z'), 'Asia/Tokyo'), '2026-06-20');
+});
+
+test('localTodayIso falls back to UTC for an invalid timezone rather than throwing', () => {
+  const instant = new Date('2026-06-20T12:00:00Z');
+  assert.equal(localTodayIso(instant, 'Not/AZone'), '2026-06-20');
+  // A non-Date / invalid input is tolerated (uses current time, returns a date string).
+  assert.match(localTodayIso('garbage', undefined), /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test('isTransientAppendError retries only request-rejected-before-write errors', () => {

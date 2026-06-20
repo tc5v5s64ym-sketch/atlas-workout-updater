@@ -11,8 +11,29 @@ function isPositiveFinite(value) {
   return Number.isFinite(value) && value > 0;
 }
 
+// Single source for "today" as a YYYY-MM-DD string. Atlas stamps date_clean in
+// the owner's LOCAL day (the browser computes it at log time), but this recency
+// math historically used UTC — so a set logged late on a local evening could be
+// read as "trained yesterday", an off-by-one that corrupts daysSince and the
+// recent-lift recommendation exclusion. ATLAS_TIMEZONE (an IANA zone name, e.g.
+// "America/Los_Angeles") aligns "today" to that same local day. Unset → UTC, so
+// existing behavior is unchanged until the owner configures their zone.
+function localTodayIso(now = new Date(), tz = process.env.ATLAS_TIMEZONE) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) now = new Date();
+  if (!tz) return now.toISOString().slice(0, 10);
+  try {
+    // en-CA renders as YYYY-MM-DD.
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(now);
+  } catch (err) {
+    // Invalid/unsupported zone → fall back to UTC rather than throw.
+    return now.toISOString().slice(0, 10);
+  }
+}
+
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return localTodayIso();
 }
 
 function safeDateString(value, fallback = todayIso()) {
@@ -929,8 +950,10 @@ function suggestDeloads(logRows, minSessions = 4) {
   });
 }
 
-function computeFatigueStatus(logRows, referenceDate = new Date()) {
-  const ref = new Date(referenceDate);
+function computeFatigueStatus(logRows, referenceDate = null) {
+  // Default to the local "today" (UTC-noon anchored) so the 7-/28-day windows
+  // share the same date basis as date_clean; explicit callers (tests) still win.
+  const ref = referenceDate != null ? new Date(referenceDate) : isoDateAtUtcNoon(todayIso());
   const safeRef = Number.isFinite(ref.getTime()) ? ref : isoDateAtUtcNoon(todayIso());
   const dayMs = 24 * 60 * 60 * 1000;
   const recentCutoff = new Date(safeRef.getTime() - 7 * dayMs).toISOString().slice(0, 10);
@@ -2503,5 +2526,7 @@ module.exports = {
   recoveryFraction,
   effortIntensityBySession,
   detectSwap,
-  buildWorkingWeightProtocol
+  buildWorkingWeightProtocol,
+  todayIso,
+  localTodayIso
 };
