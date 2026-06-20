@@ -20,7 +20,7 @@ Stop and check in with the owner — do not self-approve — when any of the fol
 
 5. **Trust-contract behavior changes.** Any change touching an `docs/INVARIANTS.md` rule or the `docs/CONSTITUTION.md` trust contract: no blind writes, the engine owns the numbers, the owner approves, undo read-back/log-tab restriction, phantom-set suppression.
 
-6. **Roadmap or vision changes.** Reordering, adding, or removing `docs/ACTIVE_ROADMAP.md` steps, or any change to Dream / Vision / Constitution layer docs (`docs/ATLAS_PRODUCT_VISION.md`, `docs/CONSTITUTION.md`). See `docs/GOVERNANCE.md`.
+6. **Vision / Dream / Constitution changes, and new-scope roadmap direction.** Owner required for: any change to the Dream, Vision, or Constitution (`docs/ATLAS_PRODUCT_VISION.md`, `docs/CONSTITUTION.md`, `docs/INVARIANTS.md`); promoting an owner-gated backlog item (`Someday / future scope`, `NEEDS DESIGN / not yet scoped`, `Strategic direction — deferred brainstorm`, or any trust-sensitive new scope) into the active queue; or any roadmap direction requiring a product/trust judgment the backlog has not already settled. **NOT owner-gated:** the routine **Roadmap Refill Loop** — when the active queue empties, automation reviews `BACKLOG.md` and repopulates `docs/ACTIVE_ROADMAP.md` from already-filed, priority-ordered, Vision-serving backlog items, then continues (see `docs/AGENT_WORKFLOW.md` → "Roadmap Refill Loop"). See `docs/GOVERNANCE.md`.
 
 7. **Model recommendation changes.** Any change to the Model Recommendation Gate outcome, the Sonnet/Opus selection guidance, or any runtime/LLM/app model, prompt model, or API model. (The gate itself is a workflow gate — changing it or overriding its recommendation is owner-gated.)
 

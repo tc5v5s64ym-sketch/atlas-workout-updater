@@ -116,6 +116,20 @@ For each unit of work, the builder:
 
 A PR is **merge-ready** only when: tests pass · required reviews pass · no open P0/P1 finding · no unresolved contract violation · risk classification done · merge card generated. Any skipped or failed required review blocks readiness.
 
+## Roadmap Refill Loop (continuous autonomy)
+
+Atlas does not idle when the active roadmap is exhausted. When the active queue in `docs/ACTIVE_ROADMAP.md` is empty (every step complete), the builder — automatically, without waiting for the owner:
+
+1. **Reviews `BACKLOG.md`** — the single source of truth for open and deferred work.
+2. **Re-reads the Vision and the Dream** (`docs/ATLAS_PRODUCT_VISION.md`) and the Constitution (`docs/CONSTITUTION.md`, `docs/INVARIANTS.md`), so the refill serves the product direction and stays inside the trust contract (layering: `docs/GOVERNANCE.md`).
+3. **Repopulates `docs/ACTIVE_ROADMAP.md`** — sequences the next priority-ordered, already-filed backlog items that advance the Vision/Dream into a fresh active queue (tiny, one concern each; model recommendation per item).
+4. **Executes** the new queue through the Autonomous Build Loop above.
+5. **Repeats** — when the queue empties again, refill again. Keep going until the owner says stop.
+
+This refill draws **only** from work already in `BACKLOG.md` (which the owner curates) and orders it to serve the Vision/Dream — it is not a license to invent product direction.
+
+**Keep an eye on the Vision and the Dream.** Each refill checks that the selected steps trace upward to the Vision and do not drift from the Dream. If the backlog no longer holds Vision-serving work — or the next meaningful direction needs a Dream/Vision/Constitution decision, or means promoting an owner-gated backlog item (`Someday / future scope`, `NEEDS DESIGN`, `Strategic direction — deferred brainstorm`, or trust-sensitive new scope) — the builder **stops and asks the owner** (`docs/OWNER_CHECKIN_RULES.md` criteria 6/8) rather than inventing scope.
+
 ## Merge gate
 
 A PR is not ready for Dale to merge unless:

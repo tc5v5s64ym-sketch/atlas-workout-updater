@@ -20,6 +20,7 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 - Fixes its own failures and review-blocking findings, then re-runs tests and review.
 - Files discovered future work in `BACKLOG.md` in the same PR — never in memory or chat.
 - **Holds full merge authority** (granted by the owner under this automation-first workflow): merges a PR once it is merge-ready (§4), without owner gating, and continues to the next approved task.
+- **Refills the roadmap** when the active queue empties: reviews `BACKLOG.md`, re-checks the Vision/Dream/Constitution, repopulates `docs/ACTIVE_ROADMAP.md` from already-filed, priority-ordered, Vision-serving backlog items, and keeps going (the Roadmap Refill Loop, `docs/AGENT_WORKFLOW.md`). Does not invent product direction or promote owner-gated scope.
 - **Stops** only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`); otherwise keeps going until the owner says stop.
 
 ### Codex — Contract Guard
