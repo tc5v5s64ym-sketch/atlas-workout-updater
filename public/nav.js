@@ -542,6 +542,12 @@
       // can own the placeholder (pointing at the next exercise). Pre-session rotation
       // is unaffected — sessionActive starts false.
       document.addEventListener('atlas:set-logged', () => { sessionActive = true; });
+      // Step 382 (#402B): a suggested workout — or any coach-owned placeholder —
+      // also stops the generic rotation, so the save-ready "Say 'log it' to save
+      // your session" hint never overwrites the suggestion placeholder before any
+      // set has been performed. coach-conversation.js fires this from
+      // setWorkoutPlaceholder.
+      document.addEventListener('atlas:placeholder-owned', () => { sessionActive = true; });
       setInterval(() => {
         if (hintPaused || composerTextarea.value || sessionActive) return;
         hintIndex = (hintIndex + 1) % PLACEHOLDER_HINTS.length;

@@ -3829,6 +3829,30 @@ test('shell: nav.js stops rotating placeholder once a session is active (atlas:s
   assert.match(nav, /sessionActive\s*=\s*false/, 'sessionActive must start false so pre-session rotation runs normally');
 });
 
+test('Step 382 (#402B): a displayed suggested workout stops the save-ready placeholder rotation', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+
+  // The save-ready hint that must NOT pressure a screen where nothing was performed.
+  assert.match(nav, /Say .* to save your session/i, 'the save-ready hint exists in the rotation (this is what must be suppressed)');
+
+  // coach-conversation owns the composer placeholder through setWorkoutPlaceholder, and
+  // signals that ownership so the generic rotation yields.
+  const setPh = cc.slice(cc.indexOf('function setWorkoutPlaceholder'), cc.indexOf('function setWorkoutPlaceholder') + 900);
+  assert.match(setPh, /atlas:placeholder-owned/, 'setWorkoutPlaceholder must announce that coach-conversation owns the placeholder');
+  assert.match(setPh, /dispatchEvent/, 'must dispatch the ownership event, not just set the attribute');
+
+  // A suggested workout routes through setWorkoutPlaceholder, so viewing a suggestion
+  // fires the ownership event before the next 4.5s rotation tick.
+  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2000);
+  assert.match(suggestFn, /setWorkoutPlaceholder\(/, 'typeSuggestedWorkout must set a contextual placeholder (which announces ownership)');
+
+  // nav.js suppresses the rotation on the ownership event (same flag as a logged set).
+  assert.match(nav, /atlas:placeholder-owned/, 'nav.js must listen for the placeholder-owned event');
+  const ownedListener = nav.slice(nav.indexOf("'atlas:placeholder-owned'"), nav.indexOf("'atlas:placeholder-owned'") + 80);
+  assert.match(ownedListener, /sessionActive\s*=\s*true/, 'the placeholder-owned listener must stop the rotation');
+});
+
 test('shell: styles define dark mode and the new component tokens', () => {
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
   // Dark is the single primary theme now (graphite/ember in :root), so the dark

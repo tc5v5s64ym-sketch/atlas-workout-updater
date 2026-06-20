@@ -505,7 +505,16 @@
 
   function setWorkoutPlaceholder(text) {
     const ta = document.getElementById('workout-text');
-    if (ta && text) ta.placeholder = text;
+    if (ta && text) {
+      ta.placeholder = text;
+      // Step 382 (#402B): once coach-conversation owns the composer placeholder
+      // (a suggested workout, freestyle hint, or plan-complete prompt), the generic
+      // home placeholder rotation in nav.js must yield. Otherwise it overwrites this
+      // every few seconds with rotating hints like "Say 'log it' to save your
+      // session" — putting save-ready pressure on a screen where nothing has been
+      // performed or logged yet.
+      document.dispatchEvent(new CustomEvent('atlas:placeholder-owned'));
+    }
   }
 
   // LLM path: send the deterministic plan facts to /api/coach/message (kind:plan)
