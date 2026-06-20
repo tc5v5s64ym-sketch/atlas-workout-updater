@@ -112,7 +112,7 @@ For each unit of work, the builder:
 8. **Re-run review** — confirm Claude Code Review and CODEX Review pass after fixes.
 9. **Classify risk** — apply exactly one primary risk label + any category labels (`docs/RISK_LABELS.md`).
 10. **Generate the merge card** — fill the PR template completely (`.github/PULL_REQUEST_TEMPLATE.md`).
-11. **Route any decision to Codex; keep going until the owner says stop.** When the loop reaches a fork in how to proceed, do **not** ask the owner — post a Codex Decision Request and proceed on Codex's answers (`docs/DECISION_ROUTING.md`). Codex escalates to the owner only the reserved items (`docs/OWNER_CHECKIN_RULES.md` — Vision/Dream/Constitution, model-recommendation, INVARIANT amendments, or what it cannot resolve). Live app testing (criterion 1) is **owner-initiated** — flag `owner-live-test` with a script, but do **not** halt. Otherwise the PR is marked merge-ready and proceeds; the next approved task starts without blocking on the owner.
+11. **Route any decision to Codex; keep going until the owner says stop.** When the loop reaches a fork in how to proceed, do **not** ask the owner — post a Codex Decision Request and proceed on Codex's answers (`docs/DECISION_ROUTING.md`). Codex escalates to the owner only the reserved items (`docs/OWNER_CHECKIN_RULES.md` — Vision/Dream/Constitution, app/runtime-model changes, INVARIANT amendments, or what it cannot resolve). Live app testing (criterion 1) is **owner-initiated** — flag `owner-live-test` with a script, but do **not** halt. Otherwise the PR is marked merge-ready and proceeds; the next approved task starts without blocking on the owner.
 
 **Pass/fail principle (non-negotiable):** a review or check that was skipped, errored, was unavailable, timed out, or returned incomplete is a **failure, not a pass** (`docs/AUTOMATION_PROTOCOL.md` §2). The loop never treats a missing signal as green.
 
@@ -124,7 +124,7 @@ Atlas does not idle when the active roadmap is exhausted. When the active queue 
 
 1. **Reviews `BACKLOG.md`** — the single source of truth for open and deferred work.
 2. **Re-reads the Vision and the Dream** (`docs/ATLAS_PRODUCT_VISION.md`) and the Constitution (`docs/CONSTITUTION.md`, `docs/INVARIANTS.md`), so the refill serves the product direction and stays inside the trust contract (layering: `docs/GOVERNANCE.md`).
-3. **Repopulates `docs/ACTIVE_ROADMAP.md`** — sequences the next priority-ordered, already-filed backlog items that advance the Vision/Dream into a fresh active queue (tiny, one concern each; model recommendation per item).
+3. **Repopulates `docs/ACTIVE_ROADMAP.md`** — sequences the next priority-ordered, already-filed backlog items that advance the Vision/Dream into a fresh active queue (tiny, one concern each; built on Opus 4.8).
 4. **Executes** the new queue through the Autonomous Build Loop above.
 5. **Repeats** — when the queue empties again, refill again. Keep going until the owner says stop.
 
@@ -169,10 +169,8 @@ Reading those five files is mandatory before any compact prompt is honored. If t
 ```text
 Use compact Atlas prompt mode.
 Continue the next active roadmap item.
-Include the model recommendation gate.
-Stop for owner confirmation before implementation.
+Build on Opus 4.8.
 Open one small PR.
-Do not merge.
 ```
 
 **Create bugfix from latest app-test failure**
@@ -180,11 +178,9 @@ Do not merge.
 ```text
 Use compact Atlas prompt mode.
 Create a narrow bugfix PR for the latest app-test failure.
-Include the model recommendation gate.
-Stop for owner confirmation before implementation.
+Build on Opus 4.8.
 If related future work is discovered, add it to BACKLOG.md.
 Open one small PR.
-Do not merge.
 ```
 
 **Update backlog only**
@@ -214,11 +210,9 @@ Before editing files, report:
 - which docs need changes
 - whether any docs conflict
 - smallest docs-only fix
-- model recommendation
-- one-line model reason
 - risk level
 
-Record this report on the merge card. Stop for owner confirmation before editing only when an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md` — e.g. trust/write-path/coach/roadmap-sensitive work, or a model-recommendation change); otherwise proceed, open one PR, and continue through the Autonomous Build Loop.
+Record this report on the merge card (built on Opus 4.8 — no model line needed). Stop for owner confirmation before editing only when an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md` — e.g. trust/write-path/coach/roadmap-sensitive work); otherwise proceed, open one PR, and continue through the Autonomous Build Loop.
 
 ## Current-State Verification Gate
 
@@ -247,7 +241,7 @@ The pre-coding report must include:
    - If possible, identify the exact current failure path.
    - If already fixed, identify where it was fixed.
 5. Allowed next action:
-   - If `STILL BROKEN`, proceed to the normal model recommendation gate.
+   - If `STILL BROKEN`, proceed to implement (on Opus 4.8).
    - If `PARTIALLY FIXED`, scope only the remaining gap.
    - If `FIXED BUT UNTESTED`, do not refactor; add the smallest regression test.
    - If `ALREADY FIXED` or `STALE / SUPERSEDED`, do not edit code; update `BACKLOG.md`/issue/roadmap status only.
@@ -260,7 +254,7 @@ If a stale item is discovered, the same PR should either:
 - update `BACKLOG.md` / `docs/ACTIVE_ROADMAP.md` to mark it resolved, deferred, or superseded, or
 - add a GitHub issue comment explaining the current-state verdict.
 
-The normal model recommendation gate remains after this verification gate.
+The builder runs on Opus 4.8 for all work — there is no model gate after this verification gate.
 
 ## Non-negotiables
 

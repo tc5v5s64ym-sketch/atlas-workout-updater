@@ -49,7 +49,6 @@ jobs:
               // prose
               'One sentence: the single concern',
               'STILL BROKEN / ALREADY FIXED',
-              'Sonnet 4.6 or Opus 4.8',
               'command + result',
             ];
             for (const s of sentinels) {
