@@ -2402,6 +2402,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
         }
       } catch (error) {
+        console.error('❌ Failed to validate sheet header contract:', error);
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
         return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
@@ -2819,6 +2820,7 @@ app.post('/api/log-workout', async (req, res) => {
       return standardError(req, res, schemaDriftMessage(headerFailures), schemaDriftDetails(headerFailures), 409);
     }
   } catch (error) {
+    console.error('❌ Failed to validate sheet header contract:', error);
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to validate sheet header contract.', null, 500);
   }
