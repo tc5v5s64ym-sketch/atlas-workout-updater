@@ -334,9 +334,25 @@ function buildPlanSystemPrompt() {
     '- Do not list the exercises — the app already shows them. Speak to WHY today looks the way it does, not what to do set by set.',
     '- End on a forward-looking line about where this session sits in the arc (e.g. "banks recovery for tomorrow\'s heavy day") — the trajectory, NOT a prescription or a rep/weight target.',
     '- Speak to the athlete ("you"). Be direct and encouraging, not a bulleted report.',
+    '- The facts may include "layoff" {severity, days_since_last_session, volume_reduced} — the engine\'s read that the athlete is returning after time off. This is safety-relevant, so VOLUNTEER it: name the time off, and give the next action (ease in, hit these clean, leave a little in reserve, rebuild from here). Match severity — "mild" is no big deal, "extended" is a deliberate re-entry, not a test. Say volume was pulled back today ONLY when volume_reduced is true; never claim a cut otherwise. Direct, not dramatic — no hype, no fake encouragement.',
+    '- Do NOT invent any set, rep, or weight numbers. The only numbers you may state are those present in the facts (e.g. days_since_last_session); everything else is the app\'s job.',
     '- Under ~70 words. Plain text only — no markdown, no bullets, no headings.',
     '- You never write to any database or sheet; you only explain.'
   ].join('\n');
+}
+
+// Bound the engine's return-after-layoff signal to a fixed shape: a severity
+// enum, an integer day count, and a boolean. No free text reaches the model, and
+// an unrecognised severity drops the whole signal (so the coach can't word a
+// layoff the engine didn't assert).
+function sanitizeLayoff(l) {
+  if (!l || typeof l !== 'object') return null;
+  const severity = ['mild', 'significant', 'extended'].includes(l.severity) ? l.severity : null;
+  if (!severity) return null;
+  const days = Number.isFinite(l.days_since_last_session)
+    ? Math.max(0, Math.round(l.days_since_last_session))
+    : null;
+  return { severity, days_since_last_session: days, volume_reduced: l.volume_reduced === true };
 }
 
 function sanitizePlanFacts(facts) {
@@ -345,6 +361,7 @@ function sanitizePlanFacts(facts) {
   return {
     label: strOrNull(f.label),
     focus: strOrNull(f.focus),
+    layoff: sanitizeLayoff(f.layoff),
     why_today: Array.isArray(f.why_today) ? f.why_today.map(strOrNull).filter(Boolean).slice(0, 4) : [],
     readiness: Array.isArray(f.readiness)
       ? f.readiness.slice(0, 6)

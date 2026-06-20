@@ -206,7 +206,8 @@ const fakeCoachState = {
   chatNoteProposal: null, // set to a note object in tests that exercise the note path
   chatConstraintProposal: null, // set to a constraint object in tests that exercise the constraint path
   throwError: null,
-  lastChatContext: null // captures the context passed to generateChatReply for assertions
+  lastChatContext: null, // captures the context passed to generateChatReply for assertions
+  lastPlanFacts: null // captures the facts passed to generatePlanMessage for assertions
 };
 const fakeCoach = {
   isConfigured: () => fakeCoachState.configured,
@@ -215,7 +216,8 @@ const fakeCoach = {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return fakeCoachState.message;
   },
-  generatePlanMessage: async () => {
+  generatePlanMessage: async (facts) => {
+    fakeCoachState.lastPlanFacts = facts ?? null;
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return fakeCoachState.planMessage;
   },
@@ -370,6 +372,37 @@ test('api smoke: coach/message returns Gemini prose when configured', async () =
     assert.equal(body.data.configured, true);
     assert.equal(body.data.source, 'gemini');
     assert.equal(body.data.message, 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/message plan route strips a client-injected layoff (engine is the only source)', async () => {
+  // Trust property: the plan route ALWAYS overwrites facts.layoff with the engine
+  // value (or null), so a client cannot make Atlas claim a layoff/volume cut the
+  // engine did not assert. We inject a fake layoff with a sentinel and confirm it
+  // never reaches the coach.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.planMessage = 'Plan note.';
+  fakeCoachState.lastPlanFacts = null;
+  try {
+    const { response } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'plan',
+        facts: {
+          label: 'Recovery / Pump',
+          layoff: { severity: 'extended', days_since_last_session: 99, volume_reduced: true, sentinel: 'CLIENT_INJECTED' },
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const passed = fakeCoachState.lastPlanFacts;
+    assert.ok(passed, 'plan facts must reach the coach');
+    // The client object is discarded entirely — never forwarded verbatim.
+    assert.ok(!JSON.stringify(passed.layoff ?? null).includes('CLIENT_INJECTED'),
+      'a client-injected layoff must never reach the coach');
   } finally {
     fakeCoachState.configured = false;
   }
