@@ -71,6 +71,20 @@ The spearhead: the engine already emits verdicts (PR 3.3 ✅) and detects swaps 
 
 ---
 
+## New-user onboarding + working-weight discovery (B8) — DESIGN APPROVED, build not started
+
+Owner-approved design pack: [`docs/ONBOARDING_WORKING_WEIGHT_SPEC.md`](./docs/ONBOARDING_WORKING_WEIGHT_SPEC.md) (Owner Review Pack #2, approved 2026-06-20). Not promoted to `docs/ACTIVE_ROADMAP.md` — owner did not reorder roadmap priorities. Build only when promoted. Owner calls locked in the spec's "Owner-approved decisions" section: full-body ×3 default shape; graduation **per-lift at `medium` (3 logged sessions)**, copy-only (never imply fully dialed in); **per-lift** calibration state only (if squat is calibrated and deadlift is unknown, Atlas says so); a user-stated number seeds the start hint but **never** raises confidence (confidence comes only from logged sessions). All numbers trace to existing engine facts (`buildWorkingWeightProtocol` 70% start hint; `exerciseBenchmark` ladder 0=none / 1–2=low / 3–4=medium / 5+=high; `buildWarmupRamp`; `confidence_factors`; `assessLayoff`; `loadSanity`; AC8 phantom-set floor). Deterministic-engine-first, voice-second; tiny PRs. **Approved implementation order:**
+
+- **PR-O1 — onboarding state** `[correctness]` (engine, pure): `services/onboardingState.js` derives a per-lift `calibration_status` (`calibrating` | `graduated`) **purely from the existing `lift_confidence` ladder** — `graduated` at `medium` (≥3 logged sessions). No new data, no schema, no write path, no LLM. Golden fixtures F4/F5 from the spec. Per-lift only (owner call 4).
+- **PR-O2 — onboarding session-template builder** `[correctness]` (engine, pure): emits the spec §3 full-body calibration plan (3 sessions, 8 reps @ 2 RIR core compounds across squat/push/pull/hinge) from available equipment + optional user reference, reusing `buildWorkingWeightProtocol` (start hint or "Start conservative") and `buildWarmupRamp` (50/70/85%, only once a working weight exists). Fixtures F1–F3, F7. No write path/schema/LLM change.
+- **PR-O3 — voice gate** `[polish]` (coach surface, **owner-gated**): copy gating keyed off `calibration_status` — calibration phrasing for `none`/`low`, recommendation phrasing for `medium`/`high`; never present a load as a recommendation/verdict for a `none`/`low` lift, only a calibration start hint; never imply fully dialed in. Fixture F6 + the spec §4 three approved example conversations (beginner/intermediate/advanced) as the voice reference. Touches the coach surface → owner-gated per `CLAUDE.md`.
+- **PR-O4 — UX banner** `[polish]` (frontend-only): surface per-lift calibration state to the user (first-run flow / banner). Per-lift, not majority-gated (owner call 4). No write path/schema/LLM change.
+- **Deferred (not built, no PR until owner promotes):** pre-session reference / equipment **intake UX** — must honor the Someday "readiness — non-intrusive / never interrogate" guardrail; and **onboarding goal capture** (`getProfileGoal` / goal classifier exist; capturing at onboarding is the deferred piece). File-only here; revisit when onboarding is promoted to the active roadmap.
+
+**Preconditions (already shipped — no onboarding PR may weaken them):** the AC8 phantom-set floor (`services/messageIntent.js`) and load sanity (`services/loadSanity.js`).
+
+---
+
 ## Settings / user-preferences panel — NEEDS DESIGN (not yet scoped)
 
 Status: parked; needs a design pass before any build.
