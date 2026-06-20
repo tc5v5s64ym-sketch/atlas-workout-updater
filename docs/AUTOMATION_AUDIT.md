@@ -45,23 +45,24 @@ This audit was taken while establishing the automation framework. It reuses exis
 - `.github/PULL_REQUEST_TEMPLATE.md` — the one-screen merge card standard.
 - `docs/RISK_LABELS.md` + `.github/labels.yml` — risk classification vocabulary + manifest.
 - `docs/AGENT_WORKFLOW.md` — the Autonomous Build Loop section.
+- `CLAUDE.md` — reconciled so the PR Execution Contract and Model Gate match the automation-first posture (no live contradiction with the build loop).
 
-All documentation / templates / labels. No production application behavior, model, prompt, workflow logic, or write path changed.
+Working enforcement (GitHub Actions, infrastructure only — no app behavior change):
+
+- `.github/workflows/labels.yml` — **Sync labels**: upserts the risk labels onto the repo from the manifest (github-script; no external action). Runs on `main`, on label/workflow change, on touching-PRs, and `workflow_dispatch`.
+- `.github/workflows/labeler.yml` + `.github/labeler.yml` — **Auto-label by path**: applies category labels from touched paths (`actions/labeler@v5`, tolerant of not-yet-seeded labels).
+- `.github/workflows/merge-card-check.yml` — **Merge card check**: fails a PR whose body is missing the Atlas Merge Card or still contains template placeholders, enforcing `AUTOMATION_PROTOCOL.md` §2.
+
+No production application behavior, model, prompt, write path, or Sheet schema changed.
 
 ---
 
-## Identified gaps / next automation PRs
+## Identified gaps / remaining automation PRs
 
-Listed as **future** PRs only — not implemented here, per the one-PR scope. Filed in `BACKLOG.md`.
+The three `auto-safe` enforcement items (label sync, auto-label by path, merge-card check) were folded into this framework PR and are now live (see above). The remaining items change **repo settings**, so they are **owner-decision** and left as future PRs, filed in `BACKLOG.md`:
 
-1. **Label sync workflow** *(infrastructure, auto-safe)* — a small Action (e.g. `crazy-max/ghaction-github-labeler` or a `gh label` script) that syncs `.github/labels.yml` to the repo so the risk labels actually exist on GitHub. Highest-leverage next step; everything else assumes the labels exist.
+1. **Branch-protection / required-checks as code** *(infrastructure, owner-decision)* — encode the merge gate as GitHub branch-protection required status checks (unit-tests, secret-scan, e2e, Claude review, merge-card-check) so "merge-ready" is machine-enforced, not convention. Changes repo settings → owner decision.
 
-2. **Branch-protection / required-checks as code** *(infrastructure, owner-decision)* — encode the merge gate as GitHub branch-protection required status checks (unit-tests, secret-scan, e2e, Claude review) so "merge-ready" is machine-enforced, not convention. Owner decision because it changes repo settings.
+2. **CODEX Review as a check** *(infrastructure, owner-decision)* — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today convention-enforced).
 
-3. **Merge-card completeness check** *(infrastructure, auto-safe)* — a lightweight Action that fails the PR if the merge-card template fields are left as placeholder comments / blank, enforcing `AUTOMATION_PROTOCOL.md` §2 ("empty field = failure").
-
-4. **CODEX Review as a check** *(infrastructure, owner-decision)* — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today it is convention-enforced).
-
-5. **Auto-label by path** *(infrastructure, auto-safe)* — a `labeler`-style Action mapping touched paths to the category labels in `docs/RISK_LABELS.md` (e.g. `public/app.js` → `approval-path`, `services/coach.js` → `coach-behavior`). The primary risk label stays a builder decision.
-
-> Recommended order: (1) label sync first — it unblocks the rest — then (3) merge-card check, (5) auto-label, and finally the owner-decision items (2) and (4).
+> The Sync labels workflow seeds the repo labels; the other workflows assume they exist, so it runs first (on `main` after merge, and on any PR — including this one — that touches the manifest).

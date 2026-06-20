@@ -13,7 +13,7 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 | Label | Meaning | When applied |
 |---|---|---|
 | **`auto-safe`** | Automation can take this all the way to merge-ready with no owner involvement. | No owner check-in criterion is met; no P0/P1; tests + reviews green. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. |
-| **`owner-live-test`** | Merge-ready in automation, but the owner must drive the live app before merge. | Owner check-in criterion 1 (live app testing) — UI/interaction change, hold point, anything only confirmable on the real app/sheet. Requires a live test script in the merge card. |
+| **`owner-live-test`** | A live app test would be valuable. **Advisory, not a halt** — the owner initiates app tests; the builder flags this and keeps going. | Owner check-in criterion 1 (live app testing) — UI/interaction change, hold point, anything only confirmable on the real app/sheet. Requires a live test script in the merge card. Does not block the loop; the owner calls the hold. |
 | **`owner-decision`** | A product/trust/roadmap/model judgment only the owner can make. | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, model recommendation, or "cannot determine safety"). |
 | **`blocked`** | Not eligible to proceed — a required signal failed, errored, was skipped, or a contract violation is unresolved. | Any failed/errored/skipped required check or review (see `AUTOMATION_PROTOCOL.md` §2), or an open P0/P1 / contract violation. |
 
@@ -50,4 +50,6 @@ A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR
 
 ## Applying the labels to the repo
 
-The labels are defined in `.github/labels.yml`. Creating/syncing them on GitHub is a small follow-up automation step (a label-sync workflow) — see `docs/AUTOMATION_AUDIT.md` "Identified gaps / next automation PRs". Until that lands, labels are applied manually or by the builder when opening the PR, using the names above verbatim.
+The labels are defined in `.github/labels.yml` (human-readable manifest) and created/updated on GitHub automatically by the **Sync labels** workflow (`.github/workflows/labels.yml`), which mirrors that manifest. It runs on `main`, whenever the manifest or workflow changes, on any PR touching them, and on manual dispatch — so the label set always exists.
+
+Category labels are then applied automatically by path via the **Auto-label by path** workflow (`.github/workflows/labeler.yml` + `.github/labeler.yml`). The **primary** risk label stays a builder decision recorded on the merge card.

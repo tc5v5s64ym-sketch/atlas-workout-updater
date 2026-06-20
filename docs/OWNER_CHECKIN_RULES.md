@@ -10,7 +10,7 @@ Atlas runs automation-first. The owner (Dale) is an **exception handler**, not a
 
 Stop and check in with the owner — do not self-approve — when any of the following is true.
 
-1. **Live application testing is required.** Automation cannot exercise the running app against the production Google Sheet. Any change whose correctness can only be confirmed by the owner driving the live app (a hold point in `docs/ACTIVE_ROADMAP.md`, a UI/interaction change, anything that needs a real device or real sheet) requires an owner live test. Provide a live test script in the merge card.
+1. **Live application testing — owner-initiated, NOT an automatic stop.** The owner decides when an app test is warranted and says so; automation does not halt the build loop on its own waiting for one. When a change would benefit from live validation (a UI/interaction change, anything only confirmable on a real device or the real sheet, a roadmap hold point), the builder labels it `owner-live-test`, includes a **live test script** in the merge card, and **keeps going**. Roadmap hold points are advisory: the owner calls the hold. The loop continues until the owner explicitly says stop for an app test (or for another criterion below).
 
 2. **Write-path behavior changes.** Any change to how rows are written to `Log_Cleaned`, `Effort`, `Constraints`, or `Deload_State`; the `test_mode`/live-write decision; row enrichment/append; or the dry-run vs live-write proof fields (`sheet_written`, `no_write_confirmed`, `sheet_write`, `log_rows_written`). See the "Critical behaviours" table in `CLAUDE.md`.
 
@@ -46,9 +46,9 @@ For this work, automation builds, tests, reviews, classifies risk, generates the
 
 When a criterion above is met, the builder:
 
-1. Stops at the check-in boundary (does not proceed past it).
+1. For criteria **2–8**, stops at the check-in boundary (does not proceed past it). For criterion **1 (live app testing)**, does **not** halt — it flags `owner-live-test` and continues until the owner says stop.
 2. Sets **`owner action required: Yes`** on the merge card and names which criterion (1–8 above) triggered it.
-3. Provides the **live test script** in the merge card when criterion 1 applies.
+3. Provides the **live test script** in the merge card when criterion 1 applies, so the owner can run it whenever they choose to call an app-test hold.
 4. Applies the matching risk label (`owner-live-test`, `owner-decision`, or `blocked`) per `docs/RISK_LABELS.md`.
 5. Asks a single, self-contained question if a decision is needed — enough context that the owner can answer without scrolling back.
 

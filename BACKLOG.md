@@ -188,12 +188,17 @@ A category the backlog has not modelled. Atlas's source of truth is Google Sheet
 
 ## Automation framework follow-ups
 
-The automation-first contract shipped as documentation + templates + label manifest (`docs/AUTOMATION_PROTOCOL.md`, `docs/OWNER_CHECKIN_RULES.md`, `docs/RISK_LABELS.md`, `docs/AUTOMATION_AUDIT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/labels.yml`). These are the remaining automation PRs that turn the documented contract into machine enforcement. Each is one concern; build in order (label sync first — it unblocks the rest). Source: `docs/AUTOMATION_AUDIT.md` "Identified gaps / next automation PRs".
+The automation-first contract shipped as documentation + templates + label manifest + working GitHub Actions enforcement (`docs/AUTOMATION_PROTOCOL.md`, `docs/OWNER_CHECKIN_RULES.md`, `docs/RISK_LABELS.md`, `docs/AUTOMATION_AUDIT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/labels.yml`, and the workflows below). Source: `docs/AUTOMATION_AUDIT.md`.
 
-- **Label sync workflow** `[infrastructure]` `auto-safe` — a small Action (e.g. `crazy-max/ghaction-github-labeler` or a `gh label` script) that syncs `.github/labels.yml` to the repo so the risk labels actually exist on GitHub. **Highest-leverage next step.** Sonnet 4.6.
-- **Merge-card completeness check** `[infrastructure]` `auto-safe` — an Action that fails the PR if the merge-card template fields are left as placeholder comments / blank, enforcing `AUTOMATION_PROTOCOL.md` §2 ("empty field = failure"). Sonnet 4.6.
-- **Auto-label by path** `[infrastructure]` `auto-safe` — a `labeler`-style Action mapping touched paths to the category labels in `docs/RISK_LABELS.md` (`public/app.js` → `approval-path`, `services/coach.js` → `coach-behavior`, etc.). Primary risk label stays a builder decision. Sonnet 4.6.
-- **Branch-protection / required-checks as code** `[infrastructure]` `owner-decision` — encode the merge gate as GitHub branch-protection required status checks so "merge-ready" is machine-enforced, not convention. Owner decision (changes repo settings). Supersedes/absorbs the existing "Branch protection on `main`" housekeeping item above.
+Shipped in the framework PR (#422):
+
+- ✅ **Label sync workflow** `[infrastructure]` — `.github/workflows/labels.yml` upserts the risk labels onto the repo from the manifest (github-script; no external action).
+- ✅ **Merge-card completeness check** `[infrastructure]` — `.github/workflows/merge-card-check.yml` fails a PR whose body is missing the Atlas Merge Card or still contains template placeholders (`AUTOMATION_PROTOCOL.md` §2).
+- ✅ **Auto-label by path** `[infrastructure]` — `.github/workflows/labeler.yml` + `.github/labeler.yml` apply category labels from touched paths (`actions/labeler@v5`). Primary risk label stays a builder decision.
+
+Remaining (owner-decision — change repo settings; not built in #422):
+
+- **Branch-protection / required-checks as code** `[infrastructure]` `owner-decision` — encode the merge gate as GitHub branch-protection required status checks (incl. merge-card-check) so "merge-ready" is machine-enforced, not convention. Owner decision. Supersedes/absorbs the existing "Branch protection on `main`" housekeeping item above.
 - **CODEX Review as a check** `[infrastructure]` `owner-decision` — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today convention-enforced). Owner decision.
 
 ## Someday / future scope

@@ -9,7 +9,7 @@
   description: "Automation can take to merge-ready; no owner involvement needed."
 - name: owner-live-test
   color: "fbca04"   # yellow
-  description: "Merge-ready in automation; owner must drive the live app first."
+  description: "Live app test advised (advisory, not a halt); owner initiates it."
 - name: owner-decision
   color: "d93f0b"   # orange-red
   description: "Product/trust/roadmap/model judgment only the owner can make."
@@ -22,7 +22,7 @@
   color: "5319e7"   # purple
   description: "Touches the trust contract or an INVARIANTS rule."
 - name: write-path
-  color: "b60205"   # red
+  color: "e99695"   # light red (distinct from blocked's strong red)
   description: "Touches Sheet writes, test_mode/live-write, proof fields, append."
 - name: approval-path
   color: "d93f0b"   # orange-red

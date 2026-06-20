@@ -19,7 +19,8 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 - Runs tests and lint locally, classifies risk, and generates the **merge card** (the PR template).
 - Fixes its own failures and review-blocking findings, then re-runs tests and review.
 - Files discovered future work in `BACKLOG.md` in the same PR — never in memory or chat.
-- **Stops** only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`) or the PR is merge-ready.
+- **Holds full merge authority** (granted by the owner under this automation-first workflow): merges a PR once it is merge-ready (§4), without owner gating, and continues to the next approved task.
+- **Stops** only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`); otherwise keeps going until the owner says stop.
 
 ### Codex — Contract Guard
 
@@ -37,9 +38,10 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 ### Owner (Dale) — Exception Handler Only
 
 - Involved **only** when an owner check-in criterion in `docs/OWNER_CHECKIN_RULES.md` is met.
-- Owns: live application testing, trust-sensitive product decisions, roadmap/vision changes, model-recommendation changes, and unresolved review conflicts.
-- Is the **only** role that merges.
-- Is **not** required for routine, automation-safe work. If no check-in criterion is met and the PR is merge-ready, the owner is informed via the merge card, not blocked on.
+- Owns: trust-sensitive product decisions, roadmap/vision changes, model-recommendation changes, and unresolved review conflicts.
+- **Initiates live app testing** — app tests are owner-initiated, not an automatic stop. The builder flags `owner-live-test` and supplies a live test script, but keeps going; the owner calls the hold and says stop when they want to test. The loop runs until the owner says stop or an owner-decision criterion (2–8) is hit.
+- Has **granted the builder (Claude) full merge authority** under this automation-first workflow; automation merges merge-ready PRs. The owner can still merge directly and can revoke this at any time, but routine merges are automated, not owner-gated.
+- Is **not** required for routine, automation-safe work. If no check-in criterion is met and the PR is merge-ready, automation merges and continues; the owner is informed via the merge card, not blocked on.
 
 ---
 
@@ -79,7 +81,7 @@ A green merge card requires **positive evidence** that every required signal ran
 
 ## 4. Merge eligibility
 
-A PR is **merge-ready** only when ALL of the following hold. (The owner still performs the merge; "merge-ready" means automation has cleared it for that decision.)
+A PR is **merge-ready** only when ALL of the following hold. (The builder holds full merge authority and merges once these are satisfied; the owner can also merge directly.)
 
 1. All required GitHub checks **passed** (tests, lint, secret scan, E2E as applicable).
 2. All required reviews **passed** — Claude Code Review completed (real review, not errored/skipped) and CODEX Review returned `NON-BLOCKING` or `READY FOR OWNER MERGE`.
@@ -105,13 +107,14 @@ P0/P1 must be fixed in-scope before readiness. P2/P3 are filed in `BACKLOG.md` a
 
 ## 5. What automation must NOT decide alone
 
-Automation may build, test, review, classify, and mark a PR merge-ready. It must **stop and escalate to the owner** — never self-approve — for any check-in criterion in `docs/OWNER_CHECKIN_RULES.md`, including:
+Automation may build, test, review, classify, merge merge-ready PRs, and continue to the next task. It must **stop and escalate to the owner** — never self-approve the *decision* — for any owner-decision criterion (2–8) in `docs/OWNER_CHECKIN_RULES.md`:
 
-- live application testing,
 - write-path / approval-gate / coach / trust-contract behavior changes,
 - roadmap or vision changes,
 - model-recommendation changes,
 - and any case where automation cannot determine that a change is safe.
+
+Live application testing (criterion 1) is **owner-initiated** — automation flags `owner-live-test` and keeps going; it does not stop the loop on its own. The owner calls app-test holds and says stop.
 
 When automation **cannot determine safety**, that uncertainty is itself an owner check-in trigger — it is never resolved by guessing in the safe-looking direction.
 

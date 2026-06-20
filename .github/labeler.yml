@@ -1,0 +1,43 @@
+# Path -> category-label map for the auto-labeler (actions/labeler@v5).
+# These are the CATEGORY labels from docs/RISK_LABELS.md (what a PR touches).
+# The single PRIMARY risk label (auto-safe / owner-live-test / owner-decision /
+# blocked) stays a builder decision and is set on the merge card, not here.
+
+write-path:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'index.js'
+          - 'services/sheets.js'
+
+approval-path:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'public/app.js'
+
+coach-behavior:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'services/coach.js'
+          - 'services/vision.js'
+          - 'public/coach-conversation.js'
+          - 'public/chat.js'
+
+parser-behavior:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'services/workoutTextParser.js'
+
+trust-sensitive:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'index.js'
+          - 'public/app.js'
+          - 'services/sheets.js'
+          - 'docs/INVARIANTS.md'
+          - 'docs/CONSTITUTION.md'
+
+infrastructure:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/**'
+          - 'scripts/**'

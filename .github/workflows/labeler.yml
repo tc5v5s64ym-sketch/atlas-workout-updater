@@ -1,0 +1,26 @@
+name: Auto-label by path
+
+# Applies CATEGORY risk labels (docs/RISK_LABELS.md) based on which files a PR
+# touches, using .github/labeler.yml. The PRIMARY risk label stays a builder
+# decision on the merge card. Tolerant: a missing label (before the Sync labels
+# workflow has seeded the repo) must never block the PR.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    name: Apply category labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label by changed paths
+        continue-on-error: true
+        uses: actions/labeler@v5
+        with:
+          configuration-path: .github/labeler.yml
+          sync-labels: false

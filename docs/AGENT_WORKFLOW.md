@@ -110,7 +110,7 @@ For each unit of work, the builder:
 8. **Re-run review** — confirm Claude Code Review and CODEX Review pass after fixes.
 9. **Classify risk** — apply exactly one primary risk label + any category labels (`docs/RISK_LABELS.md`).
 10. **Generate the merge card** — fill the PR template completely (`.github/PULL_REQUEST_TEMPLATE.md`).
-11. **Stop only if an owner-involvement criterion is met** (`docs/OWNER_CHECKIN_RULES.md`): live app testing, write-path / approval-gate / coach / trust-contract change, roadmap/vision change, model-recommendation change, or "automation cannot determine safety." Otherwise the PR is marked merge-ready and the owner merges from the card without further blocking.
+11. **Keep going until the owner says stop, or an owner-decision criterion is met** (`docs/OWNER_CHECKIN_RULES.md` criteria 2–8: write-path / approval-gate / coach / trust-contract change, roadmap/vision change, model-recommendation change, or "automation cannot determine safety"). Live app testing (criterion 1) is **owner-initiated** — the builder flags `owner-live-test` and includes a live test script, but does **not** halt for it; the owner calls app-test holds explicitly. Otherwise the PR is marked merge-ready and proceeds; the next approved task is started without blocking on the owner.
 
 **Pass/fail principle (non-negotiable):** a review or check that was skipped, errored, was unavailable, timed out, or returned incomplete is a **failure, not a pass** (`docs/AUTOMATION_PROTOCOL.md` §2). The loop never treats a missing signal as green.
 
@@ -128,13 +128,17 @@ A PR is not ready for Dale to merge unless:
 
 ## Hold points
 
-At hold points, Claude Code must stop even if all PRs are green.
+Under the automation-first workflow, hold points are **owner-initiated**, not automatic. Claude Code does not halt the build loop for an app test on its own — it flags `owner-live-test` and includes a live test script in the merge card, then keeps going. The owner calls an app-test hold when they want one and says stop; until then, work continues.
+
+When the owner does call a hold:
 
 Dale app-tests.
 
 ChatGPT interprets app-test results with Dale.
 
-Only Dale can approve continuing to the next phase.
+Only Dale resumes the held phase.
+
+(Owner-decision criteria 2–8 in `docs/OWNER_CHECKIN_RULES.md` still stop the loop automatically — only the live-app-test stop is owner-initiated.)
 
 ## Compact Atlas Prompt Mode
 
