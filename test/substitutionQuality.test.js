@@ -150,6 +150,45 @@ describe('scoreSubstitutionQuality — poor tier', () => {
   });
 });
 
+// ─── isolation → isolation muscle overlap (PR 342 deferred fix) ───────────────
+
+describe('scoreSubstitutionQuality — isolation muscle overlap', () => {
+  it('same pattern isolation, OPPOSITE muscle: Leg Curl → Leg Extension = poor', () => {
+    // Both knee_isolation / LOW, but Leg Curl=hamstrings vs Leg Extension=quads.
+    // Same pattern is not enough — this trains a different muscle.
+    const r = scoreSubstitutionQuality('Leg Curl', 'Leg Extension');
+    assert.strictEqual(r.quality, 'poor');
+    assert.strictEqual(r.reason, 'isolation_different_muscle');
+  });
+
+  it('reverse direction is also poor: Leg Extension → Leg Curl', () => {
+    const r = scoreSubstitutionQuality('Leg Extension', 'Leg Curl');
+    assert.strictEqual(r.quality, 'poor');
+    assert.strictEqual(r.reason, 'isolation_different_muscle');
+  });
+
+  it('same pattern isolation, SAME muscle stays excellent: Leg Extension → Leg Extension', () => {
+    const r = scoreSubstitutionQuality('Leg Extension', 'Leg Extension');
+    assert.strictEqual(r.quality, 'excellent');
+    assert.strictEqual(r.reason, 'same_pattern_same_muscle');
+  });
+
+  it('conservative fall-through when muscle data is missing for one side', () => {
+    // Tricep Pushdown has no primary muscle mapped yet — can't assess overlap,
+    // so the pair keeps the same-pattern/same-cost grade rather than a guessed
+    // downgrade. (Muscle-data gap is tracked separately in BACKLOG.)
+    const r = scoreSubstitutionQuality('Bicep Curl', 'Tricep Pushdown');
+    assert.strictEqual(r.quality, 'excellent');
+    assert.strictEqual(r.reason, 'same_pattern_same_cost');
+  });
+
+  it('compound → compound is unaffected by the isolation rule: Deadlift → RDL', () => {
+    const r = scoreSubstitutionQuality('Deadlift', 'Romanian Deadlift');
+    assert.strictEqual(r.quality, 'excellent');
+    assert.strictEqual(r.reason, 'same_pattern_same_cost');
+  });
+});
+
 // ─── unknown tier ─────────────────────────────────────────────────────────────
 
 describe('scoreSubstitutionQuality — unknown tier', () => {
