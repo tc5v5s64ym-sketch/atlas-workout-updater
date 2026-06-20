@@ -533,7 +533,7 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   // The declaration is cleared when the session ends.
   const endFn = appSource.slice(
     appSource.indexOf('function endPlannedSession()'),
-    appSource.indexOf('function endPlannedSession()') + 160
+    appSource.indexOf('function endPlannedSession()') + 900
   );
   assert.match(endFn, /pendingSubstitution = null/, 'ending the session must clear any pending swap');
 
@@ -3851,6 +3851,52 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
   assert.match(nav, /atlas:placeholder-owned/, 'nav.js must listen for the placeholder-owned event');
   const ownedListener = nav.slice(nav.indexOf("'atlas:placeholder-owned'"), nav.indexOf("'atlas:placeholder-owned'") + 80);
   assert.match(ownedListener, /sessionActive\s*=\s*true/, 'the placeholder-owned listener must stop the rotation');
+});
+
+// ── Step 385: frontend deload lifecycle wiring ─────────────────────────────────
+
+test('Step 385: startPlannedSession fires deload/begin only on deload_reset intent', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // Find startPlannedSession body — look far enough to capture the deload/begin block.
+  const fnStart = app.indexOf('function startPlannedSession(');
+  assert.ok(fnStart !== -1, 'startPlannedSession must exist');
+  const fnBody = app.slice(fnStart, fnStart + 1800);
+
+  // begin fires only when the intent is deload_reset.
+  assert.match(fnBody, /intent\.id\s*===\s*['"]deload_reset['"]/, 'begin must be guarded by intent.id === deload_reset');
+  assert.match(fnBody, /\/api\/deload\/begin/, 'startPlannedSession must call /api/deload/begin for deload sessions');
+  // Fire-and-forget — a lifecycle failure must never block the session UI.
+  assert.match(fnBody, /\.catch\(/, 'begin call must swallow errors (fire-and-forget)');
+});
+
+test('Step 385: approve handler marks deload session written; advance fires once per session in endPlannedSession', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // ── Approve handler: sets the flag, does NOT call advance directly ──────────
+  const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
+  assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
+  const handlerBody = app.slice(approveStart, approveStart + 6000);
+
+  // advance must NOT appear anywhere in the approve handler — it belongs in endPlannedSession.
+  assert.doesNotMatch(handlerBody, /\/api\/deload\/advance/, 'advance must NOT be called inside the approve handler (it fires once per session in endPlannedSession)');
+
+  // The approve handler sets deloadWritten on the session object after a confirmed live write.
+  assert.match(handlerBody, /deloadWritten\s*=\s*true/, 'approve handler must set deloadWritten flag after confirmed write');
+  // The flag is gated on deload_reset intent and not a duplicate-blocked replay.
+  assert.match(handlerBody, /intentId\s*===\s*['"]deload_reset['"]/, 'deloadWritten flag must be guarded by intentId === deload_reset');
+  assert.match(handlerBody, /!duplicateBlocked/, 'deloadWritten flag must not set for duplicate-blocked replays');
+
+  // ── endPlannedSession: advance fires here, exactly once per session ─────────
+  const endFnStart = app.indexOf('function endPlannedSession(');
+  assert.ok(endFnStart !== -1, 'endPlannedSession must exist');
+  const endFnBody = app.slice(endFnStart, endFnStart + 700);
+
+  assert.match(endFnBody, /\/api\/deload\/advance/, 'advance must be called in endPlannedSession');
+  assert.match(endFnBody, /deloadWritten/, 'endPlannedSession must check deloadWritten before advancing');
+  // Auto-resolve when sessions are exhausted.
+  assert.match(endFnBody, /POST_DELOAD_EVALUATION/, 'endPlannedSession must auto-resolve when advance returns POST_DELOAD_EVALUATION');
+  assert.match(endFnBody, /\/api\/deload\/resolve/, 'endPlannedSession must call resolve after the final deload session');
 });
 
 test('shell: styles define dark mode and the new component tokens', () => {
