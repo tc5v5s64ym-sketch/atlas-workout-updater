@@ -52,6 +52,7 @@ Working enforcement (GitHub Actions, infrastructure only — no app behavior cha
 - `.github/workflows/labels.yml` — **Sync labels**: upserts the risk labels onto the repo from the manifest (github-script; no external action). Runs on `main`, on label/workflow change, on touching-PRs, and `workflow_dispatch`.
 - `.github/workflows/labeler.yml` + `.github/labeler.yml` — **Auto-label by path**: applies category labels from touched paths (`actions/labeler@v5`, tolerant of not-yet-seeded labels).
 - `.github/workflows/merge-card-check.yml` — **Merge card check**: fails a PR whose body is missing the Atlas Merge Card or still contains template placeholders, enforcing `AUTOMATION_PROTOCOL.md` §2.
+- `.github/workflows/codex-decision-desk.yml` — **Codex Decision Desk**: when Claude posts a Codex Decision Request, answers every question so the owner is not asked (`docs/DECISION_ROUTING.md`). Reuses the existing `CLAUDE_CODE_OAUTH_TOKEN` subscription — **no new paid API** — with the agent in the Codex contract-guard role; a skipped/errored desk fails the job (not an implicit yes).
 
 No production application behavior, model, prompt, write path, or Sheet schema changed.
 
