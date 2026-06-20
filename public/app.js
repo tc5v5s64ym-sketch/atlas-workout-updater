@@ -1202,6 +1202,11 @@ function startPlannedSession(intent) {
     exercises,
     index: 0
   };
+  // Hide the home-screen hero so the active-session banner and coach panel
+  // are the only things visible. hideHomeEmpty() in coach-conversation.js does
+  // the same two ops but is private to that IIFE.
+  document.getElementById('coach-empty')?.setAttribute('hidden', '');
+  document.getElementById('suggested-tiles')?.setAttribute('hidden', '');
   renderActiveSessionBanner();
   const first = exercises[0];
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
