@@ -523,6 +523,70 @@ test('api smoke: coach/chat returns Gemini prose when configured', async () => {
   }
 });
 
+test('api smoke: coach/chat computes extra_work from the live plan vs preview', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'did I do extra today?',
+        context: {
+          current_plan: [{ name: 'Bench Press', sets: 3 }],
+          // 5 logged Bench sets (2 over the prescribed 3) + an unplanned Bicep Curl.
+          current_preview: [
+            { exercise: 'Bench Press' }, { exercise: 'Bench Press' }, { exercise: 'Bench Press' },
+            { exercise: 'Bench Press' }, { exercise: 'Bench Press' }, { exercise: 'Bicep Curl' },
+          ],
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const xw = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.extra_work;
+    assert.ok(xw && xw.has_extra === true, 'extra_work must be computed and present');
+    const bench = xw.extra_sets.find(s => s.exercise === 'Bench Press');
+    assert.ok(bench && bench.extra === 2, 'engine must report 2 extra bench sets (5 logged vs 3 prescribed)');
+    assert.ok(xw.extra_exercises.some(e => e.exercise === 'Bicep Curl'), 'unplanned Bicep Curl must surface as extra');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/chat reports no extra_work with no plan (nothing to exceed)', async () => {
+  // The route passes the raw buildChatContext output to the coach; sanitizeChatContext
+  // (which turns has_extra:false → null) runs inside the real coach. So here we assert
+  // the gate's no-extra shape — that with NO plan, freestyle-logged lifts are never
+  // flagged as extra. The has_extra:false → null sanitization is pinned in coach.test.js.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'did I do extra today?',
+        context: {
+          // No active plan — freestyle logging. With no prescription there is
+          // nothing to exceed, so logged lifts must NOT be reported as extra.
+          current_plan: [],
+          current_preview: [
+            { exercise: 'Bench Press' }, { exercise: 'Bench Press' }, { exercise: 'Bicep Curl' },
+          ],
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+    const xw = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.extra_work;
+    assert.ok(xw, 'extra_work shape is present on the context');
+    assert.equal(xw.has_extra, false, 'no plan → nothing exceeded → has_extra false (→ null after sanitization)');
+    assert.deepEqual(xw.extra_exercises, [], 'freestyle-logged lifts must NOT be flagged as unplanned extra');
+    assert.deepEqual(xw.extra_sets, [], 'no plan → no extra-set comparison');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 test('api smoke: coach/chat degrades to null when the coach throws — never an error bubble', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.throwError = 'gemini exploded';

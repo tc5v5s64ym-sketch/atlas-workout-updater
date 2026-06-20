@@ -47,6 +47,7 @@ const { assessLayoff } = require('./services/layoffGuard');
 const { isConstraintMessage } = require('./services/constraintDetector');
 const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { scoreSubstitutionQuality } = require('./services/substitutionQuality');
+const { detectExtraWork } = require('./services/extraWorkDetector');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
@@ -1133,6 +1134,31 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
   // (Step 377) decides "is there an authoritative session state?" identically.
   const plan_state = planStateFromContext(cc);
 
+  // Unprogrammed / extra-work signal for the LIVE session: prescribed = today's
+  // plan (current_plan.sets = target sets), logged = the live preview grouped to
+  // per-exercise set counts. Both are "now", so no stale-session mismatch. The
+  // engine (detectExtraWork) decides; missing target_sets are never guessed.
+  const previewRows = Array.isArray(cc.current_preview) ? cc.current_preview : [];
+  const loggedCounts = new Map();
+  for (const r of previewRows) {
+    const name = r && (r.exercise || r.canonical_exercise || r.name);
+    const clean = name ? String(name).trim() : '';
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    loggedCounts.set(key, { exercise: clean, sets: (loggedCounts.get(key)?.sets || 0) + 1 });
+  }
+  const prescribedForExtra = (Array.isArray(cc.current_plan) ? cc.current_plan : [])
+    .map(e => (e && typeof e === 'object'
+      ? { exercise: String(e.name || e.exercise || '').trim(), target_sets: typeof e.sets === 'number' ? e.sets : undefined }
+      : { exercise: String(e || '').trim() }))
+    .filter(e => e.exercise);
+  // Gate on a real prescribed plan: with no plan there is nothing to exceed, so
+  // detectExtraWork([], logged) would wrongly flag every logged lift as an
+  // "extra_exercise". No plan → no-extra shape (sanitizeChatContext → null).
+  const extra_work = prescribedForExtra.length > 0
+    ? detectExtraWork(prescribedForExtra, [...loggedCounts.values()])
+    : { extra_sets: [], extra_exercises: [], has_extra: false };
+
   return {
     recommended_label: read.recommended_label || null,
     recommended_focus: read.recommended_reason || null,
@@ -1147,6 +1173,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     plan_state,
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
+    extra_work,
     session_count: sessions.length,
     coaching_notes: Array.isArray(coachingNotes) ? coachingNotes.slice(0, 10) : [],
     constraints: Array.isArray(constraints) ? constraints.slice(0, 12) : []
