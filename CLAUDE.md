@@ -209,19 +209,10 @@ Architecture reviews, audits, roadmap planning, and owner-requested analysis may
 
 ---
 
-## Model Recommendation Gate
+## Model: Opus 4.8, always — no model check-in
 
-Before implementing any PR, the pre-coding report must include:
+By owner standing instruction, the builder runs on **Opus 4.8 for all work**. There is no model-selection decision and **no owner stop for model**: the merge card records `Opus 4.8` and proceeds. Do not escalate model choice to the owner or to Codex.
 
-- **Recommended model** — Sonnet 4.6 or Opus 4.8
-- **One-line reason**
-- **Risk level** — low / medium / high
+(The merge card's "Risk level" field is still filled. The old Sonnet-vs-Opus recommendation gate is retired — Opus is the default for everything.)
 
-| Model | Use when |
-|---|---|
-| Sonnet 4.6 | Mechanical, docs-only, pure-data, low-risk refactor, isolated tests, no behavior change |
-| Opus 4.8 | Behavior-changing, correctness-sensitive, trust-path, parser / session-state / write-path / recommendation logic, or anything that could silently corrupt workout data |
-
-**The model recommendation is required on every PR's merge card.** Stop for owner confirmation of the model only when the work meets an owner check-in criterion (`docs/OWNER_CHECKIN_RULES.md`) — in particular a model-recommendation change, or trust / write-path / approval-gate / coach / roadmap-sensitive work. For automation-safe work (no check-in criterion met), report the recommendation on the merge card and proceed.
-
-This is a workflow gate only. Do not change any app model, LLM behavior, API model, prompt model, or runtime model.
+This concerns the *builder's* model only. It does **not** change any app model, LLM behavior, API model, prompt model, or runtime model — `services/vision.js` / `services/coach.js` provider and model selection are unchanged and remain owner-gated.

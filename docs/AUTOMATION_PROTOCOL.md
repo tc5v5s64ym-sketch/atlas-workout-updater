@@ -15,7 +15,7 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 ### Claude — Builder
 
 - Implements one approved concern per PR (see `docs/ACTIVE_ROADMAP.md` / `BACKLOG.md`).
-- Runs the **Current-State Verification Gate** and the **Model Recommendation Gate** before editing (`docs/AGENT_WORKFLOW.md`).
+- Runs the **Current-State Verification Gate** before editing (`docs/AGENT_WORKFLOW.md`); builds on **Opus 4.8** (no model gate).
 - Runs tests and lint locally, classifies risk, and generates the **merge card** (the PR template).
 - Fixes its own failures and review-blocking findings, then re-runs tests and review.
 - Files discovered future work in `BACKLOG.md` in the same PR — never in memory or chat.
@@ -27,7 +27,7 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 
 - Performs **CODEX Review** after a PR is opened: roadmap fit, scope creep, Atlas trust contract, live-path test coverage, write-path/schema safety, accidental future-PR work, and whether the original failure is actually fixed.
 - Returns exactly one verdict: `BLOCKING`, `NON-BLOCKING`, or `READY FOR OWNER MERGE`.
-- **Answers Claude's decision panels** (the Codex Decision Desk, `docs/DECISION_ROUTING.md`): when Claude posts a Codex Decision Request, Codex answers every question grounded in roadmap fit / scope / trust contract, so the owner is not asked. It escalates only the reserved items (`docs/OWNER_CHECKIN_RULES.md` — Vision/Dream/Constitution, model-recommendation, INVARIANT amendments, or anything it genuinely cannot resolve).
+- **Answers Claude's decision panels** (the Codex Decision Desk, `docs/DECISION_ROUTING.md`): when Claude posts a Codex Decision Request, Codex answers every question grounded in roadmap fit / scope / trust contract, so the owner is not asked. It escalates only the reserved items (`docs/OWNER_CHECKIN_RULES.md` — Vision/Dream/Constitution, app/runtime-model changes, INVARIANT amendments, or anything it genuinely cannot resolve).
 - Routes future-scope findings to `BACKLOG.md` / an issue — never asks the builder to expand the current PR.
 - Does not merge. Does not start adjacent roadmap work.
 
@@ -41,7 +41,7 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 ### Owner (Dale) — Exception Handler Only
 
 - Involved **only** when **Codex escalates** a reserved decision (`docs/DECISION_ROUTING.md`, `docs/OWNER_CHECKIN_RULES.md`) or the owner interjects. Claude's decision panels go to Codex, not the owner.
-- Owns: trust-sensitive product decisions, roadmap/vision changes, model-recommendation changes, and unresolved review conflicts.
+- Owns: trust-sensitive product decisions, roadmap/vision changes, app/runtime model changes, and unresolved review conflicts. (The *builder's* model is fixed at Opus 4.8 — not an owner decision.)
 - **Initiates live app testing** — app tests are owner-initiated, not an automatic stop. The builder flags `owner-live-test` and supplies a live test script, but keeps going; the owner calls the hold and says stop when they want to test. The loop runs until the owner says stop or an owner-decision criterion (2–8) is hit.
 - Has **granted the builder (Claude) full merge authority** under this automation-first workflow; automation merges merge-ready PRs. The owner can still merge directly and can revoke this at any time, but routine merges are automated, not owner-gated.
 - Is **not** required for routine, automation-safe work. If no check-in criterion is met and the PR is merge-ready, automation merges and continues; the owner is informed via the merge card, not blocked on.
@@ -114,7 +114,7 @@ Automation may build, test, review, classify, merge merge-ready PRs, and continu
 
 - write-path / approval-gate / coach / trust-contract behavior changes,
 - roadmap or vision changes,
-- model-recommendation changes,
+- app / runtime / prompt / API model changes (the *builder's* model is fixed at Opus 4.8 — not a stop),
 - and any case where automation cannot determine that a change is safe.
 
 Live application testing (criterion 1) is **owner-initiated** — automation flags `owner-live-test` and keeps going; it does not stop the loop on its own. The owner calls app-test holds and says stop.

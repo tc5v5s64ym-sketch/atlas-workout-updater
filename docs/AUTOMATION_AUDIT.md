@@ -24,7 +24,7 @@ This audit was taken while establishing the automation framework. It reuses exis
 
 ### Process docs already in place
 
-- `docs/AGENT_WORKFLOW.md` — build loop, CODEX action rules, Current-State Verification Gate, Model Recommendation Gate, merge gate.
+- `docs/AGENT_WORKFLOW.md` — build loop, CODEX action rules, Current-State Verification Gate, merge gate.
 - `CLAUDE.md` / `CODEX.md` — operating briefs and absolute safety rules.
 - `docs/INVARIANTS.md`, `docs/CONSTITUTION.md`, `docs/GOVERNANCE.md` — the laws and layering.
 

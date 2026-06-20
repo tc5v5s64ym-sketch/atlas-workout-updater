@@ -36,9 +36,9 @@ violation · risk classification done · this card complete.
 
 <!-- STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST -->
 
-### Model recommendation
+### Model
 
-<!-- Sonnet 4.6 or Opus 4.8 · one-line reason · risk: low/medium/high -->
+Opus 4.8 (builder runs on Opus for all work — owner standing instruction). Risk level: see merge card.
 
 ### Trust / scope safety
 

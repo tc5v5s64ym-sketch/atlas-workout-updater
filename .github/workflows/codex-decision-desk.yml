@@ -77,12 +77,13 @@ jobs:
             numbered question, pick exactly one option and give a one-line reason.
 
             Escalation: mark a question `Escalate-to-owner` ONLY if it genuinely
-            requires an owner product/trust/vision/model decision per
+            requires an owner product/trust/vision decision per
             docs/OWNER_CHECKIN_RULES.md (Dream/Vision/Constitution change, a real
             production-data-write authorization, secret/GOOGLE_SHEETS_ID/Render
-            change, or model-recommendation change). Everything else you decide
-            yourself — do not punt routine scope/approach/roadmap-fit calls to the
-            owner.
+            change, or an app/runtime/prompt/API model change). The builder's
+            model is fixed at Opus 4.8 — never escalate that. Everything else you
+            decide yourself — do not punt routine scope/approach/roadmap-fit calls
+            to the owner.
 
             Post exactly ONE comment, in this format, and nothing else:
 
