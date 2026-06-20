@@ -178,6 +178,48 @@ Before editing files, report:
 
 Then STOP and wait for owner confirmation before editing. After owner confirms, create one PR and stop for review.
 
+## Current-State Verification Gate
+
+Before implementing any roadmap, backlog, or GitHub issue fix, the agent must first verify whether the reported failure still exists in the current repo.
+
+The pre-coding report must include:
+
+1. Source being worked:
+   - Roadmap step, `BACKLOG.md` item, or GitHub issue number.
+2. Duplicate/stale search:
+   - Search `BACKLOG.md`.
+   - Search `docs/ACTIVE_ROADMAP.md`.
+   - Search open and recently merged PRs.
+   - Search open/closed GitHub issues when relevant.
+   - Search current code for the named functions/files/behaviors.
+3. Current-state verdict:
+   Use exactly one of:
+   - `STILL BROKEN` -- implement fix
+   - `ALREADY FIXED` -- no code change
+   - `PARTIALLY FIXED` -- narrow remaining gap
+   - `FIXED BUT UNTESTED` -- add/adjust regression test only
+   - `STALE / SUPERSEDED` -- update docs or close issue
+   - `NEEDS OWNER APP-TEST` -- stop and ask
+4. Evidence:
+   - Cite the current file/function/test/PR/issue evidence.
+   - If possible, identify the exact current failure path.
+   - If already fixed, identify where it was fixed.
+5. Allowed next action:
+   - If `STILL BROKEN`, proceed to the normal model recommendation gate.
+   - If `PARTIALLY FIXED`, scope only the remaining gap.
+   - If `FIXED BUT UNTESTED`, do not refactor; add the smallest regression test.
+   - If `ALREADY FIXED` or `STALE / SUPERSEDED`, do not edit code; update `BACKLOG.md`/issue/roadmap status only.
+   - If `NEEDS OWNER APP-TEST`, stop.
+
+Hard rule: A Claude/Codex agent must not begin implementation simply because a backlog item or issue exists. Existence of a task is not proof the bug still exists.
+
+If a stale item is discovered, the same PR should either:
+
+- update `BACKLOG.md` / `docs/ACTIVE_ROADMAP.md` to mark it resolved, deferred, or superseded, or
+- add a GitHub issue comment explaining the current-state verdict.
+
+The normal model recommendation gate remains after this verification gate.
+
 ## Non-negotiables
 
 - `BACKLOG.md` is the source of truth.
