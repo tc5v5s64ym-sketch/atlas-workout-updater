@@ -1044,16 +1044,27 @@ app.post('/api/coach/message', async (req, res) => {
   // a "volume pulled back" claim can only come from the engine, never the client.
   // Always overwrite facts.layoff (engine value or null) so a client cannot inject
   // one; on a read failure it stays null and the coach simply won't mention it.
+  // volume_reduced must reflect the *recommended* session the client narrates —
+  // scoreIntents only caps the training intents (build_strength / build_muscle /
+  // fix_blind_spots / balanced), so it is true only when the recommended intent
+  // actually carries the returning_from_layoff cut.
   if (kind === 'plan') {
     let layoffFact = null;
     try {
-      const allLog = await getSheetRows(logSheetName);
+      const [allLog, allEffort] = await Promise.all([
+        getSheetRows(logSheetName),
+        getSheetRows(effortSheetName),
+      ]);
       const layoff = assessLayoff(allLog);
       if (layoff.returning_from_layoff) {
+        const rec = scoreIntents(allLog, allEffort, { goal: getProfileGoal() });
+        const top = rec.intents.find(i => i.recommended);
+        const volume_reduced = !!(top && Array.isArray(top.reason_codes) &&
+          top.reason_codes.includes('returning_from_layoff'));
         layoffFact = {
           severity: layoff.severity,
           days_since_last_session: layoff.days_since_last_session,
-          volume_reduced: true,
+          volume_reduced,
         };
       }
     } catch (_) {

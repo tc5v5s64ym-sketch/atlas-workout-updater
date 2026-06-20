@@ -499,6 +499,26 @@ test('scoreIntents layoff: training intents cap make-up volume + flag after a la
   }
 });
 
+test('scoreIntents layoff: non-training intents do NOT carry the layoff cut (gates coach volume_reduced)', () => {
+  // Same 21-day-layoff fixture. The coach plan route derives volume_reduced from
+  // whether the RECOMMENDED intent's reason_codes include returning_from_layoff —
+  // so the cut must be present ONLY on the four training intents, never on
+  // recovery_pump / short_session / test_progress / deload_reset (which the engine
+  // intentionally skips). This is what stops the coach over-claiming "I pulled
+  // volume back" on a recovery plan.
+  const rows = [
+    ...makeRows('Bench Press', 'chest', 'BPR01', [165, 170, 175, 180, 185], '2026-03-15'),
+    ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-15'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03' });
+  for (const id of ['recovery_pump', 'short_session', 'test_progress', 'deload_reset']) {
+    const intent = result.intents.find(i => i.id === id);
+    if (!intent) continue; // not all intents are always present
+    assert.ok(!(intent.reason_codes || []).includes('returning_from_layoff'),
+      `${id} must NOT carry returning_from_layoff (engine does not cut its volume)`);
+  }
+});
+
 test('scoreIntents layoff: normal cadence does NOT trigger the layoff cap', () => {
   // Last session 2026-04-12; today 2026-04-15 → 3-day gap → no layoff.
   const rows = [
