@@ -402,6 +402,53 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 ---
 
+## Active queue — Onboarding + working-weight discovery (Steps 386–387, promoted 2026-06-20)
+
+Promoted from `BACKLOG.md` by owner decision (2026-06-20) after approval of Owner
+Review Pack #2 ([`docs/ONBOARDING_WORKING_WEIGHT_SPEC.md`](./ONBOARDING_WORKING_WEIGHT_SPEC.md)).
+Owner scope: **promote PR-O1 and PR-O2, build PR-O1, then hold before PR-O2 for
+review.** Deterministic-engine-first; the voice gate (PR-O3) and UX (PR-O4) remain in
+`BACKLOG.md`, unpromoted, until PR-O1/O2 land and the owner promotes them. All numbers
+trace to existing engine facts; nothing here changes write-path, schema, the trust
+loop, or any LLM/prompt.
+
+### Roadmap Step 386 — PR-O1: onboarding state engine
+
+**Status:** in progress (this PR).
+
+**Type:** Correctness (engine, pure). **Risk level:** Low. **Recommended model:** Opus 4.8.
+
+**Scope:** `services/onboardingState.js` — a pure, deterministic module that derives a
+per-lift `calibration_status` (`calibrating` | `graduated`) from the EXISTING
+`lift_confidence` ladder (`services/exerciseBenchmark.js`: `none`/`low` → calibrating,
+`medium`/`high` → graduated). Re-encodes no threshold — consumes the ladder's label.
+**Per-lift only**, never majority-gated (owner call 4). No I/O, no LLM, no write-path,
+no schema, no route, no `index.js`/`public/app.js` edit.
+
+**Acceptance criteria:**
+- `calibration_status` is `graduated` exactly when `lift_confidence ∈ {medium, high}`
+  (the existing `medium` = ≥3-logged-sessions boundary), else `calibrating`.
+- Status is reported per lift; a calibrated squat and an unknown deadlift stay
+  distinguishable (no single session-level "still learning" flag).
+- Unknown/missing confidence maps to `calibrating` (safe direction).
+- Golden tests pin the spec's F4/F5 grounding (ladder-driven status; confidence_factors
+  shape). No write-path or schema change.
+
+### Roadmap Step 387 — PR-O2: onboarding session-template builder
+
+**Status:** queued — **HOLD for owner review** (do not start until owner releases the
+hold after PR-O1).
+
+**Type:** Correctness (engine, pure). **Risk level:** Low–Medium. **Recommended model:** Opus 4.8.
+
+**Scope (planned):** emit the spec §3 full-body calibration plan (3 sessions, 8 reps @
+2 RIR across squat/push/pull/hinge) from available equipment + optional user reference,
+reusing `buildWorkingWeightProtocol` (start hint / "Start conservative") and
+`buildWarmupRamp` (50/70/85%, only once a working weight exists). Fixtures F1–F3, F7.
+No write-path, schema, or LLM change.
+
+---
+
 ## Future / backlog items - not active execution
 
 Do not start these from this roadmap refill unless the owner explicitly promotes them:
