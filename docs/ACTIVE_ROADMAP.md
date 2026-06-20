@@ -370,11 +370,15 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 ### P0 — Active Session Context Integrity
 
-**Status:** diagnosed (root cause confirmed); **implementation held for owner review.**
+**Status:** ✅ **shipped (GitHub PR #442, owner-approved/merged).** Routing fix only.
 
 **Root cause (confirmed):** chat is routed **SME-first**. `public/coach-conversation.js::getChatReply` calls `POST /api/coach/ask` (the deterministic training-knowledge SME, which has *no* session context) before the session-aware coach `POST /api/coach/chat`, and short-circuits on any non-`log_only` card answer. Session questions whose wording collides with an SME card's match terms (`RIR` → `rir_rpe`; `how many reps` → `rep_ranges`; `how many sets` → `training_volume`) are intercepted and answered with generic education, never reaching the coach that knows the prescription. Secondary contributor: the coach prompt permits generic education and lacks an explicit "answer current-exercise prescription from session state first" rule.
 
-**Proposed fix plan (for review, not yet built):** gate the SME behind active-session context — when a session/plan/preview is active and the message is session-shaped, route to `/api/coach/chat` first and fall back to the SME only when the coach declines; reinforce `buildChatSystemPrompt` with an explicit prescription rule. Read-only coach path; engine owns numbers; no write-path/schema/trust-loop change.
+**What shipped (PR #442):** new `public/sessionQuestion.js` (UMD pure `isSessionStateQuestion`) flags live workout-state questions and returns false for explicit education; `getChatReply` skips the SME and routes to `/api/coach/chat` first **only** when an active workout exists (`current_plan`/`current_preview`/`plan_completed` in the chat context) AND the message is session-shaped. Education and ambiguous messages keep SME-first routing. Read-only; no LLM/prompt, write-path, schema, trust-loop, or parser change. Tests: `test/sessionQuestion.test.js` + SW cache-guard update; full suite green.
+
+**Deferred (documented complementary item, not built — per owner "no broad AI prompt changes"):** the `buildChatSystemPrompt` "answer current-exercise prescription from session state first" rule. Filed in `BACKLOG.md`. The LLM answer currently relies on the `current_plan`/`current_preview` context the session coach already receives.
+
+**Non-blocking note from review (for the owner live spot-check):** a few classifier patterns are broad (`/\binstead\b/`, `/\bhow much\b/`); during an active workout an education-flavored question containing those tokens routes to the (read-only, grounded) session coach. Safe; could tighten later if it misroutes real education questions.
 
 **Success criteria:** active-workout questions always use session context first; prescription requests never route into generic education; "what next" always references current workout state; session state has higher priority than general chat intent.
 
