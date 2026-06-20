@@ -1259,12 +1259,17 @@ app.post('/api/coach/chat', async (req, res) => {
       .filter(c => c.kind && c.target && c.rule);
     const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints);
     const { reply, propose_edit, propose_note, propose_constraint } = await coach.generateChatReply({ message, context, history });
-    if (reply && String(reply).trim()) {
+    const hasReply = Boolean(reply && String(reply).trim());
+    // Return the Gemini result when it has usable prose OR carries a structured
+    // proposal (edit/note/constraint) — a proposal must never be dropped just
+    // because the prose came back empty. Only a truly empty result (no prose, no
+    // proposal) falls through to the deterministic engine fallback below.
+    if (hasReply || propose_edit || propose_note || propose_constraint) {
       return standardSuccess(req, res, 'Coach chat reply', {
-        message: reply, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
+        message: hasReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
       });
     }
-    // Empty reply → fall through to the deterministic fallback below.
+    // Empty reply and no proposal → fall through to the deterministic fallback below.
   } catch (error) {
     // Degrade gracefully — never an error bubble. Fall through to the deterministic
     // fallback. allLog may be populated (throw came from Gemini after the read) or
