@@ -337,6 +337,27 @@ unlogged set. Onboarding must not relax AC8.
 
 ---
 
+## Owner-approved decisions (2026-06-20)
+
+The owner approved this pack **as-is** with these calls (locked — do not re-litigate
+in a build PR; changing them is an owner decision):
+
+1. **Full-body × 3 sessions** is the approved default cold-user onboarding shape.
+2. **Graduation is per-lift at `medium` (3 logged sessions), copy-only.** Atlas must
+   **not** imply the user is fully dialed in at graduation.
+3. **The three example conversations** (beginner / intermediate / advanced, §4) are
+   approved as the voice reference.
+4. **Per-lift calibration state only — never majority-gated.** If squat is calibrated
+   and deadlift is unknown, Atlas must say that clearly rather than averaging them
+   into one session-level "we're still learning."
+5. **A user-stated number seeds the start hint but never raises confidence.**
+   Confidence comes only from logged sessions (the `exerciseBenchmark` ladder).
+
+Routing: the approved implementation sequence (PR-O1 → PR-O4, intake/goals deferred)
+is recorded in `BACKLOG.md` under "New-user onboarding + working-weight discovery
+(B8)". Not promoted to `docs/ACTIVE_ROADMAP.md` — no roadmap reorder. Build only when
+the owner promotes it.
+
 ## What needs owner approval
 
 1. **Calibration = full-body × 3 sessions** (vs a split) as the default onboarding
