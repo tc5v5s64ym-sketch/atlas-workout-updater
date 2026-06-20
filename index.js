@@ -290,13 +290,14 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
     weight: row.weight,
     reps: row.reps,
     rir: row.rir,
-    notes: ensureNotes(row.notes),
-    volume_calc: row.volume_calc ?? row.volumeCalc ?? row.volume
+    notes: ensureNotes(row.notes)
   };
 
-  if (result.volume_calc === undefined || result.volume_calc === null || result.volume_calc === '') {
-    result.volume_calc = calculateVolumeCalc(result.weight, result.reps);
-  }
+  // volume_calc (column 12) is always derived server-side from weight × reps.
+  // A client-supplied volume_calc/volume is never trusted — it could disagree
+  // with weight × reps and silently corrupt anything that reads the column.
+  // (BACKLOG ME-4.)
+  result.volume_calc = calculateVolumeCalc(result.weight, result.reps);
 
   for (const field of ['date_clean', 'session_id', 'exercise', 'set_number', 'weight', 'reps', 'rir']) {
     if (result[field] === undefined || result[field] === null || result[field] === '') {
@@ -324,7 +325,9 @@ function logRowArrayToObject(row) {
     reps: row[8],
     rir: row[9],
     notes: ensureNotes(row[10]),
-    volume_calc: row[11] === undefined || row[11] === null || row[11] === '' ? calculateVolumeCalc(row[7], row[8]) : row[11]
+    // Always derived from weight × reps — a client-supplied column-12 value is
+    // never trusted on the write path (BACKLOG ME-4).
+    volume_calc: calculateVolumeCalc(row[7], row[8])
   };
 }
 
