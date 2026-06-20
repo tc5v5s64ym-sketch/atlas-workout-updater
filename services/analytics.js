@@ -1958,6 +1958,31 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     }
   }
 
+  // ── Return-after-layoff make-up-volume cap ────────────────────────────────
+  // After a layoff the lifter is rested but detrained — ease back make-up volume
+  // rather than chasing old numbers (deterministic signal from layoffGuard).
+  // Applies to training intents only; recovery_pump / short_session /
+  // test_progress / deload_reset carry their own volume handling.
+  const { assessLayoff } = require('./layoffGuard');
+  const layoff = assessLayoff(logRows, { today: todayStr });
+  if (layoff.returning_from_layoff) {
+    const LAYOFF_TRAINING_INTENTS = new Set(['build_strength', 'build_muscle', 'fix_blind_spots', 'balanced']);
+    for (const intent of intents) {
+      if (!LAYOFF_TRAINING_INTENTS.has(intent.id) || !Array.isArray(intent.exercises)) continue;
+      intent.exercises = intent.exercises.map(ex => {
+        if (!ex) return ex;
+        const base = typeof ex.target_sets === 'number' ? ex.target_sets : 3;
+        return {
+          ...ex,
+          target_sets: Math.max(2, Math.round(base * layoff.volume_factor)),
+          readiness_note: 'returning_from_layoff',
+        };
+      });
+      if (Array.isArray(intent.reason_codes)) intent.reason_codes.push('returning_from_layoff');
+      if (Array.isArray(intent.watch_for) && layoff.watch) intent.watch_for = [layoff.watch, ...intent.watch_for];
+    }
+  }
+
   // Sort, mark the top non-custom intent as recommended
   intents.sort((a, b) => b.score - a.score);
   const top = intents.find(i => i.id !== 'custom');

@@ -467,6 +467,55 @@ test('scoreIntents PR 369: non-fatigued exercises carry no readiness_note', () =
   }
 });
 
+// ── Return-after-layoff make-up-volume cap ────────────────────────────────────
+
+test('scoreIntents layoff: training intents cap make-up volume + flag after a layoff', () => {
+  // Last session 2026-04-12 (makeRows start + 4×7d); today 2026-05-03 → 21-day
+  // gap → 'significant' layoff (volume_factor 0.66). All sessions are well before
+  // today so patterns read as rested (not fatigued — the layoff cap, not the
+  // fatigue dose, is what fires).
+  const rows = [
+    ...makeRows('Bench Press', 'chest', 'BPR01', [165, 170, 175, 180, 185], '2026-03-15'),
+    ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-15'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03' });
+
+  const training = result.intents.filter(i =>
+    ['build_strength', 'build_muscle', 'fix_blind_spots', 'balanced'].includes(i.id) &&
+    Array.isArray(i.exercises) && i.exercises.length > 0);
+  assert.ok(training.length > 0, 'expected at least one training intent with exercises');
+
+  for (const intent of training) {
+    assert.ok(intent.reason_codes.includes('returning_from_layoff'),
+      `${intent.id} must carry the returning_from_layoff reason_code`);
+    for (const ex of intent.exercises) {
+      assert.equal(ex.readiness_note, 'returning_from_layoff',
+        `${intent.id}/${ex.exercise} must be flagged returning_from_layoff`);
+      assert.ok(ex.target_sets <= 3, `make-up volume should be capped, got ${ex.target_sets}`);
+      assert.ok(ex.target_sets >= 2, 'never below the floor of 2');
+    }
+    assert.ok(intent.watch_for.some(w => /returning after/i.test(w)),
+      `${intent.id} watch_for must mention the layoff`);
+  }
+});
+
+test('scoreIntents layoff: normal cadence does NOT trigger the layoff cap', () => {
+  // Last session 2026-04-12; today 2026-04-15 → 3-day gap → no layoff.
+  const rows = [
+    ...makeRows('Bench Press', 'chest', 'BPR01', [165, 170, 175, 180, 185], '2026-03-15'),
+    ...makeRows('Squat',       'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-15'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-04-15' });
+  for (const intent of result.intents) {
+    assert.ok(!(intent.reason_codes || []).includes('returning_from_layoff'),
+      `${intent.id} must not carry returning_from_layoff at normal cadence`);
+    for (const ex of (intent.exercises || [])) {
+      assert.notEqual(ex.readiness_note, 'returning_from_layoff',
+        `${intent.id}/${ex.exercise} must not be layoff-flagged at normal cadence`);
+    }
+  }
+});
+
 // ── PR 370: confidence_factors ────────────────────────────────────────────────
 
 test('scoreIntents PR 370: each exercise carries a confidence_factors object with required fields', () => {
