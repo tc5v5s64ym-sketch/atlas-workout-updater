@@ -60,6 +60,10 @@ test('isTransientAppendError retries only request-rejected-before-write errors',
   assert.equal(isTransientAppendError({ code: 429 }), true);
   assert.equal(isTransientAppendError({ code: 503 }), true);
   assert.equal(isTransientAppendError({ response: { status: 503 } }), true);
+  // Real gaxios-7 GaxiosError shape: numeric HTTP status on .status/.response.status,
+  // .code is the (here absent) transport cause. The fast-path must fire on .status.
+  assert.equal(isTransientAppendError({ status: 503, response: { status: 503 }, code: undefined }), true);
+  assert.equal(isTransientAppendError({ status: 429, response: { status: 429 } }), true);
   assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'rateLimitExceeded' }] }), true);
   assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'userRateLimitExceeded' }] }), true);
 

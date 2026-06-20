@@ -28,10 +28,14 @@ function getPrivateKey() {
 // propagate and are never retried, to avoid a silent double-append.
 function isTransientAppendError(error) {
   if (!error) return false;
+  // Read the numeric HTTP status FIRST. On a gaxios GaxiosError (gaxios 7 via
+  // googleapis), the HTTP status lives on `.status` / `.response.status`, while
+  // `.code` is the transport cause (e.g. 'ETIMEDOUT') — non-numeric. Reading
+  // `.code` first would turn a real 429/503 into NaN and silently skip the retry.
   const status = Number(
-    error.code != null ? error.code
-      : error.status != null ? error.status
-        : (error.response && error.response.status)
+    error.status != null ? error.status
+      : (error.response && error.response.status != null) ? error.response.status
+        : error.code
   );
   if (status === 429 || status === 503) return true;
   // Any other explicit status is non-retryable — a 500 (or its message) must NEVER
