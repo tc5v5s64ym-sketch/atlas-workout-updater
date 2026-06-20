@@ -186,6 +186,16 @@ A category the backlog has not modelled. Atlas's source of truth is Google Sheet
 - ✅ **Parser substitution priority fix** — `Leg Press` added to `EXERCISE_ALIASES`; `extractSetParagraphs` strips explanatory prose paragraphs (no set tokens) before normalization so the performed exercise header/sets win over skipped/mentioned exercises in substitution sentences. 4 golden tests added.
 - **API key in `localStorage`** `[housekeeping]` (`public/app.js:9`): XSS exposure risk; safe for single-user Dale, becomes a real item at multi-user/productization. Logged here so it's not a surprise. See [FIX_PLAN.md "Additional verified items"](./FIX_PLAN.md). Suggested PR type: future security hardening (not urgent for single-user tool; revisit at productization).
 
+## Automation framework follow-ups
+
+The automation-first contract shipped as documentation + templates + label manifest (`docs/AUTOMATION_PROTOCOL.md`, `docs/OWNER_CHECKIN_RULES.md`, `docs/RISK_LABELS.md`, `docs/AUTOMATION_AUDIT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/labels.yml`). These are the remaining automation PRs that turn the documented contract into machine enforcement. Each is one concern; build in order (label sync first — it unblocks the rest). Source: `docs/AUTOMATION_AUDIT.md` "Identified gaps / next automation PRs".
+
+- **Label sync workflow** `[infrastructure]` `auto-safe` — a small Action (e.g. `crazy-max/ghaction-github-labeler` or a `gh label` script) that syncs `.github/labels.yml` to the repo so the risk labels actually exist on GitHub. **Highest-leverage next step.** Sonnet 4.6.
+- **Merge-card completeness check** `[infrastructure]` `auto-safe` — an Action that fails the PR if the merge-card template fields are left as placeholder comments / blank, enforcing `AUTOMATION_PROTOCOL.md` §2 ("empty field = failure"). Sonnet 4.6.
+- **Auto-label by path** `[infrastructure]` `auto-safe` — a `labeler`-style Action mapping touched paths to the category labels in `docs/RISK_LABELS.md` (`public/app.js` → `approval-path`, `services/coach.js` → `coach-behavior`, etc.). Primary risk label stays a builder decision. Sonnet 4.6.
+- **Branch-protection / required-checks as code** `[infrastructure]` `owner-decision` — encode the merge gate as GitHub branch-protection required status checks so "merge-ready" is machine-enforced, not convention. Owner decision (changes repo settings). Supersedes/absorbs the existing "Branch protection on `main`" housekeeping item above.
+- **CODEX Review as a check** `[infrastructure]` `owner-decision` — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today convention-enforced). Owner decision.
+
 ## Someday / future scope
 
 _Not active queue. Guiding principle: Atlas infers from data and behaviour; it does not interrogate the user._

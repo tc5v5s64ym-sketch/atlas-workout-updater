@@ -94,6 +94,28 @@ If CODEX Review returns `READY FOR OWNER MERGE`:
 10. Dale merges.
 11. At hold points, Dale app-tests before the next phase continues.
 
+## Autonomous Build Loop
+
+Atlas is automation-first. The standard loop above describes the roles; this is the **loop the builder runs without owner involvement** until an owner check-in criterion is met. It is governed by `docs/AUTOMATION_PROTOCOL.md` (the automation contract), `docs/OWNER_CHECKIN_RULES.md` (when to stop for the owner), and `docs/RISK_LABELS.md` (risk classification).
+
+For each unit of work, the builder:
+
+1. **Read the roadmap** — `BACKLOG.md` (source of truth) and `docs/ACTIVE_ROADMAP.md` (current queue).
+2. **Select the next approved task** — the next roadmap/backlog item; run the Current-State Verification Gate and Model Recommendation Gate (below) before editing.
+3. **Build** — implement one concern only; file discovered future work in `BACKLOG.md` in the same PR.
+4. **Run tests** — `npm test` + lint; cover the live path or closest integration path, not only new helpers.
+5. **Run review** — open the PR; Claude Code Review (GitHub Actions) and CODEX Review run.
+6. **Fix failures** — fix failing tests and in-scope BLOCKING / P0–P1 review findings only; do not broaden scope.
+7. **Re-run tests** — confirm green after fixes.
+8. **Re-run review** — confirm Claude Code Review and CODEX Review pass after fixes.
+9. **Classify risk** — apply exactly one primary risk label + any category labels (`docs/RISK_LABELS.md`).
+10. **Generate the merge card** — fill the PR template completely (`.github/PULL_REQUEST_TEMPLATE.md`).
+11. **Stop only if an owner-involvement criterion is met** (`docs/OWNER_CHECKIN_RULES.md`): live app testing, write-path / approval-gate / coach / trust-contract change, roadmap/vision change, model-recommendation change, or "automation cannot determine safety." Otherwise the PR is marked merge-ready and the owner merges from the card without further blocking.
+
+**Pass/fail principle (non-negotiable):** a review or check that was skipped, errored, was unavailable, timed out, or returned incomplete is a **failure, not a pass** (`docs/AUTOMATION_PROTOCOL.md` §2). The loop never treats a missing signal as green.
+
+A PR is **merge-ready** only when: tests pass · required reviews pass · no open P0/P1 finding · no unresolved contract violation · risk classification done · merge card generated. Any skipped or failed required review blocks readiness.
+
 ## Merge gate
 
 A PR is not ready for Dale to merge unless:
