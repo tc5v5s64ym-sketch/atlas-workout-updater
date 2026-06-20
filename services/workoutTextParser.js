@@ -1,3 +1,5 @@
+const { classifyMessageIntent } = require('./messageIntent');
+
 const NUMBER_WORDS = {
   one: 1,
   two: 2,
@@ -259,6 +261,27 @@ function parseWorkoutText(input, context = {}) {
 
   const skipped = extractSkipNotes(rawText);
   const result = parseLogSets(rawText, context);
+
+  // AC8 credibility floor (CONVERSATION_DESIGN.md): never log a phantom set.
+  // If the message reads as a question and did NOT resolve to a real logged set,
+  // it is answered — never fabricated into an exercise from the question text
+  // (the 2026-06-16 "Didn't you suggest 225 5/2 x3" bug, which parseUnknownExercise
+  // would otherwise turn into a logged "Didnt You Suggest" set). A genuinely
+  // resolved set (real lift + set tokens) still logs even if it also asks a
+  // question, so this can never suppress a real log.
+  const hasResolvedLift = result?.intent === 'log_sets'
+    && !(result.warnings || []).includes('unknown_exercise');
+  const hasSetTokens = result?.intent === 'log_sets';
+  const floor = classifyMessageIntent(rawText, { hasResolvedLift, hasSetTokens });
+  if (floor.suppressLog && floor.reason === 'question') {
+    return {
+      intent: 'question',
+      raw_text: rawText,
+      message: "That reads like a question, so nothing was logged — ask me directly and I'll answer.",
+      warnings: ['logged_nothing_question'],
+    };
+  }
+
   if (skipped.length > 0 && result?.intent === 'log_sets') {
     return { ...result, prescribed: skipped };
   }
