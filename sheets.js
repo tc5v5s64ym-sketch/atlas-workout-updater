@@ -117,6 +117,19 @@ async function getSheetRows(tabName, maxRows = Infinity) {
   return Number.isFinite(maxRows) ? dataRows.slice(0, maxRows) : dataRows;
 }
 
+async function getHeaderRow(tabName) {
+  const sheets = await getSheetsClient();
+  const range = `${tabName}!1:1`;
+  console.log(`[sheets.js] Fetching header row from ${tabName}`);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range
+  });
+
+  return response.data.values?.[0] || [];
+}
+
 async function getSpreadsheetTabs() {
   const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.get({
@@ -197,6 +210,7 @@ module.exports = {
   getLogCompositeKeys,
   getRecentRows,
   getSheetRows,
+  getHeaderRow,
   getSpreadsheetTabs,
   logSheetName,
   effortSheetName
