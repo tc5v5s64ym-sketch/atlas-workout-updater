@@ -275,4 +275,4 @@ function classifySubstitution({ prescribed, logged, constraints, painFlag, histo
   };
 }
 
-module.exports = { classifySubstitution, OVERLAP_THRESHOLD, BROAD_REGION };
+module.exports = { classifySubstitution, computePrimaryMuscleOverlap, OVERLAP_THRESHOLD, BROAD_REGION };
