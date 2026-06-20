@@ -36,11 +36,11 @@ function normalizeDate(value) {
     return isoDateTimeMatch[1];
   }
 
-  const parsedDate = new Date(text);
-  if (!Number.isNaN(parsedDate.getTime())) {
-    return parsedDate.toISOString().slice(0, 10);
-  }
-
+  // Excel/Sheets serial dates arrive as a bare number. Convert these BEFORE the
+  // generic `new Date(text)` fallback below — that fallback parses "45000" as the
+  // YEAR 45000 (a valid Date), so without this ordering the serial branch is
+  // unreachable and a serial date is silently saved as a wrong far-future ISO
+  // date (AUDIT HI-4).
   if (typeof value === 'number' && Number.isFinite(value)) {
     const msPerDay = 24 * 60 * 60 * 1000;
     const excelEpoch = new Date(Date.UTC(1899, 11, 30)).getTime();
@@ -48,6 +48,11 @@ function normalizeDate(value) {
     if (!Number.isNaN(date.getTime())) {
       return date.toISOString().slice(0, 10);
     }
+  }
+
+  const parsedDate = new Date(text);
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return parsedDate.toISOString().slice(0, 10);
   }
 
   return '';
