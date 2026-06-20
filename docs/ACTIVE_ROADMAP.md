@@ -160,7 +160,7 @@ After Step 379 is merged, pause for owner review and optional app-test before hi
 
 ### Roadmap Step 380 - GitHub issue #359: Historical lift retrieval must use actual logged sets
 
-**Status:** pending
+**Status:** complete (pre-existing; issue #359 closed). Verified in current `main`: `buildRecentSessions` (`services/analytics.js`) emits per-set `lift_sets` (weight/reps/RIR in order, capped 12); `buildChatContext` (`index.js`) forwards `lift_sets` into the `/api/coach/chat` context; `services/coach.js` carries the explicit HISTORY RULE (answer past-workout questions ONLY from `recent_sessions[*].lift_sets`, never prescription/plan/recommendation/benchmark) and `sanitizeChatContext` preserves the sets; `test/coach.test.js` pins the #359 regression (lift_sets fidelity + RIR-0 preservation). No code change required — re-listed by the #405 roadmap refill after the issue was already closed.
 
 **Recommended model:** Opus 4.8.
 
@@ -186,7 +186,7 @@ After Step 379 is merged, pause for owner review and optional app-test before hi
 
 ### Roadmap Step 381 - GitHub issue #402A: Recent-lift exclusion / Seated Row identity normalization
 
-**Status:** pending
+**Status:** complete (resolved by GitHub PR #404). The exact repro — Seated Row prescribed the day after it was logged — is fixed by the recency exclusion added to `scoreIntents` (`services/analytics.js`): an exercise trained yesterday (`daysSince === 1`) is dropped from `allRecs` before any intent builder runs, so ROW01 (Seated Row, last set 2026-06-18) is excluded on 2026-06-19. PR #404 also dedups `allRecs` by exercise name (the most-recently-trained variant wins) as a guard against the same display name appearing under multiple codes. **Identity investigation finding:** in current `main` only `seated row → ROW01` exists (`knownLiftCodeOverrides`); the `SR01`/`BOR01` codes named in the issue are hypothetical and not present, so there is no live multi-code split for Seated Row. The only genuine residual identity-split risk — rows logged under a generated code *before* an override existed — is already tracked in `BACKLOG.md` as the SESSION_DESIGN AC5a "liftCode history-merge for pre-override rows" item. No new code required for #402A.
 
 **Recommended model:** Opus 4.8.
 
