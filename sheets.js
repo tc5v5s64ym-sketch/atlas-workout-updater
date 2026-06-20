@@ -34,12 +34,18 @@ function isTransientAppendError(error) {
         : (error.response && error.response.status)
   );
   if (status === 429 || status === 503) return true;
-  // Quota/rate-limit errors can arrive as 403 with a telling reason string.
+  // Any other explicit status is non-retryable — a 500 (or its message) must NEVER
+  // be re-classified as retryable by the reason text below, or we reintroduce the
+  // ambiguous-post-send double-append this guard exists to prevent. The reason is
+  // consulted ONLY for a 403 (quota/rate-limit rejection — rejected before write)
+  // or a status-less error. The reason match is correspondingly narrow:
+  // rate-limit/quota only (NOT backendError/unavailable, which are 500/503 signals).
+  if (Number.isFinite(status) && status !== 403) return false;
   const reason = (error.errors && error.errors[0] && error.errors[0].reason)
     || (error.response && error.response.data && error.response.data.error
       && (error.response.data.error.status || error.response.data.error.message))
     || '';
-  return /rateLimit|userRateLimit|quota|backendError|unavailable/i.test(String(reason));
+  return /rateLimit|quota/i.test(String(reason));
 }
 
 // Bounded exponential backoff. `sleep` is injectable so tests run instantly and

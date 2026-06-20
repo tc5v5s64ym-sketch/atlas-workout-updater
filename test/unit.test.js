@@ -65,6 +65,10 @@ test('isTransientAppendError retries only request-rejected-before-write errors',
 
   // Must NOT retry — ambiguous (rows may already be written) or non-transient.
   assert.equal(isTransientAppendError({ code: 500 }), false); // could have written, then failed
+  // A 500 whose reason/message is backendError/unavailable must STILL be non-retryable:
+  // the status gate wins so the reason text cannot re-classify an ambiguous 500.
+  assert.equal(isTransientAppendError({ code: 500, errors: [{ reason: 'backendError' }] }), false);
+  assert.equal(isTransientAppendError({ code: 500, response: { data: { error: { message: 'backend unavailable' } } } }), false);
   assert.equal(isTransientAppendError({ code: 'ETIMEDOUT' }), false); // post-send timeout: ambiguous
   assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'forbidden' }] }), false); // auth, not quota
   assert.equal(isTransientAppendError({ code: 400 }), false);
