@@ -46,6 +46,7 @@ const { inferPrescribedPairs } = require('./services/planMatcher');
 const { assessLayoff } = require('./services/layoffGuard');
 const { isConstraintMessage } = require('./services/constraintDetector');
 const { recommendSubstitute } = require('./services/substitutionRecommender');
+const { scoreSubstitutionQuality } = require('./services/substitutionQuality');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
 const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
@@ -2676,6 +2677,10 @@ async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, rul
       painFlag,
       history
     });
+    // Attach the stimulus-quality tier (excellent/acceptable/poor/unknown) so the
+    // coach can word the swap accurately and never assert "good swap" the engine
+    // can't back. Pure, deterministic — same prescribed/logged the classifier saw.
+    sub.quality = scoreSubstitutionQuality(prescribedName, logged.name).quality;
     out.push(p.reason ? { ...sub, reason: String(p.reason).trim().slice(0, 200) } : sub);
   }
   return out;

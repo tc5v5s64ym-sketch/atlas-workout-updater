@@ -875,6 +875,26 @@ test('sanitizeSubstitution whitelists the engine verdict and drops unknown keys'
   assert.ok(!JSON.stringify(clean).includes('IGNORE ALL RULES'));
 });
 
+test('sanitizeSubstitution carries a bounded quality tier and drops invalid ones', () => {
+  const poor = sanitizeSubstitution({ classification: 'abandoned', decision: 'warn', quality: 'poor' });
+  assert.equal(poor.quality, 'poor');
+  const good = sanitizeSubstitution({ classification: 'preserved', decision: 'approve', quality: 'excellent' });
+  assert.equal(good.quality, 'excellent');
+  // An out-of-vocabulary quality becomes null — the coach can't word a tier the engine didn't compute.
+  assert.equal(sanitizeSubstitution({ classification: 'preserved', decision: 'approve', quality: 'amazing' }).quality, null);
+  // Absent quality → null (no judgement).
+  assert.equal(sanitizeSubstitution({ classification: 'preserved', decision: 'approve' }).quality, null);
+});
+
+test('reaction + verdict prompts gate the swap-quality voice on the engine tier (no "counts" without quality)', () => {
+  for (const prompt of [buildCoachSystemPrompt(), buildVerdictReactionSystemPrompt()]) {
+    assert.match(prompt, /quality/i, 'must reference the substitution quality tier');
+    assert.match(prompt, /poor/i, 'must handle a poor swap');
+    assert.match(prompt, /never call a swap good|never .*counts|unless quality is/i,
+      'must forbid asserting a good swap / "counts" unless the engine tier says so');
+  }
+});
+
 test('sanitizeSubstitution rejects a client-injected classification outside the engine vocabulary', () => {
   // A client cannot smuggle its own verdict in: an out-of-vocab classification or
   // decision nulls the whole fact, so the model never receives a fabricated call.
@@ -897,6 +917,7 @@ test('a valid engine substitution verdict survives sanitization intact', () => {
   assert.deepEqual(clean, {
     classification: 'preserved',
     decision: 'approve',
+    quality: null,
     reason_code: 'pattern_and_muscle_match',
     prescribed: 'Bench Press',
     logged: 'Incline Dumbbell Press',

@@ -163,3 +163,23 @@ owner-approved tonal reference:
 layoff, pain, load sanity, deload/re-entry, major fatigue/readiness risk, anything
 that changes today's prescription. It stays quiet unless asked for trend
 commentary, "nice progress," deep analysis, or novelty observations.
+
+---
+
+## Substitution-quality voice (owner-approved 2026-06-20)
+
+When a logged lift swaps a prescribed one, the engine attaches `substitution.quality`
+(`scoreSubstitutionQuality` → excellent / acceptable / poor). Proactive rule:
+**volunteer a poor swap** (it materially changed the training intent); keep good /
+acceptable swaps brief or on-ask unless they affect recovery or today's
+recommendation. Owner-approved wordings:
+
+- **Excellent (real swap):** "RDLs for deadlifts — same hinge, no issue. Counts."
+- **Acceptable (lighter):** "Leg press for squats — easier on the system, still covers the legs. Fine today."
+- **Poor (different muscle/intent):** "That's not really a swap — leg curls hit hamstrings, not the quads squats were for. Logged it, but today's quad work didn't happen."
+
+**Locked rules (apply to every signal):** state the fact; explain why it matters;
+give the next action if one is needed; no praise for normal compliance; no invented
+rationale; **no "counts"-style commentary unless the engine actually knows the
+substitution quality** (`quality` present and excellent/acceptable). The model never
+decides the classification or quality — it only words the engine's call.
