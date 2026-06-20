@@ -87,7 +87,9 @@ Before implementing any roadmap, backlog, or GitHub issue fix, perform the `Curr
 ## Scope discipline for agents
 A task prompt names the file(s) you should work in. If a fix needs a small edit to an ordinary file outside that list — e.g. wiring a new helper into its one call site — you may make it without asking.
 
-But if the fix needs you to edit a write-path or critical file that your named scope did NOT include — index.js (log/write path, test_mode + proof fields, row enrichment & append), public/app.js (the preview→approve→write trust loop), services/workoutTextParser.js (the slash-notation parser), or anything on the "Critical behaviours — never change without owner approval" list — STOP and flag it as a question before editing. Do not proceed and report afterward, even if the change looks safe. If a task is meant to touch one of these files, it will be named in your scope.
+The high-risk files — index.js (log/write path, test_mode + proof fields, row enrichment & append), public/app.js (the preview→approve→write trust loop), services/workoutTextParser.js (the slash-notation parser) — may be worked **only when the active roadmap/backlog item explicitly requires it** (owner standing instruction). When you do, treat them as high-risk: a tiny PR, a focused diff, tests, and **stop if the change starts spreading** beyond what the item names. Then report.
+
+The deep behaviors on the "Critical behaviours — never change without owner approval" list are still owner-gated regardless: do not change `test_mode`/proof-field semantics, the preview→approve→write trust loop, the slash-notation contract, or the undo flow without explicit owner approval (`docs/OWNER_CHECKIN_RULES.md` criteria 2/3). Editing these files to wire an item the roadmap names is allowed under discipline; silently changing what they *do* on the write/trust path is not.
 
 ---
 
