@@ -200,6 +200,7 @@ Remaining (owner-decision — change repo settings; not built in #422):
 
 - **Branch-protection / required-checks as code** `[infrastructure]` `owner-decision` — encode the merge gate as GitHub branch-protection required status checks (incl. merge-card-check) so "merge-ready" is machine-enforced, not convention. Owner decision. Supersedes/absorbs the existing "Branch protection on `main`" housekeeping item above.
 - **CODEX Review as a check** `[infrastructure]` `owner-decision` — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today convention-enforced). Owner decision.
+- **Reconcile INVARIANTS PR1/PR2 with the `infrastructure` PR category** `[trust-sensitive]` `owner-decision` — the automation framework (`docs/RISK_LABELS.md`) recognizes an `infrastructure` PR class (CI/workflows/templates/labels, no app behavior change) and treats it as `auto-safe`, but `docs/INVARIANTS.md` PR2 still reads "docs PRs touch only `docs/` and root markdown — no config changes" and PR1 is "one concern per PR." Amend PR1/PR2 to explicitly recognize the infrastructure category (distinct from docs and from app-code PRs) so the standing invariants and the new contract do not disagree. **Owner-gated** because it edits `docs/INVARIANTS.md` (Constitution layer — OWNER_CHECKIN_RULES criterion 5); not self-amended in #422. Surfaced by automated review of #422.
 
 ## Someday / future scope
 
