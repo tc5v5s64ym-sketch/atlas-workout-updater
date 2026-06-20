@@ -1899,6 +1899,14 @@ test('normalizeDate handles ISO, datetime, and blank values', () => {
   assert.equal(normalizeDate(undefined), '');
 });
 
+test('normalizeDate converts a numeric Excel/Sheets serial, not as a year (HI-4)', () => {
+  // Serial 45000 is 2023-03-15. The old order ran `new Date("45000")` first,
+  // which JS parses as the YEAR 45000 — saving a wrong far-future date.
+  assert.equal(normalizeDate(45000), '2023-03-15');
+  assert.match(normalizeDate(45000), /^\d{4}-\d{2}-\d{2}$/);
+  assert.doesNotMatch(normalizeDate(45000), /^45000/); // never the year-45000 date
+});
+
 test('parseDurationMinutes converts hh:mm:ss, mm:ss, and numeric to minutes', () => {
   assert.equal(parseDurationMinutes('01:00:00'), 60);
   assert.equal(parseDurationMinutes('00:30:00'), 30);
