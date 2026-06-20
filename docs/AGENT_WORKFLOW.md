@@ -103,7 +103,7 @@ Atlas is automation-first. The standard loop above describes the roles; this is 
 For each unit of work, the builder:
 
 1. **Read the roadmap** — `BACKLOG.md` (source of truth) and `docs/ACTIVE_ROADMAP.md` (current queue).
-2. **Select the next approved task** — the next roadmap/backlog item; run the Current-State Verification Gate and Model Recommendation Gate (below) before editing.
+2. **Select the next approved task** — the next roadmap/backlog item; run the Current-State Verification Gate (below) before editing. (Build on Opus 4.8 — no model gate.)
 3. **Build** — implement one concern only; file discovered future work in `BACKLOG.md` in the same PR.
 4. **Run tests** — `npm test` + lint; cover the live path or closest integration path, not only new helpers.
 5. **Run review** — open the PR; Claude Code Review (GitHub Actions) and CODEX Review run.

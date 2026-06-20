@@ -15,7 +15,7 @@ Atlas automation has four roles. Each has one job. None may silently assume anot
 ### Claude — Builder
 
 - Implements one approved concern per PR (see `docs/ACTIVE_ROADMAP.md` / `BACKLOG.md`).
-- Runs the **Current-State Verification Gate** and the **Model Recommendation Gate** before editing (`docs/AGENT_WORKFLOW.md`).
+- Runs the **Current-State Verification Gate** before editing (`docs/AGENT_WORKFLOW.md`); builds on **Opus 4.8** (no model gate).
 - Runs tests and lint locally, classifies risk, and generates the **merge card** (the PR template).
 - Fixes its own failures and review-blocking findings, then re-runs tests and review.
 - Files discovered future work in `BACKLOG.md` in the same PR — never in memory or chat.

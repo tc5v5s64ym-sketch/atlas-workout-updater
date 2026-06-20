@@ -14,7 +14,7 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 |---|---|---|
 | **`auto-safe`** | Automation can take this all the way to merge-ready with no owner involvement. | No owner check-in criterion is met; no P0/P1; tests + reviews green. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. |
 | **`owner-live-test`** | A live app test would be valuable. **Advisory, not a halt** — the owner initiates app tests; the builder flags this and keeps going. | Owner check-in criterion 1 (live app testing) — UI/interaction change, hold point, anything only confirmable on the real app/sheet. Requires a live test script in the merge card. Does not block the loop; the owner calls the hold. |
-| **`owner-decision`** | A product/trust/roadmap/model judgment only the owner can make. | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, model recommendation, or "cannot determine safety"). |
+| **`owner-decision`** | A product/trust/roadmap judgment only the owner can make. | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, app/runtime-model change, or "cannot determine safety"). |
 | **`blocked`** | Not eligible to proceed — a required signal failed, errored, was skipped, or a contract violation is unresolved. | Any failed/errored/skipped required check or review (see `AUTOMATION_PROTOCOL.md` §2), or an open P0/P1 / contract violation. |
 
 > `blocked` overrides the others: if a required signal failed or is missing, the PR is `blocked` regardless of what else is true.
