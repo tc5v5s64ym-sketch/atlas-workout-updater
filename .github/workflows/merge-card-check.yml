@@ -38,6 +38,7 @@ jobs:
               // table
               'number, filled after open',
               'one line -->',
+              'e.g. docs-only',
               'low / medium / high -->',
               'pass / fail / not-run',
               'READY FOR OWNER MERGE / NON-BLOCKING / BLOCKING',
