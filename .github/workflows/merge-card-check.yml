@@ -30,10 +30,9 @@ jobs:
             // Sentinels that only exist in the UNFILLED template — leaving any
             // of them means a merge-card field was not completed. Covers the
             // table fields AND the prose sections (concern, current-state
-            // verdict, model recommendation, tests). The Trust/scope safety
-            // checkboxes are NOT enforced here (several are "or owner-flagged",
-            // so an unchecked box can be legitimate) — they are reviewed, not
-            // gated.
+            // verdict, tests). The Trust/scope safety checkboxes are NOT enforced
+            // here (several are "or owner-flagged", so an unchecked box can be
+            // legitimate) — they are reviewed, not gated.
             const sentinels = [
               // table
               'number, filled after open',
