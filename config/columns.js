@@ -74,6 +74,21 @@ const effortRowFieldAliases = {
   notes: ['notes']
 };
 
+// Tabs Atlas writes by hardcoded positional index (see appendRows callers in
+// index.js / services/deloadState.js). The header row of each MUST match the
+// contract below in order, or every future write silently lands in the wrong
+// field. `validateTabHeader` (config/sheetContract.js) compares the live header
+// row against these. Exercise_Catalog is read (not written) by index but is
+// position-sensitive on read, so it is included.
+const tabColumnContracts = {
+  Log_Cleaned: logCleanedColumns,
+  Effort: effortColumns,
+  Exercise_Catalog: exerciseCatalogColumns,
+  Coaching_Notes: coachingNotesColumns,
+  Constraints: constraintsColumns,
+  Deload_State: deloadStateColumns
+};
+
 module.exports = {
   logCleanedColumns,
   logRowFieldAliases,
@@ -82,5 +97,6 @@ module.exports = {
   coachingNotesColumns,
   constraintsColumns,
   effortRowFieldAliases,
-  deloadStateColumns
+  deloadStateColumns,
+  tabColumnContracts
 };

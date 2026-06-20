@@ -16,6 +16,7 @@ const {
   getRecentRows,
   getSheetRows: getSheetRowsRaw,
   getSpreadsheetTabs,
+  getHeaderRows,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -214,8 +215,8 @@ function invalidateSheetRowsCache() {
 }
 
 const { routeDefinitions } = require('./config/routes');
-const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
-const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus } = require('./config/sheetContract');
+const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases, tabColumnContracts } = require('./config/columns');
+const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, buildHeaderContractStatus } = require('./config/sheetContract');
 
 
 
@@ -936,11 +937,23 @@ app.get('/api/health/sheets', async (req, res) => {
       acc[tab] = { exists, required: false };
       return acc;
     }, {});
+
+    // Header-drift validation: for each contract tab that exists, read its
+    // header row and confirm the column order still matches the contract.
+    // Writes map values by hardcoded position, so a hand-reordered column would
+    // otherwise silently misroute every future write to the wrong field.
+    const presentContractTabs = Object.keys(tabColumnContracts).filter(tab => tabs.includes(tab));
+    const headerRows = await getHeaderRows(presentContractTabs);
+    const headerStatus = buildHeaderContractStatus(headerRows);
+
     return standardSuccess(req, res, 'Google Sheets health check', {
       tabs: status,
       optionalTabs: optional,
       availableTabs: tabs,
-      missingRequiredTabs: contractStatus.missingRequiredTabs
+      missingRequiredTabs: contractStatus.missingRequiredTabs,
+      headers: headerStatus.tabs,
+      headerMismatchTabs: headerStatus.mismatchTabs,
+      headersOk: headerStatus.ok
     });
   } catch (error) {
     return standardError(req, res, 'Failed to verify Google Sheets tabs', error.message, 500);

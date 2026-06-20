@@ -126,6 +126,22 @@ async function getSpreadsheetTabs() {
   return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
 }
 
+async function getHeaderRows(tabNames) {
+  // Fetch row 1 (the header) of each named tab in one batch call. Returns
+  // { tabName: [headerCells] }. Read-only; used by the sheet-contract health
+  // check to detect column drift before it can misroute a positional write.
+  if (!Array.isArray(tabNames) || tabNames.length === 0) return {};
+  const sheets = await getSheetsClient();
+  const ranges = tabNames.map(tab => `${tab}!1:1`);
+  console.log(`[sheets.js] Fetching header rows for: ${tabNames.join(', ')}`);
+  const response = await sheets.spreadsheets.values.batchGet({ spreadsheetId, ranges });
+  const out = {};
+  (response.data.valueRanges || []).forEach((valueRange, i) => {
+    out[tabNames[i]] = (valueRange.values && valueRange.values[0]) || [];
+  });
+  return out;
+}
+
 async function getEffortSessionIds() {
   const values = await getColumnValues(effortSheetName, 'B');
   return values
@@ -198,6 +214,7 @@ module.exports = {
   getRecentRows,
   getSheetRows,
   getSpreadsheetTabs,
+  getHeaderRows,
   logSheetName,
   effortSheetName
 };

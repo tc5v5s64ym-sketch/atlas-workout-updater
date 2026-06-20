@@ -18,7 +18,10 @@ const {
   requiredSheetTabs,
   optionalSheetTabs,
   getMissingRequiredTabs,
-  buildSheetContractStatus
+  buildSheetContractStatus,
+  validateTabHeader,
+  buildHeaderContractStatus,
+  canonicalHeaderToken
 } = require('../config/sheetContract');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
@@ -49,6 +52,63 @@ test('sheet contract reports each missing required tab', () => {
     assert.deepEqual(getMissingRequiredTabs(tabs), [tab]);
   }
   assert.ok(!getMissingRequiredTabs(requiredSheetTabs).includes('Dashboard'));
+});
+
+test('validateTabHeader passes when the header row matches the contract in order', () => {
+  const result = validateTabHeader('Log_Cleaned', logCleanedColumns.slice());
+  assert.equal(result.known, true);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mismatches, []);
+});
+
+test('validateTabHeader tolerates benign case/separator formatting drift', () => {
+  // "Lift Code" vs "lift_code", capitalisation, and spacing must NOT trip the guard.
+  assert.equal(canonicalHeaderToken('Lift Code'), 'lift_code');
+  const header = ['Date Clean', 'Session ID', 'Exercise', 'Canonical Exercise', 'Muscle Group',
+    'Lift Code', 'Set Number', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume Calc'];
+  const result = validateTabHeader('Log_Cleaned', header);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mismatches, []);
+});
+
+test('validateTabHeader flags a reordered column as wrong_column', () => {
+  // Swap weight (index 7) and reps (index 8) — the classic hand-edit drift.
+  const header = logCleanedColumns.slice();
+  [header[7], header[8]] = [header[8], header[7]];
+  const result = validateTabHeader('Log_Cleaned', header);
+  assert.equal(result.ok, false);
+  const wrong = result.mismatches.filter(m => m.kind === 'wrong_column').map(m => m.index).sort();
+  assert.deepEqual(wrong, [7, 8]);
+});
+
+test('validateTabHeader flags a missing trailing column and an extra column', () => {
+  const short = validateTabHeader('Effort', effortColumns.slice(0, effortColumns.length - 1));
+  assert.equal(short.ok, false);
+  assert.ok(short.mismatches.some(m => m.kind === 'missing_column' && m.index === effortColumns.length - 1));
+
+  const long = validateTabHeader('Effort', [...effortColumns, 'rogue_column']);
+  assert.equal(long.ok, false);
+  assert.ok(long.mismatches.some(m => m.kind === 'extra_column' && m.actual === 'rogue_column'));
+});
+
+test('validateTabHeader leaves non-contract tabs unpoliced', () => {
+  const result = validateTabHeader('Metadata', ['anything', 'goes']);
+  assert.equal(result.known, false);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.mismatches, []);
+});
+
+test('buildHeaderContractStatus lists only the tabs whose headers drifted', () => {
+  const reordered = effortColumns.slice();
+  [reordered[5], reordered[6]] = [reordered[6], reordered[5]]; // average_hr <-> peak_hr swap
+  const status = buildHeaderContractStatus({
+    Log_Cleaned: logCleanedColumns.slice(),
+    Effort: reordered
+  });
+  assert.equal(status.ok, false);
+  assert.deepEqual(status.mismatchTabs, ['Effort']);
+  assert.equal(status.tabs.Log_Cleaned.ok, true);
+  assert.equal(status.tabs.Effort.ok, false);
 });
 
 test('column contracts match cleaned sheet headers', () => {
