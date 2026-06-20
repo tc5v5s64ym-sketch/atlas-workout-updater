@@ -381,4 +381,4 @@ Steps 372-377 were sequenced from the June 2026 app-test failures (six findings,
 
 ## New chat / agent instruction
 
-Read this file before changing roadmap direction. Execute the next step only. Stop for owner review after every PR. Do not merge.
+Read this file before changing roadmap direction. Execute the next approved step. Under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`), proceed through the Autonomous Build Loop and merge merge-ready PRs without stopping — pausing only when an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md`). When this queue empties, refill it from `BACKLOG.md` per the Roadmap Refill Loop (`docs/AGENT_WORKFLOW.md`) rather than idling. Changing roadmap *direction* (Vision/Dream/Constitution, or promoting owner-gated scope) remains an owner decision.

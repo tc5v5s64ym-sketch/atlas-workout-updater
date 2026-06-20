@@ -6,10 +6,10 @@ This document defines the Atlas build workflow between Dale, ChatGPT, Claude Cod
 
 ### Dale
 
-- Owns product direction, phase approval, hands-on app testing, and final merge.
-- Starts each phase.
-- Merges only after checks and reviews are clean.
-- App-tests at planned hold points or when review flags product risk.
+- Owns product direction, phase approval, and hands-on app testing.
+- Starts each phase; initiates app tests (owner-initiated, not an automatic stop).
+- Can merge directly, and has granted Claude Code full merge authority for merge-ready PRs under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`); can revoke at any time.
+- App-tests when he chooses to call a hold, or when review flags product risk.
 
 ### ChatGPT
 
@@ -218,7 +218,7 @@ Before editing files, report:
 - one-line model reason
 - risk level
 
-Then STOP and wait for owner confirmation before editing. After owner confirms, create one PR and stop for review.
+Record this report on the merge card. Stop for owner confirmation before editing only when an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md` — e.g. trust/write-path/coach/roadmap-sensitive work, or a model-recommendation change); otherwise proceed, open one PR, and continue through the Autonomous Build Loop.
 
 ## Current-State Verification Gate
 
