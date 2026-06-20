@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
+const { logCleanedColumns, effortColumns } = require('../config/columns');
 
 const originalConsoleLog = console.log;
 
@@ -56,11 +57,18 @@ const fakeSheetsState = {
   // Existing Effort session_ids returned by getEffortSessionIds. Tests set this
   // to exercise the duplicate-session guard; default empty (no duplicates).
   effortSessionIds: [],
+  // When set to a tab name, getHeaderRow throws for that tab — exercises the
+  // header-drift guard's fail-closed read-failure branch.
+  failHeaderReadForTab: null,
   // Rows returned by getSheetRows for Constraints. Tests may set this.
   constraintsRows: [],
   // Deload_State tab, modeled WITH its header row at index 0 so reads mirror the
   // real getSheetRows header-stripping. Deload-lifecycle tests reset this to [].
-  deloadStateSheet: []
+  deloadStateSheet: [],
+  // Header row (row 1) returned by getHeaderRow per tab. Unset tabs fall back to
+  // the canonical column contract (a valid header), so live-write tests pass by
+  // default; header-drift tests override a tab to a reordered/short header.
+  headerRows: {}
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -128,6 +136,19 @@ const fakeSheets = {
         ? fakeSheetsState.deloadStateSheet.slice(1).map(r => [...r])
         : [];
     }
+    return [];
+  },
+  getHeaderRow: async tabName => {
+    // Simulate a Sheets read failure for the header check (tests the fail-closed
+    // 500 + failWrite branch).
+    if (fakeSheetsState.failHeaderReadForTab === tabName) {
+      throw new Error(`Simulated header read failure for "${tabName}"`);
+    }
+    if (Object.prototype.hasOwnProperty.call(fakeSheetsState.headerRows, tabName)) {
+      return [...fakeSheetsState.headerRows[tabName]];
+    }
+    if (tabName === 'Log_Cleaned') return [...logCleanedColumns];
+    if (tabName === 'Effort') return [...effortColumns];
     return [];
   },
   getSpreadsheetTabs: async () => {
@@ -1963,6 +1984,165 @@ test('api smoke: live log-workout without test_mode appends one row to Log_Clean
     assert.equal(Number(row[9]), 5);               // rir   — Bench 135 10/5
     assert.equal(Number(row[11]), 1350);           // volume_calc = 135 * 10
   } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// ── header-drift guard (trust-critical) ─────────────────────────────────────
+// A hand-edited column reorder must block the live write, not misroute values.
+test('api smoke: live log-workout is blocked when Log_Cleaned header is reordered', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // Swap weight (idx 7) and reps (idx 8) — the exact silent-misroute risk.
+  const drifted = [...logCleanedColumns];
+  [drifted[7], drifted[8]] = [drifted[8], drifted[7]];
+  fakeSheetsState.headerRows['Log_Cleaned'] = drifted;
+
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'DRIFT-LOG-01',
+        date: '2026-06-11',
+        write_id: 'drift-log-01',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
+      })
+    });
+
+    assert.equal(response.status, 409);
+    assert.equal(body.status, 'error');
+    assert.equal(body.details.sheet_write, 'blocked_schema_drift');
+    assert.equal(body.details.sheet_written, false);
+    assert.equal(body.details.no_write_confirmed, true);
+    assert.equal(body.details.header_mismatches[0].tab, 'Log_Cleaned');
+    // Nothing was appended — the permanent record is untouched.
+    assert.equal(fakeSheetsState.appendCalls.length, 0);
+  } finally {
+    delete fakeSheetsState.headerRows['Log_Cleaned'];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live complete-workout is blocked when Effort header is reordered', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // Swap average_hr (idx 5) and peak_hr (idx 6) — distinct metrics must not cross.
+  const drifted = [...effortColumns];
+  [drifted[5], drifted[6]] = [drifted[6], drifted[5]];
+  fakeSheetsState.headerRows['Effort'] = drifted;
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'DRIFT-EFFORT-01');
+      form.append('date', '2026-06-11');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('write_id', 'drift-effort-01');
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520,
+        averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+
+      assert.equal(response.status, 409, JSON.stringify(body));
+      assert.equal(body.status, 'error');
+      assert.equal(body.details.sheet_write, 'blocked_schema_drift');
+      assert.equal(body.details.sheet_written, false);
+      assert.equal(body.details.no_write_confirmed, true);
+      assert.ok(body.details.header_mismatches.some(m => m.tab === 'Effort'));
+      assert.equal(fakeSheetsState.appendCalls.length, 0);
+    });
+  } finally {
+    delete fakeSheetsState.headerRows['Effort'];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live log-workout proceeds when header is a valid casing/alias variant', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // Title-case + spaces + the 'date'/'volume' aliases — same order, must NOT block.
+  fakeSheetsState.headerRows['Log_Cleaned'] = ['Date', 'Session ID', 'Exercise', 'Canonical Exercise',
+    'Muscle Group', 'Lift Code', 'Set Number', 'Weight', 'Reps', 'RIR', 'Notes', 'Volume'];
+
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'DRIFT-VARIANT-01',
+        date: '2026-06-11',
+        write_id: 'drift-variant-01',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.sheet_write, 'success');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+    assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Log_Cleaned');
+  } finally {
+    delete fakeSheetsState.headerRows['Log_Cleaned'];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live complete-workout is blocked when Log_Cleaned header is reordered', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  const drifted = [...logCleanedColumns];
+  [drifted[7], drifted[8]] = [drifted[8], drifted[7]]; // weight <-> reps
+  fakeSheetsState.headerRows['Log_Cleaned'] = drifted;
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'DRIFT-CW-LOG-01');
+      form.append('date', '2026-06-11');
+      form.append('write_id', 'drift-cw-log-01');
+      form.append('log_rows_json', JSON.stringify([
+        { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }
+      ]));
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+
+      assert.equal(response.status, 409, JSON.stringify(body));
+      assert.equal(body.details.sheet_write, 'blocked_schema_drift');
+      assert.ok(body.details.header_mismatches.some(m => m.tab === 'Log_Cleaned'));
+      // Blocked before either the log or effort append fired.
+      assert.equal(fakeSheetsState.appendCalls.length, 0);
+    });
+  } finally {
+    delete fakeSheetsState.headerRows['Log_Cleaned'];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: live log-workout fails closed (500, no append) when the header read throws', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.failHeaderReadForTab = 'Log_Cleaned';
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const { response, body } = await requestJson('/api/log-workout', {
+        method: 'POST',
+        body: JSON.stringify({
+          session_id: 'HDR-READ-FAIL-01',
+          date: '2026-06-11',
+          write_id: 'hdr-read-fail-01',
+          log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: 5, notes: '' }]
+        })
+      });
+
+      assert.equal(response.status, 500, JSON.stringify(body));
+      assert.equal(body.status, 'error');
+      // Nothing appended — the read failure fails closed, not open.
+      assert.equal(fakeSheetsState.appendCalls.length, 0);
+    });
+  } finally {
+    fakeSheetsState.failHeaderReadForTab = null;
     fakeSheetsState.allowAppend = false;
   }
 });
