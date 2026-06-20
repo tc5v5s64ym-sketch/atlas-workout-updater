@@ -1203,6 +1203,15 @@ function startPlannedSession(intent) {
     index: 0
   };
   renderActiveSessionBanner();
+  // Step 385: begin the deload state machine when a deload_reset session starts.
+  // Fire-and-forget — never block the session UI. 409 = already in deload, fine.
+  if (intent.id === 'deload_reset') {
+    api('/api/deload/begin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ focus: 'strength', reason: 'owner started deload session' })
+    }).catch(() => {});
+  }
   const first = exercises[0];
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
 }
@@ -3927,6 +3936,19 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           session_id: realPayload.session_id,
           log_rows_written: writeData.log_rows_written
         };
+      }
+      // Step 385: advance the deload state machine on each confirmed live write during
+      // a deload session. Fire-and-forget — a lifecycle failure never blocks logging.
+      // Duplicate-blocked writes are replays of an already-advanced session.
+      if (activePlannedSession?.intentId === 'deload_reset' && !duplicateBlocked) {
+        api('/api/deload/advance', { method: 'POST' })
+          .then(r => {
+            const state = r?.data?.state;
+            if (state?.training_state === 'POST_DELOAD_EVALUATION') {
+              api('/api/deload/resolve', { method: 'POST' }).catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
     }
     invalidatePreview();

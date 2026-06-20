@@ -3853,6 +3853,51 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
   assert.match(ownedListener, /sessionActive\s*=\s*true/, 'the placeholder-owned listener must stop the rotation');
 });
 
+// ── Step 385: frontend deload lifecycle wiring ─────────────────────────────────
+
+test('Step 385: startPlannedSession fires deload/begin only on deload_reset intent', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // Find startPlannedSession body — look far enough to capture the deload/begin block.
+  const fnStart = app.indexOf('function startPlannedSession(');
+  assert.ok(fnStart !== -1, 'startPlannedSession must exist');
+  const fnBody = app.slice(fnStart, fnStart + 1200);
+
+  // begin fires only when the intent is deload_reset.
+  assert.match(fnBody, /intent\.id\s*===\s*['"]deload_reset['"]/, 'begin must be guarded by intent.id === deload_reset');
+  assert.match(fnBody, /\/api\/deload\/begin/, 'startPlannedSession must call /api/deload/begin for deload sessions');
+  // Fire-and-forget — a lifecycle failure must never block the session UI.
+  assert.match(fnBody, /\.catch\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/, 'begin call must swallow errors (fire-and-forget)');
+});
+
+test('Step 385: approve handler calls deload/advance only in the live log path, never in the screenshot/effort path', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // Locate the approve click handler body.
+  const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
+  assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
+  // Read enough to cover the full handler including both write branches.
+  const handlerBody = app.slice(approveStart, approveStart + 6000);
+
+  // The screenshot/effort-only branch is the first `if` inside the try.
+  const screenshotPath = handlerBody.slice(
+    handlerBody.indexOf("pendingWrite.mode === 'screenshot'"),
+    handlerBody.indexOf("pendingWrite.mode === 'screenshot'") + 1500
+  );
+  assert.doesNotMatch(screenshotPath, /\/api\/deload\/advance/, 'advance must NOT appear in the screenshot/effort-only write path');
+
+  // The live log path (the else branch) contains advance.
+  assert.match(handlerBody, /\/api\/deload\/advance/, 'advance must appear in the approve handler');
+
+  // advance fires only during a deload session and not on duplicate-blocked replays.
+  assert.match(handlerBody, /intentId\s*===\s*['"]deload_reset['"]/, 'advance must be guarded by intentId === deload_reset');
+  assert.match(handlerBody, /!duplicateBlocked/, 'advance must not fire for duplicate-blocked replays');
+
+  // Auto-resolve when the deload sessions are exhausted.
+  assert.match(handlerBody, /POST_DELOAD_EVALUATION/, 'handler must auto-resolve when advance transitions to POST_DELOAD_EVALUATION');
+  assert.match(handlerBody, /\/api\/deload\/resolve/, 'handler must call /api/deload/resolve after the final deload session');
+});
+
 test('shell: styles define dark mode and the new component tokens', () => {
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
   // Dark is the single primary theme now (graphite/ember in :root), so the dark

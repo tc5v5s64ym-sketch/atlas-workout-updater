@@ -59,7 +59,7 @@ const {
   resolvePostDeload
 } = require('./services/deloadEngine');
 const { readCurrentDeloadState } = require('./services/deloadState');
-const { selectProtocol, roundLoad } = require('./services/deloadProtocols');
+const { selectProtocol, roundLoad, computePrescription } = require('./services/deloadProtocols');
 const {
   beginWrite,
   completeWrite,
@@ -1567,14 +1567,13 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     // path are untouched. (The card RIR is the top-level target_rir; app.js:1126.)
     const activeDeload = recommendation.deload;
     if (activeDeload && activeDeload.in_deload === true && activeDeload.protocol) {
-      const { load_multiplier, target_rir } = activeDeload.protocol;
       const nt = recommendation.next_target;
-      if (nt && Number.isFinite(Number(nt.weight)) && Number.isFinite(Number(load_multiplier))) {
-        const cut = roundLoad(Number(nt.weight) * Number(load_multiplier));
-        if (cut != null) nt.weight = cut;
-      }
-      if (Number.isFinite(Number(target_rir))) {
-        recommendation.target_rir = Number(target_rir);
+      const prescription = nt
+        ? computePrescription(activeDeload.protocol, { working_weight: nt.weight })
+        : null;
+      if (prescription) {
+        nt.weight = prescription.weight;
+        recommendation.target_rir = prescription.target_rir;
       }
     }
     const normalizedRows = allLog
