@@ -6,12 +6,14 @@ Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./
 
 ### Deferred item tags
 
-Each deferred item should carry one of these tags so future agents know what kind of PR it warrants:
+Each deferred item should carry one of these tags so future agents know the *risk* of the PR it warrants:
 
-- `[trust-critical]` — could silently corrupt data, produce wrong numbers, or break the preview→approve→write path. Requires Opus 4.8.
-- `[correctness]` — wrong behavior visible to user but no data corruption risk. Requires Opus 4.8 if write-path-adjacent, Sonnet 4.6 otherwise.
-- `[polish]` — wording, ordering, or UX quality. No behavior change. Sonnet 4.6.
-- `[housekeeping]` — dead code, duplicate logic, test gaps, doc cleanup. Sonnet 4.6.
+- `[trust-critical]` — could silently corrupt data, produce wrong numbers, or break the preview→approve→write path.
+- `[correctness]` — wrong behavior visible to user but no data corruption risk.
+- `[polish]` — wording, ordering, or UX quality. No behavior change.
+- `[housekeeping]` — dead code, duplicate logic, test gaps, doc cleanup.
+
+> **Model:** the builder runs on **Opus 4.8 for all work** (owner standing instruction — see `CLAUDE.md`). The per-item "Sonnet 4.6 / Opus 4.8" suggestions still scattered through older items below are **superseded** — read them as risk hints only, not model selection.
 
 ---
 
@@ -207,7 +209,7 @@ Shipped after #422:
 
 Remaining:
 
-- **Sweep per-item `Sonnet 4.6` model tags now that the builder is Opus-always** `[housekeeping]` — `#429` fixed the builder model at Opus 4.8, but this file's "Deferred item tags" legend and several deferred items still carry `Sonnet 4.6` / "requires Opus 4.8 if … Sonnet otherwise" model suggestions, which now contradict "Opus 4.8, always." Historical plan docs (`FIX_PLAN.md`, `COACH_PLAN.md`, `docs/COACH_NEXT_LEVEL_BUILD_PLAN.md`) do too (lower concern). Cleanup: drop/neutralize the per-item model tags in the live BACKLOG (keep the `[trust-critical]`/`[correctness]`/`[polish]`/`[housekeeping]` *risk* tags; remove only the model half). Surfaced by automated review of #429. Good first auto-safe loop item.
+- ✅ **Sweep per-item `Sonnet 4.6` model tags now that the builder is Opus-always** `[housekeeping]` — resolved at source: the "Deferred item tags" legend now defines tags by *risk only* and adds a note that the per-item Sonnet/Opus suggestions scattered through older items are **superseded** (read as risk hints, not model selection). Historical plan docs (`FIX_PLAN.md`, `COACH_PLAN.md`, `docs/COACH_NEXT_LEVEL_BUILD_PLAN.md`) are reference-only and left as-is. Surfaced by automated review of #429.
 - **Verify the Decision Desk's author-association gate on the first live request** `[infrastructure]` — the desk triggers only when the Decision Request comment's `author_association` ∈ `OWNER/MEMBER/COLLABORATOR`. If the builder posts the request under a GitHub App/bot identity, the association can be `NONE`/`CONTRIBUTOR`, so the desk never fires (safe — fail-closed, never an implicit "yes" — but silently inert). On the first live request, confirm the posting identity's association lands in the allowed set; if not, add a **precise login allowlist** for the builder bot to the workflow `if` (do NOT loosen the gate to allow `NONE` broadly). Surfaced by automated review of #426.
 - **Optional OpenAI-backed Codex responder** `[infrastructure]` `owner-decision` — a drop-in responder mode for the decision desk using `CODEX_OPENAI_API_KEY` + `CODEX_MODEL` instead of the subscription token. **Paid OpenAI API — only if the owner wants a literal OpenAI/Codex model answering.** Not needed; the subscription responder is the default. Owner decision (cost).
 
