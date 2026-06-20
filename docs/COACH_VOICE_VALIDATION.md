@@ -183,3 +183,52 @@ give the next action if one is needed; no praise for normal compliance; no inven
 rationale; **no "counts"-style commentary unless the engine actually knows the
 substitution quality** (`quality` present and excellent/acceptable). The model never
 decides the classification or quality — it only words the engine's call.
+
+---
+
+## Extra-work voice (owner-approved 2026-06-20)
+
+When a logged session goes **beyond** the plan, the engine attaches
+`detectExtraWork(prescribed, logged)` (`services/extraWorkDetector.js`):
+
+- `extra_sets: [{ exercise, prescribed_sets, logged_sets, extra }]` — a *planned*
+  lift logged for more sets than its `target_sets`.
+- `extra_exercises: [{ exercise }]` — a logged lift that was never prescribed.
+- `has_extra: boolean`.
+
+Tonal anchor: **B6** (felt-great → unplanned max-effort work · disapprove). Drives
+the "you added extra work" voice the wiring PR will ship.
+
+**What the engine knows — and the voice may NOT exceed:** set counts and exercise
+names only. The detector has **no** weight, RIR, effort, or readiness signal. So the
+voice must NOT call extra work "junk volume," assert fatigue cost as fact, or imply
+poor effort — it may only note the *added volume* and give the calm recovery-banking
+caution from B6. Any fatigue/effort claim must come from a *separate* engine fact
+(effort verdict, readiness), never from this signal alone.
+
+**Proactive rule (owner call):** *volunteer* extra work — added volume can borrow
+from the next session's recovery, which is the B6 rationale. **Standard-tier
+threshold:** comment when `extra_sets` has an entry with `extra ≥ 2`, or when
+`extra_exercises` is non-empty. A single extra set (`extra === 1`) stays quiet at
+Standard to avoid nagging. `has_extra:false` → say nothing on this axis.
+
+Owner-approved Standard-tier wordings (one fact, one why, one action):
+
+- **Extra sets, single lift** (`extra_sets:[{exercise:"Bench Press", prescribed_sets:3, logged_sets:5, extra:2}]`):
+  "Two extra sets of bench beyond the three I'd planned. Not free — that volume comes
+  out of next session's recovery. Fine once, but bank good days instead of spending
+  them."
+- **Unprogrammed exercise** (`extra_exercises:[{exercise:"Barbell Curl"}]`):
+  "You added curls that weren't in today's plan. No problem if it's what you wanted —
+  just logging it so the history's honest, not the prescription."
+- **Both, combined** (`extra_sets:[{exercise:"Squat", prescribed_sets:3, logged_sets:4, extra:1}]`, `extra_exercises:[{exercise:"Leg Extension"}]`):
+  "One extra squat set and some unplanned leg extensions on top. The day's work was
+  already done — keep the extras to a clean back-off set rather than piling on."
+- **No extra work** (`has_extra:false`): *(no extra-work comment — Atlas is silent on
+  this axis).*
+
+**Locked rules (apply to every signal):** state the fact; explain why it matters;
+give the next action if one is needed; numbers (`extra`, `prescribed_sets`,
+`logged_sets`) pass through verbatim from the engine; no invented fatigue/effort
+claims; no praise for normal compliance; the model never decides whether extra work
+happened — it only words `detectExtraWork`'s output.
