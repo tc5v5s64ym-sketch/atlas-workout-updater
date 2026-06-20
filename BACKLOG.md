@@ -202,6 +202,7 @@ Shipped after #422:
 
 Remaining:
 
+- **Verify the Decision Desk's author-association gate on the first live request** `[infrastructure]` — the desk triggers only when the Decision Request comment's `author_association` ∈ `OWNER/MEMBER/COLLABORATOR`. If the builder posts the request under a GitHub App/bot identity, the association can be `NONE`/`CONTRIBUTOR`, so the desk never fires (safe — fail-closed, never an implicit "yes" — but silently inert). On the first live request, confirm the posting identity's association lands in the allowed set; if not, add a **precise login allowlist** for the builder bot to the workflow `if` (do NOT loosen the gate to allow `NONE` broadly). Surfaced by automated review of #426.
 - **Optional OpenAI-backed Codex responder** `[infrastructure]` `owner-decision` — a drop-in responder mode for the decision desk using `CODEX_OPENAI_API_KEY` + `CODEX_MODEL` instead of the subscription token. **Paid OpenAI API — only if the owner wants a literal OpenAI/Codex model answering.** Not needed; the subscription responder is the default. Owner decision (cost).
 
 Remaining (owner-decision — change repo settings; not built in #422):
