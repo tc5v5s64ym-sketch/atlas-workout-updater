@@ -291,12 +291,12 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
     reps: row.reps,
     rir: row.rir,
     notes: ensureNotes(row.notes),
-    volume_calc: row.volume_calc ?? row.volumeCalc ?? row.volume
+    // volume_calc is ALWAYS recomputed server-side from weight × reps — a
+    // client-supplied volume is never trusted. Trusting it let a value that
+    // disagrees with weight×reps land in Log_Cleaned col 12 and corrupt every
+    // analytic that reads volume (AUDIT ME-4).
+    volume_calc: calculateVolumeCalc(row.weight, row.reps)
   };
-
-  if (result.volume_calc === undefined || result.volume_calc === null || result.volume_calc === '') {
-    result.volume_calc = calculateVolumeCalc(result.weight, result.reps);
-  }
 
   for (const field of ['date_clean', 'session_id', 'exercise', 'set_number', 'weight', 'reps', 'rir']) {
     if (result[field] === undefined || result[field] === null || result[field] === '') {
@@ -324,7 +324,9 @@ function logRowArrayToObject(row) {
     reps: row[8],
     rir: row[9],
     notes: ensureNotes(row[10]),
-    volume_calc: row[11] === undefined || row[11] === null || row[11] === '' ? calculateVolumeCalc(row[7], row[8]) : row[11]
+    // Always recompute from weight × reps; a client-supplied col-12 value (row[11])
+    // is intentionally ignored so it can never corrupt Log_Cleaned (AUDIT ME-4).
+    volume_calc: calculateVolumeCalc(row[7], row[8])
   };
 }
 
