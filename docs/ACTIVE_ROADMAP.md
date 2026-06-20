@@ -2,7 +2,9 @@
 
 > **Governance layer:** Roadmap — see [`docs/GOVERNANCE.md`](GOVERNANCE.md) for the full hierarchy.
 
-This is the current execution queue after completing the June 2026 session-state trust-repair series (Steps 372–377).
+This is the current execution queue after completing the June 2026 session-state trust-repair series (Steps 372–377) and the trust-first refill (Steps 379–385, all merged).
+
+**Current active workstream: Trust-Critical Coach Interaction Layer (P0–P4).** Live testing (2026-06-20) surfaced a trust failure — Atlas loses active-session context and answers session questions with generic fitness education — that takes priority over remaining backlog work. This is a **diagnosis-first** workstream: see the section "Active workstream — Trust-Critical Coach Interaction Layer" below and the investigation doc [`COACH_INTERACTION_TRUST_INVESTIGATION.md`](./COACH_INTERACTION_TRUST_INVESTIGATION.md). No implementation until the P0/P1 findings are reviewed.
 
 `BACKLOG.md` remains the single source of truth for open and deferred work. This file is the detailed active queue. When these two files disagree, stop and ask the owner before changing direction.
 
@@ -355,6 +357,44 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 > **`public/app.js` restriction:** This file contains the preview->approve->write trust loop and is a restricted file per `CLAUDE.md`. It must be named in scope before editing begins. The deload lifecycle calls are system-state writes to `Deload_State` only - they are NOT logged sets and do NOT route through the preview trust loop.
 
 **Out-of-scope:** prescription model changes (-> Step 383), trigger-logic changes (-> Step 384), schema migrations, LLM prompt changes.
+
+---
+
+## Active workstream — Trust-Critical Coach Interaction Layer (P0–P4)
+
+**Origin:** live testing 2026-06-20. Atlas occasionally loses active-session context and answers educational questions when the lifter is clearly asking about the active workout ("What am I doing next?", "Weight? Reps? RIR?", "How much am I lifting, how many reps, how many sets?"). Expected: answer from the active-session prescription. Actual: generic explanations of RIR / rep ranges / volume. This is a trust issue — it makes Atlas appear to forget the workout in progress. This workstream supersedes remaining backlog priority until P0/P1 are resolved.
+
+**Goal:** Atlas must always prioritize active workout context over generic fitness knowledge.
+
+**Mode:** diagnosis-first. Full root-cause analysis is in [`COACH_INTERACTION_TRUST_INVESTIGATION.md`](./COACH_INTERACTION_TRUST_INVESTIGATION.md). **No code changes until the owner reviews the P0/P1 findings.**
+
+### P0 — Active Session Context Integrity
+
+**Status:** diagnosed (root cause confirmed); **implementation held for owner review.**
+
+**Root cause (confirmed):** chat is routed **SME-first**. `public/coach-conversation.js::getChatReply` calls `POST /api/coach/ask` (the deterministic training-knowledge SME, which has *no* session context) before the session-aware coach `POST /api/coach/chat`, and short-circuits on any non-`log_only` card answer. Session questions whose wording collides with an SME card's match terms (`RIR` → `rir_rpe`; `how many reps` → `rep_ranges`; `how many sets` → `training_volume`) are intercepted and answered with generic education, never reaching the coach that knows the prescription. Secondary contributor: the coach prompt permits generic education and lacks an explicit "answer current-exercise prescription from session state first" rule.
+
+**Proposed fix plan (for review, not yet built):** gate the SME behind active-session context — when a session/plan/preview is active and the message is session-shaped, route to `/api/coach/chat` first and fall back to the SME only when the coach declines; reinforce `buildChatSystemPrompt` with an explicit prescription rule. Read-only coach path; engine owns numbers; no write-path/schema/trust-loop change.
+
+**Success criteria:** active-workout questions always use session context first; prescription requests never route into generic education; "what next" always references current workout state; session state has higher priority than general chat intent.
+
+### P1 — Coach Signal Visibility Audit
+
+**Status:** diagnosed (needs one live repro to disambiguate); **implementation held.**
+
+**Finding:** the substitution-quality signal (`scoreSubstitutionQuality`, wired PR #439) only fires when a prescribed-vs-logged pair reaches `buildSubstitutionPreviews` via `prescribedList`. That list is built from parser-detected swap phrasing / explicitly-attached `plan_exercises`, **not** from silently comparing logged lifts against the active plan. A passive deadlift→RDL log without explicit swap phrasing yields no pair → no signal. Same active-session-context gap as P0. Secondary, by-design contributor: RDL-for-deadlift is a *good* swap → owner-approved rule keeps good swaps intentionally brief/quiet, so even when it fires it is easy to miss. **Reproduce the live flow** (was it phrased as a swap? was `plan_exercises` attached? did `data.substitutions` come back non-empty?) to disambiguate (a) never fired vs (b) fired-but-quiet vs (c) routing conflict before any code change.
+
+### P2 — Extra Work Coach Signal (PR #440)
+
+**Status:** built + reviewed; **HOLD merge** pending P0/P1 findings. Do not merge yet.
+
+### P3 — Coach Brevity Pass
+
+**Status:** not started. Responses should prefer Conclusion first, Reason second, Details only when asked (e.g. "Hold 116. You're right on target." over "Trend is flat over the last 8 sessions…").
+
+### P4 — Session-State Stress Testing
+
+**Status:** not started. Test suite for messy human inputs ("rack busy", "I'll do RDL instead", "skip that", "legs are toast", "what now", "how much", "what am I doing next") to prove session state is preserved and prioritized over generic chat intent.
 
 ---
 

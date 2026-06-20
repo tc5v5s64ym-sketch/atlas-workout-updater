@@ -17,6 +17,18 @@ Each deferred item should carry one of these tags so future agents know the *ris
 
 ---
 
+## Trust-Critical Coach Interaction Layer — TOP PRIORITY (diagnosis-first)
+
+`[trust-critical]` Live testing (2026-06-20) surfaced that Atlas loses active-session context and answers educational questions when the lifter is clearly asking about the active workout ("What am I doing next?", "Weight? Reps? RIR?", "How much am I lifting, how many reps, how many sets?"). Expected: answer from the active-session prescription. Actual: generic RIR/rep-range/volume explanations. **Goal: Atlas must always prioritize active workout context over generic fitness knowledge.** Full diagnosis: [`docs/COACH_INTERACTION_TRUST_INVESTIGATION.md`](./docs/COACH_INTERACTION_TRUST_INVESTIGATION.md); priority queue: [`docs/ACTIVE_ROADMAP.md`](./docs/ACTIVE_ROADMAP.md). **No implementation until owner reviews P0/P1 findings.**
+
+- **P0 — Active Session Context Integrity** — *diagnosed; implementation held.* Root cause confirmed: `public/coach-conversation.js::getChatReply` routes **SME-first** (`/api/coach/ask`, no session context) before the session-aware coach (`/api/coach/chat`) and short-circuits on any card match. Session questions whose wording collides with SME card match terms (`RIR`→`rir_rpe`, `how many reps`→`rep_ranges`, `how many sets`→`training_volume`) get generic education instead of the prescription. Secondary: coach prompt permits generic education and lacks a "prescription-from-session-state-first" rule. Proposed fix (for review): gate SME behind active-session context (route session-shaped questions to the coach first) + reinforce `buildChatSystemPrompt`. Read-only path; engine owns numbers; no write/schema/trust-loop change. Success: active questions use session context first; prescription requests never route to generic education; "what next" references current state; session state > general chat intent.
+- **P1 — Coach Signal Visibility Audit** — *diagnosed; needs one live repro.* Substitution-quality signal (`scoreSubstitutionQuality`, wired PR #439) only fires when a prescribed-vs-logged pair reaches `buildSubstitutionPreviews` (`prescribedList`), which is driven by explicit swap phrasing / attached `plan_exercises`, not by silently comparing logged lifts to the active plan — so passive deadlift→RDL yields no pair → no signal (same context gap as P0). Secondary by-design: good swaps are intentionally quiet (owner-approved brevity). Reproduce live flow to disambiguate never-fired vs fired-but-quiet vs routing-conflict before any code.
+- **P2 — Extra Work Coach Signal (PR #440)** — built + reviewed; **HOLD merge** pending P0/P1.
+- **P3 — Coach Brevity Pass** — Conclusion first, Reason second, Details only when asked (e.g. "Hold 116. You're right on target."). Not started.
+- **P4 — Session-State Stress Testing** — test suite for messy human inputs ("rack busy", "I'll do RDL instead", "skip that", "legs are toast", "what now", "how much", "what am I doing next"). Not started.
+
+---
+
 ## Atlas voice & interaction — TOP PRIORITY
 
 The spearhead: the engine already emits verdicts (PR 3.3 ✅) and detects swaps (PR 3.5 ✅). The next build is wording those facts and giving the user control over how much Atlas says. Credibility floor (AC8) must be solid before voice ships.
