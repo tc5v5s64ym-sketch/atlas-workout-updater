@@ -56,6 +56,7 @@ const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
+const { buildSessionQuestionAnswer } = require('./services/sessionQuestionAnswer');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1185,31 +1186,69 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
 // { message: string, history?: [{role,text}], context?: { current_preview } }.
 // When Gemini is unconfigured or fails, returns message:null so the client shows
 // a deterministic fallback — the chat is never blocked by an LLM outage.
+// Engine target for a lift name, used by the LLM-down chat fallback. Resolves the
+// lift code from the name and reads the same recommendNextSet the "Next" card uses,
+// so a deterministic answer reports the exact numbers the engine already owns.
+function recommendTargetForLift(liftName, logRows) {
+  const code = generateLiftCode(liftName);
+  if (!code) return null;
+  const rec = recommendNextSet(Array.isArray(logRows) ? logRows : [], code);
+  if (!rec || !rec.next_target) return null;
+  return {
+    exercise_name: rec.exercise_name || liftName,
+    weight: rec.next_target.weight ?? null,
+    reps: rec.next_target.reps ?? null,
+    sets: rec.next_target.sets ?? null,
+    rir: rec.target_rir ?? null
+  };
+}
+
 app.post('/api/coach/chat', async (req, res) => {
   const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
   if (!message) {
     return standardError(req, res, 'message string is required', null, 400);
   }
-  // Step 377: when the LLM is down, a session-close question ("Ok so we are
-  // done?") still gets a deterministic engine answer from computePlanState rather
-  // than dead-ending at "Coach is unavailable". This needs no Sheets access — the
-  // plan state rides in on the client context.
+  const clientCtx = req.body && req.body.context;
+  const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
+
+  // Deterministic, LLM-free answer used whenever the Gemini coach is unavailable
+  // (unconfigured / errored / timed out / empty) so the lifter is never dead-ended.
+  // Step 377: a session-close question ("are we done?") answers from plan_state.
+  // P0 follow-up (2026-06): in-session shorthand ("RIR?", "reps?", "how much")
+  // answers from the engine's recommendation for the lift in question, so an LLM
+  // outage no longer turns workout-state questions into "Coach is unavailable".
+  // logRowsForTarget supplies recommendNextSet history; [] when Sheets weren't read.
+  const deterministicAnswer = (logRowsForTarget) => {
+    const close = buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
+    if (close) return close;
+    return buildSessionQuestionAnswer(message, {
+      history,
+      clientContext: clientCtx,
+      resolveTarget: (liftName) => recommendTargetForLift(liftName, logRowsForTarget)
+    });
+  };
+
   if (!coach.isConfigured()) {
-    const closeAnswer = buildSessionCloseAnswer(message, planStateFromContext(req.body && req.body.context));
-    return standardSuccess(req, res, closeAnswer
-      ? 'Coach chat unavailable — deterministic session-status answer'
+    // No Sheets read on the unconfigured path — answer from client context only.
+    const answer = deterministicAnswer([]);
+    return standardSuccess(req, res, answer
+      ? 'Coach chat unavailable — deterministic engine answer'
       : 'Coach chat unavailable — Gemini not configured', {
-      message: closeAnswer, configured: false, model: coach.coachModel(),
-      ...(closeAnswer ? { source: 'engine' } : {})
+      message: answer, configured: false, model: coach.coachModel(),
+      ...(answer ? { source: 'engine' } : {})
     });
   }
+
+  let allLog = [];
+  let chatError = null;
   try {
-    const [allLog, allEffort, notesRows, constraintRows] = await Promise.all([
+    const [logR, allEffort, notesRows, constraintRows] = await Promise.all([
       getSheetRows(logSheetName),
       getSheetRows(effortSheetName),
       getSheetRows('Coaching_Notes').catch(() => []),
       getSheetRows('Constraints').catch(() => [])
     ]);
+    allLog = logR;
     const coachingNotes = notesRows
       .map(row => Array.isArray(row) ? { date: row[0] || null, note: row[1] || null } : { date: row.date || null, note: row.note || null })
       .filter(n => n.note);
@@ -1218,28 +1257,32 @@ app.post('/api/coach/chat', async (req, res) => {
         ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
         : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
       .filter(c => c.kind && c.target && c.rule);
-    const context = buildChatContext(allLog, allEffort, req.body && req.body.context, coachingNotes, constraints);
-    const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
+    const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints);
     const { reply, propose_edit, propose_note, propose_constraint } = await coach.generateChatReply({ message, context, history });
-    return standardSuccess(req, res, 'Coach chat reply', {
-      message: reply, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
-    });
+    const hasReply = Boolean(reply && String(reply).trim());
+    // Return the Gemini result when it has usable prose OR carries a structured
+    // proposal (edit/note/constraint) — a proposal must never be dropped just
+    // because the prose came back empty. Only a truly empty result (no prose, no
+    // proposal) falls through to the deterministic engine fallback below.
+    if (hasReply || propose_edit || propose_note || propose_constraint) {
+      return standardSuccess(req, res, 'Coach chat reply', {
+        message: hasReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
+      });
+    }
+    // Empty reply and no proposal → fall through to the deterministic fallback below.
   } catch (error) {
-    // Degrade gracefully — the client shows a templated fallback, never an error
-    // bubble. Step 377: a session-close question still resolves deterministically.
-    // plan_state derives purely from the client context (no Sheets needed), so we
-    // recompute it here rather than relying on buildChatContext — that way a read
-    // failure (Promise.all rejects before context is built) still resolves, exactly
-    // like the unconfigured path above. Whatever the throw's origin, the LLM-down
-    // session-close question is never a dead end.
-    const closeAnswer = buildSessionCloseAnswer(message, planStateFromContext(req.body && req.body.context));
-    return standardSuccess(req, res, closeAnswer
-      ? 'Coach chat failed — deterministic session-status answer'
-      : 'Coach chat failed — use fallback', {
-      message: closeAnswer, configured: true, model: coach.coachModel(),
-      ...(closeAnswer ? { source: 'engine' } : { error: error.message })
-    });
+    // Degrade gracefully — never an error bubble. Fall through to the deterministic
+    // fallback. allLog may be populated (throw came from Gemini after the read) or
+    // empty (the Sheets read itself failed); the fallback handles both.
+    chatError = error.message;
   }
+  const answer = deterministicAnswer(allLog);
+  return standardSuccess(req, res, answer
+    ? 'Coach chat — deterministic engine answer'
+    : 'Coach chat failed — use fallback', {
+    message: answer, configured: true, model: coach.coachModel(),
+    ...(answer ? { source: 'engine' } : (chatError ? { error: chatError } : {}))
+  });
 });
 
 // POST /api/coach/ask — on-demand training SME answer. Deterministic and LLM-FREE:

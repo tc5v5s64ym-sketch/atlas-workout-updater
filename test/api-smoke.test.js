@@ -603,6 +603,66 @@ test('api smoke: coach/chat degrades to null when the coach throws — never an 
   }
 });
 
+test('api smoke: coach/chat answers in-session shorthand from the engine when Gemini is down', async () => {
+  // P0 follow-up: when the LLM fails, a workout-state question ("how many reps and
+  // rir") must be answered deterministically from the engine recommendation for the
+  // named lift (Bench Press → BEN01 history), not dead-end at "Coach is unavailable".
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = 'gemini exploded';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Going to do bench 225 how many reps and rir should I do?' })
+    });
+    assert.equal(response.status, 200, 'a coach failure must not surface as an HTTP error');
+    assert.equal(body.data.source, 'engine', 'falls back to a deterministic engine answer');
+    assert.match(body.data.message, /Bench Press/, 'names the resolved lift');
+    assert.match(body.data.message, /\breps\b/, 'answers the reps part');
+    assert.match(body.data.message, /RIR \d/, 'answers the RIR part with an engine number');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.throwError = null;
+  }
+});
+
+test('api smoke: coach/chat shorthand fallback resolves the lift from the client plan context', async () => {
+  // Unconfigured (no Sheets read) — the lift + target come from the live plan the
+  // client sent, so "RIR?" still answers without the LLM.
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: 'RIR?',
+      context: { current_plan: [{ name: 'Overhead Press', weight: 116, reps: 10, sets: 3, rir: 2 }] }
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.source, 'engine');
+  assert.equal(body.data.message, 'Overhead Press: RIR 2.');
+});
+
+test('api smoke: coach/chat preserves a proposal even when the Gemini prose comes back empty', async () => {
+  // Empty reply must not drop a structured proposal — the proposal is the payload.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatMessage = '   '; // whitespace-only prose
+  fakeCoachState.chatEditProposal = { action: 'update_set', index: 0, weight: 235, reps: 5 };
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'change set 1 to 235x5' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini', 'a returned proposal keeps the gemini source, not the engine fallback');
+    assert.equal(body.data.message, null, 'empty prose surfaces as null so the client uses its fallback line');
+    assert.deepEqual(body.data.propose_edit, { action: 'update_set', index: 0, weight: 235, reps: 5 });
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = 'Your bench has been flat for a few sessions — try 5×5 at 225 this week.';
+    fakeCoachState.chatEditProposal = null;
+  }
+});
+
 test('api smoke: coach/chat never appends to a sheet', async () => {
   const before = fakeSheetsState.appendCalls.length;
   fakeCoachState.configured = true;

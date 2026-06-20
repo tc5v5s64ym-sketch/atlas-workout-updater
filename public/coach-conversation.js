@@ -1170,7 +1170,13 @@
       }
     } catch { /* fall through to the Gemini coach */ }
 
-    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null }), COACH_LLM_TIMEOUT_MS));
+    // The chat round-trip is heavier than a set reaction (4 Sheets reads + context
+    // build + up to an 8s Gemini call) AND, when Gemini is down, the server returns
+    // a deterministic engine answer only after that attempt. Give it more room than
+    // the 9s reaction budget so that fallback actually reaches the lifter instead of
+    // the generic "Coach is unavailable" line firing first.
+    const CHAT_REPLY_TIMEOUT_MS = 15000;
+    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null }), CHAT_REPLY_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
