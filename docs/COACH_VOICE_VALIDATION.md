@@ -139,3 +139,27 @@ Each tagged: **intent** (preserved / changed / abandoned / baseline) · **verdic
 - **Substitution literacy.** A real swap matches muscle/pattern (B1, B2, B4); a fake one changes the workout (B10, B12, B20).
 - **Fatigue/recovery as signal.** B7, B13, B19 — how it *felt* relative to baseline is data, not noise.
 - **No artificial positivity, no gratuitous harshness.** Honest read, coach register, then a forward recommendation.
+
+---
+
+## Return-after-layoff voice (owner-approved 2026-06-20)
+
+When the engine emits `layoff` (`assessLayoff` → `returning_from_layoff`), the plan
+voice **volunteers** it (safety-relevant — it changes today's prescription).
+Standard verbosity: one fact, one reason, one action. These wordings are the
+owner-approved tonal reference:
+
+- **Mild (~1 week off):** "Week off — no big deal. I pulled volume back a touch today; ease in and we'll ramp next session."
+- **Significant (~3 weeks):** "Three weeks out, so I pulled volume back today. Don't chase your old numbers — hit these clean, leave a little in reserve, and we rebuild from here."
+- **Extended (month-plus):** "Month-plus off means you're fresh, but not conditioned. Today's volume is cut on purpose — treat it as re-entry, not a test. We'll climb fast once you're back in rhythm."
+
+**Locked voice rules (apply to layoff and every signal Atlas words):**
+- No hype. No fake encouragement. No invented numbers.
+- If Atlas says volume was cut, that claim must come from an engine fact (`layoff.volume_reduced` / the engine's set reduction) — never asserted otherwise.
+- Direct, not dramatic.
+- A layoff comment must explain the adjustment **and** give the next action.
+
+**Proactive vs. on-ask (owner call):** Atlas *volunteers* safety-relevant reads —
+layoff, pain, load sanity, deload/re-entry, major fatigue/readiness risk, anything
+that changes today's prescription. It stays quiet unless asked for trend
+commentary, "nice progress," deep analysis, or novelty observations.

@@ -43,6 +43,7 @@ const {
 } = require('./services/analytics');
 const { classifySubstitution } = require('./services/substitutionIntent');
 const { inferPrescribedPairs } = require('./services/planMatcher');
+const { assessLayoff } = require('./services/layoffGuard');
 const { isConstraintMessage } = require('./services/constraintDetector');
 const { recommendSubstitute } = require('./services/substitutionRecommender');
 const { buildRecommendation, parseRecommendationConstraints } = require('./services/recommendationPipeline');
@@ -1037,6 +1038,28 @@ app.post('/api/coach/message', async (req, res) => {
     } catch (_) {
       // Keep client facts as-is if Sheets read or enrichment fails.
     }
+  }
+
+  // Plan voice: derive the return-after-layoff signal from the log server-side so
+  // a "volume pulled back" claim can only come from the engine, never the client.
+  // Always overwrite facts.layoff (engine value or null) so a client cannot inject
+  // one; on a read failure it stays null and the coach simply won't mention it.
+  if (kind === 'plan') {
+    let layoffFact = null;
+    try {
+      const allLog = await getSheetRows(logSheetName);
+      const layoff = assessLayoff(allLog);
+      if (layoff.returning_from_layoff) {
+        layoffFact = {
+          severity: layoff.severity,
+          days_since_last_session: layoff.days_since_last_session,
+          volume_reduced: true,
+        };
+      }
+    } catch (_) {
+      // Best-effort — omit the layoff signal if the read fails.
+    }
+    facts = { ...facts, layoff: layoffFact };
   }
 
   try {
