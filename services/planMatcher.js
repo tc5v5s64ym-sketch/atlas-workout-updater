@@ -22,6 +22,14 @@ function sameExercise(nameA, nameB) {
   return nameA.trim().toLowerCase() === nameB.trim().toLowerCase();
 }
 
+// Two lift codes identify the same lift when both are present and equal
+// (case-insensitive). Identity by code supersedes name — the same lift can be
+// logged under a different display name than the plan used.
+function sameLiftCode(a, b) {
+  return Boolean(a) && Boolean(b) &&
+    String(a).trim().toUpperCase() === String(b).trim().toUpperCase();
+}
+
 function normalizePlan(items) {
   return (Array.isArray(items) ? items : [])
     .map(p => ({
@@ -68,9 +76,25 @@ function inferPrescribedPairs(planExercises, loggedExercises) {
   const fulfilledPlanned = new Set();
   const claimedLogged = new Set();
 
+  // Step 1a: exact name matches (case-insensitive).
   for (const p of planned) {
     for (const l of logged) {
       if (sameExercise(p.name, l.name) && !claimedLogged.has(l.name.toLowerCase())) {
+        fulfilledPlanned.add(p.name.toLowerCase());
+        claimedLogged.add(l.name.toLowerCase());
+        break;
+      }
+    }
+  }
+
+  // Step 1b: lift_code identity matches for planned lifts the name pass missed.
+  // Same lift_code = same lift even when the names differ (e.g. plan "Bench Press"
+  // vs logged canonical "Barbell Bench Press"). Prevents Step 2 from mislabeling
+  // an identical lift as a pattern-based substitution.
+  for (const p of planned) {
+    if (fulfilledPlanned.has(p.name.toLowerCase()) || !p.lift_code) continue;
+    for (const l of logged) {
+      if (sameLiftCode(p.lift_code, l.lift_code) && !claimedLogged.has(l.name.toLowerCase())) {
         fulfilledPlanned.add(p.name.toLowerCase());
         claimedLogged.add(l.name.toLowerCase());
         break;

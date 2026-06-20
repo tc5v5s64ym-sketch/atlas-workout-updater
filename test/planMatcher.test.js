@@ -227,3 +227,50 @@ describe('inferPrescribedPairs — defensive inputs', () => {
     assert.deepStrictEqual(inferPrescribedPairs([], []), []);
   });
 });
+
+// ─── lift_code identity (Step 1b) ─────────────────────────────────────────────
+
+describe('inferPrescribedPairs — lift_code identity', () => {
+  it('same lift_code, different name → fulfilled, NOT a substitution', () => {
+    // Plan "Bench Press" vs logged canonical "Barbell Bench Press", same code.
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Bench Press', lift_code: 'BP01' }],
+      [{ name: 'Barbell Bench Press', lift_code: 'BP01' }]
+    );
+    assert.deepStrictEqual(pairs, []);
+  });
+
+  it('lift_code match is case-insensitive', () => {
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Bench Press', lift_code: 'bp01' }],
+      [{ name: 'Barbell Bench Press', lift_code: 'BP01' }]
+    );
+    assert.deepStrictEqual(pairs, []);
+  });
+
+  it('different lift_code, same region → still a genuine substitution', () => {
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Back Squat', lift_code: 'SQ01' }],
+      [{ name: 'Leg Press', lift_code: 'LP01' }]
+    );
+    assert.strictEqual(pairs.length, 1);
+    assert.strictEqual(pairs[0].exercise, 'Back Squat');
+    assert.strictEqual(pairs[0].logged_exercise, 'Leg Press');
+  });
+
+  it('code present on only one side → name/pattern logic unchanged (still pairs)', () => {
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Back Squat', lift_code: 'SQ01' }],
+      [{ name: 'Leg Press' }]
+    );
+    assert.strictEqual(pairs.length, 1);
+  });
+
+  it('name match still wins when codes are absent', () => {
+    const pairs = inferPrescribedPairs(
+      [{ name: 'Deadlift' }],
+      [{ name: 'deadlift' }]
+    );
+    assert.deepStrictEqual(pairs, []);
+  });
+});
