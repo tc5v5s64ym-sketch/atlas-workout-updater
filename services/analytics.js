@@ -908,8 +908,15 @@ function detectStalls(logRows, minSessions = 3) {
 }
 
 function suggestDeloads(logRows, minSessions = 4) {
-  const stalls = detectStalls(logRows, minSessions);
-  return stalls.map(stall => {
+  // Coverage-aware downgrade: a flat *accessory* whose primary muscle is already
+  // covered by OTHER lifts is a false deload trigger (the live Shrugs / Dumbbell-
+  // Curl example) — exclude it from the suggestion list rather than show it as a
+  // program deload. Main and uncovered-accessory stalls always survive. Lazy
+  // require breaks the load-time cycle coverageStalls → muscleVolume → analytics
+  // (mirrors scoreIntents); by call time every module is loaded.
+  const { annotateStallsForDeload } = require('./coverageStalls');
+  const stalls = annotateStallsForDeload(detectStalls(logRows, minSessions), logRows);
+  return stalls.filter(stall => !stall.ignored_for_deload).map(stall => {
     const deloadWeight = roundLoad(stall.last_best_weight);
     return {
       liftCode: stall.liftCode,

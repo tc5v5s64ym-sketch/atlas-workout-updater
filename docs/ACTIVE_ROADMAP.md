@@ -246,15 +246,19 @@ After Steps 380-382 are merged, pause for owner review and app-test before deloa
 
 ### Roadmap Step 383 - GitHub issue #291: Deload prescription consolidation
 
-**Status:** pending
+**Status:** pending — **premise corrected after investigation (see below); scope shrank.**
 
 **Recommended model:** Opus 4.8.
 
-**Risk level:** Medium.
+**Risk level:** Low–Medium (smaller than originally framed).
 
-**Type:** Correctness (recommendation logic) - BUMPED priority; on the Coach's Pick surface
+**Type:** Correctness (recommendation logic)
 
-**Failure or opportunity addressed:** Two prescription paths currently coexist - `computePrescription` (the canonical engine) and the older volume-first `suggestDeloads` path. The Coach's Pick surface and next-set card may route through different models and can show contradictory prescriptions. Both surfaces must derive from a single canonical source.
+**Investigation finding (2026-06-20):** The original premise — "two prescription paths coexist and show *contradictory* prescriptions on Coach's Pick vs the next-set card" — is **inaccurate**. Evidence: (1) `computePrescription` (`services/deloadProtocols.js`) has **zero production callers** — it is dark, referenced only by its own module + test. (2) There is **no "Coach's Pick" UI** anywhere in `public/` — the term exists only in this roadmap's prose. (3) The only live "deload suggestions" surface is `GET /api/coaching/insights` via `suggestDeloads` (volume-first, *holds* weight). (4) The next-set card's active-deload load-cut is computed **inline in the route** (`index.js` ~1569-1579: `next_target.weight × protocol.load_multiplier`), duplicating `computePrescription`'s math instead of calling it — and it only fires when `Deload_State` is active, which the client never sets (Step 385 is dark). So the two surfaces never describe the same lift simultaneously and cannot contradict.
+
+**Real (reduced) scope:** A DRY cleanup — have the inline route math call `computePrescription` so there is a single prescription source — which only becomes user-visible once Step 385 wires the lifecycle. Because the load-cut path is dark today, this is low-urgency and best done alongside (or just before) Step 385. **Original (inaccurate) framing retained below for history.**
+
+**Original failure-or-opportunity statement (superseded):** Two prescription paths currently coexist - `computePrescription` (the canonical engine) and the older volume-first `suggestDeloads` path. The Coach's Pick surface and next-set card may route through different models and can show contradictory prescriptions. Both surfaces must derive from a single canonical source.
 
 **Why it belongs now:** After the new history/recommendation trust failures are filed, visible deload prescription surfaces still need one canonical source before the frontend starts advancing deload state.
 
@@ -279,7 +283,7 @@ After Steps 380-382 are merged, pause for owner review and app-test before deloa
 
 ### Roadmap Step 384 - Deload trigger nuance: no accessory/deprioritized false positives
 
-**Status:** pending
+**Status:** complete (done before Step 383, re-ordered after investigation — it is the real, concrete bug). The accessory-downgrade engine `annotateStallsForDeload` (`services/coverageStalls.js`) already existed but was wired ONLY into `scoreIntents` (session planning), not into the live deload-suggestions surface (`suggestDeloads` → `GET /api/coaching/insights`) the owner actually sees. Fix: `suggestDeloads` (`services/analytics.js`) now applies `annotateStallsForDeload` and filters out `ignored_for_deload` accessories, so a flat accessory whose primary muscle is covered by other lifts (the live Shrugs case) no longer surfaces a deload. The Dumbbell-Curl-progressing (40→53 lb) case is already handled upstream: `detectStalls` measures estimated-1RM, so a genuinely rising lift is never flagged. Golden test added (`test/analytics-edge.test.js` "Step 384"). The five `DELOAD_SPEC.md` protocol behaviors remain pinned by `test/deload-protocols.test.js` (unchanged). No write-path/schema/LLM change.
 
 **Type:** Correctness (recommendation logic)
 
