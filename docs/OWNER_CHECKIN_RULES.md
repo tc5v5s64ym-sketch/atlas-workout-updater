@@ -52,4 +52,4 @@ When a criterion above is met, the builder:
 4. Applies the matching risk label (`owner-live-test`, `owner-decision`, or `blocked`) per `docs/RISK_LABELS.md`.
 5. Asks a single, self-contained question if a decision is needed — enough context that the owner can answer without scrolling back.
 
-The owner remains the only role that merges, regardless of whether a check-in was raised.
+Routine merges are automated — Claude holds full merge authority (`docs/AUTOMATION_PROTOCOL.md`); the owner can always merge directly or revoke that authority. Raising a check-in pauses automation at that boundary (for criteria 2–8) but does not change who may merge.

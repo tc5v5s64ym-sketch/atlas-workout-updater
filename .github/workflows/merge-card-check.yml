@@ -28,8 +28,14 @@ jobs:
             }
 
             // Sentinels that only exist in the UNFILLED template — leaving any
-            // of them means a merge-card field was not completed.
+            // of them means a merge-card field was not completed. Covers the
+            // table fields AND the prose sections (concern, current-state
+            // verdict, model recommendation, tests). The Trust/scope safety
+            // checkboxes are NOT enforced here (several are "or owner-flagged",
+            // so an unchecked box can be legitimate) — they are reviewed, not
+            // gated.
             const sentinels = [
+              // table
               'number, filled after open',
               'one line -->',
               'low / medium / high -->',
@@ -39,6 +45,11 @@ jobs:
               'which check-in criterion 1',
               'steps for the owner if owner-live-test',
               'merge-ready / fix-then-merge / hold-for-owner -->',
+              // prose
+              'One sentence: the single concern',
+              'STILL BROKEN / ALREADY FIXED',
+              'Sonnet 4.6 or Opus 4.8',
+              'command + result',
             ];
             for (const s of sentinels) {
               if (body.includes(s)) {
