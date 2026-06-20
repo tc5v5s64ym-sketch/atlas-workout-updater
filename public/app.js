@@ -1250,6 +1250,19 @@ function advancePlannedSession() {
 }
 
 function endPlannedSession() {
+  // Step 385: advance the deload machine exactly once per session (not per write).
+  // The deloadWritten flag is set in the approve handler on the first confirmed
+  // live write; firing here instead of per-write keeps the session-count correct.
+  if (activePlannedSession?.intentId === 'deload_reset' && activePlannedSession?.deloadWritten) {
+    api('/api/deload/advance', { method: 'POST' })
+      .then(r => {
+        const state = r?.data?.state;
+        if (state?.training_state === 'POST_DELOAD_EVALUATION') {
+          api('/api/deload/resolve', { method: 'POST' }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }
   activePlannedSession = null;
   pendingSubstitution = null;
   renderActiveSessionBanner();
@@ -3937,18 +3950,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           log_rows_written: writeData.log_rows_written
         };
       }
-      // Step 385: advance the deload state machine on each confirmed live write during
-      // a deload session. Fire-and-forget — a lifecycle failure never blocks logging.
-      // Duplicate-blocked writes are replays of an already-advanced session.
+      // Step 385: mark that this deload session had a confirmed live write so
+      // endPlannedSession knows to advance the state machine exactly once.
       if (activePlannedSession?.intentId === 'deload_reset' && !duplicateBlocked) {
-        api('/api/deload/advance', { method: 'POST' })
-          .then(r => {
-            const state = r?.data?.state;
-            if (state?.training_state === 'POST_DELOAD_EVALUATION') {
-              api('/api/deload/resolve', { method: 'POST' }).catch(() => {});
-            }
-          })
-          .catch(() => {});
+        activePlannedSession.deloadWritten = true;
       }
     }
     invalidatePreview();

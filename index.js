@@ -1571,6 +1571,9 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
       const prescription = nt
         ? computePrescription(activeDeload.protocol, { working_weight: nt.weight })
         : null;
+      // When next_target.weight is missing/non-positive, prescription is null and
+      // neither weight nor target_rir is applied (old code set target_rir unconditionally).
+      // This is intentional: surfacing a deload RIR without a deload weight is confusing.
       if (prescription) {
         nt.weight = prescription.weight;
         recommendation.target_rir = prescription.target_rir;

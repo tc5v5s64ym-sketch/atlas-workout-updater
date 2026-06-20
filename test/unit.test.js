@@ -533,7 +533,7 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   // The declaration is cleared when the session ends.
   const endFn = appSource.slice(
     appSource.indexOf('function endPlannedSession()'),
-    appSource.indexOf('function endPlannedSession()') + 160
+    appSource.indexOf('function endPlannedSession()') + 900
   );
   assert.match(endFn, /pendingSubstitution = null/, 'ending the session must clear any pending swap');
 
@@ -3870,32 +3870,33 @@ test('Step 385: startPlannedSession fires deload/begin only on deload_reset inte
   assert.match(fnBody, /\.catch\(/, 'begin call must swallow errors (fire-and-forget)');
 });
 
-test('Step 385: approve handler calls deload/advance only in the live log path, never in the screenshot/effort path', () => {
+test('Step 385: approve handler marks deload session written; advance fires once per session in endPlannedSession', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
-  // Locate the approve click handler body.
+  // ── Approve handler: sets the flag, does NOT call advance directly ──────────
   const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
   assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
-  // Read enough to cover the full handler including both write branches.
   const handlerBody = app.slice(approveStart, approveStart + 6000);
 
-  // The screenshot/effort-only branch is the first `if` inside the try.
-  const screenshotPath = handlerBody.slice(
-    handlerBody.indexOf("pendingWrite.mode === 'screenshot'"),
-    handlerBody.indexOf("pendingWrite.mode === 'screenshot'") + 1500
-  );
-  assert.doesNotMatch(screenshotPath, /\/api\/deload\/advance/, 'advance must NOT appear in the screenshot/effort-only write path');
+  // advance must NOT appear anywhere in the approve handler — it belongs in endPlannedSession.
+  assert.doesNotMatch(handlerBody, /\/api\/deload\/advance/, 'advance must NOT be called inside the approve handler (it fires once per session in endPlannedSession)');
 
-  // The live log path (the else branch) contains advance.
-  assert.match(handlerBody, /\/api\/deload\/advance/, 'advance must appear in the approve handler');
+  // The approve handler sets deloadWritten on the session object after a confirmed live write.
+  assert.match(handlerBody, /deloadWritten\s*=\s*true/, 'approve handler must set deloadWritten flag after confirmed write');
+  // The flag is gated on deload_reset intent and not a duplicate-blocked replay.
+  assert.match(handlerBody, /intentId\s*===\s*['"]deload_reset['"]/, 'deloadWritten flag must be guarded by intentId === deload_reset');
+  assert.match(handlerBody, /!duplicateBlocked/, 'deloadWritten flag must not set for duplicate-blocked replays');
 
-  // advance fires only during a deload session and not on duplicate-blocked replays.
-  assert.match(handlerBody, /intentId\s*===\s*['"]deload_reset['"]/, 'advance must be guarded by intentId === deload_reset');
-  assert.match(handlerBody, /!duplicateBlocked/, 'advance must not fire for duplicate-blocked replays');
+  // ── endPlannedSession: advance fires here, exactly once per session ─────────
+  const endFnStart = app.indexOf('function endPlannedSession(');
+  assert.ok(endFnStart !== -1, 'endPlannedSession must exist');
+  const endFnBody = app.slice(endFnStart, endFnStart + 700);
 
-  // Auto-resolve when the deload sessions are exhausted.
-  assert.match(handlerBody, /POST_DELOAD_EVALUATION/, 'handler must auto-resolve when advance transitions to POST_DELOAD_EVALUATION');
-  assert.match(handlerBody, /\/api\/deload\/resolve/, 'handler must call /api/deload/resolve after the final deload session');
+  assert.match(endFnBody, /\/api\/deload\/advance/, 'advance must be called in endPlannedSession');
+  assert.match(endFnBody, /deloadWritten/, 'endPlannedSession must check deloadWritten before advancing');
+  // Auto-resolve when sessions are exhausted.
+  assert.match(endFnBody, /POST_DELOAD_EVALUATION/, 'endPlannedSession must auto-resolve when advance returns POST_DELOAD_EVALUATION');
+  assert.match(endFnBody, /\/api\/deload\/resolve/, 'endPlannedSession must call resolve after the final deload session');
 });
 
 test('shell: styles define dark mode and the new component tokens', () => {
