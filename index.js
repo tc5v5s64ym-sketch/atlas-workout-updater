@@ -56,7 +56,7 @@ const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
-const { buildSessionQuestionAnswer } = require('./services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, answerBareShorthand } = require('./services/sessionQuestionAnswer');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1210,6 +1210,21 @@ app.post('/api/coach/chat', async (req, res) => {
   }
   const clientCtx = req.body && req.body.context;
   const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
+
+  // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
+  // "How much?", "How many sets?") is answered deterministically from the CURRENT
+  // lift — whether or not Gemini is up — so the lifter gets the current-lift fact,
+  // not generic education. Ambiguous current lift → ask which one. No active lift
+  // context → returns null so the normal flow (SME education) still applies.
+  // Context-only (no Sheets/LLM): the live plan/preview already carries the target.
+  const bare = answerBareShorthand(message, clientCtx);
+  if (bare) {
+    return standardSuccess(req, res, bare.kind === 'clarify'
+      ? 'Coach chat — clarify which lift'
+      : 'Coach chat — deterministic engine answer', {
+      message: bare.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+    });
+  }
 
   // Deterministic, LLM-free answer used whenever the Gemini coach is unavailable
   // (unconfigured / errored / timed out / empty) so the lifter is never dead-ended.

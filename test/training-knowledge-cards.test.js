@@ -101,3 +101,13 @@ test('relatedTopics reference real card ids', () => {
     }
   }
 });
+
+test('rir_rpe brief answer leads with RIR and does not conflate RPE (#449 follow-up)', () => {
+  const { getCardById } = require('../services/trainingKnowledgeCards');
+  const card = getCardById('rir_rpe');
+  // Bare "RIR?" with no active context returns this shortAnswer via the SME.
+  assert.match(card.shortAnswer, /reps in reserve/i, 'must define RIR as reps in reserve');
+  assert.match(card.shortAnswer, /RIR 0/, 'must anchor RIR 0 = no reps left');
+  assert.doesNotMatch(card.shortAnswer, /\bRPE\b/, 'the brief RIR answer must not mix in RPE');
+  assert.doesNotMatch(card.shortAnswer, /1\s*[-–]\s*10/, 'must not describe RIR as a 1-10 scale');
+});

@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand } = require('../services/sessionQuestionAnswer');
 
 // Engine target stub — stands in for recommendNextSet-derived numbers.
 const benchTarget = { exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 };
@@ -90,4 +90,58 @@ test('resolveLiftName prefers the message over history over context', () => {
     resolveLiftName('RIR?', [{ text: 'going with rdl today' }], { current_plan: [{ name: 'Deadlift' }] }),
     'RDL'
   );
+});
+
+// ---------------------------------------------------------------------------
+// answerBareShorthand — bare in-session shorthand resolves to the CURRENT lift
+// (whether or not Gemini is up), asks when ambiguous, and defers when there is
+// no active lift context. (#449 follow-up, 2026-06-21.)
+// ---------------------------------------------------------------------------
+
+test('isBareSessionShorthand matches pure shorthand only', () => {
+  for (const q of ['RIR?', 'reps?', 'Sets?', 'Weight?', 'How much?', 'How much weight?', 'How many sets?', 'how many reps']) {
+    assert.equal(isBareSessionShorthand(q), true, `bare: ${q}`);
+  }
+  for (const q of ['how much should I sleep?', 'For deadlifts how many RIR?', 'what does RIR mean?', 'how is my bench trending?']) {
+    assert.equal(isBareSessionShorthand(q), false, `not bare: ${q}`);
+  }
+});
+
+test('bare shorthand answers from the current planned lift', () => {
+  const ctx = { current_plan: [{ name: 'Deadlift', weight: 245, reps: 7, sets: 3, rir: 2 }] };
+  assert.deepEqual(answerBareShorthand('RIR?', ctx), { kind: 'answer', text: 'Deadlift: RIR 2.' });
+  assert.deepEqual(answerBareShorthand('Reps?', ctx), { kind: 'answer', text: 'Deadlift: 7 reps.' });
+  assert.deepEqual(answerBareShorthand('How much?', ctx), { kind: 'answer', text: 'Deadlift: 245 lbs.' });
+  assert.deepEqual(answerBareShorthand('How much weight?', ctx), { kind: 'answer', text: 'Deadlift: 245 lbs.' });
+  assert.deepEqual(answerBareShorthand('How many sets?', ctx), { kind: 'answer', text: 'Deadlift: 3 sets.' });
+});
+
+test('the actively-previewed lift is the current lift (wins over a multi-lift plan)', () => {
+  const ctx = {
+    current_preview: [{ exercise: 'Leg Press', weight: 300, reps: 10, rir: 1 }],
+    current_plan: [{ name: 'Deadlift', rir: 2 }, { name: 'Leg Press', rir: 1 }]
+  };
+  assert.deepEqual(answerBareShorthand('RIR?', ctx), { kind: 'answer', text: 'Leg Press: RIR 1.' });
+});
+
+test('ambiguous active context asks which lift instead of guessing', () => {
+  const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }, { name: 'Leg Press', rir: 1 }] };
+  assert.deepEqual(answerBareShorthand('RIR?', ctx), { kind: 'clarify', text: 'For which lift — Deadlift or Leg Press?' });
+});
+
+test('no active lift context defers (null) so education can apply', () => {
+  assert.equal(answerBareShorthand('RIR?', {}), null);
+  assert.equal(answerBareShorthand('RIR?', null), null);
+});
+
+test('non-bare shorthand defers (null) — named-lift and off-topic go to the normal flow', () => {
+  const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }] };
+  assert.equal(answerBareShorthand('For deadlifts how many RIR?', ctx), null);
+  assert.equal(answerBareShorthand('how much should I sleep?', ctx), null);
+});
+
+test('bare shorthand fills a missing attribute from the engine when context lacks it', () => {
+  const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }] }; // no sets in plan
+  const res = answerBareShorthand('How many sets?', ctx, () => ({ exercise_name: 'Deadlift', sets: 3 }));
+  assert.deepEqual(res, { kind: 'answer', text: 'Deadlift: 3 sets.' });
 });
