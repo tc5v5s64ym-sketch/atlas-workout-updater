@@ -187,6 +187,7 @@ if (!gitVersion) {
   try { gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim(); } catch (_) { /* not a git repo or no tags */ }
 }
 if (!gitVersion) gitVersion = 'unknown';
+const { readBuildInfo } = require('./services/buildInfo');
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
 // TODO(persistence-layer): replace in-memory pending exercises/cache with durable storage.
@@ -686,9 +687,14 @@ app.get('/routes', (req, res) => {
 });
 
 app.get('/version', (req, res) => {
+  // pr + commit_subject come from build-info.json (captured at build time); they
+  // let the in-app badge show "PR #461" instead of only a SHA. Absent → null.
+  const build = readBuildInfo();
   return standardSuccess(req, res, 'Service version', {
     version: gitVersion,
     deployed_at: deploymentTimestamp,
+    pr: build.pr != null ? build.pr : null,
+    commit_subject: build.subject || null,
     endpoints: routeDefinitions
   });
 });

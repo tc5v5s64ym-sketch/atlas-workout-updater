@@ -567,12 +567,15 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
     const v = (body && body.data) || body || {};
     const raw = String(v.version || 'unknown');
     const short = /^[0-9a-f]{7,40}(-dirty)?$/i.test(raw) ? raw.slice(0, 7) : raw;
+    // Lead with the PR number when the build captured it — "PR #461" is something
+    // you can compare to the last PR merged; the SHA stays for precision.
+    const id = (v.pr != null) ? `PR #${v.pr} · ${short}` : short;
     let when = '';
     if (v.deployed_at) {
       const d = new Date(v.deployed_at);
       if (!Number.isNaN(d.getTime())) when = `${d.toISOString().slice(0, 16).replace('T', ' ')}Z`;
     }
-    el.textContent = when ? `${short} · deployed ${when}` : short;
+    el.textContent = when ? `${id} · deployed ${when}` : id;
   } catch (_) {
     el.textContent = 'unavailable';
   }
