@@ -441,16 +441,34 @@ no schema, no route, no `index.js`/`public/app.js` edit.
 
 ### Roadmap Step 387 — PR-O2: onboarding session-template builder
 
-**Status:** queued — **HOLD for owner review** (do not start until owner releases the
-hold after PR-O1).
+**Status:** in progress (this PR) — owner released the hold (2026-06-21, "Go O2").
 
 **Type:** Correctness (engine, pure). **Risk level:** Low–Medium. **Recommended model:** Opus 4.8.
 
-**Scope (planned):** emit the spec §3 full-body calibration plan (3 sessions, 8 reps @
-2 RIR across squat/push/pull/hinge) from available equipment + optional user reference,
-reusing `buildWorkingWeightProtocol` (start hint / "Start conservative") and
-`buildWarmupRamp` (50/70/85%, only once a working weight exists). Fixtures F1–F3, F7.
-No write-path, schema, or LLM change.
+**Scope:** `services/onboardingSessionPlan.js` — a pure, deterministic
+`buildOnboardingSessionPlan({ availableEquipment, lifts })` that emits the spec §3
+full-body calibration plan (3 sessions, 8 reps @ 2 RIR across
+squat/push/pull/hinge, widening to a vertical push + one isolation in S2/S3),
+selecting a lift variant per pattern from available equipment. Every number is
+engine-owned: start hints from `buildWorkingWeightProtocol` (70% hint / "Start
+conservative"), ramps from `buildWarmupRamp` (50/70/85%) offered **only once a
+working weight exists** (F7), per-lift `calibration_status` from PR-O1's
+`calibrationStatusFor` (no majority gate). A user reference seeds the start hint
+but never raises confidence (owner call 5); unsupported-equipment patterns are
+dropped (spec §5). No I/O, no LLM, no write-path, no schema, no route, no
+`index.js`/`public/app.js` edit.
+
+**Acceptance criteria (met):**
+- Three sessions, 8 reps @ 2 RIR; cold start → every slot `calibrating` with a
+  "Start conservative" hint and no ramp.
+- F1–F3 start-hint rounding flows through `buildWorkingWeightProtocol` (185→130,
+  225→160, 275→195, 100→70); a reference never flips `calibration_status`.
+- F7 warm-up ramp appears only when a working weight is present; a `graduated`
+  label without a working weight falls back to a calibration hint (never fabricates
+  a ramp).
+- Per-lift only: a graduated squat and a calibrating hinge coexist in one plan.
+- Equipment-aware variant selection (barbell default; dumbbell/bodyweight swaps;
+  unsupported patterns dropped). Golden tests in `test/onboardingSessionPlan.test.js`.
 
 ---
 
