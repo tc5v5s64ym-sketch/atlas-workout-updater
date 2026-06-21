@@ -56,6 +56,20 @@ describe('detectWarmupRampShape — learns a lifter\'s own ramp', () => {
     assert.equal(detectWarmupRampShape(one, { liftCode: 'BEN01' }), null);
   });
 
+  it('self-sorts: learns the MOST RECENT ramp even if rows are fed newest-first', () => {
+    // Oldest session ramps into 225; newest into 245. Fed newest-first (reversed).
+    const oldest = ownerBenchSession('2026-05-01', 'S1', 225);
+    const newest = ownerBenchSession('2026-05-15', 'S3', 245);
+    const reversed = [...newest, ...oldest]; // newest block first
+    const shape = detectWarmupRampShape(reversed, { liftCode: 'BEN01' });
+    assert.ok(shape, 'detects a pattern regardless of feed order');
+    // load_fraction is relative to each session's own top, so both sessions yield
+    // ~0.60/0.82; the regression guard is the absolute warm-up weights of the latest
+    // session (245): 0.82×245 ≈ 200, not the oldest's 0.82×225 ≈ 185.
+    const recentLatest = detectWarmupRampShape([...oldest, ...newest], { liftCode: 'BEN01' });
+    assert.deepEqual(shape.steps, recentLatest.steps, 'same learned shape no matter the feed order');
+  });
+
   it('returns null for a flat accessory (no warm-ups, all working sets)', () => {
     // Seated Row 190×10 @2 ×3 across sessions — no ramp.
     const rows = ['2026-05-01', '2026-05-08', '2026-05-15'].flatMap((d, i) => [

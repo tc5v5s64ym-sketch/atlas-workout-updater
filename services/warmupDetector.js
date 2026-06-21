@@ -157,6 +157,10 @@ function detectWarmupRampShape(logRows, options = {}) {
     if (!sessions.has(key)) { sessions.set(key, []); order.push(key); }
     sessions.get(key).push(r);
   }
+  // Self-sort chronologically (key is `${ISO date}||${session_id}`, so a lexical
+  // sort is date-then-session order) so "most recent ramp" is correct regardless
+  // of the caller's row order — a reversed feed must not learn the OLDEST ramp.
+  order.sort((a, b) => a.localeCompare(b));
 
   const ramps = [];
   for (const key of order) {
@@ -174,10 +178,11 @@ function detectWarmupRampShape(logRows, options = {}) {
     reps: w.reps,
   }));
 
-  // Confidence scales with how many sessions corroborate a ramp: exactly the
-  // minimum (2) is 'low', one more is 'medium', 4+ is 'high'.
+  // Confidence scales with how many sessions corroborate a ramp, relative to the
+  // minimum: exactly minRampedSessions is 'low', +1 is 'medium', +2 or more is
+  // 'high' (so the tiers stay consistent if minRampedSessions is overridden).
   let confidence = 'low';
-  if (ramps.length >= 4) confidence = 'high';
+  if (ramps.length >= opts.minRampedSessions + 2) confidence = 'high';
   else if (ramps.length >= opts.minRampedSessions + 1) confidence = 'medium';
 
   return { steps, confidence, ramped_sessions: ramps.length, total_sessions: totalSessions };
