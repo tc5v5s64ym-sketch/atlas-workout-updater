@@ -801,23 +801,29 @@ test('scoreIntents: a layoff does NOT recommend fix_blind_spots (everything over
     `fix_blind_spots must not be boosted by a uniform layoff; got ${intentScore(result, 'fix_blind_spots')}`);
 });
 
-test('scoreIntents: consistent training with a genuinely neglected pattern still credits fix_blind_spots', () => {
-  const mk = (ex, mg, code, ws, start, step, reps) => ws.map((w, i) => {
+test('scoreIntents: consistent training with genuinely neglected LOADED patterns still credits fix_blind_spots', () => {
+  const mk = (ex, mg, code, ws, start, step) => ws.map((w, i) => {
     const d = new Date(start); d.setDate(d.getDate() + i * step);
-    return [d.toISOString().split('T')[0], `${ex}-${i}`, ex, ex, mg, code, '1', String(w), String(reps || 8), '2', '', ''];
+    return [d.toISOString().split('T')[0], `${ex}-${i}`, ex, ex, mg, code, '1', String(w), '8', '2', '', ''];
   });
-  // Pressing/pulling/legs hammered every 2 days into May; core stopped ~5 weeks ago.
+  // Contrast: pressing + pulling trained hard every 2 days right up to today
+  // (recently trained → recovering/ready). The genuine blind spots are LOADED
+  // compounds neglected for ~3.5 weeks: Back Squat (lower) + RDL (hinge) → fresh.
   const rows = [
-    ...mk('Bench Press', 'Chest', 'BEN01', [185, 188, 190, 192, 195, 198, 200, 202], '2026-04-16', 2),
-    ...mk('Back Squat', 'Quads', 'SQT01', [225, 228, 230, 232, 235, 238, 240, 242], '2026-04-17', 2),
-    ...mk('Barbell Row', 'Back', 'BOR01', [155, 158, 160, 162, 165, 168, 170, 172], '2026-04-18', 2),
-    ...mk('Hanging Knee Raise', 'Core', 'HKR01', [0, 0, 0], '2026-04-01', 3, 15),
+    ...mk('Bench Press', 'Chest', 'BEN01', [185, 188, 190, 192, 195, 198, 200, 202], '2026-04-20', 2),
+    ...mk('Barbell Row', 'Back', 'BOR01', [155, 158, 160, 162, 165, 168, 170, 172], '2026-04-21', 2),
+    ...mk('Back Squat', 'Quads', 'SQT01', [225, 230, 235], '2026-04-01', 5),
+    ...mk('Romanian Deadlift', 'Hamstrings', 'RDL01', [185, 190, 195], '2026-04-02', 5),
   ];
   const result = scoreIntents(rows, [], { today: '2026-05-06' });
-  // The gate must NOT zero out a real blind spot when training is consistent —
-  // the overdue bonus applies, so the score clears the base (40).
-  assert.ok(intentScore(result, 'fix_blind_spots') > 60,
-    `consistent training must still credit overdue patterns; got ${intentScore(result, 'fix_blind_spots')}`);
+  const fbs = result.intents.find(i => i.id === 'fix_blind_spots');
+  // The gate must NOT zero out a real blind spot when training is consistent — the
+  // overdue bonus applies (two fresh loaded patterns → base + 20×2), so it clears 60.
+  assert.ok(fbs.score > 60, `consistent training must still credit overdue patterns; got ${fbs.score}`);
+  // …and the credited patterns are the actually-neglected loaded ones (lower / hinge),
+  // not an artifact of unrelated patterns reading fresh.
+  const why = (fbs.why_today || []).join(' ');
+  assert.ok(/Lower body|Hinge/.test(why), `the neglected loaded pattern must be the one surfaced; got "${why}"`);
 });
 
 // ── e1RM trend uses each session's BEST set, not its first (warm-up) set ───────
