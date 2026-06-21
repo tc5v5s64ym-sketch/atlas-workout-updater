@@ -654,3 +654,39 @@ test('#402: same exercise under multiple lift codes appears at most once per int
     );
   }
 });
+
+// ── Major-lift warm-up ramp on the live build_strength path ───────────────────
+// Regression: the build_strength intent built its exercises via exForPatterns,
+// which (unlike buildIntentSession) attached no warm-up ramp — so the lead
+// compound showed flat sets from set one (SESSION_DESIGN.md "warm-up ramps").
+test('scoreIntents: build_strength lead compound carries an ascending warm-up ramp; accessories stay flat', () => {
+  // strength goal + rested legs → strengthPatterns includes lower/hinge/push/pull,
+  // so a heavy compound (Deadlift / Squat) leads. All sessions are well before
+  // today so patterns read as rested (no fatigue dose interfering).
+  const rows = [
+    ...makeRows('Deadlift',     'back',  'DL01',  [275, 285, 295, 305, 315], '2026-03-01'),
+    ...makeRows('Back Squat',   'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-01'),
+    ...makeRows('Lateral Raise','shoulders', 'LR01', [15, 15, 20, 20, 20],   '2026-03-01'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03', goal: 'strength' });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs && Array.isArray(bs.exercises) && bs.exercises.length, 'build_strength must have exercises');
+
+  const anchor = bs.exercises.find(ex => Array.isArray(ex.warmup_sets) && ex.warmup_sets.length);
+  assert.ok(anchor, 'the lead compound must carry a warm-up ramp (not flat from set one)');
+  assert.equal(anchor.warmup_sets.length, 3, 'a full 3-step ramp');
+  const w = anchor.warmup_sets.map(s => s.weight);
+  assert.ok(w[0] < w[1] && w[1] < w[2] && w[2] < anchor.target_weight,
+    `ramp must ascend into the working weight; got ${w} → ${anchor.target_weight}`);
+  anchor.warmup_sets.forEach(s => assert.equal(s.priming, true, 'warm-ups are priming, not working sets'));
+  // The prescribed working sets are untouched — the ramp is added, not a swap.
+  assert.ok(anchor.target_sets >= 1 && anchor.target_weight > 0);
+
+  // An isolation accessory must never carry a ramp.
+  const accessory = bs.exercises.find(ex => (ex.exercise || '').toLowerCase().includes('lateral raise'));
+  if (accessory) assert.ok(!accessory.warmup_sets, 'accessories stay flat');
+
+  // Exactly one lead compound ramps per session (not every compound).
+  const ramped = bs.exercises.filter(ex => Array.isArray(ex.warmup_sets) && ex.warmup_sets.length);
+  assert.equal(ramped.length, 1, `only the lead compound ramps; got ${ramped.length}`);
+});

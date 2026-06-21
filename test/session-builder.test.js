@@ -3,7 +3,7 @@
 const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildWarmupRamp, isBlockedPair, buildIntentSession } = require('../services/sessionBuilder');
+const { buildWarmupRamp, isBlockedPair, buildIntentSession, attachAnchorWarmup } = require('../services/sessionBuilder');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -448,5 +448,81 @@ describe('buildIntentSession — edge cases', () => {
     const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [], maxExercises: 6 });
     assert.equal(session.exercises.length, 6,
       `should return 6 exercises when 6+ candidates are available and under-coverage is empty; got ${session.exercises.length}`);
+  });
+});
+
+// ── attachAnchorWarmup ──────────────────────────────────────────────────────
+// SESSION_DESIGN.md "Set progression — warm-up ramps": the lead compound of a
+// session climbs into its working sets; later lifts and accessories stay flat.
+// This is the engine fix for the live "flat sets from set one" bug on the
+// build_strength intent's exForPatterns list (which doesn't route through
+// buildIntentSession's anchor ramp).
+
+// Exercise shape as emitted by exForPatterns / buildIntentSession.
+function makeEx(exercise, lift_code, target_weight, target_reps = 5, target_sets = 3) {
+  return { exercise, lift_code, target_weight, target_reps, target_sets, reason: 'Continue progressing' };
+}
+
+describe('attachAnchorWarmup — lead compound ramps, accessories stay flat', () => {
+  it('Deadlift lead compound gets an ascending warm-up ramp (not flat from set one)', () => {
+    const list = [makeEx('Deadlift', 'DL01', 245, 7), makeEx('Face Pull', 'FP01', 50, 15)];
+    const out = attachAnchorWarmup(list);
+    const dl = out.find(e => e.exercise === 'Deadlift');
+    assert.ok(Array.isArray(dl.warmup_sets) && dl.warmup_sets.length === 3, 'Deadlift should carry a 3-step ramp');
+    assert.equal(dl.is_anchor, true);
+    // Ascending load into the working weight — proves it is a build-up, not flat.
+    const w = dl.warmup_sets.map(s => s.weight);
+    assert.ok(w[0] < w[1] && w[1] < w[2] && w[2] < 245, `ramp must ascend below working weight; got ${w}`);
+    dl.warmup_sets.forEach(s => assert.equal(s.priming, true, 'warm-ups are priming, not working sets'));
+  });
+
+  it('working sets are preserved — the ramp is ADDED, never a substitute for them', () => {
+    const out = attachAnchorWarmup([makeEx('Back Squat', 'SQ01', 240, 5, 3)]);
+    const sq = out[0];
+    assert.equal(sq.target_weight, 240);
+    assert.equal(sq.target_reps, 5);
+    assert.equal(sq.target_sets, 3, 'prescribed working sets unchanged');
+  });
+
+  it('Back Squat lead compound ramps', () => {
+    const out = attachAnchorWarmup([makeEx('Back Squat', 'SQ01', 240, 5)]);
+    assert.equal(out[0].warmup_sets.length, 3);
+  });
+
+  it('Overhead Press (a major compound) follows the same lead-compound policy', () => {
+    const out = attachAnchorWarmup([makeEx('Overhead Press', 'OHP01', 116, 10)]);
+    assert.ok(out[0].warmup_sets.length === 3, 'OHP is a compound → ramps');
+    assert.equal(out[0].is_anchor, true);
+  });
+
+  it('accessories / isolation-only lists stay flat (no ramp)', () => {
+    const list = [makeEx('Lateral Raise', 'LR01', 20, 15), makeEx('Bicep Curl', 'BC01', 40, 12)];
+    const out = attachAnchorWarmup(list);
+    out.forEach(e => assert.ok(!e.warmup_sets, `accessory ${e.exercise} must stay flat`));
+  });
+
+  it('only the FIRST compound (lead) ramps — a later compound stays flat', () => {
+    const list = [makeEx('Deadlift', 'DL01', 245, 7), makeEx('Bench Press', 'BN01', 185, 6)];
+    const out = attachAnchorWarmup(list);
+    assert.ok(out[0].warmup_sets, 'lead compound ramps');
+    assert.ok(!out[1].warmup_sets, 'later compound stays flat (already-warm policy)');
+  });
+
+  it('unknown / missing working weight does NOT fabricate a ramp', () => {
+    const noWeight = attachAnchorWarmup([makeEx('Deadlift', 'DL01', null, 5)]);
+    assert.ok(!noWeight[0].warmup_sets, 'no working weight → no ramp');
+    const zero = attachAnchorWarmup([makeEx('Deadlift', 'DL01', 0, 5)]);
+    assert.ok(!zero[0].warmup_sets, 'zero working weight → no ramp');
+  });
+
+  it('is idempotent — a list buildIntentSession already ramped is left untouched', () => {
+    const already = [{ ...makeEx('Deadlift', 'DL01', 245, 7), is_anchor: true, warmup_sets: buildWarmupRamp(245) }];
+    const out = attachAnchorWarmup(already);
+    assert.equal(out, already, 'already-ramped list returned unchanged (same reference)');
+  });
+
+  it('empty / non-array input is safe', () => {
+    assert.deepEqual(attachAnchorWarmup([]), []);
+    assert.deepEqual(attachAnchorWarmup(null), []);
   });
 });

@@ -337,6 +337,22 @@
     return `${ex.weight}lbs ${ex.reps}/${rir}`;
   }
 
+  // Format one engine-owned warm-up (priming) set as "{weight}lbs {reps} · warm-up".
+  // These are the lead compound's ramp into its working weight (the engine's
+  // warmup_sets, SESSION_DESIGN.md "Set progression"). They are PLANNED priming
+  // sets — never working sets, never save-ready — so they carry no RIR and are
+  // visually marked "warm-up" to keep planned warm-ups distinct from logged work.
+  function formatWarmupSetLine(s) {
+    return `${s.weight}lbs ${s.reps} · warm-up`;
+  }
+
+  // The engine attaches warmup_sets only to a session's lead compound; everything
+  // else (later compounds, accessories) has none and stays flat. Read off the raw
+  // intent exercise (normalizePlanExercise intentionally drops warmup_sets).
+  function warmupSetsFor(raw) {
+    return (raw && Array.isArray(raw.warmup_sets)) ? raw.warmup_sets : [];
+  }
+
   // The exercise list + closing line as plain text — used only for the
   // no-structured-plan fallbacks (bootstrap / no history). The main path renders
   // the structured block via appendWorkoutPlan() so names can be bold.
@@ -351,6 +367,8 @@
       lines.push('');
       any = true;
       lines.push(ex.name);
+      // Warm-up ramp first (lead compound only) — climb into the working sets.
+      for (const w of warmupSetsFor(raw)) lines.push(formatWarmupSetLine(w));
       if (ex.weight != null && ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         for (let i = 0; i < count; i++) {
@@ -383,6 +401,15 @@
       name.className = 'workout-plan-name';
       name.textContent = ex.name;
       exEl.appendChild(name);
+      // Warm-up ramp first (lead compound only). Marked with its own class so the
+      // planned priming sets read as a build-up, visually distinct from the
+      // working sets below — they are never loggable / save-ready rows.
+      for (const w of warmupSetsFor(raw)) {
+        const warm = document.createElement('div');
+        warm.className = 'workout-plan-set workout-plan-warmup';
+        warm.textContent = formatWarmupSetLine(w);
+        exEl.appendChild(warm);
+      }
       if (ex.weight != null && ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         for (let i = 0; i < count; i++) {
