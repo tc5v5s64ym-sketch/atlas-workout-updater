@@ -1564,8 +1564,21 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     let score = 40;
     const PLABEL = { lower: 'Lower body', push: 'Pressing', pull: 'Pulling', hinge: 'Hinge', core: 'Core' };
 
-    // Score accounts for every neglected pattern (they ARE overdue, even if not all schedulable today).
-    for (const p of freshPatterns) score += 20;
+    // A blind spot is a pattern neglected RELATIVE to consistent training — not the
+    // uniform "everything's overdue" of a layoff or a slow / low-volume week (owner
+    // insight 2026-06-21: missing the gym for a week, with all the fatigue bars
+    // green/fresh, is NOT a blind-spot day). Only credit overdue patterns when there
+    // is evidence of recent consistent training: overall load is not low AND at
+    // least one pattern was trained recently (contrast — you're hitting some patterns
+    // and neglecting this one). When everything is uniformly fresh (a layoff/slow
+    // week), this bonus is withheld and the general training intents win instead, so
+    // the lifter is eased back rather than sent to chase "overdue" patterns.
+    const trainingConsistently = fatigue.status !== 'low'
+      && readiness.some(r => ['fatigued', 'recovering', 'ready'].includes(r.status));
+    if (trainingConsistently) {
+      // Score accounts for every neglected pattern (they ARE overdue, even if not all schedulable today).
+      for (const p of freshPatterns) score += 20;
+    }
 
     const freshIds = freshPatterns.map(p => p.pattern);
     const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];

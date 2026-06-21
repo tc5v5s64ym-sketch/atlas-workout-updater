@@ -732,7 +732,10 @@ test('scoreIntents: build_strength caps lower-body accessories when 2+ main lowe
 // The live "Back Squat flat + buried + 5-lift overload" was a buildIntentSession
 // intent (shown when the goal isn't strength). structureSession now applies the
 // same role ordering / per-pattern main ramps / lower-body cap to those intents.
-for (const goal of ['hypertrophy', 'general']) {
+// hypertrophy → build_muscle (a buildIntentSession intent), proving structureSession
+// reaches those intents. (The general goal's recommendation now depends on the
+// consistent-training gate below, so it's exercised by the blind-spot tests instead.)
+for (const goal of ['hypertrophy']) {
   test(`scoreIntents: the recommended ${goal} session ramps both main compounds, orders mains first, and caps the leg pile-up`, () => {
     const rows = [
       ...makeRows('Deadlift',                    'Posterior Chain', 'DL01',  [230, 235, 240, 245, 245], '2026-03-20'),
@@ -744,7 +747,9 @@ for (const goal of ['hypertrophy', 'general']) {
     const result = scoreIntents(rows, [], { today: '2026-05-03', goal });
     const recId = (result.todays_read && result.todays_read.recommended_intent_id)
       || (result.intents.find(i => i.recommended) || {}).id;
-    assert.ok(!['build_strength'].includes(recId), `${goal} should recommend a buildIntentSession intent, got ${recId}`);
+    // structureSession applies to every training intent, so whichever one is
+    // recommended must be role-structured (the buildIntentSession intents are
+    // covered specifically by the hypertrophy → build_muscle case).
     const intent = result.intents.find(i => i.id === recId);
     assert.ok(intent && Array.isArray(intent.exercises) && intent.exercises.length, 'recommended intent has exercises');
     const names = intent.exercises.map(e => (e.exercise || '').toLowerCase());
@@ -767,6 +772,59 @@ for (const goal of ['hypertrophy', 'general']) {
     assert.ok(legIsolations.length <= 1, `leg isolations capped to ≤1; got ${legIsolations.length}`);
   });
 }
+
+// ── fix_blind_spots is gated on a consistent-training baseline ─────────────────
+// Owner insight (2026-06-21): missing the gym for a week makes EVERY pattern read
+// "overdue", which used to make fix_blind_spots win (+20 per fresh pattern). A
+// layoff / all-green-fatigue slow week is not a blind-spot day.
+function intentScore(result, id) {
+  const i = result.intents.find(x => x.id === id);
+  return i ? i.score : null;
+}
+
+test('scoreIntents: a layoff does NOT recommend fix_blind_spots (everything overdue ≠ blind spot)', () => {
+  const mk = (ex, mg, code, ws, start, step) => ws.map((w, i) => {
+    const d = new Date(start); d.setDate(d.getDate() + i * step);
+    return [d.toISOString().split('T')[0], `${ex}-${i}`, ex, ex, mg, code, '1', String(w), '8', '2', '', ''];
+  });
+  // Trained consistently through April, then ~18 days off.
+  const rows = [
+    ...mk('Bench Press', 'Chest', 'BEN01', [185, 190, 195, 200], '2026-04-01', 4),
+    ...mk('Back Squat', 'Quads', 'SQT01', [225, 230, 235, 240], '2026-04-02', 4),
+    ...mk('Barbell Row', 'Back', 'BOR01', [155, 160, 165, 170], '2026-04-03', 4),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-05' });
+  const recId = result.todays_read && result.todays_read.recommended_intent_id;
+  assert.notEqual(recId, 'fix_blind_spots', 'a layoff must not be framed as a blind-spot day');
+  // The overdue bonus is withheld — score stays at the base, not 40 + 20×patterns.
+  assert.ok(intentScore(result, 'fix_blind_spots') <= 60,
+    `fix_blind_spots must not be boosted by a uniform layoff; got ${intentScore(result, 'fix_blind_spots')}`);
+});
+
+test('scoreIntents: consistent training with genuinely neglected LOADED patterns still credits fix_blind_spots', () => {
+  const mk = (ex, mg, code, ws, start, step) => ws.map((w, i) => {
+    const d = new Date(start); d.setDate(d.getDate() + i * step);
+    return [d.toISOString().split('T')[0], `${ex}-${i}`, ex, ex, mg, code, '1', String(w), '8', '2', '', ''];
+  });
+  // Contrast: pressing + pulling trained hard every 2 days right up to today
+  // (recently trained → recovering/ready). The genuine blind spots are LOADED
+  // compounds neglected for ~3.5 weeks: Back Squat (lower) + RDL (hinge) → fresh.
+  const rows = [
+    ...mk('Bench Press', 'Chest', 'BEN01', [185, 188, 190, 192, 195, 198, 200, 202], '2026-04-20', 2),
+    ...mk('Barbell Row', 'Back', 'BOR01', [155, 158, 160, 162, 165, 168, 170, 172], '2026-04-21', 2),
+    ...mk('Back Squat', 'Quads', 'SQT01', [225, 230, 235], '2026-04-01', 5),
+    ...mk('Romanian Deadlift', 'Hamstrings', 'RDL01', [185, 190, 195], '2026-04-02', 5),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-06' });
+  const fbs = result.intents.find(i => i.id === 'fix_blind_spots');
+  // The gate must NOT zero out a real blind spot when training is consistent — the
+  // overdue bonus applies (two fresh loaded patterns → base + 20×2), so it clears 60.
+  assert.ok(fbs.score > 60, `consistent training must still credit overdue patterns; got ${fbs.score}`);
+  // …and the credited patterns are the actually-neglected loaded ones (lower / hinge),
+  // not an artifact of unrelated patterns reading fresh.
+  const why = (fbs.why_today || []).join(' ');
+  assert.ok(/Lower body|Hinge/.test(why), `the neglected loaded pattern must be the one surfaced; got "${why}"`);
+});
 
 // ── e1RM trend uses each session's BEST set, not its first (warm-up) set ───────
 // For lifters who log warm-ups first, the per-session FIRST set is a priming set;
