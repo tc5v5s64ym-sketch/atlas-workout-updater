@@ -119,9 +119,11 @@ function buildSessionVolumeProfile(logRows, options = {}) {
     exercises_per_session: Math.round(median(totals)),
     compounds_per_session: Math.round(median(compounds)),
     accessories_per_session: Math.round(median(accessories)),
-    // A roomy cap (75th percentile, rounded up) — big enough to allow the lifter's
-    // fuller days, tight enough to trim an over-stuffed generic plan.
+    // Roomy caps (75th percentile, rounded up) — big enough to allow the lifter's
+    // fuller days, tight enough to trim an over-stuffed generic plan. session_cap
+    // bounds total exercises; accessory_cap bounds isolation/accessory work.
     session_cap: Math.ceil(percentile(totals, 0.75)),
+    accessory_cap: Math.ceil(percentile(accessories, 0.75)),
     sessions_analyzed,
     window_days: windowDays,
     confidence,

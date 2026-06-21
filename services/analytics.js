@@ -1283,7 +1283,12 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (!rampShapeCache.has(code)) rampShapeCache.set(code, detectWarmupRampShape(logRows, { liftCode: code }));
     return rampShapeCache.get(code);
   };
-  const structureOpts = { rampShapeFor };
+  // Per-user session-volume cap: learn how many exercises/accessories the lifter
+  // actually does per session and size the suggested session to that norm (null =
+  // not enough history → generic caps only). Computed once for the whole call.
+  const { buildSessionVolumeProfile } = require('./sessionVolumeProfile');
+  const sessionProfile = buildSessionVolumeProfile(logRows, { today: todayStr });
+  const structureOpts = { rampShapeFor, sessionProfile };
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
