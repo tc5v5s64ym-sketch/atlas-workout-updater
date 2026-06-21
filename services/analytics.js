@@ -1374,6 +1374,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   }
 
   function exForPatterns(patterns, max = 6) {
+    // NOTE: the emitted shape carries no `muscle_group`, so the role/order/ramp/cap
+    // helpers classify by NAME only (classifyLiftRole's muscle-group fallback is
+    // inert on this path). Correct for all in-scope lifts; threading muscle_group
+    // is a filed BACKLOG follow-up (a keyword-less accessory would read as secondary).
     return allRecs
       .filter(r => patterns.includes(r.pattern))
       .slice(0, max)

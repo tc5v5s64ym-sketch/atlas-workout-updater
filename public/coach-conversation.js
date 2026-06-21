@@ -367,7 +367,7 @@
       lines.push('');
       any = true;
       lines.push(ex.name);
-      // Warm-up ramp first (lead compound only) — climb into the working sets.
+      // Warm-up ramp first (main compounds only) — climb into the working sets.
       for (const w of warmupSetsFor(raw)) lines.push(formatWarmupSetLine(w));
       if (ex.weight != null && ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
@@ -401,7 +401,7 @@
       name.className = 'workout-plan-name';
       name.textContent = ex.name;
       exEl.appendChild(name);
-      // Warm-up ramp first (lead compound only). Marked with its own class so the
+      // Warm-up ramp first (main compounds only). Marked with its own class so the
       // planned priming sets read as a build-up, visually distinct from the
       // working sets below — they are never loggable / save-ready rows.
       for (const w of warmupSetsFor(raw)) {
