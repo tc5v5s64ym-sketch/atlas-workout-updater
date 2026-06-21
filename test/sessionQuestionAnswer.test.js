@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion } = require('../services/sessionQuestionAnswer');
 
 // Engine target stub — stands in for recommendNextSet-derived numbers.
 const benchTarget = { exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 };
@@ -144,4 +144,62 @@ test('bare shorthand fills a missing attribute from the engine when context lack
   const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }] }; // no sets in plan
   const res = answerBareShorthand('How many sets?', ctx, () => ({ exercise_name: 'Deadlift', sets: 3 }));
   assert.deepEqual(res, { kind: 'answer', text: 'Deadlift: 3 sets.' });
+});
+
+// ── answerPlannedLiftQuestion — current plan beats history & education ─────────
+// Live bug (2026-06-21): with Bench Press 230×5 @ RIR 2 on screen, "what's the RIR
+// for bench?" returned generic RIR education and "how many reps for bench?" answered
+// from past history, instead of from today's plan.
+const planCtx = { current_plan: [{ name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 }] };
+
+test('answerPlannedLiftQuestion: named planned lift → RIR from the current plan', () => {
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", planCtx), 'Bench Press today: RIR 2.');
+});
+
+test('answerPlannedLiftQuestion: named planned lift → reps from the current plan', () => {
+  assert.equal(answerPlannedLiftQuestion('How many reps for bench?', planCtx), 'Bench Press today: 5 reps.');
+});
+
+test('answerPlannedLiftQuestion: named planned lift → weight from the current plan', () => {
+  assert.equal(answerPlannedLiftQuestion('How much weight for bench?', planCtx), 'Bench Press today: 230 lbs.');
+});
+
+test('answerPlannedLiftQuestion: a concept question with no named lift defers (education stays)', () => {
+  // "What is RIR?" names no lift → null, so the SME education path is untouched.
+  assert.equal(answerPlannedLiftQuestion('What is RIR?', planCtx), null);
+  assert.equal(answerPlannedLiftQuestion('What does RIR mean?', planCtx), null);
+});
+
+test('answerPlannedLiftQuestion: a past-tense question defers to history', () => {
+  // History owns "last time / previous" — the plan must not answer these.
+  assert.equal(answerPlannedLiftQuestion('How much did I bench last time?', planCtx), null);
+  assert.equal(answerPlannedLiftQuestion('What did I bench previously?', planCtx), null);
+});
+
+test('answerPlannedLiftQuestion: a lift NOT in the plan defers (no fabricated answer)', () => {
+  // Squat is named but not in today's plan → null (caller clarifies / uses history),
+  // never a guessed value. Also no plan[0] fallback: it must match the named lift.
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for squat?", planCtx), null);
+});
+
+test('answerPlannedLiftQuestion: no plan context → defers', () => {
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", null), null);
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", {}), null);
+});
+
+test('answerPlannedLiftQuestion: reasoning/advice framings defer to the coach', () => {
+  // Running before Gemini, a value lookup must NOT swallow "why / should / increase"
+  // questions — those want coaching judgement, so they fall through to Gemini.
+  assert.equal(answerPlannedLiftQuestion('why is the RIR for bench so low today?', planCtx), null);
+  assert.equal(answerPlannedLiftQuestion('how much should I increase bench by?', planCtx), null);
+  assert.equal(answerPlannedLiftQuestion('should I go heavier on bench?', planCtx), null);
+  // But a plain value lookup still answers from the plan.
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", planCtx), 'Bench Press today: RIR 2.');
+});
+
+test('answerPlannedLiftQuestion: a lift name containing an advice-like word still answers', () => {
+  // "raise"/"lower" are NOT advice words (they collide with lift names like
+  // Lateral Raise) — a direct value lookup for such a lift is still answered.
+  const ctx = { current_plan: [{ name: 'Lateral Raises', weight: 25, reps: 15, sets: 3, rir: 1 }] };
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for lateral raise?", ctx), 'Lateral Raises today: RIR 1.');
 });

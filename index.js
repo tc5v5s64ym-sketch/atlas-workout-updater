@@ -56,7 +56,7 @@ const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
-const { buildSessionQuestionAnswer, answerBareShorthand } = require('./services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, answerBareShorthand, answerPlannedLiftQuestion } = require('./services/sessionQuestionAnswer');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1235,6 +1235,21 @@ app.post('/api/coach/chat', async (req, res) => {
       ? 'Coach chat — clarify which lift'
       : 'Coach chat — deterministic engine answer', {
       message: bare.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+    });
+  }
+
+  // Plan-first answer (2026-06-21): when the lifter NAMES a lift that is in today's
+  // plan/preview and asks its prescribed value ("what's the RIR for bench?", "how
+  // many reps for bench?"), answer from the CURRENT PLAN — before Gemini, which
+  // would otherwise narrate from history. The current plan beats history and
+  // generic education for "today's" prescription. Deferred (null) for past-tense
+  // ("...last time?"), unnamed-lift ("what is RIR?"), or off-plan lifts, so
+  // education / history / clarification routing is untouched. Context-only: no
+  // Sheets, no LLM, no invented numbers.
+  const planned = answerPlannedLiftQuestion(message, clientCtx);
+  if (planned) {
+    return standardSuccess(req, res, 'Coach chat — current plan answer', {
+      message: planned, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
     });
   }
 

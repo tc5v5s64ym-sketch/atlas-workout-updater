@@ -62,7 +62,28 @@
     return SESSION_PATTERNS.some((re) => re.test(m));
   }
 
-  const exported = { isSessionStateQuestion };
+  // A session VALUE word (the attribute the lifter is asking about).
+  const ATTR_RE = /\b(rir|rpe|reps?|sets?|weight|load|how much|how many|how heavy|how light)\b/;
+  // Past-tense / history framings — these are NOT current-plan questions.
+  const HISTORY_RE = /\b(last time|last (week|session|month|workout|time)|previous(ly)?|history|before|used to)\b/;
+
+  // True when the message asks a session value (rir/reps/weight/sets) about a lift
+  // that is in the live plan/preview (names provided by the caller from context).
+  // This catches the named-lift framings isSessionStateQuestion misses — e.g.
+  // "what's the RIR for bench?" — so the caller can route them to the session-aware
+  // coach (current plan) instead of the generic SME education. Returns false for
+  // pure education ("what is RIR?" names no lift) and for history questions.
+  function isPlannedLiftQuestion(message, liftNames) {
+    const m = (typeof message === 'string' ? message : '').toLowerCase().trim();
+    if (!m || !ATTR_RE.test(m) || HISTORY_RE.test(m)) return false;
+    if (!Array.isArray(liftNames)) return false;
+    return liftNames.some((n) => {
+      const words = String(n == null ? '' : n).toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+      return words.some((w) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(m));
+    });
+  }
+
+  const exported = { isSessionStateQuestion, isPlannedLiftQuestion };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exported;

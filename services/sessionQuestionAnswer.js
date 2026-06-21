@@ -207,4 +207,63 @@ function answerBareShorthand(message, clientContext = null, resolveTarget = null
   return text ? { kind: 'answer', text } : null;
 }
 
-module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand };
+// Past-tense / history signals. A question about the PAST is NOT a current-plan
+// question — history owns "last time / previous / before", so the plan-first
+// answer must defer on these (the caller's history/LLM path answers them).
+const HISTORY_RE = /\b(last time|last (week|session|month|workout|time)|previous(ly)?|history|before|used to)\b/i;
+
+// Reasoning / advice framings. A "why is …", "should I …", "how much to increase"
+// question is NOT a direct value lookup — it wants the coach's judgement, which
+// Gemini answers far better than the terse fact. So the deterministic plan answer
+// defers on these (the chat route falls through to Gemini). Deliberately avoids
+// words that collide with lift names (e.g. "raise" in Lateral Raise, "lower").
+const ADVICE_RE = /\b(why|should|explain|recommend|increase|decrease|heavier|lighter|progress|better|instead)\b|\btoo\s+(low|high|light|heavy|easy|hard|much|little)/i;
+
+/**
+ * Answer a NAMED-LIFT session-value question directly from the live plan/preview.
+ *
+ * This is the "current plan beats history and education" rule: when the lifter
+ * explicitly NAMES a lift that is in today's plan/preview and asks for one of its
+ * prescribed values (rir / reps / weight / sets), answer from the plan — not from
+ * generic education ("what is RIR") and not from past history.
+ *
+ * Returns null (defer to the normal SME/LLM flow) when:
+ *   - no session attribute is asked,
+ *   - the question is about the PAST (history owns "last time / previous"),
+ *   - NO lift is named *in the message* (so "what is RIR?" stays education — we do
+ *     NOT fall back to plan[0] here, unlike resolveLiftName),
+ *   - the named lift is not in the live plan/preview (→ clarify / history defer),
+ *   - the plan carries none of the asked attributes for that lift.
+ *
+ * READ-ONLY: no Sheets, no LLM, no invented numbers — only the plan's own values.
+ *
+ * @param {string} message
+ * @param {object|null} clientContext  client-sent context (current_plan/current_preview)
+ * @returns {string|null}
+ */
+function answerPlannedLiftQuestion(message, clientContext = null) {
+  const attrs = attributesAsked(message);
+  if (!attrs.length) return null;
+  const raw = String(message == null ? '' : message);
+  if (HISTORY_RE.test(raw)) return null; // past-tense → history owns it
+  if (ADVICE_RE.test(raw)) return null;  // "why / should / increase" → let Gemini coach
+
+  const named = canonicalizeExerciseName(message);
+  const liftName = named && named.canonicalName;
+  if (!liftName) return null; // no lift named → education/clarify path stays correct
+
+  const target = targetFromContext(liftName, clientContext);
+  if (!target) return null; // named lift not in the live plan → defer (clarify/history)
+  if (!attrs.some(a => target[a] != null)) return null; // plan lacks the asked value(s)
+
+  const name = target.exercise_name || liftName;
+  const parts = [];
+  if (attrs.includes('weight') && target.weight != null) parts.push(`${target.weight} lbs`);
+  if (attrs.includes('reps') && target.reps != null) parts.push(`${target.reps} reps`);
+  if (attrs.includes('sets') && target.sets != null) parts.push(`${target.sets} sets`);
+  if (attrs.includes('rir') && target.rir != null) parts.push(`RIR ${target.rir}`);
+  if (!parts.length) return null;
+  return `${name} today: ${parts.join(', ')}.`;
+}
+
+module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion };
