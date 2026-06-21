@@ -3,7 +3,7 @@
 const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildWarmupRamp, isBlockedPair, buildIntentSession, attachAnchorWarmup } = require('../services/sessionBuilder');
+const { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay } = require('../services/sessionBuilder');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -451,78 +451,166 @@ describe('buildIntentSession — edge cases', () => {
   });
 });
 
-// ── attachAnchorWarmup ──────────────────────────────────────────────────────
-// SESSION_DESIGN.md "Set progression — warm-up ramps": the lead compound of a
-// session climbs into its working sets; later lifts and accessories stay flat.
-// This is the engine fix for the live "flat sets from set one" bug on the
-// build_strength intent's exForPatterns list (which doesn't route through
-// buildIntentSession's anchor ramp).
+// ── orderByRole + attachMainCompoundWarmups ─────────────────────────────────
+// SESSION_DESIGN.md "Set progression — warm-up ramps" + owner ordering direction
+// (main → secondary → accessory). The strength session's exForPatterns list is in
+// recency order; orderByRole structures it and attachMainCompoundWarmups ramps
+// each main compound per movement pattern (the live "Back Squat buried after leg
+// extension, and flat" bug).
 
 // Exercise shape as emitted by exForPatterns / buildIntentSession.
 function makeEx(exercise, lift_code, target_weight, target_reps = 5, target_sets = 3) {
   return { exercise, lift_code, target_weight, target_reps, target_sets, reason: 'Continue progressing' };
 }
 
-describe('attachAnchorWarmup — lead compound ramps, accessories stay flat', () => {
-  it('Deadlift lead compound gets an ascending warm-up ramp (not flat from set one)', () => {
+describe('orderByRole — main compounds first, accessories last, no burying', () => {
+  it('Deadlift + Back Squat session does not place accessories between the compounds', () => {
+    // Recency order (the live bug): DL, leg ext, leg curl, squat, leg press.
+    const recencyOrder = [
+      makeEx('Deadlift', 'DL01', 245, 7),
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Single-Leg Seated Leg Press', 'LP01', 70, 12),
+    ];
+    const out = orderByRole(recencyOrder).map(e => e.exercise);
+    // Both heavy compounds precede every accessory; leg press (secondary) sits between.
+    assert.deepEqual(out, [
+      'Deadlift', 'Back Squat',
+      'Single-Leg Seated Leg Press',
+      'Leg Extension', 'Single-Leg Leg Curl',
+    ]);
+    const lastMain = out.lastIndexOf('Back Squat');
+    const firstAccessory = out.indexOf('Leg Extension');
+    assert.ok(lastMain < firstAccessory, 'no accessory may sit before a main compound');
+  });
+
+  it('is stable within a role tier (preserves upstream recency order)', () => {
+    const list = [makeEx('Deadlift', 'DL01', 245, 7), makeEx('Back Squat', 'SQ01', 240, 5)];
+    assert.deepEqual(orderByRole(list).map(e => e.exercise), ['Deadlift', 'Back Squat']);
+  });
+
+  it('empty / non-array input is safe', () => {
+    assert.deepEqual(orderByRole([]), []);
+    assert.deepEqual(orderByRole(null), []);
+  });
+});
+
+describe('attachMainCompoundWarmups — every main compound ramps per pattern', () => {
+  it('Deadlift main compound gets an ascending warm-up ramp (not flat from set one)', () => {
     const list = [makeEx('Deadlift', 'DL01', 245, 7), makeEx('Face Pull', 'FP01', 50, 15)];
-    const out = attachAnchorWarmup(list);
+    const out = attachMainCompoundWarmups(list);
     const dl = out.find(e => e.exercise === 'Deadlift');
     assert.ok(Array.isArray(dl.warmup_sets) && dl.warmup_sets.length === 3, 'Deadlift should carry a 3-step ramp');
-    assert.equal(dl.is_anchor, true);
-    // Ascending load into the working weight — proves it is a build-up, not flat.
     const w = dl.warmup_sets.map(s => s.weight);
     assert.ok(w[0] < w[1] && w[1] < w[2] && w[2] < 245, `ramp must ascend below working weight; got ${w}`);
     dl.warmup_sets.forEach(s => assert.equal(s.priming, true, 'warm-ups are priming, not working sets'));
   });
 
-  it('working sets are preserved — the ramp is ADDED, never a substitute for them', () => {
-    const out = attachAnchorWarmup([makeEx('Back Squat', 'SQ01', 240, 5, 3)]);
-    const sq = out[0];
-    assert.equal(sq.target_weight, 240);
-    assert.equal(sq.target_reps, 5);
-    assert.equal(sq.target_sets, 3, 'prescribed working sets unchanged');
+  it('Back Squat (second main, DIFFERENT pattern) ALSO ramps — the live fix', () => {
+    const list = [makeEx('Deadlift', 'DL01', 245, 7), makeEx('Back Squat', 'SQ01', 240, 5)];
+    const out = attachMainCompoundWarmups(list);
+    assert.ok(out[0].warmup_sets && out[0].warmup_sets.length === 3, 'Deadlift (hinge) ramps');
+    assert.ok(out[1].warmup_sets && out[1].warmup_sets.length === 3, 'Back Squat (squat) also ramps — different pattern');
   });
 
-  it('Back Squat lead compound ramps', () => {
-    const out = attachAnchorWarmup([makeEx('Back Squat', 'SQ01', 240, 5)]);
-    assert.equal(out[0].warmup_sets.length, 3);
+  it('Bench and OHP both ramp when working weight is known (different push patterns)', () => {
+    const out = attachMainCompoundWarmups([makeEx('Bench Press', 'BN01', 185, 6), makeEx('Overhead Press', 'OHP01', 116, 10)]);
+    assert.ok(out[0].warmup_sets.length === 3, 'Bench (horizontal push) ramps');
+    assert.ok(out[1].warmup_sets.length === 3, 'OHP (vertical push) ramps');
   });
 
-  it('Overhead Press (a major compound) follows the same lead-compound policy', () => {
-    const out = attachAnchorWarmup([makeEx('Overhead Press', 'OHP01', 116, 10)]);
-    assert.ok(out[0].warmup_sets.length === 3, 'OHP is a compound → ramps');
-    assert.equal(out[0].is_anchor, true);
+  it('a SECOND main of the SAME pattern (RDL after Deadlift — both hinge) stays flat', () => {
+    const out = attachMainCompoundWarmups([makeEx('Deadlift', 'DL01', 245, 7), makeEx('Romanian Deadlift', 'RDL01', 185, 8)]);
+    assert.ok(out[0].warmup_sets, 'first hinge ramps');
+    assert.ok(!out[1].warmup_sets, 'already-warm same-pattern main stays flat (reduced-depth deferred)');
   });
 
-  it('accessories / isolation-only lists stay flat (no ramp)', () => {
-    const list = [makeEx('Lateral Raise', 'LR01', 20, 15), makeEx('Bicep Curl', 'BC01', 40, 12)];
-    const out = attachAnchorWarmup(list);
-    out.forEach(e => assert.ok(!e.warmup_sets, `accessory ${e.exercise} must stay flat`));
+  it('working sets are preserved — the ramp is ADDED, never a substitute', () => {
+    const out = attachMainCompoundWarmups([makeEx('Back Squat', 'SQ01', 240, 5, 3)]);
+    assert.equal(out[0].target_weight, 240);
+    assert.equal(out[0].target_reps, 5);
+    assert.equal(out[0].target_sets, 3, 'prescribed working sets unchanged');
   });
 
-  it('only the FIRST compound (lead) ramps — a later compound stays flat', () => {
-    const list = [makeEx('Deadlift', 'DL01', 245, 7), makeEx('Bench Press', 'BN01', 185, 6)];
-    const out = attachAnchorWarmup(list);
-    assert.ok(out[0].warmup_sets, 'lead compound ramps');
-    assert.ok(!out[1].warmup_sets, 'later compound stays flat (already-warm policy)');
+  it('secondary compounds (leg press) and accessories stay flat', () => {
+    const list = [
+      makeEx('Single-Leg Seated Leg Press', 'LP01', 70, 12),
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Bicep Curl', 'BC01', 40, 12),
+    ];
+    const out = attachMainCompoundWarmups(list);
+    out.forEach(e => assert.ok(!e.warmup_sets, `${e.exercise} (secondary/accessory) must stay flat`));
   });
 
   it('unknown / missing working weight does NOT fabricate a ramp', () => {
-    const noWeight = attachAnchorWarmup([makeEx('Deadlift', 'DL01', null, 5)]);
+    const noWeight = attachMainCompoundWarmups([makeEx('Deadlift', 'DL01', null, 5)]);
     assert.ok(!noWeight[0].warmup_sets, 'no working weight → no ramp');
-    const zero = attachAnchorWarmup([makeEx('Deadlift', 'DL01', 0, 5)]);
+    const zero = attachMainCompoundWarmups([makeEx('Deadlift', 'DL01', 0, 5)]);
     assert.ok(!zero[0].warmup_sets, 'zero working weight → no ramp');
   });
 
-  it('is idempotent — a list buildIntentSession already ramped is left untouched', () => {
+  it('is idempotent — a list already ramped is left untouched', () => {
     const already = [{ ...makeEx('Deadlift', 'DL01', 245, 7), is_anchor: true, warmup_sets: buildWarmupRamp(245) }];
-    const out = attachAnchorWarmup(already);
+    const out = attachMainCompoundWarmups(already);
     assert.equal(out, already, 'already-ramped list returned unchanged (same reference)');
   });
 
   it('empty / non-array input is safe', () => {
-    assert.deepEqual(attachAnchorWarmup([]), []);
-    assert.deepEqual(attachAnchorWarmup(null), []);
+    assert.deepEqual(attachMainCompoundWarmups([]), []);
+    assert.deepEqual(attachMainCompoundWarmups(null), []);
+  });
+});
+
+describe('capLowerBodyAccessoriesForHeavyLegDay — volume budget for double-heavy-leg days', () => {
+  // The live overload: DL + Squat + leg press + leg ext + leg curl.
+  function heavyLegDay() {
+    return [
+      makeEx('Deadlift', 'DL01', 245, 7),
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Single-Leg Seated Leg Press', 'LP01', 70, 12),
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+    ];
+  }
+
+  it('with 2 main lower compounds, caps lower-body accessories to 1 (drops the surplus)', () => {
+    const out = capLowerBodyAccessoriesForHeavyLegDay(heavyLegDay());
+    const names = out.map(e => e.exercise);
+    // Both mains + the secondary leg press are kept; only one leg isolation remains.
+    assert.ok(names.includes('Deadlift') && names.includes('Back Squat'), 'main compounds kept');
+    assert.ok(names.includes('Single-Leg Seated Leg Press'), 'secondary compound kept');
+    const lowerAccessories = names.filter(n => /leg extension|leg curl/i.test(n));
+    assert.equal(lowerAccessories.length, 1, `lower-body accessories capped to 1; got ${lowerAccessories.length}`);
+    // The full DL+Squat+press+ext+curl pile-up must not survive intact.
+    assert.ok(out.length < 5, 'session trimmed below the 5-lift overload');
+  });
+
+  it('does NOT fire with only ONE main lower compound (normal leg day untouched)', () => {
+    const list = [
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+    ];
+    assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay(list), list, 'single-compound leg day is unchanged');
+  });
+
+  it('never trims main / secondary compounds or upper-body work', () => {
+    const list = [
+      makeEx('Deadlift', 'DL01', 245, 7),
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Bench Press', 'BN01', 185, 6),   // upper main — must stay
+      makeEx('Lateral Raise', 'LR01', 20, 15), // upper accessory — must stay
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+    ];
+    const out = capLowerBodyAccessoriesForHeavyLegDay(list).map(e => e.exercise);
+    assert.ok(out.includes('Bench Press') && out.includes('Lateral Raise'), 'upper-body work untouched');
+    assert.equal(out.filter(n => /leg extension|leg curl/i.test(n)).length, 1, 'only lower accessories capped');
+  });
+
+  it('empty / non-array input is safe', () => {
+    assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay([]), []);
+    assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay(null), []);
   });
 });

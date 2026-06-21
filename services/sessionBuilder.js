@@ -11,6 +11,7 @@
 const { patternFor } = require('./movementPattern');
 const { costFor } = require('./liftCost');
 const { musclesFor } = require('./muscleCoverage');
+const { classifyLiftRole } = require('./liftRole');
 
 // Round to nearest 5 lb (standard plate increment).
 function roundTo5(lb) {
@@ -207,40 +208,113 @@ function buildIntentSession({
   return { exercises, anchor, coveredPatterns };
 }
 
-// Attach an engine-owned warm-up ramp to the lead compound of an already-ordered
-// exercise list, per SESSION_DESIGN.md "Set progression — warm-up ramps": the
-// first heavy compound of the day climbs into its working sets (flat sets from
-// set one are "wrong and unsafe"); later lifts and accessories stay flat.
+// Order an exercise list by lift role so main compounds come first, then
+// secondary compounds, then accessories/isolations — per SESSION_DESIGN.md
+// (a session is "built around an anchor … not a pile of machine/cable
+// accessories") and the owner's lower-body ordering direction (primary →
+// secondary → leg-press/unilateral → isolation last). Roles come from the
+// existing deterministic `classifyLiftRole` (name-first); no new taxonomy.
 //
-// This is the same anchor-only policy buildIntentSession already applies — this
-// helper lets the simpler exercise builders (e.g. the build_strength intent's
-// exForPatterns list, which does not route through buildIntentSession) emit the
-// same ramp on their lead compound rather than flat sets from set one.
-//
-// Pure: returns a new array; the anchor is replaced with a shallow copy carrying
-// is_anchor + warmup_sets. The working sets are unchanged — the ramp is ADDED
-// before them, never a substitute for them. Safe by construction:
-//   - Idempotent: if any entry already carries is_anchor / warmup_sets (a list
-//     buildIntentSession already ramped), the list is returned untouched.
-//   - Lead compound = the first entry whose systemic cost is NOT low (isolations
-//     and unknown lifts are LOW → never anchors → accessories stay flat).
-//   - buildWarmupRamp returns [] for a missing / non-finite working weight, so a
-//     lift with no known working weight gets no ramp (never a fabricated load).
-function attachAnchorWarmup(exercises) {
+// Pure + STABLE: relative order within a role tier is preserved (so the
+// upstream recency order still breaks ties), and a `secondary`-defaulted lift
+// keeps its place. Accessories never jump ahead of a compound, and a heavy
+// compound is never buried after an isolation.
+const ROLE_RANK = { main: 0, secondary: 1, accessory: 2 };
+function orderByRole(exercises) {
   if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
-  // Already ramped by a builder that owns anchor selection — leave as-is.
+  // Decorate-sort-undecorate: classify each lift's role once, not per comparison.
+  return exercises
+    .map((ex, i) => ({ ex, i, rank: ROLE_RANK[classifyLiftRole(ex && ex.exercise || '', ex && ex.muscle_group || '')] ?? 1 }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i) // stable within a tier
+    .map(x => x.ex);
+}
+
+// Attach an engine-owned warm-up ramp to the MAIN compounds of an already-ordered
+// exercise list, per SESSION_DESIGN.md "Set progression — warm-up ramps": the
+// first heavy compound of each movement pattern climbs into its working sets
+// (flat sets from set one are "wrong and unsafe"); later same-pattern compounds
+// (already warm) and all secondary/accessory lifts stay flat.
+//
+// Generalizes #456's lead-compound-only ramp: the lead main compound still ramps
+// (that behavior is preserved), AND a second main compound of a DIFFERENT pattern
+// (e.g. Back Squat after Deadlift — squat vs hinge) now also ramps, since the
+// lifter is not yet warm for that pattern. A second main of the SAME pattern
+// (e.g. RDL after Deadlift — both hinge) stays flat; reduced-depth "already-warm"
+// priming is a deferred follow-up rather than a fabricated partial ramp.
+//
+// Pure: returns new objects for the ramped compounds; working sets are unchanged
+// (the ramp is ADDED before them). Safe by construction:
+//   - Idempotent: if any entry already carries is_anchor / warmup_sets (a list a
+//     structured builder already ramped), the list is returned untouched.
+//   - Only `main`-role lifts ramp (via classifyLiftRole, name-first); secondary
+//     and accessory/isolation lifts never ramp.
+//   - buildWarmupRamp returns [] for a missing / non-finite working weight, so a
+//     main lift with no known working weight gets no ramp (never a fabricated load).
+function attachMainCompoundWarmups(exercises) {
+  if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  // Already ramped by a builder that owns ramp selection — leave as-is.
   if (exercises.some(ex => ex && (ex.is_anchor || (Array.isArray(ex.warmup_sets) && ex.warmup_sets.length)))) {
     return exercises;
   }
-  const anchorIdx = exercises.findIndex(
-    ex => ex && ex.exercise && costFor(ex.exercise).cost !== 'low'
-  );
-  if (anchorIdx === -1) return exercises; // isolations only → no ramp
-  const ramp = buildWarmupRamp(exercises[anchorIdx].target_weight);
-  if (!ramp.length) return exercises;     // unknown working weight → no fabricated ramp
-  const out = exercises.slice();
-  out[anchorIdx] = { ...exercises[anchorIdx], is_anchor: true, warmup_sets: ramp };
-  return out;
+  const warmedPatterns = new Set();
+  return exercises.map(ex => {
+    if (!ex || !ex.exercise) return ex;
+    if (classifyLiftRole(ex.exercise, ex.muscle_group) !== 'main') return ex; // secondary/accessory stay flat
+    const pattern = patternFor(ex.exercise).pattern || ex.exercise;
+    if (warmedPatterns.has(pattern)) return ex; // already-warm same-pattern compound → flat (reduced depth deferred)
+    const ramp = buildWarmupRamp(ex.target_weight);
+    if (!ramp.length) return ex;                // unknown working weight → no fabricated ramp
+    warmedPatterns.add(pattern);
+    return { ...ex, is_anchor: true, warmup_sets: ramp };
+  });
 }
 
-module.exports = { buildWarmupRamp, isBlockedPair, buildIntentSession, attachAnchorWarmup };
+// Lower-body fine patterns (movementPattern.js): the two heavy compound patterns
+// (squat, hinge) plus the leg isolations. Used to spot a double-heavy-leg day and
+// the accessories that would over-stack it.
+const LOWER_BODY_PATTERNS = new Set(['squat', 'hinge', 'knee_isolation', 'calf_isolation', 'hip_isolation']);
+function isLowerBodyLift(ex) {
+  return ex && ex.exercise && LOWER_BODY_PATTERNS.has(patternFor(ex.exercise).pattern);
+}
+
+// Lower-body session volume budget. When a strength session already contains TWO
+// OR MORE main lower-body compounds (e.g. Deadlift + Back Squat), cap the number
+// of lower-body ACCESSORIES so the day does not silently stack into an unintended
+// high-volume leg session (the live "DL + Squat + leg press + leg ext + leg curl"
+// overload). Per the owner's direction: with two heavy compounds present,
+// accessories must be reduced.
+//
+// Pure + deterministic + conservative:
+//   - Fires ONLY at ≥2 main lower-body compounds; a normal single-compound leg day
+//     is never trimmed.
+//   - Trims lower-body ACCESSORIES only (role accessory + lower-body pattern),
+//     keeping the first `maxLowerAccessories` in their existing (already
+//     role-ordered) order. Main + secondary compounds and ALL upper-body work are
+//     untouched — the engine still owns what stays.
+//   - Reduces volume by DROPPING surplus accessories (never fabricates or reweights
+//     anything); planned-vs-logged and every number are unaffected.
+function capLowerBodyAccessoriesForHeavyLegDay(exercises, { maxLowerAccessories = 1 } = {}) {
+  if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  const mainLowerCompounds = exercises.filter(
+    ex => ex && ex.exercise && classifyLiftRole(ex.exercise, ex.muscle_group) === 'main' && isLowerBodyLift(ex)
+  ).length;
+  if (mainLowerCompounds < 2) return exercises; // not a double-heavy-leg day → unchanged
+  let keptLowerAccessories = 0;
+  return exercises.filter(ex => {
+    if (!ex || !ex.exercise) return true;
+    const isLowerAccessory =
+      classifyLiftRole(ex.exercise, ex.muscle_group) === 'accessory' && isLowerBodyLift(ex);
+    if (!isLowerAccessory) return true; // mains, secondary, upper-body → always kept
+    keptLowerAccessories += 1;
+    return keptLowerAccessories <= maxLowerAccessories;
+  });
+}
+
+module.exports = {
+  buildWarmupRamp,
+  isBlockedPair,
+  buildIntentSession,
+  orderByRole,
+  attachMainCompoundWarmups,
+  capLowerBodyAccessoriesForHeavyLegDay,
+};

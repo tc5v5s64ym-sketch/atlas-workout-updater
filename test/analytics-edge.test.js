@@ -655,38 +655,75 @@ test('#402: same exercise under multiple lift codes appears at most once per int
   }
 });
 
-// ── Major-lift warm-up ramp on the live build_strength path ───────────────────
-// Regression: the build_strength intent built its exercises via exForPatterns,
-// which (unlike buildIntentSession) attached no warm-up ramp — so the lead
-// compound showed flat sets from set one (SESSION_DESIGN.md "warm-up ramps").
-test('scoreIntents: build_strength lead compound carries an ascending warm-up ramp; accessories stay flat', () => {
-  // strength goal + rested legs → strengthPatterns includes lower/hinge/push/pull,
-  // so a heavy compound (Deadlift / Squat) leads. All sessions are well before
-  // today so patterns read as rested (no fatigue dose interfering).
+// ── Major-lift ramp coverage + role ordering on the live build_strength path ──
+// The build_strength intent builds via exForPatterns (recency order, no ramp).
+// orderByRole + attachMainCompoundWarmups now (a) put main compounds before
+// accessories and (b) ramp EVERY main compound per movement pattern — so a second
+// main of a different pattern (Back Squat after Deadlift) also ramps, not just the
+// lead (the live "Back Squat buried + flat after leg extension" bug).
+test('scoreIntents: build_strength ramps every main compound per pattern and orders mains before accessories', () => {
+  // strength goal + rested legs → strengthPatterns includes lower/hinge/push/pull.
+  // Accessories logged most recently so recency order would interleave them.
   const rows = [
-    ...makeRows('Deadlift',     'back',  'DL01',  [275, 285, 295, 305, 315], '2026-03-01'),
-    ...makeRows('Back Squat',   'lower', 'SQT01', [225, 230, 235, 240, 245], '2026-03-01'),
-    ...makeRows('Lateral Raise','shoulders', 'LR01', [15, 15, 20, 20, 20],   '2026-03-01'),
+    ...makeRows('Deadlift',      'Posterior Chain', 'DL01',  [275, 285, 295, 305, 315], '2026-03-01'),
+    ...makeRows('Back Squat',    'Quads',           'SQT01', [225, 230, 235, 240, 245], '2026-03-01'),
+    ...makeRows('Leg Extension', 'Quads',           'LE01',  [50, 55, 55, 60, 60],      '2026-03-08'),
+    ...makeRows('Lateral Raise', 'Shoulders',       'LR01',  [15, 15, 20, 20, 20],      '2026-03-08'),
   ];
   const result = scoreIntents(rows, [], { today: '2026-05-03', goal: 'strength' });
   const bs = result.intents.find(i => i.id === 'build_strength');
   assert.ok(bs && Array.isArray(bs.exercises) && bs.exercises.length, 'build_strength must have exercises');
 
-  const anchor = bs.exercises.find(ex => Array.isArray(ex.warmup_sets) && ex.warmup_sets.length);
-  assert.ok(anchor, 'the lead compound must carry a warm-up ramp (not flat from set one)');
-  assert.equal(anchor.warmup_sets.length, 3, 'a full 3-step ramp');
-  const w = anchor.warmup_sets.map(s => s.weight);
-  assert.ok(w[0] < w[1] && w[1] < w[2] && w[2] < anchor.target_weight,
-    `ramp must ascend into the working weight; got ${w} → ${anchor.target_weight}`);
-  anchor.warmup_sets.forEach(s => assert.equal(s.priming, true, 'warm-ups are priming, not working sets'));
-  // The prescribed working sets are untouched — the ramp is added, not a swap.
-  assert.ok(anchor.target_sets >= 1 && anchor.target_weight > 0);
+  const byName = n => bs.exercises.find(ex => (ex.exercise || '').toLowerCase().includes(n));
+  const dl = byName('deadlift');
+  const sq = byName('squat');
+  assert.ok(dl && sq, 'both Deadlift and Back Squat must be present');
 
-  // An isolation accessory must never carry a ramp.
-  const accessory = bs.exercises.find(ex => (ex.exercise || '').toLowerCase().includes('lateral raise'));
-  if (accessory) assert.ok(!accessory.warmup_sets, 'accessories stay flat');
+  // Both main compounds carry an ascending ramp (different patterns: hinge vs squat).
+  for (const main of [dl, sq]) {
+    assert.ok(Array.isArray(main.warmup_sets) && main.warmup_sets.length === 3,
+      `${main.exercise} must carry a 3-step ramp`);
+    const w = main.warmup_sets.map(s => s.weight);
+    assert.ok(w[0] < w[1] && w[1] < w[2] && w[2] < main.target_weight,
+      `${main.exercise} ramp must ascend into the working weight; got ${w} → ${main.target_weight}`);
+    main.warmup_sets.forEach(s => assert.equal(s.priming, true));
+    assert.ok(main.target_sets >= 1 && main.target_weight > 0, 'working sets preserved');
+  }
 
-  // Exactly one lead compound ramps per session (not every compound).
-  const ramped = bs.exercises.filter(ex => Array.isArray(ex.warmup_sets) && ex.warmup_sets.length);
-  assert.equal(ramped.length, 1, `only the lead compound ramps; got ${ramped.length}`);
+  // Accessories stay flat and never sit before a main compound.
+  const names = bs.exercises.map(e => (e.exercise || '').toLowerCase());
+  const lastMainIdx = Math.max(names.findIndex(n => n.includes('deadlift')), names.findIndex(n => n.includes('squat')));
+  const accessoryIdx = names.findIndex(n => n.includes('leg extension') || n.includes('lateral raise'));
+  if (accessoryIdx !== -1) {
+    assert.ok(accessoryIdx > lastMainIdx, 'no accessory may sit before a main compound');
+    assert.ok(!bs.exercises[accessoryIdx].warmup_sets, 'accessories stay flat');
+  }
+});
+
+// ── Lower-body volume budget on the live build_strength path ───────────────────
+// The reported overload: Deadlift + Back Squat + leg press + leg ext + leg curl
+// all stacked in one strength session. With 2+ main lower-body compounds, the
+// lower-body accessories must be capped so the day isn't a silent high-volume leg
+// session.
+test('scoreIntents: build_strength caps lower-body accessories when 2+ main lower compounds are present', () => {
+  const rows = [
+    ...makeRows('Deadlift',                    'Posterior Chain', 'DL01',  [230, 235, 240, 245, 245], '2026-03-01'),
+    ...makeRows('Back Squat',                  'Quads',           'SQT01', [225, 230, 235, 240, 240], '2026-03-01'),
+    ...makeRows('Single-Leg Seated Leg Press', 'Glutes',          'LP01',  [60, 65, 70, 70, 70],      '2026-03-15'),
+    ...makeRows('Leg Extension',               'Quads',           'LE01',  [50, 55, 55, 60, 60],      '2026-03-15'),
+    ...makeRows('Single-Leg Leg Curl',         'Hamstrings',      'LC01',  [55, 60, 60, 60, 60],      '2026-03-15'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03', goal: 'strength' });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs && Array.isArray(bs.exercises), 'build_strength must exist');
+  const names = bs.exercises.map(e => (e.exercise || '').toLowerCase());
+
+  // Both heavy compounds survive; the leg-isolation pile-up is reduced to ≤1.
+  assert.ok(names.some(n => n.includes('deadlift')) && names.some(n => n.includes('squat')),
+    'both main compounds kept');
+  const legIsolations = names.filter(n => n.includes('leg extension') || n.includes('leg curl'));
+  assert.ok(legIsolations.length <= 1, `lower-body accessories capped to ≤1; got ${legIsolations.length}`);
+  // The full 5-lower-lift overload must not survive intact.
+  const lowerLifts = names.filter(n => /deadlift|squat|leg press|leg extension|leg curl/.test(n));
+  assert.ok(lowerLifts.length < 5, `double-heavy-leg overload trimmed; got ${lowerLifts.length} lower lifts`);
 });
