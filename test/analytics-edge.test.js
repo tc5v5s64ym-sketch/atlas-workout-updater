@@ -727,3 +727,43 @@ test('scoreIntents: build_strength caps lower-body accessories when 2+ main lowe
   const lowerLifts = names.filter(n => /deadlift|squat|leg press|leg extension|leg curl/.test(n));
   assert.ok(lowerLifts.length < 5, `double-heavy-leg overload trimmed; got ${lowerLifts.length} lower lifts`);
 });
+
+// ── The buildIntentSession intents are structured too (build_muscle / fix_blind_spots / balanced) ──
+// The live "Back Squat flat + buried + 5-lift overload" was a buildIntentSession
+// intent (shown when the goal isn't strength). structureSession now applies the
+// same role ordering / per-pattern main ramps / lower-body cap to those intents.
+for (const goal of ['hypertrophy', 'general']) {
+  test(`scoreIntents: the recommended ${goal} session ramps both main compounds, orders mains first, and caps the leg pile-up`, () => {
+    const rows = [
+      ...makeRows('Deadlift',                    'Posterior Chain', 'DL01',  [230, 235, 240, 245, 245], '2026-03-20'),
+      ...makeRows('Back Squat',                  'Quads',           'SQT01', [225, 230, 235, 240, 240], '2026-03-18'),
+      ...makeRows('Leg Extension',               'Quads',           'LE01',  [50, 55, 55, 60, 60],      '2026-03-15'),
+      ...makeRows('Single-Leg Leg Curl',         'Hamstrings',      'LC01',  [55, 60, 60, 60, 60],      '2026-03-15'),
+      ...makeRows('Single-Leg Seated Leg Press', 'Glutes',          'LP01',  [60, 65, 70, 70, 70],      '2026-03-15'),
+    ];
+    const result = scoreIntents(rows, [], { today: '2026-05-03', goal });
+    const recId = (result.todays_read && result.todays_read.recommended_intent_id)
+      || (result.intents.find(i => i.recommended) || {}).id;
+    assert.ok(!['build_strength'].includes(recId), `${goal} should recommend a buildIntentSession intent, got ${recId}`);
+    const intent = result.intents.find(i => i.id === recId);
+    assert.ok(intent && Array.isArray(intent.exercises) && intent.exercises.length, 'recommended intent has exercises');
+    const names = intent.exercises.map(e => (e.exercise || '').toLowerCase());
+
+    // Both main compounds ramp (different patterns: hinge + squat).
+    const dl = intent.exercises.find(e => /deadlift/i.test(e.exercise));
+    const sq = intent.exercises.find(e => /squat/i.test(e.exercise));
+    assert.ok(dl && Array.isArray(dl.warmup_sets) && dl.warmup_sets.length === 3, 'Deadlift ramps');
+    assert.ok(sq && Array.isArray(sq.warmup_sets) && sq.warmup_sets.length === 3, 'Back Squat ramps (was flat before)');
+
+    // Mains before accessories; secondary leg press never ramps.
+    const lastMainIdx = Math.max(names.findIndex(n => n.includes('deadlift')), names.findIndex(n => n.includes('squat')));
+    const accIdx = names.findIndex(n => n.includes('leg extension') || n.includes('leg curl'));
+    if (accIdx !== -1) assert.ok(accIdx > lastMainIdx, 'no accessory before a main compound');
+    const legPress = intent.exercises.find(e => /leg press/i.test(e.exercise));
+    if (legPress) assert.ok(!legPress.warmup_sets, 'secondary leg press stays flat');
+
+    // Lower-body accessory pile-up capped; the 5-lift overload is gone.
+    const legIsolations = names.filter(n => n.includes('leg extension') || n.includes('leg curl'));
+    assert.ok(legIsolations.length <= 1, `leg isolations capped to ≤1; got ${legIsolations.length}`);
+  });
+}

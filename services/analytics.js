@@ -1265,7 +1265,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     ? options.underCoverage
     : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
   // No cycle: sessionBuilder → movementPattern / liftCost / muscleCoverage (none import analytics).
-  const { buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay } = require('./sessionBuilder');
+  const { buildIntentSession, structureSession } = require('./sessionBuilder');
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
@@ -1470,24 +1470,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       score += 10;
       why.push('Legs are well rested — lead with a heavy lower-body compound');
     }
-    // Structure the strength session (SESSION_DESIGN.md "Set progression" + the
-    // owner's main→secondary→accessory ordering): the exForPatterns list is in
-    // recency order, so first order it by lift role (main compounds first, never
-    // an accessory buried between two compounds), THEN ramp every main compound
-    // per movement pattern (so a second main of a different pattern — e.g. Back
-    // Squat after Deadlift — also climbs into its working weight, not just the
-    // lead). Ordering precedes ramping so "first of each pattern" reflects the
-    // displayed order; both precede the readiness dose so ramps derive from the
-    // working weight and survive any set trim.
-    // Then apply the lower-body volume budget: if two+ main lower-body compounds
-    // are present (e.g. Deadlift + Back Squat), cap lower-body accessories so the
-    // day doesn't silently stack into a high-volume leg session. Runs on the
-    // role-ordered list (accessories already last) and before the readiness dose.
-    const exercises = applyReadinessDose(
-      capLowerBodyAccessoriesForHeavyLegDay(
-        attachMainCompoundWarmups(orderByRole(exForPatterns(strengthPatterns)))
-      )
-    );
+    // Structure the session (shared with every training intent): role-order
+    // (main→secondary→accessory), ramp every main compound per movement pattern,
+    // and cap lower-body accessories on a double-heavy-leg day. Runs before the
+    // readiness dose so ramps derive from the working weight and survive a trim.
+    const exercises = applyReadinessDose(structureSession(exForPatterns(strengthPatterns)));
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
     for (const s of eligibleStalls.slice(0, 2)) {
@@ -1541,7 +1528,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (daysSinceLast === 0) score -= 10;
 
     const { exercises: rawBuildMuscle } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'core'], allRecs, underCoverageData });
-    const exercises = applyReadinessDose(rawBuildMuscle);
+    // Same role-aware structuring as build_strength: main compounds first and
+    // ramped per pattern (buildIntentSession ramps only its single anchor, which
+    // can be a secondary lift), lower-body pile-up capped on a heavy-leg day.
+    const exercises = applyReadinessDose(structureSession(rawBuildMuscle));
     intents.push({
       id: 'build_muscle',
       label: 'Build Muscle',
@@ -1575,7 +1565,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const freshIds = freshPatterns.map(p => p.pattern);
     const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];
     const session = buildIntentSession({ patterns: targetPatterns, allRecs, underCoverageData });
-    const exercises = applyReadinessDose(session.exercises);
+    const exercises = applyReadinessDose(structureSession(session.exercises));
 
     // AC1: only mention patterns that actually have exercises in today's session.
     const scheduledFresh = freshPatterns.filter(p => session.coveredPatterns.has(p.pattern));
@@ -1620,7 +1610,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (fatigue.status === 'normal') score += 10;
 
     const { exercises: rawBalanced } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'hinge', 'core'], allRecs, underCoverageData });
-    const exercises = applyReadinessDose(rawBalanced);
+    const exercises = applyReadinessDose(structureSession(rawBalanced));
     intents.push({
       id: 'balanced',
       label: 'Balanced Day',
