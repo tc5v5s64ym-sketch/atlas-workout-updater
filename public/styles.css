@@ -1127,6 +1127,11 @@ button.approve {
   line-height: 1.5;
   color: var(--ink);
 }
+/* Planned warm-up (priming) sets — the lead compound's ramp into its working
+   weight. Dimmed so they read as a build-up, distinct from the working sets. */
+.workout-plan-warmup {
+  color: var(--muted);
+}
 .workout-plan-closing {
   margin-top: var(--s3);
   color: var(--muted);

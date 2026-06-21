@@ -207,4 +207,40 @@ function buildIntentSession({
   return { exercises, anchor, coveredPatterns };
 }
 
-module.exports = { buildWarmupRamp, isBlockedPair, buildIntentSession };
+// Attach an engine-owned warm-up ramp to the lead compound of an already-ordered
+// exercise list, per SESSION_DESIGN.md "Set progression — warm-up ramps": the
+// first heavy compound of the day climbs into its working sets (flat sets from
+// set one are "wrong and unsafe"); later lifts and accessories stay flat.
+//
+// This is the same anchor-only policy buildIntentSession already applies — this
+// helper lets the simpler exercise builders (e.g. the build_strength intent's
+// exForPatterns list, which does not route through buildIntentSession) emit the
+// same ramp on their lead compound rather than flat sets from set one.
+//
+// Pure: returns a new array; the anchor is replaced with a shallow copy carrying
+// is_anchor + warmup_sets. The working sets are unchanged — the ramp is ADDED
+// before them, never a substitute for them. Safe by construction:
+//   - Idempotent: if any entry already carries is_anchor / warmup_sets (a list
+//     buildIntentSession already ramped), the list is returned untouched.
+//   - Lead compound = the first entry whose systemic cost is NOT low (isolations
+//     and unknown lifts are LOW → never anchors → accessories stay flat).
+//   - buildWarmupRamp returns [] for a missing / non-finite working weight, so a
+//     lift with no known working weight gets no ramp (never a fabricated load).
+function attachAnchorWarmup(exercises) {
+  if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  // Already ramped by a builder that owns anchor selection — leave as-is.
+  if (exercises.some(ex => ex && (ex.is_anchor || (Array.isArray(ex.warmup_sets) && ex.warmup_sets.length)))) {
+    return exercises;
+  }
+  const anchorIdx = exercises.findIndex(
+    ex => ex && ex.exercise && costFor(ex.exercise).cost !== 'low'
+  );
+  if (anchorIdx === -1) return exercises; // isolations only → no ramp
+  const ramp = buildWarmupRamp(exercises[anchorIdx].target_weight);
+  if (!ramp.length) return exercises;     // unknown working weight → no fabricated ramp
+  const out = exercises.slice();
+  out[anchorIdx] = { ...exercises[anchorIdx], is_anchor: true, warmup_sets: ramp };
+  return out;
+}
+
+module.exports = { buildWarmupRamp, isBlockedPair, buildIntentSession, attachAnchorWarmup };

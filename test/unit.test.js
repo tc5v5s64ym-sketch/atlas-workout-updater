@@ -770,6 +770,37 @@ test('two-way chat: coach-conversation handles the chat event read-only via /api
   assert.doesNotMatch(chatBlock, /approveBtn\.click|\/api\/log-workout|\/api\/complete-workout/);
 });
 
+test('major-lift ramp: suggested-workout display renders the engine warm-up ramp before working sets', () => {
+  const convSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+
+  // Reads the engine-owned warmup_sets off the raw intent exercise (the lead
+  // compound only); normalizePlanExercise intentionally drops them.
+  assert.match(convSource, /function warmupSetsFor\(raw\)/);
+  assert.match(convSource, /raw\.warmup_sets/);
+  // Warm-ups are formatted as priming sets (no RIR), marked "warm-up" so they
+  // read as a build-up, distinct from working sets.
+  assert.match(convSource, /function formatWarmupSetLine/);
+  assert.match(convSource, /warm-up/);
+
+  // In BOTH render paths the warm-up loop precedes the working-set loop, so the
+  // ramp climbs INTO the working weight (never a substitute for the working sets).
+  for (const fn of ['suggestedExercisesBlock', 'appendWorkoutPlan']) {
+    const start = convSource.indexOf(`function ${fn}`);
+    assert.ok(start !== -1, `${fn} must exist`);
+    const body = convSource.slice(start, start + 2000);
+    const warmIdx = body.indexOf('warmupSetsFor(raw)');
+    const workIdx = body.indexOf('formatPlanSetLine');
+    assert.ok(warmIdx !== -1, `${fn} must render warm-up sets`);
+    assert.ok(workIdx !== -1, `${fn} must render working sets`);
+    assert.ok(warmIdx < workIdx, `${fn} must render the ramp before the working sets`);
+  }
+
+  // The structured path tags warm-ups with their own class (visual distinction);
+  // it must never route planned warm-ups into the write/approve loop.
+  assert.match(convSource, /workout-plan-warmup/);
+  assert.doesNotMatch(convSource, /warmup_sets[^\n]*\/api\/log-workout/);
+});
+
 test('conversational logger form edits invalidate stale previews before save', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
@@ -4398,8 +4429,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v11/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v10\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v12/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v11\b/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
