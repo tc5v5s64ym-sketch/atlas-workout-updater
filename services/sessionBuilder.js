@@ -222,13 +222,10 @@ function buildIntentSession({
 const ROLE_RANK = { main: 0, secondary: 1, accessory: 2 };
 function orderByRole(exercises) {
   if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  // Decorate-sort-undecorate: classify each lift's role once, not per comparison.
   return exercises
-    .map((ex, i) => ({ ex, i }))
-    .sort((a, b) => {
-      const ra = ROLE_RANK[classifyLiftRole(a.ex && a.ex.exercise || '', a.ex && a.ex.muscle_group || '')] ?? 1;
-      const rb = ROLE_RANK[classifyLiftRole(b.ex && b.ex.exercise || '', b.ex && b.ex.muscle_group || '')] ?? 1;
-      return ra - rb || a.i - b.i; // stable within a tier
-    })
+    .map((ex, i) => ({ ex, i, rank: ROLE_RANK[classifyLiftRole(ex && ex.exercise || '', ex && ex.muscle_group || '')] ?? 1 }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i) // stable within a tier
     .map(x => x.ex);
 }
 
