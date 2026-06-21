@@ -1172,7 +1172,18 @@
       inCoachingConversation;
     const sessionShaped = typeof sessionQuestion !== 'undefined'
       && sessionQuestion.isSessionStateQuestion(message);
-    const skipSme = hasActiveWorkout && sessionShaped;
+    // Named-lift value questions ("what's the RIR for bench?") aren't matched by the
+    // bare-shape classifier, so they leaked to the SME and got generic education.
+    // When the named lift is in the live plan/preview, treat it as session-shaped so
+    // it routes to the session-aware coach (which answers from the current plan).
+    const planLiftNames = [
+      ...(Array.isArray(ctx.current_plan) ? ctx.current_plan.map(p => p && (p.name || p.exercise)) : []),
+      ...(Array.isArray(ctx.current_preview) ? ctx.current_preview.map(p => p && p.exercise) : []),
+    ].filter(Boolean);
+    const plannedLiftValue = typeof sessionQuestion !== 'undefined'
+      && typeof sessionQuestion.isPlannedLiftQuestion === 'function'
+      && sessionQuestion.isPlannedLiftQuestion(message, planLiftNames);
+    const skipSme = hasActiveWorkout && (sessionShaped || plannedLiftValue);
 
     // SME first: a training-knowledge question gets a deterministic, LLM-free answer
     // from /api/coach/ask. Anything it has no card for (depth log_only / no answer) —

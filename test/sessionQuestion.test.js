@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { isSessionStateQuestion } = require('../public/sessionQuestion');
+const { isSessionStateQuestion, isPlannedLiftQuestion } = require('../public/sessionQuestion');
 
 const repoRoot = path.join(__dirname, '..');
 
@@ -106,9 +106,12 @@ test('getChatReply gates the SME on active-session + session-shaped message', ()
   assert.match(src, /Array\.isArray\(history\)\s*&&\s*history\.length\s*>\s*0/,
     'inCoachingConversation should be derived from a non-empty history');
 
-  // The SME call is skipped only when both conditions hold.
-  assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*sessionShaped/,
-    'skipSme should require BOTH an active workout AND a session-shaped message');
+  // The SME call is skipped only with an active workout AND either a bare-shaped
+  // question OR a named-planned-lift value question (e.g. "what's the RIR for bench?").
+  assert.match(src, /skipSme\s*=\s*hasActiveWorkout\s*&&\s*\(sessionShaped\s*\|\|\s*plannedLiftValue\)/,
+    'skipSme should require an active workout AND (session-shaped OR a planned-lift value question)');
+  assert.match(src, /sessionQuestion\.isPlannedLiftQuestion\(message,\s*planLiftNames\)/,
+    'getChatReply should classify named-planned-lift value questions via isPlannedLiftQuestion');
   assert.match(src, /if\s*\(\s*!skipSme\s*\)\s*try\s*\{/,
     'the /api/coach/ask SME block should run only when not skipped');
 
@@ -127,4 +130,43 @@ test('the new script is wired into the shell (index.html + service worker)', () 
 
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
   assert.match(sw, /sessionQuestion\.js/, 'service worker shell should include sessionQuestion.js');
+});
+
+// ---------------------------------------------------------------------------
+// isPlannedLiftQuestion — named-lift value questions that the bare-shape
+// classifier misses ("what's the RIR for bench?"). Catches them ONLY when the
+// named lift is in the live plan/preview, so the caller can route to the
+// session-aware coach instead of the generic SME. (2026-06-21 live failure.)
+// ---------------------------------------------------------------------------
+
+test('isPlannedLiftQuestion flags named-planned-lift value questions', () => {
+  const lifts = ['Bench Press'];
+  for (const q of ["What's the RIR for bench?", 'How many reps for bench?', 'How much weight for bench?']) {
+    assert.equal(isPlannedLiftQuestion(q, lifts), true, `expected planned-lift question: ${JSON.stringify(q)}`);
+  }
+});
+
+test('isPlannedLiftQuestion leaves pure education alone (no lift named)', () => {
+  const lifts = ['Bench Press'];
+  for (const q of ['What is RIR?', 'What does RIR mean?', 'Explain RPE.']) {
+    assert.equal(isPlannedLiftQuestion(q, lifts), false, `education should not be a planned-lift question: ${JSON.stringify(q)}`);
+  }
+});
+
+test('isPlannedLiftQuestion defers history questions to history', () => {
+  const lifts = ['Bench Press'];
+  assert.equal(isPlannedLiftQuestion('How much did I bench last time?', lifts), false);
+  assert.equal(isPlannedLiftQuestion('What did I bench previously?', lifts), false);
+});
+
+test('isPlannedLiftQuestion ignores lifts not in the live plan', () => {
+  // Squat is named but not on today's plan → not a current-plan question.
+  assert.equal(isPlannedLiftQuestion("What's the RIR for squat?", ['Bench Press']), false);
+});
+
+test('isPlannedLiftQuestion is safe on empty / missing inputs', () => {
+  assert.equal(isPlannedLiftQuestion('', ['Bench Press']), false);
+  assert.equal(isPlannedLiftQuestion("What's the RIR for bench?", null), false);
+  assert.equal(isPlannedLiftQuestion("What's the RIR for bench?", []), false);
+  assert.equal(isPlannedLiftQuestion(null, ['Bench Press']), false);
 });
