@@ -22,6 +22,9 @@ process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
 // changed-file secret scan (scripts/check-changed-files-for-secrets.js) does not
 // flag this throwaway stub.
 process.env.GOOGLE_PRIVATE_KEY = 'test-private-key-stub';
+// Exercise the /version reliable-SHA path: when Render injects RENDER_GIT_COMMIT,
+// /version must report it verbatim (read at index.js load, so set before require).
+process.env.RENDER_GIT_COMMIT = 'a1b2c3d4e5f6071829304152637485960718293a';
 
 const logRows = [
   ['2026-06-01', 'SESSION-OLD', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '205', '5', '3', 'old bench'],
@@ -306,6 +309,19 @@ test('api smoke: health returns service status', async () => {
   assert.equal(response.status, 200);
   assert.equal(body.status, 'ok');
   assert.equal(body.data.service, 'atlas-workout-updater');
+});
+
+test('api smoke: /version reports the Render-injected commit SHA + deploy time', async () => {
+  const { response, body } = await requestJson('/version');
+
+  assert.equal(response.status, 200);
+  assert.equal(body.status, 'ok');
+  // RENDER_GIT_COMMIT (set above) wins over `git describe`, so the deployed commit
+  // is always reportable even when the runtime container has no .git.
+  assert.equal(body.data.version, 'a1b2c3d4e5f6071829304152637485960718293a');
+  // deployed_at is the server boot time — a reliable "is this build current?" signal.
+  assert.ok(typeof body.data.deployed_at === 'string' && !Number.isNaN(Date.parse(body.data.deployed_at)),
+    'deployed_at must be an ISO timestamp');
 });
 
 test('api smoke: routes include key endpoints and write metadata', async () => {

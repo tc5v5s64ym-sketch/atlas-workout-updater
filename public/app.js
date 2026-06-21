@@ -555,6 +555,29 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
   }
 });
 
+// Glanceable build badge in Settings: always-visible deployed commit + boot time,
+// so "is the live app current?" is a glance, not a Debug-JSON dig. /version is
+// public (no auth), so a plain fetch works; failures degrade quietly.
+(async function populateBuildInfo() {
+  const el = document.getElementById('build-version');
+  if (!el) return;
+  try {
+    const res = await fetch('/version');
+    const body = await res.json().catch(() => null);
+    const v = (body && body.data) || body || {};
+    const raw = String(v.version || 'unknown');
+    const short = /^[0-9a-f]{7,40}(-dirty)?$/i.test(raw) ? raw.slice(0, 7) : raw;
+    let when = '';
+    if (v.deployed_at) {
+      const d = new Date(v.deployed_at);
+      if (!Number.isNaN(d.getTime())) when = `${d.toISOString().slice(0, 16).replace('T', ' ')}Z`;
+    }
+    el.textContent = when ? `${short} · deployed ${when}` : short;
+  } catch (_) {
+    el.textContent = 'unavailable';
+  }
+})();
+
 document.getElementById('load-debug-config-btn')?.addEventListener('click', async () => {
   const box = document.getElementById('debug-result');
   setBoxSpan(box, 'muted', 'Loading…');
