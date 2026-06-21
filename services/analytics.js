@@ -1265,7 +1265,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     ? options.underCoverage
     : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
   // No cycle: sessionBuilder → movementPattern / liftCost / muscleCoverage (none import analytics).
-  const { buildIntentSession, attachAnchorWarmup } = require('./sessionBuilder');
+  const { buildIntentSession, orderByRole, attachMainCompoundWarmups } = require('./sessionBuilder');
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
@@ -1466,12 +1466,18 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       score += 10;
       why.push('Legs are well rested — lead with a heavy lower-body compound');
     }
-    // Ramp the lead compound into its working sets (SESSION_DESIGN.md "warm-up
-    // ramps") — the strength session's exForPatterns list does not route through
-    // buildIntentSession, so without this its anchor would be flat from set one.
-    // attachAnchorWarmup runs before the readiness dose so the ramp is computed
-    // from the working weight and survives any working-set trim.
-    const exercises = applyReadinessDose(attachAnchorWarmup(exForPatterns(strengthPatterns)));
+    // Structure the strength session (SESSION_DESIGN.md "Set progression" + the
+    // owner's main→secondary→accessory ordering): the exForPatterns list is in
+    // recency order, so first order it by lift role (main compounds first, never
+    // an accessory buried between two compounds), THEN ramp every main compound
+    // per movement pattern (so a second main of a different pattern — e.g. Back
+    // Squat after Deadlift — also climbs into its working weight, not just the
+    // lead). Ordering precedes ramping so "first of each pattern" reflects the
+    // displayed order; both precede the readiness dose so ramps derive from the
+    // working weight and survive any set trim.
+    const exercises = applyReadinessDose(
+      attachMainCompoundWarmups(orderByRole(exForPatterns(strengthPatterns)))
+    );
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
     for (const s of eligibleStalls.slice(0, 2)) {
