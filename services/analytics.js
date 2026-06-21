@@ -1,5 +1,5 @@
 const { parseNumber, normalizeDate, parseDurationMinutes, getSimpleTrend, calculateQualityScore, qualityScoreBreakdown } = require('./validation');
-const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps, recommendedTargetRir } = require('./liftRole');
+const { applyLiftRoleGuards, isAccessory, isMainCompound, guardAccessoryReps, recommendedTargetRir, classifyLiftRole } = require('./liftRole');
 const { classifySubstitution } = require('./substitutionIntent');
 const { sanitizeLoad } = require('./loadSanity');
 
@@ -1430,6 +1430,43 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     });
   }
 
+  // Recovery-aware movement-density cap. The readiness model already knows which
+  // movement patterns are still recovering (rm[pattern].status); a strength session
+  // should not STACK multiple movements on such a pattern — that contradicts the
+  // "still recovering" read the same model surfaces. For each pattern marked
+  // 'recovering' or 'fatigued', keep only the single highest-priority movement
+  // (main > secondary > accessory, ties broken by the existing recency order) and
+  // drop the surplus. Pure + drop-only; reuses existing readiness metadata — it
+  // invents no new recovery rule, only reflects the one already computed. Returns
+  // { exercises, trimmed } where `trimmed` lists the patterns that lost movements
+  // (so the intent can EXPLAIN the trim and stay consistent with its own read).
+  const RECOVERING_PATTERN_MOVEMENT_CAP = 1;
+  function capRecoveringPatternDensity(exercises) {
+    const list = Array.isArray(exercises) ? exercises : [];
+    if (list.length <= 1) return { exercises: list, trimmed: [] };
+    const patternOfEx = ex => (allRecs.find(r => r.liftCode === (ex && ex.lift_code)) || {}).pattern || null;
+    const isCapped = p => !!p && ['recovering', 'fatigued'].includes(rm[p]?.status);
+    const roleRank = ex => ({ main: 0, secondary: 1, accessory: 2 })[classifyLiftRole(ex && ex.exercise || '', '')] ?? 1;
+    const byPattern = new Map();
+    list.forEach((ex, i) => {
+      const p = patternOfEx(ex);
+      if (!isCapped(p)) return;
+      if (!byPattern.has(p)) byPattern.set(p, []);
+      byPattern.get(p).push({ i, ex });
+    });
+    const dropIdx = new Set();
+    const trimmed = [];
+    for (const [pattern, members] of byPattern) {
+      if (members.length <= RECOVERING_PATTERN_MOVEMENT_CAP) continue;
+      trimmed.push(pattern);
+      [...members]
+        .sort((a, b) => roleRank(a.ex) - roleRank(b.ex) || a.i - b.i)
+        .slice(RECOVERING_PATTERN_MOVEMENT_CAP)
+        .forEach(m => dropIdx.add(m.i));
+    }
+    return { exercises: list.filter((_, i) => !dropIdx.has(i)), trimmed };
+  }
+
   // Standard pivot rules for an exercise list
   function pivotFor(exercises) {
     return exercises.slice(0, 2).flatMap(ex => [
@@ -1493,11 +1530,22 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       score += 10;
       why.push('Legs are well rested — lead with a heavy lower-body compound');
     }
+    // Recovery-aware density: before structuring, thin any movement pattern the
+    // readiness model marks 'recovering'/'fatigued' down to a single movement, so
+    // the prescription reflects the same recovery read the summary surfaces (no
+    // "push is still recovering" while stacking three presses).
+    const { exercises: recoveryCapped, trimmed: recoveringTrims } = capRecoveringPatternDensity(exForPatterns(strengthPatterns));
     // Structure the session (shared with every training intent): role-order
     // (main→secondary→accessory), ramp every main compound per movement pattern,
     // and cap lower-body accessories on a double-heavy-leg day. Runs before the
     // readiness dose so ramps derive from the working weight and survive a trim.
-    const exercises = applyReadinessDose(structureSession(exForPatterns(strengthPatterns), structureOpts));
+    const exercises = applyReadinessDose(structureSession(recoveryCapped, structureOpts));
+    const PATTERN_LABEL = { push: 'Push', pull: 'Pull', lower: 'Lower body', hinge: 'Hinge', core: 'Core' };
+    for (const p of recoveringTrims) {
+      const label = PATTERN_LABEL[p] || p;
+      why.push(`${label} is still ${rm[p].status} — keeping it to one movement today rather than stacking volume on a recovering pattern`);
+      protects.push(`${label} recovery`);
+    }
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
     for (const s of eligibleStalls.slice(0, 2)) {
@@ -1525,6 +1573,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         daysSinceLast >= 2           && 'well_rested',
         isFatigued('lower')          && 'lower_fatigued',
         isFatigued('push')           && 'push_fatigued',
+        recoveringTrims.length > 0   && 'recovering_pattern_density_capped',
         upPush.length > 0            && 'trending_up',
         downCompounds.length >= 2    && 'multiple_trending_down',
         isFresh('pull')              && 'pull_overdue',

@@ -891,3 +891,74 @@ test('scoreIntents: a main compound with NO logged ramp history gets the generic
   assert.ok(squat, 'Squat must appear as a ramped main compound');
   assert.deepEqual(squat.warmup_sets.map(s => s.reps), [8, 5, 3], 'generic ramp when there is no logged ramp history');
 });
+
+// ── Recovery-aware strength density (read ↔ prescription consistency) ──────────
+// A movement pattern the readiness model marks 'recovering' must not be STACKED
+// with multiple movements in Build Strength — that contradicts the same model's
+// "still recovering" read. The prescription is thinned to one movement of that
+// pattern (the main compound), and the intent explains the trim.
+
+test('scoreIntents: a recovering push pattern is thinned to one pressing movement (no read/prescription contradiction)', () => {
+  // Bench + Weighted Dip + Incline DB Press all last trained 2 days before today
+  // (daysSince=2 → recovery≈0.62 → 'recovering' push). A barbell row sits in the
+  // same sessions (pull). All on shared dates → 5 sessions < 6 → no #466 profile,
+  // so the per-pattern recovery cap is what fires, not the session-volume cap.
+  const rows = [
+    ...makeRows('Bench Press',     'chest', 'BPR01', [185, 188, 190, 193, 195], '2026-04-01'),
+    ...makeRows('Weighted Dip',    'chest', 'DIP01', [ 90,  92,  95,  97, 100], '2026-04-01'),
+    ...makeRows('Incline DB Press','chest', 'INC01', [ 60,  62,  64,  66,  68], '2026-04-01'),
+    ...makeRows('Barbell Row',     'back',  'ROW01', [155, 158, 160, 163, 165], '2026-04-01'),
+  ];
+  const today = '2026-05-01'; // last session 2026-04-29 → 2 days ago
+
+  // Precondition: the readiness model really does read push as 'recovering'.
+  const readiness = buildMuscleGroupReadiness(rows, { today });
+  assert.equal(readiness.find(r => r.pattern === 'push')?.status, 'recovering',
+    'fixture must put push in the recovering state for this test to be meaningful');
+
+  const result = scoreIntents(rows, [], { today });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength must exist');
+
+  // Prescription reflects the recovery read: exactly ONE pressing movement, and it
+  // is the main compound (Bench), not the secondary presses.
+  const pushCodes = new Set(['BPR01', 'DIP01', 'INC01']);
+  const pushInPlan = bs.exercises.filter(ex => pushCodes.has(ex.lift_code));
+  assert.equal(pushInPlan.length, 1,
+    `recovering push should be thinned to one movement, got [${pushInPlan.map(e => e.exercise).join(', ')}]`);
+  assert.equal(pushInPlan[0].lift_code, 'BPR01', 'the surviving press is the main compound (Bench)');
+
+  // The trim is selective — pull is untouched (still prescribed).
+  assert.ok(bs.exercises.some(ex => ex.lift_code === 'ROW01'), 'pull work is retained');
+
+  // Text ↔ prescription consistency: the intent EXPLAINS the recovery-driven trim.
+  assert.ok(bs.why_today.some(w => /push is still recovering/i.test(w)),
+    `expected a why_today line acknowledging push recovery, got [${bs.why_today.join(' | ')}]`);
+  assert.ok(bs.reason_codes.includes('recovering_pattern_density_capped'),
+    `expected recovering_pattern_density_capped reason code, got [${bs.reason_codes.join(', ')}]`);
+});
+
+test('scoreIntents: the density cap is recovery-gated — a fresh push pattern keeps all its movements', () => {
+  // Same three presses, but last trained 7 days before today (daysSince=7 →
+  // recovery≈0.97 → 'fresh' push). No recovery contradiction → no trim.
+  const rows = [
+    ...makeRows('Bench Press',     'chest', 'BPR01', [185, 188, 190, 193, 195], '2026-03-27'),
+    ...makeRows('Weighted Dip',    'chest', 'DIP01', [ 90,  92,  95,  97, 100], '2026-03-27'),
+    ...makeRows('Incline DB Press','chest', 'INC01', [ 60,  62,  64,  66,  68], '2026-03-27'),
+  ];
+  const today = '2026-05-01'; // last session 2026-04-24 → 7 days ago
+
+  const readiness = buildMuscleGroupReadiness(rows, { today });
+  assert.equal(readiness.find(r => r.pattern === 'push')?.status, 'fresh',
+    'fixture must put push in the fresh state (not recovering) for the control');
+
+  const result = scoreIntents(rows, [], { today });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength must exist');
+
+  const pushCodes = new Set(['BPR01', 'DIP01', 'INC01']);
+  const pushInPlan = bs.exercises.filter(ex => pushCodes.has(ex.lift_code));
+  assert.equal(pushInPlan.length, 3, 'a fresh push pattern is not thinned');
+  assert.ok(!bs.reason_codes.includes('recovering_pattern_density_capped'),
+    'no recovery cap code when nothing was recovering');
+});
