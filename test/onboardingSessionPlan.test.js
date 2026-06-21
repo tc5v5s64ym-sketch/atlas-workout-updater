@@ -39,6 +39,8 @@ test('emits 3 sessions, 8 reps @ 2 RIR, full-body calibration shape', () => {
 
   for (const session of plan.sessions) {
     for (const slot of session.slots) {
+      // Spec §3 prescribes 2×8 @ 2 RIR (two working sets) throughout.
+      assert.equal(slot.target_sets, 2);
       assert.equal(slot.target_reps, 8);
       assert.equal(slot.target_rir, 2);
     }

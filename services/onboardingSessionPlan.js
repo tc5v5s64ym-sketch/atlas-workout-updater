@@ -36,6 +36,9 @@ const { calibrationStatusFor, GRADUATED } = require('./onboardingState');
 
 const TARGET_REPS = 8;
 const TARGET_RIR = 2;
+// Spec §3 prescribes 2×8 @ 2 RIR (two working sets per lift) throughout. These are
+// the WORKING sets; the optional warm-up ramp (buildWarmupRamp) is separate.
+const TARGET_SETS = 2;
 
 // Equipment a full gym supports. Variant selection prefers barbell first, then
 // dumbbell, machine, bodyweight — matching the spec §3 example lifts.
@@ -127,6 +130,7 @@ function buildSlot(pattern, variant, state) {
     pattern,
     exercise: variant.exercise,
     equipment: variant.equipment,
+    target_sets: TARGET_SETS,
     target_reps: TARGET_REPS,
     target_rir: TARGET_RIR,
     calibration_status,
@@ -180,6 +184,7 @@ function buildOnboardingSessionPlan({ availableEquipment, lifts } = {}) {
   const sessions = SESSIONS.map(({ session, focus, patterns }) => ({
     session,
     focus,
+    target_sets: TARGET_SETS,
     target_reps: TARGET_REPS,
     target_rir: TARGET_RIR,
     slots: patterns
