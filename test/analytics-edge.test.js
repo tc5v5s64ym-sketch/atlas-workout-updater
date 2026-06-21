@@ -699,3 +699,31 @@ test('scoreIntents: build_strength ramps every main compound per pattern and ord
     assert.ok(!bs.exercises[accessoryIdx].warmup_sets, 'accessories stay flat');
   }
 });
+
+// ── Lower-body volume budget on the live build_strength path ───────────────────
+// The reported overload: Deadlift + Back Squat + leg press + leg ext + leg curl
+// all stacked in one strength session. With 2+ main lower-body compounds, the
+// lower-body accessories must be capped so the day isn't a silent high-volume leg
+// session.
+test('scoreIntents: build_strength caps lower-body accessories when 2+ main lower compounds are present', () => {
+  const rows = [
+    ...makeRows('Deadlift',                    'Posterior Chain', 'DL01',  [230, 235, 240, 245, 245], '2026-03-01'),
+    ...makeRows('Back Squat',                  'Quads',           'SQT01', [225, 230, 235, 240, 240], '2026-03-01'),
+    ...makeRows('Single-Leg Seated Leg Press', 'Glutes',          'LP01',  [60, 65, 70, 70, 70],      '2026-03-15'),
+    ...makeRows('Leg Extension',               'Quads',           'LE01',  [50, 55, 55, 60, 60],      '2026-03-15'),
+    ...makeRows('Single-Leg Leg Curl',         'Hamstrings',      'LC01',  [55, 60, 60, 60, 60],      '2026-03-15'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03', goal: 'strength' });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs && Array.isArray(bs.exercises), 'build_strength must exist');
+  const names = bs.exercises.map(e => (e.exercise || '').toLowerCase());
+
+  // Both heavy compounds survive; the leg-isolation pile-up is reduced to ≤1.
+  assert.ok(names.some(n => n.includes('deadlift')) && names.some(n => n.includes('squat')),
+    'both main compounds kept');
+  const legIsolations = names.filter(n => n.includes('leg extension') || n.includes('leg curl'));
+  assert.ok(legIsolations.length <= 1, `lower-body accessories capped to ≤1; got ${legIsolations.length}`);
+  // The full 5-lower-lift overload must not survive intact.
+  const lowerLifts = names.filter(n => /deadlift|squat|leg press|leg extension|leg curl/.test(n));
+  assert.ok(lowerLifts.length < 5, `double-heavy-leg overload trimmed; got ${lowerLifts.length} lower lifts`);
+});

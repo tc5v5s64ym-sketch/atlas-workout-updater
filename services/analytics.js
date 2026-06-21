@@ -1265,7 +1265,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     ? options.underCoverage
     : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
   // No cycle: sessionBuilder → movementPattern / liftCost / muscleCoverage (none import analytics).
-  const { buildIntentSession, orderByRole, attachMainCompoundWarmups } = require('./sessionBuilder');
+  const { buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay } = require('./sessionBuilder');
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
@@ -1475,8 +1475,14 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     // lead). Ordering precedes ramping so "first of each pattern" reflects the
     // displayed order; both precede the readiness dose so ramps derive from the
     // working weight and survive any set trim.
+    // Then apply the lower-body volume budget: if two+ main lower-body compounds
+    // are present (e.g. Deadlift + Back Squat), cap lower-body accessories so the
+    // day doesn't silently stack into a high-volume leg session. Runs on the
+    // role-ordered list (accessories already last) and before the readiness dose.
     const exercises = applyReadinessDose(
-      attachMainCompoundWarmups(orderByRole(exForPatterns(strengthPatterns)))
+      capLowerBodyAccessoriesForHeavyLegDay(
+        attachMainCompoundWarmups(orderByRole(exForPatterns(strengthPatterns)))
+      )
     );
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.

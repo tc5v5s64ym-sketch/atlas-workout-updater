@@ -272,4 +272,52 @@ function attachMainCompoundWarmups(exercises) {
   });
 }
 
-module.exports = { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups };
+// Lower-body fine patterns (movementPattern.js): the two heavy compound patterns
+// (squat, hinge) plus the leg isolations. Used to spot a double-heavy-leg day and
+// the accessories that would over-stack it.
+const LOWER_BODY_PATTERNS = new Set(['squat', 'hinge', 'knee_isolation', 'calf_isolation', 'hip_isolation']);
+function isLowerBodyLift(ex) {
+  return ex && ex.exercise && LOWER_BODY_PATTERNS.has(patternFor(ex.exercise).pattern);
+}
+
+// Lower-body session volume budget. When a strength session already contains TWO
+// OR MORE main lower-body compounds (e.g. Deadlift + Back Squat), cap the number
+// of lower-body ACCESSORIES so the day does not silently stack into an unintended
+// high-volume leg session (the live "DL + Squat + leg press + leg ext + leg curl"
+// overload). Per the owner's direction: with two heavy compounds present,
+// accessories must be reduced.
+//
+// Pure + deterministic + conservative:
+//   - Fires ONLY at ≥2 main lower-body compounds; a normal single-compound leg day
+//     is never trimmed.
+//   - Trims lower-body ACCESSORIES only (role accessory + lower-body pattern),
+//     keeping the first `maxLowerAccessories` in their existing (already
+//     role-ordered) order. Main + secondary compounds and ALL upper-body work are
+//     untouched — the engine still owns what stays.
+//   - Reduces volume by DROPPING surplus accessories (never fabricates or reweights
+//     anything); planned-vs-logged and every number are unaffected.
+function capLowerBodyAccessoriesForHeavyLegDay(exercises, { maxLowerAccessories = 1 } = {}) {
+  if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  const mainLowerCompounds = exercises.filter(
+    ex => ex && ex.exercise && classifyLiftRole(ex.exercise, ex.muscle_group) === 'main' && isLowerBodyLift(ex)
+  ).length;
+  if (mainLowerCompounds < 2) return exercises; // not a double-heavy-leg day → unchanged
+  let keptLowerAccessories = 0;
+  return exercises.filter(ex => {
+    if (!ex || !ex.exercise) return true;
+    const isLowerAccessory =
+      classifyLiftRole(ex.exercise, ex.muscle_group) === 'accessory' && isLowerBodyLift(ex);
+    if (!isLowerAccessory) return true; // mains, secondary, upper-body → always kept
+    keptLowerAccessories += 1;
+    return keptLowerAccessories <= maxLowerAccessories;
+  });
+}
+
+module.exports = {
+  buildWarmupRamp,
+  isBlockedPair,
+  buildIntentSession,
+  orderByRole,
+  attachMainCompoundWarmups,
+  capLowerBodyAccessoriesForHeavyLegDay,
+};

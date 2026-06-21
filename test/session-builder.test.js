@@ -3,7 +3,7 @@
 const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups } = require('../services/sessionBuilder');
+const { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay } = require('../services/sessionBuilder');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -559,5 +559,58 @@ describe('attachMainCompoundWarmups — every main compound ramps per pattern', 
   it('empty / non-array input is safe', () => {
     assert.deepEqual(attachMainCompoundWarmups([]), []);
     assert.deepEqual(attachMainCompoundWarmups(null), []);
+  });
+});
+
+describe('capLowerBodyAccessoriesForHeavyLegDay — volume budget for double-heavy-leg days', () => {
+  // The live overload: DL + Squat + leg press + leg ext + leg curl.
+  function heavyLegDay() {
+    return [
+      makeEx('Deadlift', 'DL01', 245, 7),
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Single-Leg Seated Leg Press', 'LP01', 70, 12),
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+    ];
+  }
+
+  it('with 2 main lower compounds, caps lower-body accessories to 1 (drops the surplus)', () => {
+    const out = capLowerBodyAccessoriesForHeavyLegDay(heavyLegDay());
+    const names = out.map(e => e.exercise);
+    // Both mains + the secondary leg press are kept; only one leg isolation remains.
+    assert.ok(names.includes('Deadlift') && names.includes('Back Squat'), 'main compounds kept');
+    assert.ok(names.includes('Single-Leg Seated Leg Press'), 'secondary compound kept');
+    const lowerAccessories = names.filter(n => /leg extension|leg curl/i.test(n));
+    assert.equal(lowerAccessories.length, 1, `lower-body accessories capped to 1; got ${lowerAccessories.length}`);
+    // The full DL+Squat+press+ext+curl pile-up must not survive intact.
+    assert.ok(out.length < 5, 'session trimmed below the 5-lift overload');
+  });
+
+  it('does NOT fire with only ONE main lower compound (normal leg day untouched)', () => {
+    const list = [
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+    ];
+    assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay(list), list, 'single-compound leg day is unchanged');
+  });
+
+  it('never trims main / secondary compounds or upper-body work', () => {
+    const list = [
+      makeEx('Deadlift', 'DL01', 245, 7),
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Bench Press', 'BN01', 185, 6),   // upper main — must stay
+      makeEx('Lateral Raise', 'LR01', 20, 15), // upper accessory — must stay
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+    ];
+    const out = capLowerBodyAccessoriesForHeavyLegDay(list).map(e => e.exercise);
+    assert.ok(out.includes('Bench Press') && out.includes('Lateral Raise'), 'upper-body work untouched');
+    assert.equal(out.filter(n => /leg extension|leg curl/i.test(n)).length, 1, 'only lower accessories capped');
+  });
+
+  it('empty / non-array input is safe', () => {
+    assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay([]), []);
+    assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay(null), []);
   });
 });
