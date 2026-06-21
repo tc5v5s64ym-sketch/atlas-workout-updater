@@ -343,10 +343,50 @@ function capLowerBodyAccessoriesForHeavyLegDay(exercises, { maxLowerAccessories 
   });
 }
 
+// Per-user session-volume cap. Sizes a built session to the lifter's OWN norm
+// (services/sessionVolumeProfile.js) instead of generic limits — the data-driven,
+// all-body generalization of capLowerBodyAccessoriesForHeavyLegDay.
+//
+// Given a profile { session_cap, accessory_cap }:
+//   1. Accessory cap — keep at most `accessory_cap` accessories (drop the trailing
+//      surplus; the list is role-ordered so the last accessories are lowest value).
+//   2. Total cap — if still over `session_cap`, drop the lowest-priority lift
+//      (accessory first, then secondary) until at/under cap; NEVER a main compound,
+//      even if that leaves the session above cap.
+// Pure + drop-only (never reweights/fabricates). Returns the list unchanged when
+// there is no profile (insufficient history → caller keeps generic caps) or when
+// the session already fits — so normal 4–6-exercise days are untouched.
+function capSessionToProfile(exercises, profile) {
+  if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  if (!profile || !Number.isFinite(profile.session_cap)) return exercises; // no profile → generic behavior
+  const totalCap = profile.session_cap;
+  const accessoryCap = Number.isFinite(profile.accessory_cap) ? profile.accessory_cap : Infinity;
+  const roleOf = ex => classifyLiftRole(ex && ex.exercise || '', ex && ex.muscle_group || '');
+
+  // 1. Accessory cap — keep the first `accessoryCap` accessories, drop the rest.
+  let keptAccessories = 0;
+  let out = exercises.filter(ex => {
+    if (roleOf(ex) !== 'accessory') return true;
+    keptAccessories += 1;
+    return keptAccessories <= accessoryCap;
+  });
+
+  // 2. Total cap — trim lowest-priority lifts (accessory → secondary), never a main.
+  while (out.length > totalCap) {
+    let dropIdx = -1;
+    for (let i = out.length - 1; i >= 0; i--) { if (roleOf(out[i]) === 'accessory') { dropIdx = i; break; } }
+    if (dropIdx === -1) for (let i = out.length - 1; i >= 0; i--) { if (roleOf(out[i]) === 'secondary') { dropIdx = i; break; } }
+    if (dropIdx === -1) break; // only main compounds remain — never drop a main
+    out.splice(dropIdx, 1);
+  }
+  return out;
+}
+
 // One role-aware structuring pass shared by every training intent, so the
-// suggested session is consistently ordered, ramped, and volume-budgeted no
-// matter which builder produced it (exForPatterns for build_strength, or
-// buildIntentSession for build_muscle / fix_blind_spots / balanced):
+// suggested session is consistently ordered, ramped, volume-budgeted, and sized
+// to the lifter no matter which builder produced it (exForPatterns for
+// build_strength, or buildIntentSession for build_muscle / fix_blind_spots /
+// balanced):
 //   1. strip any builder-applied ramp/anchor — buildIntentSession ramps its
 //      single anchor, which may be a SECONDARY lift (e.g. Leg Press); role-aware
 //      ramping must own that decision, not inherit it;
@@ -356,6 +396,8 @@ function capLowerBodyAccessoriesForHeavyLegDay(exercises, { maxLowerAccessories 
 //      ramp follow the lifter's own learned pattern when one exists, else generic.
 //   4. capLowerBodyAccessoriesForHeavyLegDay — trim the accessory pile-up on a
 //      double-heavy-leg day.
+//   5. capSessionToProfile — when `opts.sessionProfile` is present, size the whole
+//      session to the lifter's own learned norm (total + accessory caps).
 // Pure; safe on empty/missing input.
 function structureSession(exercises, opts = {}) {
   if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
@@ -364,7 +406,8 @@ function structureSession(exercises, opts = {}) {
     const { warmup_sets, is_anchor, ...rest } = ex; // eslint-disable-line no-unused-vars
     return rest;
   });
-  return capLowerBodyAccessoriesForHeavyLegDay(attachMainCompoundWarmups(orderByRole(flat), opts));
+  const structured = capLowerBodyAccessoriesForHeavyLegDay(attachMainCompoundWarmups(orderByRole(flat), opts));
+  return capSessionToProfile(structured, opts.sessionProfile);
 }
 
 module.exports = {
@@ -375,5 +418,6 @@ module.exports = {
   orderByRole,
   attachMainCompoundWarmups,
   capLowerBodyAccessoriesForHeavyLegDay,
+  capSessionToProfile,
   structureSession,
 };

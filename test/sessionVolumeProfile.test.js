@@ -79,6 +79,62 @@ describe('buildSessionVolumeProfile — learns the lifter\'s session composition
     assert.ok(profile.session_cap >= profile.exercises_per_session, 'cap not below the median');
   });
 
+  it('accessory_cap is profile-derived (75th pct of accessory count), not a constant', () => {
+    // 5 one-accessory days + 3 two-accessory days → median 1, 75th-pct 2.
+    const rows = [];
+    for (let i = 0; i < 5; i++) rows.push(...session(`2026-04-1${i}`, `S${i}`, [
+      ['Bench Press', 'Chest'], ['Row', 'Back'], ['Triceps Pushdown', 'Triceps'],
+    ]));
+    for (let i = 5; i < 8; i++) rows.push(...session(`2026-04-2${i}`, `S${i}`, [
+      ['Bench Press', 'Chest'], ['Row', 'Back'], ['Triceps Pushdown', 'Triceps'], ['Lateral Raise', 'Shoulders'],
+    ]));
+    const profile = buildSessionVolumeProfile(rows, { today: '2026-05-01' });
+    assert.ok(profile, 'enough history → a profile');
+    assert.equal(profile.accessories_per_session, 1, 'median 1 accessory/session');
+    assert.equal(profile.accessory_cap, 2, '75th-pct accessory cap learned as 2');
+    assert.ok(profile.accessory_cap >= profile.accessories_per_session, 'accessory cap not below the median');
+  });
+
+  it('reads OBJECT-form Log_Cleaned rows the same as array rows', () => {
+    // Same 8×4-exercise history as the headline test, but built from object rows
+    // (canonical_exercise / muscle_group) to prove readRow handles both shapes.
+    function objSession(date, id, exs) {
+      const rows = [];
+      for (const [name, muscle] of exs) {
+        for (let s = 1; s <= 3; s++) {
+          rows.push({
+            date_clean: date,
+            session_id: id,
+            exercise: name,
+            canonical_exercise: name,
+            muscle_group: muscle,
+            set_number: s,
+            weight: 135,
+            reps: 5,
+            rir: 2,
+          });
+        }
+      }
+      return rows;
+    }
+    const rows = [];
+    for (let i = 0; i < 8; i++) {
+      const d = new Date('2026-04-01'); d.setDate(d.getDate() + i * 3);
+      rows.push(...objSession(d.toISOString().slice(0, 10), `S${i}`, [
+        ['Bench Press', 'Chest'],          // main
+        ['Incline DB Press', 'Chest'],     // secondary
+        ['Lateral Raise', 'Shoulders'],    // accessory
+        ['Triceps Pushdown', 'Triceps'],   // accessory
+      ]));
+    }
+    const profile = buildSessionVolumeProfile(rows, { today: '2026-05-01' });
+    assert.ok(profile, 'object-form rows → a profile');
+    assert.equal(profile.exercises_per_session, 4, 'object rows learn ~4 exercises/session');
+    assert.equal(profile.accessories_per_session, 2, 'object rows: ~2 accessories/session');
+    assert.equal(profile.compounds_per_session, 2, 'object rows: ~2 compound lifts/session');
+    assert.equal(profile.sessions_analyzed, 8, 'all 8 object-form sessions counted');
+  });
+
   it('is null-safe', () => {
     assert.equal(buildSessionVolumeProfile([], {}), null);
     assert.equal(buildSessionVolumeProfile(null, {}), null);

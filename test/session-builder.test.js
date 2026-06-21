@@ -3,7 +3,7 @@
 const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildWarmupRamp, buildPersonalizedRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay, structureSession } = require('../services/sessionBuilder');
+const { buildWarmupRamp, buildPersonalizedRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay, capSessionToProfile, structureSession } = require('../services/sessionBuilder');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -714,5 +714,75 @@ describe('attachMainCompoundWarmups — personalized when a shape exists, generi
   it('with no opts, behaves exactly as before (generic ramp)', () => {
     const out = attachMainCompoundWarmups([makeEx('Deadlift', 'DL01', 245, 5)]);
     assert.deepEqual(out[0].warmup_sets.map(s => s.reps), [8, 5, 3]);
+  });
+});
+
+describe('capSessionToProfile — the cap is DERIVED FROM the profile, not hardcoded', () => {
+  // role check: main = Bench/Squat/Deadlift/OHP/Barbell Row; secondary = Leg Press /
+  // Lat Pulldown; accessory = Lateral Raise / Bicep Curl / Face Pull / Leg Extension.
+  const M = (n, c) => makeEx(n, c, 185, 5);      // main compound
+  const S = (n, c) => makeEx(n, c, 150, 8);      // secondary compound
+  const A = (n, c) => makeEx(n, c, 30, 12);      // accessory
+  const roles = list => list.map(e => classifyRole(e));
+  function classifyRole(e) { const { classifyLiftRole } = require('../services/liftRole'); return classifyLiftRole(e.exercise, e.muscle_group); }
+
+  // An 8-exercise plan: 3 main + 2 secondary + 3 accessory (role-ordered).
+  const bigPlan = () => [
+    M('Bench Press', 'Chest'), M('Barbell Row', 'Back'), M('Overhead Press', 'Shoulders'),
+    S('Leg Press', 'Quads'), S('Lat Pulldown', 'Back'),
+    A('Lateral Raise', 'Shoulders'), A('Bicep Curl', 'Biceps'), A('Face Pull', 'Rear Delts'),
+  ];
+
+  it('profile cap 6 → a 7–8 exercise plan trims to 6 (mains preserved)', () => {
+    const out = capSessionToProfile(bigPlan(), { session_cap: 6, accessory_cap: 2 });
+    assert.equal(out.length, 6);
+    assert.equal(roles(out).filter(r => r === 'main').length, 3, 'all 3 main compounds kept');
+  });
+
+  it('the cap FOLLOWS the profile value (cap 4 trims harder than cap 6)', () => {
+    const at6 = capSessionToProfile(bigPlan(), { session_cap: 6, accessory_cap: 2 });
+    const at4 = capSessionToProfile(bigPlan(), { session_cap: 4, accessory_cap: 2 });
+    assert.equal(at6.length, 6);
+    assert.equal(at4.length, 4, 'a smaller profile cap trims to 4 — proves it is data-derived');
+    assert.equal(roles(at4).filter(r => r === 'main').length, 3, 'mains still preserved at cap 4');
+  });
+
+  it('accessory cap is profile-derived: above accessory_cap is trimmed first', () => {
+    const at2 = capSessionToProfile(bigPlan(), { session_cap: 8, accessory_cap: 2 });
+    assert.equal(roles(at2).filter(r => r === 'accessory').length, 2, 'accessories capped to the profile p75 (2)');
+    const at1 = capSessionToProfile(bigPlan(), { session_cap: 8, accessory_cap: 1 });
+    assert.equal(roles(at1).filter(r => r === 'accessory').length, 1, 'a profile with accessory_cap 1 trims to 1');
+  });
+
+  it('trims accessories FIRST, then secondary only if still over — never a main', () => {
+    // cap 4, accessory_cap 0: must drop all 3 accessories, then 1 secondary, keep 3 main.
+    const out = capSessionToProfile(bigPlan(), { session_cap: 4, accessory_cap: 0 });
+    const r = roles(out);
+    assert.equal(r.filter(x => x === 'main').length, 3, 'all mains preserved');
+    assert.equal(r.filter(x => x === 'accessory').length, 0, 'accessories trimmed first');
+    assert.equal(r.filter(x => x === 'secondary').length, 1, 'then one secondary trimmed to hit cap 4');
+  });
+
+  it('NEVER drops a main compound, even if that leaves the session above cap', () => {
+    const mainsOnly = [M('Deadlift', 'Posterior Chain'), M('Back Squat', 'Quads'), M('Bench Press', 'Chest'), M('Overhead Press', 'Shoulders')];
+    const out = capSessionToProfile(mainsOnly, { session_cap: 2, accessory_cap: 0 });
+    assert.equal(out.length, 4, 'all 4 mains kept despite cap 2 — never drop a main');
+  });
+
+  it('does NOT reshape a normal session that already fits the profile', () => {
+    const normal = [M('Bench Press', 'Chest'), M('Barbell Row', 'Back'), S('Lat Pulldown', 'Back'), A('Face Pull', 'Rear Delts')];
+    const out = capSessionToProfile(normal, { session_cap: 6, accessory_cap: 2 });
+    assert.deepEqual(out, normal, '4-exercise, 1-accessory day is left untouched');
+  });
+
+  it('falls back to generic (no trim) when there is no profile — insufficient history', () => {
+    const plan = bigPlan();
+    assert.equal(capSessionToProfile(plan, null).length, 8, 'null profile → unchanged');
+    assert.equal(capSessionToProfile(plan, {}).length, 8, 'profile without session_cap → unchanged');
+  });
+
+  it('empty / non-array input is safe', () => {
+    assert.deepEqual(capSessionToProfile([], { session_cap: 6 }), []);
+    assert.deepEqual(capSessionToProfile(null, { session_cap: 6 }), []);
   });
 });
