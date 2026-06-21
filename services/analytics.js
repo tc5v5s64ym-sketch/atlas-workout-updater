@@ -689,16 +689,21 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   const lowerBody = isLowerBodyGroup(muscleGroup);
   const increaseAmount = lowerBody ? 10 : 5;
 
-  // e1RM trend across all sessions for this lift
-  const sessionBests = [];
-  const seenSessions = new Set();
+  // e1RM trend across all sessions for this lift. Use each session's BEST e1RM
+  // (top working effort), not its first logged set: lifters who log warm-ups
+  // first would otherwise have the trend computed from a priming set (e.g. a flat
+  // 135×15 warm-up), masking real working-set progression. Mirrors detectStalls,
+  // which already takes the per-session max. Session order is chronological (rows
+  // are sorted by date → session → set_number), so first-seen order is preserved.
+  const sessionBestMap = new Map();
+  const sessionBestOrder = [];
   for (const row of rows) {
-    if (!seenSessions.has(row.session_id)) {
-      seenSessions.add(row.session_id);
-      const e1rm = row.weight && row.reps ? Math.round(row.weight * (1 + row.reps / 30) * 100) / 100 : null;
-      if (e1rm) sessionBests.push(e1rm);
-    }
+    if (!row.weight || !row.reps) continue;
+    const e1rm = Math.round(row.weight * (1 + row.reps / 30) * 100) / 100;
+    if (!sessionBestMap.has(row.session_id)) sessionBestOrder.push(row.session_id);
+    sessionBestMap.set(row.session_id, Math.max(sessionBestMap.get(row.session_id) || 0, e1rm));
   }
+  const sessionBests = sessionBestOrder.map(id => sessionBestMap.get(id));
   const e1rmTrend = sessionBests.length >= 2 ? getSimpleTrend(sessionBests) : 'flat';
 
   let recommendation = 'Repeat the last working set and keep form tight.';

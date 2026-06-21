@@ -767,3 +767,24 @@ for (const goal of ['hypertrophy', 'general']) {
     assert.ok(legIsolations.length <= 1, `leg isolations capped to ≤1; got ${legIsolations.length}`);
   });
 }
+
+// ── e1RM trend uses each session's BEST set, not its first (warm-up) set ───────
+// For lifters who log warm-ups first, the per-session FIRST set is a priming set;
+// computing the trend from it masks real working-set progression.
+test('recommendNextSet: a climbing lift logged warm-up-first reads e1rm_trend "up" (not masked flat)', () => {
+  const row = (d, s, sn, w, r, rir) => [d, s, 'Bench Press', 'Bench Press', 'Chest', 'BEN01', String(sn), String(w), String(r), String(rir), '', ''];
+  // Each session: flat 135×15 warm-up logged FIRST, then climbing working sets.
+  const rows = [
+    row('2026-05-01', 'S1', 1, 135, 15, 6), row('2026-05-01', 'S1', 2, 185, 8, 2), row('2026-05-01', 'S1', 3, 205, 5, 2),
+    row('2026-05-08', 'S2', 1, 135, 15, 6), row('2026-05-08', 'S2', 2, 195, 8, 2), row('2026-05-08', 'S2', 3, 225, 5, 2),
+  ];
+  const rec = recommendNextSet(rows, 'BEN01', { today: '2026-05-09' });
+  assert.equal(rec.e1rm_trend, 'up', 'working-set progression must not be masked by a flat warm-up logged first');
+});
+
+test('recommendNextSet: trend is unaffected for single-working-set-per-session history', () => {
+  // Guard: the common case (one set per session, no warm-ups) is unchanged.
+  const row = (d, s, w) => [d, s, 'Squat', 'Squat', 'Quads', 'SQ01', '1', String(w), '5', '2', '', ''];
+  const rows = [row('2026-05-01', 'A', 225), row('2026-05-08', 'B', 230), row('2026-05-15', 'C', 235)];
+  assert.equal(recommendNextSet(rows, 'SQ01', { today: '2026-05-16' }).e1rm_trend, 'up');
+});
