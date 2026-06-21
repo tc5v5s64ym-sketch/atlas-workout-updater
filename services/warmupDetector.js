@@ -127,7 +127,7 @@ function rampInSession(sets, opts) {
 // Detect a lifter's learned warm-up ramp shape for one lift.
 //
 // @param logRows  full Log_Cleaned rows (array-form or object-form), any lifts
-// @param options  { liftCode?, exerciseName?, warmupRirFloor?, maxWarmupFraction?, minRampedSessions? }
+// @param options  { liftCode?, exerciseName?, minWarmupRir?, maxWarmupFraction?, minRampedSessions? }
 // @returns {
 //   steps: [{ load_fraction, reps }],   // ascending ramp as fractions of the top working set
 //   confidence: 'low' | 'medium' | 'high',
@@ -174,10 +174,11 @@ function detectWarmupRampShape(logRows, options = {}) {
     reps: w.reps,
   }));
 
-  // Confidence scales with how many sessions corroborate a ramp.
+  // Confidence scales with how many sessions corroborate a ramp: exactly the
+  // minimum (2) is 'low', one more is 'medium', 4+ is 'high'.
   let confidence = 'low';
   if (ramps.length >= 4) confidence = 'high';
-  else if (ramps.length >= opts.minRampedSessions) confidence = 'medium';
+  else if (ramps.length >= opts.minRampedSessions + 1) confidence = 'medium';
 
   return { steps, confidence, ramped_sessions: ramps.length, total_sessions: totalSessions };
 }

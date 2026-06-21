@@ -41,9 +41,11 @@ describe('detectWarmupRampShape — learns a lifter\'s own ramp', () => {
     assert.equal(shape.ramped_sessions, 3);
   });
 
-  it('confidence scales with corroborating sessions (medium at 2–3, high at 4+)', () => {
+  it('confidence scales with corroborating sessions (low at 2, medium at 3, high at 4+)', () => {
     const two = [...ownerBenchSession('2026-05-01', 'S1', 225), ...ownerBenchSession('2026-05-08', 'S2', 225)];
-    assert.equal(detectWarmupRampShape(two, { liftCode: 'BEN01' }).confidence, 'medium');
+    assert.equal(detectWarmupRampShape(two, { liftCode: 'BEN01' }).confidence, 'low');
+    const three = ['2026-05-01', '2026-05-08', '2026-05-15'].flatMap((d, i) => ownerBenchSession(d, `S${i}`, 225));
+    assert.equal(detectWarmupRampShape(three, { liftCode: 'BEN01' }).confidence, 'medium');
     const four = ['2026-05-01', '2026-05-08', '2026-05-15', '2026-05-22']
       .flatMap((d, i) => ownerBenchSession(d, `S${i}`, 225));
     assert.equal(detectWarmupRampShape(four, { liftCode: 'BEN01' }).confidence, 'high');
