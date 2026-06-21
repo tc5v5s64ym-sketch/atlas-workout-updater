@@ -388,9 +388,14 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 **Finding:** the substitution-quality signal (`scoreSubstitutionQuality`, wired PR #439) only fires when a prescribed-vs-logged pair reaches `buildSubstitutionPreviews` via `prescribedList`. That list is built from parser-detected swap phrasing / explicitly-attached `plan_exercises`, **not** from silently comparing logged lifts against the active plan. A passive deadlift→RDL log without explicit swap phrasing yields no pair → no signal. Same active-session-context gap as P0. Secondary, by-design contributor: RDL-for-deadlift is a *good* swap → owner-approved rule keeps good swaps intentionally brief/quiet, so even when it fires it is easy to miss. **Reproduce the live flow** (was it phrased as a swap? was `plan_exercises` attached? did `data.substitutions` come back non-empty?) to disambiguate (a) never fired vs (b) fired-but-quiet vs (c) routing conflict before any code change.
 
+### P0 follow-ups — shipped
+
+- ✅ **Free-form chat counts as active context** (#446): `getChatReply` treats an in-progress conversation as active context, so session shorthand no longer leaks to SME mid-conversation.
+- ✅ **Coach-down deterministic engine fallback** (#449): `services/sessionQuestionAnswer.js` answers in-session shorthand from `recommendNextSet`/plan-preview targets when Gemini is unavailable, instead of "Coach is unavailable." See `BACKLOG.md` for the two deferred review notes + the open Gemini-reliability item.
+
 ### P2 — Extra Work Coach Signal (PR #440)
 
-**Status:** built + reviewed; **HOLD merge** pending P0/P1 findings. Do not merge yet.
+**Status:** ✅ **shipped/merged (#440).** Engine fact `extra_work` wired into the coach chat context (on-ask/recovery-gated wording). Follow-ups tracked in `BACKLOG.md`.
 
 ### P3 — Coach Brevity Pass
 
