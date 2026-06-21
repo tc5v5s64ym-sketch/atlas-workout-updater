@@ -310,6 +310,29 @@ function capLowerBodyAccessoriesForHeavyLegDay(exercises, { maxLowerAccessories 
   });
 }
 
+// One role-aware structuring pass shared by every training intent, so the
+// suggested session is consistently ordered, ramped, and volume-budgeted no
+// matter which builder produced it (exForPatterns for build_strength, or
+// buildIntentSession for build_muscle / fix_blind_spots / balanced):
+//   1. strip any builder-applied ramp/anchor — buildIntentSession ramps its
+//      single anchor, which may be a SECONDARY lift (e.g. Leg Press); role-aware
+//      ramping must own that decision, not inherit it;
+//   2. orderByRole — main compounds first, accessories last;
+//   3. attachMainCompoundWarmups — ramp the first MAIN compound of each pattern
+//      (known working weight only; never fabricated);
+//   4. capLowerBodyAccessoriesForHeavyLegDay — trim the accessory pile-up on a
+//      double-heavy-leg day.
+// Pure; safe on empty/missing input.
+function structureSession(exercises) {
+  if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
+  const flat = exercises.map(ex => {
+    if (!ex || typeof ex !== 'object') return ex;
+    const { warmup_sets, is_anchor, ...rest } = ex; // eslint-disable-line no-unused-vars
+    return rest;
+  });
+  return capLowerBodyAccessoriesForHeavyLegDay(attachMainCompoundWarmups(orderByRole(flat)));
+}
+
 module.exports = {
   buildWarmupRamp,
   isBlockedPair,
@@ -317,4 +340,5 @@ module.exports = {
   orderByRole,
   attachMainCompoundWarmups,
   capLowerBodyAccessoriesForHeavyLegDay,
+  structureSession,
 };

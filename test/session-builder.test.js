@@ -3,7 +3,7 @@
 const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay } = require('../services/sessionBuilder');
+const { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay, structureSession } = require('../services/sessionBuilder');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -612,5 +612,49 @@ describe('capLowerBodyAccessoriesForHeavyLegDay — volume budget for double-hea
   it('empty / non-array input is safe', () => {
     assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay([]), []);
     assert.deepEqual(capLowerBodyAccessoriesForHeavyLegDay(null), []);
+  });
+});
+
+describe('structureSession — one role-aware pass shared by every training intent', () => {
+  it('strips a builder-applied anchor ramp and re-ramps the MAIN compounds', () => {
+    // buildIntentSession-style input: Leg Press (a SECONDARY lift) is the anchor
+    // and pre-ramped; accessories interleaved; Back Squat flat. The screenshot bug.
+    const fromBuildIntentSession = [
+      { exercise: 'Deadlift', lift_code: 'DL01', target_weight: 245, target_reps: 7, target_sets: 3, is_anchor: true, warmup_sets: buildWarmupRamp(245) },
+      makeEx('Leg Extension', 'LE01', 60, 16),
+      makeEx('Single-Leg Leg Curl', 'LC01', 60, 11),
+      makeEx('Back Squat', 'SQ01', 240, 5),
+      makeEx('Single-Leg Seated Leg Press', 'LP01', 70, 12),
+    ];
+    const out = structureSession(fromBuildIntentSession);
+    const names = out.map(e => e.exercise);
+    // main compounds first, both ramped; secondary leg press next; one isolation; curl capped out.
+    assert.deepEqual(names, ['Deadlift', 'Back Squat', 'Single-Leg Seated Leg Press', 'Leg Extension']);
+    assert.ok(out[0].warmup_sets && out[1].warmup_sets, 'both main compounds ramp');
+    assert.ok(!out[2].warmup_sets, 'secondary leg press stays flat');
+    assert.ok(!out[3].warmup_sets, 'accessory stays flat');
+  });
+
+  it('does NOT let a secondary-lift anchor keep its ramp (only main compounds ramp)', () => {
+    // Leg Press is the anchor buildIntentSession ramped, but it is role=secondary.
+    const input = [
+      { exercise: 'Single-Leg Seated Leg Press', lift_code: 'LP01', target_weight: 70, target_reps: 12, target_sets: 3, is_anchor: true, warmup_sets: buildWarmupRamp(70) },
+      makeEx('Leg Extension', 'LE01', 60, 16),
+    ];
+    const out = structureSession(input);
+    out.forEach(e => assert.ok(!e.warmup_sets, `${e.exercise} (secondary/accessory) must not ramp`));
+  });
+
+  it('preserves non-ramp fields (reason, confidence) through the pass', () => {
+    const input = [{ exercise: 'Back Squat', lift_code: 'SQ01', target_weight: 240, target_reps: 5, target_sets: 3, reason: 'progress', confidence_factors: { sessions: 5 } }];
+    const out = structureSession(input);
+    assert.equal(out[0].reason, 'progress');
+    assert.deepEqual(out[0].confidence_factors, { sessions: 5 });
+    assert.ok(out[0].warmup_sets, 'a known-weight main compound ramps');
+  });
+
+  it('empty / non-array input is safe', () => {
+    assert.deepEqual(structureSession([]), []);
+    assert.deepEqual(structureSession(null), []);
   });
 });
