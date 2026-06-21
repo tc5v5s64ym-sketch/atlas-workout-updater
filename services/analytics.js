@@ -1467,6 +1467,37 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     return { exercises: list.filter((_, i) => !dropIdx.has(i)), trimmed };
   }
 
+  // Backfill toward the lifter's learned session norm with READY patterns. When a
+  // pattern's density was trimmed for recovery, a session built from only a couple
+  // of patterns (e.g. push+pull) can collapse below the profile target — a single
+  // recovering pattern should reduce ITS volume, not shorten the whole day. So when
+  // a recovery trim happened and the session is under the learned target, top it up
+  // with movements from rested patterns (never the recovering one, and never extra
+  // push-to-fill). Skipped when there is no learned profile (sparse data → generic
+  // behaviour) or when global fatigue already warrants a short session. The target
+  // is the profile MEDIAN (`exercises_per_session`), bounded by `session_cap`, so it
+  // stays data-driven (never forces a fixed count) and never exceeds #466's cap.
+  function backfillToProfileTarget(exercises, trimmedPatterns) {
+    const list = Array.isArray(exercises) ? exercises : [];
+    if (!trimmedPatterns || trimmedPatterns.length === 0) return list;       // no recovery trim → nothing to backfill
+    if (!sessionProfile || !Number.isFinite(sessionProfile.exercises_per_session)) return list; // no learned norm
+    if (fatigue.status === 'high') return list;                              // short session is warranted
+    const cap = Number.isFinite(sessionProfile.session_cap) ? sessionProfile.session_cap : Infinity;
+    const target = Math.min(sessionProfile.exercises_per_session, cap);
+    if (list.length >= target) return list;
+    const have = new Set(list.map(ex => ex && ex.lift_code).filter(Boolean));
+    const isRecovering = p => ['recovering', 'fatigued'].includes(rm[p]?.status);
+    const readyPatterns = [...new Set(allRecs.map(r => r.pattern).filter(p => p && !isRecovering(p)))];
+    const out = list.slice();
+    for (const cand of exForPatterns(readyPatterns, target * 2)) {
+      if (out.length >= target) break;
+      if (have.has(cand.lift_code)) continue;
+      out.push(cand);
+      have.add(cand.lift_code);
+    }
+    return out;
+  }
+
   // Standard pivot rules for an exercise list
   function pivotFor(exercises) {
     return exercises.slice(0, 2).flatMap(ex => [
@@ -1535,16 +1566,24 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     // the prescription reflects the same recovery read the summary surfaces (no
     // "push is still recovering" while stacking three presses).
     const { exercises: recoveryCapped, trimmed: recoveringTrims } = capRecoveringPatternDensity(exForPatterns(strengthPatterns));
+    // If the recovery trim left the session short of the lifter's learned norm,
+    // backfill with rested patterns so one recovering pattern doesn't collapse the
+    // whole day (shift volume to ready work, don't add more of the recovering one).
+    const profileSized = backfillToProfileTarget(recoveryCapped, recoveringTrims);
+    const didBackfill = profileSized.length > recoveryCapped.length;
     // Structure the session (shared with every training intent): role-order
     // (main→secondary→accessory), ramp every main compound per movement pattern,
     // and cap lower-body accessories on a double-heavy-leg day. Runs before the
     // readiness dose so ramps derive from the working weight and survive a trim.
-    const exercises = applyReadinessDose(structureSession(recoveryCapped, structureOpts));
+    const exercises = applyReadinessDose(structureSession(profileSized, structureOpts));
     const PATTERN_LABEL = { push: 'Push', pull: 'Pull', lower: 'Lower body', hinge: 'Hinge', core: 'Core' };
     for (const p of recoveringTrims) {
       const label = PATTERN_LABEL[p] || p;
       why.push(`${label} is still ${rm[p].status} — keeping it to one movement today rather than stacking volume on a recovering pattern`);
       protects.push(`${label} recovery`);
+    }
+    if (didBackfill) {
+      why.push('Shifting the freed volume to well-recovered patterns to keep a full session');
     }
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
@@ -1574,6 +1613,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         isFatigued('lower')          && 'lower_fatigued',
         isFatigued('push')           && 'push_fatigued',
         recoveringTrims.length > 0   && 'recovering_pattern_density_capped',
+        didBackfill                  && 'volume_shifted_to_ready_patterns',
         upPush.length > 0            && 'trending_up',
         downCompounds.length >= 2    && 'multiple_trending_down',
         isFresh('pull')              && 'pull_overdue',

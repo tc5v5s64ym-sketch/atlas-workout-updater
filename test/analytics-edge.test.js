@@ -962,3 +962,121 @@ test('scoreIntents: the density cap is recovery-gated — a fresh push pattern k
   assert.ok(!bs.reason_codes.includes('recovering_pattern_density_capped'),
     'no recovery cap code when nothing was recovering');
 });
+
+// ── Recovery trim must not collapse the session below the learned norm ─────────
+// A single recovering pattern should reduce ITS density, then the day is
+// backfilled with rested patterns toward the lifter's profile target (median ~5,
+// p75 6) — it should not shrink to 3 exercises unless global fatigue warrants it.
+
+// Session of [name, muscle, code, weight] rows (3 sets each) on a given date.
+function densitySession(date, lifts) {
+  const rows = [];
+  for (const [name, muscle, code, w] of lifts) {
+    for (let s = 1; s <= 3; s++) {
+      rows.push([date, `${date}-S`, name, name, muscle, code, String(s), String(w), '5', '2', '', '']);
+    }
+  }
+  return rows;
+}
+
+// Eight weekly "full" 5-exercise history sessions (push/pull/lower/hinge/core) so
+// buildSessionVolumeProfile learns a ~5-exercise norm.
+function densityHistory() {
+  const rows = [];
+  for (let i = 0; i < 8; i++) {
+    const d = new Date('2026-02-07'); d.setDate(d.getDate() + i * 7);
+    rows.push(...densitySession(d.toISOString().slice(0, 10), [
+      ['Bench Press',       'chest',            'BPR01', 185],
+      ['Seated Row',        'back',             'ROW01', 155],
+      ['Leg Press',         'quads',            'LEG01', 300],
+      ['Romanian Deadlift', 'posterior chain',  'RDL01', 185],
+      ['Cable Crunch',      'abs',              'CRU01',  60],
+    ]));
+  }
+  return rows;
+}
+
+test('scoreIntents: a recovering push pattern does NOT collapse Build Strength to 3 — it backfills rested patterns to the learned norm', () => {
+  const rows = [
+    ...densityHistory(),
+    // Rested patterns last trained 3 days ago (ready): pull / lower / hinge / core.
+    ...densitySession('2026-04-28', [
+      ['Seated Row',        'back',            'ROW01', 158],
+      ['Lat Pulldown',      'back',            'LAT01', 120],
+      ['Leg Press',         'quads',           'LEG01', 305],
+      ['Romanian Deadlift', 'posterior chain', 'RDL01', 188],
+      ['Cable Crunch',      'abs',             'CRU01',  62],
+    ]),
+    // Push last trained 2 days ago (recovering) with THREE pressing movements.
+    ...densitySession('2026-04-29', [
+      ['Bench Press',        'chest', 'BPR01', 190],
+      ['Weighted Dip',       'chest', 'DIP01',  95],
+      ['Incline DB Press',   'chest', 'INC01',  65],
+    ]),
+  ];
+  const today = '2026-05-01';
+
+  const readiness = buildMuscleGroupReadiness(rows, { today });
+  assert.equal(readiness.find(r => r.pattern === 'push')?.status, 'recovering', 'push must read recovering');
+  assert.equal(readiness.find(r => r.pattern === 'pull')?.status, 'ready', 'pull must read ready (not recovering)');
+  assert.equal(readiness.find(r => r.pattern === 'lower')?.status, 'ready', 'lower must read ready (backfill source)');
+
+  const result = scoreIntents(rows, [], { today });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength must exist');
+
+  // Push is still thinned to one movement (the #467 behaviour holds).
+  const pushCodes = new Set(['BPR01', 'DIP01', 'INC01']);
+  assert.equal(bs.exercises.filter(ex => pushCodes.has(ex.lift_code)).length, 1, 'push thinned to one movement');
+
+  // But the session is NOT collapsed to 3 — it sits near the learned 4–6 norm…
+  assert.ok(bs.exercises.length >= 4 && bs.exercises.length <= 6,
+    `expected a 4–6 exercise session near the learned norm, got ${bs.exercises.length}`);
+
+  // …because it backfilled with a rested, non-push pattern (legs / hinge / core).
+  const backfillCodes = new Set(['LEG01', 'RDL01', 'CRU01']);
+  assert.ok(bs.exercises.some(ex => backfillCodes.has(ex.lift_code)),
+    'session must backfill with a rested pattern beyond push+pull');
+  assert.ok(bs.reason_codes.includes('volume_shifted_to_ready_patterns'),
+    `expected volume_shifted_to_ready_patterns reason code, got [${bs.reason_codes.join(', ')}]`);
+});
+
+test('scoreIntents: a 3-exercise Build Strength day is allowed when GLOBAL fatigue is high (no backfill)', () => {
+  const rows = [
+    ...densityHistory(),
+    // A tiny baseline-window session (days 8–28) so fatigue has a baseline to beat.
+    ...densitySession('2026-04-10', [['Cable Crunch', 'abs', 'CRU01', 30]]),
+    // Heavy recent week (last 7 days) → recent volume ≫ baseline → fatigue 'high'.
+    ...densitySession('2026-04-28', [
+      ['Seated Row',        'back',            'ROW01', 158],
+      ['Lat Pulldown',      'back',            'LAT01', 120],
+      ['Leg Press',         'quads',           'LEG01', 305],
+      ['Romanian Deadlift', 'posterior chain', 'RDL01', 188],
+      ['Cable Crunch',      'abs',             'CRU01',  62],
+    ]),
+    ...densitySession('2026-04-29', [
+      ['Bench Press',      'chest', 'BPR01', 190],
+      ['Weighted Dip',     'chest', 'DIP01',  95],
+      ['Incline DB Press', 'chest', 'INC01',  65],
+    ]),
+  ];
+  const today = '2026-05-01';
+
+  // Precondition: global fatigue really is high, and a profile exists (so the only
+  // reason a short session is allowed is fatigue, not missing data).
+  assert.equal(computeFatigueStatus(rows, new Date(today + 'T12:00:00')).status, 'high',
+    'fixture must drive global fatigue high');
+  assert.equal(buildMuscleGroupReadiness(rows, { today }).find(r => r.pattern === 'push')?.status, 'recovering');
+
+  const result = scoreIntents(rows, [], { today });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs, 'build_strength must exist');
+
+  assert.equal(bs.exercises.filter(ex => new Set(['BPR01', 'DIP01', 'INC01']).has(ex.lift_code)).length, 1,
+    'push still thinned to one movement');
+  // High fatigue → no backfill → the short session is allowed.
+  assert.ok(!bs.reason_codes.includes('volume_shifted_to_ready_patterns'), 'no backfill under high fatigue');
+  assert.ok(bs.reason_codes.includes('high_fatigue'), 'the short session carries the global-fatigue reason');
+  assert.ok(bs.exercises.length <= 3,
+    `expected a short session under high fatigue, got ${bs.exercises.length}`);
+});
