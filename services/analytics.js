@@ -1271,6 +1271,19 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     : (() => { const { computeUnderCoverage } = require('./underCoverage'); return computeUnderCoverage(logRows, { today: todayStr }); })();
   // No cycle: sessionBuilder → movementPattern / liftCost / muscleCoverage (none import analytics).
   const { buildIntentSession, structureSession } = require('./sessionBuilder');
+  // Personalized warm-up ramps: per main compound, learn the lifter's own ramp
+  // shape from logged history (warmupDetector). Cached per lift_code so the
+  // detector scans the log at most once per lift across all intents. A null shape
+  // (no logged ramp history) means the structuring falls back to the generic ramp.
+  const { detectWarmupRampShape } = require('./warmupDetector');
+  const rampShapeCache = new Map();
+  const rampShapeFor = (ex) => {
+    const code = ex && ex.lift_code;
+    if (!code) return null;
+    if (!rampShapeCache.has(code)) rampShapeCache.set(code, detectWarmupRampShape(logRows, { liftCode: code }));
+    return rampShapeCache.get(code);
+  };
+  const structureOpts = { rampShapeFor };
   const underMuscles = new Set(underCoverageData.filter(m => m.status === 'under').map(m => m.muscle));
   const patternsWithGaps = new Set([...underMuscles].map(m => MUSCLE_PATTERN[m]).filter(Boolean));
   // Each stall is tagged ignored_for_deload when it's a flat accessory whose
@@ -1479,7 +1492,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     // (main→secondary→accessory), ramp every main compound per movement pattern,
     // and cap lower-body accessories on a double-heavy-leg day. Runs before the
     // readiness dose so ramps derive from the working weight and survive a trim.
-    const exercises = applyReadinessDose(structureSession(exForPatterns(strengthPatterns)));
+    const exercises = applyReadinessDose(structureSession(exForPatterns(strengthPatterns), structureOpts));
     // Only flag a plateau on lifts whose muscle group could actually be trained
     // today — warning about a fatigued lift here would just repeat the deload bug.
     for (const s of eligibleStalls.slice(0, 2)) {
@@ -1536,7 +1549,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     // Same role-aware structuring as build_strength: main compounds first and
     // ramped per pattern (buildIntentSession ramps only its single anchor, which
     // can be a secondary lift), lower-body pile-up capped on a heavy-leg day.
-    const exercises = applyReadinessDose(structureSession(rawBuildMuscle));
+    const exercises = applyReadinessDose(structureSession(rawBuildMuscle, structureOpts));
     intents.push({
       id: 'build_muscle',
       label: 'Build Muscle',
@@ -1583,7 +1596,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const freshIds = freshPatterns.map(p => p.pattern);
     const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];
     const session = buildIntentSession({ patterns: targetPatterns, allRecs, underCoverageData });
-    const exercises = applyReadinessDose(structureSession(session.exercises));
+    const exercises = applyReadinessDose(structureSession(session.exercises, structureOpts));
 
     // AC1: only mention patterns that actually have exercises in today's session.
     const scheduledFresh = freshPatterns.filter(p => session.coveredPatterns.has(p.pattern));
@@ -1628,7 +1641,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (fatigue.status === 'normal') score += 10;
 
     const { exercises: rawBalanced } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'hinge', 'core'], allRecs, underCoverageData });
-    const exercises = applyReadinessDose(structureSession(rawBalanced));
+    const exercises = applyReadinessDose(structureSession(rawBalanced, structureOpts));
     intents.push({
       id: 'balanced',
       label: 'Balanced Day',

@@ -3,7 +3,7 @@
 const { describe, it, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildWarmupRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay, structureSession } = require('../services/sessionBuilder');
+const { buildWarmupRamp, buildPersonalizedRamp, isBlockedPair, buildIntentSession, orderByRole, attachMainCompoundWarmups, capLowerBodyAccessoriesForHeavyLegDay, structureSession } = require('../services/sessionBuilder');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -656,5 +656,63 @@ describe('structureSession — one role-aware pass shared by every training inte
   it('empty / non-array input is safe', () => {
     assert.deepEqual(structureSession([]), []);
     assert.deepEqual(structureSession(null), []);
+  });
+});
+
+describe('buildPersonalizedRamp — scale a lifter\'s learned ramp to today\'s weight', () => {
+  it('scales the owner\'s 2-step Bench shape (~0.60/0.82 × 15/10) to the working weight', () => {
+    const shape = { steps: [{ load_fraction: 0.60, reps: 15 }, { load_fraction: 0.82, reps: 10 }] };
+    const ramp = buildPersonalizedRamp(225, shape);
+    assert.deepEqual(ramp, [
+      { weight: 135, reps: 15, priming: true }, // 225×0.60
+      { weight: 185, reps: 10, priming: true }, // 225×0.82 = 184.5 → 185
+    ]);
+  });
+
+  it('preserves the lifter\'s rep scheme (not the generic 8/5/3)', () => {
+    const ramp = buildPersonalizedRamp(225, { steps: [{ load_fraction: 0.6, reps: 15 }, { load_fraction: 0.82, reps: 10 }] });
+    assert.deepEqual(ramp.map(s => s.reps), [15, 10]);
+  });
+
+  it('drops steps that round to ≥ the working weight (not a warm-up)', () => {
+    const ramp = buildPersonalizedRamp(100, { steps: [{ load_fraction: 0.5, reps: 8 }, { load_fraction: 0.99, reps: 3 }] });
+    assert.equal(ramp.length, 1);
+    assert.ok(ramp[0].weight < 100);
+  });
+
+  it('keeps the ramp strictly ascending (drops post-rounding duplicates)', () => {
+    const ramp = buildPersonalizedRamp(100, { steps: [{ load_fraction: 0.50, reps: 8 }, { load_fraction: 0.52, reps: 6 }] });
+    const ws = ramp.map(s => s.weight);
+    for (let i = 1; i < ws.length; i++) assert.ok(ws[i] > ws[i - 1], `ascending; got ${ws}`);
+  });
+
+  it('returns [] for missing/invalid shape or weight (→ caller uses the generic ramp)', () => {
+    assert.deepEqual(buildPersonalizedRamp(225, null), []);
+    assert.deepEqual(buildPersonalizedRamp(225, { steps: [] }), []);
+    assert.deepEqual(buildPersonalizedRamp(0, { steps: [{ load_fraction: 0.6, reps: 10 }] }), []);
+    assert.deepEqual(buildPersonalizedRamp(225, { steps: [{ load_fraction: 1.2, reps: 10 }] }), []); // ≥1 → no sub-working step
+  });
+});
+
+describe('attachMainCompoundWarmups — personalized when a shape exists, generic otherwise', () => {
+  it('uses the lifter\'s learned ramp for a main compound that has a shape', () => {
+    const list = [makeEx('Bench Press', 'BEN01', 225, 5)];
+    const rampShapeFor = (ex) => ex.lift_code === 'BEN01'
+      ? { steps: [{ load_fraction: 0.60, reps: 15 }, { load_fraction: 0.82, reps: 10 }] }
+      : null;
+    const out = attachMainCompoundWarmups(list, { rampShapeFor });
+    assert.deepEqual(out[0].warmup_sets.map(s => s.reps), [15, 10], 'personalized rep scheme');
+    assert.equal(out[0].warmup_sets.length, 2);
+  });
+
+  it('falls back to the generic ramp when no shape is available', () => {
+    const list = [makeEx('Bench Press', 'BEN01', 225, 5)];
+    const out = attachMainCompoundWarmups(list, { rampShapeFor: () => null });
+    assert.deepEqual(out[0].warmup_sets.map(s => s.reps), [8, 5, 3], 'generic 8/5/3');
+  });
+
+  it('with no opts, behaves exactly as before (generic ramp)', () => {
+    const out = attachMainCompoundWarmups([makeEx('Deadlift', 'DL01', 245, 5)]);
+    assert.deepEqual(out[0].warmup_sets.map(s => s.reps), [8, 5, 3]);
   });
 });
