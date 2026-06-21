@@ -16,3 +16,6 @@ backups/
 # Playwright transient output (traces, screenshots on failure)
 test-results/
 playwright-report/
+
+# Build identity captured at build time (scripts/write-build-info.js)
+public/build-info.json

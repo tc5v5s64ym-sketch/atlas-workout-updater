@@ -319,6 +319,10 @@ test('api smoke: /version reports the Render-injected commit SHA + deploy time',
   // RENDER_GIT_COMMIT (set above) wins over `git describe`, so the deployed commit
   // is always reportable even when the runtime container has no .git.
   assert.equal(body.data.version, 'a1b2c3d4e5f6071829304152637485960718293a');
+  // PR identity from build-info.json (captured at build time) — number-or-null and
+  // string-or-null regardless of whether a build-info file exists in this env.
+  assert.ok(body.data.pr === null || typeof body.data.pr === 'number', 'pr is number|null');
+  assert.ok(body.data.commit_subject === null || typeof body.data.commit_subject === 'string', 'commit_subject is string|null');
   // deployed_at is the server boot time — a reliable "is this build current?" signal.
   assert.ok(typeof body.data.deployed_at === 'string' && !Number.isNaN(Date.parse(body.data.deployed_at)),
     'deployed_at must be an ISO timestamp');
