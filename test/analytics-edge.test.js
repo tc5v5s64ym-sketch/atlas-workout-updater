@@ -846,3 +846,48 @@ test('recommendNextSet: trend is unaffected for single-working-set-per-session h
   const rows = [row('2026-05-01', 'A', 225), row('2026-05-08', 'B', 230), row('2026-05-15', 'C', 235)];
   assert.equal(recommendNextSet(rows, 'SQ01', { today: '2026-05-16' }).e1rm_trend, 'up');
 });
+
+// ── Personalized warm-up ramps from logged history (end-to-end) ───────────────
+// A lift the lifter logs a consistent warm-up ramp on gets THEIR ramp scaled to
+// today's working weight; a lift with no logged ramp history gets the generic one.
+test('scoreIntents: a main compound with a logged ramp history shows the lifter\'s own ramp', () => {
+  const row = (d, s, code, sn, w, r, rir, ex, mg) =>
+    [d, s, ex, ex, mg, code, String(sn), String(w), String(r), rir == null ? '' : String(rir), '', ''];
+  const rows = [];
+  // Bench: the owner's ramp style (135×15 warm-up, 185×10 transition, 225 working)
+  // across 4 sessions → detector learns a 2-step ~0.60/0.82 × 15/10 ramp.
+  ['2026-04-22', '2026-04-26', '2026-04-30', '2026-05-04'].forEach((d, i) => {
+    rows.push(row(d, `B${i}`, 'BEN01', 1, 135, 15, 6, 'Bench Press', 'Chest'));
+    rows.push(row(d, `B${i}`, 'BEN01', 2, 185, 10, 2, 'Bench Press', 'Chest'));
+    rows.push(row(d, `B${i}`, 'BEN01', 3, 225, 8, 1, 'Bench Press', 'Chest'));
+    rows.push(row(d, `B${i}`, 'BEN01', 4, 225, 5, 2, 'Bench Press', 'Chest'));
+  });
+  const result = scoreIntents(rows, [], { today: '2026-05-06', goal: 'strength' });
+  let bench = null;
+  for (const intent of result.intents) {
+    const ex = (intent.exercises || []).find(e => /bench/i.test(e.exercise) && Array.isArray(e.warmup_sets) && e.warmup_sets.length);
+    if (ex) { bench = ex; break; }
+  }
+  assert.ok(bench, 'Bench must appear as a ramped main compound');
+  // Personalized: 2 steps with the lifter's rep scheme (15, 10) — NOT the generic
+  // 3-step 8/5/3. Loads scale to the working weight (~0.60/0.82 of ~225).
+  assert.equal(bench.warmup_sets.length, 2, `personalized 2-step ramp; got ${bench.warmup_sets.length}`);
+  assert.deepEqual(bench.warmup_sets.map(s => s.reps), [15, 10], 'the lifter\'s own rep scheme, not 8/5/3');
+  const w = bench.warmup_sets.map(s => s.weight);
+  assert.ok(w[0] < w[1] && w[1] < bench.target_weight, `ascending into the working weight; got ${w} → ${bench.target_weight}`);
+  bench.warmup_sets.forEach(s => assert.equal(s.priming, true));
+});
+
+test('scoreIntents: a main compound with NO logged ramp history gets the generic ramp', () => {
+  // Squat logged as flat working sets only (no warm-up lead-in) → generic 8/5/3.
+  const row = (d, s, w) => [d, s, 'Back Squat', 'Back Squat', 'Quads', 'SQT01', '1', String(w), '5', '2', '', ''];
+  const rows = ['2026-04-28', '2026-05-01', '2026-05-04'].map((d, i) => row(d + '', `S${i}`, 235 + i * 5));
+  const result = scoreIntents(rows, [], { today: '2026-05-06', goal: 'strength' });
+  let squat = null;
+  for (const intent of result.intents) {
+    const ex = (intent.exercises || []).find(e => /squat/i.test(e.exercise) && Array.isArray(e.warmup_sets) && e.warmup_sets.length);
+    if (ex) { squat = ex; break; }
+  }
+  assert.ok(squat, 'Squat must appear as a ramped main compound');
+  assert.deepEqual(squat.warmup_sets.map(s => s.reps), [8, 5, 3], 'generic ramp when there is no logged ramp history');
+});

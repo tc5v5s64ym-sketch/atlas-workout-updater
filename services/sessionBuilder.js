@@ -31,6 +31,31 @@ function buildWarmupRamp(workingWeight) {
   ];
 }
 
+// Build a PERSONALIZED warm-up ramp from a lifter's own learned ramp shape
+// (services/warmupDetector.js::detectWarmupRampShape) scaled to today's working
+// weight. The shape's load fractions and rep scheme are the lifter's; the engine
+// only scales + rounds to plate increments — no invented numbers.
+// Returns [] (→ caller falls back to the generic buildWarmupRamp) when the shape
+// is missing/invalid or can't form a valid strictly-ascending sub-working ramp.
+function buildPersonalizedRamp(workingWeight, shape) {
+  if (!Number.isFinite(workingWeight) || workingWeight <= 0) return [];
+  if (!shape || !Array.isArray(shape.steps) || shape.steps.length === 0) return [];
+  const out = [];
+  let prevWeight = 0;
+  for (const step of shape.steps) {
+    const frac = Number(step && step.load_fraction);
+    const reps = Number(step && step.reps);
+    if (!Number.isFinite(frac) || frac <= 0 || frac >= 1) continue; // must be a sub-working fraction
+    if (!Number.isFinite(reps) || reps <= 0) continue;
+    const weight = Math.max(45, roundTo5(workingWeight * frac));
+    if (weight >= workingWeight) continue; // not a warm-up after rounding/clamping
+    if (weight <= prevWeight) continue;    // keep strictly ascending (drop post-rounding dupes)
+    out.push({ weight, reps: Math.round(reps), priming: true });
+    prevWeight = weight;
+  }
+  return out;
+}
+
 // Block a co-anchor pair when BOTH exercises share the same fine-grained movement
 // pattern (from movementPattern.js) AND both are HIGH systemic cost.
 //
@@ -250,19 +275,27 @@ function orderByRole(exercises) {
 //     and accessory/isolation lifts never ramp.
 //   - buildWarmupRamp returns [] for a missing / non-finite working weight, so a
 //     main lift with no known working weight gets no ramp (never a fabricated load).
-function attachMainCompoundWarmups(exercises) {
+// `opts.rampShapeFor(exercise)` (optional) returns a lifter's learned warm-up
+// shape for that lift (or null). When present, the lead compound ramps with the
+// lifter's OWN pattern (buildPersonalizedRamp); otherwise it uses the generic
+// buildWarmupRamp — i.e. no history → generic ramp, a logged ramp history → their
+// logic. Either way the engine owns every number.
+function attachMainCompoundWarmups(exercises, opts = {}) {
   if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
   // Already ramped by a builder that owns ramp selection — leave as-is.
   if (exercises.some(ex => ex && (ex.is_anchor || (Array.isArray(ex.warmup_sets) && ex.warmup_sets.length)))) {
     return exercises;
   }
+  const rampShapeFor = typeof opts.rampShapeFor === 'function' ? opts.rampShapeFor : null;
   const warmedPatterns = new Set();
   return exercises.map(ex => {
     if (!ex || !ex.exercise) return ex;
     if (classifyLiftRole(ex.exercise, ex.muscle_group) !== 'main') return ex; // secondary/accessory stay flat
     const pattern = patternFor(ex.exercise).pattern || ex.exercise;
     if (warmedPatterns.has(pattern)) return ex; // already-warm same-pattern compound → flat (reduced depth deferred)
-    const ramp = buildWarmupRamp(ex.target_weight);
+    const shape = rampShapeFor ? rampShapeFor(ex) : null;
+    let ramp = shape ? buildPersonalizedRamp(ex.target_weight, shape) : [];
+    if (!ramp.length) ramp = buildWarmupRamp(ex.target_weight); // no/invalid personal shape → generic
     if (!ramp.length) return ex;                // unknown working weight → no fabricated ramp
     warmedPatterns.add(pattern);
     return { ...ex, is_anchor: true, warmup_sets: ramp };
@@ -319,22 +352,24 @@ function capLowerBodyAccessoriesForHeavyLegDay(exercises, { maxLowerAccessories 
 //      ramping must own that decision, not inherit it;
 //   2. orderByRole — main compounds first, accessories last;
 //   3. attachMainCompoundWarmups — ramp the first MAIN compound of each pattern
-//      (known working weight only; never fabricated);
+//      (known working weight only; never fabricated). `opts.rampShapeFor` lets the
+//      ramp follow the lifter's own learned pattern when one exists, else generic.
 //   4. capLowerBodyAccessoriesForHeavyLegDay — trim the accessory pile-up on a
 //      double-heavy-leg day.
 // Pure; safe on empty/missing input.
-function structureSession(exercises) {
+function structureSession(exercises, opts = {}) {
   if (!Array.isArray(exercises) || exercises.length === 0) return exercises || [];
   const flat = exercises.map(ex => {
     if (!ex || typeof ex !== 'object') return ex;
     const { warmup_sets, is_anchor, ...rest } = ex; // eslint-disable-line no-unused-vars
     return rest;
   });
-  return capLowerBodyAccessoriesForHeavyLegDay(attachMainCompoundWarmups(orderByRole(flat)));
+  return capLowerBodyAccessoriesForHeavyLegDay(attachMainCompoundWarmups(orderByRole(flat), opts));
 }
 
 module.exports = {
   buildWarmupRamp,
+  buildPersonalizedRamp,
   isBlockedPair,
   buildIntentSession,
   orderByRole,
