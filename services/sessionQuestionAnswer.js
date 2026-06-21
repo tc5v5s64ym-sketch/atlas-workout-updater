@@ -139,4 +139,72 @@ function buildSessionQuestionAnswer(message, { history = [], clientContext = nul
   return formatAnswer(liftName, attrs, target);
 }
 
-module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName };
+// A "bare" in-session shorthand question — pure attribute shorthand with NO lift
+// named in the message ("RIR?", "Reps?", "How much?", "How much weight?",
+// "How many sets?"). Deliberately tight so off-topic text that merely contains a
+// token ("how much should I sleep?") does NOT match.
+const BARE_SHORTHAND_RE = /^(rir|reps?|sets?|weight|load|how much( weight)?|how many (reps|sets))\s*\??$/i;
+
+function isBareSessionShorthand(message) {
+  return BARE_SHORTHAND_RE.test(String(message == null ? '' : message).trim());
+}
+
+// Distinct lift names available from the live context: the actively-previewed
+// lift is THE current lift; otherwise a single planned lift is current; multiple
+// planned lifts with no preview are ambiguous.
+function currentLiftFromContext(clientContext) {
+  const cc = clientContext && typeof clientContext === 'object' ? clientContext : {};
+  const previewLifts = [...new Set((Array.isArray(cc.current_preview) ? cc.current_preview : [])
+    .map(p => p && p.exercise).filter(Boolean))];
+  if (previewLifts.length === 1) return { current: previewLifts[0], candidates: previewLifts };
+  if (previewLifts.length > 1) return { current: null, candidates: previewLifts };
+  const planLifts = [...new Set((Array.isArray(cc.current_plan) ? cc.current_plan : [])
+    .map(p => p && p.name).filter(Boolean))];
+  if (planLifts.length === 1) return { current: planLifts[0], candidates: planLifts };
+  return { current: null, candidates: planLifts };
+}
+
+function formatLiftChoices(lifts) {
+  const top = lifts.slice(0, 3);
+  if (top.length <= 1) return top[0] || 'your current lift';
+  if (top.length === 2) return `${top[0]} or ${top[1]}`;
+  return `${top.slice(0, -1).join(', ')}, or ${top[top.length - 1]}`;
+}
+
+/**
+ * Answer bare in-session shorthand from the engine/current lift, regardless of
+ * whether the Gemini coach is up — so "RIR?" mid-workout returns the current
+ * lift's target, not generic education. Ambiguous current lift → ask which one.
+ *
+ * @returns {{kind:'answer'|'clarify', text:string}|null}
+ *   - 'answer'  : a deterministic current-lift fact
+ *   - 'clarify' : a tight "which lift?" question (active session, ambiguous lift)
+ *   - null      : not bare shorthand, or no active lift context (caller handles,
+ *                 e.g. education when there is no active session)
+ */
+function answerBareShorthand(message, clientContext = null, resolveTarget = null) {
+  if (!isBareSessionShorthand(message)) return null;
+  const attrs = attributesAsked(message);
+  if (!attrs.length) return null;
+
+  const { current, candidates } = currentLiftFromContext(clientContext);
+  if (!current) {
+    if (candidates.length > 1) {
+      return { kind: 'clarify', text: `For which lift — ${formatLiftChoices(candidates)}?` };
+    }
+    return null; // no active lift context → let the caller fall back (education is fine)
+  }
+
+  const ctxTarget = targetFromContext(current, clientContext);
+  const contextMissingAsked = !ctxTarget || attrs.some(a => ctxTarget[a] == null);
+  let target = ctxTarget;
+  if (contextMissingAsked && typeof resolveTarget === 'function') {
+    const engineTarget = resolveTarget(current);
+    if (engineTarget) target = mergeTargets(ctxTarget, engineTarget);
+  }
+  if (!target) return null;
+  const text = formatAnswer(current, attrs, target);
+  return text ? { kind: 'answer', text } : null;
+}
+
+module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand };

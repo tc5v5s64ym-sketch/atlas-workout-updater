@@ -641,6 +641,41 @@ test('api smoke: coach/chat shorthand fallback resolves the lift from the client
   assert.equal(body.data.message, 'Overhead Press: RIR 2.');
 });
 
+test('api smoke: coach/chat answers BARE shorthand from the current lift even when Gemini is UP (#449 follow-up)', async () => {
+  // Pre-empt: bare "RIR?" with an active plan answers from the current lift
+  // deterministically, not LLM education — even though Gemini is configured.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  const ctx = { current_plan: [{ name: 'Deadlift', weight: 245, reps: 7, sets: 3, rir: 2 }] };
+  try {
+    for (const [q, expected] of [['RIR?', 'Deadlift: RIR 2.'], ['Reps?', 'Deadlift: 7 reps.'], ['How much?', 'Deadlift: 245 lbs.'], ['How many sets?', 'Deadlift: 3 sets.']]) {
+      const { response, body } = await requestJson('/api/coach/chat', {
+        method: 'POST', body: JSON.stringify({ message: q, context: ctx })
+      });
+      assert.equal(response.status, 200, q);
+      assert.equal(body.data.source, 'engine', `${q} → engine, not LLM`);
+      assert.equal(body.data.message, expected, q);
+    }
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/chat asks which lift when bare shorthand is ambiguous (#449 follow-up)', async () => {
+  fakeCoachState.configured = true;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'RIR?', context: { current_plan: [{ name: 'Deadlift', rir: 2 }, { name: 'Leg Press', rir: 1 }] } })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine');
+    assert.equal(body.data.message, 'For which lift — Deadlift or Leg Press?');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 test('api smoke: coach/chat preserves a proposal even when the Gemini prose comes back empty', async () => {
   // Empty reply must not drop a structured proposal — the proposal is the payload.
   fakeCoachState.configured = true;

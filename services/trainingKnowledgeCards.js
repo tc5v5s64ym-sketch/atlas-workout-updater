@@ -119,7 +119,7 @@ const CARDS = [
   {
     id: 'rir_rpe',
     title: 'RIR / RPE',
-    shortAnswer: 'RIR = reps in reserve; RPE = rated effort. They calibrate how close to failure a set was.',
+    shortAnswer: 'RIR means reps in reserve — how many good reps you had left before failure. RIR 2 means about 2 good reps left; RIR 0 means no reps left.',
     detailedAnswer: 'RIR is how many clean reps you had left; RPE is the inverse rated effort (RPE 8 ≈ 2 RIR). Use them honestly to autoregulate: if a set was harder than planned (lower RIR), ease off; if easier with solid technique (higher RIR), you can add a little. Strength keeps 1–3 RIR; power stays well short of failure.',
     appliesToGoals: ['strength', 'hypertrophy', 'power', 'muscular_endurance', 'general_health', 'mixed'],
     whenToUse: ['Logging effort honestly', 'Deciding next-set or next-session load'],
