@@ -212,6 +212,13 @@ function answerBareShorthand(message, clientContext = null, resolveTarget = null
 // answer must defer on these (the caller's history/LLM path answers them).
 const HISTORY_RE = /\b(last time|last (week|session|month|workout|time)|previous(ly)?|history|before|used to)\b/i;
 
+// Reasoning / advice framings. A "why is …", "should I …", "how much to increase"
+// question is NOT a direct value lookup — it wants the coach's judgement, which
+// Gemini answers far better than the terse fact. So the deterministic plan answer
+// defers on these (the chat route falls through to Gemini). Deliberately avoids
+// words that collide with lift names (e.g. "raise" in Lateral Raise, "lower").
+const ADVICE_RE = /\b(why|should|explain|recommend|increase|decrease|heavier|lighter|progress|better|instead)\b|\btoo\s+(low|high|light|heavy|easy|hard|much|little)/i;
+
 /**
  * Answer a NAMED-LIFT session-value question directly from the live plan/preview.
  *
@@ -237,7 +244,9 @@ const HISTORY_RE = /\b(last time|last (week|session|month|workout|time)|previous
 function answerPlannedLiftQuestion(message, clientContext = null) {
   const attrs = attributesAsked(message);
   if (!attrs.length) return null;
-  if (HISTORY_RE.test(String(message == null ? '' : message))) return null;
+  const raw = String(message == null ? '' : message);
+  if (HISTORY_RE.test(raw)) return null; // past-tense → history owns it
+  if (ADVICE_RE.test(raw)) return null;  // "why / should / increase" → let Gemini coach
 
   const named = canonicalizeExerciseName(message);
   const liftName = named && named.canonicalName;

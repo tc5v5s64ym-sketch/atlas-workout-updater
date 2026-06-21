@@ -186,3 +186,20 @@ test('answerPlannedLiftQuestion: no plan context → defers', () => {
   assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", null), null);
   assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", {}), null);
 });
+
+test('answerPlannedLiftQuestion: reasoning/advice framings defer to the coach', () => {
+  // Running before Gemini, a value lookup must NOT swallow "why / should / increase"
+  // questions — those want coaching judgement, so they fall through to Gemini.
+  assert.equal(answerPlannedLiftQuestion('why is the RIR for bench so low today?', planCtx), null);
+  assert.equal(answerPlannedLiftQuestion('how much should I increase bench by?', planCtx), null);
+  assert.equal(answerPlannedLiftQuestion('should I go heavier on bench?', planCtx), null);
+  // But a plain value lookup still answers from the plan.
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for bench?", planCtx), 'Bench Press today: RIR 2.');
+});
+
+test('answerPlannedLiftQuestion: a lift name containing an advice-like word still answers', () => {
+  // "raise"/"lower" are NOT advice words (they collide with lift names like
+  // Lateral Raise) — a direct value lookup for such a lift is still answered.
+  const ctx = { current_plan: [{ name: 'Lateral Raises', weight: 25, reps: 15, sets: 3, rir: 1 }] };
+  assert.equal(answerPlannedLiftQuestion("What's the RIR for lateral raise?", ctx), 'Lateral Raises today: RIR 1.');
+});
