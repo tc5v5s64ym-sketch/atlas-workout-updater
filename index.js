@@ -179,8 +179,14 @@ app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
-let gitVersion = 'unknown';
-try { gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim(); } catch (_) { /* not a git repo or no tags */ }
+// Prefer the commit Render injects at runtime (RENDER_GIT_COMMIT) so the deployed
+// SHA is reported even when the runtime container has no .git; fall back to a local
+// `git describe` for dev, then 'unknown'.
+let gitVersion = (process.env.RENDER_GIT_COMMIT || '').trim();
+if (!gitVersion) {
+  try { gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim(); } catch (_) { /* not a git repo or no tags */ }
+}
+if (!gitVersion) gitVersion = 'unknown';
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
 // TODO(persistence-layer): replace in-memory pending exercises/cache with durable storage.

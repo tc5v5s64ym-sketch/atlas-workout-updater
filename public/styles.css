@@ -661,6 +661,8 @@ main {
 .status-warn { color: var(--warn); font-size: 0.92rem; }
 .status-error { color: var(--danger); font-size: 0.92rem; }
 .debug-pre { font-size: 0.78rem; overflow-x: auto; background: var(--card-sunken); border-radius: var(--r-sm); padding: var(--s3); margin: var(--s2) 0 0; white-space: pre-wrap; word-break: break-all; }
+/* Glanceable build badge in Settings — deployed commit + boot time. */
+.build-info { font-family: var(--mono); font-size: 0.72rem; margin: var(--s2) 0 0; }
 
 /* ============================================================================
    Coach (chat-first front door)
