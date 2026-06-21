@@ -99,6 +99,7 @@ Useful for history and context. Do not use them as current task lists.
 
 - `AUDIT.md`
 - `docs/AUDIT_2026-06-12.md`
+- `docs/AUDIT_TRIAGE_2026-06-20.md` — current-state triage of the AUDIT.md Medium/Low findings (ME-5/6/9/10/11/12, LO-1…LO-11), verified against `main` with file:line evidence.
 - `docs/API_AUDIT.md`
 - `docs/FOUNDATION_AUDIT.md`
 - `docs/BASELINE_POST_CUTOVER.md`
