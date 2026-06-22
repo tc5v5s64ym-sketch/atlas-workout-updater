@@ -472,6 +472,37 @@ dropped (spec §5). No I/O, no LLM, no write-path, no schema, no route, no
 
 ---
 
+## Active queue — Training Intelligence Implementation Series (promoted 2026-06-22)
+
+Promoted by owner decision (2026-06-22) as the build series implementing the Training Profile Taxonomy ([`docs/TRAINING_PROFILE_TAXONOMY.md`](TRAINING_PROFILE_TAXONOMY.md)) and the Session Planning Engine ([`docs/SESSION_PLANNING_ENGINE.md`](SESSION_PLANNING_ENGINE.md)) planning specs. **Only PR 477 is active.** PRs 478–486+ are filed in `BACKLOG.md` ("Training Intelligence Implementation Series"), owner-gated and **not active** — promote one at a time on explicit owner direction. Deterministic-engine-first; the LLM only words facts. Tiny PRs. (The `PR 47x` labels are the owner's logical slice numbers; GitHub PR numbers are a separate namespace.)
+
+### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
+
+**Status:** approved; pre-coding report delivered. **Owner confirmation required before editing production files** (owner standing instruction for this slice — no production edits until confirmed).
+
+**Type:** Behavior-changing coach/session logic. **Trust-sensitive.** **Risk level:** Medium-high. **Recommended model:** Opus 4.8.
+
+**Scope guardrails (explicit):**
+- **Current weighted/RIR workflow only** — the resistance grammar Atlas already parses.
+- **No parser grammar expansion.**
+- **No Sheet schema change** (12-col `Log_Cleaned` / 9-col `Effort` / 5-col `Constraints` / 7-col `Deload_State` untouched).
+- **No write-path change**; preview→approve→write trust loop, `test_mode`/proof fields, and undo unchanged.
+- **No multi-modality logging yet** (cardio/bodyweight/holds/AMRAP/EMOM/circuits → PR 486+).
+- **No full profile-score engine yet** (→ PR 480/482).
+- **No deload implementation yet** (→ PR 485; does not change `docs/DELOAD_SPEC.md` / `computePrescription`).
+
+**Exact behavior change:** When a weighted set sequence is logged (e.g. `Bench 135 10/5 185 10/2 235 6/2 6/0 4/1`), Atlas (a) ignores warmup/feeder sets (early, RIR ≥ 4, clearly lighter than the working load) — no sandbag callout; (b) flags an unplanned RIR-0 work set as a redline and a same-load rep drop after it as fatigue confirmation; (c) holds/caps pressing progression and marks pressing intra-session yellow; (d) when the next planned move shares the prime mover (weighted dips/incline/heavy OHP), suggests a pull movement first, else a lighter/optional next press; (e) words a high-RIR work set as underdosed ("bump coming"). Isolation RIR 0 is caution-only — not treated like a heavy compound. Pain (if already flagged) keeps priority over progression.
+
+**Proposed files/functions:** new pure `services/setEffortSignals.js` (`analyzeSetSequence`, `assessNextMoveConflict`); new reason codes in `services/trainingKnowledge.js` (`REASON_CODES`); wiring via `services/analytics.js` (`recommendNextSet`), `services/coach.js` (prompt rule + one sanitized field), `public/coach-conversation.js` (routing + deterministic copy), possibly a tiny `public/app.js` thread-through. Deterministic-first; LLM-down fallback templates required (reuse `effortVerdict`, `patternFor`, `musclesFor`, `classifyLiftRole`, the verdict/rule-decision coach channel).
+
+**Reason codes:** `warmup_feeder_ignored`, `redline_set`, `rep_drop_after_redline`, `pressing_readiness_yellow`, `same_prime_mover_conflict`, `reroute_pull_first`, `cap_next_press`, `high_rir_workset_underdosed`.
+
+**Tests:** pure-helper golden fixtures (`test/setEffortSignals.test.js`): `bench_warmup_high_rir_not_sandbagging`, `bench_redline_rep_drop_blocks_progression`, `bench_redline_before_weighted_dips_reroutes`, `high_rir_workset_callout`, `isolation_rir0_not_treated_like_heavy_compound`, `no_overreaction_to_one_hard_set_without_overlap`; plus a coach-copy wording/severity test and an api-smoke assertion that no row is written by the dry-run path.
+
+**Owner check-in:** trust-sensitive coach surface + restricted files (`public/app.js`, `services/coach.js`) → owner confirmation gate before editing production (`docs/OWNER_CHECKIN_RULES.md` criteria 2/3). Pre-coding report stands; await owner go.
+
+---
+
 ## Future / backlog items - not active execution
 
 Do not start these from this roadmap refill unless the owner explicitly promotes them:
