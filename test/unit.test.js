@@ -690,7 +690,7 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   // The helper mutates the live session and re-renders the banner, and dedupes.
   const helper = appSource.slice(
     appSource.indexOf('function applySessionSubstitution('),
-    appSource.indexOf('function applySessionSubstitution(') + 1700
+    appSource.indexOf('function startPlannedSession(')
   );
   assert.match(helper, /renderActiveSessionBanner\(\)/, 'must re-render the banner after a swap');
   assert.match(helper, /dupElsewhere/, 'must guard against duplicating an already-planned substitute');
@@ -4228,6 +4228,40 @@ test('screenshot: picking a file auto-fires the preview (no separate Preview tap
   assert.match(nav, /effortImage\?\.addEventListener\('change'/, 'must listen for file selection');
   assert.match(nav, /effort-mode"\]:checked'\)\?\.value === 'screenshot'/, 'must only auto-submit in screenshot mode');
   assert.match(nav, /logger-form'\)\?\.dispatchEvent\(new Event\('submit'/, 'must dispatch the form submit');
+});
+
+test('closeout screenshot: attachment menu does not auto-open the effort details panel', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  const screenshotHandler = nav.slice(
+    nav.indexOf("attach-screenshot')?.addEventListener"),
+    nav.indexOf("attach-manual')?.addEventListener")
+  );
+  assert.match(nav, /function setEffortMode\(mode, \{ reveal = true \} = \{\}\)/, 'setEffortMode must support a no-reveal screenshot path');
+  assert.match(screenshotHandler, /setEffortMode\('screenshot', \{ reveal: false \}\)/, 'screenshot selection must not reveal Effort optional details');
+  assert.doesNotMatch(screenshotHandler, /scrollIntoView|details\.open\s*=\s*true/, 'screenshot selection must not auto-open or scroll the Effort panel');
+});
+
+test('closeout screenshot: plan-complete attachment buffers evidence before workout parsing or ingestion', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const submitStart = app.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  const parseAt = app.indexOf('await rowsFromWorkoutInput()', submitStart);
+  const guardAt = app.indexOf('if (file && !pendingChatText && !sessionCompiledAwaitingPreview && isPlanCloseoutAwaitingSave())', submitStart);
+  const guard = app.slice(guardAt, app.indexOf('let logRows = []', guardAt));
+  assert.ok(guardAt > submitStart && guardAt < parseAt, 'closeout screenshot guard must run before workout parsing');
+  assert.match(guard, /closeoutScreenshotFile = file/, 'must remember the attachment locally');
+  assert.match(guard, /Screenshot attached\. Say done to save\./, 'must show compact non-blocking closeout copy');
+  assert.match(guard, /return;/, 'must not fall through into /api/complete-workout preview');
+});
+
+test('closeout screenshot: done save ignores buffered screenshot and uses normal log-workout preview', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /const closeoutAttachmentOnly = file && closeoutScreenshotFile === file && sessionCompiledAwaitingPreview;/, 'done path must identify a closeout-only screenshot');
+  assert.match(app, /if \(closeoutAttachmentOnly\) file = null;/, 'done path must not send the buffered screenshot to complete-workout');
+  const previewStart = app.indexOf("const previewBtn = document.getElementById('preview-btn')");
+  const previewBranch = app.slice(previewStart, app.indexOf("} else if (effortOnly)", previewStart));
+  assert.match(previewBranch, /if \(mode === 'screenshot' && file\)/, 'screenshot ingestion must require an actual non-buffered file');
+  const manualBranch = app.slice(app.indexOf('const effortRow = manualEffort;', previewStart), app.indexOf('renderLogWorkoutPreview(result, effortRow);', previewStart) + 60);
+  assert.match(manualBranch, /\/api\/log-workout/, 'normal done preview must still use the log-workout dry-run');
 });
 
 test('chips: nav.js chip handlers are read-only and never touch write paths', () => {
