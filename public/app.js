@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v25';
+const ATLAS_SHELL_BUILD = 'v26';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2593,9 +2593,14 @@ async function parseWorkoutTextWithBackend(workoutText) {
 
   const data = result?.data || {};
   if (data.test_mode !== true || data.sheet_written !== false || data.no_write_confirmed !== true) {
-    const err = new Error('Backend parser did not prove no-write safety.');
-    err.noFallback = true;
-    throw err;
+    // A flaky/partial response that can't prove its own no-write safety is
+    // untrustworthy, so we DISCARD it entirely and let the caller re-parse
+    // locally. This is fallback-eligible (no noFallback): the local parser is
+    // pure client-side and never writes, the missing proof was the backend's
+    // problem with a response we're throwing away, and the real write still
+    // goes through preview→approve→write. Dropping a clearly-typed set into
+    // chat on flaky signal is the worse failure.
+    throw new Error('Backend parser did not prove no-write safety.');
   }
 
   const parsed = data.parsed;
@@ -2610,9 +2615,10 @@ async function parseWorkoutTextWithBackend(workoutText) {
 
   const rows = rowsFromBackendParsedWorkout(parsed);
   if (!rows.length) {
-    const err = new Error('Backend parser did not produce any set rows.');
-    err.noFallback = true;
-    throw err;
+    // A log_sets response with no actual sets is a partial/garbled response —
+    // fallback-eligible (no noFallback) so the local parser can recover a
+    // clearly-typed set on flaky signal instead of dropping it into chat.
+    throw new Error('Backend parser did not produce any set rows.');
   }
   return { intent: 'log_sets', rows, warnings: data.warnings || [], prescribed: Array.isArray(parsed.prescribed) ? parsed.prescribed : null };
 }

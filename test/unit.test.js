@@ -1113,6 +1113,40 @@ test('conversational logger requires backend parser no-write proof before using 
   assert.match(parserFunction, /Backend parser did not prove no-write safety/);
 });
 
+test('flaky/partial backend parse is fallback-eligible so the local parser can recover', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const parserFunction = appSource.slice(
+    appSource.indexOf('async function parseWorkoutTextWithBackend(workoutText)'),
+    appSource.indexOf('function populateSetRows')
+  );
+  // A partial/untrustworthy backend response (proof fields missing, or a log_sets
+  // reply with no actual sets) must still THROW — we never trust it.
+  assert.match(parserFunction, /Backend parser did not prove no-write safety/);
+  assert.match(parserFunction, /Backend parser did not produce any set rows/);
+  // ...but neither throw may TAG the error noFallback (the assignment, not the word
+  // in a comment). On flaky signal that lets rowsFromWorkoutInput fall back to the
+  // pure client-side local parser (which never writes) instead of dropping a
+  // clearly-typed set into chat. The deliberate non-log answers keep noFallback —
+  // see clarification_intents_are_tagged_no_fallback.
+  assert.doesNotMatch(parserFunction, /\.noFallback\s*=/);
+});
+
+test('local parser recovers a clearly-typed named set on flaky signal (lb suffix, slash notation)', () => {
+  // The live failure that motivated the fallback: "Lat Pulldown 175lbs 8/2 8/2 8/2"
+  // dropped into chat as "Noted — keep logging" when the backend parse came back
+  // partial on mobile signal. The local parser handles it cleanly, so the fallback
+  // logs a real named set instead.
+  const result = parseWorkoutText('Lat Pulldown 175lbs 8/2 8/2 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Lat Pulldown');
+  assert.equal(result.sets.length, 3);
+  for (const set of result.sets) {
+    assert.equal(set.weight, 175);
+    assert.equal(set.reps, 8);
+    assert.equal(set.rir, 2);
+  }
+});
+
 test('conversational logger shows parser source without changing save gating', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const cssSource = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
@@ -4436,8 +4470,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v25/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v24\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v26/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v25\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
