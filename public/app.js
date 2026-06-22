@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v24';
+const ATLAS_SHELL_BUILD = 'v25';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2979,21 +2979,6 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   }
   if (byExercise.length) {
     try {
-      // Detect plan completion: all planned exercises must be in sessionCompleted
-      // (which resolveCompletedIdentity already normalised to planned canonical/display names).
-      // keep in sync with computeCloseout in services/sessionCloseout.js
-      const planIsComplete = !!(
-        activePlannedSession && activePlannedSession.exercises.length > 0 &&
-        activePlannedSession.exercises.every(ex => {
-          const n = String(ex.canonicalName || ex.name || '').toLowerCase();
-          return n && sessionCompleted.some(c => String(c).toLowerCase() === n);
-        })
-      );
-      // Next-up = the FIRST planned exercise (visible order) not yet completed, so
-      // the handoff follows the visible plan and skips already-logged lifts whether
-      // logged in order or out of order — never a later accessory while an earlier
-      // lift is still outstanding. Mirrors nextRemainingExercise in
-      // services/sessionPlanExecutor.js. Read-only narration — not the write path.
       // nextPlanned (the handoff/composer target) and plannedQueue (the set-effort
       // reroute queue) derive from the SAME remaining-after-this-log source, so the
       // handoff, composer placeholder, and reroute can never disagree — and a lift
@@ -3002,6 +2987,15 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
       const remaining = remainingPlannedExercises();
       const nextPlanned = remaining[0] || null;
       const plannedQueue = remaining;
+      // Plan complete = a plan exists (started OR coach-suggested) and nothing
+      // remains. Derive it from the SAME remaining state as nextPlanned so the two
+      // can't disagree. The old check only consulted activePlannedSession, so in the
+      // coach-suggestion flow (activePlannedSession === null) it was ALWAYS false —
+      // after the last logged lift the closeout never fired and the handoff fell
+      // through to the divergent getNextExerciseInPlan fallback, resurrecting an
+      // already-completed lift (the live "wanted weighted dips again" bug).
+      // keep in sync with computeCloseout in services/sessionCloseout.js
+      const planIsComplete = plannedExerciseOrder().length > 0 && remaining.length === 0;
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
         detail: {
           exercises: byExercise,
