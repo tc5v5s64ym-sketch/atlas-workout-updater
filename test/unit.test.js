@@ -4499,6 +4499,27 @@ test('set-effort wiring: handleSetLogged renders one short effort line + folds r
   assert.doesNotMatch(block, /sessionLog\b/, 'no full-session recap may be built per set');
 });
 
+test('handoff: the /api/plan/today fallback never resurrects an already-completed lift', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = ccSource.slice(
+    ccSource.indexOf('async function handleSetLogged(detail)'),
+    ccSource.indexOf('async function handlePreviewReady')
+  );
+  // next-up is computed BEFORE the closeout decision, so a genuine next wins.
+  assert.match(block, /let nextEx = detail\.nextPlanned \|\| await getNextExerciseInPlan/);
+  // A fallback next-up (only when there's no deterministic nextPlanned) that is
+  // already in detail.completed is dropped — this is the "wanted weighted dips
+  // again" fix.
+  assert.match(block, /if \(nextEx && !detail\.nextPlanned\)/);
+  assert.match(block, /detail\.completed \|\| \[\]\)\.some/);
+  assert.match(block, /if \(done\) nextEx = null;/);
+  // Closeout fires only when the plan is complete AND nothing is genuinely next.
+  assert.match(block, /if \(!nextEx && detail\.planIsComplete\)/);
+  // app.js threads the completed-lift names into the event for that rejection.
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /completed: \[\.\.\.sessionCompleted\]/);
+});
+
 // ── Glanceable dashboard ───────────────────────────────────────────────────────
 
 test('glance: data-heavy dashboard cards collapse to one friendly line each', () => {

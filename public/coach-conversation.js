@@ -1025,7 +1025,19 @@
     // “next up: C” when C was already logged earlier in the session.
     // detail.planIsComplete is computed in emitSetLogged (public/app.js);
     // keep in sync with services/sessionCloseout.js.
-    if (detail.planIsComplete) {
+    // Next-up first: prefer the authoritative `detail.nextPlanned` (the first
+    // planned lift not yet completed, deterministic). Only when there's none do we
+    // fall back to the /api/plan/today lookup — and that fallback must NOT resurrect
+    // an already-completed lift (its order can diverge from what was logged; that
+    // was the "wanted weighted dips again" bug). A genuine next-up wins over the
+    // closeout; closeout fires only when the plan is complete AND nothing is next.
+    const lastLogged = exercises[exercises.length - 1];
+    let nextEx = detail.nextPlanned || await getNextExerciseInPlan(lastLogged.exercise);
+    if (nextEx && !detail.nextPlanned) {
+      const done = (detail.completed || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
+      if (done) nextEx = null;
+    }
+    if (!nextEx && detail.planIsComplete) {
       const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
       const count = session ? session.exercises.length : null;
       const closeout = document.createElement('div');
@@ -1036,14 +1048,6 @@
       bubble.appendChild(closeout);
       setWorkoutPlaceholder('Say "done" to save your session');
     } else {
-      // Next-exercise handoff: append a short line pointing at the next exercise
-      // in the plan. The engine owns the ordering — we only word it. Prefer the
-      // authoritative `detail.nextPlanned` (computed in app.js as the first
-      // planned exercise not yet completed, in the visible plan order — so it
-      // follows the plan and skips already-logged lifts). Fall back to the API-plan
-      // lookup only for freeform logging with no active planned session.
-      const lastLogged = exercises[exercises.length - 1];
-      const nextEx = detail.nextPlanned || await getNextExerciseInPlan(lastLogged.exercise);
       if (nextEx) {
         const handoff = document.createElement('div');
         handoff.className = 'next-exercise-handoff';

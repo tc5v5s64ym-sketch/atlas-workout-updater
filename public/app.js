@@ -3002,6 +3002,10 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
           text: text || '',
           planIsComplete,
           nextPlanned,
+          // The completed-lift names this session, so the handoff's /api/plan/today
+          // fallback can reject a next-up that's already done (its order can diverge
+          // from what was actually logged — the source of the resurrected lift).
+          completed: [...sessionCompleted],
           ...(plannedQueue.length ? { plannedQueue } : {}),
           ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
         }
