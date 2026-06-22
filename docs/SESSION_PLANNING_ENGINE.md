@@ -7,7 +7,8 @@
 > **Builds on:** [`docs/TRAINING_PROFILE_TAXONOMY.md`](TRAINING_PROFILE_TAXONOMY.md) (PR #474 — *who the
 > user is*). This doc covers *what to train today*. It does **not** recreate or replace that spec.
 > **Source material:** the "Atlas Training Intelligence System" research report (objective-scoring model
-> below) + the taxonomy spec + Atlas's existing deterministic engine.
+> below) + the *Deloading in Resistance Training* report (§10) + the taxonomy spec + Atlas's existing
+> deterministic engine.
 
 ---
 
@@ -192,7 +193,7 @@ here.
 
 ### 4.9 `recovery_reload`
 - **Choose when:** elevated fatigue/soreness, poor sleep, or stacked yellow flags **short of** a full
-  deload; keep moving without adding stress.
+  deload; keep moving without adding stress. See §10 for the recovery→deload decision ladder.
 - **Order:** easy full-body / mobility / Zone 1–2 movement; nothing heavy or near-failure.
 - **Effort targets:** RPE ≤5 / Zone 1–2; low volume; no PRs.
 - **Fatigue constraints:** explicitly *reduces* load/volume; antagonist/rested patterns only.
@@ -202,7 +203,7 @@ here.
 - **Fatigue-adjusted:** if still wrecked → mobility + walk only.
 
 ### 4.10 `deload`
-- **Choose when:** the deterministic deload trigger fires / `Deload_State` is active (`docs/DELOAD_SPEC.md`).
+- **Choose when:** the deterministic deload trigger fires / `Deload_State` is active (`docs/DELOAD_SPEC.md`). See §10 for convergence triggers + profile-aware deload styles.
 - **Order:** same movements, reduced load/volume per the **predefined protocol** (not invented numbers).
 - **Effort targets:** protocol-defined load cut / volume cut; high RIR; no failure.
 - **Fatigue constraints:** the whole objective *is* fatigue management; AI decides *if*, engine decides
@@ -295,7 +296,9 @@ Golden fixtures gate objective selection, ordering, and adjustment **before any 
 case asserts: `user_profile` · `session_objective` · `recent_history` · `readiness_signal` ·
 `planned_session` · `fatigue_adjusted_session` · `exercise_order_reason` · `target_effort` ·
 `coach_explanation` · `next_action`. Deterministic fields assert exactly; `coach_explanation` asserts
-shape/rules (matching the existing coach-test rubric), not exact LLM prose.
+shape/rules (matching the existing coach-test rubric), not exact LLM prose. **Deload / recovery fixtures**
+(`single_bad_session_no_deload`, `repeated_rir0_main_lift_deload`, `taper_vs_deload_distinction`, …) are
+listed in §10.7.
 
 | Fixture | Asserts (objective → key adjustment) |
 |---|---|
@@ -361,7 +364,133 @@ the next plan.* The Coach Voice Renderer narrates each step.
 
 ---
 
-## 10. Guardrails
+## 10. Recovery & deload model
+
+> Grounded in the *Deloading in Resistance Training* research report + the existing
+> [`docs/DELOAD_SPEC.md`](DELOAD_SPEC.md). **Planning-layer only.** This section documents *when* the planner
+> selects `recovery_reload` / `deload` (vs normal training, micro-adjustment, taper, maintenance, complete
+> rest) and *how a deload is styled by profile*. It does **not** change the deload prescription engine — the
+> actual protocol numbers remain owned by `computePrescription` / `docs/DELOAD_SPEC.md` (AI decides *if*, the
+> engine decides *what*). No deload behavior is implemented here.
+
+### 10.1 Recovery / deload concepts (the boundary)
+
+| Concept | What it is | Default use / trigger |
+|---|---|---|
+| **Normal fatigue routing** | In-session / next-session tweaks (taxonomy §6, this doc §7) | one or a single local signal; no phase change |
+| **`recovery_reload`** | A *lighter adjustment* before a full deload is warranted | a few stacked fatigue signals across days |
+| **`deload`** | A short period of *reduced training stress* to dissipate fatigue and restore readiness | convergence of fatigue + performance signals |
+| **Taper** | A *competition/test peaking* strategy (cut volume, **keep intensity**, sharpen) — **not** a normal deload | a test / competition date is approaching |
+| **Maintenance phase** | A *longer reduced-dose* period to **preserve adaptations** | an extended span where progress is paused on purpose (life/season) |
+| **Complete rest** | *Training cessation* — **not** the default deload | illness / burnout / injury flare |
+
+Boundary rules: a deload is **reduced stress, not stopping** (complete rest is rarer and different); a taper
+is **peaking** (keep intensity, cut volume) — never conflate it with a fatigue-dissipation deload;
+`recovery_reload` sits **below** deload (the lighter touch that may prevent a full one).
+
+### 10.2 Deload trigger logic (deterministic, convergence-based)
+
+**Atlas should not deload after one bad session. It looks for convergence of signals.** Trigger examples:
+
+- repeated **RIR 0 / missed reps** on main lifts
+- **performance decline** across repeated exposures (e1RM / reps-at-load trending down)
+- high **soreness or joint aches**
+- poor **sleep, mood, motivation, or readiness** (opt-in/volunteered or watch-derived)
+- **normal loads feeling abnormally hard**
+- **session RPE rising at unchanged workload** (effort drift)
+- **multiple markers moving the wrong way together**
+
+Concrete convergence thresholds (initial defaults — **fixture-protected before shipping**, like the §3
+weights):
+
+- **3 moderate warning signals within 7 days** → `recovery_reload` / `deload` review
+- **2 consecutive sessions** with unplanned RIR 0 / missed reps on main lifts → `deload` candidate
+- **readiness red for 3 planned training days** → `deload` candidate
+- **pain warning major** → pivot/stop the affected pattern (a *pain override*, not by itself a deload)
+
+These extend the existing deload-trigger machinery (`suggestDeloads`, `annotateStallsForDeload` in
+`services/coverageStalls.js`, `detectStalls`) — which already triggers on *primary-lift* evidence and
+ignores progressing accessories — with a multi-signal convergence view.
+
+### 10.3 Default deload prescription (defaults; engine owns the numbers)
+
+- usually **5–7 days**
+- **reduce volume first**
+- cut weekly sets roughly **30–60%**
+- **reduce proximity to failure** (raise RIR)
+- **keep key movement patterns** where possible
+- **avoid brand-new exercises** that create new soreness
+- **preserve technical rhythm** for strength/power users
+- **remove first:** grinders, failure work, intensifiers, excessive accessories, high-density conditioning
+
+The concrete load/volume math stays in `computePrescription` / `docs/DELOAD_SPEC.md` (predefined protocols,
+not invented numbers).
+
+### 10.4 Profile-aware deload styles
+
+(extends taxonomy profiles 1–5; the deload is *styled* to the user)
+
+- **Strength:** preserve main-lift exposure and bar feel; cut accessory volume first; reduce grinders /
+  repeated hard sets; deadlift/hinge may need a **stronger** reduction than bench; keep some moderate/heavy
+  technical work if pain-free.
+- **Hypertrophy:** cut hard sets **30–50%**; avoid failure and intensifiers; keep familiar exercises; reduce
+  redundant pump work; **volume reduction matters more than total rest**.
+- **General fitness:** preserve routine and habit; reduce session length, effort, and complexity; use easy
+  full-body / machines / walking / light cardio; **protect adherence**.
+- **Cardio / endurance:** switch hard intervals to **base/easy** work; reduce high-zone volume; preserve
+  easy aerobic rhythm; don't stack hard sessions when recovery markers are poor.
+- **Bodyweight / circuit:** reduce density, rounds, hard progressions, and near-failure work; preserve skill
+  patterns with **easier leverage**; reduce high-eccentric gymnastics / kipping / plyometric stress; use
+  easier versions rather than novel soreness-inducing movements.
+
+### 10.5 Session planning integration — the recovery decision ladder
+
+How the planner chooses among **normal training · micro-adjustment · `recovery_reload` · `deload` · taper ·
+complete rest**:
+
+1. **one isolated bad signal** → adjust **today only** (normal fatigue routing).
+2. **one local fatigue signal** → reduce or **reroute that muscle/pattern** (taxonomy §6).
+3. **multiple fatigue signals across several days** → **`recovery_reload`**.
+4. **repeated performance decline + subjective fatigue** → **`deload`**.
+5. **pain warning major** → **pivot/stop the affected pattern** (pain override — not necessarily a deload).
+6. **competition / test date approaching** → **taper**, not a generic deload.
+7. **illness / burnout / injury flare** → **complete rest** may be recommended.
+
+This ladder is the deterministic front of §3's objective scoring: a converged deload/recovery signal raises
+the `recovery_fit` / `fatigue_conflict` terms and forces the corresponding objective; every choice is
+explainable from the converged signals.
+
+### 10.6 Coach voice examples
+
+- "One bad day is not a deload. We adjust today and watch the trend."
+- "Too many yellow flags stacked together. This is recovery work now."
+- "We are cutting volume, not quitting."
+- "Deload means reduce the stress, keep the rhythm."
+- "No new weird exercises this week. The goal is to recover, not create fresh soreness."
+- "This is not weakness. This is setting up the next push."
+- "You do not get to turn deload week into slightly easier hard training."
+
+### 10.7 Test matrix additions (deload / recovery)
+
+Same assertion fields as §8 (`user_profile` … `next_action`):
+
+| Fixture | Asserts |
+|---|---|
+| `single_bad_session_no_deload` | one bad session → adjust today only; **no deload** |
+| `local_fatigue_micro_adjustment` | one local signal → reduce/reroute that pattern only |
+| `repeated_rir0_main_lift_deload` | 2 consecutive RIR 0 on a main lift → `deload` candidate |
+| `high_soreness_plus_poor_sleep_recovery_reload` | stacked soreness + poor sleep → `recovery_reload` |
+| `strength_volume_led_deload` | strength deload preserves main-lift feel, cuts accessory volume first |
+| `hypertrophy_failure_work_removed` | hypertrophy deload cuts hard sets 30–50%, removes failure/intensifiers |
+| `cardio_intervals_to_base_deload` | cardio deload swaps intervals → easy base, cuts high-zone volume |
+| `bodyweight_density_reduction` | bodyweight deload reduces density/rounds, easier leverage, no novel soreness |
+| `pain_override_not_deload` | pain-major → pivot/stop affected pattern, **not** a blanket deload |
+| `taper_vs_deload_distinction` | test date near → **taper** (keep intensity, cut volume), not a fatigue deload |
+| `complete_rest_for_illness_or_burnout` | illness / burnout / injury flare → **complete rest** recommendation |
+
+---
+
+## 11. Guardrails
 
 - **Deterministic-first.** The engine selects the objective and orders the plan from explainable facts; the
   LLM only words the result.
@@ -374,6 +503,10 @@ the next plan.* The Coach Voice Renderer narrates each step.
 - **No vague AI-only planning decisions.** Every planned decision must be explainable from profile, goal,
   exercise type, recent logs, fatigue, readiness, equipment, time, or constraints.
 - **Weights are fixture-protected before shipping** (§3) — no silent weight drift.
+- **No deload implementation.** §10 documents planning-layer *selection* (when to pick `recovery_reload` /
+  `deload` / taper / maintenance / complete rest) only; the deload prescription engine (`computePrescription`)
+  and `docs/DELOAD_SPEC.md` protocols are unchanged. Every deload recommendation must be explainable from
+  logged performance, fatigue signals, profile, modality, pain, or readiness history.
 - **One small planning PR. Do not merge** without owner direction.
 
 ---
