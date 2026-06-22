@@ -842,7 +842,19 @@
   function liftCodeForExercise(name) {
     const dl = document.getElementById('exercise-catalog');
     if (!dl || !name) return null;
-    const opt = Array.from(dl.options || []).find(o => (o.value || '').toLowerCase() === String(name).toLowerCase());
+    const key = String(name).toLowerCase();
+    const opts = Array.from(dl.options || []);
+    // Exact name first; then an alias/contains fallback (mirrors planStepFor /
+    // getNextExerciseInPlan) so a shorthand like "Lat pull" still resolves to the
+    // "Lat Pulldown" code — without it the post-log next-prescription card silently
+    // doesn't render for shorthand-logged lifts.
+    let opt = opts.find(o => (o.value || '').toLowerCase() === key);
+    if (!opt) {
+      opt = opts.find(o => {
+        const v = (o.value || '').toLowerCase();
+        return v && (v.includes(key) || key.includes(v));
+      });
+    }
     return opt ? (opt.label || null) : null;
   }
 
