@@ -253,6 +253,30 @@ test('post-log live path: with NO code bridge at all (no enrichment, no catalog)
     'no code bridge → the canonical alias does not resolve (documents why the datalist/enrichment bridge is needed)');
 });
 
+test('post-log live path: a coach-suggested plan registers COMPLETE after the last lift (no resurrected next-up)', () => {
+  // The live "wanted weighted dips again" bug: in the coach-suggestion flow
+  // (activePlannedSession === null) planIsComplete was always false, so after the
+  // last lift the closeout never fired and the handoff resurrected a done lift.
+  const { api, events } = loadEmitHarness();
+  api.setIntentData(SUGGESTED_PLAN);
+  const logs = [
+    ['Bench Press', 'BEN01'], ['Seated Row', 'ROW01'],
+    ['Dips (Weighted)', 'DIP01'], ['Lat Pulldown', 'LAT01'],
+    ['Incline DB Press', 'INC01'], ['Face Pull', 'FAC01'],
+  ];
+  for (const [name, code] of logs) {
+    api.emitSetLogged([{ exercise: name, weight: 50, reps: 8, rir: 2 }], '', [], [{ exercise: name, lift_code: code }]);
+  }
+  // After the last lift: complete, nothing left, no resurrected next-up.
+  const last = events[events.length - 1].detail;
+  assert.equal(last.planIsComplete, true, 'suggestion-flow plan must register complete after the last lift');
+  assert.equal(last.nextPlanned, null, 'no next-up may be resurrected at session end');
+  // Mid-session it must NOT prematurely flag complete, and next-up advances normally.
+  const afterFirst = events[0].detail;
+  assert.equal(afterFirst.planIsComplete, false);
+  assert.equal(afterFirst.nextPlanned, 'Seated Row');
+});
+
 // --- Class B: shorthand-named lift re-parses against the pending planned lift ---
 function loadReplanHelper(planned, parseStub) {
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

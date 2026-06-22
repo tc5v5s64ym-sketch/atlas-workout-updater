@@ -4436,8 +4436,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v24/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v23\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v25/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v24\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4497,6 +4497,27 @@ test('set-effort wiring: handleSetLogged renders one short effort line + folds r
   // No full-session recap: the per-set handler must not iterate the whole session
   // log / sessionLog to print a summary after each set.
   assert.doesNotMatch(block, /sessionLog\b/, 'no full-session recap may be built per set');
+});
+
+test('handoff: the /api/plan/today fallback never resurrects an already-completed lift', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = ccSource.slice(
+    ccSource.indexOf('async function handleSetLogged(detail)'),
+    ccSource.indexOf('async function handlePreviewReady')
+  );
+  // next-up is computed BEFORE the closeout decision, so a genuine next wins.
+  assert.match(block, /let nextEx = detail\.nextPlanned \|\| await getNextExerciseInPlan/);
+  // A fallback next-up (only when there's no deterministic nextPlanned) that is
+  // already in detail.completed is dropped — this is the "wanted weighted dips
+  // again" fix.
+  assert.match(block, /if \(nextEx && !detail\.nextPlanned\)/);
+  assert.match(block, /detail\.completed \|\| \[\]\)\.some/);
+  assert.match(block, /if \(done\) nextEx = null;/);
+  // Closeout fires only when the plan is complete AND nothing is genuinely next.
+  assert.match(block, /if \(!nextEx && detail\.planIsComplete\)/);
+  // app.js threads the completed-lift names into the event for that rejection.
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /completed: \[\.\.\.sessionCompleted\]/);
 });
 
 // ── Glanceable dashboard ───────────────────────────────────────────────────────
