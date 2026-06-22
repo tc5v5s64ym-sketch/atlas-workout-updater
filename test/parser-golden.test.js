@@ -728,3 +728,41 @@ test('AC8: a non-question unresolved lift keeps its existing flagged-log path', 
   assert.equal(result.intent, 'log_sets');
   assert.ok((result.warnings || []).includes('unknown_exercise'));
 });
+
+// ---------------------------------------------------------------------------
+// Feedback-vs-log classification (2026-06-21 live failure)
+//
+// Natural-language coaching feedback must NOT be coined into a phantom exercise.
+// Live bug: "I don't want to do 11 reps on a workout like seated rows 10/2..."
+// was logged as an exercise named "I Don't Want To Do" (0×10). A conversational
+// lead (pronouns/negations/verbs, or an overly long phrase) must not log_sets;
+// it falls through to a coach question instead. Legit unknown lifts still parse.
+// ---------------------------------------------------------------------------
+
+test('feedback: "I don\'t want to do 11 reps..." does not produce a phantom log', () => {
+  const result = parseWorkoutText("I don't want to do 11 reps on a workout like seated rows 10/2 across all sets then we should move up after thats proven");
+  assert.notEqual(result.intent, 'log_sets', `coaching feedback must not log_sets, got: ${result.intent}`);
+  assert.ok(!Array.isArray(result.sets) || result.sets.length === 0, 'no set rows from a feedback sentence');
+});
+
+test('feedback: a "we should..." preference sentence does not log', () => {
+  const result = parseWorkoutText('we should move up after thats proven 10/2');
+  assert.notEqual(result.intent, 'log_sets');
+});
+
+test('feedback: an unknown lead that reads as prose creates no 0-weight phantom exercise', () => {
+  const result = parseWorkoutText("i think my form felt off 8/2");
+  assert.notEqual(result.intent, 'log_sets');
+  assert.ok(!Array.isArray(result.sets) || result.sets.length === 0);
+});
+
+test('feedback guard does NOT block a genuine unknown lift (short noun-phrase name)', () => {
+  // Jefferson Curl isn't in the catalog but is a real lift typed as "name + sets".
+  const result = parseWorkoutText('Jefferson Curl 95 8/2');
+  assert.equal(result.intent, 'log_sets', `a real unknown lift must still log, got: ${result.intent}`);
+});
+
+test('feedback guard does NOT block known logging language', () => {
+  assert.equal(parseWorkoutText('Bench 140 15/4 230 4/2').intent, 'log_sets');
+  assert.equal(parseWorkoutText('Seated rows 190 11/2 11/2 11/2').intent, 'log_sets');
+});

@@ -1,7 +1,9 @@
 'use strict';
 const test   = require('node:test');
 const assert = require('node:assert/strict');
-const { computePlanState, nextExerciseFromPlan, isPlanComplete, applySubstitution, planStateFromContext, detectSessionCloseQuestion, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
+const fs   = require('node:fs');
+const path = require('node:path');
+const { computePlanState, nextExerciseFromPlan, nextRemainingExercise, isPlanComplete, applySubstitution, planStateFromContext, detectSessionCloseQuestion, buildSessionCloseAnswer } = require('../services/sessionPlanExecutor');
 
 /* ===== Shape ===== */
 
@@ -508,4 +510,54 @@ test('step-377: buildSessionCloseAnswer returns null when the question is not a 
 test('step-377: buildSessionCloseAnswer returns null when there is no authoritative plan state', () => {
   assert.equal(buildSessionCloseAnswer('are we done?', null), null);
   assert.equal(buildSessionCloseAnswer('are we done?', computePlanState([], [])), null, 'empty plan → no answer');
+});
+
+/* ===== nextRemainingExercise — next-up cursor (visible order, skip logged) ===== */
+// Live bug (2026-06-21): after logging Bench, the handoff said "next up: Face Pull"
+// (a later accessory) instead of Seated Row, because the old lookup used API-plan
+// map order and never skipped already-logged lifts. Next-up must follow the
+// VISIBLE planned order and point at the first UNLOGGED exercise.
+const VISIBLE_PLAN = ['Bench Press', 'Seated Row', 'Weighted Dip', 'Lat Pulldown', 'Incline DB Press', 'Face Pull'];
+
+test('nextRemainingExercise: after Bench is logged, next up is Seated Row (not a later accessory)', () => {
+  assert.equal(nextRemainingExercise(VISIBLE_PLAN, ['Bench Press']), 'Seated Row');
+});
+
+test('nextRemainingExercise: advances in visible order as lifts are logged', () => {
+  assert.equal(nextRemainingExercise(VISIBLE_PLAN, ['Bench Press', 'Seated Row']), 'Weighted Dip');
+  assert.equal(nextRemainingExercise(VISIBLE_PLAN, ['Bench Press', 'Seated Row', 'Weighted Dip']), 'Lat Pulldown');
+});
+
+test('nextRemainingExercise: out-of-order logging never points back at a completed lift', () => {
+  // Logged Face Pull first (out of order) → next up is the first still-unlogged in
+  // plan order (Bench Press), never the already-done Face Pull.
+  assert.equal(nextRemainingExercise(VISIBLE_PLAN, ['Face Pull']), 'Bench Press');
+  // Bench + Face Pull done → next is Seated Row, not Face Pull again.
+  assert.equal(nextRemainingExercise(VISIBLE_PLAN, ['Bench Press', 'Face Pull']), 'Seated Row');
+});
+
+test('nextRemainingExercise: null when the plan is complete or empty', () => {
+  assert.equal(nextRemainingExercise(VISIBLE_PLAN, VISIBLE_PLAN), null);
+  assert.equal(nextRemainingExercise([], []), null);
+});
+
+test('nextRemainingExercise: matches by lift_code too (plan "Rows" logged as "Barbell Row")', () => {
+  const planned = [{ name: 'Rows', liftCode: 'ROW01' }, { name: 'Bench', liftCode: 'BEN01' }];
+  assert.equal(nextRemainingExercise(planned, [{ name: 'Barbell Row', liftCode: 'ROW01' }]), 'Bench');
+});
+
+/* ===== Frontend wiring: app.js computes nextPlanned, coach-conversation uses it ===== */
+test('app.js emitSetLogged computes nextPlanned from visible order minus completed', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  assert.match(src, /nextPlanned/, 'emitSetLogged should compute a nextPlanned field');
+  // Derived from the active planned session order, excluding sessionCompleted.
+  assert.match(src, /activePlannedSession\.exercises\.find\(/, 'nextPlanned should scan the visible plan order');
+  assert.match(src, /!sessionCompleted\.some\(/, 'nextPlanned should skip already-completed exercises');
+  assert.match(src, /detail:\s*\{[\s\S]*nextPlanned/, 'nextPlanned must be included in the set-logged event detail');
+});
+
+test('coach-conversation.js prefers detail.nextPlanned for the next-up handoff', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(src, /detail\.nextPlanned\s*\|\|\s*await getNextExerciseInPlan/,
+    'handoff should use detail.nextPlanned first, falling back to the API-plan lookup only for freeform');
 });
