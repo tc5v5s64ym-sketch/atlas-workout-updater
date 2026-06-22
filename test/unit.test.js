@@ -4241,7 +4241,7 @@ test('closeout screenshot: attachment menu does not auto-open the effort details
   assert.doesNotMatch(screenshotHandler, /scrollIntoView|details\.open\s*=\s*true/, 'screenshot selection must not auto-open or scroll the Effort panel');
 });
 
-test('closeout screenshot: plan-complete attachment buffers evidence before workout parsing or ingestion', () => {
+test('closeout screenshot: plan-complete attachment parses effort without workout ingestion', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const submitStart = app.indexOf("document.getElementById('logger-form').addEventListener('submit'");
   const parseAt = app.indexOf('await rowsFromWorkoutInput()', submitStart);
@@ -4249,14 +4249,18 @@ test('closeout screenshot: plan-complete attachment buffers evidence before work
   const guard = app.slice(guardAt, app.indexOf('let logRows = []', guardAt));
   assert.ok(guardAt > submitStart && guardAt < parseAt, 'closeout screenshot guard must run before workout parsing');
   assert.match(guard, /closeoutScreenshotFile = file/, 'must remember the attachment locally');
-  assert.match(guard, /Screenshot attached\. Say done to save\./, 'must show compact non-blocking closeout copy');
+  assert.match(guard, /parseWorkoutImage\(file\)/, 'must try parse-only effort extraction');
+  assert.match(guard, /Effort read from screenshot\. Say done to preview your workout with effort data\./, 'successful parse must say effort data will be included');
+  assert.match(guard, /Screenshot attached, but effort couldn't be read\. Say done to save the workout without effort data\./, 'failed parse must be explicit and non-blocking');
   assert.match(guard, /return;/, 'must not fall through into /api/complete-workout preview');
+  assert.doesNotMatch(guard, /submitCompleteWorkout|complete-workout/, 'closeout attachment must not call workout ingestion');
 });
 
-test('closeout screenshot: done save ignores buffered screenshot and uses normal log-workout preview', () => {
+test('closeout screenshot: done save uses normal log-workout preview and includes parsed effort when available', () => {
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(app, /const closeoutAttachmentOnly = file && closeoutScreenshotFile === file && sessionCompiledAwaitingPreview;/, 'done path must identify a closeout-only screenshot');
   assert.match(app, /if \(closeoutAttachmentOnly\) file = null;/, 'done path must not send the buffered screenshot to complete-workout');
+  assert.match(app, /if \(closeoutAttachmentOnly && closeoutScreenshotEffort\) \{[\s\S]*manualEffort = effortRowFromParsedEffort\(closeoutScreenshotEffort, sessionId, date, location, notes\);[\s\S]*\}/, 'parsed closeout effort must become the normal effort_row payload');
   const previewStart = app.indexOf("const previewBtn = document.getElementById('preview-btn')");
   const previewBranch = app.slice(previewStart, app.indexOf("} else if (effortOnly)", previewStart));
   assert.match(previewBranch, /if \(mode === 'screenshot' && file\)/, 'screenshot ingestion must require an actual non-buffered file');
