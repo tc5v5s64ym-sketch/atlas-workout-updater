@@ -242,6 +242,8 @@ test('answerTotalRepsQuestion: answers reps-totals only — defers "total weight
   // it with a rep count would be off-topic, so defer those to Gemini.
   assert.equal(answerTotalRepsQuestion('total weight for bench?', { clientContext: totalCtx }), null);
   assert.equal(answerTotalRepsQuestion("what's my total volume for bench?", { clientContext: totalCtx }), null);
+  // "total sets" (sets asked, not reps) is also a different metric → defer.
+  assert.equal(answerTotalRepsQuestion('total sets for bench?', { clientContext: totalCtx }), null);
   // A reps total (and a bare "total?") still answer.
   assert.equal(
     answerTotalRepsQuestion('how many reps total for bench?', { clientContext: totalCtx }),

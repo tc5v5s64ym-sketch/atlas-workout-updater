@@ -1253,7 +1253,7 @@ app.post('/api/coach/chat', async (req, res) => {
   // "total?" follow-up works. Context-only: no Sheets, no LLM, no invented numbers.
   const totalReps = answerTotalRepsQuestion(message, { history, clientContext: clientCtx });
   if (totalReps) {
-    return standardSuccess(req, res, 'Coach chat — current plan answer', {
+    return standardSuccess(req, res, 'Coach chat — planned total answer', {
       message: totalReps, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
     });
   }
