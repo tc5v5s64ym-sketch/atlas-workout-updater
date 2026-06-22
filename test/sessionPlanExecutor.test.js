@@ -547,12 +547,16 @@ test('nextRemainingExercise: matches by lift_code too (plan "Rows" logged as "Ba
 });
 
 /* ===== Frontend wiring: app.js computes nextPlanned, coach-conversation uses it ===== */
-test('app.js emitSetLogged computes nextPlanned from visible order minus completed', () => {
+test('app.js next-up follows the visible plan order (started OR coach-suggested) minus completed', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
   assert.match(src, /nextPlanned/, 'emitSetLogged should compute a nextPlanned field');
-  // Derived from the active planned session order, excluding sessionCompleted.
-  assert.match(src, /activePlannedSession\.exercises\.find\(/, 'nextPlanned should scan the visible plan order');
-  assert.match(src, /!sessionCompleted\.some\(/, 'nextPlanned should skip already-completed exercises');
+  assert.match(src, /const nextPlanned = firstUnloggedPlannedLift\(\)/, 'nextPlanned comes from firstUnloggedPlannedLift');
+  // The order source is the started session OR the cached coach-suggested plan, so
+  // next-up works even without "Start Session".
+  assert.match(src, /function plannedExerciseOrder\(\)/, 'a shared plan-order helper exists');
+  assert.match(src, /activePlannedSession\.exercises\.map\(/, 'order uses the started session when present');
+  assert.match(src, /lastIntentData[\s\S]*?recommended/, 'order falls back to the cached coach-suggested plan');
+  assert.match(src, /!sessionCompleted\.some\(/, 'next-up skips already-completed exercises');
   assert.match(src, /detail:\s*\{[\s\S]*nextPlanned/, 'nextPlanned must be included in the set-logged event detail');
 });
 
