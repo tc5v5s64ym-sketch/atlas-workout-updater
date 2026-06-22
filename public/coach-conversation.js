@@ -494,16 +494,64 @@
     return lines.join('\n');
   }
 
-  // Build "Bench 185×6" placeholder from the first (current) plan exercise only.
+  // Compact, parse-safe lift aliases for the composer placeholder (to save space).
+  // Each alias round-trips through the parser's canonicalizer back to the SAME lift
+  // (verified in test/coachConversation.test.js), so a hint never resolves to the
+  // wrong exercise if the lifter types it. Ambiguous shorts ("Row", "LatPD",
+  // "Incline") are deliberately omitted — they don't canonicalize cleanly — so
+  // those lifts keep their full canonical name (which also parses). Full names are
+  // unchanged in the workout DISPLAY; this only compacts the composer hint.
+  const COMPOSER_ALIASES = [
+    [/^bench press$/i, 'Bench'],
+    [/^back squat$/i, 'Squat'],
+    [/^(conventional |sumo )?deadlift$/i, 'DL'],
+    [/^romanian deadlift$|^rdl$/i, 'RDL'],
+    [/^overhead press$/i, 'OHP'],
+    [/^dips?(\s*\(weighted\))?$/i, 'Dip'],
+  ];
+  function composerLiftAlias(name) {
+    const n = String(name == null ? '' : name).trim();
+    if (!n) return '';
+    for (const [re, alias] of COMPOSER_ALIASES) if (re.test(n)) return alias;
+    return n; // full canonical name — also parses cleanly
+  }
+
+  // Build the compact composer hint for ONE planned lift: short alias, the engine's
+  // warm-up ramp marked "wu", then the working-set target in Atlas shorthand with
+  // repeated sets collapsed as "xN" — e.g. "Bench 140x15wu 190x10wu 230 5/2 x3".
+  // Warm-ups are DISPLAY-ONLY: they carry no RIR, are tagged "wu", and the parser
+  // ignores a "{w}x{r}wu" token (it isn't a valid set), so a submitted hint logs
+  // only the working sets — never a save-ready warm-up. Reads warmup_sets off the
+  // RAW intent exercise (normalizePlanExercise drops them). Returns null when no
+  // working target is known (caller falls back to its previous behaviour).
+  function compactPrescription(raw) {
+    const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
+    if (!ex || !ex.name || ex.weight == null || ex.reps == null) return null;
+    const parts = [composerLiftAlias(ex.name)];
+    for (const w of warmupSetsFor(raw)) {
+      if (w && w.weight != null && w.reps != null) parts.push(`${w.weight}x${w.reps}wu`);
+    }
+    let sets = Number(ex.sets);
+    if (!Number.isFinite(sets) || sets < 1) sets = 1;
+    sets = Math.min(sets, 10);
+    if (ex.rir == null || ex.rir === '') {
+      // No RIR → a "{weight} {reps} xN" hint does NOT round-trip (bare-reps lists
+      // mis-parse), so emit a single clean "{weight} {reps}" token instead of a
+      // collapsed set. Mirrors formatNextPlaceholder; plan entries carry a
+      // target_rir in production, so this is a defensive fallback.
+      parts.push(`${ex.weight} ${ex.reps}`);
+    } else {
+      const working = `${ex.weight} ${ex.reps}/${ex.rir}`;
+      parts.push(sets > 1 ? `${working} x${sets}` : working);
+    }
+    return parts.join(' ');
+  }
+
+  // Build the composer placeholder from the first (current) plan exercise — the
+  // compact full prescription (warm-ups + working sets), not just the lead set.
   function buildWorkoutPlaceholder(exercises) {
     if (!exercises || !exercises.length) return null;
-    const items = exercises.slice(0, 1).map(raw => {
-      const ex = (typeof normalizePlanExercise === 'function') ? normalizePlanExercise(raw) : raw;
-      if (!ex || !ex.name || ex.weight == null || ex.reps == null) return null;
-      const name = ex.name.split(' ').slice(0, 2).join(' ');
-      return `${name} ${ex.weight}×${ex.reps}`;
-    }).filter(Boolean);
-    return items.length ? items[0] : null;
+    return compactPrescription(exercises[0]);
   }
 
   // Extract placeholder from a typed Atlas reply that contains exercise prescriptions.

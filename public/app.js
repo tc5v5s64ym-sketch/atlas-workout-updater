@@ -2527,7 +2527,13 @@ async function parseWorkoutTextWithBackend(workoutText) {
       body: JSON.stringify({
         text: workoutText,
         context: {
-          activeExercise,
+          // When the lifter names no exercise, a bare set sequence attaches to the
+          // active lift; if none is active yet but a planned workout is open, fall
+          // back to the first unlogged planned lift (the composer's "next up") so
+          // "140 15 230 4/2…" lands on Bench instead of dead-ending at "Which
+          // exercise is this for?". Still test_mode dry-run — preview/approval
+          // rules are unchanged; with no plan context it keeps asking to clarify.
+          activeExercise: activeExercise || firstUnloggedPlannedLift(),
           activeSessionType: null,
           todayPlan: null
         },
@@ -2598,7 +2604,7 @@ async function rowsFromWorkoutInput() {
   } catch (backendError) {
     if (!shouldUseLocalFallback(backendError)) throw backendError;
     console.warn('[atlas] parse-workout-text unavailable, using local fallback:', backendError.message);
-    const localResult = parseWorkoutText(workoutText);
+    const localResult = parseWorkoutText(workoutText, { activeExercise: activeExercise || firstUnloggedPlannedLift() });
     if (localResult.errors.length > 0) throw new Error(localResult.errors.join(' | '));
     if (!localResult.rows.length) throw new Error('Workout text did not produce any set rows.');
     populateSetRows(localResult.rows);
@@ -2723,6 +2729,20 @@ let sessionLog = [];
 // Cleared alongside sessionLog at save and on startOver.
 let sessionCompleted = [];
 
+// The first planned exercise (visible order) not yet logged this session — the
+// lift a bare set sequence ("140 15 190 10 230 4/2…") should attach to when the
+// lifter names no exercise. Null when there's no active plan or it's complete.
+// Shared by emitSetLogged's next-up handoff and the parse context (the implicit
+// attach target). Read-only — never changes what gets written or how.
+function firstUnloggedPlannedLift() {
+  if (!activePlannedSession || !activePlannedSession.exercises.length) return null;
+  const rec = activePlannedSession.exercises.find(ex => {
+    const n = String(ex.canonicalName || ex.name || '').toLowerCase();
+    return n && !sessionCompleted.some(c => String(c).toLowerCase() === n);
+  });
+  return rec ? (rec.name || rec.canonicalName || null) : null;
+}
+
 // Editor-ready rows from the buffer, numbering sets per exercise.
 function buildRowsFromSessionLog() {
   const counts = new Map();
@@ -2814,14 +2834,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
       // logged in order or out of order — never a later accessory while an earlier
       // lift is still outstanding. Mirrors nextRemainingExercise in
       // services/sessionPlanExecutor.js. Read-only narration — not the write path.
-      let nextPlanned = null;
-      if (activePlannedSession && activePlannedSession.exercises.length > 0) {
-        const nextRec = activePlannedSession.exercises.find(ex => {
-          const n = String(ex.canonicalName || ex.name || '').toLowerCase();
-          return n && !sessionCompleted.some(c => String(c).toLowerCase() === n);
-        });
-        nextPlanned = nextRec ? (nextRec.name || nextRec.canonicalName || null) : null;
-      }
+      const nextPlanned = firstUnloggedPlannedLift();
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
         detail: {
           exercises: byExercise,
