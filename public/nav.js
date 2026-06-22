@@ -404,12 +404,13 @@
     }
   });
 
-  function setEffortMode(mode) {
+  function setEffortMode(mode, { reveal = true } = {}) {
     const radio = document.querySelector(`input[name="effort-mode"][value="${mode}"]`);
     if (radio && !radio.checked) {
       radio.checked = true;
       radio.dispatchEvent(new Event('change', { bubbles: true }));
     }
+    if (!reveal) return;
     const details = document.getElementById('effort-details');
     if (details) {
       details.hidden = false;
@@ -421,7 +422,7 @@
   // mode and opens the native file picker. Manual entry: focuses the duration.
   document.getElementById('attach-screenshot')?.addEventListener('click', () => {
     closeAttachMenu();
-    setEffortMode('screenshot');
+    setEffortMode('screenshot', { reveal: false });
     document.getElementById('effort-image')?.click();
   });
 

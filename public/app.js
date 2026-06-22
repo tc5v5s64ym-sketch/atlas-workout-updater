@@ -2826,6 +2826,11 @@ let sessionLog = [];
 // plan_completed so the server can compute which planned exercises remain.
 // Cleared alongside sessionLog at save and on startOver.
 let sessionCompleted = [];
+// A closeout screenshot is optional evidence, not workout text. When the plan is
+// already complete, choosing a file under the composer must not auto-route to
+// /api/complete-workout; "done" still saves the buffered session rows.
+let closeoutScreenshotFile = null;
+let closeoutScreenshotEffort = null;
 
 // The planned exercises the lifter is working through, in the VISIBLE plan order,
 // WITH their identity fields (name + canonical + liftCode). Source: a formally-
@@ -2870,6 +2875,27 @@ function remainingPlannedExercises() {
     const n = String(name || '').toLowerCase();
     return n && !completed.has(n);
   });
+}
+
+function isPlanCloseoutAwaitingSave() {
+  return sessionLog.length > 0 &&
+    plannedExerciseOrder().length > 0 &&
+    remainingPlannedExercises().length === 0;
+}
+
+function effortRowFromParsedEffort(effort, sessionId, date, location, notes) {
+  if (!effort) return null;
+  return {
+    date,
+    session_id: sessionId,
+    duration: effort.duration,
+    active_calories: effort.activeCalories,
+    total_calories: effort.totalCalories,
+    average_hr: effort.averageHR,
+    peak_hr: effort.peakHR,
+    location: location || '',
+    notes: notes || ''
+  };
 }
 
 // Resolve a lift_code for an exercise NAME from the loaded catalog datalist
@@ -3307,6 +3333,8 @@ function startOverWorkout() {
   lastParsedWorkoutText = '';
   sessionLog = [];
   sessionCompleted = [];
+  closeoutScreenshotFile = null;
+  closeoutScreenshotEffort = null;
   setsTableBody.innerHTML = '';
   parsedRowsEditor.hidden = true;
   const effortDetails = document.getElementById('effort-details');
@@ -3567,6 +3595,25 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const sessionId = sessionIdInput.value.trim() || (date ? generateSessionId(date) : '');
   const location = document.getElementById('log-location').value.trim();
   const notes = document.getElementById('log-notes').value.trim();
+  let file = null;
+  if (mode === 'screenshot') {
+    const imageInput = document.getElementById('effort-image');
+    file = imageInput.files[0] || null;
+  }
+
+  if (file && !pendingChatText && !sessionCompiledAwaitingPreview && isPlanCloseoutAwaitingSave()) {
+    closeoutScreenshotFile = file;
+    closeoutScreenshotEffort = null;
+    setStatus(loggerStatus, 'Reading screenshot effort...', 'ok');
+    try {
+      closeoutScreenshotEffort = await parseWorkoutImage(file);
+      setStatus(loggerStatus, 'Effort read from screenshot. Say done to preview your workout with effort data.', 'ok');
+    } catch {
+      setStatus(loggerStatus, "Screenshot attached, but effort couldn't be read. Say done to save the workout without effort data.", 'warn');
+    }
+    return;
+  }
+
   let logRows = [];
   try {
     await rowsFromWorkoutInput();
@@ -3602,10 +3649,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
-  let file = null;
-  if (mode === 'screenshot') {
-    const imageInput = document.getElementById('effort-image');
-    file = imageInput.files[0] || null;
+  const closeoutAttachmentOnly = file && closeoutScreenshotFile === file && sessionCompiledAwaitingPreview;
+  if (closeoutAttachmentOnly) file = null;
+  if (closeoutAttachmentOnly && closeoutScreenshotEffort) {
+    manualEffort = effortRowFromParsedEffort(closeoutScreenshotEffort, sessionId, date, location, notes);
   }
 
   // Screenshot upload and manual effort form are end-of-session triggers.
@@ -3732,7 +3779,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   previewBtn.textContent = 'Previewing…';
 
   try {
-    if (mode === 'screenshot') {
+    if (mode === 'screenshot' && file) {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
       const result = await submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, testMode: true });
@@ -3873,6 +3920,15 @@ async function submitCompleteWorkout({ file, logRows, sessionId, date, location,
   // retried append. Dry-run previews never consume idempotency state.
   if (writeId && !testMode) form.append('write_id', writeId);
   return api('/api/complete-workout', { method: 'POST', body: form });
+}
+
+async function parseWorkoutImage(file) {
+  const form = new FormData();
+  form.append('image', file);
+  const result = await api('/api/parse-workout-image', { method: 'POST', body: form });
+  const parsed = result?.data?.parsed || null;
+  if (!parsed) throw new Error('No effort metrics returned from screenshot.');
+  return parsed;
 }
 
 // Compact one-line confirmation of what the write will contain. The full
@@ -4211,6 +4267,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // The session is saved — start the next session's buffer fresh.
     if (pendingLastWrite) sessionLog = [];
     if (pendingLastWrite) sessionCompleted = [];
+    if (pendingLastWrite) closeoutScreenshotFile = null;
+    if (pendingLastWrite) closeoutScreenshotEffort = null;
     if (pendingLastWrite) {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);
