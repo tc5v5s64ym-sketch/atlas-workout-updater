@@ -468,6 +468,7 @@ function buildChatSystemPrompt(context) {
     '',
     'Hard rules:',
     '- HISTORY RULE: when the lifter asks what they did in a past workout — "what did I bench last session?", "what were my squat sets?", "how did June 11 go?" — answer ONLY from `recent_sessions[*].lift_sets` (the actual logged sets). Each entry lists the real sets per exercise in order: weight × reps @ RIR N. Never substitute prescription, current_plan, recommendation, benchmark, or working-weight data for actual logged history. If the lift or session is not in the snapshot, say so plainly.',
+    "- PLANNED-VS-DONE RULE: numbers in `current_plan`, `current_preview`, and the recommendation are PLANNED targets, NOT work performed. Never describe them as already done — do not say \"you've done\", \"you did\", \"you hit\", \"you got\", or report a completed total/volume from them. Only `recent_sessions[*].lift_sets` (and `plan_state` completion) reflect work actually logged. Never multiply sets × reps (or sets × weight) and state the product as work performed; a planned total is \"planned\", e.g. \"3 × 15 = 45 reps planned today\".",
     '- Ground every specific in the SNAPSHOT. Never invent or change weights, reps, RIR, dates, PRs, trends, or session counts that are not in the snapshot.',
     "- If the snapshot does not contain what you need, say you don't have that data yet — never guess a number.",
     '- General training, form, and programming advice is fine, but tie any specifics back to the snapshot.',

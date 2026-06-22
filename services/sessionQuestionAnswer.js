@@ -266,4 +266,38 @@ function answerPlannedLiftQuestion(message, clientContext = null) {
   return `${name} today: ${parts.join(', ')}.`;
 }
 
-module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion };
+// A "total" question wants sets × reps as a PLANNED total, not the per-set target.
+const TOTAL_RE = /\btotal\b/i;
+
+/**
+ * Answer a "total reps" question with an ENGINE-COMPUTED planned total (sets ×
+ * reps), worded as planned — so a bare "total?" follow-up gets a grounded fact
+ * instead of an LLM that multiplies the numbers itself and mis-tenses it as
+ * completed work ("you've done 45 reps" when nothing is logged).
+ *
+ * Resolves the lift from the message, then the recent conversation turns, then the
+ * live plan (via resolveLiftName), so "total?" right after discussing a lift works.
+ * Returns null (defer) when it isn't a total question, is past-tense/advice, the
+ * lift can't be resolved, or the plan lacks BOTH reps and sets (no fabrication).
+ * READ-ONLY: no Sheets, no LLM, no invented numbers.
+ *
+ * @param {string} message
+ * @param {object} opts  { history, clientContext }
+ * @returns {string|null}
+ */
+function answerTotalRepsQuestion(message, { history = [], clientContext = null } = {}) {
+  const raw = String(message == null ? '' : message);
+  if (!TOTAL_RE.test(raw)) return null;
+  if (HISTORY_RE.test(raw) || ADVICE_RE.test(raw)) return null; // past / reasoning → defer
+
+  const liftName = resolveLiftName(message, history, clientContext);
+  if (!liftName) return null;
+  const target = targetFromContext(liftName, clientContext);
+  if (!target || target.reps == null || target.sets == null) return null; // need both to total
+
+  const name = target.exercise_name || liftName;
+  const total = target.sets * target.reps;
+  return `${name} today: ${total} total reps planned (${target.sets} sets × ${target.reps}).`;
+}
+
+module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion };

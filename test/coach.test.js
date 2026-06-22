@@ -284,6 +284,14 @@ test('chat system prompt carries the conversational guardrails', () => {
   assert.match(prompt, /log it/i, 'must name the end-of-session write trigger');
 });
 
+test('chat system prompt forbids presenting planned work as completed (PLANNED-VS-DONE)', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /PLANNED-VS-DONE RULE/, 'must carry the planned-vs-done rule');
+  assert.match(prompt, /PLANNED targets/i, 'plan numbers are planned targets, not work performed');
+  assert.match(prompt, /you'?ve done/i, 'must name the forbidden "you\'ve done" framing');
+  assert.match(prompt, /Never multiply sets × reps/i, 'must forbid stating a computed total as work performed');
+});
+
 test('sanitizeChatContext whitelists the snapshot and drops unknown keys + bounds arrays', () => {
   const clean = sanitizeChatContext({
     recommended_label: 'Build Strength',
