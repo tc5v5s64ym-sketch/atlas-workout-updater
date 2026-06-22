@@ -2729,18 +2729,33 @@ let sessionLog = [];
 // Cleared alongside sessionLog at save and on startOver.
 let sessionCompleted = [];
 
+// The ordered exercise names the lifter is working through, in the VISIBLE plan
+// order: a formally-started planned session if one exists, else the cached
+// coach-suggested plan (lastIntentData's recommended intent). This second source
+// is what makes next-up / bare-set-attach work when the lifter logs straight
+// against a coach suggestion without tapping "Start Session" (activePlannedSession
+// stays null in that flow).
+function plannedExerciseOrder() {
+  if (activePlannedSession && activePlannedSession.exercises.length) {
+    return activePlannedSession.exercises.map(ex => ex.canonicalName || ex.name).filter(Boolean);
+  }
+  const intents = (lastIntentData && lastIntentData.intents) || [];
+  const recommended = intents.find(i => i.recommended);
+  const exs = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
+  return exs.map(ex => ex.canonical_exercise || ex.exercise).filter(Boolean);
+}
+
 // The first planned exercise (visible order) not yet logged this session — the
 // lift a bare set sequence ("140 15 190 10 230 4/2…") should attach to when the
-// lifter names no exercise. Null when there's no active plan or it's complete.
-// Shared by emitSetLogged's next-up handoff and the parse context (the implicit
-// attach target). Read-only — never changes what gets written or how.
+// lifter names no exercise, and the next-up handoff target. Null when there's no
+// plan (started OR suggested) or it's complete. Shared by emitSetLogged's next-up
+// and the parse context. Read-only — never changes what gets written or how.
 function firstUnloggedPlannedLift() {
-  if (!activePlannedSession || !activePlannedSession.exercises.length) return null;
-  const rec = activePlannedSession.exercises.find(ex => {
-    const n = String(ex.canonicalName || ex.name || '').toLowerCase();
-    return n && !sessionCompleted.some(c => String(c).toLowerCase() === n);
-  });
-  return rec ? (rec.name || rec.canonicalName || null) : null;
+  for (const name of plannedExerciseOrder()) {
+    const n = String(name || '').toLowerCase();
+    if (n && !sessionCompleted.some(c => String(c).toLowerCase() === n)) return name;
+  }
+  return null;
 }
 
 // Editor-ready rows from the buffer, numbering sets per exercise.
