@@ -2594,6 +2594,34 @@ function applyUpdateToLastRow(update) {
   if (update.rir != null) lastRow.querySelector('.set-rir').value = String(update.rir);
 }
 
+// When a conversational log names a lift the parser can't resolve ("Lat pull",
+// "Incline") but the lead clearly refers to the current pending PLANNED lift,
+// re-parse with the planned lift's full name substituted so the sets attach to it
+// instead of dead-ending in chat ("Noted — keep logging…"). Returns rows or null.
+// Frontend-only: it calls the SAME backend parser with a resolved name — no parser
+// grammar change. Gated tightly — only fires when the lead (the words before the
+// first number) alias-matches the pending planned lift, so an unrelated new lift
+// never mis-attaches; with no plan / no match it returns null and the normal
+// chat-clarify fallback runs.
+async function rowsFromUnresolvedPlannedLead(workoutText) {
+  const planned = firstUnloggedPlannedLift();
+  if (!planned) return null;
+  const tokens = String(workoutText || '').trim().split(/\s+/);
+  let i = 0;
+  while (i < tokens.length && !/\d/.test(tokens[i])) i += 1;
+  if (i === 0 || i >= tokens.length) return null; // no lead name, or no set tokens
+  const lead = tokens.slice(0, i).join(' ').toLowerCase();
+  const p = String(planned).toLowerCase();
+  if (!(lead === p || p.includes(lead) || lead.includes(p))) return null;
+  const rebuilt = `${planned} ${tokens.slice(i).join(' ')}`;
+  try {
+    const retry = await parseWorkoutTextWithBackend(rebuilt);
+    return retry && retry.intent === 'log_sets' ? retry.rows : null;
+  } catch {
+    return null;
+  }
+}
+
 async function rowsFromWorkoutInput() {
   const workoutText = workoutTextInput.value.trim();
   if (!workoutText || workoutText === lastParsedWorkoutText) return;
@@ -2602,6 +2630,19 @@ async function rowsFromWorkoutInput() {
   try {
     parsed = await parseWorkoutTextWithBackend(workoutText);
   } catch (backendError) {
+    // Before any fallback: re-parse a shorthand-named lift that refers to the
+    // pending planned lift, so "Lat pull"/"Incline" attach to "Lat Pulldown"/
+    // "Incline DB Press" rather than silently routing to chat.
+    const replanned = await rowsFromUnresolvedPlannedLead(workoutText);
+    if (replanned && replanned.length) {
+      populateSetRows(replanned);
+      lastParserStatus = { source: 'backend-replanned' };
+      activeExercise = replanned[0]?.exercise || null;
+      parsedRowsEditor.hidden = true;
+      lastParsedWorkoutText = workoutText;
+      lastPrescribed = null;
+      return;
+    }
     if (!shouldUseLocalFallback(backendError)) throw backendError;
     console.warn('[atlas] parse-workout-text unavailable, using local fallback:', backendError.message);
     const localResult = parseWorkoutText(workoutText, { activeExercise: activeExercise || firstUnloggedPlannedLift() });
@@ -3566,7 +3607,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     let midSessionEnrichment = null;
     const hasPrescribed = Array.isArray(lastPrescribed) && lastPrescribed.length > 0;
     const hasPlan = activePlannedSession && activePlannedSession.exercises.length > 0;
-    if (hasPrescribed || hasPlan) {
+    // A coach-suggested plan (logged without "Start Session") also needs enrichment:
+    // without it the logged rows carry no lift_code, so resolveCompletedIdentity
+    // cannot map a logged canonical ("Dips (Weighted)") back to the planned lift
+    // ("Weighted Dip") when the wording differs — completion / remaining queue /
+    // composer then go stale. Fetch enrichment whenever ANY plan exists so the
+    // lift_code bridge is available in both flows. Still test_mode dry-run — no write.
+    const hasSuggestedPlan = !hasPlan && plannedExerciseEntries().length > 0;
+    if (hasPrescribed || hasPlan || hasSuggestedPlan) {
       try {
         const loggedExercise = logRows[0] ? logRows[0].exercise || '' : '';
         const subPayload = {

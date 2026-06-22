@@ -163,3 +163,110 @@ test('post-log identity: emitSetLogged derives nextPlanned + plannedQueue from o
   // Read-only narration — emitSetLogged must not touch any write path.
   assert.doesNotMatch(block, /\/api\/log-workout|\/api\/complete-workout|appendRows/);
 });
+
+// --- INTEGRATION: drive the real emitSetLogged → atlas:set-logged event --------
+// This is the path the #480 helper-only tests missed: in the live coach-suggestion
+// flow the logged row is the catalog canonical ("Dips (Weighted)") and completion
+// must be bridged to the planned lift ("Weighted Dip") by the enrichment lift_code.
+function loadEmitHarness() {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const slice = src.slice(
+    src.indexOf('function plannedExerciseEntries()'),
+    src.indexOf('async function fetchReaction(')
+  );
+  assert.ok(slice, 'emitSetLogged + identity helpers must be found');
+  const events = [];
+  const fakeDoc = { dispatchEvent: e => { events.push(e); return true; } };
+  function FakeCustomEvent(type, init) { return { type, detail: init && init.detail }; }
+  const factory = new Function(
+    'document', 'CustomEvent', 'setsTableBody', 'parsedRowsEditor', 'invalidatePreview',
+    `let activePlannedSession = null;
+     let lastIntentData = null;
+     let sessionCompleted = [];
+     let sessionLog = [];
+     let pendingSubstitution = null;
+     let lastParsedWorkoutText = '';
+     function applySessionSubstitution() {}
+     ${slice}
+     return {
+       setIntentData: d => { lastIntentData = d; },
+       getCompleted: () => sessionCompleted.slice(),
+       emitSetLogged,
+     };`
+  );
+  const api = factory(fakeDoc, FakeCustomEvent, { innerHTML: '' }, { hidden: false }, () => {});
+  return { api, events };
+}
+
+test('post-log live path: emitSetLogged with enrichment bridges "Dips (Weighted)" → "Weighted Dip"', () => {
+  const { api, events } = loadEmitHarness();
+  api.setIntentData(SUGGESTED_PLAN); // coach-suggested flow (no Start Session)
+  // Log Bench, Seated Row, then the dip logged as its catalog canonical, each with
+  // the enrichment row the new suggestion-flow fetch now provides (lift_code).
+  api.emitSetLogged([{ exercise: 'Bench Press', weight: 230, reps: 5, rir: 2 }], '', [],
+    [{ exercise: 'Bench Press', canonical_exercise: 'Bench Press', lift_code: 'BEN01' }]);
+  api.emitSetLogged([{ exercise: 'Seated Row', weight: 180, reps: 8, rir: 4 }], '', [],
+    [{ exercise: 'Seated Row', canonical_exercise: 'Seated Row', lift_code: 'ROW01' }]);
+  api.emitSetLogged(
+    [{ exercise: 'Dips (Weighted)', weight: 50, reps: 11, rir: 0 }], '', [],
+    [{ exercise: 'Dips (Weighted)', canonical_exercise: 'Dips (Weighted)', lift_code: 'DIP01' }]
+  );
+  // The completed dip is recognized as the planned lift, so it leaves the queue.
+  assert.ok(api.getCompleted().includes('Weighted Dip'), 'completion resolves to the planned name');
+  const detail = events[events.length - 1].detail;
+  assert.ok(!detail.plannedQueue.includes('Weighted Dip'), 'plannedQueue must drop the completed dip');
+  assert.equal(detail.nextPlanned, 'Lat Pulldown', 'composer/handoff advance to Lat Pulldown');
+});
+
+test('post-log live path: WITHOUT enrichment the bug persists (proves the suggestion-flow fetch is required)', () => {
+  const { api, events } = loadEmitHarness();
+  api.setIntentData(SUGGESTED_PLAN);
+  // Pre-2 lifts done; dip logged as canonical but with NO enrichment (the old gap).
+  api.emitSetLogged([{ exercise: 'Bench Press', weight: 230, reps: 5, rir: 2 }], '', [],
+    [{ exercise: 'Bench Press', lift_code: 'BEN01' }]);
+  api.emitSetLogged([{ exercise: 'Seated Row', weight: 180, reps: 8, rir: 4 }], '', [],
+    [{ exercise: 'Seated Row', lift_code: 'ROW01' }]);
+  api.emitSetLogged([{ exercise: 'Dips (Weighted)', weight: 50, reps: 11, rir: 0 }], '', [], null);
+  const detail = events[events.length - 1].detail;
+  // "Dips (Weighted)" can't bridge to "Weighted Dip" by name alone → stays in queue.
+  assert.ok(detail.plannedQueue.includes('Weighted Dip'),
+    'without the lift_code bridge the canonical alias does not resolve — exactly the live regression');
+});
+
+// --- Class B: shorthand-named lift re-parses against the pending planned lift ---
+function loadReplanHelper(planned, parseStub) {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnSrc = src.slice(
+    src.indexOf('async function rowsFromUnresolvedPlannedLead'),
+    src.indexOf('async function rowsFromWorkoutInput')
+  );
+  assert.ok(fnSrc, 'rowsFromUnresolvedPlannedLead must be found');
+  return new Function('firstUnloggedPlannedLift', 'parseWorkoutTextWithBackend',
+    `${fnSrc}; return rowsFromUnresolvedPlannedLead;`)(() => planned, parseStub);
+}
+
+test('post-log live path: "Lat pull"/"Incline" re-parse with the planned lift name substituted', async () => {
+  for (const [planned, input, expectText] of [
+    ['Lat Pulldown', 'Lat pull 175 8/2 8/2 8/2', 'Lat Pulldown 175 8/2 8/2 8/2'],
+    ['Incline DB Press', 'Incline 70 8/5 8/5 8/4', 'Incline DB Press 70 8/5 8/5 8/4'],
+  ]) {
+    let seen = null;
+    const stub = async (text) => { seen = text; return { intent: 'log_sets', rows: [{ exercise: planned }] }; };
+    const fn = loadReplanHelper(planned, stub);
+    const rows = await fn(input);
+    assert.equal(seen, expectText, 'lead is replaced with the planned lift name, sets preserved');
+    assert.ok(rows && rows.length, 'rows are produced');
+  }
+});
+
+test('post-log live path: re-parse never mis-attaches an unrelated lift / no-plan / no-sets', async () => {
+  let called = false;
+  const stub = async () => { called = true; return { intent: 'log_sets', rows: [{}] }; };
+  // Unrelated lead → no match → no re-parse.
+  assert.equal(await loadReplanHelper('Lat Pulldown', stub)('Zercher Squat 95 8/2'), null);
+  // No set tokens → null.
+  assert.equal(await loadReplanHelper('Lat Pulldown', stub)('Lat pull'), null);
+  // No pending plan → null.
+  assert.equal(await loadReplanHelper(null, stub)('Lat pull 175 8/2'), null);
+  assert.equal(called, false, 'the parser is never called for a non-matching / unattachable input');
+});

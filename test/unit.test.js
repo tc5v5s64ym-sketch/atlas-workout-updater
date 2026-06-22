@@ -1029,7 +1029,14 @@ test('parser_status_label_cannot_lie', () => {
 
   assert.equal(localAssignments.length, 1);
   assert.ok(localStatus > rethrowCheck);
-  assert.doesNotMatch(noFallbackPath, /lastParserStatus\s*=/);
+  // The pre-rethrow region must never claim the 'local' label (that can only follow
+  // a real local parse below the rethrow check).
+  assert.doesNotMatch(noFallbackPath, /lastParserStatus = \{ source: 'local' \}/);
+  // It MAY set a status only for the planned-lead reattach — and only after a
+  // successful backend re-parse populated rows, so the label still cannot lie.
+  if (/lastParserStatus\s*=/.test(noFallbackPath)) {
+    assert.match(noFallbackPath, /populateSetRows\(replanned\)[\s\S]*lastParserStatus = \{ source: 'backend-replanned' \}/);
+  }
 });
 
 test('clarification_leaves_text_unparsed', () => {
@@ -4429,8 +4436,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v20/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v19\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v21/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v20\b/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
