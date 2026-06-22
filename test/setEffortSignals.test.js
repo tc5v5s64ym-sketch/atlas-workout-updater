@@ -53,6 +53,18 @@ test('setEffortSignals: bench_redline_rep_drop_blocks_progression', () => {
   }
 });
 
+test('setEffortSignals: repeated redline on the same load is flagged', () => {
+  const a = analyzeSetSequence(
+    [[235, 5, 0], [235, 4, 0]],
+    { exerciseName: 'Bench Press' }
+  );
+  assert.equal(a.signals.redline_set, true);
+  assert.equal(a.signals.repeated_redline, true);
+  // A single redline set is not "repeated".
+  const single = analyzeSetSequence([[225, 5, 0]], { exerciseName: 'Bench Press' });
+  assert.equal(single.signals.repeated_redline, false);
+});
+
 // ---------------------------------------------------------------------------
 // Fixture 3 — bench redline before weighted dips reroutes a pull first.
 // ---------------------------------------------------------------------------
