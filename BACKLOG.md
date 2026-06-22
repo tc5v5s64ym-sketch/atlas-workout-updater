@@ -343,6 +343,16 @@ Remaining (owner-decision — change repo settings; not built in #422):
 - **CODEX Review as a check** `[infrastructure]` `owner-decision` — if/when CODEX Review is automatable, surface its verdict as a required status check so a missing CODEX verdict blocks merge mechanically (today convention-enforced). Owner decision.
 - **Reconcile INVARIANTS PR1/PR2 with the `infrastructure` PR category** `[trust-sensitive]` `owner-decision` — the automation framework (`docs/RISK_LABELS.md`) recognizes an `infrastructure` PR class (CI/workflows/templates/labels, no app behavior change) and treats it as `auto-safe`, but `docs/INVARIANTS.md` PR2 still reads "docs PRs touch only `docs/` and root markdown — no config changes" and PR1 is "one concern per PR." Amend PR1/PR2 to explicitly recognize the infrastructure category (distinct from docs and from app-code PRs) so the standing invariants and the new contract do not disagree. **Owner-gated** because it edits `docs/INVARIANTS.md` (Constitution layer — OWNER_CHECKIN_RULES criterion 5); not self-amended in #422. Surfaced by automated review of #422.
 
+## Multi-style training support — PLANNING (owner-gated, not active)
+
+Atlas is currently shaped around one lifter's style (gym progressive overload in `weight × reps @ RIR`). The Dream is a training-intelligence engine for **many** styles. Planning spec filed: [`docs/TRAINING_PROFILE_TAXONOMY.md`](./docs/TRAINING_PROFILE_TAXONOMY.md) — defines the first five training profiles (strength · hypertrophy · general fitness · cardio/endurance · bodyweight/calisthenics/circuits), a deterministic **profile-score** model (style as a multi-axis vector, not one fixed label), an onboarding classifier, an exercise **modality schema** (`load_type`/`fatigue_class`/`effort_metric`/`progression_metric`), expanded logging grammar (duration/distance/pace/zone/rounds/`+load`), a **profile-aware stimulus governor** (RIR rules differ by profile; RIR is irrelevant for cardio), live cross-modality fatigue routing, coach-voice examples, and a per-profile golden test matrix. Research-grounded (WHO 2020 / HHS activity guidelines; ACSM progression; Zourdos 2016 RIR-RPE; Refalo 2023 proximity-to-failure; HR-zone / Karvonen models).
+
+**Status:** docs/plan only — no production, write-path, parser, or schema change. **Owner-gated to promote.** Phased engine-first build plan (PR-T2…PR-T8) lives in the spec's Part D. Scope fence: this is multi-*style* for the single owner, **not** multi-*user* (multi-user stays out per the Vision guardrail). Promote a slice into `docs/ACTIVE_ROADMAP.md` only on explicit owner direction.
+
+- **PR-T2** modality schema (pure data) `[correctness]` · **PR-T3** profile-score engine (read-only) `[correctness]` · **PR-T4** onboarding classifier `[correctness]` · **PR-T5** profile-aware stimulus governor `[trust-critical]` · **PR-T6** expanded logging grammar — **owner-gated** (slash-notation contract / `workoutTextParser.js`) + the **[owner-gated migration]** decision for where non-RIR metrics persist `[trust-critical]` · **PR-T7** live fatigue routing `[correctness]` · **PR-T8** coach voice `[polish]`.
+
+---
+
 ## Someday / future scope
 
 _Not active queue. Guiding principle: Atlas infers from data and behaviour; it does not interrogate the user._

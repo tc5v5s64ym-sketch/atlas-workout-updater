@@ -63,6 +63,7 @@ These describe specific systems or constraints. Use them when your PR touches th
 - `docs/TODAY_SCREEN_SPEC.md`
 - `docs/RECOMMENDATION_PIPELINE_V1_5.md`
 - `docs/TRAINING_SME_LAYER.md`
+- `docs/TRAINING_PROFILE_TAXONOMY.md` — planning spec for multi-style training support (five training profiles, profile-score model, modality schema, onboarding classifier, profile-aware stimulus governor). Owner-gated, not active roadmap; filed in `BACKLOG.md`.
 
 ## Historical / archived plans
 
