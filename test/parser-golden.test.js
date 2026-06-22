@@ -766,3 +766,44 @@ test('feedback guard does NOT block known logging language', () => {
   assert.equal(parseWorkoutText('Bench 140 15/4 230 4/2').intent, 'log_sets');
   assert.equal(parseWorkoutText('Seated rows 190 11/2 11/2 11/2').intent, 'log_sets');
 });
+
+// ---------------------------------------------------------------------------
+// Bare-set attachment to the current planned lift (2026-06-21 live failure)
+//
+// When a planned workout is open, a bare set sequence with NO exercise name
+// should attach to the current/next planned lift (passed as context.activeExercise
+// by the app). Without any lift context it must still ask for clarification — and
+// never coin a phantom lift.
+// ---------------------------------------------------------------------------
+
+test('bare set sequence attaches to the lift in context.activeExercise', () => {
+  const r = parseWorkoutText('140 15 230 4/2 4/1 3/1', { activeExercise: 'Bench Press' });
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.exercise, 'Bench Press');
+});
+
+test('bare set sequence with NO lift context asks for clarification (no phantom lift)', () => {
+  const r = parseWorkoutText('140 15 230 4/2 4/1 3/1');
+  assert.notEqual(r.intent, 'log_sets', 'must not log without a lift');
+  assert.ok(!Array.isArray(r.sets) || r.sets.length === 0 || r.intent === 'needs_clarification');
+});
+
+// ---------------------------------------------------------------------------
+// Composer placeholder is parse-safe and warm-up-safe if submitted
+//
+// The compact placeholder marks warm-ups with a "wu" suffix. If the lifter submits
+// the whole hint, the "{w}x{r}wu" tokens are NOT valid sets, so the parser logs
+// ONLY the working sets — warm-ups never become save-ready. Aliases parse too.
+// ---------------------------------------------------------------------------
+
+test('submitting the compact placeholder logs only working sets (wu warm-ups dropped)', () => {
+  const r = parseWorkoutText('Bench 140x15wu 190x10wu 230 5/2 x3');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.exercise, 'Bench Press', 'the "Bench" alias resolves to Bench Press');
+  assert.equal(r.sets.length, 3, 'only the 3 working sets log; the 2 wu warm-ups are not save-ready');
+  for (const s of r.sets) { assert.equal(s.weight, 230); assert.equal(s.reps, 5); assert.equal(s.rir, 2); }
+});
+
+test('a bare "{w}x{r}wu" warm-up token alone is not a loggable set', () => {
+  assert.notEqual(parseWorkoutText('140x15wu').intent, 'log_sets');
+});

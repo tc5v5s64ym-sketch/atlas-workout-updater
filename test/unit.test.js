@@ -937,7 +937,7 @@ test('conversational logger calls backend parser before local parser fallback', 
   assert.match(appSource, /async function parseWorkoutTextWithBackend/);
   assert.match(appSource, /api\('\/api\/parse-workout-text'/);
   assert.match(appSource, /test_mode: true/);
-  assert.ok(rowsFunction.indexOf('parseWorkoutTextWithBackend(workoutText)') < rowsFunction.indexOf('parseWorkoutText(workoutText)'));
+  assert.ok(rowsFunction.indexOf('parseWorkoutTextWithBackend(workoutText)') < rowsFunction.indexOf('parseWorkoutText(workoutText'));
   assert.match(rowsFunction, /console\.warn.*parse-workout-text unavailable/);
   assert.doesNotMatch(rowsFunction, /setStatus.*Backend parser unavailable/);
 });
@@ -1008,7 +1008,7 @@ test('clarification_blocks_local_parser_invocation', () => {
   );
   const catchStart = rowsFunction.indexOf('catch (backendError)');
   const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;', catchStart);
-  const localParserCall = rowsFunction.indexOf('parseWorkoutText(workoutText)', catchStart);
+  const localParserCall = rowsFunction.indexOf('parseWorkoutText(workoutText', catchStart);
 
   assert.ok(catchStart >= 0);
   assert.ok(rethrowCheck > catchStart);
@@ -4429,8 +4429,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v16/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v15\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v17/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v16\b/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
