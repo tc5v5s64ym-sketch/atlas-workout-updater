@@ -168,7 +168,7 @@ test('post-log identity: emitSetLogged derives nextPlanned + plannedQueue from o
 // This is the path the #480 helper-only tests missed: in the live coach-suggestion
 // flow the logged row is the catalog canonical ("Dips (Weighted)") and completion
 // must be bridged to the planned lift ("Weighted Dip") by the enrichment lift_code.
-function loadEmitHarness() {
+function loadEmitHarness(catalogOptions) {
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const slice = src.slice(
     src.indexOf('function plannedExerciseEntries()'),
@@ -176,7 +176,11 @@ function loadEmitHarness() {
   );
   assert.ok(slice, 'emitSetLogged + identity helpers must be found');
   const events = [];
-  const fakeDoc = { dispatchEvent: e => { events.push(e); return true; } };
+  const fakeDoc = {
+    dispatchEvent: e => { events.push(e); return true; },
+    // The loaded exercise catalog datalist (value = canonical_name, label = code).
+    getElementById: id => (id === 'exercise-catalog' && catalogOptions) ? { options: catalogOptions } : null,
+  };
   function FakeCustomEvent(type, init) { return { type, detail: init && init.detail }; }
   const factory = new Function(
     'document', 'CustomEvent', 'setsTableBody', 'parsedRowsEditor', 'invalidatePreview',
@@ -218,19 +222,35 @@ test('post-log live path: emitSetLogged with enrichment bridges "Dips (Weighted)
   assert.equal(detail.nextPlanned, 'Lat Pulldown', 'composer/handoff advance to Lat Pulldown');
 });
 
-test('post-log live path: WITHOUT enrichment the bug persists (proves the suggestion-flow fetch is required)', () => {
-  const { api, events } = loadEmitHarness();
+test('post-log live path: the catalog datalist bridges the alias with NO enrichment / network call', () => {
+  // The live fix: lift_code comes from the loaded catalog datalist (canonical_name →
+  // code), so the dip resolves WITHOUT the per-set /api/log-workout preview call that
+  // broke the mid-session no-write guardrail (E2E previewRequests must stay 0).
+  const catalog = [{ value: 'Dips (Weighted)', label: 'DIP01' }];
+  const { api, events } = loadEmitHarness(catalog);
   api.setIntentData(SUGGESTED_PLAN);
-  // Pre-2 lifts done; dip logged as canonical but with NO enrichment (the old gap).
+  api.emitSetLogged([{ exercise: 'Bench Press', weight: 230, reps: 5, rir: 2 }], '', [],
+    [{ exercise: 'Bench Press', lift_code: 'BEN01' }]);
+  api.emitSetLogged([{ exercise: 'Seated Row', weight: 180, reps: 8, rir: 4 }], '', [],
+    [{ exercise: 'Seated Row', lift_code: 'ROW01' }]);
+  api.emitSetLogged([{ exercise: 'Dips (Weighted)', weight: 50, reps: 11, rir: 0 }], '', [], null);
+  assert.ok(api.getCompleted().includes('Weighted Dip'), 'datalist code bridges canonical → planned name');
+  const detail = events[events.length - 1].detail;
+  assert.ok(!detail.plannedQueue.includes('Weighted Dip'));
+  assert.equal(detail.nextPlanned, 'Lat Pulldown');
+});
+
+test('post-log live path: with NO code bridge at all (no enrichment, no catalog) the alias cannot resolve', () => {
+  const { api, events } = loadEmitHarness(null);
+  api.setIntentData(SUGGESTED_PLAN);
   api.emitSetLogged([{ exercise: 'Bench Press', weight: 230, reps: 5, rir: 2 }], '', [],
     [{ exercise: 'Bench Press', lift_code: 'BEN01' }]);
   api.emitSetLogged([{ exercise: 'Seated Row', weight: 180, reps: 8, rir: 4 }], '', [],
     [{ exercise: 'Seated Row', lift_code: 'ROW01' }]);
   api.emitSetLogged([{ exercise: 'Dips (Weighted)', weight: 50, reps: 11, rir: 0 }], '', [], null);
   const detail = events[events.length - 1].detail;
-  // "Dips (Weighted)" can't bridge to "Weighted Dip" by name alone → stays in queue.
   assert.ok(detail.plannedQueue.includes('Weighted Dip'),
-    'without the lift_code bridge the canonical alias does not resolve — exactly the live regression');
+    'no code bridge → the canonical alias does not resolve (documents why the datalist/enrichment bridge is needed)');
 });
 
 // --- Class B: shorthand-named lift re-parses against the pending planned lift ---

@@ -2630,10 +2630,15 @@ async function rowsFromWorkoutInput() {
   try {
     parsed = await parseWorkoutTextWithBackend(workoutText);
   } catch (backendError) {
-    // Before any fallback: re-parse a shorthand-named lift that refers to the
-    // pending planned lift, so "Lat pull"/"Incline" attach to "Lat Pulldown"/
-    // "Incline DB Press" rather than silently routing to chat.
-    const replanned = await rowsFromUnresolvedPlannedLead(workoutText);
+    // Re-parse a shorthand-named lift that refers to the pending planned lift, so
+    // "Lat pull"/"Incline" attach to "Lat Pulldown"/"Incline DB Press" instead of
+    // routing to chat. ONLY when the backend actually responded but couldn't resolve
+    // rows (noFallback) — for network/5xx we skip it and go straight to the local
+    // fallback (which already gets firstUnloggedPlannedLift as activeExercise),
+    // avoiding a wasted ~8s re-parse timeout when offline at the gym.
+    const replanned = !shouldUseLocalFallback(backendError)
+      ? await rowsFromUnresolvedPlannedLead(workoutText)
+      : null;
     if (replanned && replanned.length) {
       populateSetRows(replanned);
       lastParserStatus = { source: 'backend-replanned' };
@@ -2815,6 +2820,20 @@ function remainingPlannedExercises() {
   });
 }
 
+// Resolve a lift_code for an exercise NAME from the loaded catalog datalist
+// (option value = canonical_name, label = lift_code). This lets completion bridge
+// a logged catalog canonical ("Dips (Weighted)") to a planned lift BY CODE without
+// any network call — so conversational logging issues NO preview request (the
+// mid-session no-write guardrail stays intact). Empty string when unresolved.
+function liftCodeFromCatalog(name) {
+  if (!name || typeof document === 'undefined') return '';
+  const dl = document.getElementById('exercise-catalog');
+  if (!dl) return '';
+  const key = String(name).toLowerCase();
+  const opt = Array.from(dl.options || []).find(o => (o.value || '').toLowerCase() === key);
+  return opt ? (opt.label || '') : '';
+}
+
 // The first planned exercise (visible order) not yet logged this session — the
 // lift a bare set sequence ("140 15 190 10 230 4/2…") should attach to when the
 // lifter names no exercise, and the next-up handoff target. Null when there's no
@@ -2848,7 +2867,14 @@ function buildRowsFromSessionLog() {
 function resolveCompletedIdentity(rawName, enrichmentRow) {
   const entries = plannedExerciseEntries();
   if (entries.length) {
-    const loggedCode = (enrichmentRow && enrichmentRow.lift_code) || '';
+    // lift_code is the reliable bridge across naming differences ("Dips (Weighted)"
+    // vs planned "Weighted Dip"). Prefer the enrichment's code (started flow);
+    // otherwise resolve it from the catalog datalist by the logged canonical / raw
+    // name — no network call, so conversational logging issues no preview request.
+    const loggedCode = (enrichmentRow && enrichmentRow.lift_code)
+      || liftCodeFromCatalog(enrichmentRow && enrichmentRow.canonical_exercise)
+      || liftCodeFromCatalog(rawName)
+      || '';
     if (loggedCode) {
       const match = entries.find(e => e.liftCode && e.liftCode.toLowerCase() === String(loggedCode).toLowerCase());
       if (match) return match.name;
@@ -3607,14 +3633,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     let midSessionEnrichment = null;
     const hasPrescribed = Array.isArray(lastPrescribed) && lastPrescribed.length > 0;
     const hasPlan = activePlannedSession && activePlannedSession.exercises.length > 0;
-    // A coach-suggested plan (logged without "Start Session") also needs enrichment:
-    // without it the logged rows carry no lift_code, so resolveCompletedIdentity
-    // cannot map a logged canonical ("Dips (Weighted)") back to the planned lift
-    // ("Weighted Dip") when the wording differs — completion / remaining queue /
-    // composer then go stale. Fetch enrichment whenever ANY plan exists so the
-    // lift_code bridge is available in both flows. Still test_mode dry-run — no write.
-    const hasSuggestedPlan = !hasPlan && plannedExerciseEntries().length > 0;
-    if (hasPrescribed || hasPlan || hasSuggestedPlan) {
+    if (hasPrescribed || hasPlan) {
       try {
         const loggedExercise = logRows[0] ? logRows[0].exercise || '' : '';
         const subPayload = {
