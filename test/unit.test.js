@@ -4429,8 +4429,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v19/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v18\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v20/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v19\b/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
@@ -4448,8 +4448,10 @@ test('set-effort wiring: app.js threads the remaining planned queue into atlas:s
     appSource.indexOf('function emitSetLogged('),
     appSource.indexOf('// The session lives in the buffer')
   );
-  // plannedQueue = the visible planned order minus already-completed lifts.
-  assert.match(block, /const plannedQueue = plannedExerciseOrder\(\)\.filter/);
+  // plannedQueue = the shared remaining-after-this-log source (excludes completed
+  // lifts under any alias); nextPlanned derives from the same source.
+  assert.match(block, /const remaining = remainingPlannedExercises\(\);/);
+  assert.match(block, /const plannedQueue = remaining;/);
   assert.match(block, /plannedQueue\.length \? \{ plannedQueue \}/);
   // Suggestion-only — emitSetLogged must not reorder or mutate the plan here.
   assert.doesNotMatch(block, /activePlannedSession\.exercises\.(sort|reverse|splice)/);

@@ -2729,20 +2729,49 @@ let sessionLog = [];
 // Cleared alongside sessionLog at save and on startOver.
 let sessionCompleted = [];
 
-// The ordered exercise names the lifter is working through, in the VISIBLE plan
-// order: a formally-started planned session if one exists, else the cached
-// coach-suggested plan (lastIntentData's recommended intent). This second source
-// is what makes next-up / bare-set-attach work when the lifter logs straight
-// against a coach suggestion without tapping "Start Session" (activePlannedSession
-// stays null in that flow).
-function plannedExerciseOrder() {
+// The planned exercises the lifter is working through, in the VISIBLE plan order,
+// WITH their identity fields (name + canonical + liftCode). Source: a formally-
+// started planned session if one exists, else the cached coach-suggested plan
+// (lastIntentData's recommended intent). This is the single source of truth for
+// post-log identity so every surface (sessionCompleted, plannedQueue, nextPlanned,
+// handoff, composer, set-effort reroute) resolves a logged lift to the SAME
+// planned name — whether or not the lifter tapped "Start Session".
+function plannedExerciseEntries() {
   if (activePlannedSession && activePlannedSession.exercises.length) {
-    return activePlannedSession.exercises.map(ex => ex.canonicalName || ex.name).filter(Boolean);
+    return activePlannedSession.exercises.map(ex => ({
+      name: ex.canonicalName || ex.name,
+      canonical: ex.canonicalName || ex.name,
+      liftCode: ex.liftCode || ''
+    })).filter(e => e.name);
   }
   const intents = (lastIntentData && lastIntentData.intents) || [];
   const recommended = intents.find(i => i.recommended);
   const exs = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
-  return exs.map(ex => ex.canonical_exercise || ex.exercise).filter(Boolean);
+  return exs.map(ex => ({
+    name: ex.canonical_exercise || ex.exercise,
+    canonical: ex.canonical_exercise || ex.exercise,
+    liftCode: ex.lift_code || ex.liftCode || ''
+  })).filter(e => e.name);
+}
+
+// The ordered exercise names (visible plan order). Unchanged contract — the names
+// are exactly what currentPlanForChat / resolveCompletedIdentity emit.
+function plannedExerciseOrder() {
+  return plannedExerciseEntries().map(e => e.name);
+}
+
+// The planned exercises (visible order) NOT yet completed this session — the ONE
+// shared "remaining after this log" source for nextPlanned, the bare-set attach
+// target, and the set-effort reroute queue, so they can never disagree. Completion
+// identity is normalized by resolveCompletedIdentity, so a logged alias
+// ("Dips (Weighted)" / "Lat pull") is matched to its planned name
+// ("Weighted Dip" / "Lat Pulldown") and correctly excluded.
+function remainingPlannedExercises() {
+  const completed = new Set(sessionCompleted.map(c => String(c).toLowerCase()));
+  return plannedExerciseOrder().filter(name => {
+    const n = String(name || '').toLowerCase();
+    return n && !completed.has(n);
+  });
 }
 
 // The first planned exercise (visible order) not yet logged this session — the
@@ -2751,11 +2780,7 @@ function plannedExerciseOrder() {
 // plan (started OR suggested) or it's complete. Shared by emitSetLogged's next-up
 // and the parse context. Read-only — never changes what gets written or how.
 function firstUnloggedPlannedLift() {
-  for (const name of plannedExerciseOrder()) {
-    const n = String(name || '').toLowerCase();
-    if (n && !sessionCompleted.some(c => String(c).toLowerCase() === n)) return name;
-  }
-  return null;
+  return remainingPlannedExercises()[0] || null;
 }
 
 // Editor-ready rows from the buffer, numbering sets per exercise.
@@ -2768,31 +2793,38 @@ function buildRowsFromSessionLog() {
   });
 }
 
-// Resolve the best stable identity for plan_completed tracking. When both the
-// server enrichment and the active planned session are present, prefer the
-// PLANNED exercise name so the server's name-based computePlanState can match
-// it against current_plan[].name (e.g. "Barbell Row" logged for planned "Rows").
-//
-// Returns the same string that currentPlanForChat emits for the matched plan
-// entry: canonicalName (canonical_exercise) if present, else name (exercise).
+// Resolve the best stable identity for plan_completed tracking against the ACTIVE
+// plan source (a started session OR the coach-suggested plan — plannedExerciseEntries),
+// so completion is recognized in BOTH flows. Returns the planned name exactly as
+// plannedExerciseOrder / currentPlanForChat emit it, so the server's name-based
+// computePlanState and the client's remaining-queue filter both match.
 // Priority:
-//   1. lift_code match against planned session → planned canonical/display name
+//   1. lift_code match (authoritative catalog identity from the enrichment row)
 //   2. canonical_exercise exact match → planned canonical/display name
-//   3. fall back to raw logged exercise name
-function resolveCompletedIdentity(rawName, enrichmentRow, plannedSession) {
-  if (plannedSession) {
-    const planName = m => m.canonicalName || m.name;
-    const loggedCode = enrichmentRow && enrichmentRow.lift_code;
+//   3. raw-name alias/contains match (mirrors planStepFor / getNextExerciseInPlan)
+//      so "Lat pull" → "Lat Pulldown" and "Weighted dips" → "Weighted Dip" resolve
+//   4. fall back to the raw logged exercise name
+function resolveCompletedIdentity(rawName, enrichmentRow) {
+  const entries = plannedExerciseEntries();
+  if (entries.length) {
+    const loggedCode = (enrichmentRow && enrichmentRow.lift_code) || '';
     if (loggedCode) {
-      const match = plannedSession.exercises.find(e => e.liftCode && e.liftCode.toLowerCase() === loggedCode.toLowerCase());
-      if (match) return planName(match);
+      const match = entries.find(e => e.liftCode && e.liftCode.toLowerCase() === String(loggedCode).toLowerCase());
+      if (match) return match.name;
     }
     const canonical = (enrichmentRow && enrichmentRow.canonical_exercise) || '';
     if (canonical) {
       const key = canonical.toLowerCase();
-      const match = plannedSession.exercises.find(e =>
-        (e.canonicalName || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
-      if (match) return planName(match);
+      const match = entries.find(e => e.canonical.toLowerCase() === key || e.name.toLowerCase() === key);
+      if (match) return match.name;
+    }
+    const rk = String(rawName || '').toLowerCase();
+    if (rk) {
+      const match = entries.find(e => {
+        const n = e.name.toLowerCase();
+        return n === rk || n.includes(rk) || rk.includes(n);
+      });
+      if (match) return match.name;
     }
   }
   return rawName;
@@ -2829,7 +2861,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
     // Track the best available planned identity for plan_completed wiring so the
     // server's name-based computePlanState can mark the exercise as done even
     // when the logged canonical name differs from the plan entry name.
-    const completedName = resolveCompletedIdentity(o.exercise, enrichMap.get(o.exercise), activePlannedSession);
+    const completedName = resolveCompletedIdentity(o.exercise, enrichMap.get(o.exercise));
     if (!sessionCompleted.includes(completedName)) sessionCompleted.push(completedName);
   }
   if (byExercise.length) {
@@ -2849,15 +2881,14 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
       // logged in order or out of order — never a later accessory while an earlier
       // lift is still outstanding. Mirrors nextRemainingExercise in
       // services/sessionPlanExecutor.js. Read-only narration — not the write path.
-      const nextPlanned = firstUnloggedPlannedLift();
-      // The remaining planned exercises (visible order) not yet completed — the
-      // queue the set-effort engine reads to suggest a reroute when the just-logged
-      // pressing work went yellow and the next planned move shares the prime mover.
+      // nextPlanned (the handoff/composer target) and plannedQueue (the set-effort
+      // reroute queue) derive from the SAME remaining-after-this-log source, so the
+      // handoff, composer placeholder, and reroute can never disagree — and a lift
+      // just completed (under any alias) is never re-offered or deferred.
       // Read-only narration; suggestion-only — it never reorders or mutates the plan.
-      const plannedQueue = plannedExerciseOrder().filter(name => {
-        const n = String(name || '').toLowerCase();
-        return n && !sessionCompleted.some(c => String(c).toLowerCase() === n);
-      });
+      const remaining = remainingPlannedExercises();
+      const nextPlanned = remaining[0] || null;
+      const plannedQueue = remaining;
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
         detail: {
           exercises: byExercise,
