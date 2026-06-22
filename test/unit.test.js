@@ -4429,8 +4429,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v18/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v17\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v19/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v18\b/, 'old cache name must be gone');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
@@ -4438,6 +4438,42 @@ test('shell cache: service worker version bumped and all shell scripts precached
   }
   // The API must still never be intercepted
   assert.match(sw, /startsWith\('\/api'\)/, 'API traffic must stay uncached');
+});
+
+// ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
+
+test('set-effort wiring: app.js threads the remaining planned queue into atlas:set-logged', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const block = appSource.slice(
+    appSource.indexOf('function emitSetLogged('),
+    appSource.indexOf('// The session lives in the buffer')
+  );
+  // plannedQueue = the visible planned order minus already-completed lifts.
+  assert.match(block, /const plannedQueue = plannedExerciseOrder\(\)\.filter/);
+  assert.match(block, /plannedQueue\.length \? \{ plannedQueue \}/);
+  // Suggestion-only — emitSetLogged must not reorder or mutate the plan here.
+  assert.doesNotMatch(block, /activePlannedSession\.exercises\.(sort|reverse|splice)/);
+});
+
+test('set-effort wiring: handleSetLogged renders one short effort line + folds reroute, no full-session recap', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = ccSource.slice(
+    ccSource.indexOf('async function handleSetLogged(detail)'),
+    ccSource.indexOf('async function handlePreviewReady')
+  );
+  assert.ok(block.length > 0, 'handleSetLogged must be found');
+  // The engine-backed effort line is rendered (one element), and the planned queue
+  // is forwarded to the coach facts.
+  assert.match(block, /planned_queue:\s*Array\.isArray\(detail\.plannedQueue\)/);
+  assert.match(block, /reaction\.effort_note/);
+  assert.match(block, /effort-note/);
+  // The reroute suggestion is folded into the existing single handoff line.
+  assert.match(block, /reaction\.reroute && reaction\.reroute\.line/);
+  // Exactly one effort line — the deterministic line is rendered once, not per set.
+  assert.equal((block.match(/className = 'coach-msg effort-note'/g) || []).length, 1);
+  // No full-session recap: the per-set handler must not iterate the whole session
+  // log / sessionLog to print a summary after each set.
+  assert.doesNotMatch(block, /sessionLog\b/, 'no full-session recap may be built per set');
 });
 
 // ── Glanceable dashboard ───────────────────────────────────────────────────────

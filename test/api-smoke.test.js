@@ -459,6 +459,42 @@ test('api smoke: coach/message never appends to a sheet', async () => {
   assert.equal(fakeSheetsState.appendCalls.length, before, 'coach endpoint must not write any rows');
 });
 
+test('api smoke: coach/message returns deterministic set-effort copy (engine-backed, LLM-independent)', async () => {
+  // PR 477 wiring: a heavy-compound redline with a same-prime-mover next move and
+  // a pull queued must yield an effort_note + a reroute suggestion. These are
+  // computed from the engine, so they are present even with Gemini UNCONFIGURED
+  // (the default here) — i.e. the LLM-down path still surfaces the engine's read.
+  const before = fakeSheetsState.appendCalls.length;
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({
+      facts: {
+        exerciseName: 'Bench Press',
+        todaySets: [{ weight: 235, reps: 6, rir: 2 }, { weight: 235, reps: 6, rir: 0 }, { weight: 235, reps: 4, rir: 1 }],
+        planned_queue: ['Weighted Dips', 'Seated Row'],
+      },
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.message, null, 'Gemini is unconfigured here — prose is null');
+  assert.equal(body.data.effort_note, 'You went to zero and reps dropped after. Pressing is yellow now.');
+  assert.ok(body.data.reroute, 'a reroute suggestion must be present');
+  assert.equal(body.data.reroute.type, 'reroute_pull_first');
+  assert.match(body.data.reroute.line, /Seated Row/);
+  // Trust: surfacing the engine read never writes a row.
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'coach effort path must not write');
+});
+
+test('api smoke: coach/message omits set-effort extras when there is no signal / no queue', async () => {
+  const { body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 2 }] } })
+  });
+  // Clean on-target set, no planned queue → no effort line, no reroute.
+  assert.equal(body.data.effort_note, null);
+  assert.equal(body.data.reroute, null);
+});
+
 test('api smoke: health/gemini reflects configured state', async () => {
   fakeCoachState.configured = true;
   try {

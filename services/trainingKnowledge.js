@@ -258,6 +258,19 @@ const REASON_CODES = Object.freeze({
   ENDURANCE_DENSITY_PROGRESS: 'endurance_density_progress',
   COLD_START_NO_HISTORY: 'cold_start_no_history',
   LLM_NUMBERS_LOCKED: 'llm_numbers_locked',
+  // Set-effort signals — the per-set RIR/fatigue vocabulary emitted by
+  // services/setEffortSignals.js (Training Intelligence PR 477). Registered
+  // centrally here so the codes have one home; the engine module defines the
+  // same string values in its own frozen EFFORT_REASON_CODES map (a test pins
+  // the two in sync).
+  WARMUP_FEEDER_IGNORED: 'warmup_feeder_ignored',
+  REDLINE_SET: 'redline_set',
+  REP_DROP_AFTER_REDLINE: 'rep_drop_after_redline',
+  PRESSING_READINESS_YELLOW: 'pressing_readiness_yellow',
+  SAME_PRIME_MOVER_CONFLICT: 'same_prime_mover_conflict',
+  REROUTE_PULL_FIRST: 'reroute_pull_first',
+  CAP_NEXT_PRESS: 'cap_next_press',
+  HIGH_RIR_WORKSET_UNDERDOSED: 'high_rir_workset_underdosed',
 });
 
 function normalizeTrainingGoal(goal) {

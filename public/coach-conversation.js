@@ -14,7 +14,9 @@
  * Coaching voice seam: getInWorkoutNote(facts) turns Atlas's deterministic
  * *facts* into the coach's *voice* via /api/coach/message (Gemini), falling back
  * to a deterministic one-line reaction whenever the LLM is unconfigured, slow,
- * or errors. The engine owns the numbers; the voice only words them.
+ * or errors. The engine owns the numbers; the voice only words them. It returns
+ * { note, effort_note, reroute } — `note` is the prose; `effort_note` and
+ * `reroute` are the deterministic, engine-backed set-effort extras (PR 477).
  *
  * Reuses app.js globals (top-level fns): api, getApiKey, fetchReaction,
  * previewSetsForLift, normalizePlanExercise.
@@ -734,18 +736,29 @@
   // When a substitution is present, it is passed in facts so the LLM addresses
   // it in one integrated response. The fallback appends the templated line after
   // the opener so no separate substitution box is needed.
+  // Returns { note, effort_note, reroute }. `note` is the conversational prose
+  // (LLM if available, else the templated opener). `effort_note` and `reroute`
+  // are the deterministic, engine-backed set-effort extras the server computes
+  // (PR 477 wiring) — present whether or not Gemini answered, and rendered as
+  // their own short line so the engine's read is never lost to an LLM outage.
   async function getInWorkoutNote(facts) {
-    const llm = await getLlmCoachingMessage(facts).catch(() => null);
-    if (llm && llm.trim()) return llm;
+    const data = await getLlmCoachingMessage(facts).catch(() => null);
+    const llm = data && typeof data.message === 'string' ? data.message : null;
+    const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
+      ? data.effort_note.trim() : null;
+    const reroute = data && data.reroute && typeof data.reroute === 'object' ? data.reroute : null;
+    if (llm && llm.trim()) return { note: llm, effort_note, reroute };
     const opener = coachOpener(facts.todaySets || [], facts.rec);
     const sub = facts.substitution;
     if (sub && sub.classification) {
       const subLine = coachVoiceTemplates.templatedSubstitutionLine(sub);
-      if (subLine) return opener + '\n\n' + subLine;
+      if (subLine) return { note: opener + '\n\n' + subLine, effort_note, reroute };
     }
-    return opener;
+    return { note: opener, effort_note, reroute };
   }
 
+  // Returns the full /api/coach/message data object ({ message, effort_note,
+  // reroute }) or null — the caller pulls the prose and the engine extras from it.
   async function getLlmCoachingMessage(facts) {
     if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
@@ -753,7 +766,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ facts })
-    }).then(res => (res && res.data && res.data.message) || null);
+    }).then(res => (res && res.data) || null);
     return Promise.race([request, timeout]);
   }
 
@@ -950,13 +963,15 @@
       && prescribedName.toLowerCase() === lastSuggestion.prescribed.toLowerCase();
     if (suggestMatch) lastSuggestion = null;
 
-    const note = await getInWorkoutNote({
+    const reaction = await getInWorkoutNote({
       liftCode: code,
       exerciseName: primary.exercise,
       todaySets: primary.sets,
       rec,
+      planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
       substitution: suggestMatch ? undefined : primarySub
     });
+    const note = reaction.note;
     await typeOut(body, note);
     chatTurns.push({ role: 'atlas', text: note });
 
@@ -968,6 +983,15 @@
         : `You went with ${loggedName}.`;
       await typeOut(ack, ackText);
       bubble.appendChild(ack);
+    }
+
+    // Deterministic, engine-backed set-effort line (PR 477). One short line only —
+    // it never expands into a full-session recap.
+    if (reaction.effort_note) {
+      const eff = document.createElement('div');
+      eff.className = 'coach-msg effort-note';
+      await typeOut(eff, reaction.effort_note);
+      bubble.appendChild(eff);
     }
 
     if (rec && rec.recommendation) {
@@ -1011,7 +1035,12 @@
       if (nextEx) {
         const handoff = document.createElement('div');
         handoff.className = 'next-exercise-handoff';
-        handoff.textContent = `Moving on — next up: ${nextEx}.`;
+        // When the engine flags a same-prime-mover conflict, word its reroute
+        // suggestion instead of the plain next-up. Suggestion-only — the plan,
+        // cursor, and composer placeholder below are unchanged.
+        handoff.textContent = (reaction.reroute && reaction.reroute.line)
+          ? reaction.reroute.line
+          : `Moving on — next up: ${nextEx}.`;
         bubble.appendChild(handoff);
         // Advance the composer placeholder to the next exercise’s FULL prescription
         // (each set written out) so the lifter can log it without scrolling back to
