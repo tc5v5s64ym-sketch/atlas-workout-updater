@@ -2594,6 +2594,34 @@ function applyUpdateToLastRow(update) {
   if (update.rir != null) lastRow.querySelector('.set-rir').value = String(update.rir);
 }
 
+// When a conversational log names a lift the parser can't resolve ("Lat pull",
+// "Incline") but the lead clearly refers to the current pending PLANNED lift,
+// re-parse with the planned lift's full name substituted so the sets attach to it
+// instead of dead-ending in chat ("Noted — keep logging…"). Returns rows or null.
+// Frontend-only: it calls the SAME backend parser with a resolved name — no parser
+// grammar change. Gated tightly — only fires when the lead (the words before the
+// first number) alias-matches the pending planned lift, so an unrelated new lift
+// never mis-attaches; with no plan / no match it returns null and the normal
+// chat-clarify fallback runs.
+async function rowsFromUnresolvedPlannedLead(workoutText) {
+  const planned = firstUnloggedPlannedLift();
+  if (!planned) return null;
+  const tokens = String(workoutText || '').trim().split(/\s+/);
+  let i = 0;
+  while (i < tokens.length && !/\d/.test(tokens[i])) i += 1;
+  if (i === 0 || i >= tokens.length) return null; // no lead name, or no set tokens
+  const lead = tokens.slice(0, i).join(' ').toLowerCase();
+  const p = String(planned).toLowerCase();
+  if (!(lead === p || p.includes(lead) || lead.includes(p))) return null;
+  const rebuilt = `${planned} ${tokens.slice(i).join(' ')}`;
+  try {
+    const retry = await parseWorkoutTextWithBackend(rebuilt);
+    return retry && retry.intent === 'log_sets' ? retry.rows : null;
+  } catch {
+    return null;
+  }
+}
+
 async function rowsFromWorkoutInput() {
   const workoutText = workoutTextInput.value.trim();
   if (!workoutText || workoutText === lastParsedWorkoutText) return;
@@ -2602,6 +2630,24 @@ async function rowsFromWorkoutInput() {
   try {
     parsed = await parseWorkoutTextWithBackend(workoutText);
   } catch (backendError) {
+    // Re-parse a shorthand-named lift that refers to the pending planned lift, so
+    // "Lat pull"/"Incline" attach to "Lat Pulldown"/"Incline DB Press" instead of
+    // routing to chat. ONLY when the backend actually responded but couldn't resolve
+    // rows (noFallback) — for network/5xx we skip it and go straight to the local
+    // fallback (which already gets firstUnloggedPlannedLift as activeExercise),
+    // avoiding a wasted ~8s re-parse timeout when offline at the gym.
+    const replanned = !shouldUseLocalFallback(backendError)
+      ? await rowsFromUnresolvedPlannedLead(workoutText)
+      : null;
+    if (replanned && replanned.length) {
+      populateSetRows(replanned);
+      lastParserStatus = { source: 'backend-replanned' };
+      activeExercise = replanned[0]?.exercise || null;
+      parsedRowsEditor.hidden = true;
+      lastParsedWorkoutText = workoutText;
+      lastPrescribed = null;
+      return;
+    }
     if (!shouldUseLocalFallback(backendError)) throw backendError;
     console.warn('[atlas] parse-workout-text unavailable, using local fallback:', backendError.message);
     const localResult = parseWorkoutText(workoutText, { activeExercise: activeExercise || firstUnloggedPlannedLift() });
@@ -2774,6 +2820,20 @@ function remainingPlannedExercises() {
   });
 }
 
+// Resolve a lift_code for an exercise NAME from the loaded catalog datalist
+// (option value = canonical_name, label = lift_code). This lets completion bridge
+// a logged catalog canonical ("Dips (Weighted)") to a planned lift BY CODE without
+// any network call — so conversational logging issues NO preview request (the
+// mid-session no-write guardrail stays intact). Empty string when unresolved.
+function liftCodeFromCatalog(name) {
+  if (!name || typeof document === 'undefined') return '';
+  const dl = document.getElementById('exercise-catalog');
+  if (!dl) return '';
+  const key = String(name).toLowerCase();
+  const opt = Array.from(dl.options || []).find(o => (o.value || '').toLowerCase() === key);
+  return opt ? (opt.label || '') : '';
+}
+
 // The first planned exercise (visible order) not yet logged this session — the
 // lift a bare set sequence ("140 15 190 10 230 4/2…") should attach to when the
 // lifter names no exercise, and the next-up handoff target. Null when there's no
@@ -2807,7 +2867,14 @@ function buildRowsFromSessionLog() {
 function resolveCompletedIdentity(rawName, enrichmentRow) {
   const entries = plannedExerciseEntries();
   if (entries.length) {
-    const loggedCode = (enrichmentRow && enrichmentRow.lift_code) || '';
+    // lift_code is the reliable bridge across naming differences ("Dips (Weighted)"
+    // vs planned "Weighted Dip"). Prefer the enrichment's code (started flow);
+    // otherwise resolve it from the catalog datalist by the logged canonical / raw
+    // name — no network call, so conversational logging issues no preview request.
+    const loggedCode = (enrichmentRow && enrichmentRow.lift_code)
+      || liftCodeFromCatalog(enrichmentRow && enrichmentRow.canonical_exercise)
+      || liftCodeFromCatalog(rawName)
+      || '';
     if (loggedCode) {
       const match = entries.find(e => e.liftCode && e.liftCode.toLowerCase() === String(loggedCode).toLowerCase());
       if (match) return match.name;
