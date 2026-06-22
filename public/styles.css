@@ -663,6 +663,10 @@ main {
 .debug-pre { font-size: 0.78rem; overflow-x: auto; background: var(--card-sunken); border-radius: var(--r-sm); padding: var(--s3); margin: var(--s2) 0 0; white-space: pre-wrap; word-break: break-all; }
 /* Glanceable build badge in Settings — deployed commit + boot time. */
 .build-info { font-family: var(--mono); font-size: 0.72rem; margin: var(--s2) 0 0; }
+/* Running-shell tag — the bundle actually loaded in this browser. Prominent (not
+   muted) so "is the new code live?" is unmissable; the strong tag stands out. */
+.shell-info { font-family: var(--mono); font-size: 0.82rem; margin: var(--s3) 0 0; }
+.shell-info strong { color: var(--accent); }
 
 /* ============================================================================
    Coach (chat-first front door)
