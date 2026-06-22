@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v22';
+const ATLAS_SHELL_BUILD = 'v23';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -566,6 +566,12 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
 // so "is the live app current?" is a glance, not a Debug-JSON dig. /version is
 // public (no auth), so a plain fetch works; failures degrade quietly.
 (async function populateBuildInfo() {
+  // The running-shell tag is baked into THIS bundle — set it first and
+  // unconditionally (its own prominent line) so it shows even if /version is
+  // unreachable. This is the truth about which JS is actually loaded; the server
+  // build line below can read "current" while the browser runs a cached shell.
+  const shellEl = document.getElementById('shell-version');
+  if (shellEl) shellEl.textContent = ATLAS_SHELL_BUILD;
   const el = document.getElementById('build-version');
   if (!el) return;
   try {
@@ -582,13 +588,9 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
       const d = new Date(v.deployed_at);
       if (!Number.isNaN(d.getTime())) when = `${d.toISOString().slice(0, 16).replace('T', ' ')}Z`;
     }
-    const server = when ? `${id} · deployed ${when}` : id;
-    // Append the SHELL build (this bundle's own tag) so a stale cached shell is a
-    // glance: server build vs the JS actually running. They should match after a
-    // fresh load; if "shell" lags the server build, hard-reload to clear the SW.
-    el.textContent = `${server} · shell ${ATLAS_SHELL_BUILD}`;
+    el.textContent = when ? `${id} · deployed ${when}` : id;
   } catch (_) {
-    el.textContent = `unavailable · shell ${ATLAS_SHELL_BUILD}`;
+    el.textContent = 'unavailable';
   }
 })();
 
