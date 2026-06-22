@@ -807,3 +807,13 @@ test('submitting the compact placeholder logs only working sets (wu warm-ups dro
 test('a bare "{w}x{r}wu" warm-up token alone is not a loggable set', () => {
   assert.notEqual(parseWorkoutText('140x15wu').intent, 'log_sets');
 });
+
+test('a no-RIR placeholder uses a single "{weight} {reps}" token that parses (no fragile xN)', () => {
+  // compactPrescription's RIR-less fallback must emit "Bench 230 5", not the
+  // non-round-tripping "Bench 230 5 x3" — so the displayed hint never misleads.
+  const r = parseWorkoutText('Bench 230 5');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.sets.length, 1);
+  assert.equal(r.sets[0].weight, 230);
+  assert.equal(r.sets[0].reps, 5);
+});

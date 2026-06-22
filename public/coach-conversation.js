@@ -534,10 +534,16 @@
     let sets = Number(ex.sets);
     if (!Number.isFinite(sets) || sets < 1) sets = 1;
     sets = Math.min(sets, 10);
-    const working = (ex.rir == null || ex.rir === '')
-      ? `${ex.weight} ${ex.reps}`
-      : `${ex.weight} ${ex.reps}/${ex.rir}`;
-    parts.push(sets > 1 ? `${working} x${sets}` : working);
+    if (ex.rir == null || ex.rir === '') {
+      // No RIR → a "{weight} {reps} xN" hint does NOT round-trip (bare-reps lists
+      // mis-parse), so emit a single clean "{weight} {reps}" token instead of a
+      // collapsed set. Mirrors formatNextPlaceholder; plan entries carry a
+      // target_rir in production, so this is a defensive fallback.
+      parts.push(`${ex.weight} ${ex.reps}`);
+    } else {
+      const working = `${ex.weight} ${ex.reps}/${ex.rir}`;
+      parts.push(sets > 1 ? `${working} x${sets}` : working);
+    }
     return parts.join(' ');
   }
 
