@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 
 // Engine target stub — stands in for recommendNextSet-derived numbers.
 const benchTarget = { exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 };
@@ -202,4 +202,59 @@ test('answerPlannedLiftQuestion: a lift name containing an advice-like word stil
   // Lateral Raise) — a direct value lookup for such a lift is still answered.
   const ctx = { current_plan: [{ name: 'Lateral Raises', weight: 25, reps: 15, sets: 3, rir: 1 }] };
   assert.equal(answerPlannedLiftQuestion("What's the RIR for lateral raise?", ctx), 'Lateral Raises today: RIR 1.');
+});
+
+// ── answerTotalRepsQuestion — engine-computed PLANNED total, never "you've done" ──
+// Live bug (2026-06-21): bare "Total?" after discussing Face Pull → Gemini answered
+// "You've done 45 reps of Face Pull today." — a fabricated, mis-tensed total for
+// work not logged. The engine now owns the total (sets × reps) and labels it planned.
+const totalCtx = { current_plan: [
+  { name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 },
+  { name: 'Face Pull', weight: 40, reps: 15, sets: 3, rir: 1 },
+] };
+
+test('answerTotalRepsQuestion: named lift → engine-computed planned total', () => {
+  assert.equal(
+    answerTotalRepsQuestion('how many reps total for face pulls', { clientContext: totalCtx }),
+    'Face Pull today: 45 total reps planned (3 sets × 15).'
+  );
+});
+
+test('answerTotalRepsQuestion: bare "Total?" resolves the lift from recent turns', () => {
+  const history = [
+    { role: 'user', text: 'how many reps total for face pulls' },
+    { role: 'assistant', text: 'Face Pull today: 15 reps.' },
+  ];
+  assert.equal(
+    answerTotalRepsQuestion('Total?', { history, clientContext: totalCtx }),
+    'Face Pull today: 45 total reps planned (3 sets × 15).'
+  );
+});
+
+test('answerTotalRepsQuestion: the answer is labeled planned, never "you\'ve done"', () => {
+  const ans = answerTotalRepsQuestion('total reps for bench?', { clientContext: totalCtx });
+  assert.match(ans, /planned/);
+  assert.doesNotMatch(ans, /you'?ve done|you did|you hit/i);
+});
+
+test('answerTotalRepsQuestion: answers reps-totals only — defers "total weight/volume"', () => {
+  // A "total" question worded as weight or volume asks a different metric; answering
+  // it with a rep count would be off-topic, so defer those to Gemini.
+  assert.equal(answerTotalRepsQuestion('total weight for bench?', { clientContext: totalCtx }), null);
+  assert.equal(answerTotalRepsQuestion("what's my total volume for bench?", { clientContext: totalCtx }), null);
+  // "total sets" (sets asked, not reps) is also a different metric → defer.
+  assert.equal(answerTotalRepsQuestion('total sets for bench?', { clientContext: totalCtx }), null);
+  // A reps total (and a bare "total?") still answer.
+  assert.equal(
+    answerTotalRepsQuestion('how many reps total for bench?', { clientContext: totalCtx }),
+    'Bench Press today: 15 total reps planned (3 sets × 5).'
+  );
+});
+
+test('answerTotalRepsQuestion: defers when not a total question, past-tense, or unresolvable', () => {
+  assert.equal(answerTotalRepsQuestion('how many reps for bench?', { clientContext: totalCtx }), null);
+  assert.equal(answerTotalRepsQuestion('what was my total last time?', { clientContext: totalCtx }), null);
+  assert.equal(answerTotalRepsQuestion('total?', { clientContext: {} }), null);
+  // No sets in the plan → cannot total without fabricating.
+  assert.equal(answerTotalRepsQuestion('total reps for bench?', { clientContext: { current_plan: [{ name: 'Bench Press', reps: 5, sets: null }] } }), null);
 });

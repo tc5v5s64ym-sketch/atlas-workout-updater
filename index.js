@@ -56,7 +56,7 @@ const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
-const { buildSessionQuestionAnswer, answerBareShorthand, answerPlannedLiftQuestion } = require('./services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, answerBareShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1246,6 +1246,18 @@ app.post('/api/coach/chat', async (req, res) => {
   // ("...last time?"), unnamed-lift ("what is RIR?"), or off-plan lifts, so
   // education / history / clarification routing is untouched. Context-only: no
   // Sheets, no LLM, no invented numbers.
+  // "Total?" (reps total) — answer the ENGINE-computed planned total (sets × reps),
+  // worded as planned, before Gemini. Otherwise the LLM multiplies the numbers
+  // itself and mis-tenses the result as completed work ("you've done 45 reps" for
+  // a lift not yet logged). Resolves the lift from the recent turns, so a bare
+  // "total?" follow-up works. Context-only: no Sheets, no LLM, no invented numbers.
+  const totalReps = answerTotalRepsQuestion(message, { history, clientContext: clientCtx });
+  if (totalReps) {
+    return standardSuccess(req, res, 'Coach chat — planned total answer', {
+      message: totalReps, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+    });
+  }
+
   const planned = answerPlannedLiftQuestion(message, clientCtx);
   if (planned) {
     return standardSuccess(req, res, 'Coach chat — current plan answer', {
