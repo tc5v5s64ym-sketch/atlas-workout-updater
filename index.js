@@ -87,6 +87,8 @@ const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
+const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
+const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
 const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
@@ -1030,15 +1032,63 @@ app.get('/api/health/gemini', (req, res) => {
 // "plan" explains why today's recommended session fits. READ-ONLY: this endpoint
 // never touches Google Sheets. When Gemini is unconfigured or fails, it returns
 // message:null so the client falls back to its templated copy — never blocked.
+// Deterministic set-effort signals (Training Intelligence PR 477 wiring). Reads
+// the client-provided set sequence + remaining planned queue and runs the pure
+// engine (services/setEffortSignals.js) to produce short engine-backed copy: a
+// per-set effort note and, when the next planned move shares a fatigued prime
+// mover, a suggestion-only reroute line. Computed independent of Gemini so the
+// copy survives an LLM outage; this route never writes, so proof fields /
+// Log_Cleaned are untouched. The LLM never sees or words these here (that is
+// PR 484) — this is the deterministic floor only.
+function computeSetEffortExtras(rawFacts) {
+  const out = { effort_note: null, reroute: null };
+  try {
+    const todaySets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
+    // Only analyze the current weighted/RIR workflow: at least one set must carry
+    // a finite weight or RIR. Empty/cardio-shaped input is left alone.
+    const hasSignal = todaySets.some(s => s && (Number.isFinite(Number(s.weight)) || Number.isFinite(Number(s.rir))));
+    if (!hasSignal) return out;
+    const rec = rawFacts.rec && typeof rawFacts.rec === 'object' ? rawFacts.rec : {};
+    const analysis = analyzeSetSequence(todaySets, {
+      exerciseName: rawFacts.exerciseName || rec.exercise_name || '',
+      targetRir: rec.target_rir,
+    });
+    if (!analysis) return out;
+    out.effort_note = buildEffortNote(analysis);
+    // Reroute only when a remaining planned queue exists (engine also guards this).
+    const queue = Array.isArray(rawFacts.planned_queue) ? rawFacts.planned_queue : [];
+    if (queue.length) {
+      const conflict = assessNextMoveConflict(analysis, queue);
+      const line = buildRerouteNote(conflict);
+      if (conflict && conflict.conflict && line) {
+        out.reroute = {
+          type: conflict.suggestion && conflict.suggestion.type,
+          next_exercise: conflict.next_exercise,
+          reason_codes: conflict.reason_codes,
+          line,
+        };
+      }
+    }
+  } catch (_) {
+    // Best-effort — a signal failure must never block the coach response.
+  }
+  return out;
+}
+
 app.post('/api/coach/message', async (req, res) => {
   const rawFacts = req.body && req.body.facts;
   if (!rawFacts || typeof rawFacts !== 'object') {
     return standardError(req, res, 'facts object is required', null, 400);
   }
   const kind = req.body.kind === 'plan' ? 'plan' : 'set';
+  // Engine-backed extras are deterministic and Gemini-independent — compute them
+  // up front so they ride along on every response path below (incl. LLM-down).
+  const effortExtras = kind === 'set'
+    ? computeSetEffortExtras(rawFacts)
+    : { effort_note: null, reroute: null };
   if (!coach.isConfigured()) {
     return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-      message: null, configured: false, model: coach.coachModel()
+      message: null, configured: false, model: coach.coachModel(), ...effortExtras
     });
   }
 
@@ -1092,12 +1142,12 @@ app.post('/api/coach/message', async (req, res) => {
     const message = kind === 'plan'
       ? await coach.generatePlanMessage(facts)
       : await coach.generateCoachMessage(facts);
-    return standardSuccess(req, res, 'Coach message', { message, configured: true, model: coach.coachModel(), source: 'gemini', kind });
+    return standardSuccess(req, res, 'Coach message', { message, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...effortExtras });
   } catch (error) {
     // Degrade gracefully: tell the client to use its templated fallback rather
     // than surfacing an error in the chat.
     return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-      message: null, configured: true, model: coach.coachModel(), error: error.message
+      message: null, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
     });
   }
 });

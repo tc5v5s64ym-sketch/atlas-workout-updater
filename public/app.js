@@ -2850,12 +2850,21 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
       // lift is still outstanding. Mirrors nextRemainingExercise in
       // services/sessionPlanExecutor.js. Read-only narration — not the write path.
       const nextPlanned = firstUnloggedPlannedLift();
+      // The remaining planned exercises (visible order) not yet completed — the
+      // queue the set-effort engine reads to suggest a reroute when the just-logged
+      // pressing work went yellow and the next planned move shares the prime mover.
+      // Read-only narration; suggestion-only — it never reorders or mutates the plan.
+      const plannedQueue = plannedExerciseOrder().filter(name => {
+        const n = String(name || '').toLowerCase();
+        return n && !sessionCompleted.some(c => String(c).toLowerCase() === n);
+      });
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
         detail: {
           exercises: byExercise,
           text: text || '',
           planIsComplete,
           nextPlanned,
+          ...(plannedQueue.length ? { plannedQueue } : {}),
           ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
         }
       }));
