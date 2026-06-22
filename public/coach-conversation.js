@@ -953,11 +953,13 @@
       setWorkoutPlaceholder('Say "done" to save your session');
     } else {
       // Next-exercise handoff: append a short line pointing at the next exercise
-      // in the plan. The engine owns the ordering — we only word it. Anchor on the
-      // LAST logged exercise so that when several lifts are logged in one input the
-      // handoff advances past everything just logged, not just past the first.
+      // in the plan. The engine owns the ordering — we only word it. Prefer the
+      // authoritative `detail.nextPlanned` (computed in app.js as the first
+      // planned exercise not yet completed, in the visible plan order — so it
+      // follows the plan and skips already-logged lifts). Fall back to the API-plan
+      // lookup only for freeform logging with no active planned session.
       const lastLogged = exercises[exercises.length - 1];
-      const nextEx = await getNextExerciseInPlan(lastLogged.exercise);
+      const nextEx = detail.nextPlanned || await getNextExerciseInPlan(lastLogged.exercise);
       if (nextEx) {
         const handoff = document.createElement('div');
         handoff.className = 'next-exercise-handoff';

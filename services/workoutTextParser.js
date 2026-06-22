@@ -628,11 +628,33 @@ function extractUnknownExerciseLead(rawText) {
     .trim();
   if (!rawName) return null;
 
+  // Guard against coining a phantom exercise from conversational feedback. A real
+  // (even unknown) exercise name is a short noun phrase ("Jefferson Curl", "Hack
+  // Squat"). Natural-language feedback ("I don't want to do 11 reps...", "we
+  // should move up...") contains pronouns/negations/verbs that never appear in
+  // lift names, or simply runs long. When the lead reads as prose, bail (→ the
+  // message is treated as a coach question, not a logged set) instead of saving a
+  // bogus "I Don't Want To Do" lift.
+  if (looksLikeProse(rawName)) return null;
+
   return {
     rawName,
     rest: tokens.slice(start).join(' ').trim(),
   };
 }
+
+// Words that occur in conversational feedback but never in an exercise name.
+const NON_EXERCISE_WORDS = /\b(i|im|i'?m|ive|i'?ve|you|your|we|we'?re|they|my|me|us|he|she|it'?s|dont|don'?t|do|does|wont|won'?t|cant|can'?t|not|no|want|wanna|should|would|could|will|like|love|hate|feel|felt|think|thought|need|gonna|let'?s|lets|because|across|prove|proven|instead|maybe|please|too|really|just|move|after|before|when|why|how|what|that'?s|thats)\b/i;
+
+// A lead reads as prose (not a lift name) when it contains a conversational word
+// or runs longer than a plausible exercise name (real names are ≤ 4 words, e.g.
+// "Single Leg Leg Press"). High-precision: equipment/movement names never trip it.
+function looksLikeProse(name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length > 4) return true;
+  return NON_EXERCISE_WORDS.test(name);
+}
+
 
 function looksLikeSetToken(token) {
   return /^x\d+$/i.test(token)

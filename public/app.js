@@ -2809,11 +2809,25 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
           return n && sessionCompleted.some(c => String(c).toLowerCase() === n);
         })
       );
+      // Next-up = the FIRST planned exercise (visible order) not yet completed, so
+      // the handoff follows the visible plan and skips already-logged lifts whether
+      // logged in order or out of order — never a later accessory while an earlier
+      // lift is still outstanding. Mirrors nextRemainingExercise in
+      // services/sessionPlanExecutor.js. Read-only narration — not the write path.
+      let nextPlanned = null;
+      if (activePlannedSession && activePlannedSession.exercises.length > 0) {
+        const nextRec = activePlannedSession.exercises.find(ex => {
+          const n = String(ex.canonicalName || ex.name || '').toLowerCase();
+          return n && !sessionCompleted.some(c => String(c).toLowerCase() === n);
+        });
+        nextPlanned = nextRec ? (nextRec.name || nextRec.canonicalName || null) : null;
+      }
       document.dispatchEvent(new CustomEvent('atlas:set-logged', {
         detail: {
           exercises: byExercise,
           text: text || '',
           planIsComplete,
+          nextPlanned,
           ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
         }
       }));

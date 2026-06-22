@@ -308,9 +308,27 @@ function buildSessionCloseAnswer(message, planState) {
   return `Not done yet — ${left} still on your list: ${remaining.join(', ')}. Knock ${left === 1 ? 'it' : 'those'} out, then say "log it" to save.`;
 }
 
+/**
+ * nextRemainingExercise(planned, completed) → string | null
+ *
+ * The next exercise still to do: the FIRST planned entry (in the planned/visible
+ * order) not yet covered by computePlanState's match rules. Returns null when the
+ * plan is complete or empty. This is what a "next up" handoff should point at — it
+ * follows the visible plan order and skips anything already logged, whether the
+ * lifter logged in order or jumped around. Pure.
+ *
+ * keep in sync with the inline nextPlanned computation in emitSetLogged
+ * (public/app.js).
+ */
+function nextRemainingExercise(planned, completed) {
+  const { remaining } = computePlanState(planned, completed);
+  return remaining.length ? remaining[0] : null;
+}
+
 module.exports = {
   computePlanState,
   nextExerciseFromPlan,
+  nextRemainingExercise,
   isPlanComplete,
   applySubstitution,
   clampCursorAfterRemoval,
