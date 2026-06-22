@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v23';
+const ATLAS_SHELL_BUILD = 'v24';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -559,6 +559,39 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
     box.replaceChildren(pre);
   } catch (err) {
     setBoxSpan(box, 'muted', `Could not load: ${err.message}`);
+  }
+});
+
+// Diagnostic: dump the LIVE in-session plan/completion state — so a wrong "next up"
+// or a stale composer placeholder can be diagnosed from the actual runtime values
+// (sessionCompleted, remaining, nextPlanned), which the static code can't always
+// explain after a mid-session swap. Read-only; no writes, no effect on the workout.
+// Tap it right after a wrong handoff and screenshot it.
+document.getElementById('load-session-state-btn')?.addEventListener('click', () => {
+  const box = document.getElementById('debug-result');
+  try {
+    const liteEx = arr => (Array.isArray(arr) ? arr.map(e => ({
+      name: e.canonicalName || e.canonical_exercise || e.name || e.exercise || '',
+      liftCode: e.liftCode || e.lift_code || ''
+    })) : []);
+    const recommended = ((lastIntentData && lastIntentData.intents) || []).find(i => i.recommended);
+    const state = {
+      shell: ATLAS_SHELL_BUILD,
+      activePlannedSession: activePlannedSession
+        ? { index: activePlannedSession.index, exercises: liteEx(activePlannedSession.exercises) }
+        : null,
+      suggestedPlan: recommended ? liteEx(recommended.exercises) : null,
+      plannedExerciseOrder: plannedExerciseOrder(),
+      sessionCompleted: [...sessionCompleted],
+      remainingPlannedExercises: remainingPlannedExercises(),
+      firstUnloggedPlannedLift: firstUnloggedPlannedLift()
+    };
+    const pre = document.createElement('pre');
+    pre.className = 'debug-pre';
+    pre.textContent = JSON.stringify(state, null, 2);
+    box.replaceChildren(pre);
+  } catch (err) {
+    setBoxSpan(box, 'muted', `Could not read session state: ${err.message}`);
   }
 });
 

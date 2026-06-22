@@ -4436,8 +4436,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v23/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v22\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v24/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v23\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4448,6 +4448,10 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(appSrc, /shellEl\.textContent = ATLAS_SHELL_BUILD/, 'the running-shell line must display the shell tag');
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   assert.match(html, /id="shell-version"/, 'a dedicated shell-version element must exist in Settings');
+  // Session-state debug dump (read-only diagnostic for a wrong next-up / stale composer).
+  assert.match(html, /id="load-session-state-btn"/, 'a "Show session state" debug button must exist');
+  assert.match(appSrc, /load-session-state-btn'\)\?\.addEventListener/, 'the session-state debug handler must be wired');
+  assert.match(appSrc, /remainingPlannedExercises\(\),/, 'the dump must include remainingPlannedExercises');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
