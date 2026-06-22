@@ -817,3 +817,51 @@ test('a no-RIR placeholder uses a single "{weight} {reps}" token that parses (no
   assert.equal(r.sets[0].weight, 230);
   assert.equal(r.sets[0].reps, 5);
 });
+
+// ---------------------------------------------------------------------------
+// Mixed bare-pair + slash notation in one lift log (owner-approved, 2026-06-21)
+//
+// Warm-up climb written as bare "{weight} {reps}" pairs, then slash working sets
+// for the same lift: "Bench 140 15 190 10 230 4/2 4/1 3/1" → 5 sets. The bare
+// pairs must NOT mis-segment, and all existing notations must still parse.
+// ---------------------------------------------------------------------------
+
+test('mixed: bare warm-up pairs + slash working sets parse as all 5 sets', () => {
+  assert.deepEqual(sets(parseWorkoutText('Bench 140 15 190 10 230 4/2 4/1 3/1')), [
+    [140, 15, null],
+    [190, 10, null],
+    [230, 4, 2],
+    [230, 4, 1],
+    [230, 3, 1],
+  ]);
+});
+
+test('mixed: same format attaches to the planned lift when the name is omitted', () => {
+  const r = parseWorkoutText('140 15 190 10 230 4/2 4/1 3/1', { activeExercise: 'Bench Press' });
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.exercise, 'Bench Press');
+  assert.deepEqual(r.sets.map(s => [s.weight, s.reps, s.rir]), [
+    [140, 15, null], [190, 10, null], [230, 4, 2], [230, 4, 1], [230, 3, 1],
+  ]);
+});
+
+test('mixed: consecutive bare pairs do NOT mis-segment ("140 15 190 10" is two sets)', () => {
+  assert.deepEqual(sets(parseWorkoutText('Bench 140 15 190 10')), [[140, 15, null], [190, 10, null]]);
+});
+
+test('mixed: a single space-separated "{weight} {reps} {rir}" set is unchanged', () => {
+  // The whole-text single-set rule must still claim "225 5 2" (one set @RIR 2),
+  // not split it into a bare pair that drops the RIR.
+  assert.deepEqual(sets(parseWorkoutText('Bench 225 5 2')), [[225, 5, 2]]);
+  assert.deepEqual(sets(parseWorkoutText('Bench 185 8')), [[185, 8, null]]);
+});
+
+test('mixed: slash-only and xN repeats still parse exactly as before', () => {
+  assert.deepEqual(sets(parseWorkoutText('Bench 230 5/2 5/2 5/2')), [[230, 5, 2], [230, 5, 2], [230, 5, 2]]);
+  assert.deepEqual(sets(parseWorkoutText('Lat pulldown 170 8/2 x3')), [[170, 8, 2], [170, 8, 2], [170, 8, 2]]);
+});
+
+test('mixed: bare-pair support does not turn prose into a log', () => {
+  const r = parseWorkoutText('we should move up to 10 reps after 8 felt easy');
+  assert.notEqual(r.intent, 'log_sets');
+});

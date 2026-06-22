@@ -798,6 +798,24 @@ function parseDaleShorthand(text) {
 
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i];
+
+    // A single space-separated "{weight} {reps} {rir?}" log — "225 5 2", "185 8".
+    // Matched against the WHOLE token string at the start ONLY: anchoring to the
+    // full text (not a sub-window) is what stops "140 15 190 10" from being
+    // mis-segmented as a stray "15 190 10" → 15×190 @10. A longer sequence (more
+    // tokens, or any slash) falls through to the weight/slash/bare-pair handling.
+    if (i === 0) {
+      const single = tokens.join(' ').match(/^(\d+(?:\.\d+)?)\s*(?:lb|lbs)?\s+(\d+)\s*(?:reps?)?\s*(?:rir\s*)?(\d+(?:\.\d+)?)?$/i);
+      if (single) {
+        sets.push(setRecord({
+          weight: Number(single[1]),
+          reps: Number(single[2]),
+          rir: single[3] == null ? null : Number(single[3]),
+        }));
+        break;
+      }
+    }
+
     const repeat = token.match(/^x(\d+)$/i);
     if (repeat && previousSet) {
       const totalInstances = Number(repeat[1]);
@@ -833,15 +851,19 @@ function parseDaleShorthand(text) {
       continue;
     }
 
-    const appStyle = tokens.slice(i).join(' ').match(/^(\d+(?:\.\d+)?)\s*(?:lb|lbs)?\s+(\d+)\s*(?:reps?)?\s*(?:rir\s*)?(\d+(?:\.\d+)?)?$/i);
-    if (appStyle && sets.length === 0) {
-      previousSet = setRecord({
-        weight: Number(appStyle[1]),
-        reps: Number(appStyle[2]),
-        rir: appStyle[3] == null ? null : Number(appStyle[3]),
-      });
+    // Bare "{weight} {reps}" pair (no slash, no RIR) inside a multi-set sequence —
+    // e.g. the warm-up climb "140 15 190 10" before the slash working sets. Only
+    // fires when this token is a plain weight AND the next token is a plain integer
+    // (not a slash, not an xN). The whole-text single-set rule above already
+    // claimed a lone "{weight} {reps}"/"{weight} {reps} {rir}", so this never
+    // swallows the trailing RIR of a single space-separated set.
+    const nextBare = tokens[i + 1]?.match(/^(\d+)$/);
+    if (weight && nextBare) {
+      currentWeight = Number(weight[1]);
+      previousSet = setRecord({ weight: currentWeight, reps: Number(nextBare[1]), rir: null });
       sets.push(previousSet);
-      break;
+      i += 1;
+      continue;
     }
   }
 
