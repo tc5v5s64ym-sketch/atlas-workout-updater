@@ -5,6 +5,13 @@
 
 const API_KEY_STORAGE = 'atlas_api_key';
 
+// Shell build tag baked INTO this bundle (mirrors the service-worker cache name in
+// public/sw.js). The Settings badge shows it next to the server /version: if the
+// server reports a newer build but this tag is stale/absent, the browser is running
+// a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
+// code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
+const ATLAS_SHELL_BUILD = 'v22';
+
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
 }
@@ -575,9 +582,13 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
       const d = new Date(v.deployed_at);
       if (!Number.isNaN(d.getTime())) when = `${d.toISOString().slice(0, 16).replace('T', ' ')}Z`;
     }
-    el.textContent = when ? `${id} · deployed ${when}` : id;
+    const server = when ? `${id} · deployed ${when}` : id;
+    // Append the SHELL build (this bundle's own tag) so a stale cached shell is a
+    // glance: server build vs the JS actually running. They should match after a
+    // fresh load; if "shell" lags the server build, hard-reload to clear the SW.
+    el.textContent = `${server} · shell ${ATLAS_SHELL_BUILD}`;
   } catch (_) {
-    el.textContent = 'unavailable';
+    el.textContent = `unavailable · shell ${ATLAS_SHELL_BUILD}`;
   }
 })();
 

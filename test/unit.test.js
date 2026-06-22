@@ -4436,8 +4436,15 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v21/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v20\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v22/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v21\b/, 'old cache name must be gone');
+  // The shell build tag baked into app.js must equal the SW cache version, so the
+  // Settings badge ("shell vNN") truthfully reflects the running bundle.
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const shellTag = (appSrc.match(/const ATLAS_SHELL_BUILD = '([^']+)'/) || [])[1];
+  const swCacheVer = (sw.match(/atlas-shell-(v\d+)/) || [])[1];
+  assert.equal(shellTag, swCacheVer, 'ATLAS_SHELL_BUILD (app.js) must match the SW cache version');
+  assert.match(appSrc, /shell \$\{ATLAS_SHELL_BUILD\}/, 'the Settings build badge must display the shell tag');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
