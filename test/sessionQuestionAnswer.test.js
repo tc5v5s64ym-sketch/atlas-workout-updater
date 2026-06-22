@@ -237,6 +237,18 @@ test('answerTotalRepsQuestion: the answer is labeled planned, never "you\'ve don
   assert.doesNotMatch(ans, /you'?ve done|you did|you hit/i);
 });
 
+test('answerTotalRepsQuestion: answers reps-totals only — defers "total weight/volume"', () => {
+  // A "total" question worded as weight or volume asks a different metric; answering
+  // it with a rep count would be off-topic, so defer those to Gemini.
+  assert.equal(answerTotalRepsQuestion('total weight for bench?', { clientContext: totalCtx }), null);
+  assert.equal(answerTotalRepsQuestion("what's my total volume for bench?", { clientContext: totalCtx }), null);
+  // A reps total (and a bare "total?") still answer.
+  assert.equal(
+    answerTotalRepsQuestion('how many reps total for bench?', { clientContext: totalCtx }),
+    'Bench Press today: 15 total reps planned (3 sets × 5).'
+  );
+});
+
 test('answerTotalRepsQuestion: defers when not a total question, past-tense, or unresolvable', () => {
   assert.equal(answerTotalRepsQuestion('how many reps for bench?', { clientContext: totalCtx }), null);
   assert.equal(answerTotalRepsQuestion('what was my total last time?', { clientContext: totalCtx }), null);

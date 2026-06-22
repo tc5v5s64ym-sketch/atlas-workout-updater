@@ -289,6 +289,10 @@ function answerTotalRepsQuestion(message, { history = [], clientContext = null }
   const raw = String(message == null ? '' : message);
   if (!TOTAL_RE.test(raw)) return null;
   if (HISTORY_RE.test(raw) || ADVICE_RE.test(raw)) return null; // past / reasoning → defer
+  // This answers a REPS total only. A "total weight/load" or "total volume"
+  // question asks a different metric — defer it to Gemini rather than reply with a
+  // rep count. (Bare "total?" carries no attribute and stays a reps-total.)
+  if (attributesAsked(raw).includes('weight') || /\bvolume\b/i.test(raw)) return null;
 
   const liftName = resolveLiftName(message, history, clientContext);
   if (!liftName) return null;
