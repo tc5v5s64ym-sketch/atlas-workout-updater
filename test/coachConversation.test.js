@@ -22,15 +22,29 @@ test('liftLabel falls back when object has no name', () => {
 
 /* ===== templatedSubstitutionLine ===== */
 
-test('templatedSubstitutionLine: preserved — names and intent language', () => {
+test('templatedSubstitutionLine: preserved good pivot — brief, non-lecturing acknowledgement (slice 2)', () => {
   const line = templatedSubstitutionLine({
     classification: 'preserved',
+    quality: 'excellent',
     prescribed: { name: 'Barbell Row' },
     logged: { name: 'Cable Row' }
   });
-  assert.match(line, /Cable Row for Barbell Row/);
+  assert.match(line, /^Good pivot/);
+  assert.match(line, /Cable Row/);
+  assert.match(line, /Log it\./);
+  // It must not lecture or scold a smart swap.
+  assert.doesNotMatch(line, /next time|downgrade|shifts the target|untrained/i);
+});
+
+test('templatedSubstitutionLine: preserved but poor quality keeps the measured line (no false praise)', () => {
+  const line = templatedSubstitutionLine({
+    classification: 'preserved',
+    quality: 'poor',
+    prescribed: { name: 'Barbell Row' },
+    logged: { name: 'Cable Row' }
+  });
+  assert.doesNotMatch(line, /Good pivot/);
   assert.match(line, /same job, different tool/i);
-  assert.match(line, /preserved/i);
 });
 
 test('templatedSubstitutionLine: changed — shifts-muscle language', () => {
