@@ -86,3 +86,14 @@ The KB **never** reads or writes `lift_code`. A future wiring PR adds an explici
 - The KB is hand-editable JSON validated by `test/exerciseResolver.test.js`. Adding an
   exercise = add a catalog record + ≥1 alias; the test fails on any enum/dedup/coverage
   violation.
+
+## Wiring-time hardening notes
+
+- **Same-id alias confidence on collision.** `validateKb` rejects a normalized alias that
+  maps to *two different* `exercise_id`s, and the build step dedups aliases by normalized
+  form, so the committed data has no normalized collisions. But `exerciseResolver.register()`
+  is *first-registration-wins*: if a future hand-edit introduces two aliases for the **same**
+  `exercise_id` that normalize identically with different `confidence`, the first-listed one
+  silently wins. Harmless reference-only today; before step 2 (clarify-on-low-confidence)
+  depends on confidence, add a "keep the higher confidence" guard in `register()` (and a
+  validator warning for same-id normalized duplicates).
