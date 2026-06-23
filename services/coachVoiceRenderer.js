@@ -119,6 +119,102 @@ function findForbiddenContradictions(reasonCodes, prose) {
   return out;
 }
 
+// ── Substitution pivot voice (slice 2) ───────────────────────────────────────
+// When the substitution engine (services/substitutionQuality.js + the classifier)
+// says a swap PRESERVED the stimulus and the quality is not poor/unknown, it is a
+// good equipment/substitution pivot. The deterministic voice OWNS that reaction
+// with a brief, warm acknowledgement — and the contradiction guard suppresses any
+// generic/LLM prose that would scold the lifter for a smart pivot. A swap the
+// engine flagged as `changed`/`abandoned`/`poor` is left to the existing
+// classification copy / LLM (this slice never silences a real downgrade warning).
+const SUBSTITUTION_REASON_CODES = Object.freeze({ GOOD_PIVOT: 'good_pivot' });
+
+// Phrases that lecture/scold a GOOD pivot. Matched case-insensitively against the
+// candidate prose; any hit on a good pivot means the prose is moralizing a swap
+// the engine already blessed, so it is suppressed.
+const PIVOT_LECTURE = [
+  /down-?grade/i,
+  /not\s+(quite\s+)?ideal/i,
+  /not\s+(a\s+)?(perfect|true|proper|real)\s+(swap|match|substitut\w*|one-?for-?one)/i,
+  /should(\s+have|'ve)?\s+(done|stuck|used|kept)/i,
+  /(real|prescribed|proper|original)\s+(lift|movement|exercise)\b/i,
+  /\b(lesser|inferior|sub-?par|compromis\w*)\b/i,
+  /settle\s+for/i,
+  /shifts?\s+the\s+target/i,
+  /objective\s+untrained/i,
+  /worse\s+(choice|option)/i,
+];
+
+// Read the logged lift name from either an object ref or a bare string.
+function pivotLoggedName(sub) {
+  const ref = sub && sub.logged;
+  if (ref && typeof ref === 'object') return typeof ref.name === 'string' ? ref.name.trim() : '';
+  return typeof ref === 'string' ? ref.trim() : '';
+}
+
+// A good pivot = engine-classified intent PRESERVED, stimulus quality not poor/unknown.
+function isGoodPivot(sub) {
+  return !!sub
+    && typeof sub === 'object'
+    && sub.classification === 'preserved'
+    && sub.quality !== 'poor'
+    && sub.quality !== 'unknown';
+}
+
+// The single server-side source of the brief pivot line.
+function substitutionPivotLine(sub) {
+  const l = pivotLoggedName(sub);
+  return l
+    ? `Good pivot — ${l} holds the same pattern with less friction. Log it.`
+    : 'Good pivot — same pattern, less friction. Log it.';
+}
+
+/**
+ * Pure substitution contradiction guard — the lecture phrases a good pivot must
+ * never carry. Returns [] unless `goodPivot` is true AND the prose lectures.
+ *
+ * @param {boolean} goodPivot
+ * @param {string} prose
+ * @returns {Array<{code:string, phrase:string}>}
+ */
+function findSubstitutionContradictions(goodPivot, prose) {
+  const text = typeof prose === 'string' ? prose : '';
+  if (!goodPivot || !text.trim()) return [];
+  const out = [];
+  for (const re of PIVOT_LECTURE) {
+    const m = text.match(re);
+    if (m) out.push({ code: SUBSTITUTION_REASON_CODES.GOOD_PIVOT, phrase: m[0] });
+  }
+  return out;
+}
+
+/**
+ * Render the authoritative substitution-pivot voice (same shape as renderSetVoice).
+ * Only a GOOD pivot yields a deterministic prose-suppressing line; every other swap
+ * returns neutral so existing copy/LLM keeps wording it.
+ *
+ * @param {object} input
+ * @param {object|null} input.substitution   - the classified swap ({classification, quality, logged, ...}).
+ * @param {string}      input.candidateProse - the generic/LLM prose to vet (may be '').
+ * @returns {object} voice
+ */
+function renderSubstitutionVoice({ substitution = null, candidateProse = '' } = {}) {
+  const good = isGoodPivot(substitution);
+  const reason_codes = good ? [SUBSTITUTION_REASON_CODES.GOOD_PIVOT] : [];
+  const contradictions = findSubstitutionContradictions(good, candidateProse);
+  if (!good) {
+    return { primary_line: null, secondary_line: null, severity: 'neutral', reason_codes, suppress_generic_prose: false, contradictions };
+  }
+  return {
+    primary_line: substitutionPivotLine(substitution),
+    secondary_line: null,
+    severity: 'pivot',
+    reason_codes,
+    suppress_generic_prose: true,
+    contradictions,
+  };
+}
+
 // Deterministic severity. Negative fatigue/underdose signals (from the set-effort
 // engine) take precedence over the recommendation engine's positive effort verdict
 // — a redline is never "on target", even if the lone working set hit its RIR.
@@ -198,4 +294,10 @@ function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, c
   };
 }
 
-module.exports = { renderSetVoice, findForbiddenContradictions };
+module.exports = {
+  renderSetVoice,
+  findForbiddenContradictions,
+  renderSubstitutionVoice,
+  findSubstitutionContradictions,
+  SUBSTITUTION_REASON_CODES,
+};

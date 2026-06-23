@@ -748,23 +748,28 @@
       ? data.effort_note.trim() : null;
     const reroute = data && data.reroute && typeof data.reroute === 'object' ? data.reroute : null;
     const voice = data && data.voice && typeof data.voice === 'object' ? data.voice : null;
+    const subVoice = data && data.sub_voice && typeof data.sub_voice === 'object' ? data.sub_voice : null;
+    // Substitution acknowledgement (slice 2): the deterministic pivot line from the
+    // renderer wins over the templated classification copy; for a non-pivot swap the
+    // template still words it. Computed once so every return path below can append it.
+    const sub = facts.substitution;
+    const subLine = (subVoice && subVoice.primary_line)
+      || (sub && sub.classification ? coachVoiceTemplates.templatedSubstitutionLine(sub) : null);
+    const withSub = base => (subLine ? base + '\n\n' + subLine : base);
     // Deterministic Coach Voice Renderer wins. When a non-neutral set-effort signal
     // (redline / rep-drop / pressing-yellow / underdose / isolation caution) owns
     // the reaction, render its primary_line and NEVER the generic/LLM prose — the
     // server has already nulled contradictory prose; this is the visual backstop.
     if (voice && voice.suppress_generic_prose && voice.primary_line) {
-      return { note: voice.primary_line, effort_note, reroute, voice };
+      return { note: withSub(voice.primary_line), effort_note, reroute, voice };
     }
+    // LLM prose present means the server did NOT suppress it (no good-pivot lecture);
+    // it already addresses the swap in one integrated voice, so trust it as-is.
     if (llm && llm.trim()) return { note: llm, effort_note, reroute, voice };
-    // LLM down / neutral: prefer the engine's correct-effort line (on-target praise)
-    // when one was offered, else the templated opener.
+    // LLM down / suppressed (incl. a good pivot): prefer the engine's correct-effort
+    // line (on-target praise) when offered, else the templated opener, then the swap.
     const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec);
-    const sub = facts.substitution;
-    if (sub && sub.classification) {
-      const subLine = coachVoiceTemplates.templatedSubstitutionLine(sub);
-      if (subLine) return { note: opener + '\n\n' + subLine, effort_note, reroute, voice };
-    }
-    return { note: opener, effort_note, reroute, voice };
+    return { note: withSub(opener), effort_note, reroute, voice };
   }
 
   // Returns the full /api/coach/message data object ({ message, effort_note,

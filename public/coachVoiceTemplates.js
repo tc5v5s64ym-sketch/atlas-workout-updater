@@ -20,6 +20,15 @@
     const p = liftLabel(sub && sub.prescribed, 'the prescribed lift');
     const l = liftLabel(sub && sub.logged, 'what you logged');
     const reasonSuffix = (sub && sub.reason) ? ` Reason: ${sub.reason}.` : '';
+    // Good pivot (Coach Voice Renderer slice 2): the engine classified the swap as
+    // intent-PRESERVED with a non-poor stimulus → a brief, non-lecturing
+    // acknowledgement. Mirrors the server renderer's substitutionPivotLine for the
+    // offline / no-LLM path and the preview-bubble intro. A poor-quality "preserved"
+    // (rare) falls through to the measured line below.
+    const quality = sub && sub.quality;
+    if (sub && sub.classification === 'preserved' && quality !== 'poor' && quality !== 'unknown') {
+      return `Good pivot — ${l} holds the same pattern with less friction. Log it.${reasonSuffix}`;
+    }
     switch (sub && sub.classification) {
       case 'preserved':
         return `${l} for ${p} — same job, different tool. Intent preserved.${reasonSuffix}`;

@@ -90,7 +90,7 @@ const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextP
 const { resolveExercise } = require('./services/exerciseResolver');
 const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
-const { renderSetVoice, findForbiddenContradictions } = require('./services/coachVoiceRenderer');
+const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('./services/coachVoiceRenderer');
 const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
@@ -1107,6 +1107,26 @@ function finalizeSetVoice(message, voiceBase) {
   };
 }
 
+// Finalize BOTH the set-effort voice and the substitution-pivot voice (Coach Voice
+// Renderer slice 2) against the candidate prose for THIS response path. The
+// deterministic engine wins: the LLM prose is suppressed (message → null) when a
+// non-neutral set signal owns the reaction OR the prose contradicts a set reason
+// code (finalizeSetVoice), OR the swap is a good pivot whose deterministic line
+// owns the acknowledgement / the prose would lecture it. Returns
+// { message, voice, sub_voice }. Read-only — never writes.
+function finalizeCoachVoice(message, voiceBase, subVoiceBase) {
+  const setFin = finalizeSetVoice(message, voiceBase);
+  let outMessage = setFin.message;
+  let sub_voice = null;
+  if (subVoiceBase) {
+    const goodPivot = subVoiceBase.severity === 'pivot';
+    const contradictions = findSubstitutionContradictions(goodPivot, message);
+    sub_voice = { ...subVoiceBase, contradictions };
+    if (subVoiceBase.suppress_generic_prose || contradictions.length > 0) outMessage = null;
+  }
+  return { message: outMessage, voice: setFin.voice, sub_voice };
+}
+
 app.post('/api/coach/message', async (req, res) => {
   const rawFacts = req.body && req.body.facts;
   if (!rawFacts || typeof rawFacts !== 'object') {
@@ -1122,10 +1142,16 @@ app.post('/api/coach/message', async (req, res) => {
     : { effort_note: null, reroute: null, voiceBase: null };
   const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute };
   const voiceBase = computed.voiceBase;
+  // Substitution-pivot voice (slice 2). Read straight from the client-provided swap;
+  // only the classification/quality/logged-name fields are consulted. Best-effort —
+  // a bad shape just yields a neutral voice and changes nothing.
+  const subVoiceBase = (rawFacts.substitution && typeof rawFacts.substitution === 'object')
+    ? renderSubstitutionVoice({ substitution: rawFacts.substitution, candidateProse: '' })
+    : null;
   if (!coach.isConfigured()) {
-    const fin = finalizeSetVoice(null, voiceBase);
+    const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
     return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-      message: fin.message, voice: fin.voice, configured: false, model: coach.coachModel(), ...effortExtras
+      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...effortExtras
     });
   }
 
@@ -1181,14 +1207,14 @@ app.post('/api/coach/message', async (req, res) => {
       : await coach.generateCoachMessage(facts);
     // Deterministic engine controls the coaching meaning: suppress the LLM prose
     // when it contradicts (or would speak over) a non-neutral set-effort signal.
-    const fin = finalizeSetVoice(message, voiceBase);
-    return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...effortExtras });
+    const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase);
+    return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...effortExtras });
   } catch (error) {
     // Degrade gracefully: tell the client to use its templated fallback rather
     // than surfacing an error in the chat.
-    const fin = finalizeSetVoice(null, voiceBase);
+    const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
     return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-      message: fin.message, voice: fin.voice, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
+      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
     });
   }
 });

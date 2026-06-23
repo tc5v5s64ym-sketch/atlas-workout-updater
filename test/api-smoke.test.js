@@ -397,6 +397,88 @@ test('api smoke: coach/message returns Gemini prose when configured', async () =
   }
 });
 
+// ── Slice 2: substitution pivot voice on the real /api/coach/message route ─────
+const goodPivotFacts = () => ({
+  substitution: {
+    classification: 'preserved', quality: 'excellent',
+    prescribed: { name: 'Barbell Bench Press' }, logged: { name: 'Dumbbell Bench Press' },
+  },
+});
+
+test('api smoke: coach/message attaches a pivot sub_voice and suppresses a lecturing LLM line', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  // The model lectures a good pivot — the contradiction guard must suppress it.
+  fakeCoachState.message = "That's a downgrade — get the real lift back in next time.";
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: goodPivotFacts() }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, null, 'a lecture on a good pivot must be suppressed');
+    assert.ok(body.data.sub_voice, 'sub_voice must ride along');
+    assert.equal(body.data.sub_voice.severity, 'pivot');
+    assert.match(body.data.sub_voice.primary_line, /^Good pivot/);
+    assert.ok(body.data.sub_voice.contradictions.length > 0, 'the lecture is recorded as a contradiction');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.message = 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.';
+  }
+});
+
+test('api smoke: coach/message — good pivot owns the reaction (deterministic line, prose suppressed)', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.message = 'Nice swap, that works well.'; // clean, but the deterministic line owns it
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({ facts: goodPivotFacts() }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, null, 'suppress_generic_prose: the brief Atlas line owns a good pivot');
+    assert.equal(body.data.sub_voice.severity, 'pivot');
+    assert.match(body.data.sub_voice.primary_line, /Dumbbell Bench Press/);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.message = 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.';
+  }
+});
+
+test('api smoke: coach/message — good pivot sub_voice rides the unconfigured fallback too', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: goodPivotFacts() }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, false);
+  assert.equal(body.data.message, null);
+  assert.ok(body.data.sub_voice && body.data.sub_voice.primary_line, 'deterministic pivot line is available offline');
+});
+
+test('api smoke: coach/message — a real downgrade swap is NOT suppressed (warning survives)', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.message = 'Leg Extension for Leg Curl shifts the target muscle — slot the real match in next time.';
+  try {
+    const { response, body } = await requestJson('/api/coach/message', {
+      method: 'POST',
+      body: JSON.stringify({
+        facts: { substitution: { classification: 'changed', quality: 'poor', prescribed: { name: 'Leg Curl' }, logged: { name: 'Leg Extension' } } },
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, fakeCoachState.message, 'a genuine downgrade warning must reach the lifter');
+    assert.equal(body.data.sub_voice.severity, 'neutral');
+    assert.equal(body.data.sub_voice.primary_line, null);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.message = 'Strong work.\n\n* 225 × 5 @2\n\nNext: 235 × 5.';
+  }
+});
+
 test('api smoke: coach/message plan route strips a client-injected layoff (engine is the only source)', async () => {
   // Trust property: the plan route ALWAYS overwrites facts.layoff with the engine
   // value (or null), so a client cannot make Atlas claim a layoff/volume cut the

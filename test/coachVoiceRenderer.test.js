@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { analyzeSetSequence, assessNextMoveConflict, EFFORT_REASON_CODES } = require('../services/setEffortSignals');
-const { renderSetVoice, findForbiddenContradictions } = require('../services/coachVoiceRenderer');
+const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions, SUBSTITUTION_REASON_CODES } = require('../services/coachVoiceRenderer');
 
 const repoRoot = path.join(__dirname, '..');
 
@@ -225,4 +225,79 @@ test('coach voice renderer stays pure (no write path / parser / schema / IO)', (
   assert.doesNotMatch(src, /appendRows|getSheetRows|Log_Cleaned|fetch\(/, 'no writes / reads / network');
   // It only depends on the deterministic copy layer.
   assert.match(src, /require\(['"]\.\/setEffortCopy['"]\)/);
+});
+
+// ── Slice 2: substitution pivot voice ─────────────────────────────────────────
+// A good equipment/substitution pivot (engine: intent PRESERVED, quality not
+// poor/unknown) gets a brief deterministic acknowledgement that OWNS the reaction
+// and a contradiction guard that suppresses lecturing prose. Non-pivot swaps stay
+// neutral so the existing classification copy / LLM still words them.
+
+const goodPivotSub = (over = {}) => ({
+  classification: 'preserved', quality: 'excellent',
+  prescribed: { name: 'Barbell Bench Press' }, logged: { name: 'Dumbbell Bench Press' }, ...over,
+});
+
+test('slice2: good pivot → deterministic brief acknowledgement, prose suppressed', () => {
+  const v = renderSubstitutionVoice({ substitution: goodPivotSub() });
+  assert.equal(v.severity, 'pivot');
+  assert.equal(v.suppress_generic_prose, true);
+  assert.match(v.primary_line, /^Good pivot/);
+  assert.match(v.primary_line, /Dumbbell Bench Press/);
+  assert.match(v.primary_line, /Log it\./);
+  assert.deepEqual(v.reason_codes, [SUBSTITUTION_REASON_CODES.GOOD_PIVOT]);
+});
+
+test('slice2: acceptable-quality preserved swap is still a pivot', () => {
+  const v = renderSubstitutionVoice({ substitution: goodPivotSub({ quality: 'acceptable' }) });
+  assert.equal(v.severity, 'pivot');
+  assert.equal(v.suppress_generic_prose, true);
+});
+
+test('slice2: preserved swap with no logged name falls back to the generic pivot line', () => {
+  const v = renderSubstitutionVoice({ substitution: { classification: 'preserved', quality: 'excellent' } });
+  assert.equal(v.severity, 'pivot');
+  assert.equal(v.primary_line, 'Good pivot — same pattern, less friction. Log it.');
+});
+
+test('slice2: a downgrade/abandoned swap is NOT acknowledged as a pivot (no false praise)', () => {
+  for (const sub of [
+    { classification: 'changed', quality: 'acceptable', logged: { name: 'Leg Extension' } },
+    { classification: 'abandoned', quality: 'poor', logged: { name: 'Bicep Curl' } },
+    { classification: 'preserved', quality: 'poor', logged: { name: 'Pec Deck' } },
+    { classification: 'preserved', quality: 'unknown', logged: { name: 'Mystery Lift' } },
+    { classification: 'baseline', quality: null, logged: { name: 'New Machine' } },
+  ]) {
+    const v = renderSubstitutionVoice({ substitution: sub });
+    assert.equal(v.severity, 'neutral', JSON.stringify(sub));
+    assert.equal(v.primary_line, null);
+    assert.equal(v.suppress_generic_prose, false);
+    assert.deepEqual(v.contradictions, []);
+  }
+});
+
+test('slice2: contradiction guard catches a lecture on a good pivot, ignores clean prose', () => {
+  // Lecturing prose on a good pivot → flagged.
+  for (const lecture of [
+    "That's a downgrade — get the real lift back in next time.",
+    'Not ideal; you should have stuck with the prescribed movement.',
+    'A lesser option, but it covers the session.',
+  ]) {
+    const hits = findSubstitutionContradictions(true, lecture);
+    assert.ok(hits.length > 0, `should flag: ${lecture}`);
+    assert.equal(hits[0].code, SUBSTITUTION_REASON_CODES.GOOD_PIVOT);
+  }
+  // Clean, non-lecturing prose → no contradiction.
+  assert.deepEqual(findSubstitutionContradictions(true, 'Good pivot — same pattern. Log it.'), []);
+  // Not a good pivot → the guard never fires, even on lecturing prose (a real
+  // downgrade warning must be allowed through).
+  assert.deepEqual(findSubstitutionContradictions(false, "That's a downgrade, get the real lift back."), []);
+});
+
+test('slice2: renderSubstitutionVoice tolerates a missing/garbage substitution', () => {
+  for (const bad of [undefined, null, {}, { classification: 'nope' }, 'string', 42]) {
+    const v = renderSubstitutionVoice({ substitution: bad });
+    assert.equal(v.severity, 'neutral');
+    assert.equal(v.primary_line, null);
+  }
 });
