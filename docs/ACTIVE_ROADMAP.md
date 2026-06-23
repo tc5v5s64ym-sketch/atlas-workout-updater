@@ -483,8 +483,9 @@ Promoted by owner decision (2026-06-22) as the build series implementing the Tra
 - ✅ **PR 480 — Pure Session Objective Scorer** — shipped: pure `services/objectiveScorer.js` (`scoreObjectives` derives the §3 term sub-scores per objective from a normalized snapshot, selects via the PR 479 contract). Live-snapshot wiring deferred.
 - ✅ **PR 481 — Stimulus Governor Fixtures** — shipped: pure `services/stimulusGovernorRules.js` (`governorRuleFor` + frozen vocabularies) pinning the §5 profile×modality RIR/effort rules.
 - ✅ **PR 482 — Profile-aware Stimulus Governor** — shipped (pure + unwired): `services/stimulusGovernor.js::gradeStimulus` grades a logged effort by profile + modality, emitting `progression_verdict` + `fatigue_signal` per the PR 481 rules. Not wired into any live path.
-- ◐ **PR 483 — Live Fatigue Router expansion** — next: generalizes PR 477's pressing routing to cross-pattern / cross-modality (Taxonomy §6 / SPE §7).
-- PRs 484–486 follow in order (see `BACKLOG.md` "Training Intelligence Implementation Series").
+- ✅ **PR 483 — Live Fatigue Router expansion** — shipped (pure + unwired): `services/fatigueRouter.js::routeNextMove` reroutes the next move from logged fatigue (block_pr / reduce_intensity / reduce_density / promote_alternative / make_optional / reduce / keep). Not wired into the live path.
+- ◐ **PR 484 — Coach Voice Renderer** — next: words the new engine facts. **`[trust-critical]` coach-surface → owner-gated** (confirm scope before editing `services/coach.js`).
+- PRs 485–486 follow in order (see `BACKLOG.md` "Training Intelligence Implementation Series").
 
 ### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
 
