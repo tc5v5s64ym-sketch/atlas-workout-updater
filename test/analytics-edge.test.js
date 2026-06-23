@@ -1123,3 +1123,44 @@ test('capRecoveringPatternDensity roleRank uses the exercise muscle_group (not e
     /classifyLiftRole\(ex && ex\.exercise \|\| '', ''\)/,
     'the empty-group classifyLiftRole call must not return');
 });
+
+// #402 dedup carve-out: the allRecs name-dedup used to skip ALL single-word names
+// (a whitespace proxy for "muscle-group placeholder"), which let a real single-word
+// lift logged under two lift codes escape dedup and get double-recommended. The
+// carve-out now skips only single-word names that are actual muscle-group labels,
+// so real single-word lifts dedup to the most-recently-trained code, while
+// multi-word lifts (even ones containing a muscle keyword) are unaffected.
+test('#402: real single-word lift logged under two codes dedups to the newest code', () => {
+  const mk = (n, c, mg, d, w) => ({
+    lift_code: c, exercise: n, canonical_exercise: n, muscle_group: mg,
+    weight: w, reps: 8, rir: 2, date_clean: d, set_number: 1,
+  });
+  const rows = [];
+  // "Squat" under an OLDER code SQ01 and a NEWER code SQ02 — same real lift.
+  for (const d of ['2026-05-20', '2026-05-27', '2026-06-03']) rows.push(mk('Squat', 'SQ01', 'Quads', d, 225));
+  for (const d of ['2026-06-06', '2026-06-10', '2026-06-14']) rows.push(mk('Squat', 'SQ02', 'Quads', d, 245));
+  for (const d of ['2026-06-05', '2026-06-09', '2026-06-13']) rows.push(mk('Bench Press', 'BEN01', 'Chest', d, 185));
+
+  const out = scoreIntents(rows, [], { today: '2026-06-16' });
+  const squats = (out.intents || []).flatMap(it => it.exercises || []).filter(e => /^squat$/i.test(e.exercise || ''));
+  const codes = [...new Set(squats.map(e => e.lift_code))];
+  assert.deepEqual(codes, ['SQ02'], 'the older Squat code must be deduped out; only the newest survives');
+});
+
+test('#402: a multi-word lift with a muscle keyword still dedups (no regression)', () => {
+  const mk = (n, c, mg, d, w) => ({
+    lift_code: c, exercise: n, canonical_exercise: n, muscle_group: mg,
+    weight: w, reps: 8, rir: 2, date_clean: d, set_number: 1,
+  });
+  const rows = [];
+  // "Leg Press" classifies as a muscle group via its keyword, but it has a space
+  // (a real lift) so it must still dedup — guards against a contains-match regression.
+  for (const d of ['2026-05-20', '2026-05-27', '2026-06-03']) rows.push(mk('Leg Press', 'LP01', 'Quads', d, 300));
+  for (const d of ['2026-06-06', '2026-06-10', '2026-06-14']) rows.push(mk('Leg Press', 'LP02', 'Quads', d, 320));
+  for (const d of ['2026-06-05', '2026-06-09', '2026-06-13']) rows.push(mk('Bench Press', 'BEN01', 'Chest', d, 185));
+
+  const out = scoreIntents(rows, [], { today: '2026-06-16' });
+  const lp = (out.intents || []).flatMap(it => it.exercises || []).filter(e => /^leg press$/i.test(e.exercise || ''));
+  const codes = [...new Set(lp.map(e => e.lift_code))];
+  assert.deepEqual(codes, ['LP02'], 'Leg Press must still dedup to the newest code');
+});
