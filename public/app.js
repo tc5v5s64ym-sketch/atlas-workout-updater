@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v32';
+const ATLAS_SHELL_BUILD = 'v33';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -3512,6 +3512,20 @@ function renderModalityPreview(preview) {
   previewPanel.open = true;
 }
 
+// Question-shaped input must reach the coach, not a write preview. The modality
+// recognizer is name+quantity based, so "how was my 5km run?" carries a cardio word
+// and a distance and would otherwise stage a (garbage-exercise) write preview. We
+// suppress only CLEAR questions — a trailing "?" or an interrogative lead word —
+// and deliberately omit log-ambiguous verbs (did/do/does/ran) so a real entry like
+// "Did 5k run 30:00" is never blocked. Fail-open toward the coach: a suppressed
+// input simply routes to chat, never to a write.
+function looksLikeModalityQuestion(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  if (t.endsWith('?')) return true;
+  return /^(how|hows|what|whats|why|when|where|who|which|whose|should|was|were|is|are|can|could|would|will)\b/.test(t);
+}
+
 // Try to stage a modality input as a previewed-but-unwritten approval. Returns
 // true when it owned the input (a recognized modality was previewed, OR a friendly
 // fail-closed message was shown); false when the input is NOT a modality (the
@@ -3519,6 +3533,8 @@ function renderModalityPreview(preview) {
 // here — the actual write happens solely in the #approve-btn handler.
 async function tryPreviewModality(text, sessionId, date) {
   if (!text || !date) return false;
+  // A question about training is for the coach — never stage it as a write preview.
+  if (looksLikeModalityQuestion(text)) return false;
   let result;
   try {
     result = await api('/api/log-modality', {
