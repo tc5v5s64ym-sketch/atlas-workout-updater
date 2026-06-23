@@ -156,8 +156,11 @@ const fakeSheets = {
   },
   getSpreadsheetTabs: async () => {
     const base = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Constraints'];
-    // Deload_State is present unless a test hides it to exercise the 503 path.
-    return fakeSheetsState.hideDeloadStateTab ? base : [...base, 'Deload_State'];
+    // Deload_State / Modality_Log are present unless a test hides them to exercise
+    // their respective 503 paths.
+    if (!fakeSheetsState.hideDeloadStateTab) base.push('Deload_State');
+    if (!fakeSheetsState.hideModalityLogTab) base.push('Modality_Log');
+    return base;
   },
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort'
@@ -1391,6 +1394,104 @@ test('api smoke: parse-workout-text attaches KB identity for Cable Fly (no split
   // Still a dry-run; never writes.
   assert.equal(body.data.sheet_written, false);
   assert.equal(body.data.no_write_confirmed, true);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+// ── PR 486 slice 4b — /api/log-modality trust-loop write route ────────────────
+test('api smoke: log-modality dry-run (test_mode) previews the normalized row and writes nothing', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/log-modality', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'Run 5 km 32:10 RPE 7 avg HR 151', session_id: 'S1', date: '2026-06-23', test_mode: true })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_write, 'skipped');
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.modality, 'cardio_steady');
+  // Normalized preview row: km→m, mm:ss elapsed→duration_sec (32:10 = 1930s).
+  // Columns: date, session_id, modality, exercise, duration_sec, distance_m, rounds, rest_sec, level, rpe, avg_hr, notes
+  assert.deepEqual(body.data.modality_row_preview, ['2026-06-23', 'S1', 'cardio_steady', 'Run', 1930, 5000, '', '', '', 7, 151, 'elapsed 32:10']);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: log-modality live write appends the normalized row to Modality_Log', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response, body } = await requestJson('/api/log-modality', {
+      method: 'POST',
+      body: JSON.stringify({ text: '8 x 400m / 90 sec RPE 8', session_id: 'S2', date: '2026-06-23', write_id: 'mod-wid-1' })
+    });
+
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.test_mode, false);
+    assert.equal(body.data.sheet_write, 'success');
+    assert.equal(body.data.sheet_written, true);
+    assert.equal(body.data.modality, 'cardio_interval');
+    assert.equal(fakeSheetsState.appendCalls.length, 1);
+    assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Modality_Log');
+    // rounds=8, distance_m=400 (per-rep work), rest_sec=90, rpe=8; duration_sec blank (distance-based).
+    assert.deepEqual(fakeSheetsState.appendCalls[0].rows[0],
+      ['2026-06-23', 'S2', 'cardio_interval', '', '', 400, 8, 90, '', 8, '', '']);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: log-modality is idempotent — a duplicate write_id appends only once', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const payload = JSON.stringify({ text: 'Plank 60 sec x3 RPE 7', session_id: 'S3', date: '2026-06-23', write_id: 'mod-wid-dup' });
+    const first = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+    const second = await requestJson('/api/log-modality', { method: 'POST', body: payload });
+
+    assert.equal(first.body.data.sheet_written, true);
+    assert.equal(second.body.data.duplicate_write, true);
+    assert.equal(second.body.data.sheet_written, false);
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'a replayed write_id must not append twice');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: log-modality returns 503 until the Modality_Log tab exists (and writes nothing)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.hideModalityLogTab = true;
+  try {
+    const { response } = await requestJson('/api/log-modality', {
+      method: 'POST',
+      body: JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S4', date: '2026-06-23', write_id: 'mod-wid-503' })
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(fakeSheetsState.appendCalls, []);
+  } finally {
+    fakeSheetsState.hideModalityLogTab = false;
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('api smoke: log-modality rejects a slash-notation set (422) — resistance path is never hijacked', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response } = await requestJson('/api/log-modality', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'Bench 225 5/2', session_id: 'S5', date: '2026-06-23', write_id: 'mod-wid-slash' })
+  });
+  assert.equal(response.status, 422, 'a slash set is not a modality input');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: log-modality live write requires a write_id', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response } = await requestJson('/api/log-modality', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S6', date: '2026-06-23' })
+  });
+  assert.equal(response.status, 400);
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 

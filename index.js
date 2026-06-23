@@ -89,6 +89,7 @@ const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerc
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
 const { recognizeModalityInput } = require('./services/multiModalityParser');
+const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
 const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
@@ -179,7 +180,7 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
@@ -234,7 +235,7 @@ function invalidateSheetRowsCache() {
 }
 
 const { routeDefinitions } = require('./config/routes');
-const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases } = require('./config/columns');
+const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases, modalityLogColumns } = require('./config/columns');
 const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
 
 // --- Header-drift guard (trust-critical write protection) --------------------
@@ -1733,6 +1734,105 @@ app.post('/api/constraints', async (req, res) => {
   } catch (err) {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to save constraint', err.message, 500);
+  }
+});
+
+// POST /api/log-modality — persist a NON-slash modality entry (timed hold /
+// steady cardio / cardio interval / circuit) to the Modality_Log tab (PR 486
+// slice 4b). The engine owns the structured fields: the route re-recognizes the
+// raw `text` server-side via recognizeModalityInput (the client never supplies the
+// numbers) and normalizes units into the Modality_Log column contract.
+//
+// Trust loop: `test_mode` is honored exactly like /api/log-workout — test_mode
+// true → dry-run preview, no write, proof fields (sheet_written:false,
+// no_write_confirmed:true); test_mode absent/false → live write (the approve→write
+// step after the slice-3 dry-run preview). Live writes require write_id for
+// idempotency and 503 until the optional tab exists. This route NEVER touches
+// Log_Cleaned / Effort or the slash-notation resistance path.
+app.post('/api/log-modality', async (req, res) => {
+  const payload = req.body || {};
+  if (typeof payload !== 'object' || Array.isArray(payload)) {
+    return standardError(req, res, 'Invalid JSON payload. A JSON object is required.', null, 400);
+  }
+  const text = typeof payload.text === 'string' ? payload.text : '';
+  const session_id = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
+  const date = typeof payload.date === 'string' ? payload.date.trim() : '';
+  const notes = typeof payload.notes === 'string' ? payload.notes.trim() : '';
+  const testMode = isTestModeEnabled(payload.test_mode);
+  const writeId = payload.write_id;
+
+  if (!text.trim()) return standardError(req, res, 'text is required.', null, 400);
+  if (!session_id) return standardError(req, res, 'session_id is required.', null, 400);
+  if (!date) return standardError(req, res, 'date is required.', null, 400);
+
+  // Engine owns the structured record. Slash-notation sets are NOT ours — the
+  // recognizer returns null for them, so they route to /api/log-workout instead.
+  const record = recognizeModalityInput(text);
+  if (!record) {
+    return standardError(req, res, 'Not a recognized modality input (cardio / interval / circuit / timed hold). Slash-notation sets log via /api/log-workout.', null, 422);
+  }
+  const row = toModalityLogRow(record, { date, session_id, notes });
+
+  if (testMode) {
+    return standardSuccess(req, res, 'log-modality dry-run', {
+      test_mode: true,
+      sheet_write: 'skipped',
+      sheet_written: false,
+      no_write_confirmed: true,
+      modality: record.modality,
+      modality_record: record,
+      modality_row_preview: row
+    }, 200);
+  }
+
+  // Live writes carry a write_id so a lost-response retry is deduplicated instead
+  // of appending the same row twice.
+  if (!normalizeWriteId(writeId)) {
+    return standardError(req, res, 'write_id is required', null, 400);
+  }
+
+  const idempotency = beginWrite(writeId, { endpoint: '/api/log-modality', session_id, date });
+  if (idempotency.duplicate) {
+    const rec = idempotency.record || {};
+    const original = rec.response || {};
+    return standardSuccess(req, res,
+      rec.status === 'completed'
+        ? 'Duplicate write_id; modality was already saved.'
+        : 'Duplicate write_id; modality write is in progress.',
+      { ...original, duplicate_write: true, write_id: idempotency.write_id, sheet_written: false },
+      rec.status === 'completed' ? 200 : 409
+    );
+  }
+
+  const tabs = await getSpreadsheetTabs().catch(() => []);
+  if (!tabs.includes('Modality_Log')) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, `Modality_Log tab not found — create it in Google Sheets first (columns: ${modalityLogColumns.join(', ')})`, null, 503);
+  }
+
+  try {
+    const appendResponse = await appendRows('Modality_Log', [row]);
+    invalidateSheetRowsCache();
+    const responseBody = {
+      message: 'Modality logged successfully.',
+      test_mode: false,
+      sheet_write: 'success',
+      sheet_written: true,
+      modality_written: true,
+      modality: record.modality,
+      appendedRange: appendResponse.data.updates?.updatedRange,
+      modality_row: row
+    };
+    if (idempotency.enabled) {
+      responseBody.write_id = idempotency.write_id;
+      responseBody.duplicate_write = false;
+      responseBody.idempotency_status = 'completed';
+      completeWrite(idempotency.write_id, idempotency.token, responseBody);
+    }
+    return standardSuccess(req, res, 'log-modality processed', responseBody, 200);
+  } catch (err) {
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to append modality data', process.env.NODE_ENV === 'production' ? null : err.message, 500);
   }
 });
 
