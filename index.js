@@ -1229,6 +1229,14 @@ app.post('/api/coach/message', async (req, res) => {
     facts = { ...facts, layoff: layoffFact };
   }
 
+  // PR 484 slice 3: let the set-reaction coach WORD the profile-aware Stimulus
+  // Governor grade (computed read-only in slice 2). The model only words this
+  // engine verdict — sanitizeFacts bounds it to controlled enums and the prompt
+  // forbids inventing numbers.
+  if (kind === 'set' && computed.set_grade) {
+    facts = { ...facts, stimulus_grade: computed.set_grade };
+  }
+
   try {
     const message = kind === 'plan'
       ? await coach.generatePlanMessage(facts)

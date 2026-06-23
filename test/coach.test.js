@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1549,3 +1549,43 @@ test('sanitizeChatContext: plan_state with isComplete:false and one remaining ex
     assert.equal(r.isComplete, true);
   });
 }
+
+// ── PR 484 slice 3: profile-aware Stimulus Governor grade in the coach voice ──
+test('coach system prompt carries the stimulus_grade (profile-aware) rule', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /stimulus_grade/, 'must reference the stimulus_grade fact');
+  assert.match(prompt, /PROFILE-AWARE/i);
+  assert.match(prompt, /general_fitness/i, 'must carry the no-celebrate-grinding rule for general_fitness');
+  assert.match(prompt, /never invent a number/i);
+});
+
+test('sanitizeStimulusGrade keeps a valid grade and drops out-of-vocab values', () => {
+  const clean = sanitizeStimulusGrade({
+    profile: 'strength', effort_interpretation: 'rir',
+    progression_verdict: 'hold', fatigue_signal: 'high', bogus: 'x',
+  });
+  assert.deepEqual(clean, { profile: 'strength', effort_interpretation: 'rir', progression_verdict: 'hold', fatigue_signal: 'high' });
+
+  // Out-of-vocab profile/verdict/fatigue are nulled; effort_interpretation survives as a string.
+  const partial = sanitizeStimulusGrade({ profile: 'nope', progression_verdict: 'hold', fatigue_signal: 'nope' });
+  assert.equal(partial.profile, null);
+  assert.equal(partial.progression_verdict, 'hold');
+  assert.equal(partial.fatigue_signal, null);
+});
+
+test('sanitizeStimulusGrade returns null for junk or a grade with no verdict/fatigue', () => {
+  assert.equal(sanitizeStimulusGrade(null), null);
+  assert.equal(sanitizeStimulusGrade('nope'), null);
+  assert.equal(sanitizeStimulusGrade({ profile: 'strength' }), null); // no verdict, no fatigue
+  assert.equal(sanitizeStimulusGrade({ progression_verdict: 'bogus', fatigue_signal: 'bogus' }), null);
+});
+
+test('sanitizeFacts threads stimulus_grade through (present → kept, absent → null)', () => {
+  const withGrade = sanitizeFacts({
+    exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 0 }],
+    stimulus_grade: { profile: 'general_fitness', effort_interpretation: 'rir', progression_verdict: 'hold', fatigue_signal: 'elevated' },
+  });
+  assert.deepEqual(withGrade.stimulus_grade, { profile: 'general_fitness', effort_interpretation: 'rir', progression_verdict: 'hold', fatigue_signal: 'elevated' });
+  const without = sanitizeFacts({ exerciseName: 'Bench Press', todaySets: [] });
+  assert.equal(without.stimulus_grade, null);
+});

@@ -11,6 +11,9 @@
  */
 
 const coachBrain = require('./coachBrain');
+// Stimulus Governor vocabularies (PR 481) — imported (not re-declared) so the
+// stimulus_grade whitelist stays in lockstep with the engine's controlled enums.
+const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusGovernorRules');
 // The rules engine's frozen decision/severity vocabularies — ruleTypes.js is
 // built to be consumed by "(later) the AI coaching layer", i.e. here. Importing
 // (rather than re-declaring) keeps the verdict-reaction whitelist in lockstep
@@ -57,6 +60,7 @@ function buildCoachSystemPrompt() {
     '- You MAY reference ONE history number from the facts (working_weight, first_weight, best_weight, the range/ceiling, or the most recent entry from last_working_sets) to ground progress, e.g. "right at your working weight of {working_weight}" or "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
     '- The facts may include "trend" {trend, confidence, sessions_analyzed} — the engine\'s e1RM trajectory across recent sessions. "improving" = e1RM is clearly rising; "flat" = holding steady; "declining" = e1RM is drifting down; "noisy" = high variance, no clear read. When trend is present and is not "noisy", name the direction once as part of the arc narrative. Never claim a trend when the field is absent, and never contradict the engine\'s verdict. `trend` is the authoritative e1RM trajectory signal — use only this object, never any other trend field in the facts.',
     '- The facts may include "readiness_signal" {signal, confidence, note} — the engine\'s fatigue inference from the recent deviation streak. "monitoring" = watching, no fatigue signal; "possible_fatigue" = 3+ consecutive below-expected sessions; "likely_fatigue" = sustained streak + declining e1RM trend. When monitoring, say nothing about fatigue. When possible_fatigue, gently name the pattern without catastrophising. When likely_fatigue, be direct and honest: name the trend and suggest the lifter consider a recovery week. Never diagnose fatigue from a single session and never contradict the engine\'s verdict.',
+    '- The facts may include "stimulus_grade" {profile, effort_interpretation, progression_verdict, fatigue_signal} — the engine\'s PROFILE-AWARE read of this set (the same RIR reads differently by training profile). Respect it and never contradict it: progression_verdict "hold" or "back_off" means do NOT tell them to add load/push; "+load"/"+reps" means there is room to progress; fatigue_signal "high" means flag recovery, not progression. Critically, for a "general_fitness" profile do NOT celebrate grinding to failure — maximal effort is not the goal there. It is consistent with effort_verdict (never contradict either); word it, and never invent a number from it.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -132,8 +136,24 @@ function sanitizeFacts(facts) {
     trend: sanitizeTrend(rec.trend),
     // The readiness/fatigue inference engine's verdict (services/readinessSignal.js).
     // monitoring/possible_fatigue/likely_fatigue from recent deviation streak + trend.
-    readiness_signal: sanitizeReadinessSignal(rec.readiness_signal)
+    readiness_signal: sanitizeReadinessSignal(rec.readiness_signal),
+    // The Stimulus Governor's PROFILE-AWARE read of the set (PR 482/484): which
+    // metric was read + a coarse progression direction + fatigue signal, styled to
+    // the lifter's profile. The model WORDS this; it never invents a number.
+    stimulus_grade: sanitizeStimulusGrade(f.stimulus_grade)
   };
+}
+
+// Whitelist the Stimulus Governor grade — only the controlled-enum fields survive.
+// A grade carrying neither a known verdict nor a known fatigue signal is dropped.
+function sanitizeStimulusGrade(g) {
+  if (!g || typeof g !== 'object') return null;
+  const profile = PROFILES.includes(g.profile) ? g.profile : null;
+  const progression_verdict = PROGRESSION_VERDICTS.includes(g.progression_verdict) ? g.progression_verdict : null;
+  const fatigue_signal = FATIGUE_SIGNALS.includes(g.fatigue_signal) ? g.fatigue_signal : null;
+  const effort_interpretation = strOrNull(g.effort_interpretation);
+  if (!progression_verdict && !fatigue_signal) return null;
+  return { profile, effort_interpretation, progression_verdict, fatigue_signal };
 }
 
 // Whitelist the engine's effort verdict — only the level, target, and headline
@@ -1049,6 +1069,7 @@ module.exports = {
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
   sanitizeFacts,
+  sanitizeStimulusGrade,
   sanitizeSubstitution,
   sanitizeDeviation,
   sanitizeEvidenceContext,
