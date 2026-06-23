@@ -1095,7 +1095,7 @@ test('scoreIntents threads muscle_group onto recommended exercises (keyword-less
     rows.push(mk('Barbell Row', 'ROW01', 'Back', d, 135));
     rows.push(mk('Pallof Press', 'PAL01', 'Core', d, 60)); // name matches no role pattern
   }
-  const out = scoreIntents(rows, { today: '2026-06-20' });
+  const out = scoreIntents(rows, [], { today: '2026-06-20' });
   const exercises = (out.intents || []).flatMap(it => it.exercises || []);
   const pallofs = exercises.filter(e => /pallof/i.test(e.exercise || ''));
   assert.ok(pallofs.length > 0, 'the keyword-less accessory should appear in a recommended intent');
