@@ -459,6 +459,57 @@ test('api smoke: coach/message next_move_advisory is null with no planned next m
   assert.equal(body.data.next_move_advisory, null, 'no planned queue → no advisory');
 });
 
+// ── PR 484 recovery/deload SELECTION voicing on the real /api/coach/message route ──
+const setWithRec = (rec) => ({ facts: { exerciseName: 'Squat', todaySets: [{ weight: 315, reps: 5, rir: 1 }], rec } });
+const strongRec = { trend: { trend: 'declining', confidence: 'high' }, readiness_signal: { signal: 'likely_fatigue', confidence: 'high' } };
+const moderateRec = { trend: { trend: 'declining', confidence: 'high' }, readiness_signal: { signal: 'possible_fatigue', confidence: 'medium' } };
+
+test('api smoke: strong convergence → cautious DELOAD recovery_advisory', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', { method: 'POST', body: JSON.stringify(setWithRec(strongRec)) });
+  assert.equal(response.status, 200);
+  const a = body.data.recovery_advisory;
+  assert.ok(a && typeof a === 'object', 'a converged deload signal must surface');
+  assert.equal(a.decision, 'deload');
+  assert.ok(a.converged_signals.includes('performance_decline') && a.converged_signals.includes('subjective_fatigue'));
+});
+
+test('api smoke: moderate stacked signal → RECOVERY_RELOAD (hold/recovery), not a full deload', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', { method: 'POST', body: JSON.stringify(setWithRec(moderateRec)) });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.recovery_advisory.decision, 'recovery_reload');
+});
+
+test('api smoke: a single weak/ambiguous signal stays SILENT (no recovery_advisory)', async () => {
+  fakeCoachState.configured = false;
+  // Decline alone (no readiness fatigue) — one signal does not converge.
+  const declineOnly = await requestJson('/api/coach/message', { method: 'POST', body: JSON.stringify(setWithRec({ trend: { trend: 'declining', confidence: 'high' } })) });
+  assert.equal(declineOnly.body.data.recovery_advisory, null, 'one signal must not trigger');
+  // Fatigue readiness alone (no performance decline) — also silent.
+  const fatigueOnly = await requestJson('/api/coach/message', { method: 'POST', body: JSON.stringify(setWithRec({ readiness_signal: { signal: 'likely_fatigue', confidence: 'high' } })) });
+  assert.equal(fatigueOnly.body.data.recovery_advisory, null, 'one signal must not trigger');
+});
+
+test('api smoke: recovery_advisory is suppressed when a deload is already ACTIVE', async () => {
+  fakeCoachState.configured = false;
+  const rec = { ...strongRec, deload: { in_deload: true } };
+  const { body } = await requestJson('/api/coach/message', { method: 'POST', body: JSON.stringify(setWithRec(rec)) });
+  assert.equal(body.data.recovery_advisory, null, 'the active-deload fact owns that voice — no double-speak');
+});
+
+test('api smoke: recovery_advisory does not contradict the fatigue-router (both ease off)', async () => {
+  fakeCoachState.configured = false;
+  // Legs→cardio (reduce_intensity) AND a converged deload signal: both lean toward
+  // LESS work, never opposing directions.
+  const facts = { exerciseName: 'Squat', todaySets: [{ weight: 315, reps: 5, rir: 1 }], planned_queue: ['Run'], rec: strongRec };
+  const { body } = await requestJson('/api/coach/message', { method: 'POST', body: JSON.stringify({ facts }) });
+  assert.equal(body.data.next_move_advisory.action, 'reduce_intensity', 'next-move eases off');
+  assert.equal(body.data.recovery_advisory.decision, 'deload', 'recovery eases off');
+  // Neither voice is a "push/add load" action, so they cannot contradict.
+  assert.ok(!['keep'].includes(body.data.next_move_advisory.action));
+});
+
 // ── Slice 2: substitution pivot voice on the real /api/coach/message route ─────
 const goodPivotFacts = () => ({
   substitution: {
