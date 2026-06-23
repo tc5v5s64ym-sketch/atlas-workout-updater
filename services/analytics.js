@@ -1307,11 +1307,14 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const validCode = c => c && /[a-zA-Z]/.test(c);
   const normalized = asArray(logRows).map(normalizeLogRow).filter(r => validCode(r.lift_code) && isPositiveFinite(r.weight) && isPositiveFinite(r.reps) && r.date_clean);
 
-  const liftInfo = new Map(); // liftCode → { pattern, lastDate }
+  const liftInfo = new Map(); // liftCode → { pattern, muscle_group, lastDate }
   for (const row of normalized) {
     const existing = liftInfo.get(row.lift_code);
     if (!existing || row.date_clean > existing.lastDate) {
-      liftInfo.set(row.lift_code, { pattern: classifyMuscleGroup(row.muscle_group), lastDate: row.date_clean });
+      // Keep the raw muscle_group alongside the derived pattern so the
+      // role/order/ramp/cap helpers can use classifyLiftRole's muscle-group
+      // fallback, not just the name.
+      liftInfo.set(row.lift_code, { pattern: classifyMuscleGroup(row.muscle_group), muscle_group: row.muscle_group, lastDate: row.date_clean });
     }
   }
 
@@ -1320,7 +1323,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   for (const [liftCode, info] of liftInfo) {
     const rec = recommendNextSet(logRows, liftCode);
     if (rec.next_target && rec.sessions_analyzed > 0) {
-      allRecs.push({ ...rec, pattern: info.pattern });
+      allRecs.push({ ...rec, pattern: info.pattern, muscle_group: info.muscle_group });
     }
   }
   // Sort by most recently trained so exercises are in recency order
@@ -1397,16 +1400,18 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   }
 
   function exForPatterns(patterns, max = 6) {
-    // NOTE: the emitted shape carries no `muscle_group`, so the role/order/ramp/cap
-    // helpers classify by NAME only (classifyLiftRole's muscle-group fallback is
-    // inert on this path). Correct for all in-scope lifts; threading muscle_group
-    // is a filed BACKLOG follow-up (a keyword-less accessory would read as secondary).
+    // The emitted shape carries `muscle_group` so the role/order/ramp/cap helpers
+    // (orderByRole / attachMainCompoundWarmups / capLowerBodyAccessoriesForHeavyLegDay)
+    // can use classifyLiftRole's muscle-group fallback — a keyword-less accessory
+    // (no "curl"/"raise"/etc. in the name) still reads as `accessory` via its group,
+    // instead of defaulting to `secondary` and slipping the lower-body cap / ordering.
     return allRecs
       .filter(r => patterns.includes(r.pattern))
       .slice(0, max)
       .map(r => ({
         exercise: r.exercise_name,
         lift_code: r.liftCode,
+        muscle_group: r.muscle_group,
         target_weight: r.next_target.weight,
         target_reps: r.next_target.reps,
         target_sets: r.next_target.sets,

@@ -786,3 +786,32 @@ describe('capSessionToProfile — the cap is DERIVED FROM the profile, not hardc
     assert.deepEqual(capSessionToProfile(null, { session_cap: 6 }), []);
   });
 });
+
+// Threading fix: exForPatterns now emits `muscle_group`, so orderByRole's
+// muscle-group fallback (classifyLiftRole) classifies a keyword-less accessory
+// correctly. "Pallof Press" matches no name pattern (→ secondary by name alone),
+// but muscle_group "Core" makes it an accessory — so it must sort AFTER a true
+// secondary lift, not interleave among the compounds.
+test('orderByRole: a keyword-less accessory is ordered by its muscle group, not name only', () => {
+  const withGroup = [
+    { exercise: 'Back Squat', muscle_group: 'Quads' },   // main (by name)
+    { exercise: 'Pallof Press', muscle_group: 'Core' },  // accessory (only via muscle group)
+    { exercise: 'Leg Press', muscle_group: 'Quads' },    // secondary (by name)
+  ];
+  assert.deepEqual(
+    orderByRole(withGroup).map(e => e.exercise),
+    ['Back Squat', 'Leg Press', 'Pallof Press'],
+    'the core accessory should sort last (after the secondary) via the muscle-group fallback');
+
+  // Regression guard: without muscle_group the same lift reads as `secondary`
+  // (name-only) and sits ahead of the true secondary — the bug this fix closes.
+  const nameOnly = [
+    { exercise: 'Back Squat' },
+    { exercise: 'Pallof Press' },
+    { exercise: 'Leg Press' },
+  ];
+  assert.deepEqual(
+    orderByRole(nameOnly).map(e => e.exercise),
+    ['Back Squat', 'Pallof Press', 'Leg Press'],
+    'name-only classification leaves the core lift mid-pack (documents why threading matters)');
+});
