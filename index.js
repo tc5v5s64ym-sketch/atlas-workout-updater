@@ -1764,6 +1764,12 @@ app.post('/api/log-modality', async (req, res) => {
   if (!text.trim()) return standardError(req, res, 'text is required.', null, 400);
   if (!session_id) return standardError(req, res, 'session_id is required.', null, 400);
   if (!date) return standardError(req, res, 'date is required.', null, 400);
+  // Light input hardening (review #517): `date` lands verbatim in Modality_Log, so
+  // reject an obviously-malformed value rather than persist it (keeps downstream
+  // analytics clean). YYYY-MM-DD only.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return standardError(req, res, 'date must be in YYYY-MM-DD format.', null, 400);
+  }
 
   // Engine owns the structured record. Slash-notation sets are NOT ours — the
   // recognizer returns null for them, so they route to /api/log-workout instead.
@@ -1772,6 +1778,13 @@ app.post('/api/log-modality', async (req, res) => {
     return standardError(req, res, 'Not a recognized modality input (cardio / interval / circuit / timed hold). Slash-notation sets log via /api/log-workout.', null, 422);
   }
   const row = toModalityLogRow(record, { date, session_id, notes });
+  // Defense-in-depth (review #517): `toModalityLogRow` returns null only for an
+  // unknown modality — unreachable today since `record` is one of the four
+  // recognized modalities — but guard explicitly so a null can never reach an
+  // append. Make the invariant loud rather than silently write a bad row.
+  if (!row) {
+    return standardError(req, res, 'Could not build a modality row from the recognized input.', null, 422);
+  }
 
   if (testMode) {
     return standardSuccess(req, res, 'log-modality dry-run', {
