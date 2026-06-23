@@ -49,7 +49,7 @@ Build order:
 
 - Tiny PRs.
 - One concern per PR.
-- Stop after every PR for owner review.
+- Automation-first: do **not** stop after every PR. Proceed through the Autonomous Build Loop and **merge merge-ready PRs** (Claude holds full merge authority), continuing to the next approved task; stop only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`) or the owner interjects. (Hold points below are **owner-initiated**, not automatic — `docs/AGENT_WORKFLOW.md` "Hold points".) The earlier "stop after every PR for owner review" rule is the legacy human-driven cadence and is superseded.
 - Deterministic engine first, AI voice second.
 - Do not touch write paths unless the PR explicitly says so.
 - Do not change Sheet schema unless explicitly approved.

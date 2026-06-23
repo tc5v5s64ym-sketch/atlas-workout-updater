@@ -20,13 +20,15 @@ This document defines the Atlas build workflow between Dale, ChatGPT, Claude Cod
 
 ### Claude Code
 
-- Implements one PR at a time.
-- Reads `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, `docs/DOCS_INDEX.md`, and this file before starting.
-- Opens a PR and stops.
-- If review comments request changes, fixes only those requested changes, pushes updates, and stops again.
-- Does not broaden scope during fixes.
-- Does not start the next PR without owner approval.
-- Does not merge.
+> **Automation-first (operative).** These bullets are reconciled to the **Autonomous Build Loop** (`docs/AUTOMATION_PROTOCOL.md`): Claude builds, tests, reviews, classifies risk, fills the merge card, **merges merge-ready PRs (it holds full merge authority)**, and continues to the next approved task — stopping only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`) or the owner interjects. The older "opens a PR and stops / does not merge / does not start the next without owner approval" cadence is **legacy human-driven** and is superseded.
+
+- Implements one concern per PR (Invariant PR1).
+- Reads `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, `docs/DOCS_INDEX.md`, and this file before starting; runs the Current-State Verification Gate.
+- Opens the PR, runs tests + reviews, classifies risk, and fills the merge card.
+- If review requests changes, fixes only the in-scope finding, pushes, and re-runs tests/review — it does not broaden scope, and it does not stop unless an owner check-in criterion applies.
+- Routes decision panels to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), never to the owner.
+- Merges a PR once it is merge-ready (`docs/AUTOMATION_PROTOCOL.md` §4) and continues to the next approved task; refills `docs/ACTIVE_ROADMAP.md` from `BACKLOG.md` when the queue empties (Roadmap Refill Loop).
+- Stops for the owner only on an owner check-in criterion (`docs/OWNER_CHECKIN_RULES.md`) — e.g. an owner-initiated live-test hold, a reserved decision, or unresolved safety.
 
 ### GitHub
 
@@ -56,29 +58,31 @@ CODEX Review returns one of:
 
 ## CODEX Review action rules
 
+> **Automation-first note:** under the Autonomous Build Loop Claude does **not** stop after each CODEX Review round. It fixes in-scope blockers, re-runs tests + review, and continues; it merges once the PR is merge-ready. The "stop" steps below are the legacy human-driven cadence, reconciled inline.
+
 If CODEX Review returns `BLOCKING` and the issue is in scope for the current PR:
 
 1. Claude Code fixes only that issue.
 2. Claude Code pushes the update.
 3. GitHub checks rerun.
 4. CODEX Review reruns.
-5. Claude Code stops again.
+5. Claude Code re-confirms green and continues — it does **not** stop unless an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md`).
 
 If CODEX Review finds future-scope work:
 
 1. Claude Code must not build it inside the current PR.
 2. Claude Code adds it to `BACKLOG.md` or creates/links an issue.
 3. Claude Code mentions the deferral in the PR notes.
-4. Claude Code stops.
+4. Claude Code continues with the current PR / next approved task — future scope is filed, not built, and is not a stop.
 
 If CODEX Review returns `NON-BLOCKING`:
 
 - Claude Code may leave the finding as a note/deferred item.
-- Dale may still merge after GitHub checks are green.
+- The PR is merge-ready once GitHub checks are green; **Claude merges** (it holds full merge authority — `docs/AUTOMATION_PROTOCOL.md`). Dale may also merge directly.
 
 If CODEX Review returns `READY FOR OWNER MERGE`:
 
-- The PR is ready for Dale's final merge decision once GitHub checks are green.
+- The PR is merge-ready once GitHub checks are green; **Claude merges** under its delegated merge authority (Dale may merge directly or revoke that authority at any time).
 
 ## Standard PR loop
 
