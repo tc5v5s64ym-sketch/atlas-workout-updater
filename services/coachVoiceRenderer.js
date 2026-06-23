@@ -28,6 +28,7 @@
 // LLM prompt is untouched; suppression/override happens at the response boundary.
 
 const { effortNote, rerouteNote } = require('./setEffortCopy');
+const { EFFORT_REASON_CODES } = require('./setEffortSignals');
 
 // Owner-approved correct-effort praise (COACH_VOICE_VALIDATION.md / setEffortCopy
 // tonal anchors): praise the CORRECT effort, never the suffering.
@@ -104,14 +105,17 @@ function findForbiddenContradictions(reasonCodes, prose) {
       if (m) out.push({ code, phrase: m[0] });
     }
   };
-  // A redline / rep-drop / pressing-yellow means HOLD — any progression hype lies.
-  check('redline_set', PROGRESSION_HYPE);
-  check('rep_drop_after_redline', PROGRESSION_HYPE);
-  check('pressing_readiness_yellow', PROGRESSION_HYPE);
+  // Bind to the engine's frozen reason-code map (not string literals) so a rename
+  // in setEffortSignals.js can't silently stop this trust-critical guard from
+  // firing. A redline / rep-drop / pressing-yellow means HOLD — any progression
+  // hype lies.
+  check(EFFORT_REASON_CODES.REDLINE_SET, PROGRESSION_HYPE);
+  check(EFFORT_REASON_CODES.REP_DROP_AFTER_REDLINE, PROGRESSION_HYPE);
+  check(EFFORT_REASON_CODES.PRESSING_READINESS_YELLOW, PROGRESSION_HYPE);
   // A high-RIR working set was UNDER target — calling it perfect/on-target lies.
-  check('high_rir_workset_underdosed', ON_TARGET_CLAIM);
+  check(EFFORT_REASON_CODES.HIGH_RIR_WORKSET_UNDERDOSED, ON_TARGET_CLAIM);
   // A warmup/feeder set must never be scolded as sandbagging.
-  check('warmup_feeder_ignored', SANDBAG);
+  check(EFFORT_REASON_CODES.WARMUP_FEEDER_IGNORED, SANDBAG);
   return out;
 }
 

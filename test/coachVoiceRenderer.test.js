@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
-const { analyzeSetSequence, assessNextMoveConflict } = require('../services/setEffortSignals');
+const { analyzeSetSequence, assessNextMoveConflict, EFFORT_REASON_CODES } = require('../services/setEffortSignals');
 const { renderSetVoice, findForbiddenContradictions } = require('../services/coachVoiceRenderer');
 
 const repoRoot = path.join(__dirname, '..');
@@ -137,6 +137,30 @@ test('no_full_session_recap_after_single_set', () => {
   assert.ok(sentences.length <= 3, `terse reaction (<=3 short sentences), got ${sentences.length}`);
   // It speaks about THIS lift only — it does not enumerate other planned exercises.
   assert.doesNotMatch(v.primary_line, /Seated Row|Lat Pulldown|Overhead Press/);
+});
+
+// 11b — the guard fires for EACH reason code on its own (no co-occurrence cover).
+// Binds to the engine's frozen map, so a rename in setEffortSignals can't quietly
+// disable a check and slip past the fixtures (where the pressing/rep-drop codes
+// only ever appear alongside redline_set).
+test('contradiction guard fires per reason code, bound to the engine map', () => {
+  const cases = [
+    [EFFORT_REASON_CODES.REDLINE_SET, 'add more weight next time'],
+    [EFFORT_REASON_CODES.REP_DROP_AFTER_REDLINE, "keep pushing, you're on track"],
+    [EFFORT_REASON_CODES.PRESSING_READINESS_YELLOW, 'go heavier next set'],
+    [EFFORT_REASON_CODES.HIGH_RIR_WORKSET_UNDERDOSED, 'perfect, right on target'],
+    [EFFORT_REASON_CODES.WARMUP_FEEDER_IGNORED, 'you sandbagged that, too easy'],
+  ];
+  for (const [code, prose] of cases) {
+    const hits = findForbiddenContradictions([code], prose);
+    assert.ok(hits.length > 0, `guard must fire for ${code} in isolation`);
+    assert.ok(hits.every(h => h.code === code), `every hit must attribute to ${code}`);
+  }
+  // A clean, non-contradictory line trips nothing even with a live code present.
+  assert.deepEqual(
+    findForbiddenContradictions([EFFORT_REASON_CODES.REDLINE_SET], 'Hold the load and clean up reps.'),
+    []
+  );
 });
 
 // 12 — the renderer is pure: no write path, parser, schema, or I/O.
