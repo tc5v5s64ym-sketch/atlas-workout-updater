@@ -474,7 +474,13 @@ dropped (spec §5). No I/O, no LLM, no write-path, no schema, no route, no
 
 ## Active queue — Training Intelligence Implementation Series (promoted 2026-06-22)
 
-Promoted by owner decision (2026-06-22) as the build series implementing the Training Profile Taxonomy ([`docs/TRAINING_PROFILE_TAXONOMY.md`](TRAINING_PROFILE_TAXONOMY.md)) and the Session Planning Engine ([`docs/SESSION_PLANNING_ENGINE.md`](SESSION_PLANNING_ENGINE.md)) planning specs. **Only PR 477 is active.** PRs 478–486+ are filed in `BACKLOG.md` ("Training Intelligence Implementation Series"), owner-gated and **not active** — promote one at a time on explicit owner direction. Deterministic-engine-first; the LLM only words facts. Tiny PRs. (The `PR 47x` labels are the owner's logical slice numbers; GitHub PR numbers are a separate namespace.)
+Promoted by owner decision (2026-06-22) as the build series implementing the Training Profile Taxonomy ([`docs/TRAINING_PROFILE_TAXONOMY.md`](TRAINING_PROFILE_TAXONOMY.md)) and the Session Planning Engine ([`docs/SESSION_PLANNING_ENGINE.md`](SESSION_PLANNING_ENGINE.md)) planning specs. **The owner promoted the full 478–486 series into the active queue (2026-06-23)** — build one tiny PR at a time, in order. Deterministic-engine-first; the LLM only words facts. Tiny PRs. (The `PR 47x` labels are the owner's logical slice numbers; GitHub PR numbers are a separate namespace.)
+
+**Series progress (2026-06-23):**
+- ✅ **PR 477** — RIR-aware coach accountability (engine PR-A #478 + wiring PR-B #479) — shipped.
+- ✅ **PR 478 — Exercise Modality Schema** — shipped: pure-data `services/exerciseModality.js` (`modalityFor`), reference-only, no write-path/schema change. Golden-fixture coverage of Taxonomy §3.
+- ◐ **PR 479 — Session Objective Scoring Fixtures** — next.
+- PRs 480–486 follow in order (see `BACKLOG.md` "Training Intelligence Implementation Series").
 
 ### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
 
