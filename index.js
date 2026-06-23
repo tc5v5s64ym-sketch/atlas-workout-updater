@@ -92,6 +92,8 @@ const { resolveExercise } = require('./services/exerciseResolver');
 const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('./services/coachVoiceRenderer');
+const { gradeStimulus } = require('./services/stimulusGovernor');
+const { profileForGoal, modalityCategoryFor } = require('./services/trainingIntelligenceAdapter');
 const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
@@ -1047,7 +1049,7 @@ function computeSetEffortExtras(rawFacts) {
   // voiceBase is the deterministic Coach Voice Renderer output WITHOUT the prose
   // contradiction check (candidateProse is finalized per response path below). null
   // when there is no weighted/RIR signal to read.
-  const out = { effort_note: null, reroute: null, voiceBase: null };
+  const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null };
   try {
     const todaySets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
     // Only analyze the current weighted/RIR workflow: at least one set must carry
@@ -1055,11 +1057,36 @@ function computeSetEffortExtras(rawFacts) {
     const hasSignal = todaySets.some(s => s && (Number.isFinite(Number(s.weight)) || Number.isFinite(Number(s.rir))));
     if (!hasSignal) return out;
     const rec = rawFacts.rec && typeof rawFacts.rec === 'object' ? rawFacts.rec : {};
+    const exerciseName = rawFacts.exerciseName || rec.exercise_name || '';
     const analysis = analyzeSetSequence(todaySets, {
-      exerciseName: rawFacts.exerciseName || rec.exercise_name || '',
+      exerciseName,
       targetRir: rec.target_rir,
     });
     if (!analysis) return out;
+
+    // Profile-aware Stimulus Governor grade (PR 484 wiring slice 2 — read-only fact).
+    // Grades the hardest logged set by the user's PROFILE + the exercise MODALITY
+    // (via the slice-1 adapter), so the same RIR reads differently for a strength vs
+    // a general-fitness lifter. Additive only — it does NOT change the existing
+    // `voiceBase`/message here; a later slice words it. Best-effort; engine-vocab out.
+    try {
+      const workRirs = todaySets.map(s => Number(s && s.rir)).filter(Number.isFinite);
+      const grade = gradeStimulus({
+        profile: profileForGoal(getProfileGoal()),
+        modalityCategory: modalityCategoryFor(exerciseName),
+        rir: workRirs.length ? Math.min(...workRirs) : null,
+        target_rir: rec.target_rir,
+        is_heavy_compound: !!analysis.is_compound,
+      });
+      if (grade) {
+        out.set_grade = {
+          profile: grade.rule.profile,
+          effort_interpretation: grade.effort_interpretation,
+          progression_verdict: grade.progression_verdict,
+          fatigue_signal: grade.fatigue_signal,
+        };
+      }
+    } catch (_) { /* grade is best-effort; never block the reaction */ }
     out.effort_note = buildEffortNote(analysis);
     // Reroute only when a remaining planned queue exists (engine also guards this).
     const queue = Array.isArray(rawFacts.planned_queue) ? rawFacts.planned_queue : [];
@@ -1140,8 +1167,8 @@ app.post('/api/coach/message', async (req, res) => {
   // applies the prose contradiction check per path and rides `voice` along too.
   const computed = kind === 'set'
     ? computeSetEffortExtras(rawFacts)
-    : { effort_note: null, reroute: null, voiceBase: null };
-  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute };
+    : { effort_note: null, reroute: null, voiceBase: null, set_grade: null };
+  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade };
   const voiceBase = computed.voiceBase;
   // Substitution-pivot voice (slice 2). Read straight from the client-provided swap;
   // only the classification/quality/logged-name fields are consulted. Best-effort —
