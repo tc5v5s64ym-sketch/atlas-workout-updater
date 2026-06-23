@@ -747,14 +747,24 @@
     const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
       ? data.effort_note.trim() : null;
     const reroute = data && data.reroute && typeof data.reroute === 'object' ? data.reroute : null;
-    if (llm && llm.trim()) return { note: llm, effort_note, reroute };
-    const opener = coachOpener(facts.todaySets || [], facts.rec);
+    const voice = data && data.voice && typeof data.voice === 'object' ? data.voice : null;
+    // Deterministic Coach Voice Renderer wins. When a non-neutral set-effort signal
+    // (redline / rep-drop / pressing-yellow / underdose / isolation caution) owns
+    // the reaction, render its primary_line and NEVER the generic/LLM prose — the
+    // server has already nulled contradictory prose; this is the visual backstop.
+    if (voice && voice.suppress_generic_prose && voice.primary_line) {
+      return { note: voice.primary_line, effort_note, reroute, voice };
+    }
+    if (llm && llm.trim()) return { note: llm, effort_note, reroute, voice };
+    // LLM down / neutral: prefer the engine's correct-effort line (on-target praise)
+    // when one was offered, else the templated opener.
+    const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec);
     const sub = facts.substitution;
     if (sub && sub.classification) {
       const subLine = coachVoiceTemplates.templatedSubstitutionLine(sub);
-      if (subLine) return { note: opener + '\n\n' + subLine, effort_note, reroute };
+      if (subLine) return { note: opener + '\n\n' + subLine, effort_note, reroute, voice };
     }
-    return { note: opener, effort_note, reroute };
+    return { note: opener, effort_note, reroute, voice };
   }
 
   // Returns the full /api/coach/message data object ({ message, effort_note,
@@ -998,8 +1008,11 @@
     }
 
     // Deterministic, engine-backed set-effort line (PR 477). One short line only —
-    // it never expands into a full-session recap.
-    if (reaction.effort_note) {
+    // it never expands into a full-session recap. When the Coach Voice Renderer is
+    // suppressing generic prose, the note ABOVE already IS the deterministic
+    // reaction (voice.primary_line incorporates this observation), so skip the
+    // separate line to avoid saying it twice.
+    if (reaction.effort_note && !(reaction.voice && reaction.voice.suppress_generic_prose)) {
       const eff = document.createElement('div');
       eff.className = 'coach-msg effort-note';
       await typeOut(eff, reaction.effort_note);

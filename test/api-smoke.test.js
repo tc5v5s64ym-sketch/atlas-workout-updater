@@ -481,6 +481,13 @@ test('api smoke: coach/message returns deterministic set-effort copy (engine-bac
   assert.ok(body.data.reroute, 'a reroute suggestion must be present');
   assert.equal(body.data.reroute.type, 'reroute_pull_first');
   assert.match(body.data.reroute.line, /Seated Row/);
+  // Coach Voice Renderer (slice 1): a non-neutral signal rides along as `voice`,
+  // owns the reaction (suppress_generic_prose), and carries the deterministic line.
+  assert.ok(body.data.voice, 'the deterministic voice must be present');
+  assert.equal(body.data.voice.severity, 'block');
+  assert.equal(body.data.voice.suppress_generic_prose, true);
+  assert.match(body.data.voice.primary_line, /pressing is yellow|hold/i);
+  assert.doesNotMatch(body.data.voice.primary_line, /keep pushing|add (weight|load)|on track/i);
   // Trust: surfacing the engine read never writes a row.
   assert.equal(fakeSheetsState.appendCalls.length, before, 'coach effort path must not write');
 });
