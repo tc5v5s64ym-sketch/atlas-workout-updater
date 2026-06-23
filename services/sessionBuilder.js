@@ -128,6 +128,7 @@ function buildIntentSession({
     exercises.push({
       exercise: rec.exercise_name,
       lift_code: rec.liftCode,
+      muscle_group: rec.muscle_group,
       target_weight: rec.next_target.weight,
       target_reps: rec.next_target.reps,
       target_sets: rec.next_target.sets,
@@ -174,6 +175,7 @@ function buildIntentSession({
     exercises.push({
       exercise: rec.exercise_name,
       lift_code: rec.liftCode,
+      muscle_group: rec.muscle_group,
       target_weight: rec.next_target.weight,
       target_reps: rec.next_target.reps,
       target_sets: rec.next_target.sets,
@@ -204,6 +206,7 @@ function buildIntentSession({
         exercises.push({
           exercise: balanceRec.exercise_name,
           lift_code: balanceRec.liftCode,
+          muscle_group: balanceRec.muscle_group,
           target_weight: balanceRec.next_target.weight,
           target_reps: balanceRec.next_target.reps,
           target_sets: balanceRec.next_target.sets,
