@@ -1341,10 +1341,14 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const seen = new Set();
     const deduped = allRecs.filter(r => {
       const key = (r.exercise_name || '').toLowerCase().trim();
-      // Single-word names are often muscle-group labels used as placeholders in
-      // test helpers (e.g. exercise_name='Chest'); skip dedup to avoid collapsing
-      // distinct lift codes that happen to share a generic single-word label.
-      if (!key || !key.includes(' ')) return true;
+      if (!key) return true;
+      // Skip dedup ONLY for a single-word name that is itself a muscle-group
+      // label (e.g. exercise_name='Chest'/'Back'/'Core') — these are used as
+      // placeholders in test helpers and must not collapse distinct lift codes.
+      // A real single-word lift (Squat, Deadlift, Curl, Dips) is NOT a muscle
+      // label, so it now dedups correctly; multi-word lifts (e.g. "Leg Press")
+      // always dedup, unaffected by the muscle keyword in their name.
+      if (!key.includes(' ') && classifyMuscleGroup(r.exercise_name) !== null) return true;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
