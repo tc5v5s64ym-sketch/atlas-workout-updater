@@ -1495,6 +1495,21 @@ test('api smoke: log-modality live write requires a write_id', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: log-modality rejects a malformed date (400) and writes nothing', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response } = await requestJson('/api/log-modality', {
+      method: 'POST',
+      body: JSON.stringify({ text: 'Run 5 km 30:00', session_id: 'S7', date: 'June 23', write_id: 'mod-wid-baddate' })
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(fakeSheetsState.appendCalls, []);
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 test('api smoke: parse-workout-image is parse-only — auto_write=true performs no write', async () => {
   fakeSheetsState.appendCalls.length = 0;
   // allowAppend stays false: if the removed auto_write branch ever wrote, the
