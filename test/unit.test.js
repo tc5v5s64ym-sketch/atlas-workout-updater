@@ -1800,6 +1800,16 @@ test('last_session_route_registered_before_lift_code_param', () => {
   assert.ok(lastSessionIndex < liftCodeIndex);
 });
 
+test('coach set-reaction stimulus_grade is engine-only (always overwritten, no client passthrough)', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // The route must ALWAYS set stimulus_grade from the engine (or null), never
+  // conditionally leave a client-supplied value in place.
+  assert.match(
+    indexSource,
+    /stimulus_grade:\s*kind === 'set'\s*\?\s*\(computed\.set_grade \|\| null\)\s*:\s*null/,
+    'index.js must overwrite stimulus_grade with the engine value or null (engine-only)');
+});
+
 test('route_definitions_include_last_session', () => {
   const route = routeDefinitions.find(candidate => candidate.path === '/api/exercises/last-session');
 

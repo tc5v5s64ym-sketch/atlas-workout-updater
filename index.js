@@ -1232,10 +1232,9 @@ app.post('/api/coach/message', async (req, res) => {
   // PR 484 slice 3: let the set-reaction coach WORD the profile-aware Stimulus
   // Governor grade (computed read-only in slice 2). The model only words this
   // engine verdict — sanitizeFacts bounds it to controlled enums and the prompt
-  // forbids inventing numbers.
-  if (kind === 'set' && computed.set_grade) {
-    facts = { ...facts, stimulus_grade: computed.set_grade };
-  }
+  // forbids inventing numbers. ALWAYS overwrite (engine value or null) so a
+  // client-supplied `stimulus_grade` can never reach the coach — engine-only.
+  facts = { ...facts, stimulus_grade: kind === 'set' ? (computed.set_grade || null) : null };
 
   try {
     const message = kind === 'plan'
