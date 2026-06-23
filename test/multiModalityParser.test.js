@@ -154,6 +154,14 @@ test('the slash-notation resistance contract is never hijacked (returns null)', 
   }
 });
 
+test('a unitless rounds-ish input is NOT an interval/circuit (returns null)', () => {
+  // "N x N" with no work unit (km/mi/m/min/sec) is resistance shorthand, not an
+  // interval; locks the interval guard's required-work-unit against regex edits.
+  for (const t of ['Bench 3 x 5', '3 x 5', 'Squat 5 x 5 reps', '4 x 8 @ 135']) {
+    assert.equal(recognizeModalityInput(t), null, `must not be a modality: ${JSON.stringify(t)}`);
+  }
+});
+
 test('non-workout chatter and empty input → null', () => {
   for (const t of ['thanks coach', 'what should I do next?', '', '   ', null, undefined]) {
     assert.equal(recognizeModalityInput(t), null);
