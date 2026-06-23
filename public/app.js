@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v28';
+const ATLAS_SHELL_BUILD = 'v29';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2620,7 +2620,7 @@ async function parseWorkoutTextWithBackend(workoutText) {
     // clearly-typed set on flaky signal instead of dropping it into chat.
     throw new Error('Backend parser did not produce any set rows.');
   }
-  return { intent: 'log_sets', rows, warnings: data.warnings || [], prescribed: Array.isArray(parsed.prescribed) ? parsed.prescribed : null };
+  return { intent: 'log_sets', rows, warnings: data.warnings || [], prescribed: Array.isArray(parsed.prescribed) ? parsed.prescribed : null, kbIdentity: data.kb_identity || null };
 }
 
 function populateSetRows(rows) {
@@ -2742,7 +2742,7 @@ async function rowsFromWorkoutInput() {
   // the catalog. Only warn when it's truly unresolved — unknown to the catalog
   // too — so a successfully-parsed, catalog-known lift never gets "didn't catch
   // that" on top of its confirmation card.
-  if (shouldWarnUnknownLift(parsed.warnings, parsed.rows[0]?.exercise, liftCodeFromCatalog)) {
+  if (shouldWarnUnknownLift(parsed.warnings, parsed.rows[0]?.exercise, liftCodeFromCatalog, parsed.kbIdentity)) {
     parsedRowsEditor.hidden = false;
     setStatus(loggerStatus, "Didn't catch that lift — check the exercise name before saving.", 'warn');
   }
@@ -2752,8 +2752,13 @@ async function rowsFromWorkoutInput() {
 // `unknown_exercise` AND the catalog doesn't recognize the resolved name either —
 // i.e. the parser truly failed to resolve a real lift. A catalog hit (the parser
 // map is just narrower than the catalog) means it's a real lift; no warning.
-function shouldWarnUnknownLift(warnings, exerciseName, catalogLookup) {
+function shouldWarnUnknownLift(warnings, exerciseName, catalogLookup, kbIdentity) {
   if (!(Array.isArray(warnings) && warnings.includes('unknown_exercise'))) return false;
+  // The server attaches a KB identity when the exercise resolver recognizes the
+  // lift (e.g. Cable Fly) even though the parser's narrower catalog flagged it
+  // unknown. That is the SAME identity source the card/voice trust — so honor it
+  // here too and don't split-brain a real lift into a "didn't catch that" warning.
+  if (kbIdentity && kbIdentity.exercise_id) return false;
   const known = typeof catalogLookup === 'function' && exerciseName && catalogLookup(exerciseName);
   return !known;
 }

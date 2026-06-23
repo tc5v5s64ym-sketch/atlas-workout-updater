@@ -1146,6 +1146,29 @@ test('api smoke: parse-workout-text dry-run proves no write', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// Cable Fly is `unknown_exercise` to the parser's narrow catalog, but the KB
+// resolver recognizes it. The real route must attach a kb_identity so the client's
+// unknown-lift warning isn't split-brain with the card/voice. Real route + real KB.
+test('api smoke: parse-workout-text attaches KB identity for Cable Fly (no split-brain)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'Cable Fly 30 12/0', test_mode: true })
+  });
+
+  assert.equal(response.status, 200);
+  // Confirmation-card data: a real log_sets parse with the set.
+  assert.equal(body.data.parsed.intent, 'log_sets');
+  assert.deepEqual(body.data.parsed.sets.map(s => [s.weight, s.reps, s.rir]), [[30, 12, 0]]);
+  // KB identity resolved (this is what suppresses the "didn't catch that lift" warning).
+  assert.ok(body.data.kb_identity, 'kb_identity must be attached when the KB recognizes the lift');
+  assert.equal(body.data.kb_identity.exercise_id, 'cable_fly');
+  // Still a dry-run; never writes.
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: parse-workout-image is parse-only — auto_write=true performs no write', async () => {
   fakeSheetsState.appendCalls.length = 0;
   // allowAppend stays false: if the removed auto_write branch ever wrote, the
