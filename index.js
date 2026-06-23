@@ -88,6 +88,7 @@ const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
+const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { resolveExercise } = require('./services/exerciseResolver');
 const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
@@ -2491,6 +2492,21 @@ app.post('/api/parse-workout-text', (req, res) => {
         if (hit && hit.confident) {
           responseBody.kb_identity = { exercise_id: hit.exercise_id, name: hit.name, confidence: hit.confidence };
         }
+      }
+    } catch (_) { /* best-effort; recognition must never break the dry-run */ }
+    // Multi-modality recognition (PR 486 slice 3): attach recognized non-slash
+    // modality metadata (timed holds / steady cardio / intervals / circuits) to
+    // the DRY-RUN preview so the client can show what was understood. Additive +
+    // read-only: the slash-notation resistance parser still owns any `log_sets`
+    // claim (the recognizer returns null for slash input, and we never attach
+    // when the resistance parser claimed sets), nothing is written, and the
+    // dry-run proof fields (test_mode/sheet_written/no_write_confirmed) are
+    // untouched. No parser-grammar change.
+    try {
+      const p = responseBody.parsed;
+      if (!(p && p.intent === 'log_sets')) {
+        const modality = recognizeModalityInput(String(req.body?.text || ''));
+        if (modality) responseBody.modality = modality;
       }
     } catch (_) { /* best-effort; recognition must never break the dry-run */ }
     console.log(`[parse-workout-text] ok ${Date.now() - t0}ms`);

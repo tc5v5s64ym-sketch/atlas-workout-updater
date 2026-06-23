@@ -1317,6 +1317,60 @@ test('api smoke: parse-workout-text dry-run proves no write', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// PR 486 slice 3: the dry-run preview attaches recognized non-slash modality
+// metadata (timed holds / steady cardio / intervals / circuits) so the client can
+// show what was understood — still without writing anything. Real route + real
+// recognizer.
+test('api smoke: parse-workout-text attaches modality metadata for a circuit (no write)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'AMRAP 12 min: pushups 10, air squats 15 - 6 rounds RPE 8', test_mode: true })
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(body.data.modality, 'modality metadata must be attached for a recognized circuit');
+  assert.equal(body.data.modality.modality, 'circuit');
+  assert.equal(body.data.modality.kind, 'amrap');
+  assert.equal(body.data.modality.cap_min, 12);
+  // Still a dry-run; proof fields intact; never writes.
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: parse-workout-text attaches modality metadata for steady cardio (no write)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'Run 5 km 32:10 RPE 7 avg HR 151', test_mode: true })
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(body.data.modality, 'modality metadata must be attached for recognized cardio');
+  assert.equal(body.data.modality.modality, 'cardio_steady');
+  assert.equal(body.data.modality.distance_km, 5);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+// The slash-notation contract is never hijacked: a weighted/slash set is a
+// resistance `log_sets` parse and gets NO modality metadata attached.
+test('api smoke: parse-workout-text attaches NO modality for a slash-notation set (contract intact)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'Bench 225 5/2', test_mode: true })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.data.parsed.intent, 'log_sets');
+  assert.equal(body.data.modality, undefined, 'a slash set must not be claimed as a modality');
+  assert.equal(body.data.sheet_written, false);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 // Cable Fly is `unknown_exercise` to the parser's narrow catalog, but the KB
 // resolver recognizes it. The real route must attach a kb_identity so the client's
 // unknown-lift warning isn't split-brain with the card/voice. Real route + real KB.
