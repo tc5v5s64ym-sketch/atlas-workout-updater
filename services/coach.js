@@ -14,6 +14,9 @@ const coachBrain = require('./coachBrain');
 // Stimulus Governor vocabularies (PR 481) — imported (not re-declared) so the
 // stimulus_grade whitelist stays in lockstep with the engine's controlled enums.
 const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusGovernorRules');
+// Fatigue Router action vocabulary (PR 483) — imported so the next_move_advisory
+// whitelist stays in lockstep with the engine's controlled routing actions.
+const { ROUTE_ACTIONS } = require('./fatigueRouter');
 // The rules engine's frozen decision/severity vocabularies — ruleTypes.js is
 // built to be consumed by "(later) the AI coaching layer", i.e. here. Importing
 // (rather than re-declaring) keeps the verdict-reaction whitelist in lockstep
@@ -61,6 +64,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "trend" {trend, confidence, sessions_analyzed} — the engine\'s e1RM trajectory across recent sessions. "improving" = e1RM is clearly rising; "flat" = holding steady; "declining" = e1RM is drifting down; "noisy" = high variance, no clear read. When trend is present and is not "noisy", name the direction once as part of the arc narrative. Never claim a trend when the field is absent, and never contradict the engine\'s verdict. `trend` is the authoritative e1RM trajectory signal — use only this object, never any other trend field in the facts.',
     '- The facts may include "readiness_signal" {signal, confidence, note} — the engine\'s fatigue inference from the recent deviation streak. "monitoring" = watching, no fatigue signal; "possible_fatigue" = 3+ consecutive below-expected sessions; "likely_fatigue" = sustained streak + declining e1RM trend. When monitoring, say nothing about fatigue. When possible_fatigue, gently name the pattern without catastrophising. When likely_fatigue, be direct and honest: name the trend and suggest the lifter consider a recovery week. Never diagnose fatigue from a single session and never contradict the engine\'s verdict.',
     '- The facts may include "stimulus_grade" {profile, effort_interpretation, progression_verdict, fatigue_signal} — the engine\'s PROFILE-AWARE read of this set (the same RIR reads differently by training profile). Respect it and never contradict it: progression_verdict "hold" or "back_off" means do NOT tell them to add load/push; "+load"/"+reps" means there is room to progress; fatigue_signal "high" means flag recovery, not progression. Critically, for a "general_fitness" profile do NOT celebrate grinding to failure — maximal effort is not the goal there. It is consistent with effort_verdict (never contradict either); word it, and never invent a number from it.',
+    '- The facts may include "next_move_advisory" {action, reason, next_exercise, next_modality} — the engine\'s SUGGESTION for the planned NEXT move given the fatigue just logged. WORD it as a heads-up for what is up next, never as an order, and never reorder the plan yourself: "reduce" = trim sets/load on the next item; "make_optional" = the next item is optional today; "promote_alternative" = consider a rested/antagonist move instead; "block_pr" = do NOT attempt a PR on the next lift until recovery shows; "reduce_intensity" = keep the upcoming cardio easy (Zone 2 / shorter); "reduce_density" = cut rounds/density on the next circuit. Use the engine\'s reason; never invent a number, a set count, or a load.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -140,7 +144,11 @@ function sanitizeFacts(facts) {
     // The Stimulus Governor's PROFILE-AWARE read of the set (PR 482/484): which
     // metric was read + a coarse progression direction + fatigue signal, styled to
     // the lifter's profile. The model WORDS this; it never invents a number.
-    stimulus_grade: sanitizeStimulusGrade(f.stimulus_grade)
+    stimulus_grade: sanitizeStimulusGrade(f.stimulus_grade),
+    // The Fatigue Router's cross-pattern / cross-modality SUGGESTION for the planned
+    // NEXT move (PR 483/484), given the fatigue just logged. The model WORDS this
+    // suggestion — it never auto-applies it, reorders the plan, or invents a number.
+    next_move_advisory: sanitizeNextMoveAdvisory(f.next_move_advisory)
   };
 }
 
@@ -154,6 +162,22 @@ function sanitizeStimulusGrade(g) {
   const effort_interpretation = strOrNull(g.effort_interpretation);
   if (!progression_verdict && !fatigue_signal) return null;
   return { profile, effort_interpretation, progression_verdict, fatigue_signal };
+}
+
+// Whitelist the Fatigue Router's next-move suggestion (PR 483/484) — only a known
+// routing action survives, with the engine's reason/target/next-move labels as
+// bounded strings. A 'keep' (or unknown) action carries no advice, so it is dropped.
+function sanitizeNextMoveAdvisory(a) {
+  if (!a || typeof a !== 'object') return null;
+  const action = ROUTE_ACTIONS.includes(a.action) ? a.action : null;
+  if (!action || action === 'keep') return null;
+  return {
+    action,
+    reason: clampText(a.reason, 200),
+    target: strOrNull(a.target),
+    next_exercise: strOrNull(a.next_exercise),
+    next_modality: strOrNull(a.next_modality),
+  };
 }
 
 // Whitelist the engine's effort verdict — only the level, target, and headline
@@ -1070,6 +1094,7 @@ module.exports = {
   buildCoachUserPrompt,
   sanitizeFacts,
   sanitizeStimulusGrade,
+  sanitizeNextMoveAdvisory,
   sanitizeSubstitution,
   sanitizeDeviation,
   sanitizeEvidenceContext,

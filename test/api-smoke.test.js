@@ -428,6 +428,37 @@ test('api smoke: coach/message set_grade is null for a non-weighted (cardio-shap
   assert.equal(body.data.set_grade, null, 'no weighted/RIR signal → no set_grade');
 });
 
+test('api smoke: coach/message attaches a read-only next_move_advisory (fatigue router)', async () => {
+  fakeCoachState.configured = false; // the advisory rides along on every path
+  // Heavy compound lower-body block, then cardio queued next → cross-modality
+  // "keep the cardio easy" suggestion (independent of profile/fatigue tier). The
+  // pressing-specific reroute stays silent for a squat, so the gate lets it through.
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: {
+      exerciseName: 'Squat', todaySets: [{ weight: 315, reps: 5, rir: 1 }],
+      planned_queue: ['Run'],
+    } })
+  });
+  assert.equal(response.status, 200);
+  const a = body.data.next_move_advisory;
+  assert.ok(a && typeof a === 'object', 'next_move_advisory must be present for legs→cardio');
+  assert.equal(a.action, 'reduce_intensity');
+  assert.equal(a.next_exercise, 'Run');
+  assert.equal(a.next_modality, 'cardio');
+  assert.equal(body.data.reroute, null, 'pressing reroute must stay silent (no collision)');
+});
+
+test('api smoke: coach/message next_move_advisory is null with no planned next move', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: { exerciseName: 'Squat', todaySets: [{ weight: 315, reps: 5, rir: 1 }] } })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.next_move_advisory, null, 'no planned queue → no advisory');
+});
+
 // ── Slice 2: substitution pivot voice on the real /api/coach/message route ─────
 const goodPivotFacts = () => ({
   substitution: {

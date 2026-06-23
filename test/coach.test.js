@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1588,4 +1588,48 @@ test('sanitizeFacts threads stimulus_grade through (present → kept, absent →
   assert.deepEqual(withGrade.stimulus_grade, { profile: 'general_fitness', effort_interpretation: 'rir', progression_verdict: 'hold', fatigue_signal: 'elevated' });
   const without = sanitizeFacts({ exerciseName: 'Bench Press', todaySets: [] });
   assert.equal(without.stimulus_grade, null);
+});
+
+test('coach system prompt carries the next_move_advisory (fatigue-router) rule', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /next_move_advisory/, 'must reference the next_move_advisory fact');
+  // The full action vocabulary must be worded, never auto-applied.
+  for (const action of ['reduce', 'make_optional', 'promote_alternative', 'block_pr', 'reduce_intensity', 'reduce_density']) {
+    assert.match(prompt, new RegExp(action), `must word the ${action} action`);
+  }
+  assert.match(prompt, /never as an order|never reorder the plan/i, 'must be a suggestion, not an order');
+  assert.match(prompt, /never invent a number/i);
+});
+
+test('sanitizeNextMoveAdvisory keeps a known action and bounds its fields', () => {
+  const clean = sanitizeNextMoveAdvisory({
+    action: 'reduce_intensity',
+    reason: 'Heavy lower-body work just done — keep the following cardio easy.',
+    target: 'cardio', next_exercise: 'Treadmill Run', next_modality: 'cardio', bogus: 'x',
+  });
+  assert.deepEqual(clean, {
+    action: 'reduce_intensity',
+    reason: 'Heavy lower-body work just done — keep the following cardio easy.',
+    target: 'cardio', next_exercise: 'Treadmill Run', next_modality: 'cardio',
+  });
+  // Reason is clamped to 200 chars.
+  const long = sanitizeNextMoveAdvisory({ action: 'reduce', reason: 'x'.repeat(400) });
+  assert.ok(long.reason.length <= 200, 'reason must be clamped');
+});
+
+test('sanitizeNextMoveAdvisory drops keep / unknown actions and junk', () => {
+  assert.equal(sanitizeNextMoveAdvisory(null), null);
+  assert.equal(sanitizeNextMoveAdvisory('nope'), null);
+  assert.equal(sanitizeNextMoveAdvisory({ action: 'keep', reason: 'all good' }), null, 'keep carries no advice');
+  assert.equal(sanitizeNextMoveAdvisory({ action: 'teleport', reason: 'x' }), null, 'out-of-vocab action dropped');
+});
+
+test('sanitizeFacts threads next_move_advisory through (present → kept, absent → null)', () => {
+  const withAdvisory = sanitizeFacts({
+    exerciseName: 'Squat', todaySets: [{ weight: 315, reps: 5, rir: 0 }],
+    next_move_advisory: { action: 'make_optional', reason: 'High fatigue on the muscle up next.', target: 'squat', next_exercise: 'Leg Press', next_modality: 'resistance' },
+  });
+  assert.deepEqual(withAdvisory.next_move_advisory, { action: 'make_optional', reason: 'High fatigue on the muscle up next.', target: 'squat', next_exercise: 'Leg Press', next_modality: 'resistance' });
+  const without = sanitizeFacts({ exerciseName: 'Squat', todaySets: [] });
+  assert.equal(without.next_move_advisory, null);
 });
