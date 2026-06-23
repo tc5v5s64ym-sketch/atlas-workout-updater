@@ -62,6 +62,54 @@ const deloadStateColumns = [
   'deload_exit_criteria'
 ];
 
+// Modality_Log — the persistence target for NON-slash modality logs recognized by
+// services/multiModalityParser.js (timed holds / steady cardio / cardio intervals
+// / circuits — PR 486). This is a NEW typed sibling tab; it leaves the 12-col
+// Log_Cleaned and 9-col Effort schemas untouched. Like Constraints/Deload_State it
+// is OPTIONAL (config/sheetContract.js) — the future write route returns 503 until
+// the tab exists.
+//
+// One row per recognized modality entry; the `modality` column is the discriminator
+// that tells you how to read the shared metric columns:
+//   timed_hold     → duration_sec = hold length, rounds = sets
+//   cardio_steady  → duration_sec = elapsed/duration, distance_m, level (machine)
+//   cardio_interval→ rounds, duration_sec = per-rep work time, distance_m = per-rep
+//                    work distance, rest_sec = rest between rounds
+//   circuit        → exercise = kind label (AMRAP/EMOM/…), duration_sec = time cap,
+//                    rounds, notes = movement list
+// Unused columns for a given modality are left blank. NOTE: column design is
+// owner-reviewable before any write is wired (PR 486 slice 4b) — slice 4a defines
+// the contract only; nothing is written yet.
+const modalityLogColumns = [
+  'date',
+  'session_id',
+  'modality',
+  'exercise',
+  'duration_sec',
+  'distance_m',
+  'rounds',
+  'rest_sec',
+  'level',
+  'rpe',
+  'avg_hr',
+  'notes'
+];
+
+const modalityLogRowFieldAliases = {
+  date: ['date', 'date_clean', 'dateClean'],
+  session_id: ['session_id', 'sessionId'],
+  modality: ['modality'],
+  exercise: ['exercise'],
+  duration_sec: ['duration_sec', 'durationSec', 'duration'],
+  distance_m: ['distance_m', 'distanceM', 'distance'],
+  rounds: ['rounds'],
+  rest_sec: ['rest_sec', 'restSec', 'rest'],
+  level: ['level'],
+  rpe: ['rpe'],
+  avg_hr: ['avg_hr', 'avgHr', 'average_hr', 'averageHR'],
+  notes: ['notes']
+};
+
 const effortRowFieldAliases = {
   date: ['date'],
   session_id: ['session_id', 'sessionId'],
@@ -82,5 +130,7 @@ module.exports = {
   coachingNotesColumns,
   constraintsColumns,
   effortRowFieldAliases,
-  deloadStateColumns
+  deloadStateColumns,
+  modalityLogColumns,
+  modalityLogRowFieldAliases
 };

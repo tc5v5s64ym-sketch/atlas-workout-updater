@@ -23,7 +23,7 @@ const {
   normalizeHeaderToken,
   validateHeaderRow
 } = require('../config/sheetContract');
-const { logRowFieldAliases, effortRowFieldAliases } = require('../config/columns');
+const { logRowFieldAliases, effortRowFieldAliases, modalityLogColumns, modalityLogRowFieldAliases } = require('../config/columns');
 const { isTransientAppendError, retryWithBackoff } = require('../sheets');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
@@ -54,6 +54,48 @@ test('sheet contract reports each missing required tab', () => {
     assert.deepEqual(getMissingRequiredTabs(tabs), [tab]);
   }
   assert.ok(!getMissingRequiredTabs(requiredSheetTabs).includes('Dashboard'));
+});
+
+// PR 486 slice 4a — Modality_Log typed tab schema (pure config, no write path).
+test('Modality_Log is an OPTIONAL tab (never required), leaving the core contract intact', () => {
+  assert.ok(optionalSheetTabs.includes('Modality_Log'));
+  assert.ok(!requiredSheetTabs.includes('Modality_Log'));
+  // Core contract unchanged: Log_Cleaned / Effort stay required, no new required tab.
+  assert.deepEqual(requiredSheetTabs, ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary']);
+  const status = buildSheetContractStatus(requiredSheetTabs);
+  assert.equal(status.missingRequiredTabs.length, 0, 'Modality_Log absent must not make the sheet incomplete');
+  assert.equal(status.optional.Modality_Log, false);
+  const withTab = buildSheetContractStatus([...requiredSheetTabs, 'Modality_Log']);
+  assert.equal(withTab.optional.Modality_Log, true);
+});
+
+test('Modality_Log column contract is the pinned 12-column order', () => {
+  assert.deepEqual(modalityLogColumns, [
+    'date', 'session_id', 'modality', 'exercise', 'duration_sec', 'distance_m',
+    'rounds', 'rest_sec', 'level', 'rpe', 'avg_hr', 'notes'
+  ]);
+  // Every column has an alias entry (so a hand-edited header validates).
+  for (const col of modalityLogColumns) {
+    assert.ok(Array.isArray(modalityLogRowFieldAliases[col]) && modalityLogRowFieldAliases[col].length, `missing aliases for ${col}`);
+  }
+});
+
+test('Modality_Log header validates against canonical and camelCase variants', () => {
+  const canonical = validateHeaderRow(modalityLogColumns, modalityLogColumns, modalityLogRowFieldAliases);
+  assert.equal(canonical.ok, true);
+  const camel = validateHeaderRow(
+    ['date', 'sessionId', 'modality', 'exercise', 'durationSec', 'distanceM', 'rounds', 'restSec', 'level', 'rpe', 'averageHR', 'notes'],
+    modalityLogColumns,
+    modalityLogRowFieldAliases
+  );
+  assert.equal(camel.ok, true, JSON.stringify(camel.mismatches));
+  // A wrong header position is reported, not silently accepted.
+  const wrong = validateHeaderRow(
+    ['date', 'session_id', 'exercise', 'modality', 'duration_sec', 'distance_m', 'rounds', 'rest_sec', 'level', 'rpe', 'avg_hr', 'notes'],
+    modalityLogColumns,
+    modalityLogRowFieldAliases
+  );
+  assert.equal(wrong.ok, false);
 });
 
 test('localTodayIso defaults to UTC when no timezone is configured', () => {
