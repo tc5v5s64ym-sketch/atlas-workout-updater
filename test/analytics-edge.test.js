@@ -1104,3 +1104,22 @@ test('scoreIntents threads muscle_group onto recommended exercises (keyword-less
   assert.ok(pallofs.some(e => e.muscle_group === 'Core'),
     'the exForPatterns path must thread muscle_group so role classification is not name-only');
 });
+
+// Consistency completion: capRecoveringPatternDensity ranks which movement to keep
+// on a recovering pattern via classifyLiftRole — it must use the exercise's
+// muscle_group (now threaded through exForPatterns), not an empty group, so a
+// keyword-less accessory is ranked as accessory and dropped before a real lift.
+test('capRecoveringPatternDensity roleRank uses the exercise muscle_group (not empty)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'analytics.js'), 'utf8');
+  assert.match(
+    src,
+    /roleRank\s*=\s*ex\s*=>.*classifyLiftRole\(ex && ex\.exercise \|\| '', ex && ex\.muscle_group \|\| ''\)/,
+    'capRecoveringPatternDensity must pass ex.muscle_group to classifyLiftRole');
+  // Guard against regressing to the empty-group form.
+  assert.doesNotMatch(
+    src,
+    /classifyLiftRole\(ex && ex\.exercise \|\| '', ''\)/,
+    'the empty-group classifyLiftRole call must not return');
+});

@@ -1451,7 +1451,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (list.length <= 1) return { exercises: list, trimmed: [] };
     const patternOfEx = ex => (allRecs.find(r => r.liftCode === (ex && ex.lift_code)) || {}).pattern || null;
     const isCapped = p => !!p && ['recovering', 'fatigued'].includes(rm[p]?.status);
-    const roleRank = ex => ({ main: 0, secondary: 1, accessory: 2 })[classifyLiftRole(ex && ex.exercise || '', '')] ?? 1;
+    const roleRank = ex => ({ main: 0, secondary: 1, accessory: 2 })[classifyLiftRole(ex && ex.exercise || '', ex && ex.muscle_group || '')] ?? 1;
     const byPattern = new Map();
     list.forEach((ex, i) => {
       const p = patternOfEx(ex);
