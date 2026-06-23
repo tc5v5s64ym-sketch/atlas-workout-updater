@@ -25,6 +25,20 @@ test('timed hold: minutes convert to seconds; sets default to 1', () => {
   assert.equal(r.sets, 1);
 });
 
+test('timed hold: a mid-string "x3" multiplier is captured (not just trailing)', () => {
+  const r = recognizeModalityInput('Plank 60 sec x3 RPE 7');
+  assert.equal(r.modality, 'timed_hold');
+  assert.equal(r.duration_sec, 60);
+  assert.equal(r.sets, 3);
+  assert.equal(r.rpe, 7);
+});
+
+test('timed hold: a leading "3x" multiplier is captured too', () => {
+  const r = recognizeModalityInput('Dead Hang 30 sec 3x');
+  assert.equal(r.modality, 'timed_hold');
+  assert.equal(r.sets, 3);
+});
+
 test('cardio (duration + RPE + HR): "Elliptical 30 min RPE 6 avg HR 142"', () => {
   assert.deepEqual(recognizeModalityInput('Elliptical 30 min RPE 6 avg HR 142'), {
     modality: 'cardio_steady', exercise: 'Elliptical', duration_min: 30,
@@ -55,6 +69,75 @@ test('cardio: miles convert to km', () => {
   assert.equal(r.distance_km, Math.round(3 * 1.60934 * 100) / 100);
 });
 
+// ── Cardio intervals (PR 486 slice 2) ────────────────────────────────────────
+test('intervals (distance work + rest): "8 x 400m / 90 sec"', () => {
+  const r = recognizeModalityInput('8 x 400m / 90 sec');
+  assert.equal(r.modality, 'cardio_interval');
+  assert.equal(r.rounds, 8);
+  assert.equal(r.work_distance_m, 400);
+  assert.equal(r.work_sec, null);
+  assert.equal(r.rest_sec, 90);
+});
+
+test('intervals (named, miles → meters, rest in min, RPE)', () => {
+  const r = recognizeModalityInput('Run intervals 4 x 1 mile / 3 min RPE 8');
+  assert.equal(r.modality, 'cardio_interval');
+  assert.equal(r.rounds, 4);
+  assert.equal(r.work_distance_m, Math.round(1 * 1609.34));
+  assert.equal(r.rest_sec, 180);
+  assert.equal(r.rpe, 8);
+});
+
+test('intervals (time-based work): "6 x 2 min / 60 sec"', () => {
+  const r = recognizeModalityInput('6 x 2 min / 60 sec');
+  assert.equal(r.modality, 'cardio_interval');
+  assert.equal(r.rounds, 6);
+  assert.equal(r.work_sec, 120);
+  assert.equal(r.work_distance_m, null);
+  assert.equal(r.rest_sec, 60);
+});
+
+test('intervals run before steady cardio (a rounds pattern wins over distance)', () => {
+  const r = recognizeModalityInput('5 x 800m');
+  assert.equal(r.modality, 'cardio_interval');
+  assert.equal(r.rounds, 5);
+  assert.equal(r.work_distance_m, 800);
+  assert.equal(r.rest_sec, null);
+});
+
+// ── Circuits / conditioning (PR 486 slice 2) ─────────────────────────────────
+test('circuit (AMRAP): cap, movements, rounds, RPE', () => {
+  const r = recognizeModalityInput('AMRAP 12 min: pushups 10, air squats 15, situps 20 - 6 rounds RPE 8');
+  assert.equal(r.modality, 'circuit');
+  assert.equal(r.kind, 'amrap');
+  assert.equal(r.cap_min, 12);
+  assert.equal(r.rounds, 6);
+  assert.deepEqual(r.movements, ['pushups 10', 'air squats 15', 'situps 20']);
+  assert.equal(r.rpe, 8);
+});
+
+test('circuit (EMOM): cap + movements, no reported rounds', () => {
+  const r = recognizeModalityInput('EMOM 10 min: 5 pullups, 10 pushups, 15 squats');
+  assert.equal(r.modality, 'circuit');
+  assert.equal(r.kind, 'emom');
+  assert.equal(r.cap_min, 10);
+  assert.equal(r.rounds, null);
+  assert.deepEqual(r.movements, ['5 pullups', '10 pushups', '15 squats']);
+});
+
+test('circuit cap is anchored to the keyword header, not a movement duration', () => {
+  const r = recognizeModalityInput('AMRAP: plank 2 min, lunges 10');
+  assert.equal(r.modality, 'circuit');
+  assert.equal(r.cap_min, null); // "2 min" belongs to the movement, not the cap
+  assert.deepEqual(r.movements, ['plank 2 min', 'lunges 10']);
+});
+
+test('circuit wins over a hold-name listed inside it', () => {
+  const r = recognizeModalityInput('AMRAP 8 min: plank 30 sec, lunges 10');
+  assert.equal(r.modality, 'circuit');
+  assert.equal(r.kind, 'amrap');
+});
+
 // ── The contract guard: resistance / slash-notation inputs are NOT ours ───────
 test('the slash-notation resistance contract is never hijacked (returns null)', () => {
   const resistance = [
@@ -83,9 +166,13 @@ test('a bare cardio/hold name with no quantity → null (needs a real signal)', 
 });
 
 test('every recognized modality is in the MODALITIES vocabulary', () => {
-  for (const t of ['Plank 60 sec', 'Run 5 km 30:00', 'Elliptical 30 min']) {
+  const samples = [
+    'Plank 60 sec', 'Run 5 km 30:00', 'Elliptical 30 min',
+    '8 x 400m / 90 sec', 'AMRAP 10 min: pushups 10',
+  ];
+  for (const t of samples) {
     const r = recognizeModalityInput(t);
-    assert.ok(r && MODALITIES.includes(r.modality));
+    assert.ok(r && MODALITIES.includes(r.modality), `unknown modality for ${JSON.stringify(t)}`);
   }
   assert.ok(Object.isFrozen(MODALITIES));
 });
