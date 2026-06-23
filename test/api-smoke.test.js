@@ -668,6 +668,67 @@ test('api smoke: coach/chat returns Gemini prose when configured', async () => {
   }
 });
 
+// ── Slice 3: recovery routing — a tired lifter never gets motivation hype ──────
+const HYPE = /push through|you('?| )ve got this|you got this|no excuses|grind it out|dig deep|beast mode|crush it|let'?s go champ/i;
+
+test('api smoke: coach/chat routes a tired lifter to recovery, bypassing the LLM (no hype)', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatMessage = "Push through it — you've got this, no excuses!"; // the LLM hype we must NOT surface
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "I'm exhausted today" })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'tiredness is owned by the deterministic engine, not Gemini');
+    assert.notEqual(body.data.message, fakeCoachState.chatMessage, 'the LLM hype line must be bypassed');
+    assert.doesNotMatch(body.data.message, HYPE, 'recovery routing must never hype a tired lifter');
+    assert.match(body.data.message, /recovery|pull-back|rest|lighter|reserve|recovered/i, 'it routes on recovery');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/chat — tired lifter gets recovery routing even when Gemini is unconfigured (no dead-end)', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'legs are toast' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.source, 'engine');
+  assert.ok(body.data.message && body.data.message.trim(), 'a tired lifter is never dead-ended on the unconfigured path');
+  assert.doesNotMatch(body.data.message, HYPE);
+});
+
+test('api smoke: coach/chat — a non-tired question still reaches the LLM (no over-capture)', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my bench trending?', history: [{ role: 'user', text: 'hi' }] })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini', 'a normal question must not be captured by recovery routing');
+    assert.equal(body.data.message, fakeCoachState.chatMessage);
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/chat recovery routing never writes a sheet', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  try {
+    await requestJson('/api/coach/chat', { method: 'POST', body: JSON.stringify({ message: "I'm wiped out" }) });
+  } finally {
+    fakeCoachState.configured = false;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'recovery routing is read-only');
+});
+
 test('api smoke: coach/chat computes extra_work from the live plan vs preview', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.throwError = null;
