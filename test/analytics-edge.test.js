@@ -1080,3 +1080,27 @@ test('scoreIntents: a 3-exercise Build Strength day is allowed when GLOBAL fatig
   assert.ok(bs.exercises.length <= 3,
     `expected a short session under high fatigue, got ${bs.exercises.length}`);
 });
+
+// Threading fix: scoreIntents' exForPatterns now carries `muscle_group` on every
+// recommended exercise, so the session-structuring helpers can classify a
+// keyword-less accessory by its muscle group. Prove the field survives end-to-end.
+test('scoreIntents threads muscle_group onto recommended exercises (keyword-less accessory)', () => {
+  const mk = (name, code, mg, date, w) => ({
+    lift_code: code, exercise: name, canonical_exercise: name, muscle_group: mg,
+    weight: w, reps: 8, rir: 2, date_clean: date, set_number: 1,
+  });
+  const rows = [];
+  for (const d of ['2026-06-01', '2026-06-04', '2026-06-08', '2026-06-11', '2026-06-15', '2026-06-18']) {
+    rows.push(mk('Bench Press', 'BEN01', 'Chest', d, 185));
+    rows.push(mk('Barbell Row', 'ROW01', 'Back', d, 135));
+    rows.push(mk('Pallof Press', 'PAL01', 'Core', d, 60)); // name matches no role pattern
+  }
+  const out = scoreIntents(rows, { today: '2026-06-20' });
+  const exercises = (out.intents || []).flatMap(it => it.exercises || []);
+  const pallofs = exercises.filter(e => /pallof/i.test(e.exercise || ''));
+  assert.ok(pallofs.length > 0, 'the keyword-less accessory should appear in a recommended intent');
+  // The exForPatterns-built intents now carry muscle_group end-to-end (the
+  // buildIntentSession path is a separate, out-of-scope builder — see BACKLOG).
+  assert.ok(pallofs.some(e => e.muscle_group === 'Core'),
+    'the exForPatterns path must thread muscle_group so role classification is not name-only');
+});
