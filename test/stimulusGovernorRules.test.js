@@ -104,6 +104,15 @@ test('every allowed_verdict is in the PROGRESSION_VERDICTS vocabulary', () => {
   }
 });
 
+test('returned arrays are copies — a caller cannot corrupt the shared rule table', () => {
+  const r = governorRuleFor('strength', 'resistance');
+  r.rir_band.push(99);
+  r.allowed_verdicts.push('bogus');
+  const fresh = governorRuleFor('strength', 'resistance');
+  assert.deepEqual(fresh.rir_band, [1, 3], 'rir_band must not be shared/mutated across lookups');
+  assert.ok(!fresh.allowed_verdicts.includes('bogus'), 'allowed_verdicts must not be shared/mutated');
+});
+
 test('unknown profile or modality returns null', () => {
   assert.equal(governorRuleFor('nope', 'resistance'), null);
   assert.equal(governorRuleFor('strength', 'nope'), null);

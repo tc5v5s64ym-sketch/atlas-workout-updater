@@ -86,7 +86,9 @@ function governorRuleFor(profile, modalityCategory) {
     modality: modalityCategory,
     effort_interpretation: m.effort_interpretation,
     rir_relevant: rirRelevant,
-    rir_band: rirRelevant ? p.rir_band : null,
+    // Copy the nested array (PROFILE_RIR_RULES is only shallow-frozen) so a caller
+    // can't mutate the shared module-level rule table — symmetric with allowed_verdicts.
+    rir_band: rirRelevant && p.rir_band ? p.rir_band.slice() : null,
     rir0_blocks_progression: rirRelevant ? p.rir0_blocks_progression : false,
     rir0_caution: rirRelevant ? p.rir0_caution : false,
     rir0_ok_isolation: rirRelevant ? p.rir0_ok_isolation : false,
