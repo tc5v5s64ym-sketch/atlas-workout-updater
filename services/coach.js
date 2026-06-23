@@ -17,6 +17,9 @@ const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusG
 // Fatigue Router action vocabulary (PR 483) — imported so the next_move_advisory
 // whitelist stays in lockstep with the engine's controlled routing actions.
 const { ROUTE_ACTIONS } = require('./fatigueRouter');
+// Recovery/Deload SELECTION decision vocabulary (PR 485) — imported so the
+// recovery_advisory whitelist stays in lockstep with the engine's decisions.
+const { RECOVERY_DECISIONS } = require('./recoveryDeloadSelection');
 // The rules engine's frozen decision/severity vocabularies — ruleTypes.js is
 // built to be consumed by "(later) the AI coaching layer", i.e. here. Importing
 // (rather than re-declaring) keeps the verdict-reaction whitelist in lockstep
@@ -65,6 +68,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "readiness_signal" {signal, confidence, note} — the engine\'s fatigue inference from the recent deviation streak. "monitoring" = watching, no fatigue signal; "possible_fatigue" = 3+ consecutive below-expected sessions; "likely_fatigue" = sustained streak + declining e1RM trend. When monitoring, say nothing about fatigue. When possible_fatigue, gently name the pattern without catastrophising. When likely_fatigue, be direct and honest: name the trend and suggest the lifter consider a recovery week. Never diagnose fatigue from a single session and never contradict the engine\'s verdict.',
     '- The facts may include "stimulus_grade" {profile, effort_interpretation, progression_verdict, fatigue_signal} — the engine\'s PROFILE-AWARE read of this set (the same RIR reads differently by training profile). Respect it and never contradict it: progression_verdict "hold" or "back_off" means do NOT tell them to add load/push; "+load"/"+reps" means there is room to progress; fatigue_signal "high" means flag recovery, not progression. Critically, for a "general_fitness" profile do NOT celebrate grinding to failure — maximal effort is not the goal there. It is consistent with effort_verdict (never contradict either); word it, and never invent a number from it.',
     '- The facts may include "next_move_advisory" {action, reason, next_exercise, next_modality} — the engine\'s SUGGESTION for the planned NEXT move given the fatigue just logged. WORD it as a heads-up for what is up next, never as an order, and never reorder the plan yourself: "reduce" = trim sets/load on the next item; "make_optional" = the next item is optional today; "promote_alternative" = consider a rested/antagonist move instead; "block_pr" = do NOT attempt a PR on the next lift until recovery shows; "reduce_intensity" = keep the upcoming cardio easy (Zone 2 / shorter); "reduce_density" = cut rounds/density on the next circuit. Use the engine\'s reason; never invent a number, a set count, or a load.',
+    '- The facts may include "recovery_advisory" {decision, recovery_state, rationale, deload_style} — the engine\'s CONVERGENCE-BASED read that recovery may be due. It appears ONLY on a genuine signal; when it is absent, say NOTHING about deloading. Word it CAUTIOUSLY, never as a command: for "deload" say a deload is "worth considering" or "recovery may be the smarter play" — never a flat "you need a deload"; for "recovery_reload" suggest "holding the line today" — a lighter week, not a full deload. Give the reason briefly from the facts (the converged signals / rationale) and, if deload_style is present, you may name its qualitative focus — but invent NO load/volume/RIR numbers (the prescription is owned elsewhere). Do NOT shame hard effort; reward the smart move of backing off, not heroics. It is consistent with effort_verdict / stimulus_grade / next_move_advisory — in the same note never also tell them to add load or push.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
@@ -148,7 +152,12 @@ function sanitizeFacts(facts) {
     // The Fatigue Router's cross-pattern / cross-modality SUGGESTION for the planned
     // NEXT move (PR 483/484), given the fatigue just logged. The model WORDS this
     // suggestion — it never auto-applies it, reorders the plan, or invents a number.
-    next_move_advisory: sanitizeNextMoveAdvisory(f.next_move_advisory)
+    next_move_advisory: sanitizeNextMoveAdvisory(f.next_move_advisory),
+    // The Recovery/Deload SELECTION engine's CONVERGENCE-based read (PR 485/484) that
+    // recovery may be due. Present only for a genuine deload / recovery_reload signal;
+    // the model words it CAUTIOUSLY (worth considering / hold the line), never as a
+    // command, never with a number — the deload prescription is owned elsewhere.
+    recovery_advisory: sanitizeRecoveryAdvisory(f.recovery_advisory)
   };
 }
 
@@ -177,6 +186,30 @@ function sanitizeNextMoveAdvisory(a) {
     target: strOrNull(a.target),
     next_exercise: strOrNull(a.next_exercise),
     next_modality: strOrNull(a.next_modality),
+  };
+}
+
+// Whitelist the Recovery/Deload SELECTION (PR 485/484). ONLY the two recovery-
+// oriented decisions are ever voiced — deload / recovery_reload; anything else
+// (normal / micro_adjustment / taper / complete_rest / unknown) carries no recovery
+// advice here and is dropped, keeping the coach SILENT on weak/ambiguous signal.
+// The deload_style is a profile + qualitative focus list (NO numbers — the
+// prescription is owned elsewhere); converged_signals are bounded engine labels.
+function sanitizeRecoveryAdvisory(a) {
+  if (!a || typeof a !== 'object') return null;
+  const decision = RECOVERY_DECISIONS.includes(a.decision) ? a.decision : null;
+  if (decision !== 'deload' && decision !== 'recovery_reload') return null;
+  const style = a.deload_style && typeof a.deload_style === 'object' ? a.deload_style : null;
+  const deload_style = style ? {
+    profile: strOrNull(style.profile),
+    focus: Array.isArray(style.focus) ? style.focus.slice(0, 4).map(f => clampText(f, 80)).filter(Boolean) : [],
+  } : null;
+  return {
+    decision,
+    recovery_state: strOrNull(a.recovery_state),
+    converged_signals: Array.isArray(a.converged_signals) ? a.converged_signals.slice(0, 6).map(s => clampText(s, 60)).filter(Boolean) : [],
+    rationale: clampText(a.rationale, 240),
+    deload_style,
   };
 }
 
@@ -1095,6 +1128,7 @@ module.exports = {
   sanitizeFacts,
   sanitizeStimulusGrade,
   sanitizeNextMoveAdvisory,
+  sanitizeRecoveryAdvisory,
   sanitizeSubstitution,
   sanitizeDeviation,
   sanitizeEvidenceContext,

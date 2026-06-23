@@ -97,6 +97,7 @@ const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, fi
 const { gradeStimulus } = require('./services/stimulusGovernor');
 const { profileForGoal, modalityCategoryFor } = require('./services/trainingIntelligenceAdapter');
 const { routeNextMove } = require('./services/fatigueRouter');
+const { assessRecoveryDeload } = require('./services/recoveryDeloadSelection');
 const { patternFor } = require('./services/movementPattern');
 const { musclesFor } = require('./services/muscleCoverage');
 const trainingStore = require('./services/trainingStore');
@@ -1060,11 +1061,34 @@ function nextExerciseName(item) {
   return '';
 }
 
+// Tiny adapter (PR 484/485): map the ALREADY-COMPUTED live verdicts (trend +
+// readiness_signal) into the recovery/deload SELECTION engine's signal snapshot.
+// Deliberately conservative — only confident verdicts become signals, and a single
+// signal never converges (the engine needs a stack), so weak/ambiguous evidence
+// stays silent. No new deload math; the engine owns the decision. `loads_feel_hard`
+// is the milder readiness tier — a moderate warning that must STACK with a
+// performance signal before recovery_reload, and it never trips the strong deload
+// trigger (which needs subjective_fatigue/high_soreness).
+function deriveRecoverySignals(rec, profile) {
+  const r = rec && typeof rec === 'object' ? rec : {};
+  const trend = r.trend && typeof r.trend === 'object' ? r.trend : {};
+  const readiness = r.readiness_signal && typeof r.readiness_signal === 'object' ? r.readiness_signal : {};
+  const declining = trend.trend === 'declining' && (trend.confidence === 'high' || trend.confidence === 'medium');
+  const likelyFatigue = readiness.signal === 'likely_fatigue' && (readiness.confidence === 'high' || readiness.confidence === 'medium');
+  const possibleFatigue = readiness.signal === 'possible_fatigue';
+  return {
+    profile: profile || null,
+    performance_decline: declining,
+    subjective_fatigue: likelyFatigue,
+    loads_feel_hard: possibleFatigue && !likelyFatigue,
+  };
+}
+
 function computeSetEffortExtras(rawFacts) {
   // voiceBase is the deterministic Coach Voice Renderer output WITHOUT the prose
   // contradiction check (candidateProse is finalized per response path below). null
   // when there is no weighted/RIR signal to read.
-  const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null };
+  const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null };
   try {
     const todaySets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
     // Only analyze the current weighted/RIR workflow: at least one set must carry
@@ -1161,6 +1185,30 @@ function computeSetEffortExtras(rawFacts) {
         }
       }
     }
+
+    // PR 484 recovery/deload SELECTION voicing (engine: assessRecoveryDeload, PR 485).
+    // CONSERVATIVE by construction: the tiny adapter derives signals only from
+    // already-computed live verdicts, the convergence engine under-triggers (no
+    // deload from one bad day), and we surface ONLY the recovery-oriented decisions
+    // (deload / recovery_reload). Stay SILENT for normal / micro_adjustment (too
+    // weak) and for taper / complete_rest (no live test-date / illness signal — never
+    // fabricated), and when a deload is ALREADY active (the existing `deload` fact
+    // owns that voice). Read-only context; the coach words it cautiously, no numbers.
+    try {
+      const deloadActive = rec.deload && rec.deload.in_deload === true;
+      if (!deloadActive) {
+        const sel = assessRecoveryDeload(deriveRecoverySignals(rec, profileForGoal(getProfileGoal())));
+        if (sel && (sel.decision === 'deload' || sel.decision === 'recovery_reload')) {
+          out.recovery_advisory = {
+            decision: sel.decision,
+            recovery_state: sel.recovery_state,
+            converged_signals: sel.converged_signals,
+            rationale: sel.rationale,
+            deload_style: sel.deload_style,
+          };
+        }
+      }
+    } catch (_) { /* best-effort — a recovery read must never block the reaction */ }
     // Deterministic set-feedback voice (Coach Voice Renderer slice 1). The engine
     // decides the coaching MEANING; the prose contradiction check is applied per
     // response path in finalizeSetVoice (the candidate prose differs LLM-up vs
@@ -1225,8 +1273,8 @@ app.post('/api/coach/message', async (req, res) => {
   // applies the prose contradiction check per path and rides `voice` along too.
   const computed = kind === 'set'
     ? computeSetEffortExtras(rawFacts)
-    : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null };
-  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade, next_move_advisory: computed.next_move_advisory };
+    : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null };
+  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade, next_move_advisory: computed.next_move_advisory, recovery_advisory: computed.recovery_advisory };
   const voiceBase = computed.voiceBase;
   // Substitution-pivot voice (slice 2). Read straight from the client-provided swap;
   // only the classification/quality/logged-name fields are consulted. Best-effort —
@@ -1300,6 +1348,13 @@ app.post('/api/coach/message', async (req, res) => {
   // the prompt forbids inventing numbers / auto-applying. ALWAYS overwrite (engine
   // value or null) so a client-supplied advisory can never reach the coach.
   facts = { ...facts, next_move_advisory: kind === 'set' ? (computed.next_move_advisory || null) : null };
+
+  // PR 484 recovery/deload voicing: let the set-reaction coach WORD the conservative
+  // recovery SELECTION (computed read-only above; under-triggered + recovery-oriented
+  // only). sanitizeFacts bounds the decision to the engine's recovery vocabulary and
+  // the prompt forbids commanding a deload / inventing numbers. ALWAYS overwrite
+  // (engine value or null) so a client-supplied advisory can never reach the coach.
+  facts = { ...facts, recovery_advisory: kind === 'set' ? (computed.recovery_advisory || null) : null };
 
   try {
     const message = kind === 'plan'

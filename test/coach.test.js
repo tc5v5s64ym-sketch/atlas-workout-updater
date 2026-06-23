@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1632,4 +1632,56 @@ test('sanitizeFacts threads next_move_advisory through (present → kept, absent
   assert.deepEqual(withAdvisory.next_move_advisory, { action: 'make_optional', reason: 'High fatigue on the muscle up next.', target: 'squat', next_exercise: 'Leg Press', next_modality: 'resistance' });
   const without = sanitizeFacts({ exerciseName: 'Squat', todaySets: [] });
   assert.equal(without.next_move_advisory, null);
+});
+
+test('coach system prompt carries the recovery_advisory (deload selection) rule — cautious, no command', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /recovery_advisory/, 'must reference the recovery_advisory fact');
+  // Cautious phrasing is mandated; a flat "you need a deload" command is forbidden.
+  assert.match(prompt, /worth considering/i);
+  assert.match(prompt, /recovery may be the smarter play/i);
+  assert.match(prompt, /hold(ing)? the line/i);
+  assert.match(prompt, /never a flat "you need a deload"|never as a command/i, 'must forbid commanding a deload');
+  assert.match(prompt, /do NOT shame hard effort/i, 'must not shame effort');
+  assert.match(prompt, /invent NO|invent no number/i, 'must forbid inventing numbers');
+  // Must not contradict the push/progress voices in the same note.
+  assert.match(prompt, /never also tell them to add load or push/i);
+});
+
+test('sanitizeRecoveryAdvisory keeps recovery-oriented decisions and bounds fields', () => {
+  const deload = sanitizeRecoveryAdvisory({
+    decision: 'deload', recovery_state: 'deload',
+    converged_signals: ['performance_decline', 'subjective_fatigue'],
+    rationale: 'Converged fatigue → deload.',
+    deload_style: { profile: 'strength', focus: ['cut accessory volume first', 'reduce grinders'] },
+    bogus: 'x',
+  });
+  assert.equal(deload.decision, 'deload');
+  assert.deepEqual(deload.converged_signals, ['performance_decline', 'subjective_fatigue']);
+  assert.equal(deload.deload_style.profile, 'strength');
+  assert.equal(deload.deload_style.focus.length, 2);
+  assert.equal(deload.bogus, undefined, 'unknown fields are dropped');
+
+  const reload = sanitizeRecoveryAdvisory({ decision: 'recovery_reload', rationale: 'x' });
+  assert.equal(reload.decision, 'recovery_reload');
+});
+
+test('sanitizeRecoveryAdvisory stays SILENT on weak/non-recovery decisions and junk', () => {
+  assert.equal(sanitizeRecoveryAdvisory(null), null);
+  assert.equal(sanitizeRecoveryAdvisory('nope'), null);
+  assert.equal(sanitizeRecoveryAdvisory({ decision: 'normal' }), null, 'normal carries no recovery advice');
+  assert.equal(sanitizeRecoveryAdvisory({ decision: 'micro_adjustment' }), null, 'too weak to voice');
+  assert.equal(sanitizeRecoveryAdvisory({ decision: 'taper' }), null, 'taper is not a fatigue deload');
+  assert.equal(sanitizeRecoveryAdvisory({ decision: 'complete_rest' }), null, 'illness/injury handled elsewhere');
+  assert.equal(sanitizeRecoveryAdvisory({ decision: 'teleport' }), null, 'out-of-vocab dropped');
+});
+
+test('sanitizeFacts threads recovery_advisory through (present → kept, absent → null)', () => {
+  const withAdv = sanitizeFacts({
+    exerciseName: 'Squat', todaySets: [{ weight: 315, reps: 5, rir: 0 }],
+    recovery_advisory: { decision: 'deload', recovery_state: 'deload', converged_signals: ['performance_decline', 'subjective_fatigue'], rationale: 'Converged fatigue → deload.', deload_style: { profile: 'strength', focus: ['cut accessory volume first'] } },
+  });
+  assert.equal(withAdv.recovery_advisory.decision, 'deload');
+  const without = sanitizeFacts({ exerciseName: 'Squat', todaySets: [] });
+  assert.equal(without.recovery_advisory, null);
 });
