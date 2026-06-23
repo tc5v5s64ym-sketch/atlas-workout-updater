@@ -172,11 +172,15 @@ function recognizeCircuit(t) {
   if (!kindM) return null;
   if (SLASH_SET.test(t)) return null; // weighted workflow, not ours
   const kind = kindM[1].toLowerCase();
-  const capM = t.match(/(\d+(?:\.\d+)?)\s*(?:min(?:ute)?s?|mins)\b/i);
+  const colonIdx = t.indexOf(':');
+  // Anchor the time cap to the keyword header (before the colon, where
+  // "AMRAP 12 min:" puts it) so a movement's own duration ("plank 2 min")
+  // is never misread as the cap.
+  const capHead = colonIdx >= 0 ? t.slice(0, colonIdx) : t;
+  const capM = capHead.match(/(\d+(?:\.\d+)?)\s*(?:min(?:ute)?s?|mins)\b/i);
   const roundsM = t.match(/(\d+)\s*rounds?\b/i);
   const { rpe, avg_hr } = extractCommon(t);
   let movements = null;
-  const colonIdx = t.indexOf(':');
   if (colonIdx >= 0) {
     // Drop trailing " - 6 rounds RPE 8"-style metadata after a dash.
     const body = t.slice(colonIdx + 1).split(/\s[-–—]\s/)[0];

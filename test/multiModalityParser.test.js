@@ -125,6 +125,13 @@ test('circuit (EMOM): cap + movements, no reported rounds', () => {
   assert.deepEqual(r.movements, ['5 pullups', '10 pushups', '15 squats']);
 });
 
+test('circuit cap is anchored to the keyword header, not a movement duration', () => {
+  const r = recognizeModalityInput('AMRAP: plank 2 min, lunges 10');
+  assert.equal(r.modality, 'circuit');
+  assert.equal(r.cap_min, null); // "2 min" belongs to the movement, not the cap
+  assert.deepEqual(r.movements, ['plank 2 min', 'lunges 10']);
+});
+
 test('circuit wins over a hold-name listed inside it', () => {
   const r = recognizeModalityInput('AMRAP 8 min: plank 30 sec, lunges 10');
   assert.equal(r.modality, 'circuit');
