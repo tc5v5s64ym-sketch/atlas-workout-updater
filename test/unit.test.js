@@ -712,6 +712,18 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   assert.match(appSource, /timed_hold: 'Timed hold'/);
   assert.match(appSource, /MODALITY_HEADINGS\[preview\.modality\] \|\| 'Conditioning'/);
   assert.doesNotMatch(appSource, /'Cardio \/ conditioning to write/, 'the hardcoded cardio-only heading must be gone');
+
+  // Question-shaped input ("how was my 5km run?") routes to the coach, never to a
+  // write preview — the guard runs before the dry-run and bails out of the preview.
+  assert.match(appSource, /function looksLikeModalityQuestion/);
+  assert.match(appSource, /if \(looksLikeModalityQuestion\(text\)\) return false;/);
+  const guardBlock = appSource.slice(
+    appSource.indexOf('function looksLikeModalityQuestion'),
+    appSource.indexOf('async function tryPreviewModality')
+  );
+  assert.match(guardBlock, /t\.endsWith\('\?'\)/, 'a trailing ? is a question');
+  assert.match(guardBlock, /\^\(how\|/, 'interrogative lead words are questions');
+  assert.doesNotMatch(guardBlock, /\bdid\b|\bdoes\b|\bran\b/, 'log-ambiguous verbs must NOT be treated as questions');
 });
 
 test('two-way chat: non-loggable text routes to the coach instead of erroring', () => {
@@ -4611,8 +4623,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v32/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v31\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v33/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v32\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
