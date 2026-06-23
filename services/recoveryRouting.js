@@ -19,6 +19,15 @@
 // "tired of …" / "sick of …" is impatience, not training fatigue — never route it.
 const IMPATIENCE = /\btired of\b|\bsick (and tired )?of\b/;
 
+// Negation flips the meaning: "I'm not tired", "not feeling tired", "hardly tired"
+// must NOT route to a pull-back line (it would contradict the lifter). Allow up to
+// two words between the negator and the fatigue term ("not really that tired").
+const NEGATED_FATIGUE = /\b(not|never|hardly|barely|no longer|isn'?t|aren'?t|ain'?t|don'?t|wasn'?t)\s+(\w+\s+){0,2}(tired|exhausted|wiped|drained|spent|cooked|wrecked|fatigued|gassed|smoked|fried|knackered|toast|beat)\b/;
+
+// A leading interrogative makes it an analytical question ("why am I always tired
+// lately?") — that belongs to the coach, not a canned current-state recovery line.
+const LEADING_QUESTION = /^(why|how|what|when|where|which|is|are|am|do|does|did|should|could|would|can|who)\b/;
+
 // Direct fatigue states the lifter reports about themselves.
 const FATIGUE_STATE = /(exhausted|wiped(?:\s*out)?|drained|knackered|gassed|smoked|spent|fatigued|shattered|zonked|burn(?:t|ed)\s*out|running on (?:empty|fumes)|(?:no|low|zero)\s+energy|no gas(?:\s+left)?)/;
 
@@ -39,6 +48,10 @@ function isTirednessExpression(message) {
   const t = String(message == null ? '' : message).toLowerCase().trim();
   if (!t) return false;
   if (IMPATIENCE.test(t)) return false;
+  // Negation and analytical questions are NOT current-state fatigue reports — both
+  // bias toward letting the coach answer rather than canning a recovery line.
+  if (NEGATED_FATIGUE.test(t)) return false;
+  if (LEADING_QUESTION.test(t)) return false;
   if (BARE.test(t)) return true;
   if (FATIGUE_STATE.test(t)) return true;
   // "tired" as a whole word (the impatience sense is already excluded above).

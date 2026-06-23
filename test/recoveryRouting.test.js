@@ -30,6 +30,24 @@ test('isTirednessExpression: ignores impatience and unrelated uses (no over-capt
   }
 });
 
+test('isTirednessExpression: negation does not route a not-tired lifter to recovery', () => {
+  for (const m of [
+    "I'm not tired today", 'not feeling tired, let'+"'"+'s go heavy', "I'm not that wrecked",
+    'hardly tired', 'barely drained', 'no longer exhausted', "I'm not cooked at all",
+  ]) {
+    assert.equal(isTirednessExpression(m), false, `negation should NOT detect: ${m}`);
+  }
+});
+
+test('isTirednessExpression: an analytical question about fatigue belongs to the coach, not the canned line', () => {
+  for (const m of [
+    'why am I always tired lately?', 'how come I get so exhausted mid-session?',
+    'is it normal to feel this drained?', 'should I be this wiped after squats?',
+  ]) {
+    assert.equal(isTirednessExpression(m), false, `question should NOT short-circuit: ${m}`);
+  }
+});
+
 test('buildTirednessRecoveryAnswer: elevated weekly load → pull-back, grounded, no hype', () => {
   const a = buildTirednessRecoveryAnswer({ fatigueStatus: { status: 'high' } });
   assert.match(a, /above your usual volume/);
