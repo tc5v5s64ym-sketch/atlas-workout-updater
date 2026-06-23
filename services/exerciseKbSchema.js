@@ -61,8 +61,13 @@ const CATALOG_FIELDS = Object.freeze([
 
 const ID_RE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/;
 
-// Shared normalization — mirrors services/exerciseEnrichment.js normalizeExerciseKey
-// so KB recognition and the existing enrichment layer treat names identically.
+// Recognition normalization for the KB. Based on services/exerciseEnrichment.js
+// normalizeExerciseKey, but DELIBERATELY broader: it also folds hyphens/underscores
+// to spaces and trims, so "bent-over row" and "t-bar row" collapse to the same key
+// as their spaced forms (better recognition). It is therefore a SUPERSET, not a
+// mirror — it diverges from normalizeExerciseKey on hyphenated names. The
+// exercise_id ↔ lift_code crosswalk (EXERCISE_KB_WIRING.md step 3) must reconcile
+// the two normalizers before the layers compare normalized forms.
 function normalizeExerciseText(value) {
   return String(value == null ? '' : value)
     .trim()

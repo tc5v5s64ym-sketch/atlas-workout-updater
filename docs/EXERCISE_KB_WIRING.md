@@ -73,7 +73,11 @@ The KB **never** reads or writes `lift_code`. A future wiring PR adds an explici
 3. **`exercise_id ↔ lift_code` crosswalk.** Add a mapping (catalog field or a side table)
    so a resolved `exercise_id` yields the canonical `lift_code`. Reconcile with
    `knownLiftCodeOverrides` and the `Exercise_Catalog` tab; **owner-approved** since it
-   touches the write contract's identity.
+   touches the write contract's identity. **Reconcile normalization here:** the KB's
+   `normalizeExerciseText` deliberately folds hyphens/underscores and trims, whereas
+   `exerciseEnrichment.normalizeExerciseKey` does not — so hyphenated names (`bent-over
+   row`, `t-bar row`) normalize differently across the two layers. Align them (or map
+   explicitly) before comparing normalized forms at the crosswalk.
 4. **Feed coaching identity.** Route `movement_pattern` / muscles / `exercise_type` from the
    KB into the substitution/fatigue/role engines via the maps above, replacing the regex
    heuristics in `movementPattern.js` / `liftRole.js` incrementally (behind tests).
