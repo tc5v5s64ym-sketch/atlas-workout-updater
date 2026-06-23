@@ -60,11 +60,13 @@ function isTirednessExpression(message) {
   return false;
 }
 
-// Read the readiness engine's per-pattern statuses for any flagged as fatigued.
+// Read the readiness engine's per-pattern statuses for any flagged fatigued. The
+// engine's vocabulary is fatigued|recovering|ready|fresh|unknown (analytics.js
+// readinessStatus); only `fatigued` is the "flagged fatigued" state this line names.
 function fatiguedPatternNames(readiness) {
   if (!Array.isArray(readiness)) return [];
   return readiness
-    .filter(r => r && /fatigued|caution|red|low/i.test(String(r.status || '')))
+    .filter(r => r && String(r.status || '').toLowerCase() === 'fatigued')
     .map(r => r.pattern)
     .filter(Boolean);
 }
