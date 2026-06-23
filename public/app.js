@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v27';
+const ATLAS_SHELL_BUILD = 'v28';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2737,10 +2737,25 @@ async function rowsFromWorkoutInput() {
   // The parser couldn't confidently resolve the lift name and echoed the typed
   // text instead of guessing a real lift. Surface it so the wrong history isn't
   // saved — the exercise field is editable, so a tap fixes it before approval.
-  if ((parsed.warnings || []).includes('unknown_exercise')) {
+  // But the parser's internal alias map is NARROWER than the exercise catalog: a
+  // real lift like "Cable Fly" is `unknown_exercise` to the parser yet known to
+  // the catalog. Only warn when it's truly unresolved — unknown to the catalog
+  // too — so a successfully-parsed, catalog-known lift never gets "didn't catch
+  // that" on top of its confirmation card.
+  if (shouldWarnUnknownLift(parsed.warnings, parsed.rows[0]?.exercise, liftCodeFromCatalog)) {
     parsedRowsEditor.hidden = false;
     setStatus(loggerStatus, "Didn't catch that lift — check the exercise name before saving.", 'warn');
   }
+}
+
+// Whether to warn that a lift wasn't caught. True only when the parser flagged
+// `unknown_exercise` AND the catalog doesn't recognize the resolved name either —
+// i.e. the parser truly failed to resolve a real lift. A catalog hit (the parser
+// map is just narrower than the catalog) means it's a real lift; no warning.
+function shouldWarnUnknownLift(warnings, exerciseName, catalogLookup) {
+  if (!(Array.isArray(warnings) && warnings.includes('unknown_exercise'))) return false;
+  const known = typeof catalogLookup === 'function' && exerciseName && catalogLookup(exerciseName);
+  return !known;
 }
 
 function shouldUseLocalFallback(err) {
