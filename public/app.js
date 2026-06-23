@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v31';
+const ATLAS_SHELL_BUILD = 'v32';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -3487,10 +3487,20 @@ function pendingWriteHasPreviewProof(write) {
 // proves no-write, the existing #approve-btn is the only write trigger, and the
 // real write goes through /api/log-modality only on explicit approval.
 const MODALITY_LOG_LABELS = ['Date', 'Session', 'Modality', 'Exercise', 'Duration (s)', 'Distance (m)', 'Rounds', 'Rest (s)', 'Level', 'RPE', 'Avg HR', 'Notes'];
+// Human label for the preview heading, keyed by the parser's modality value
+// (services/multiModalityParser.js). Falls back to a generic heading so a hold
+// never reads "Cardio".
+const MODALITY_HEADINGS = {
+  cardio_steady: 'Cardio',
+  cardio_interval: 'Intervals',
+  circuit: 'Circuit / conditioning',
+  timed_hold: 'Timed hold'
+};
 
 function renderModalityPreview(preview) {
   previewContent.innerHTML = '';
-  previewContent.appendChild(el('h3', { text: 'Cardio / conditioning to write (Modality_Log)' }));
+  const label = MODALITY_HEADINGS[preview.modality] || 'Conditioning';
+  previewContent.appendChild(el('h3', { text: `${label} to write (Modality_Log)` }));
   const row = Array.isArray(preview.row) ? preview.row : [];
   // Key/value list of exactly what will be written — blanks omitted for clarity.
   const pairs = MODALITY_LOG_LABELS
