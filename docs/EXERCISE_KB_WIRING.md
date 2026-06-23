@@ -1,9 +1,11 @@
 # Exercise Knowledge Base — Migration / Wiring Plan
 
-Status: **reference-only.** This PR ships the catalog, alias table, schema/validator,
-resolver, and tests. It does **not** wire the KB into the live write/coaching path.
-Per the owner spec: *do not wire into live coaching until alias tests pass.* They now
-pass — wiring is the next, separate, gated step below.
+Status: **read-only, identity-only wiring has begun.** #490 shipped the catalog, alias
+table, schema/validator, resolver, and tests as reference-only. The Cable Fly identity
+fix then added the **first read-only live use**: `/api/parse-workout-text` consults
+`resolveExercise` to attach `kb_identity` so the unknown-lift warning isn't split-brain
+(a partial landing of step 1 below). The KB still does **not** touch the write path, the
+`lift_code` crosswalk, or coaching decisions — those remain gated steps below.
 
 ## What exists today (do NOT clobber)
 
@@ -63,10 +65,11 @@ The KB **never** reads or writes `lift_code`. A future wiring PR adds an explici
 
 ## Wiring steps (each its own small, gated PR — not in this PR)
 
-1. **Shadow-resolve (read-only).** In the conversational log path, after the parser
-   produces a name, also call `resolveExercise(name)` and log (telemetry only) whether it
-   resolved, the id, and confidence. No behavior change. Confirms real-log coverage before
-   anything depends on it.
+1. **Shadow-resolve (read-only). ◐ Partially landed.** The Cable Fly fix wired
+   `resolveExercise` into `/api/parse-workout-text` to attach `kb_identity`, which now
+   suppresses the false unknown-lift warning (one behavior: warning suppression only).
+   Remaining: broaden read-only resolution across the conversational log path + telemetry
+   to confirm real-log coverage before anything else depends on it.
 2. **Clarify on low confidence.** When `resolveExercise` returns `confident:false` or
    `null` for a logged lift, the coach asks "which lift?" instead of guessing — still no
    write/schema change.

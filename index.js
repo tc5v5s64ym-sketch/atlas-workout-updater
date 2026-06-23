@@ -87,6 +87,7 @@ const coachPolish = require('./services/coachPolish');
 const { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches } = require('./services/exerciseEnrichment');
 const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
+const { resolveExercise } = require('./services/exerciseResolver');
 const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
 const { renderSetVoice, findForbiddenContradictions } = require('./services/coachVoiceRenderer');
@@ -2393,6 +2394,21 @@ app.post('/api/parse-workout-text', (req, res) => {
   const t0 = Date.now();
   try {
     const responseBody = buildWorkoutTextParseDryRunResponse(req.body);
+    // Unify exercise identity: the parser's internal catalog is narrower than the
+    // KB, so a real lift (e.g. Cable Fly) is flagged `unknown_exercise` even though
+    // the KB recognizes it. Attach the KB identity so the client's "didn't catch
+    // that lift" warning isn't split-brain with the confirmation card / voice that
+    // already recognized it. Additive + read-only — no parser grammar, write, or
+    // proof-field change (test_mode/sheet_written/no_write_confirmed untouched).
+    try {
+      const p = responseBody.parsed;
+      if (p && p.intent === 'log_sets') {
+        const hit = resolveExercise(p.canonical_name || p.exercise || p.raw_name || '');
+        if (hit && hit.confident) {
+          responseBody.kb_identity = { exercise_id: hit.exercise_id, name: hit.name, confidence: hit.confidence };
+        }
+      }
+    } catch (_) { /* best-effort; recognition must never break the dry-run */ }
     console.log(`[parse-workout-text] ok ${Date.now() - t0}ms`);
     return standardSuccess(req, res, 'parse-workout-text processed', responseBody, 200);
   } catch (error) {
