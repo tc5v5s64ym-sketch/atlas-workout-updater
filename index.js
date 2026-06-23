@@ -96,6 +96,9 @@ const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('./services/coachVoiceRenderer');
 const { gradeStimulus } = require('./services/stimulusGovernor');
 const { profileForGoal, modalityCategoryFor } = require('./services/trainingIntelligenceAdapter');
+const { routeNextMove } = require('./services/fatigueRouter');
+const { patternFor } = require('./services/movementPattern');
+const { musclesFor } = require('./services/muscleCoverage');
 const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
@@ -1047,11 +1050,21 @@ app.get('/api/health/gemini', (req, res) => {
 // copy survives an LLM outage; this route never writes, so proof fields /
 // Log_Cleaned are untouched. The LLM never sees or words these here (that is
 // PR 484) — this is the deterministic floor only.
+// Resolve a planned-queue item to its exercise name (string or object), mirroring
+// setEffortSignals' exerciseNameOf so the fatigue-router wiring reads the same shape.
+function nextExerciseName(item) {
+  if (typeof item === 'string') return item.trim();
+  if (item && typeof item === 'object') {
+    return String(item.name || item.canonicalName || item.exercise || item.canonical_exercise || '').trim();
+  }
+  return '';
+}
+
 function computeSetEffortExtras(rawFacts) {
   // voiceBase is the deterministic Coach Voice Renderer output WITHOUT the prose
   // contradiction check (candidateProse is finalized per response path below). null
   // when there is no weighted/RIR signal to read.
-  const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null };
+  const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null };
   try {
     const todaySets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
     // Only analyze the current weighted/RIR workflow: at least one set must carry
@@ -1103,6 +1116,47 @@ function computeSetEffortExtras(rawFacts) {
           reason_codes: conflict.reason_codes,
           line,
         };
+      }
+    }
+    // PR 484 fatigue-router voicing slice — generalize the next-move read beyond the
+    // pressing-specific `reroute` above (PR 477). Feeds the slice-2 governor
+    // `fatigue_signal` + the just-logged pattern/muscles + the planned next move
+    // (pattern/muscles/modality) into the read-only fatigue router (PR 483) to surface
+    // a cross-pattern / cross-modality next-move SUGGESTION the coach can word.
+    // GATED so the two systems never contradict: only emitted when the pressing
+    // reroute did NOT fire (out.reroute null) and the router returns a non-'keep'
+    // action. Best-effort; engine vocab only; never auto-applies or writes.
+    if (!out.reroute && queue.length && out.set_grade && out.set_grade.fatigue_signal) {
+      const nextName = nextExerciseName(queue[0]);
+      if (nextName) {
+        const jm = analysis.muscles || {};
+        const nMus = musclesFor(nextName) || {};
+        const workRir0s = todaySets.map(s => Number(s && s.rir)).filter(r => r === 0).length;
+        const advisory = routeNextMove({
+          justLogged: {
+            pattern: analysis.pattern || null,
+            muscles: [...(jm.primary || []), ...(jm.secondary || [])],
+            fatigue_signal: out.set_grade.fatigue_signal,
+            repeated_rir0: workRir0s >= 2,
+          },
+          nextMove: {
+            pattern: patternFor(nextName).pattern || null,
+            muscles: [...(nMus.primary || []), ...(nMus.secondary || [])],
+            modalityCategory: modalityCategoryFor(nextName),
+            is_pr_attempt: false,
+          },
+          // A heavy lower-body compound just logged gates the cardio-after-legs case.
+          heavy_lower_block_done: !!analysis.is_compound && ['squat', 'hinge'].includes(analysis.pattern),
+        });
+        if (advisory && advisory.action && advisory.action !== 'keep') {
+          out.next_move_advisory = {
+            action: advisory.action,
+            reason: advisory.reason || null,
+            target: advisory.target || null,
+            next_exercise: nextName,
+            next_modality: modalityCategoryFor(nextName) || null,
+          };
+        }
       }
     }
     // Deterministic set-feedback voice (Coach Voice Renderer slice 1). The engine
@@ -1169,8 +1223,8 @@ app.post('/api/coach/message', async (req, res) => {
   // applies the prose contradiction check per path and rides `voice` along too.
   const computed = kind === 'set'
     ? computeSetEffortExtras(rawFacts)
-    : { effort_note: null, reroute: null, voiceBase: null, set_grade: null };
-  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade };
+    : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null };
+  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade, next_move_advisory: computed.next_move_advisory };
   const voiceBase = computed.voiceBase;
   // Substitution-pivot voice (slice 2). Read straight from the client-provided swap;
   // only the classification/quality/logged-name fields are consulted. Best-effort —
@@ -1237,6 +1291,13 @@ app.post('/api/coach/message', async (req, res) => {
   // forbids inventing numbers. ALWAYS overwrite (engine value or null) so a
   // client-supplied `stimulus_grade` can never reach the coach — engine-only.
   facts = { ...facts, stimulus_grade: kind === 'set' ? (computed.set_grade || null) : null };
+
+  // PR 484 fatigue-router voicing: let the set-reaction coach WORD the cross-pattern
+  // next-move SUGGESTION (computed read-only above, gated to not collide with the
+  // pressing reroute). sanitizeFacts bounds the action to the router's vocabulary and
+  // the prompt forbids inventing numbers / auto-applying. ALWAYS overwrite (engine
+  // value or null) so a client-supplied advisory can never reach the coach.
+  facts = { ...facts, next_move_advisory: kind === 'set' ? (computed.next_move_advisory || null) : null };
 
   try {
     const message = kind === 'plan'
