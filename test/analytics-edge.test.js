@@ -1164,3 +1164,40 @@ test('#402: a multi-word lift with a muscle keyword still dedups (no regression)
   const codes = [...new Set(lp.map(e => e.lift_code))];
   assert.deepEqual(codes, ['LP02'], 'Leg Press must still dedup to the newest code');
 });
+
+test('#402: a bare single-word movement name ("Row") dedups (substring residual closed)', () => {
+  const mk = (n, c, mg, d, w) => ({
+    lift_code: c, exercise: n, canonical_exercise: n, muscle_group: mg,
+    weight: w, reps: 8, rir: 2, date_clean: d, set_number: 1,
+  });
+  const rows = [];
+  // "Row" matches the `row` token in the pull muscle-pattern (a substring match),
+  // but it is a MOVEMENT, not a muscle label — it must dedup. This is the exact
+  // #402 Seated Row family; exact-membership (not classifyMuscleGroup) closes it.
+  for (const d of ['2026-05-20', '2026-05-27', '2026-06-03']) rows.push(mk('Row', 'RW01', 'Back', d, 135));
+  for (const d of ['2026-06-06', '2026-06-10', '2026-06-14']) rows.push(mk('Row', 'RW02', 'Back', d, 155));
+  for (const d of ['2026-06-05', '2026-06-09', '2026-06-13']) rows.push(mk('Bench Press', 'BEN01', 'Chest', d, 185));
+
+  const out = scoreIntents(rows, [], { today: '2026-06-16' });
+  const r = (out.intents || []).flatMap(it => it.exercises || []).filter(e => /^row$/i.test(e.exercise || ''));
+  const codes = [...new Set(r.map(e => e.lift_code))];
+  assert.deepEqual(codes, ['RW02'], 'a bare "Row" must dedup to the newest code, not escape via a substring match');
+});
+
+test('#402: a single-word muscle-group LABEL placeholder ("Chest") is NOT collapsed', () => {
+  const mk = (n, c, mg, d, w) => ({
+    lift_code: c, exercise: n, canonical_exercise: n, muscle_group: mg,
+    weight: w, reps: 8, rir: 2, date_clean: d, set_number: 1,
+  });
+  const rows = [];
+  // 'Chest' is a muscle-group label used as a test placeholder — distinct lift
+  // codes under it must be preserved (the carve-out's whole purpose).
+  for (const d of ['2026-06-03', '2026-06-07']) rows.push(mk('Chest', 'CH01', 'Chest', d, 100));
+  for (const d of ['2026-06-10', '2026-06-14']) rows.push(mk('Chest', 'CH02', 'Chest', d, 110));
+  for (const d of ['2026-06-05', '2026-06-09', '2026-06-13']) rows.push(mk('Squat', 'SQ02', 'Quads', d, 245));
+
+  const out = scoreIntents(rows, [], { today: '2026-06-16' });
+  const chest = (out.intents || []).flatMap(it => it.exercises || []).filter(e => /^chest$/i.test(e.exercise || ''));
+  const codes = new Set(chest.map(e => e.lift_code));
+  assert.ok(codes.has('CH01') && codes.has('CH02'), 'both Chest placeholder codes must survive (not collapsed)');
+});

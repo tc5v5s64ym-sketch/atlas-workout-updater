@@ -1089,6 +1089,19 @@ const PATTERN_REGEXES = [
   ['core',  /core|ab|oblique/i]
 ];
 
+// Single-word muscle-group LABELS (coarse groups + the fine muscle taxonomy in
+// colloquial form). Used by the allRecs name-dedup to protect test-helper
+// placeholders that use a muscle label as an exercise name (e.g. 'Chest') while
+// still deduping real single-word LIFTS (Squat / Curl / Dips / Row). This is an
+// exact whole-string set on purpose — substring/`classifyMuscleGroup` matching
+// would mis-protect movement words like 'Row' (the `row` token lives in the pull
+// pattern), which is exactly the #402 Seated Row family we want to dedup.
+const MUSCLE_GROUP_LABELS = new Set([
+  'chest', 'pecs', 'back', 'lats', 'traps', 'delts', 'shoulders', 'arms',
+  'biceps', 'triceps', 'forearms', 'legs', 'quads', 'hamstrings', 'hams',
+  'glutes', 'calves', 'core', 'abs', 'obliques',
+]);
+
 function classifyMuscleGroup(muscleGroup) {
   const s = String(muscleGroup || '').trim();
   for (const [pattern, regex] of PATTERN_REGEXES) {
@@ -1342,13 +1355,14 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const deduped = allRecs.filter(r => {
       const key = (r.exercise_name || '').toLowerCase().trim();
       if (!key) return true;
-      // Skip dedup ONLY for a single-word name that is itself a muscle-group
-      // label (e.g. exercise_name='Chest'/'Back'/'Core') — these are used as
-      // placeholders in test helpers and must not collapse distinct lift codes.
-      // A real single-word lift (Squat, Deadlift, Curl, Dips) is NOT a muscle
-      // label, so it now dedups correctly; multi-word lifts (e.g. "Leg Press")
-      // always dedup, unaffected by the muscle keyword in their name.
-      if (!key.includes(' ') && classifyMuscleGroup(r.exercise_name) !== null) return true;
+      // Skip dedup ONLY for a single-word name that is EXACTLY a muscle-group
+      // label (e.g. exercise_name='Chest'/'Back'/'Core'/'Lats') — these are used
+      // as placeholders in test helpers and must not collapse distinct lift codes.
+      // Exact membership (not substring): a real single-word lift that merely
+      // CONTAINS or IS a muscle keyword used as a movement word — 'Row' (matches
+      // the `row` token in the pull regex), 'Squat', 'Curl', 'Dips' — is NOT a
+      // muscle label, so it dedups correctly. Multi-word lifts always dedup.
+      if (MUSCLE_GROUP_LABELS.has(key)) return true;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
