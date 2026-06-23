@@ -397,6 +397,34 @@ test('api smoke: coach/message returns Gemini prose when configured', async () =
   }
 });
 
+// ── PR 484 wiring slice 2: profile-aware Stimulus Governor grade rides along ───
+test('api smoke: coach/message attaches a read-only set_grade (profile-aware governor)', async () => {
+  fakeCoachState.configured = false; // grade rides along on every path; use the simple one
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 0 }] } })
+  });
+  assert.equal(response.status, 200);
+  const g = body.data.set_grade;
+  assert.ok(g && typeof g === 'object', 'set_grade must be present for a weighted/RIR set');
+  // Resistance modality → RIR is the metric read (profile-independent, so env-robust).
+  assert.equal(g.effort_interpretation, 'rir');
+  assert.ok(['+load', '+reps', '+rounds', '+duration', 'hold', 'back_off'].includes(g.progression_verdict));
+  assert.ok(['none', 'elevated', 'high'].includes(g.fatigue_signal));
+  assert.ok(typeof g.profile === 'string' && g.profile.length > 0);
+  // Read-only: this route never writes; the manifest already asserts writeCapable:false.
+});
+
+test('api smoke: coach/message set_grade is null for a non-weighted (cardio-shaped) input', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/message', {
+    method: 'POST',
+    body: JSON.stringify({ facts: { exerciseName: 'Run', todaySets: [{ duration_min: 30 }] } })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.set_grade, null, 'no weighted/RIR signal → no set_grade');
+});
+
 // ── Slice 2: substitution pivot voice on the real /api/coach/message route ─────
 const goodPivotFacts = () => ({
   substitution: {
