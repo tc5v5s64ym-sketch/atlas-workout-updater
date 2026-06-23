@@ -57,6 +57,7 @@ const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
 const { buildSessionQuestionAnswer, answerBareShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
+const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('./services/recoveryRouting');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1382,6 +1383,12 @@ app.post('/api/coach/chat', async (req, res) => {
     });
   }
 
+  // Slice 3 — recovery routing: when the lifter SAYS they're tired/cooked/drained,
+  // the deterministic engine owns the reply and routes on the actual recovery state,
+  // so the LLM never defaults to motivation hype. Grounded below (configured path)
+  // from computeFatigueStatus + readiness + days-since; here it only flags the intent.
+  const tired = isTirednessExpression(message);
+
   // Deterministic, LLM-free answer used whenever the Gemini coach is unavailable
   // (unconfigured / errored / timed out / empty) so the lifter is never dead-ended.
   // Step 377: a session-close question ("are we done?") answers from plan_state.
@@ -1401,7 +1408,11 @@ app.post('/api/coach/chat', async (req, res) => {
 
   if (!coach.isConfigured()) {
     // No Sheets read on the unconfigured path — answer from client context only.
-    const answer = deterministicAnswer([]);
+    // A tired lifter still gets recovery routing (no engine signals available here,
+    // so the safe no-numbers recovery line), never a dead-end or hype.
+    const answer = tired
+      ? buildTirednessRecoveryAnswer({ readiness: Array.isArray(clientCtx && clientCtx.readiness) ? clientCtx.readiness : null })
+      : deterministicAnswer([]);
     return standardSuccess(req, res, answer
       ? 'Coach chat unavailable — deterministic engine answer'
       : 'Coach chat unavailable — Gemini not configured', {
@@ -1429,6 +1440,19 @@ app.post('/api/coach/chat', async (req, res) => {
         : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
       .filter(c => c.kind && c.target && c.rule);
     const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints);
+    // Slice 3 — recovery routing owns a tired lifter's reply, grounded in the real
+    // recovery state (weekly-load fatigue, days since last session, fatigued
+    // patterns). Deterministic + read-only; the LLM is bypassed so it can't hype.
+    if (tired) {
+      const recoveryReply = buildTirednessRecoveryAnswer({
+        fatigueStatus: computeFatigueStatus(allLog),
+        readiness: context.readiness,
+        daysSinceLastSession: assessLayoff(allLog).days_since_last_session,
+      });
+      return standardSuccess(req, res, 'Coach chat — recovery routing', {
+        message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
+      });
+    }
     const { reply, propose_edit, propose_note, propose_constraint } = await coach.generateChatReply({ message, context, history });
     const hasReply = Boolean(reply && String(reply).trim());
     // Return the Gemini result when it has usable prose OR carries a structured
