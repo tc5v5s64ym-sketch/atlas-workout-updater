@@ -1131,19 +1131,21 @@ function computeSetEffortExtras(rawFacts) {
       if (nextName) {
         const jm = analysis.muscles || {};
         const nMus = musclesFor(nextName) || {};
-        const workRir0s = todaySets.map(s => Number(s && s.rir)).filter(r => r === 0).length;
+        // NOTE: the router's `block_pr` branch needs BOTH `repeated_rir0` and
+        // `is_pr_attempt`, but there is no live PR-attempt signal at this set-reaction
+        // call site yet — so that branch is inert here regardless. Both inputs are
+        // omitted (the router treats them as falsy) rather than computing a dead
+        // `repeated_rir0`; wiring real PR intent is a future slice (see BACKLOG).
         const advisory = routeNextMove({
           justLogged: {
             pattern: analysis.pattern || null,
             muscles: [...(jm.primary || []), ...(jm.secondary || [])],
             fatigue_signal: out.set_grade.fatigue_signal,
-            repeated_rir0: workRir0s >= 2,
           },
           nextMove: {
             pattern: patternFor(nextName).pattern || null,
             muscles: [...(nMus.primary || []), ...(nMus.secondary || [])],
             modalityCategory: modalityCategoryFor(nextName),
-            is_pr_attempt: false,
           },
           // A heavy lower-body compound just logged gates the cardio-after-legs case.
           heavy_lower_block_done: !!analysis.is_compound && ['squat', 'hinge'].includes(analysis.pattern),
