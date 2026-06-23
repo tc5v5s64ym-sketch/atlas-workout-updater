@@ -403,7 +403,7 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 ### P4 — Session-State Stress Testing
 
-**Status:** not started. Test suite for messy human inputs ("rack busy", "I'll do RDL instead", "skip that", "legs are toast", "what now", "how much", "what am I doing next") to prove session state is preserved and prioritized over generic chat intent.
+**Status:** ✅ **shipped.** Test-only — new `test/sessionStateStress.test.js`: a system-level stress corpus of messy human inputs ("rack busy", "I'll do RDL instead", "skip that", "legs are toast", "what now", "how much", "what am I doing next") run across the deterministic routing/answering guards *together* (`isSessionStateQuestion`/`isPlannedLiftQuestion`, `answerBareShorthand`/`answerPlannedLiftQuestion`, `isTirednessExpression`/`buildTirednessRecoveryAnswer`, `classifyMessageIntent`) to prove session state is preserved and prioritized over generic chat/education — independent of LLM availability (all helpers are pure). Includes negative controls (education + plain logging not hijacked), the ambiguous-lift "ask which one" guard, the never-hype/never-invent-a-load recovery guarantee, and the AC8 phantom-set floor under messy input. No production code change. Full suite green (2381). Detector-gap finding filed in `BACKLOG.md` (recovery `FRAMING` list omits "quads").
 
 ---
 
