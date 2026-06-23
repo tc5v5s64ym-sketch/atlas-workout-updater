@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v30';
+const ATLAS_SHELL_BUILD = 'v31';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -3449,8 +3449,19 @@ function hasCompleteWorkoutNoWriteProof(result) {
     data.no_write_confirmed === true;
 }
 
+// Modality (cardio / circuit / timed-hold) dry-run no-write proof. The
+// /api/log-modality dry-run returns its proof at result.data (like the manual
+// log-workout path), NOT nested under data.data.
+function hasLogModalityNoWriteProof(result) {
+  const data = result?.data || {};
+  return data.test_mode === true &&
+    data.sheet_write === 'skipped' &&
+    data.sheet_written === false &&
+    data.no_write_confirmed === true;
+}
+
 function previewProofFromResult(result, mode) {
-  const data = mode === 'manual' ? (result?.data || {}) : (result?.data?.data || {});
+  const data = (mode === 'manual' || mode === 'modality') ? (result?.data || {}) : (result?.data?.data || {});
   return {
     mode,
     test_mode: data.test_mode,
@@ -3466,7 +3477,68 @@ function pendingWriteHasPreviewProof(write) {
   const proof = write.previewProof;
   if (proof.test_mode !== true || proof.sheet_written !== false || proof.no_write_confirmed !== true) return false;
   if (proof.mode === 'manual' && proof.sheet_write !== 'skipped') return false;
+  if (proof.mode === 'modality' && proof.sheet_write !== 'skipped') return false;
   if ((proof.mode === 'screenshot' || proof.mode === 'effort-only') && proof.sheet_write !== 'skipped') return false;
+  return true;
+}
+
+// PR 486 frontend wiring — the modality (cardio / interval / circuit / timed-hold)
+// trust loop. MIRRORS the slash trust loop and never alters it: a dry-run preview
+// proves no-write, the existing #approve-btn is the only write trigger, and the
+// real write goes through /api/log-modality only on explicit approval.
+const MODALITY_LOG_LABELS = ['Date', 'Session', 'Modality', 'Exercise', 'Duration (s)', 'Distance (m)', 'Rounds', 'Rest (s)', 'Level', 'RPE', 'Avg HR', 'Notes'];
+
+function renderModalityPreview(preview) {
+  previewContent.innerHTML = '';
+  previewContent.appendChild(el('h3', { text: 'Cardio / conditioning to write (Modality_Log)' }));
+  const row = Array.isArray(preview.row) ? preview.row : [];
+  // Key/value list of exactly what will be written — blanks omitted for clarity.
+  const pairs = MODALITY_LOG_LABELS
+    .map((label, i) => [label, row[i]])
+    .filter(([, v]) => v !== '' && v !== null && v !== undefined);
+  previewContent.appendChild(renderTable(['Field', 'Value'], pairs));
+  previewContent.appendChild(el('div', { class: 'muted small', text: 'Writes one row to the Modality_Log tab. Strength sets are unaffected.' }));
+  previewPanel.hidden = false;
+  previewPanel.open = true;
+}
+
+// Try to stage a modality input as a previewed-but-unwritten approval. Returns
+// true when it owned the input (a recognized modality was previewed, OR a friendly
+// fail-closed message was shown); false when the input is NOT a modality (the
+// caller then falls through to the coach). Read-only: only a test_mode dry-run runs
+// here — the actual write happens solely in the #approve-btn handler.
+async function tryPreviewModality(text, sessionId, date) {
+  if (!text || !date) return false;
+  let result;
+  try {
+    result = await api('/api/log-modality', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, session_id: sessionId, date, test_mode: true })
+    });
+  } catch (err) {
+    // 422 = not a recognized modality → let the caller route to the coach.
+    // Any other failure → we can't trust a preview, so we never stage a write.
+    return false;
+  }
+  const data = result?.data || {};
+  if (!data.modality || !Array.isArray(data.modality_row_preview)) return false;
+  // Fail closed: never enable approval without the dry-run no-write proof.
+  if (!hasLogModalityNoWriteProof(result)) {
+    setStatus(loggerStatus, "Couldn't safely preview that cardio/conditioning entry — nothing was staged to write.", 'error');
+    return true;
+  }
+  pendingWrite = {
+    mode: 'modality',
+    text,
+    sessionId,
+    date,
+    writeId: generateWriteId(),
+    previewProof: previewProofFromResult(result, 'modality')
+  };
+  renderModalityPreview({ modality: data.modality, row: data.modality_row_preview });
+  document.getElementById('approve-btn').disabled = !pendingWriteHasPreviewProof(pendingWrite);
+  setStatus(loggerStatus, `Previewed ${String(data.modality).replace(/_/g, ' ')} — review and approve to write.`, 'ok');
   return true;
 }
 
@@ -3646,6 +3718,14 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // first. If a card was dispatched, skip the coach route (one response per message).
     // If no recommendation exists in the catalog, fall through to the coach as normal.
     if (pendingChatText && !hasAnyEffortInput()) {
+      // A cardio / interval / circuit / timed-hold input isn't a slash workout, so
+      // the slash parser threw above. Try the modality trust loop (dry-run preview
+      // → approve → /api/log-modality) before treating it as a coach question. On a
+      // 422 / non-modality this returns false and we fall through to the coach.
+      if (await tryPreviewModality(pendingChatText, sessionId, date)) {
+        activeExercise = null;
+        return;
+      }
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
       if (!suggested) routeMessageToCoach(pendingChatText);
       // Clear the stale active-exercise context so the next bare shorthand input
@@ -4193,6 +4273,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   // Captured up front — the preview teardown below nulls pendingWrite, and
   // the success message still needs to know which kind of write this was.
   const wasEffortOnly = pendingWrite.effortOnly === true;
+  const wasModality = pendingWrite.mode === 'modality';
   let pendingLastWrite = null;
   let duplicateBlocked = false;
   try {
@@ -4221,6 +4302,30 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           if (!rowsWritten || rowsWritten === 0) {
             throw new Error(`Write completed but log_rows_written=${rowsWritten ?? 'missing'}. Verify Sheets before approving again.`);
           }
+        }
+      }
+    } else if (pendingWrite.mode === 'modality') {
+      // Live modality write — mirrors the slash approve branch: omit test_mode so
+      // the server performs the real append, carry the write_id from the dry-run
+      // for idempotency, and require an explicit success proof before declaring it
+      // saved. Writes only to Modality_Log; never touches Log_Cleaned/Effort.
+      const writeResult = await api('/api/log-modality', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: pendingWrite.text,
+          session_id: pendingWrite.sessionId,
+          date: pendingWrite.date,
+          write_id: pendingWrite.writeId
+        })
+      });
+      const writeData = writeResult?.data || {};
+      // Idempotent replay: a duplicate write_id is echoed back with sheet_written
+      // false; the original row is already on the sheet, so treat it as blocked.
+      duplicateBlocked = writeData.duplicate_write === true && writeData.sheet_written === false;
+      if (!duplicateBlocked) {
+        if (writeData.sheet_write !== 'success' || writeData.sheet_written !== true) {
+          throw new Error(`Modality write did not confirm success (sheet_write=${writeData.sheet_write ?? 'missing'}). Check Sheets.`);
         }
       }
     } else {
@@ -4276,7 +4381,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       loggerStatus,
       duplicateBlocked
         ? 'Duplicate tap blocked — this workout was already written. ✓'
-        : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+        : wasModality ? 'Cardio / conditioning written to Google Sheets. ✓'
+          : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
       'ok'
     );
     // Always reflect the write that just happened. Screenshot / effort-only
