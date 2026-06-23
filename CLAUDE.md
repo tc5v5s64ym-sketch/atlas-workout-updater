@@ -36,8 +36,8 @@ Atlas uses GitHub as the handoff bus.
 - Claude Code implements one concern per PR and opens the PR. Under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`) it then proceeds autonomously — building, testing, running review, classifying risk, and producing the merge card — and stops for the owner only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`).
 - Claude Code Review checks code-level correctness when enabled.
 - CODEX Review checks roadmap fit, scope creep, Atlas trust contract, live-path test coverage, write-path/schema safety, and accidental future-PR work.
-- If CODEX Review returns `BLOCKING` and the finding is in scope for the current PR, Claude Code fixes only that finding, pushes updates, and stops again.
-- If CODEX Review finds future-scope work, Claude Code must not build it inside the current PR; add it to `BACKLOG.md` or an issue and stop.
+- If CODEX Review returns `BLOCKING` and the finding is in scope for the current PR, Claude Code fixes only that finding, pushes updates, re-runs tests/review, and continues — it does not stop unless an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md`).
+- If CODEX Review finds future-scope work, Claude Code must not build it inside the current PR; it files the item in `BACKLOG.md` or an issue and continues (filing future scope is not a stop).
 - Merges happen once a PR is merge-ready (GitHub checks green, reviews passed, CODEX Review `READY FOR OWNER MERGE` or `NON-BLOCKING`). Under the automation-first workflow Claude Code holds full merge authority and merges merge-ready PRs (`docs/AUTOMATION_PROTOCOL.md`); Dale can merge directly or revoke that authority at any time.
 
 See `docs/AGENT_WORKFLOW.md` for the full workflow.

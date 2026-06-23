@@ -80,6 +80,21 @@ A green merge card requires **positive evidence** that every required signal ran
 - **Risk classification:** a risk label from `docs/RISK_LABELS.md` was applied.
 - **Merge card:** generated and complete (`.github/PULL_REQUEST_TEMPLATE.md`).
 
+### Enforcement map — who enforces each signal
+
+So the loop is reliable, every required signal has a named enforcer. "Workflow-enforced" means a GitHub Actions job fails the PR when the signal is absent or errored; "builder-enforced" means Claude must not merge without positive evidence (§2), recording it on the merge card.
+
+| Signal | Enforced by | Mechanism |
+|---|---|---|
+| Unit tests / lint / secret scan / E2E | **Workflow** | `ci.yml` jobs must conclude `success` |
+| Claude Code Review | **Workflow** | `claude-code-review.yml` → "Ensure the review actually ran" guard (`is_error=false`) |
+| Merge card present + filled | **Workflow** | `merge-card-check.yml` (no template placeholders) |
+| Codex **Decision** answer (decision panels) | **Workflow** | `codex-decision-desk.yml` → "Ensure the desk actually answered" guard; an unanswered/errored desk fails (`docs/DECISION_ROUTING.md`) |
+| CODEX **Review** verdict (`NON-BLOCKING` / `READY FOR OWNER MERGE`) | **Builder** (agent-performed review) | recorded in the merge card's **Codex status** field; a missing/`BLOCKING`/errored verdict blocks merge per §2 — there is no workflow that fabricates a verdict, and silence is never a pass |
+| Risk classification | **Builder** | exactly one `docs/RISK_LABELS.md` label, recorded on the merge card |
+
+> **CODEX Review vs. the Codex Decision Desk are two different things.** The **Decision Desk** (`codex-decision-desk.yml`) answers Claude's *decision panels* and is workflow-automated with its own enforcement guard — present and complete (it is **not** missing). **CODEX Review** is the per-PR contract-guard *verdict* (roadmap fit, scope, trust contract, write-path/schema safety); it is performed by the external Codex agent and **builder-enforced** at the merge gate via §2 — it is not produced by a workflow. If CODEX Review is ever promoted to an automated job, it must carry an "Ensure the review actually ran" guard mirroring `claude-code-review.yml`, and this map updates accordingly.
+
 ---
 
 ## 4. Merge eligibility
