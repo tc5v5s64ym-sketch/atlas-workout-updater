@@ -706,6 +706,12 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
 
   // Approval gating accepts the modality proof exactly like manual (sheet_write skipped).
   assert.match(appSource, /proof\.mode === 'modality' && proof\.sheet_write !== 'skipped'/);
+
+  // The preview heading is modality-aware (a timed hold must not read "Cardio").
+  assert.match(appSource, /const MODALITY_HEADINGS = \{/);
+  assert.match(appSource, /timed_hold: 'Timed hold'/);
+  assert.match(appSource, /MODALITY_HEADINGS\[preview\.modality\] \|\| 'Conditioning'/);
+  assert.doesNotMatch(appSource, /'Cardio \/ conditioning to write/, 'the hardcoded cardio-only heading must be gone');
 });
 
 test('two-way chat: non-loggable text routes to the coach instead of erroring', () => {
@@ -4605,8 +4611,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v31/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v30\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v32/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v31\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
