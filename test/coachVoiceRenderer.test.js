@@ -103,7 +103,35 @@ test('on_target_effort_gets_correct_effort_praise', () => {
   assert.match(v.primary_line, /on target|dial+ed in/i);
   assert.doesNotMatch(v.primary_line, /grind|failure|to the well|crushed|survive/i,
     'praise correct effort, never suffering');
-  assert.equal(v.suppress_generic_prose, false, 'with no negative signal the LLM may still add tone');
+});
+
+// 7a — on-target is now a deterministic rendered voice state (PR #488 follow-up):
+// the weighted/RIR lane uses the short renderer line, not generic LLM prose.
+test('on_target_effort_uses_renderer_primary_line', () => {
+  const v = renderSetVoice({ analysis: inclineOnTarget(), recVerdict: { level: 'on_target' } });
+  assert.equal(v.severity, 'on_target');
+  assert.equal(v.suppress_generic_prose, true, 'on-target owns the reaction with the deterministic line');
+  assert.ok(v.primary_line && v.primary_line.trim().length, 'a deterministic on-target line must be present');
+});
+
+// 7b — a long generic/LLM paragraph on an on-target set is suppressed.
+test('on_target_effort_suppresses_long_generic_llm_prose', () => {
+  const longProse = 'Solid work today, right on target with RIR 2. This 70lb weight is sitting nicely in '
+    + 'your 65-75lb working range, so we are keeping the load the same and aiming for 9 reps next time. '
+    + 'Looks like you are set to push the top of that range soon.';
+  const v = renderSetVoice({ analysis: inclineOnTarget(), recVerdict: { level: 'on_target' }, candidateProse: longProse });
+  assert.equal(v.suppress_generic_prose, true, 'the boundary must suppress the long generic prose');
+  assert.ok(v.primary_line.length < longProse.length, 'the deterministic line is short, not the paragraph');
+  assert.ok(!/\n/.test(v.primary_line) && v.primary_line.split(/[.!?]+/).filter(s => s.trim()).length <= 2,
+    'short Atlas voice (<=2 sentences)');
+});
+
+// 7c — the exact live failing input now renders the short Atlas voice.
+test('incline_70_8_2_x3_outputs_dialled_in_voice', () => {
+  const v = renderSetVoice({ analysis: inclineOnTarget(), recVerdict: { level: 'on_target' } });
+  assert.equal(v.primary_line, 'Dialled in — that landed right on target.');
+  assert.equal(v.severity, 'on_target');
+  assert.equal(v.suppress_generic_prose, true);
 });
 
 // 8 — plan-complete voice is short and closeout-focused (no recap / next-up).
@@ -161,6 +189,32 @@ test('contradiction guard fires per reason code, bound to the engine map', () =>
     findForbiddenContradictions([EFFORT_REASON_CODES.REDLINE_SET], 'Hold the load and clean up reps.'),
     []
   );
+});
+
+// 4 (secondary live issue) — Cable Fly 30 12/0 logs as an isolation caution AND
+// must NOT also raise "didn't catch that lift" when the catalog knows the lift.
+test('cable_fly_isolation_rir0_no_didnt_catch_warning', () => {
+  // The isolation caution voice still fires for the parsed set.
+  const v = renderSetVoice({ analysis: cableFlyRIR0() });
+  assert.equal(v.severity, 'caution');
+  assert.match(v.primary_line, /isolation/i);
+
+  // Extract the pure warning gate from app.js and check it against the catalog.
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fnSrc = appSrc.slice(
+    appSrc.indexOf('function shouldWarnUnknownLift('),
+    appSrc.indexOf('function effortMode()')
+  );
+  const shouldWarnUnknownLift = new Function(`${fnSrc}; return shouldWarnUnknownLift;`)();
+  // Cable Fly is unknown to the PARSER (warnings include unknown_exercise) but the
+  // catalog resolves it → no "didn't catch that lift".
+  const catalogKnows = name => (String(name).toLowerCase() === 'cable fly' ? 'CABF01' : '');
+  assert.equal(shouldWarnUnknownLift(['unknown_exercise'], 'Cable Fly', catalogKnows), false,
+    'a catalog-known lift must not raise the warning');
+  // A genuinely unresolved lift (unknown to the catalog too) still warns.
+  assert.equal(shouldWarnUnknownLift(['unknown_exercise'], 'Zzqx Press', () => ''), true);
+  // No unknown_exercise flag → never warns.
+  assert.equal(shouldWarnUnknownLift([], 'Bench Press', catalogKnows), false);
 });
 
 // 12 — the renderer is pure: no write path, parser, schema, or I/O.

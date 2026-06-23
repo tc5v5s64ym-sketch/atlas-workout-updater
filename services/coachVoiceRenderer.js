@@ -11,7 +11,7 @@
 //
 //   - primary_line            the deterministic reaction line to show
 //   - secondary_line          optional suggestion-only reroute line (never mutates a plan)
-//   - severity                'block' | 'caution' | 'bump' | 'on_target' | 'neutral'
+//   - severity                'block' | 'caution' | 'bump' | 'on_target' | 'hard' | 'neutral'
 //   - reason_codes            the engine's codes, verbatim
 //   - suppress_generic_prose  true when a non-neutral fatigue/underdose signal owns
 //                             the reaction — generic/LLM prose must NOT speak over it
@@ -129,7 +129,8 @@ function classifySeverity(analysis, recVerdict) {
     if (analysis.progression_verdict === 'bump') return 'bump';
   }
   const level = recVerdict && recVerdict.level;
-  if (level === 'on_target' || level === 'hard') return 'on_target';
+  if (level === 'on_target') return 'on_target';
+  if (level === 'hard') return 'hard';
   return 'neutral';
 }
 
@@ -167,9 +168,16 @@ function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, c
     primary_line = observation;
     suppress_generic_prose = true;
   } else if (severity === 'on_target') {
-    // Correct effort. Praise the execution, not heroics. The LLM may still add
-    // tone (no contradiction is possible with no negative signal), so this is the
-    // floor / LLM-down line, not a suppression.
+    // Correct effort. In the weighted/RIR set-feedback lane the deterministic
+    // voice OWNS this too — short, consistent Atlas voice, not a paragraph of
+    // generic LLM prose. Praise the execution, not heroics, and suppress the
+    // prose (the next-recommendation card still carries the numbers).
+    primary_line = ON_TARGET_PRAISE;
+    suppress_generic_prose = true;
+  } else if (severity === 'hard') {
+    // A tough set right at target — correct effort, not a redline. No
+    // contradiction is possible (no negative signal), so the LLM may still add
+    // tone; this praise line is the deterministic floor / LLM-down path.
     primary_line = ON_TARGET_PRAISE;
     suppress_generic_prose = false;
   } else {
