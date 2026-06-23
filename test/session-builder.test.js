@@ -787,6 +787,31 @@ describe('capSessionToProfile — the cap is DERIVED FROM the profile, not hardc
   });
 });
 
+// Parity follow-up to the exForPatterns threading: buildIntentSession (the
+// build_muscle / fix_blind_spots / balanced builder) now threads muscle_group
+// from its allRecs onto every emitted exercise, so structureSession's role
+// helpers can classify a keyword-less accessory by its muscle group.
+test('buildIntentSession threads muscle_group onto emitted exercises', () => {
+  const rec = (name, code, pattern, mg, weight) => ({
+    exercise_name: name, liftCode: code, pattern, muscle_group: mg,
+    next_target: { weight, reps: 8, sets: 3 }, recommendation: 'go',
+    e1rm_trend: 'stable', last_working_sets: [], sessions_analyzed: 3,
+    days_since_last_session: 3, confidence: 'medium',
+  });
+  const allRecs = [
+    rec('Bench Press', 'BEN01', 'push', 'Chest', 185),   // anchor (compound)
+    rec('Pallof Press', 'PAL01', 'core', 'Core', 60),    // keyword-less accessory (group-only)
+  ];
+  const { exercises } = buildIntentSession({ patterns: ['push', 'core'], allRecs });
+  assert.ok(exercises.length >= 1, 'should build at least one exercise');
+  for (const ex of exercises) {
+    assert.ok('muscle_group' in ex, `emitted exercise should carry muscle_group: ${ex.exercise}`);
+  }
+  const pallof = exercises.find(e => /pallof/i.test(e.exercise));
+  assert.ok(pallof, 'the keyword-less accessory should be included');
+  assert.equal(pallof.muscle_group, 'Core', 'muscle_group must thread through buildIntentSession');
+});
+
 // Threading fix: exForPatterns now emits `muscle_group`, so orderByRole's
 // muscle-group fallback (classifyLiftRole) classifies a keyword-less accessory
 // correctly. "Pallof Press" matches no name pattern (→ secondary by name alone),
