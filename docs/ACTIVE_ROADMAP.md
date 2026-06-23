@@ -480,8 +480,9 @@ Promoted by owner decision (2026-06-22) as the build series implementing the Tra
 - ✅ **PR 477** — RIR-aware coach accountability (engine PR-A #478 + wiring PR-B #479) — shipped.
 - ✅ **PR 478 — Exercise Modality Schema** — shipped: pure-data `services/exerciseModality.js` (`modalityFor`), reference-only, no write-path/schema change. Golden-fixture coverage of Taxonomy §3.
 - ✅ **PR 479 — Session Objective Scoring Fixtures** — shipped: pure `services/objectiveScoring.js` (frozen §3 weights + `combineObjectiveScore`/`selectObjective`), golden-fixture-protected before the scorer.
-- ◐ **PR 480 — Pure Session Objective Scorer** — next: computes the term sub-scores from real inputs, satisfying the PR 479 fixtures.
-- PRs 481–486 follow in order (see `BACKLOG.md` "Training Intelligence Implementation Series").
+- ✅ **PR 480 — Pure Session Objective Scorer** — shipped: pure `services/objectiveScorer.js` (`scoreObjectives` derives the §3 term sub-scores per objective from a normalized snapshot, selects via the PR 479 contract). Live-snapshot wiring deferred.
+- ◐ **PR 481 — Stimulus Governor Fixtures** — next: golden fixtures for the profile×modality RIR/effort rules (Taxonomy §5).
+- PRs 482–486 follow in order (see `BACKLOG.md` "Training Intelligence Implementation Series").
 
 ### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
 
