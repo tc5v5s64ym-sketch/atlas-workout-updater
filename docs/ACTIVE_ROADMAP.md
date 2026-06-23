@@ -485,7 +485,8 @@ Promoted by owner decision (2026-06-22) as the build series implementing the Tra
 - ✅ **PR 482 — Profile-aware Stimulus Governor** — shipped (pure + unwired): `services/stimulusGovernor.js::gradeStimulus` grades a logged effort by profile + modality, emitting `progression_verdict` + `fatigue_signal` per the PR 481 rules. Not wired into any live path.
 - ✅ **PR 483 — Live Fatigue Router expansion** — shipped (pure + unwired): `services/fatigueRouter.js::routeNextMove` reroutes the next move from logged fatigue (block_pr / reduce_intensity / reduce_density / promote_alternative / make_optional / reduce / keep). Not wired into the live path.
 - ◐ **PR 484 — Coach Voice Renderer** — next: words the new engine facts. **`[trust-critical]` coach-surface → owner-gated** (confirm scope before editing `services/coach.js`).
-- PRs 485–486 follow in order (see `BACKLOG.md` "Training Intelligence Implementation Series").
+- ✅ **PR 485 — Recovery / Deload Engine** — shipped (engine-only selection layer): `services/recoveryDeloadSelection.js::assessRecoveryDeload` (SPE §10 ladder + convergence triggers + profile-aware style descriptors; no prescription numbers, unwired).
+- **Remaining (both owner-gated, autonomous build paused here):** PR 484 — Coach Voice Renderer (coach-surface) · PR 486 — Multi-modality logging (owner-gated parser + schema migration). The pure deterministic engine layer (478–483, 485) is complete; the rest crosses trust-sensitive lines and awaits owner direction.
 
 ### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
 
