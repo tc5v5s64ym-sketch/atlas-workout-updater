@@ -89,6 +89,7 @@ const { normalizeDurationString } = require('./services/duration');
 const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextParser');
 const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
+const { renderSetVoice, findForbiddenContradictions } = require('./services/coachVoiceRenderer');
 const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
@@ -1041,7 +1042,10 @@ app.get('/api/health/gemini', (req, res) => {
 // Log_Cleaned are untouched. The LLM never sees or words these here (that is
 // PR 484) — this is the deterministic floor only.
 function computeSetEffortExtras(rawFacts) {
-  const out = { effort_note: null, reroute: null };
+  // voiceBase is the deterministic Coach Voice Renderer output WITHOUT the prose
+  // contradiction check (candidateProse is finalized per response path below). null
+  // when there is no weighted/RIR signal to read.
+  const out = { effort_note: null, reroute: null, voiceBase: null };
   try {
     const todaySets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
     // Only analyze the current weighted/RIR workflow: at least one set must carry
@@ -1057,8 +1061,9 @@ function computeSetEffortExtras(rawFacts) {
     out.effort_note = buildEffortNote(analysis);
     // Reroute only when a remaining planned queue exists (engine also guards this).
     const queue = Array.isArray(rawFacts.planned_queue) ? rawFacts.planned_queue : [];
+    let conflict = null;
     if (queue.length) {
-      const conflict = assessNextMoveConflict(analysis, queue);
+      conflict = assessNextMoveConflict(analysis, queue);
       const line = buildRerouteNote(conflict);
       if (conflict && conflict.conflict && line) {
         out.reroute = {
@@ -1069,10 +1074,36 @@ function computeSetEffortExtras(rawFacts) {
         };
       }
     }
+    // Deterministic set-feedback voice (Coach Voice Renderer slice 1). The engine
+    // decides the coaching MEANING; the prose contradiction check is applied per
+    // response path in finalizeSetVoice (the candidate prose differs LLM-up vs
+    // LLM-down). recVerdict comes from the recommendation engine's effort verdict.
+    out.voiceBase = renderSetVoice({
+      analysis,
+      conflict,
+      recVerdict: rec.effort_verdict || null,
+      candidateProse: '',
+    });
   } catch (_) {
     // Best-effort — a signal failure must never block the coach response.
   }
   return out;
+}
+
+// Finalize the deterministic voice against the candidate prose for THIS response
+// path and decide whether the generic/LLM prose may speak. The engine wins: when a
+// non-neutral fatigue/underdose signal is present, or the prose contradicts a
+// reason code, the prose is suppressed (message → null) so it can never dilute or
+// contradict the engine's read. Returns { message, voice } (voice null when there
+// is no set-effort signal). Read-only — never writes.
+function finalizeSetVoice(message, voiceBase) {
+  if (!voiceBase) return { message, voice: null };
+  const contradictions = findForbiddenContradictions(voiceBase.reason_codes, message);
+  const suppress = voiceBase.suppress_generic_prose || contradictions.length > 0;
+  return {
+    message: suppress ? null : message,
+    voice: { ...voiceBase, contradictions },
+  };
 }
 
 app.post('/api/coach/message', async (req, res) => {
@@ -1083,12 +1114,17 @@ app.post('/api/coach/message', async (req, res) => {
   const kind = req.body.kind === 'plan' ? 'plan' : 'set';
   // Engine-backed extras are deterministic and Gemini-independent — compute them
   // up front so they ride along on every response path below (incl. LLM-down).
-  const effortExtras = kind === 'set'
+  // voiceBase is the deterministic Coach Voice Renderer read; finalizeSetVoice
+  // applies the prose contradiction check per path and rides `voice` along too.
+  const computed = kind === 'set'
     ? computeSetEffortExtras(rawFacts)
-    : { effort_note: null, reroute: null };
+    : { effort_note: null, reroute: null, voiceBase: null };
+  const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute };
+  const voiceBase = computed.voiceBase;
   if (!coach.isConfigured()) {
+    const fin = finalizeSetVoice(null, voiceBase);
     return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-      message: null, configured: false, model: coach.coachModel(), ...effortExtras
+      message: fin.message, voice: fin.voice, configured: false, model: coach.coachModel(), ...effortExtras
     });
   }
 
@@ -1142,12 +1178,16 @@ app.post('/api/coach/message', async (req, res) => {
     const message = kind === 'plan'
       ? await coach.generatePlanMessage(facts)
       : await coach.generateCoachMessage(facts);
-    return standardSuccess(req, res, 'Coach message', { message, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...effortExtras });
+    // Deterministic engine controls the coaching meaning: suppress the LLM prose
+    // when it contradicts (or would speak over) a non-neutral set-effort signal.
+    const fin = finalizeSetVoice(message, voiceBase);
+    return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...effortExtras });
   } catch (error) {
     // Degrade gracefully: tell the client to use its templated fallback rather
     // than surfacing an error in the chat.
+    const fin = finalizeSetVoice(null, voiceBase);
     return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-      message: null, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
+      message: fin.message, voice: fin.voice, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
     });
   }
 });
