@@ -663,6 +663,51 @@ test('conversational logger keeps preview no-write proof required before enablin
   assert.match(appSource, /document\.getElementById\('approve-btn'\)\.disabled = !pendingWrite/);
 });
 
+test('PR 486 frontend: modality logging mirrors the trust loop without altering slash logging', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // The dry-run preview (tryPreviewModality) calls /api/log-modality with
+  // test_mode:true and requires the no-write proof before staging an approval.
+  assert.match(appSource, /async function tryPreviewModality/);
+  assert.match(appSource, /function hasLogModalityNoWriteProof/);
+  const previewBlock = appSource.slice(
+    appSource.indexOf('async function tryPreviewModality'),
+    appSource.indexOf('function hasAnyEffortInput')
+  );
+  assert.match(previewBlock, /'\/api\/log-modality'/);
+  assert.match(previewBlock, /test_mode:\s*true/, 'the preview must be a dry-run');
+  assert.match(previewBlock, /hasLogModalityNoWriteProof\(result\)/, 'fail closed without the no-write proof');
+  assert.match(previewBlock, /generateWriteId\(\)/, 'a write_id is staged for idempotency');
+  // The preview never writes: no live (test_mode-less) log-modality call here.
+  assert.doesNotMatch(previewBlock, /delete[^\n]*test_mode|write_id: pendingWrite\.writeId/);
+
+  // The ONLY live modality write is in the #approve-btn handler, gated on the
+  // preview proof, and it requires an explicit success confirmation.
+  const approveBlock = appSource.slice(
+    appSource.indexOf("getElementById('approve-btn').addEventListener('click'"),
+    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 4000
+  );
+  assert.match(approveBlock, /pendingWrite\.mode === 'modality'/);
+  assert.match(approveBlock, /write_id: pendingWrite\.writeId/, 'live write carries the staged write_id');
+  assert.match(approveBlock, /writeData\.sheet_write !== 'success' \|\| writeData\.sheet_written !== true/);
+
+  // Regression: the slash log-workout approve branch is unchanged — still posts
+  // /api/log-workout with test_mode deleted and requires sheet_write success.
+  assert.match(approveBlock, /const realPayload = \{ \.\.\.pendingWrite\.payload \}/);
+  assert.match(approveBlock, /delete realPayload\.test_mode/);
+  assert.match(approveBlock, /'\/api\/log-workout'/);
+
+  // The modality hook lives ONLY in the coach-fallback branch (input the slash
+  // parser rejected), so strength-set logging never routes through it.
+  assert.match(appSource, /if \(await tryPreviewModality\(pendingChatText, sessionId, date\)\)/);
+  const hookIdx = appSource.indexOf('if (await tryPreviewModality(pendingChatText');
+  const coachRouteIdx = appSource.indexOf('routeMessageToCoach(pendingChatText)');
+  assert.ok(hookIdx > 0 && coachRouteIdx > hookIdx, 'modality is tried before falling through to the coach');
+
+  // Approval gating accepts the modality proof exactly like manual (sheet_write skipped).
+  assert.match(appSource, /proof\.mode === 'modality' && proof\.sheet_write !== 'skipped'/);
+});
+
 test('two-way chat: non-loggable text routes to the coach instead of erroring', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
@@ -4560,8 +4605,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v30/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v29\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v31/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v30\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
