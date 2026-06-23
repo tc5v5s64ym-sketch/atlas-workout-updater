@@ -31,6 +31,15 @@ test('exercise KB meets the seed-size targets (>=250 canonical, >=1000 aliases)'
   assert.ok(aliases.length >= 1000, `aliases has ${aliases.length} (<1000)`);
 });
 
+test('every canonical name resolves to its own record (no alias shadows a name)', () => {
+  const mis = [];
+  for (const rec of catalog) {
+    const r = resolveExercise(rec.name);
+    if (!r || r.exercise_id !== rec.exercise_id) mis.push(`${rec.exercise_id} ("${rec.name}") → ${r && r.exercise_id}`);
+  }
+  assert.equal(mis.length, 0, 'canonical names must self-resolve:\n' + mis.slice(0, 20).join('\n'));
+});
+
 test('exercise_id is stable lower snake_case and unique (distinct from lift_code)', () => {
   const ids = new Set();
   for (const rec of catalog) {

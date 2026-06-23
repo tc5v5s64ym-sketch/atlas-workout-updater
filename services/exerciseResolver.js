@@ -38,9 +38,11 @@ function register(alias, exercise_id, confidence, alias_type) {
   // loaded before synthesized name-aliases, so curated confidence is preserved.
   if (!aliasIndex.has(norm)) aliasIndex.set(norm, { exercise_id, confidence, alias_type });
 }
-for (const a of ALIASES) if (a && a.alias) register(a.alias, a.exercise_id, typeof a.confidence === 'number' ? a.confidence : 1, a.alias_type || 'common_name');
-// Safety net: every canonical name resolves to itself even if the alias list missed it.
+// Canonical names are registered FIRST so a record's own name always wins — an
+// alias of another exercise can never shadow a canonical name. (The committed data
+// is also validated to contain no such collision; this is defense in depth.)
 for (const rec of CATALOG) if (rec && rec.name) register(rec.name, rec.exercise_id, 1, 'common_name');
+for (const a of ALIASES) if (a && a.alias) register(a.alias, a.exercise_id, typeof a.confidence === 'number' ? a.confidence : 1, a.alias_type || 'common_name');
 
 // Strip a trailing set-notation tail ("Cable Fly 30 12/0" → "Cable Fly"): the lift
 // name is the run of leading tokens before the first token that contains a digit.

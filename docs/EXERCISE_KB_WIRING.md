@@ -93,6 +93,13 @@ The KB **never** reads or writes `lift_code`. A future wiring PR adds an explici
 
 ## Wiring-time hardening notes
 
+- **Canonical names win over aliases (enforced).** A record's own name always resolves to
+  itself: `exerciseResolver` registers canonical names *before* aliases, `validateKb`
+  rejects any alias that normalizes to a *different* exercise's canonical name, and the
+  build folds equipment-qualified duplicates (e.g. `barbell_back_squat`→`back_squat`,
+  `machine_chest_fly`→`pec_deck`, the cable-fly family→`cable_fly`) so no two canonicals
+  describe the same lift. Regression-tested ("every canonical name resolves to its own
+  record").
 - **Same-id alias confidence on collision.** `validateKb` rejects a normalized alias that
   maps to *two different* `exercise_id`s, and the build step dedups aliases by normalized
   form, so the committed data has no normalized collisions. But `exerciseResolver.register()`

@@ -1153,38 +1153,6 @@
     ]
   },
   {
-    "exercise_id": "barbell_back_squat",
-    "name": "Barbell Back Squat",
-    "category": "barbell",
-    "exercise_type": "main_lift",
-    "movement_pattern": "squat",
-    "primary_muscles": [
-      "quads",
-      "glutes"
-    ],
-    "secondary_muscles": [
-      "hamstrings",
-      "lower_back",
-      "abs"
-    ],
-    "equipment": [
-      "barbell"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 9,
-    "skill_score": 7,
-    "substitution_group": "squat_pattern",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "compound",
-      "strength",
-      "high_fatigue",
-      "free_weight"
-    ]
-  },
-  {
     "exercise_id": "barbell_high_bar_squat",
     "name": "Barbell High-Bar Squat",
     "category": "barbell",
@@ -1247,37 +1215,6 @@
       "high_fatigue",
       "free_weight",
       "powerlifting"
-    ]
-  },
-  {
-    "exercise_id": "barbell_front_squat",
-    "name": "Barbell Front Squat",
-    "category": "barbell",
-    "exercise_type": "main_lift",
-    "movement_pattern": "squat",
-    "primary_muscles": [
-      "quads"
-    ],
-    "secondary_muscles": [
-      "glutes",
-      "abs",
-      "upper_back"
-    ],
-    "equipment": [
-      "barbell"
-    ],
-    "difficulty": "advanced",
-    "fatigue_score": 8,
-    "skill_score": 8,
-    "substitution_group": "squat_pattern",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "compound",
-      "strength",
-      "high_fatigue",
-      "free_weight"
     ]
   },
   {
@@ -2011,37 +1948,6 @@
     ]
   },
   {
-    "exercise_id": "barbell_overhead_press",
-    "name": "Barbell Overhead Press",
-    "category": "barbell",
-    "exercise_type": "main_lift",
-    "movement_pattern": "vertical_push",
-    "primary_muscles": [
-      "front_delts",
-      "side_delts"
-    ],
-    "secondary_muscles": [
-      "triceps",
-      "traps",
-      "abs"
-    ],
-    "equipment": [
-      "barbell"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 7,
-    "skill_score": 6,
-    "substitution_group": "vertical_press",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "compound",
-      "strength",
-      "free_weight"
-    ]
-  },
-  {
     "exercise_id": "barbell_military_press",
     "name": "Barbell Military Press",
     "category": "barbell",
@@ -2535,37 +2441,6 @@
       "compound",
       "strength",
       "free_weight"
-    ]
-  },
-  {
-    "exercise_id": "barbell_hip_thrust",
-    "name": "Barbell Hip Thrust",
-    "category": "barbell",
-    "exercise_type": "accessory",
-    "movement_pattern": "hinge",
-    "primary_muscles": [
-      "glutes"
-    ],
-    "secondary_muscles": [
-      "hamstrings",
-      "quads"
-    ],
-    "equipment": [
-      "barbell",
-      "bench"
-    ],
-    "difficulty": "beginner",
-    "fatigue_score": 6,
-    "skill_score": 4,
-    "substitution_group": "glute_isolation",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "compound",
-      "hypertrophy",
-      "free_weight",
-      "beginner_friendly"
     ]
   },
   {
@@ -4160,38 +4035,6 @@
     ]
   },
   {
-    "exercise_id": "leg_press_45_degree",
-    "name": "45-Degree Leg Press",
-    "category": "machine",
-    "exercise_type": "accessory",
-    "movement_pattern": "squat",
-    "primary_muscles": [
-      "quads",
-      "glutes"
-    ],
-    "secondary_muscles": [
-      "hamstrings",
-      "calves"
-    ],
-    "equipment": [
-      "machine",
-      "plate"
-    ],
-    "difficulty": "beginner",
-    "fatigue_score": 6,
-    "skill_score": 2,
-    "substitution_group": "squat_pattern",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": true,
-    "atlas_tags": [
-      "compound",
-      "hypertrophy",
-      "machine",
-      "beginner_friendly"
-    ]
-  },
-  {
     "exercise_id": "horizontal_leg_press",
     "name": "Horizontal Leg Press",
     "category": "machine",
@@ -4424,36 +4267,6 @@
       "isolation",
       "hypertrophy",
       "machine",
-      "low_fatigue"
-    ]
-  },
-  {
-    "exercise_id": "machine_chest_fly",
-    "name": "Machine Chest Fly",
-    "category": "machine",
-    "exercise_type": "isolation",
-    "movement_pattern": "horizontal_push",
-    "primary_muscles": [
-      "chest"
-    ],
-    "secondary_muscles": [
-      "front_delts"
-    ],
-    "equipment": [
-      "machine"
-    ],
-    "difficulty": "beginner",
-    "fatigue_score": 3,
-    "skill_score": 1,
-    "substitution_group": "chest_isolation",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": true,
-    "atlas_tags": [
-      "isolation",
-      "hypertrophy",
-      "machine",
-      "beginner_friendly",
       "low_fatigue"
     ]
   },
@@ -5360,64 +5173,6 @@
     ]
   },
   {
-    "exercise_id": "high_cable_fly",
-    "name": "High Cable Fly",
-    "category": "cable",
-    "exercise_type": "isolation",
-    "movement_pattern": "horizontal_push",
-    "primary_muscles": [
-      "chest"
-    ],
-    "secondary_muscles": [
-      "front_delts"
-    ],
-    "equipment": [
-      "cable"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 3,
-    "skill_score": 3,
-    "substitution_group": "chest_isolation",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "isolation",
-      "hypertrophy",
-      "cable",
-      "low_fatigue"
-    ]
-  },
-  {
-    "exercise_id": "low_cable_fly",
-    "name": "Low Cable Fly",
-    "category": "cable",
-    "exercise_type": "isolation",
-    "movement_pattern": "horizontal_push",
-    "primary_muscles": [
-      "chest"
-    ],
-    "secondary_muscles": [
-      "front_delts"
-    ],
-    "equipment": [
-      "cable"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 3,
-    "skill_score": 3,
-    "substitution_group": "chest_isolation",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "isolation",
-      "hypertrophy",
-      "cable",
-      "low_fatigue"
-    ]
-  },
-  {
     "exercise_id": "seated_cable_fly",
     "name": "Seated Cable Fly",
     "category": "cable",
@@ -5436,35 +5191,6 @@
     "difficulty": "intermediate",
     "fatigue_score": 3,
     "skill_score": 3,
-    "substitution_group": "chest_isolation",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "isolation",
-      "hypertrophy",
-      "cable",
-      "low_fatigue"
-    ]
-  },
-  {
-    "exercise_id": "cable_crossover",
-    "name": "Cable Crossover",
-    "category": "cable",
-    "exercise_type": "isolation",
-    "movement_pattern": "horizontal_push",
-    "primary_muscles": [
-      "chest"
-    ],
-    "secondary_muscles": [
-      "front_delts"
-    ],
-    "equipment": [
-      "cable"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 3,
-    "skill_score": 4,
     "substitution_group": "chest_isolation",
     "is_unilateral": false,
     "is_bodyweight": false,
@@ -5748,37 +5474,6 @@
       "compound",
       "hypertrophy",
       "cable"
-    ]
-  },
-  {
-    "exercise_id": "cable_face_pull",
-    "name": "Cable Face Pull",
-    "category": "cable",
-    "exercise_type": "isolation",
-    "movement_pattern": "horizontal_pull",
-    "primary_muscles": [
-      "rear_delts"
-    ],
-    "secondary_muscles": [
-      "upper_back",
-      "traps"
-    ],
-    "equipment": [
-      "cable"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 2,
-    "skill_score": 4,
-    "substitution_group": "rear_delt",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": false,
-    "atlas_tags": [
-      "isolation",
-      "hypertrophy",
-      "cable",
-      "low_fatigue",
-      "rehab"
     ]
   },
   {
@@ -7926,35 +7621,6 @@
     ]
   },
   {
-    "exercise_id": "stationary_bike",
-    "name": "Stationary Bike",
-    "category": "cardio",
-    "exercise_type": "conditioning",
-    "movement_pattern": "conditioning",
-    "primary_muscles": [],
-    "secondary_muscles": [
-      "quads",
-      "hamstrings",
-      "calves"
-    ],
-    "equipment": [
-      "bike"
-    ],
-    "difficulty": "beginner",
-    "fatigue_score": 4,
-    "skill_score": 1,
-    "substitution_group": "conditioning",
-    "is_unilateral": false,
-    "is_bodyweight": false,
-    "is_machine": true,
-    "atlas_tags": [
-      "cardio",
-      "conditioning",
-      "machine",
-      "low_skill"
-    ]
-  },
-  {
     "exercise_id": "spin_class",
     "name": "Spin Class",
     "category": "cardio",
@@ -9663,34 +9329,6 @@
       "bodyweight",
       "core",
       "low_fatigue"
-    ]
-  },
-  {
-    "exercise_id": "hanging_knee_raise",
-    "name": "Hanging Knee Raise",
-    "category": "core",
-    "exercise_type": "bodyweight",
-    "movement_pattern": "flexion",
-    "primary_muscles": [
-      "abs"
-    ],
-    "secondary_muscles": [
-      "forearms"
-    ],
-    "equipment": [
-      "bodyweight"
-    ],
-    "difficulty": "intermediate",
-    "fatigue_score": 3,
-    "skill_score": 3,
-    "substitution_group": "abs",
-    "is_unilateral": false,
-    "is_bodyweight": true,
-    "is_machine": false,
-    "atlas_tags": [
-      "bodyweight",
-      "core",
-      "core"
     ]
   },
   {

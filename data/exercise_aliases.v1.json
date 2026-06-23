@@ -702,12 +702,6 @@
     "confidence": 0.95
   },
   {
-    "alias": "ez bar curl",
-    "exercise_id": "barbell_curl",
-    "alias_type": "equipment_variant",
-    "confidence": 0.8
-  },
-  {
     "alias": "dumbbell curl",
     "exercise_id": "dumbbell_curl",
     "alias_type": "common_name",
@@ -918,12 +912,6 @@
     "confidence": 1
   },
   {
-    "alias": "glute bridge",
-    "exercise_id": "hip_thrust",
-    "alias_type": "common_name",
-    "confidence": 0.7
-  },
-  {
     "alias": "walking lunge",
     "exercise_id": "walking_lunge",
     "alias_type": "common_name",
@@ -940,12 +928,6 @@
     "exercise_id": "walking_lunge",
     "alias_type": "shorthand",
     "confidence": 0.65
-  },
-  {
-    "alias": "dumbbell lunge",
-    "exercise_id": "walking_lunge",
-    "alias_type": "equipment_variant",
-    "confidence": 0.8
   },
   {
     "alias": "bulgarian split squat",
@@ -1158,32 +1140,26 @@
     "confidence": 1
   },
   {
-    "alias": "clean",
-    "exercise_id": "power_clean",
-    "alias_type": "shorthand",
-    "confidence": 0.7
-  },
-  {
     "alias": "barbell squat",
-    "exercise_id": "barbell_back_squat",
+    "exercise_id": "back_squat",
     "alias_type": "common_name",
     "confidence": 0.8
   },
   {
     "alias": "back squats",
-    "exercise_id": "barbell_back_squat",
+    "exercise_id": "back_squat",
     "alias_type": "pluralization",
     "confidence": 0.9
   },
   {
     "alias": "barbell back squats",
-    "exercise_id": "barbell_back_squat",
+    "exercise_id": "back_squat",
     "alias_type": "pluralization",
     "confidence": 1
   },
   {
     "alias": "bb back squat",
-    "exercise_id": "barbell_back_squat",
+    "exercise_id": "back_squat",
     "alias_type": "abbreviation",
     "confidence": 0.85
   },
@@ -1237,13 +1213,13 @@
   },
   {
     "alias": "fs",
-    "exercise_id": "barbell_front_squat",
+    "exercise_id": "front_squat",
     "alias_type": "abbreviation",
     "confidence": 0.5
   },
   {
     "alias": "bb front squat",
-    "exercise_id": "barbell_front_squat",
+    "exercise_id": "front_squat",
     "alias_type": "abbreviation",
     "confidence": 0.85
   },
@@ -1861,7 +1837,7 @@
   },
   {
     "alias": "shoulder press",
-    "exercise_id": "barbell_overhead_press",
+    "exercise_id": "overhead_press",
     "alias_type": "common_name",
     "confidence": 0.6
   },
@@ -2226,6 +2202,12 @@
     "confidence": 0.6
   },
   {
+    "alias": "ez-bar curl",
+    "exercise_id": "ez_bar_curl",
+    "alias_type": "common_name",
+    "confidence": 1
+  },
+  {
     "alias": "ezbar curl",
     "exercise_id": "ez_bar_curl",
     "alias_type": "shorthand",
@@ -2311,19 +2293,19 @@
   },
   {
     "alias": "bb hip thrust",
-    "exercise_id": "barbell_hip_thrust",
+    "exercise_id": "hip_thrust",
     "alias_type": "abbreviation",
     "confidence": 0.85
   },
   {
     "alias": "barbell hip thrusts",
-    "exercise_id": "barbell_hip_thrust",
+    "exercise_id": "hip_thrust",
     "alias_type": "pluralization",
     "confidence": 0.95
   },
   {
     "alias": "hip thurst",
-    "exercise_id": "barbell_hip_thrust",
+    "exercise_id": "hip_thrust",
     "alias_type": "misspelling",
     "confidence": 0.6
   },
@@ -3744,6 +3726,12 @@
     "confidence": 0.9
   },
   {
+    "alias": "dumbbell lunge",
+    "exercise_id": "dumbbell_lunge",
+    "alias_type": "common_name",
+    "confidence": 1
+  },
+  {
     "alias": "dumbbell lunges",
     "exercise_id": "dumbbell_lunge",
     "alias_type": "pluralization",
@@ -4213,25 +4201,25 @@
   },
   {
     "alias": "incline leg press",
-    "exercise_id": "leg_press_45_degree",
+    "exercise_id": "leg_press",
     "alias_type": "common_name",
     "confidence": 0.8
   },
   {
     "alias": "angled leg press",
-    "exercise_id": "leg_press_45_degree",
+    "exercise_id": "leg_press",
     "alias_type": "common_name",
     "confidence": 0.7
   },
   {
     "alias": "plate loaded leg press",
-    "exercise_id": "leg_press_45_degree",
+    "exercise_id": "leg_press",
     "alias_type": "commercial_gym_name",
     "confidence": 0.7
   },
   {
     "alias": "leg pres",
-    "exercise_id": "leg_press_45_degree",
+    "exercise_id": "leg_press",
     "alias_type": "misspelling",
     "confidence": 0.6
   },
@@ -4495,31 +4483,31 @@
   },
   {
     "alias": "machine chest flys",
-    "exercise_id": "machine_chest_fly",
+    "exercise_id": "pec_deck",
     "alias_type": "pluralization",
     "confidence": 0.9
   },
   {
     "alias": "machine chest flies",
-    "exercise_id": "machine_chest_fly",
+    "exercise_id": "pec_deck",
     "alias_type": "pluralization",
     "confidence": 0.9
   },
   {
     "alias": "machine fly",
-    "exercise_id": "machine_chest_fly",
+    "exercise_id": "pec_deck",
     "alias_type": "shorthand",
     "confidence": 0.75
   },
   {
     "alias": "seated machine fly",
-    "exercise_id": "machine_chest_fly",
+    "exercise_id": "pec_deck",
     "alias_type": "common_name",
     "confidence": 0.8
   },
   {
     "alias": "machine pec fly",
-    "exercise_id": "machine_chest_fly",
+    "exercise_id": "pec_deck",
     "alias_type": "common_name",
     "confidence": 0.8
   },
@@ -5473,37 +5461,37 @@
   },
   {
     "alias": "crossover",
-    "exercise_id": "cable_crossover",
+    "exercise_id": "cable_fly",
     "alias_type": "shorthand",
     "confidence": 0.7
   },
   {
     "alias": "low cable flys",
-    "exercise_id": "low_cable_fly",
+    "exercise_id": "cable_fly",
     "alias_type": "pluralization",
     "confidence": 1
   },
   {
     "alias": "low cable crossover",
-    "exercise_id": "low_cable_fly",
+    "exercise_id": "cable_fly",
     "alias_type": "common_name",
     "confidence": 0.9
   },
   {
     "alias": "high cable flys",
-    "exercise_id": "high_cable_fly",
+    "exercise_id": "cable_fly",
     "alias_type": "pluralization",
     "confidence": 1
   },
   {
     "alias": "high cable crossover",
-    "exercise_id": "high_cable_fly",
+    "exercise_id": "cable_fly",
     "alias_type": "common_name",
     "confidence": 0.9
   },
   {
     "alias": "high to low cable fly",
-    "exercise_id": "high_cable_fly",
+    "exercise_id": "cable_fly",
     "alias_type": "common_name",
     "confidence": 0.9
   },
@@ -5719,13 +5707,13 @@
   },
   {
     "alias": "cable face pulls",
-    "exercise_id": "cable_face_pull",
+    "exercise_id": "face_pull",
     "alias_type": "pluralization",
     "confidence": 1
   },
   {
     "alias": "rope face pull",
-    "exercise_id": "cable_face_pull",
+    "exercise_id": "face_pull",
     "alias_type": "common_name",
     "confidence": 0.95
   },
@@ -6114,12 +6102,6 @@
     "confidence": 0.95
   },
   {
-    "alias": "woodchopper",
-    "exercise_id": "cable_woodchopper",
-    "alias_type": "shorthand",
-    "confidence": 0.85
-  },
-  {
     "alias": "cable chop",
     "exercise_id": "cable_woodchopper",
     "alias_type": "shorthand",
@@ -6130,12 +6112,6 @@
     "exercise_id": "cable_pallof_press",
     "alias_type": "common_name",
     "confidence": 1
-  },
-  {
-    "alias": "pallof press",
-    "exercise_id": "cable_pallof_press",
-    "alias_type": "shorthand",
-    "confidence": 0.95
   },
   {
     "alias": "pallof presses",
@@ -7008,6 +6984,12 @@
     "confidence": 0.6
   },
   {
+    "alias": "glute bridge",
+    "exercise_id": "glute_bridge_bodyweight",
+    "alias_type": "common_name",
+    "confidence": 1
+  },
+  {
     "alias": "bodyweight glute bridge",
     "exercise_id": "glute_bridge_bodyweight",
     "alias_type": "common_name",
@@ -7381,25 +7363,25 @@
   },
   {
     "alias": "exercise bike",
-    "exercise_id": "stationary_bike",
+    "exercise_id": "cycling",
     "alias_type": "common_name",
     "confidence": 0.9
   },
   {
     "alias": "upright bike",
-    "exercise_id": "stationary_bike",
+    "exercise_id": "cycling",
     "alias_type": "common_name",
     "confidence": 0.8
   },
   {
     "alias": "recumbent bike",
-    "exercise_id": "stationary_bike",
+    "exercise_id": "cycling",
     "alias_type": "common_name",
     "confidence": 0.7
   },
   {
     "alias": "cardio bike",
-    "exercise_id": "stationary_bike",
+    "exercise_id": "cycling",
     "alias_type": "common_name",
     "confidence": 0.7
   },
@@ -7918,6 +7900,12 @@
     "exercise_id": "sprints",
     "alias_type": "common_name",
     "confidence": 0.7
+  },
+  {
+    "alias": "clean",
+    "exercise_id": "clean",
+    "alias_type": "common_name",
+    "confidence": 0.8
   },
   {
     "alias": "full clean",
@@ -8737,25 +8725,25 @@
   },
   {
     "alias": "hanging knee raises",
-    "exercise_id": "hanging_knee_raise",
+    "exercise_id": "hanging_leg_raise",
     "alias_type": "pluralization",
     "confidence": 1
   },
   {
     "alias": "hkr",
-    "exercise_id": "hanging_knee_raise",
+    "exercise_id": "hanging_leg_raise",
     "alias_type": "abbreviation",
     "confidence": 0.8
   },
   {
     "alias": "hanging knee tuck",
-    "exercise_id": "hanging_knee_raise",
+    "exercise_id": "hanging_leg_raise",
     "alias_type": "common_name",
     "confidence": 0.85
   },
   {
     "alias": "knee raise",
-    "exercise_id": "hanging_knee_raise",
+    "exercise_id": "hanging_leg_raise",
     "alias_type": "shorthand",
     "confidence": 0.7
   },
@@ -9174,6 +9162,12 @@
     "confidence": 0.6
   },
   {
+    "alias": "woodchopper",
+    "exercise_id": "bodyweight_woodchopper",
+    "alias_type": "common_name",
+    "confidence": 0.9
+  },
+  {
     "alias": "wood chopper",
     "exercise_id": "bodyweight_woodchopper",
     "alias_type": "common_name",
@@ -9202,6 +9196,12 @@
     "exercise_id": "bodyweight_woodchopper",
     "alias_type": "shorthand",
     "confidence": 0.55
+  },
+  {
+    "alias": "pallof press",
+    "exercise_id": "band_pallof_press",
+    "alias_type": "common_name",
+    "confidence": 1
   },
   {
     "alias": "pallof",

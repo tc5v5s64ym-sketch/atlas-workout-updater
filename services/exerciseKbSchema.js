@@ -143,11 +143,13 @@ function validateKb({ catalog, aliases }) {
 
   const idSet = new Set();
   const dupIds = new Set();
+  const canonicalNameToId = new Map(); // normalized canonical name -> exercise_id
   catalog.forEach((rec, i) => {
     validateCatalogRecord(rec, i).forEach(e => errors.push(e));
     if (rec && rec.exercise_id) {
       if (idSet.has(rec.exercise_id)) dupIds.add(rec.exercise_id);
       idSet.add(rec.exercise_id);
+      if (typeof rec.name === 'string') canonicalNameToId.set(normalizeExerciseText(rec.name), rec.exercise_id);
     }
   });
   for (const d of dupIds) errors.push(`duplicate exercise_id: "${d}"`);
@@ -161,6 +163,11 @@ function validateKb({ catalog, aliases }) {
       const norm = normalizeExerciseText(a.alias);
       if (aliasToId.has(norm) && aliasToId.get(norm) !== a.exercise_id) {
         errors.push(`ambiguous alias "${a.alias}" (norm "${norm}") maps to both ${aliasToId.get(norm)} and ${a.exercise_id}`);
+      }
+      // A canonical name must resolve to its OWN record — an alias may never shadow
+      // a different exercise's canonical name.
+      if (canonicalNameToId.has(norm) && canonicalNameToId.get(norm) !== a.exercise_id) {
+        errors.push(`alias "${a.alias}" (norm "${norm}") shadows the canonical name of ${canonicalNameToId.get(norm)} but maps to ${a.exercise_id}`);
       }
       aliasToId.set(norm, a.exercise_id);
     }
