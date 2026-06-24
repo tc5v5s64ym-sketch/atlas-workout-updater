@@ -18,13 +18,17 @@
 
 const { classifyLiftRole } = require('./liftRole');
 const { costFor } = require('./liftCost');
+const { EXERCISE_TYPES: LEGACY_EXERCISE_TYPES } = require('./trainingKnowledge');
 
 // ─── Controlled vocabularies (Taxonomy §3 enums) ──────────────────────────────
 
-// Extends today's compound|isolation|machine|bodyweight|power|unknown.
+// Extends LEGACY_EXERCISE_TYPES (compound|isolation|machine|bodyweight|power|unknown)
+// with cardio/timed/circuit kinds. Importing the base prevents silent drift if the
+// legacy list ever changes — consumers of both modules see one source of truth.
 const EXERCISE_TYPES = Object.freeze([
-  'compound', 'isolation', 'machine', 'bodyweight', 'power',
-  'cardio_steady', 'cardio_interval', 'circuit', 'timed_hold', 'mobility', 'unknown',
+  ...LEGACY_EXERCISE_TYPES.filter(t => t !== 'unknown'),
+  'cardio_steady', 'cardio_interval', 'circuit', 'timed_hold', 'mobility',
+  'unknown',
 ]);
 
 const LOAD_TYPES = Object.freeze([

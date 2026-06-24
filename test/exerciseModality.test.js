@@ -91,3 +91,10 @@ test('enums are frozen and non-empty (schema guard)', () => {
     assert.ok(EXERCISE_TYPES.includes(t), `EXERCISE_TYPES must extend with ${t}`);
   }
 });
+
+test('EXERCISE_TYPES is a superset of the legacy trainingKnowledge types (import-and-extend guard)', () => {
+  const { EXERCISE_TYPES: legacyTypes } = require('../services/trainingKnowledge');
+  for (const t of legacyTypes) {
+    assert.ok(EXERCISE_TYPES.includes(t), `EXERCISE_TYPES must retain legacy type ${t}`);
+  }
+});
