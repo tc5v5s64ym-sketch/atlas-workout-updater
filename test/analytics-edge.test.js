@@ -963,6 +963,71 @@ test('scoreIntents: the density cap is recovery-gated — a fresh push pattern k
     'no recovery cap code when nothing was recovering');
 });
 
+// ── Recovery-aware density extends to the buildIntentSession intents ───────────
+// build_muscle / fix_blind_spots / balanced now thin a recovering pattern too,
+// but at the HIGHER hypertrophy cap (2 movements) — hypertrophy tolerates more
+// volume on a recovering pattern than a strength day (which caps at 1).
+
+test('scoreIntents: build_muscle thins a recovering push pattern to TWO movements (hypertrophy cap), not one and not three', () => {
+  // Same recovering-push fixture as the build_strength density test: three presses
+  // + a row, all last trained 2 days before today → push reads 'recovering'.
+  const rows = [
+    ...makeRows('Bench Press',     'chest', 'BPR01', [185, 188, 190, 193, 195], '2026-04-01'),
+    ...makeRows('Weighted Dip',    'chest', 'DIP01', [ 90,  92,  95,  97, 100], '2026-04-01'),
+    ...makeRows('Incline DB Press','chest', 'INC01', [ 60,  62,  64,  66,  68], '2026-04-01'),
+    ...makeRows('Barbell Row',     'back',  'ROW01', [155, 158, 160, 163, 165], '2026-04-01'),
+  ];
+  const today = '2026-05-01';
+
+  // Precondition: push really is recovering (the cap only fires on a recovering read).
+  const readiness = buildMuscleGroupReadiness(rows, { today });
+  assert.equal(readiness.find(r => r.pattern === 'push')?.status, 'recovering',
+    'fixture must put push in the recovering state for this test to be meaningful');
+
+  const result = scoreIntents(rows, [], { today });
+  const bm = result.intents.find(i => i.id === 'build_muscle');
+  assert.ok(bm, 'build_muscle must exist');
+
+  const pushCodes = new Set(['BPR01', 'DIP01', 'INC01']);
+  const pushInPlan = bm.exercises.filter(ex => pushCodes.has(ex.lift_code));
+  assert.equal(pushInPlan.length, 2,
+    `recovering push should be thinned to the hypertrophy cap (2), got [${pushInPlan.map(e => e.exercise).join(', ')}]`);
+  // The kept presses lead with the main compound (Bench), not dropped for it.
+  assert.ok(pushInPlan.some(ex => ex.lift_code === 'BPR01'), 'the main compound (Bench) survives the trim');
+  // Pull is untouched.
+  assert.ok(bm.exercises.some(ex => ex.lift_code === 'ROW01'), 'pull work is retained');
+  // The trim is surfaced honestly in both the reason codes and the why copy.
+  assert.ok(bm.reason_codes.includes('recovering_pattern_density_capped'),
+    `expected recovering_pattern_density_capped reason code, got [${bm.reason_codes.join(', ')}]`);
+  assert.ok(bm.why_today.some(w => /still recovering/i.test(w) && /movements/i.test(w)),
+    `expected a why_today line acknowledging the recovery trim, got [${bm.why_today.join(' | ')}]`);
+});
+
+test('scoreIntents: the buildIntentSession density cap is recovery-gated — a fresh push keeps all THREE presses', () => {
+  // Three presses last trained 7 days before today → push reads 'fresh'. No
+  // recovery contradiction → no trim in build_muscle either (control for the above).
+  const rows = [
+    ...makeRows('Bench Press',     'chest', 'BPR01', [185, 188, 190, 193, 195], '2026-03-27'),
+    ...makeRows('Weighted Dip',    'chest', 'DIP01', [ 90,  92,  95,  97, 100], '2026-03-27'),
+    ...makeRows('Incline DB Press','chest', 'INC01', [ 60,  62,  64,  66,  68], '2026-03-27'),
+  ];
+  const today = '2026-05-01';
+
+  const readiness = buildMuscleGroupReadiness(rows, { today });
+  assert.equal(readiness.find(r => r.pattern === 'push')?.status, 'fresh',
+    'fixture must put push in the fresh state (not recovering) for the control');
+
+  const result = scoreIntents(rows, [], { today });
+  const bm = result.intents.find(i => i.id === 'build_muscle');
+  assert.ok(bm, 'build_muscle must exist');
+
+  const pushCodes = new Set(['BPR01', 'DIP01', 'INC01']);
+  const pushInPlan = bm.exercises.filter(ex => pushCodes.has(ex.lift_code));
+  assert.equal(pushInPlan.length, 3, 'a fresh push pattern is not thinned in build_muscle');
+  assert.ok(!bm.reason_codes.includes('recovering_pattern_density_capped'),
+    'no recovery cap code when nothing was recovering');
+});
+
 // ── Recovery trim must not collapse the session below the learned norm ─────────
 // A single recovering pattern should reduce ITS density, then the day is
 // backfilled with rested patterns toward the lifter's profile target (median ~5,

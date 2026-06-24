@@ -1463,10 +1463,17 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   // invents no new recovery rule, only reflects the one already computed. Returns
   // { exercises, trimmed } where `trimmed` lists the patterns that lost movements
   // (so the intent can EXPLAIN the trim and stay consistent with its own read).
+  // Strength caps a recovering pattern to a single movement; hypertrophy/balanced
+  // intents tolerate more volume on a recovering pattern, so they cap at two (a
+  // recovering pattern still has its density reduced — never zeroed — but is not
+  // thinned as aggressively as on a strength day). The cap is a parameter so the
+  // single function serves both reads with no behaviour change to build_strength.
   const RECOVERING_PATTERN_MOVEMENT_CAP = 1;
-  function capRecoveringPatternDensity(exercises) {
+  const HYPERTROPHY_RECOVERING_CAP = 2;
+  function capRecoveringPatternDensity(exercises, cap = RECOVERING_PATTERN_MOVEMENT_CAP) {
     const list = Array.isArray(exercises) ? exercises : [];
     if (list.length <= 1) return { exercises: list, trimmed: [] };
+    const limit = Number.isFinite(cap) && cap >= 1 ? cap : RECOVERING_PATTERN_MOVEMENT_CAP;
     const patternOfEx = ex => (allRecs.find(r => r.liftCode === (ex && ex.lift_code)) || {}).pattern || null;
     const isCapped = p => !!p && ['recovering', 'fatigued'].includes(rm[p]?.status);
     const roleRank = ex => ({ main: 0, secondary: 1, accessory: 2 })[classifyLiftRole(ex && ex.exercise || '', ex && ex.muscle_group || '')] ?? 1;
@@ -1480,14 +1487,25 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const dropIdx = new Set();
     const trimmed = [];
     for (const [pattern, members] of byPattern) {
-      if (members.length <= RECOVERING_PATTERN_MOVEMENT_CAP) continue;
+      if (members.length <= limit) continue;
       trimmed.push(pattern);
       [...members]
         .sort((a, b) => roleRank(a.ex) - roleRank(b.ex) || a.i - b.i)
-        .slice(RECOVERING_PATTERN_MOVEMENT_CAP)
+        .slice(limit)
         .forEach(m => dropIdx.add(m.i));
     }
     return { exercises: list.filter((_, i) => !dropIdx.has(i)), trimmed };
+  }
+
+  // Trim-explanation lines for the hypertrophy/balanced intents that also cap
+  // recovering-pattern density (at the higher HYPERTROPHY_RECOVERING_CAP). Mirrors
+  // the build_strength wording so the prescription stays honest about its own read.
+  const RECOVERING_PATTERN_LABEL = { push: 'Push', pull: 'Pull', lower: 'Lower body', hinge: 'Hinge', core: 'Core' };
+  function recoveringTrimWhy(trimmed) {
+    return (trimmed || []).map(p => {
+      const label = RECOVERING_PATTERN_LABEL[p] || p;
+      return `${label} is still ${rm[p]?.status} — keeping it to ${HYPERTROPHY_RECOVERING_CAP} movements rather than stacking volume on a recovering pattern`;
+    });
   }
 
   // Backfill toward the lifter's learned session norm with READY patterns. When a
@@ -1663,10 +1681,15 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (daysSinceLast === 0) score -= 10;
 
     const { exercises: rawBuildMuscle } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'core'], allRecs, underCoverageData });
+    // Recovery-aware density (hypertrophy cap): thin any recovering/fatigued pattern
+    // to two movements before structuring, so this intent reflects the same readiness
+    // read build_strength does — without zeroing a pattern hypertrophy can still work.
+    const { exercises: bmCapped, trimmed: bmTrims } = capRecoveringPatternDensity(rawBuildMuscle, HYPERTROPHY_RECOVERING_CAP);
     // Same role-aware structuring as build_strength: main compounds first and
     // ramped per pattern (buildIntentSession ramps only its single anchor, which
     // can be a secondary lift), lower-body pile-up capped on a heavy-leg day.
-    const exercises = applyReadinessDose(structureSession(rawBuildMuscle, structureOpts));
+    const exercises = applyReadinessDose(structureSession(bmCapped, structureOpts));
+    for (const line of recoveringTrimWhy(bmTrims)) why.push(line);
     intents.push({
       id: 'build_muscle',
       label: 'Build Muscle',
@@ -1680,6 +1703,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         fatigue.status === 'high'     && 'high_fatigue',
         readyPatterns.length >= 2     && 'multiple_groups_ready',
         daysSinceLast === 0           && 'trained_today',
+        bmTrims.length > 0            && 'recovering_pattern_density_capped',
       ].filter(Boolean),
       data_points: fatigue.ratio ? [{ label: 'Weekly load', value: `${fatigue.ratio}× baseline`, context: fatigue.status }] : [],
       what_it_protects: ['Muscle tissue development', 'Volume accumulation'],
@@ -1713,7 +1737,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const freshIds = freshPatterns.map(p => p.pattern);
     const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];
     const session = buildIntentSession({ patterns: targetPatterns, allRecs, underCoverageData });
-    const exercises = applyReadinessDose(structureSession(session.exercises, structureOpts));
+    // Recovery-aware density (hypertrophy cap): this intent targets fresh/neglected
+    // patterns, so a recovering pattern here is rare — but cap it the same way for
+    // safety, never stacking volume on a pattern the readiness model marks recovering.
+    const { exercises: fbsCapped, trimmed: fbsTrims } = capRecoveringPatternDensity(session.exercises, HYPERTROPHY_RECOVERING_CAP);
+    const exercises = applyReadinessDose(structureSession(fbsCapped, structureOpts));
 
     // AC1: only mention patterns that actually have exercises in today's session.
     const scheduledFresh = freshPatterns.filter(p => session.coveredPatterns.has(p.pattern));
@@ -1738,7 +1766,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
           ? ['Neglected patterns found but no matching exercises available today']
           : ['No clear gaps detected'],
       why_today: why.length ? why : ['Check for any movements not done recently'],
-      reason_codes: scheduledFresh.map(p => `${p.pattern}_overdue`),
+      reason_codes: [
+        ...scheduledFresh.map(p => `${p.pattern}_overdue`),
+        ...(fbsTrims.length > 0 ? ['recovering_pattern_density_capped'] : []),
+      ],
       data_points: data,
       what_it_protects: ['Movement pattern balance', 'Injury prevention via balanced training'],
       watch_for: ['Ease back into a rested pattern — do not max effort after a long gap'],
@@ -1758,7 +1789,11 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (fatigue.status === 'normal') score += 10;
 
     const { exercises: rawBalanced } = buildIntentSession({ patterns: ['push', 'pull', 'lower', 'hinge', 'core'], allRecs, underCoverageData });
-    const exercises = applyReadinessDose(structureSession(rawBalanced, structureOpts));
+    // Recovery-aware density (hypertrophy cap): thin any recovering/fatigued pattern
+    // to two movements before structuring — consistent with the other training intents.
+    const { exercises: balCapped, trimmed: balTrims } = capRecoveringPatternDensity(rawBalanced, HYPERTROPHY_RECOVERING_CAP);
+    const exercises = applyReadinessDose(structureSession(balCapped, structureOpts));
+    for (const line of recoveringTrimWhy(balTrims)) why.push(line);
     intents.push({
       id: 'balanced',
       label: 'Balanced Day',
@@ -1772,6 +1807,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
         fatiguedPatterns.length > 0 && 'some_fatigued',
         freshPatterns.length > 0   && 'pattern_overdue',
         fatigue.status === 'normal' && 'normal_fatigue',
+        balTrims.length > 0         && 'recovering_pattern_density_capped',
       ].filter(Boolean),
       data_points: [],
       what_it_protects: ['Training consistency', 'Pattern balance'],
