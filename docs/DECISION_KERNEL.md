@@ -14,7 +14,7 @@ These are the operating rules. Each routine decision should be checkable against
 
 **Trust & data safety**
 
-- **Approve-before-write.** No real Google Sheets write without explicit owner approval. The preview → approve → write trust loop and the dry-run (`sheet_written:false` / `no_write_confirmed:true`) vs live-write (`sheet_write:'success'`) proof fields are never weakened (`docs/INVARIANTS.md` W1–W3).
+- **Approve-before-write.** No real Google Sheets write without explicit owner approval. The preview → approve → write trust loop and the dry-run (`sheet_written:false` / `no_write_confirmed:true`) vs live-write (`sheet_write:'success'` **and** `log_rows_written > 0`) proof fields are never weakened (`docs/INVARIANTS.md` W1–W3).
 - **`test_mode` absent = live write.** Dry-runs pass `test_mode:true` explicitly; agents never omit it unless a real, approved write is intended (W2).
 - **No silent state changes.** Every state change is visible and traceable — no row written, deleted, or modified outside an approved, proof-carrying path; system-state tabs are append-only with an audit trail.
 - **Preserve user intent.** Valid gym language must be loggable; deterministically-loggable input must never be silently discarded or routed to the coach instead of logged.
@@ -53,7 +53,7 @@ These are the operating rules. Each routine decision should be checkable against
 2. **`docs/ACTIVE_ROADMAP.md`** — the live queue / current critical path.
 3. **`docs/DECISION_KERNEL.md`** — this file: the durable principles for routine decisions.
 
-**If `docs/ACTIVE_ROADMAP.md` contains eligible work** → continue roadmap execution. **Do not consult `BACKLOG.md` for work selection** while the roadmap has eligible items.
+**If `docs/ACTIVE_ROADMAP.md` contains eligible work** → continue roadmap execution. **Do not consult `BACKLOG.md` for work *selection*** while the roadmap has eligible items. (This is about *what to build next*, not whether to open the file: `CLAUDE.md` Backlog discipline still requires reading `BACKLOG.md` at the start of a session for awareness and appending any discovered work in the same PR — always read it, just don't pick the next task from it while the roadmap has eligible items.)
 
 **If the roadmap is exhausted** (every step complete) →
 
