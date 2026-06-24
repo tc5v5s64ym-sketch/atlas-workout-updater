@@ -125,16 +125,23 @@ P0/P1 must be fixed in-scope before readiness. P2/P3 are filed in `BACKLOG.md` a
 
 ## 5. What automation must NOT decide alone
 
-Automation may build, test, review, classify, merge merge-ready PRs, and continue to the next task. It must **stop and escalate to the owner** — never self-approve the *decision* — for any owner-decision criterion (2–8) in `docs/OWNER_CHECKIN_RULES.md`:
+Automation may build, test, review, classify, merge merge-ready PRs, and continue to the next task. Under **Escalation Policy v2** (`docs/OWNER_CHECKIN_RULES.md`), it has **PM authority** for any decision derivable from the Atlas docs/principles/prior accepted behavior — root-cause, fix selection, PR sizing, test design, regression strategy, refactors, parser-routing clearly derivable from principles, and whether to fix a bug that clearly violates an Atlas principle. These are **pre-authorized**: decide and proceed, no owner and no Codex panel.
 
-- write-path / approval-gate / coach / trust-contract behavior changes,
-- roadmap or vision changes,
-- app / runtime / prompt / API model changes (the *builder's* model is fixed at Opus 4.8 — not a stop),
-- and any case where automation cannot determine that a change is safe.
+It must **stop and escalate to the owner** only for the **five reserved categories**:
 
-Live application testing (criterion 1) is **owner-initiated** — automation flags `owner-live-test` and keeps going; it does not stop the loop on its own. The owner calls app-test holds and says stop.
+1. **Live app testing** — owner-initiated/advisory: flag `owner-live-test` with a script and keep going; the owner calls the hold.
+2. **Product-scope changes** — a new user-facing capability, workflow, logging model, or new trust contract.
+3. **Schema / storage changes** — Sheet schema, database schema, data migrations.
+4. **Destructive operations** — deletion, backfills, historical rewrites, irreversible actions.
+5. **Genuine principle conflicts** — two principles point to different outcomes and no documented precedent resolves it.
 
-When automation **cannot determine safety**, that uncertainty is itself an owner check-in trigger — it is never resolved by guessing in the safe-looking direction.
+A genuinely non-derivable fork that is **not** in those five goes to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner. App/runtime/prompt/API model changes remain owner-reserved as a product-scope/trust item (the *builder's* model is fixed at Opus 4.8 — not a stop).
+
+**Bug loop:** investigate → root cause → smallest safe fix → check Atlas principles → build → test → open PR → merge if §4 authorizes it; stop only if a reserved category triggers (typically just live validation afterward).
+
+When automation **genuinely cannot determine safety** (a real principle conflict with no precedent), that uncertainty is the trigger — it is never resolved by guessing in the safe-looking direction. Mere derivable ambiguity is **not** such a trigger: resolve it with PM authority from the docs.
+
+> **Absolute data-safety is unchanged.** PM authority never authorizes a real production write, a data migration, or an INVARIANT/Constitution amendment — see `docs/OWNER_CHECKIN_RULES.md` "Absolute data-safety."
 
 ---
 

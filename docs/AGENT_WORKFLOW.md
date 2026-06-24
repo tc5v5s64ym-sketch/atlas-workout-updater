@@ -26,9 +26,10 @@ This document defines the Atlas build workflow between Dale, ChatGPT, Claude Cod
 - Reads `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, `docs/DOCS_INDEX.md`, and this file before starting; runs the Current-State Verification Gate.
 - Opens the PR, runs tests + reviews, classifies risk, and fills the merge card.
 - If review requests changes, fixes only the in-scope finding, pushes, and re-runs tests/review — it does not broaden scope, and it does not stop unless an owner check-in criterion applies.
-- Routes decision panels to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), never to the owner.
+- Holds **PM authority** (Escalation Policy v2, `docs/OWNER_CHECKIN_RULES.md`): a decision derivable from the Atlas docs/principles/prior accepted behavior is **pre-authorized** — Claude decides and proceeds, with no owner stop and no Codex panel (root-cause, fix selection, PR sizing, test design, regression strategy, refactors, principle-derivable parser-routing, fixing a clear-principle-violation bug).
+- Routes only a **genuinely non-derivable** decision panel — one the docs do not settle and that is not owner-reserved — to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), never to the owner.
 - Merges a PR once it is merge-ready (`docs/AUTOMATION_PROTOCOL.md` §4) and continues to the next approved task; refills `docs/ACTIVE_ROADMAP.md` from `BACKLOG.md` when the queue empties (Roadmap Refill Loop).
-- Stops for the owner only on an owner check-in criterion (`docs/OWNER_CHECKIN_RULES.md`) — e.g. an owner-initiated live-test hold, a reserved decision, or unresolved safety.
+- Stops for the owner only on one of the **five reserved categories** (`docs/OWNER_CHECKIN_RULES.md` Escalation Policy v2): live app testing (owner-initiated), product-scope changes, schema/storage changes, destructive operations, or a genuine principle conflict with no precedent.
 
 ### GitHub
 
@@ -116,7 +117,11 @@ For each unit of work, the builder:
 8. **Re-run review** — confirm Claude Code Review and CODEX Review pass after fixes.
 9. **Classify risk** — apply exactly one primary risk label + any category labels (`docs/RISK_LABELS.md`).
 10. **Generate the merge card** — fill the PR template completely (`.github/PULL_REQUEST_TEMPLATE.md`).
-11. **Route any decision to Codex; keep going until the owner says stop.** When the loop reaches a fork in how to proceed, do **not** ask the owner — post a Codex Decision Request and proceed on Codex's answers (`docs/DECISION_ROUTING.md`). Codex escalates to the owner only the reserved items (`docs/OWNER_CHECKIN_RULES.md` — Vision/Dream/Constitution, app/runtime-model changes, INVARIANT amendments, or what it cannot resolve). Live app testing (criterion 1) is **owner-initiated** — flag `owner-live-test` with a script, but do **not** halt. Otherwise the PR is marked merge-ready and proceeds; the next approved task starts without blocking on the owner.
+11. **Decide with PM authority; escalate only the five reserved categories.** When the loop reaches a fork, first apply **Escalation Policy v2** (`docs/OWNER_CHECKIN_RULES.md`): if the answer is derivable from the Atlas docs/principles/prior accepted behavior, Claude **decides and proceeds** — no owner, no Codex panel. Only a genuinely non-derivable, non-reserved fork posts a Codex Decision Request (`docs/DECISION_ROUTING.md`). Escalate to the owner **only** for the five reserved categories (live app testing, product-scope, schema/storage, destructive operations, genuine principle conflict with no precedent). Live app testing is **owner-initiated** — flag `owner-live-test` with a script, but do **not** halt. Otherwise mark the PR merge-ready and proceed; the next approved task starts without blocking on the owner.
+
+### Bug-discovery routing (default — no owner stop)
+
+When Claude discovers a bug (in a live-test report, review, or its own work), it does **not** stop to ask "should I fix this / how." It runs the loop: **investigate → produce root cause → determine the smallest safe fix → check it against Atlas principles (`docs/INVARIANTS.md` / `docs/CONSTITUTION.md` / prior accepted behavior) → build → test → open one PR → merge if `docs/AUTOMATION_PROTOCOL.md` §4 authorizes it.** A bug whose behavior **clearly violates** an Atlas principle (e.g. deterministically-loggable input routed to the coach; valid gym language unloggable; the trust path silently discarding user intent) is **pre-authorized to fix** — proceed and request only a **live validation test** afterward. Stop only if fixing it would trip a reserved category (a schema change, a new trust contract, a destructive op, or a genuine principle conflict with no precedent).
 
 **Pass/fail principle (non-negotiable):** a review or check that was skipped, errored, was unavailable, timed out, or returned incomplete is a **failure, not a pass** (`docs/AUTOMATION_PROTOCOL.md` §2). The loop never treats a missing signal as green.
 
@@ -158,7 +163,7 @@ ChatGPT interprets app-test results with Dale.
 
 Only Dale resumes the held phase.
 
-(Owner-decision criteria 2–8 in `docs/OWNER_CHECKIN_RULES.md` still stop the loop automatically — only the live-app-test stop is owner-initiated.)
+(Per **Escalation Policy v2** in `docs/OWNER_CHECKIN_RULES.md`, the loop stops for the owner only on one of the **five reserved categories** — live app testing (owner-initiated), product-scope, schema/storage, destructive operations, or a genuine principle conflict with no precedent. Everything derivable from the Atlas docs/principles is PM authority and does not stop the loop.)
 
 ## Compact Atlas Prompt Mode
 

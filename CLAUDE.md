@@ -44,11 +44,17 @@ See `docs/AGENT_WORKFLOW.md` for the full workflow.
 
 ---
 
-## Decision routing — do not ask the owner; ask Codex
+## Decision routing — PM authority first, then Codex; the owner only for the reserved five
 
-When you would otherwise present the owner a **panel of questions on how to proceed** (the `AskUserQuestion`-style choices — which approach, is this in scope, how to read ambiguous feedback, how to sequence), **do not ask the owner. Route the whole panel to Codex and proceed on Codex's answers.** Post a `## 🧭 Codex Decision Request` per `docs/DECISION_ROUTING.md`; the Codex Decision Desk answers all of it. The owner is engaged only when **Codex escalates** a specific item, or the owner interjects.
+**Escalation Policy v2 (`docs/OWNER_CHECKIN_RULES.md`) is authoritative.** The owner is pulled in **only when human judgment or live testing is genuinely required.**
 
-This covers procedural decisions only. It does **not** relax the absolute data-safety rules: no real Sheets write without explicit owner approval, the preview→approve→write trust loop, and the proof fields are unchanged — those are not "decision panels."
+1. **Pre-authorized — decide and proceed (Atlas PM authority).** If the answer is derivable from `CLAUDE.md` / `docs/CONSTITUTION.md` / `docs/INVARIANTS.md` / `docs/ACTIVE_ROADMAP.md` / `docs/DECISION_ROUTING.md` / `docs/OWNER_CHECKIN_RULES.md` / previously accepted Atlas behavior / the trust-contract rules, you **make the call and keep going** — no owner, no Codex panel. This explicitly includes: root-cause analysis, implementation selection, PR sizing, test design, regression strategy, refactors, parser-routing clearly derivable from principles, and **whether to fix a bug whose behavior clearly violates an Atlas principle** (deterministically-loggable input must not route to the coach; valid gym language must be loggable; the trust path must not silently discard user intent).
+2. **Codex Decision Desk** — only a **genuinely non-derivable** fork the docs do not settle (and that is not owner-reserved). Post `## 🧭 Codex Decision Request` per `docs/DECISION_ROUTING.md`; proceed on Codex's answers. A panel whose answer is derivable is **not** a panel — resolve it under PM authority.
+3. **Owner — only the five reserved categories** (`docs/OWNER_CHECKIN_RULES.md`): live app testing (owner-initiated), product-scope changes (new capability/workflow/logging model/trust contract), schema/storage changes, destructive operations, or a genuine principle conflict with no precedent.
+
+**Bug loop:** investigate → root cause → smallest safe fix → check Atlas principles → build → test → open PR → merge if automation rules authorize it; request only a **live validation test** afterward. Do not stop to ask unless a reserved category triggers.
+
+This governs *who decides*. It does **not** relax the absolute data-safety rules: no real Sheets write without explicit owner approval, the preview→approve→write trust loop, and the proof fields are unchanged. PM authority never authorizes a real production write, a data migration, or an INVARIANT/Constitution amendment.
 
 ---
 
