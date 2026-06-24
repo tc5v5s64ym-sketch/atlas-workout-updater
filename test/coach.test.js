@@ -1685,3 +1685,75 @@ test('sanitizeFacts threads recovery_advisory through (present → kept, absent 
   const without = sanitizeFacts({ exerciseName: 'Squat', todaySets: [] });
   assert.equal(without.recovery_advisory, null);
 });
+
+// ---------------------------------------------------------------------------
+// Voice rubric — golden assertions that pin key prompt rules.
+// A change to a named rule MUST update the matching assertion here.
+// These tests catch silent voice drift without requiring an LLM call.
+// ---------------------------------------------------------------------------
+
+test('rubric: buildCoachSystemPrompt — CONCLUSION FIRST rule is present with its bad/good example pair', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /CONCLUSION FIRST/,
+    'CONCLUSION FIRST rule must be present in buildCoachSystemPrompt');
+  assert.match(prompt, /Bad opener.*Trend is flat/s,
+    'Bad opener example ("Trend is flat…") must anchor the CONCLUSION FIRST rule');
+  assert.match(prompt, /Good opener.*Hold 116/s,
+    'Good opener example ("Hold 116") must anchor the CONCLUSION FIRST rule');
+});
+
+test('rubric: buildCoachSystemPrompt — failure-language prohibition is pinned', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /grinding/,
+    '"grinding" must appear in the failure-language prohibition');
+  assert.match(prompt, /barely made it/,
+    '"barely made it" must appear in the failure-language prohibition');
+  assert.match(prompt, /derive effort from effort_verdict ONLY/,
+    'IRON RULE — derive effort from effort_verdict ONLY — must be present');
+});
+
+test('rubric: buildChatSystemPrompt — PLANNED-VS-DONE RULE is pinned with prohibited past-tense verbs', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /PLANNED-VS-DONE RULE/,
+    'PLANNED-VS-DONE RULE must be present in buildChatSystemPrompt');
+  assert.match(prompt, /you've done/,
+    '"you\'ve done" must appear as a prohibited phrase');
+  assert.match(prompt, /you did/,
+    '"you did" must appear as a prohibited phrase');
+  assert.match(prompt, /you hit/,
+    '"you hit" must appear as a prohibited phrase');
+  assert.match(prompt, /you got/,
+    '"you got" must appear as a prohibited phrase');
+});
+
+test('rubric: buildChatSystemPrompt — HISTORY RULE pins recent_sessions source', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /HISTORY RULE/,
+    'HISTORY RULE must be present in buildChatSystemPrompt');
+  assert.match(prompt, /recent_sessions\[\*\]\.lift_sets/,
+    'history answers must cite recent_sessions[*].lift_sets as the authoritative source');
+});
+
+test("rubric: buildChatSystemPrompt — WHAT'S-LEFT RULE pins plan_state.remaining", () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /WHAT'S-LEFT RULE|WHATS-LEFT RULE/i,
+    "WHAT'S-LEFT RULE must be present in buildChatSystemPrompt");
+  assert.match(prompt, /plan_state\.remaining/,
+    "what's-left answers must be sourced from plan_state.remaining");
+});
+
+test('rubric: buildVerdictReactionSystemPrompt — conclusion-first rule and anti-patterns are pinned', () => {
+  const prompt = buildVerdictReactionSystemPrompt();
+  assert.match(prompt, /conclusion first/i,
+    'conclusion-first rule must be present in buildVerdictReactionSystemPrompt');
+  assert.match(prompt, /exclamation stacking/,
+    '"exclamation stacking" must appear in the anti-patterns list');
+  assert.match(prompt, /emoji confetti/,
+    '"emoji confetti" must appear in the anti-patterns list');
+});
+
+test('rubric: buildPlanSystemPrompt — CONCLUSION FIRST rule is present', () => {
+  const prompt = buildPlanSystemPrompt();
+  assert.match(prompt, /CONCLUSION FIRST/,
+    'CONCLUSION FIRST rule must be present in buildPlanSystemPrompt');
+});
