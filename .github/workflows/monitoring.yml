@@ -14,6 +14,7 @@ jobs:
   daily-read-only-check:
     name: Daily read-only smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4

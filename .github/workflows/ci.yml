@@ -47,6 +47,7 @@ jobs:
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,6 +70,7 @@ jobs:
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,6 +90,7 @@ jobs:
   e2e-tests:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: unit-tests
     steps:
       - name: Checkout
@@ -119,6 +122,7 @@ jobs:
   render-smoke-test:
     name: Render smoke test (Mission Control)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: unit-tests
     if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     steps:
