@@ -401,7 +401,7 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 ### P3 — Coach Brevity Pass
 
-**Status:** not started. Responses should prefer Conclusion first, Reason second, Details only when asked (e.g. "Hold 116. You're right on target." over "Trend is flat over the last 8 sessions…").
+**Status:** ◐ in progress — conclusion-first ordering shipped into the coach **voice** (this PR). Responses should prefer Conclusion first, Reason second, Details only when asked (e.g. "Hold 116. You're right on target." over "Trend is flat over the last 8 sessions…"). Added a `CONCLUSION FIRST` rule to all three LLM voices (set-reaction / plan "why today" / chat) in `services/coach.js` and a 7th quality ("Conclusion first") to `docs/COACHING_NOTE_VOICE.md`; the rule is **presentation order only** — it never changes what is answered or any grounding/what's-left/history rule. Source-introspection tests pin the rule in each voice (`test/coachPromptRules.test.js`). Pure coach-wording change (PM authority under Escalation Policy v3); no schema / write-path / trust-loop / slash-parser change. **Owner live spot-check** recommended to confirm the model leads with the conclusion in practice. **Deferred follow-ups** (filed in `BACKLOG.md`): conclusion-first flip of the deterministic stimulus-governor reason strings and the `public/coachVoiceTemplates.js` "Heads up —" next-move lines.
 
 ### P4 — Session-State Stress Testing
 

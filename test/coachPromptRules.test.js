@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildCoachSystemPrompt } = require('../services/coach');
+const { buildCoachSystemPrompt, buildPlanSystemPrompt, buildChatSystemPrompt } = require('../services/coach');
 
 const prompt = buildCoachSystemPrompt();
 
@@ -95,5 +95,40 @@ test('system prompt: trend rule identifies trend object as the authoritative e1R
   assert.ok(
     prompt.includes('authoritative e1RM trajectory signal'),
     'trend rule must mark the trend object as authoritative to prevent the model using a legacy trend string'
+  );
+});
+
+// ── P3 — Coach Brevity Pass: conclusion-first ordering across all three voices ──
+
+test('set-reaction prompt: carries the CONCLUSION FIRST ordering rule', () => {
+  assert.ok(
+    prompt.includes('CONCLUSION FIRST'),
+    'set-reaction prompt must instruct the model to lead with the verdict'
+  );
+});
+
+test('plan prompt: carries the CONCLUSION FIRST ordering rule', () => {
+  assert.ok(
+    buildPlanSystemPrompt().includes('CONCLUSION FIRST'),
+    'plan "why today" prompt must instruct the model to lead with the position'
+  );
+});
+
+test('chat prompt: carries the CONCLUSION FIRST ordering rule', () => {
+  assert.ok(
+    buildChatSystemPrompt().includes('CONCLUSION FIRST'),
+    'chat prompt must instruct the model to lead with the answer, reason second, details on ask'
+  );
+});
+
+test('chat prompt: conclusion-first rule is presentation order only, not a content change', () => {
+  const chat = buildChatSystemPrompt();
+  const idx = chat.indexOf('CONCLUSION FIRST');
+  assert.ok(idx >= 0);
+  // The rule must explicitly scope itself to presentation so it never overrides the
+  // grounding/what's-left/history rules above it.
+  assert.ok(
+    chat.slice(idx).includes('presentation order only'),
+    'chat conclusion-first rule must declare it changes presentation order, not what is answered'
   );
 });
