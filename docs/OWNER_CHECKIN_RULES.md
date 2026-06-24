@@ -104,9 +104,10 @@ For this work, automation builds, tests, reviews, classifies risk, generates the
 
 ## How a decision is routed
 
-When the builder reaches a decision, it does **not** ask the owner. It:
+When the builder reaches a decision, it does **not** ask the owner. It either:
 
-1. **Posts a Codex Decision Request** (`## 🧭 Codex Decision Request`) on the PR/issue and applies the `codex-decision` label (`docs/DECISION_ROUTING.md`). Codex answers every question; Claude proceeds on those answers.
+0. **Opens an Atlas Decision Desk issue** for a standalone owner-gated/ambiguous **implementation** decision — the "🧭 Atlas Decision Desk" template (labels `atlas-decision-desk` + `needs-pm-decision`) with root cause / options / recommended option / affected files / risk / live-testing-needed / Vision principle. The desk (`.github/workflows/atlas-decision-desk.yml`) answers `APPROVED` / `REJECTED` / `SPLIT` / `ESCALATE-TO-OWNER` from the docs; Claude proceeds on the verdict (`docs/DECISION_ROUTING.md` "The Atlas Decision Desk"). **OR**
+1. **Posts a Codex Decision Request** (`## 🧭 Codex Decision Request`) on the PR/issue and applies the `codex-decision` label (`docs/DECISION_ROUTING.md`) for an inline PR decision panel. Codex answers every question; Claude proceeds on those answers.
 2. For any item Codex marks **`Escalate-to-owner`** (the reserved set — criteria 6/7, INVARIANT amendments under 5, or what Codex cannot resolve under 8), sets **`owner action required: Yes`** on the merge card for that item and applies `owner-decision`. The rest still proceed.
 3. For criterion **1 (live app testing)**, does **not** halt — flags `owner-live-test`, includes the **live test script** in the merge card, and continues until the owner says stop.
 4. A Codex decision that was skipped/errored/unanswered is a **failure, not an implicit yes** (`docs/AUTOMATION_PROTOCOL.md` §2) — the builder waits for the answer rather than guessing on a consequential fork.
