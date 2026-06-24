@@ -85,6 +85,16 @@ test('buildTirednessRecoveryAnswer: no signals → safe recovery routing, no inv
   assert.ok(a.trim().length > 0);
 });
 
+test('isTirednessExpression: muscle-specific body-part phrasings route to recovery (FRAMING gap)', () => {
+  for (const m of [
+    'quads are fried', 'my quads are cooked', 'hamstrings are toast', 'hams are wrecked',
+    'glutes are cooked', 'calves are beat up', 'chest is fried', 'delts are cooked',
+    'traps are wrecked', 'lats are toast', 'hips are fried', 'core is cooked',
+  ]) {
+    assert.equal(isTirednessExpression(m), true, `muscle-specific phrase should detect: ${m}`);
+  }
+});
+
 test('buildTirednessRecoveryAnswer: never hypes across every signal combination', () => {
   const combos = [
     {}, { fatigueStatus: { status: 'high' } }, { fatigueStatus: { status: 'normal' }, daysSinceLastSession: 5 },

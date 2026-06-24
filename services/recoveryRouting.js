@@ -34,7 +34,7 @@ const FATIGUE_STATE = /(exhausted|wiped(?:\s*out)?|drained|knackered|gassed|smok
 // Fatigue slang that needs a self/body framing so it doesn't catch unrelated uses
 // ("beat my PR", "is the gym dead"). Paired with FRAMING below.
 const FATIGUE_SLANG = /(cooked|wrecked|toast|fried|beat(?:en)?\s*up|so done)/;
-const FRAMING = /\b(i'?m|i am|im|feel(?:ing)?|so|really|pretty|kinda|super|totally|today|legs?|arms?|shoulders?|back|body|everything|completely|absolutely)\b/;
+const FRAMING = /\b(i'?m|i am|im|feel(?:ing)?|so|really|pretty|kinda|super|totally|today|legs?|arms?|shoulders?|back|body|everything|completely|absolutely|quads?|hamstrings?|hams?|glutes?|calves|chest|delts?|traps?|lats?|hips?|core)\b/;
 
 // One-word fatigue exclamations.
 const BARE = /^(cooked|wrecked|toast|exhausted|drained|spent|knackered|fried|gassed|smoked|wiped)\.?!?$/;
