@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildWorkoutScreenshotPrompt, getProviderConfig, normalizeParsedMetrics } = require('../services/vision');
+const { buildWorkoutScreenshotPrompt, getProviderConfig, normalizeParsedMetrics, stripJsonFences, withVisionTimeout, VISION_TIMEOUT_MS } = require('../services/vision');
 
 // ---------------------------------------------------------------------------
 // Prompt content tests (unchanged behaviour)
@@ -102,6 +102,22 @@ test('provider: ATLAS_LLM_MODEL overrides the default gemini model', () => {
   withEnv({ ATLAS_LLM_PROVIDER: 'gemini', GEMINI_API_KEY: 'gm-test', ATLAS_LLM_MODEL: 'gemini-custom' }, () => {
     const config = getProviderConfig();
     assert.equal(config.model, 'gemini-custom');
+  });
+});
+
+// ME-10: the OpenAI path must honor ATLAS_LLM_MODEL (was hardcoded to gpt-4.1-mini).
+test('provider: openai default model is gpt-4.1-mini', () => {
+  withEnv({ ATLAS_LLM_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-test', ATLAS_LLM_MODEL: undefined }, () => {
+    const config = getProviderConfig();
+    assert.equal(config.provider, 'openai');
+    assert.equal(config.model, 'gpt-4.1-mini');
+  });
+});
+
+test('provider: ATLAS_LLM_MODEL overrides the default openai model (ME-10)', () => {
+  withEnv({ ATLAS_LLM_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-test', ATLAS_LLM_MODEL: 'gpt-4o-mini' }, () => {
+    const config = getProviderConfig();
+    assert.equal(config.model, 'gpt-4o-mini');
   });
 });
 
@@ -223,4 +239,50 @@ test('normalizeParsedMetrics: gemini markdown-wrapped JSON normalizes correctly 
   assert.equal(result.averageHR, 155);
   assert.equal(result.peakHR, 182);
   assert.equal(result.date, null);
+});
+
+// ---------------------------------------------------------------------------
+// ME-11 — defensive parsing + abort timeout (both providers)
+// ---------------------------------------------------------------------------
+
+test('stripJsonFences: removes ```json fences the OpenAI path now strips too', () => {
+  assert.equal(stripJsonFences('```json\n{"a":1}\n```'), '{"a":1}');
+  assert.equal(stripJsonFences('```\n{"a":1}\n```'), '{"a":1}');
+  assert.equal(stripJsonFences('{"a":1}'), '{"a":1}', 'unfenced JSON is untouched');
+  assert.equal(stripJsonFences('  {"a":1}  '), '{"a":1}', 'surrounding whitespace trimmed');
+});
+
+test('withVisionTimeout: resolves the inner call and passes a live AbortSignal', async () => {
+  let seenSignal = null;
+  const result = await withVisionTimeout(signal => {
+    seenSignal = signal;
+    return Promise.resolve('ok');
+  });
+  assert.equal(result, 'ok');
+  assert.ok(seenSignal instanceof AbortSignal, 'fn receives an AbortSignal to thread into the SDK');
+  assert.equal(seenSignal.aborted, false, 'signal is not aborted on a fast success');
+});
+
+test('withVisionTimeout: aborts and throws a clear timeout error when the call overruns', async () => {
+  await assert.rejects(
+    withVisionTimeout(
+      signal => new Promise((_resolve, reject) => {
+        // Never resolves on its own; reject when the timeout aborts the signal.
+        signal.addEventListener('abort', () => reject(new Error('aborted by signal')));
+      }),
+      20
+    ),
+    /Vision request timed out after 20ms/
+  );
+});
+
+test('withVisionTimeout: propagates a non-timeout error unchanged', async () => {
+  await assert.rejects(
+    withVisionTimeout(() => Promise.reject(new Error('provider 500'))),
+    /provider 500/
+  );
+});
+
+test('VISION_TIMEOUT_MS: has a sane positive default', () => {
+  assert.ok(Number.isFinite(VISION_TIMEOUT_MS) && VISION_TIMEOUT_MS > 0);
 });

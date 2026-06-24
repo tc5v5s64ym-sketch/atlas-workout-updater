@@ -57,7 +57,11 @@ function getProviderConfig() {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('OPENAI_API_KEY is required for workout image parsing.');
     }
-    return { provider: 'openai', apiKey: process.env.OPENAI_API_KEY };
+    return {
+      provider: 'openai',
+      model: (process.env.ATLAS_LLM_MODEL || 'gpt-4.1-mini').trim(),
+      apiKey: process.env.OPENAI_API_KEY
+    };
   }
 
   throw new Error(
@@ -91,12 +95,39 @@ function stripJsonFences(text) {
   return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
 }
 
+// Vision (image) parsing is heavier than the text-chat coach path, so it gets its
+// own abort timeout — generous enough not to false-fail a normal screenshot parse,
+// but bounded so a hung provider call can never block the request forever. Override
+// with ATLAS_VISION_TIMEOUT_MS.
+const VISION_TIMEOUT_MS = Number(process.env.ATLAS_VISION_TIMEOUT_MS) > 0
+  ? Number(process.env.ATLAS_VISION_TIMEOUT_MS)
+  : 30000;
+
+// Runs an async provider call with an abort timeout. Passes the AbortSignal to `fn`
+// so the underlying SDK request is actually cancelled (not just ignored), and always
+// clears the timer. A timeout surfaces as a clear error rather than a hang.
+async function withVisionTimeout(fn, ms = VISION_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fn(controller.signal);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Vision request timed out after ${ms}ms.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function parseWithOpenAI(imageBuffer, mimeType, config) {
   const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
   const client = new OpenAI({ apiKey: config.apiKey });
 
-  const response = await client.responses.create({
-    model: 'gpt-4.1-mini',
+  const response = await withVisionTimeout(signal => client.responses.create({
+    model: config.model,
+    text: { format: { type: 'json_object' } },   // JSON mode — model must return a JSON object
     input: [
       {
         role: 'user',
@@ -106,12 +137,15 @@ async function parseWithOpenAI(imageBuffer, mimeType, config) {
         ]
       }
     ]
-  });
+  }, { signal }));
 
-  const textOutput = extractTextOutput(response);
-  if (!textOutput) {
+  const rawOutput = extractTextOutput(response);
+  if (!rawOutput) {
     throw new Error('Vision model returned no text output.');
   }
+
+  // Defensive: strip code fences in case the model wraps the JSON despite JSON mode.
+  const textOutput = stripJsonFences(rawOutput);
 
   let parsed;
   try {
@@ -126,13 +160,17 @@ async function parseWithOpenAI(imageBuffer, mimeType, config) {
 async function parseWithGemini(imageBuffer, mimeType, config) {
   const ai = new GoogleGenAI({ apiKey: config.apiKey });
 
-  const response = await ai.models.generateContent({
+  const response = await withVisionTimeout(signal => ai.models.generateContent({
     model: config.model,
     contents: [
       { inlineData: { mimeType, data: imageBuffer.toString('base64') } },
       { text: buildWorkoutScreenshotPrompt() }
-    ]
-  });
+    ],
+    config: {
+      responseMimeType: 'application/json',   // JSON mode
+      abortSignal: signal
+    }
+  }));
 
   const textOutput = stripJsonFences(response.text?.trim() || '');
   if (!textOutput) {
@@ -195,5 +233,8 @@ module.exports = {
   buildWorkoutScreenshotPrompt,
   parseWorkoutScreenshot,
   getProviderConfig,
-  normalizeParsedMetrics
+  normalizeParsedMetrics,
+  stripJsonFences,
+  withVisionTimeout,
+  VISION_TIMEOUT_MS
 };
