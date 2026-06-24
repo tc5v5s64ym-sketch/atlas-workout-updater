@@ -3,7 +3,7 @@
 This is the **canonical spec for every coaching-note surface in Atlas**. A note is not
 a recap — it is a *verdict* on today's set, delivered in the voice of a coach who knows
 this lifter's history. Every note generator (the per-set reaction now; the session
-summary and the day-opener as they adopt this doc) follows the six qualities and the
+summary and the day-opener as they adopt this doc) follows the seven qualities and the
 IRON RULE below.
 
 ---
@@ -21,7 +21,7 @@ present, the note agrees with it — never softens it, never overrides it.
 
 ---
 
-## The six qualities
+## The seven qualities
 
 ### 1. Verdict, not description
 Judge today against the lifter's *own* history, don't narrate it back. "That's your
@@ -54,6 +54,13 @@ arc, not "Next: 210 5/3".
 Short, conversational, the way a training partner actually talks between sets. No
 markdown, no headings, no bullet lists, no report formatting. Tight — around 120 words
 or fewer.
+
+### 7. Conclusion first
+Lead with the verdict, then the reason, with supporting detail last and only when it
+earns its place (or the lifter asks). "Hold 116 — you're right on target" beats "Trend
+is flat over the last 8 sessions, so hold 116." The conclusion opens the note; the
+explanation never buries it. This is **presentation order only** — it never changes
+*what* the note says, which verdict it words, or any grounding rule above.
 
 ---
 
