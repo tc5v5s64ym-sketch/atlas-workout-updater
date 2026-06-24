@@ -8,7 +8,47 @@ This document lists the decision criteria and, for each, **who answers** — Cod
 
 ---
 
-## Escalation Policy v2 — Atlas PM authority (owner standing instruction, 2026-06-24)
+## Escalation Policy v3 — minimum-escalation, ship-by-default (owner standing instruction, 2026-06-24)
+
+**This section is authoritative and supersedes Escalation Policy v2 below.** Where v2, the criteria table, or any other doc differs, read it through v3. v2 is retained only for the numbering and rationale it still shares with v3.
+
+**Reduce owner escalations to the minimum. The default behavior is to continue shipping.** Do **not** escalate simply because a change touches the **coach surface, coach wording, coach rendering, frontend presentation, or UX**. If the correct behavior is already determined by existing governance, decide autonomously and proceed.
+
+### Consult-then-decide
+
+Before treating anything as an escalation, consult the governing documents:
+
+- `docs/ATLAS_PRODUCT_VISION.md` (Vision / "The Dream")
+- `docs/ACTIVE_ROADMAP.md`
+- `docs/DECISION_KERNEL.md`
+- `docs/CONSTITUTION.md`
+- `docs/INVARIANTS.md`
+- `docs/AUTOMATION_PROTOCOL.md`
+
+If the requested behavior is **derivable** from those (plus `CLAUDE.md`, `docs/DECISION_ROUTING.md`, this file, or previously accepted Atlas behavior / the trust-contract rules), Claude holds **PM authority**: decide and proceed — no owner, no Codex panel. This explicitly includes coach wording/rendering, frontend, and UX work whose correct behavior is already determined by governance.
+
+### Escalate to the owner ONLY when one of these four is true
+
+1. **A live test is required that only the owner can perform** — browser/UI/mobile behavior, real user-workflow validation, verifying a fix in production. (Owner-initiated/advisory: flag `owner-live-test` with a live test script and **keep going**; the owner calls the hold.)
+2. **The work changes Atlas's product vision, coaching philosophy, or introduces new product scope** — a new user-facing capability, a new workflow, a new logging model, a new trust contract, or a change to *what Atlas believes about training* (coaching **philosophy** — distinct from coach wording/rendering, which is not reserved). App/runtime/prompt/API **model** selection (`services/vision.js` / `services/coach.js`) stays here too; the **builder's** model is fixed at Opus 4.8 and is never a stop.
+3. **The work performs destructive or irreversible operations** — Sheet/DB **schema** changes, data **migrations**, data **deletion** or historical rewrites, **credentials**, or **security-sensitive infrastructure**. (This folds v2's separate "schema/storage" and "destructive operations" categories into one.)
+4. **The Decision Kernel finds a genuine conflict between governing principles and cannot resolve it** — two principles, or the Vision / Roadmap / Architecture / invariants, point to different outcomes and no documented precedent resolves it (incl. a highest-priority item that does not clearly advance the Vision). Stop and report the conflict rather than ship around it.
+
+Nothing outside these four is an owner stop. A genuinely non-derivable fork that is **not** owner-reserved goes to the **Codex / Atlas Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner.
+
+### When uncertain
+
+Do **not** default to escalation. **Document the reasoning, cite the governing documents used, make the smallest safe decision, and continue** (record it in the Decision Kernel response format — `docs/DECISION_KERNEL.md`). Escalate only when a reserved category above is genuinely triggered.
+
+### Unchanged: absolute data-safety
+
+v3 governs *who decides*, not data safety. The "Absolute data-safety" section below is unchanged: no real Google Sheets write without explicit owner approval, the preview→approve→write trust loop, the proof fields, and no secret/`GOOGLE_SHEETS_ID`/env exposure. **PM authority never authorizes a real production write, a data migration, or an INVARIANT/Constitution amendment** — those remain owner-reserved (categories 2–3 above and absolute data-safety).
+
+---
+
+## Escalation Policy v2 — Atlas PM authority (owner standing instruction, 2026-06-24) — SUPERSEDED BY v3
+
+> **Superseded by Escalation Policy v3 above.** Retained for rationale and the criteria-numbering it shares with v3. The substantive change in v3: coach surface / wording / rendering / frontend / UX is **not** an escalation trigger when derivable; v2's five reserved categories are consolidated to **four** (schema/storage + destructive operations merged into "destructive or irreversible"); coaching **philosophy** is named explicitly as reserved product scope.
 
 The owner is pulled in **only when human judgment or live testing is genuinely required.** Everything else is **pre-authorized**: Claude makes the call and proceeds. This section is authoritative; where the criteria table below differs, read it through this policy.
 
@@ -43,7 +83,7 @@ Nothing outside these five is an owner stop. A genuinely non-derivable fork that
 
 ### Bug-handling routing (the default loop)
 
-When Claude discovers a bug it does **not** stop to ask. It: **investigate → produce root cause → determine the smallest safe fix → check it against Atlas principles → build → test → open PR → merge if the existing automation rules authorize it** (`docs/AUTOMATION_PROTOCOL.md` §4). It stops only when one of the five reserved categories is triggered — typically just a request for **live validation afterward**.
+When Claude discovers a bug it does **not** stop to ask. It: **investigate → produce root cause → determine the smallest safe fix → check it against Atlas principles → build → test → open PR → merge if the existing automation rules authorize it** (`docs/AUTOMATION_PROTOCOL.md` §4). It stops only when one of the reserved categories is triggered (four under Escalation Policy v3 — see above) — typically just a request for **live validation afterward**.
 
 > **Precedent (2026-06-24):** the multi-line strength-logging bug (#530) and the bodyweight-dips bug (#531) both **clearly violated existing Atlas principles** (deterministically-loggable input was routed to the coach; valid gym language was unloggable; the trust path silently discarded user intent). Under this policy they were **pre-authorized**: Claude should have root-caused, chosen the smallest safe fix, implemented, merged, and requested only a live validation test — without owner authorization to proceed.
 
@@ -55,7 +95,7 @@ This policy governs *who decides*, not data safety. The "Absolute data-safety" s
 
 ## Decision criteria and disposition
 
-> Read through **Escalation Policy v2** above: a criterion's disposition is **owner** only when it maps to one of the five reserved categories; otherwise a derivable call is **PM authority** (Claude decides) and a genuine non-derivable fork is **Codex**.
+> Read through **Escalation Policy v3** above (authoritative; v2 retained as superseded): a criterion's disposition is **owner** only when it maps to one of the **four** reserved categories; otherwise a derivable call is **PM authority** (Claude decides) — including coach wording/rendering/UX — and a genuine non-derivable fork is **Codex**.
 
 For each, "Codex decides" means Codex answers the panel and Claude proceeds; "escalate-to-owner" means Codex routes that specific item to the owner.
 
@@ -65,7 +105,7 @@ For each, "Codex decides" means Codex answers the panel and Claude proceeds; "es
 
 3. **Approval-gate behavior changes.** Any change to the preview → approve → write trust loop (`public/app.js`). _Disposition: **Codex decides**._
 
-4. **Coach behavior changes.** Any change to what the coach says or how it decides to speak — `services/coach.js`, `services/vision.js`, coach prompts, sanitizer whitelists, coach-surface narration. _Disposition: **Codex decides**._
+4. **Coach behavior changes.** Any change to what the coach says or how it decides to speak — `services/coach.js`, `services/vision.js`, coach prompts, sanitizer whitelists, coach-surface narration. _Disposition (v3): coach **wording / rendering / narration** that only words facts the engine already emits, with correct behavior derivable from governance, is **PM authority** — decide and proceed, no escalation. Escalate **only** when the change alters Atlas's **coaching philosophy** (reserved category 2) or the app/runtime/prompt/API **model** selection; a genuinely non-derivable but non-reserved fork still goes to **Codex**, not the owner._ **Carve-out — NOT PM authority:** expanding a **sanitizer whitelist** (forwarding any new field to the LLM via `sanitizeFacts` / `sanitizeChatContext`) is a **trust / data-exposure** change, not wording — it stays **Codex-gated under the trust contract** (criterion 5 below; `CLAUDE.md` "forward only whitelisted fields … never raw client objects"). The v3 relaxation is scoped to pure wording/rendering/narration that words already-emitted, already-whitelisted facts.
 
 5. **Trust-contract behavior changes.** Any change touching an `docs/INVARIANTS.md` rule or the `docs/CONSTITUTION.md` trust contract: no blind writes, the engine owns the numbers, the owner approves, undo read-back/log-tab restriction, phantom-set suppression. _Disposition: **Codex decides** within the contract; **escalate-to-owner** if the change would amend or weaken an INVARIANT/Constitution rule._
 
