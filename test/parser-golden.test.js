@@ -916,3 +916,46 @@ test('added-load: a "+" wedged between digits is NOT stripped (no silent concate
     assert.ok(!r.sets.some(s => s.weight === 22525), 'must never concatenate into 22525');
   }
 });
+
+// ---------------------------------------------------------------------------
+// Bodyweight dips (Fix B) — bare dips logs as bodyweight; weighted dips preserved.
+// ---------------------------------------------------------------------------
+
+test('bodyweight dips: "Dips 10/2 x3" → bodyweight Dips, weight null, 3 sets', () => {
+  const r = parseWorkoutText('Dips 10/2 x3');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Dips', 'bare dips is bodyweight Dips, NOT Dips (Weighted)');
+  assert.equal(r.sets.length, 3);
+  assert.ok(r.sets.every(s => s.weight === null), 'bodyweight → no weight');
+  assert.deepEqual(r.sets.map(s => [s.reps, s.rir]), [[10, 2], [10, 2], [10, 2]]);
+});
+
+test('bodyweight dips: "Dip 10/2 x3" (singular alias) also bodyweight', () => {
+  const r = parseWorkoutText('Dip 10/2 x3');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Dips');
+  assert.ok(r.sets.every(s => s.weight === null));
+});
+
+test('bodyweight dips: weighted dips are UNCHANGED — added load still wins', () => {
+  // The fix must not regress the added-load path (PR 486 slice 2b).
+  const w1 = parseWorkoutText('Dips +25 8/2');
+  assert.equal(w1.canonical_name, 'Dips (Weighted)');
+  assert.deepEqual(w1.sets.map(s => [s.weight, s.reps, s.rir]), [[25, 8, 2]]);
+  const w2 = parseWorkoutText('Weighted dips +50 10/2 x3');
+  assert.equal(w2.canonical_name, 'Dips (Weighted)');
+  assert.deepEqual(w2.sets.map(s => [s.weight, s.reps, s.rir]), [[50, 10, 2], [50, 10, 2], [50, 10, 2]]);
+});
+
+test('bodyweight dips: a multi-line session mixes bodyweight and weighted dips correctly', () => {
+  // Each line parses independently (one exercise per line). Bodyweight dips → Dips
+  // (weight null); a weighted lift on its own line is unchanged.
+  const bw = parseWorkoutText('Dips 10/2 x3');
+  const wt = parseWorkoutText('Dips +25 8/2');
+  const bench = parseWorkoutText('Bench 225 5/2 x3');
+  assert.equal(bw.canonical_name, 'Dips');
+  assert.ok(bw.sets.every(s => s.weight === null));
+  assert.equal(wt.canonical_name, 'Dips (Weighted)');
+  assert.equal(wt.sets[0].weight, 25);
+  assert.equal(bench.canonical_name, 'Bench Press');
+});
