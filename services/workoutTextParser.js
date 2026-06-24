@@ -537,6 +537,26 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
+  // Bare bodyweight Dips ("Dips 10/2 x3", "Dip 10/2 x3") logs as BODYWEIGHT, distinct
+  // from the added-load form. The "dips"/"dip" alias resolves to "Dips (Weighted)"
+  // (added load is the common gym case), so ONLY when the rest carries no external
+  // load — i.e. the weighted slash parser finds no sets — do we re-label to a
+  // bodyweight "Dips" and read the reps as bodyweight (weight null). Weighted dips
+  // ("Dips +25 8/2", "Weighted dips +50 10/2 x3") still parse weighted below, since
+  // parseSetGroups resolves their load. All Dips variants share lift code DIP01, so
+  // bodyweight/added-load differ only by the weight value, not the exercise.
+  if (resolvedExercise.canonicalName === 'Dips (Weighted)' && !parseSetGroups(resolvedExercise.rest).length) {
+    const bodyweightSets = parseBodyweightReps(resolvedExercise.rest);
+    if (bodyweightSets.length) {
+      return buildLogResult({
+        rawText,
+        rawName: titleCaseFallback(resolvedExercise.rawName),
+        canonicalName: 'Dips',
+        sets: bodyweightSets,
+      });
+    }
+  }
+
   return parseWithExercise(rawText, resolvedExercise);
 }
 
