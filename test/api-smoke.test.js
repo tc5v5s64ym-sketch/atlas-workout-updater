@@ -2160,6 +2160,21 @@ test('api smoke: complete-workout rejects an oversized log_rows_json (>200 rows)
   assert.deepEqual(fakeSheetsState.appendCalls, [], 'an oversized payload must never reach the append path');
 });
 
+test('api smoke: complete-workout returns a clean 413 (not 500) when log_rows_json exceeds the field-size cap (ME-5)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const form = new FormData();
+  form.append('session_id', 'FIELD-OVERSIZE-01');
+  form.append('duration', '00:30:00');
+  // A log_rows_json field well over the 512 KB fieldSize cap → multer LIMIT_FIELD_VALUE,
+  // which the error middleware now maps to a clean 413 (not a generic 500).
+  form.append('log_rows_json', 'x'.repeat(600 * 1024));
+  form.append('test_mode', 'true');
+
+  const { response } = await requestMultipart('/api/complete-workout', form);
+  assert.equal(response.status, 413);
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'an oversized field must never reach the append path');
+});
+
 test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {

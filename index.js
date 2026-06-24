@@ -3801,6 +3801,12 @@ app.use((err, req, res, next) => {
     return standardError(req, res, 'File too large. Max size is 10MB.', null, 413);
   }
 
+  // An oversized multipart text field (e.g. log_rows_json past the 512 KB fieldSize
+  // cap) must return a clean 4xx like the file-size path, not fall through to 500.
+  if (err && err.code === 'LIMIT_FIELD_VALUE') {
+    return standardError(req, res, 'Request field too large.', null, 413);
+  }
+
   if (err && err.message && /^Only image\/(png|jpeg|jpg|webp)/.test(err.message)) {
     return standardError(req, res, err.message, null, 400);
   }
