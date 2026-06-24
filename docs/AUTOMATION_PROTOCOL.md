@@ -16,6 +16,22 @@ Atlas is **not a backlog grinder.** Every autonomous loop builds toward the owne
 - **A backlog item is eligible only if it moves Atlas toward the Vision and respects the Architecture.** If the highest-priority item does not clearly advance the Vision, or conflicts with the Roadmap/Architecture/invariants, the builder **stops and reports the conflict** instead of shipping it (a genuine-conflict escalation, §5 / `docs/OWNER_CHECKIN_RULES.md` category 5).
 - **Vision Alignment Check is part of merge-readiness** (§4): every autonomous PR states which Vision/Roadmap/Architecture principle it advances, why this is the smallest safe step, which invariant it protects, and whether it introduces any user-facing trust change.
 
+### Document precedence (routine execution)
+
+For **routine** autonomous work, read in this order — not the full north-star documents:
+
+1. `CLAUDE.md`
+2. `docs/ACTIVE_ROADMAP.md`
+3. `docs/DECISION_KERNEL.md` — the durable principles distilled for routine decisions.
+
+**If `docs/ACTIVE_ROADMAP.md` has eligible work, continue roadmap execution and do not consult `BACKLOG.md` for work selection.** Only when the roadmap is exhausted:
+
+4. `BACKLOG.md` — then run the Roadmap Refill Loop (`docs/AGENT_WORKFLOW.md`).
+
+**Token-efficiency rule:** do **not** re-read the full `docs/ATLAS_PRODUCT_VISION.md` / `docs/ROADMAP.md` / `docs/ARCHITECTURE.md` for routine PRs — use `docs/DECISION_KERNEL.md`. Consult the full sources only when (a) the kernel is insufficient, (b) the roadmap is exhausted and refill needs full product direction, (c) a backlog promotion/refill is required, (d) a major product-direction decision is being made, (e) a trust contract changes, or (f) a genuine principle conflict exists. The Vision-first selection rule and the Vision Alignment Check still apply — they can be satisfied from the kernel for routine work.
+
+**Operational completeness:** with the kernel in place, the Atlas automation architecture is **operationally complete**. Further process/workflow changes require **evidence of an actual bottleneck**, not a hypothetical refinement; default effort returns to building Atlas (`docs/DECISION_KERNEL.md`, "Operational completeness").
+
 ---
 
 ## 1. Roles

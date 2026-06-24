@@ -20,6 +20,18 @@ Atlas is **not a backlog grinder**. Every autonomous loop builds toward the owne
 
 **Operating rule.** The Vision is the product north star; the Roadmap **layer** is the sequencing map — directional milestones live in `docs/ROADMAP.md` (reference only), and the **live sequence** is `docs/ACTIVE_ROADMAP.md` + `BACKLOG.md`; the Architecture defines the system boundaries; the Backlog is the work queue. **A backlog item is valid to build only if it moves Atlas toward the Vision and respects the Architecture.** The Vision's load-bearing principles: **conversational logging · deterministic engine ownership · approve-before-write trust loop · coach restraint · depth-before-breadth training intelligence · eventual multi-user product path.**
 
+### Routine-execution precedence (token-efficient path)
+
+The reading list above is the **full** north-star order, required when selecting a major direction, refilling the roadmap, or resolving a principle conflict. For **routine** PR execution, read the distilled path instead:
+
+1. `CLAUDE.md`
+2. `docs/ACTIVE_ROADMAP.md`
+3. `docs/DECISION_KERNEL.md` — the durable principles distilled from Vision / Roadmap / Architecture / Constitution / Invariants.
+
+**If `docs/ACTIVE_ROADMAP.md` has eligible work, continue roadmap execution and do not consult `BACKLOG.md` for work selection.** When the roadmap is exhausted, read **4. `BACKLOG.md`** and run the Roadmap Refill Loop.
+
+**Token-efficiency rule:** do **not** re-read the full `docs/ATLAS_PRODUCT_VISION.md` / `docs/ROADMAP.md` / `docs/ARCHITECTURE.md` for routine PR selection — `docs/DECISION_KERNEL.md` is the operational reference. Consult the full sources only when the roadmap is exhausted, a backlog promotion/refill is required, a major product-direction decision is being made, a trust contract changes, or a genuine principle conflict exists (`docs/DECISION_KERNEL.md`, "When the kernel is not enough"). The Vision Alignment Check below can be satisfied from the kernel for routine work.
+
 ### Vision Alignment Check (required before every autonomous PR)
 
 State this on the merge card / in the PR body before opening any autonomous PR:
