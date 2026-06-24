@@ -948,11 +948,11 @@ function computeFatigueStatus(logRows, referenceDate = null) {
 function previewTestRows(logRows, effortRows) {
   const logCandidates = asArray(logRows)
     .map(normalizeLogRow)
-    .filter(row => /test/i.test(row.notes) || /test/i.test(row.session_id) || /session-2026/i.test(row.session_id));
+    .filter(row => /test/i.test(row.notes) || /test/i.test(row.session_id) || /session-20\d\d/i.test(row.session_id));
 
   const effortCandidates = asArray(effortRows)
     .map(normalizeEffortRow)
-    .filter(row => /test/i.test(row.notes) || /test/i.test(row.session_id) || /session-2026/i.test(row.session_id));
+    .filter(row => /test/i.test(row.notes) || /test/i.test(row.session_id) || /session-20\d\d/i.test(row.session_id));
 
   return {
     log_candidates: logCandidates,
