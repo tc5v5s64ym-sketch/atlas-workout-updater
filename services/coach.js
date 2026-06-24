@@ -69,7 +69,8 @@ function buildCoachSystemPrompt() {
     '- The facts may include "stimulus_grade" {profile, effort_interpretation, progression_verdict, fatigue_signal} — the engine\'s PROFILE-AWARE read of this set (the same RIR reads differently by training profile). Respect it and never contradict it: progression_verdict "hold" or "back_off" means do NOT tell them to add load/push; "+load"/"+reps" means there is room to progress; fatigue_signal "high" means flag recovery, not progression. Critically, for a "general_fitness" profile do NOT celebrate grinding to failure — maximal effort is not the goal there. It is consistent with effort_verdict (never contradict either); word it, and never invent a number from it.',
     '- The facts may include "next_move_advisory" {action, reason, next_exercise, next_modality} — the engine\'s SUGGESTION for the planned NEXT move given the fatigue just logged. WORD it as a heads-up for what is up next, never as an order, and never reorder the plan yourself: "reduce" = trim sets/load on the next item; "make_optional" = the next item is optional today; "promote_alternative" = consider a rested/antagonist move instead; "block_pr" = do NOT attempt a PR on the next lift until recovery shows; "reduce_intensity" = keep the upcoming cardio easy (Zone 2 / shorter); "reduce_density" = cut rounds/density on the next circuit. Use the engine\'s reason; never invent a number, a set count, or a load.',
     '- The facts may include "recovery_advisory" {decision, recovery_state, rationale, deload_style} — the engine\'s CONVERGENCE-BASED read that recovery may be due. It appears ONLY on a genuine signal; when it is absent, say NOTHING about deloading. Word it CAUTIOUSLY, never as a command: for "deload" say a deload is "worth considering" or "recovery may be the smarter play" — never a flat "you need a deload"; for "recovery_reload" suggest "holding the line today" — a lighter week, not a full deload. Give the reason briefly from the facts (the converged signals / rationale) and, if deload_style is present, you may name its qualitative focus — but invent NO load/volume/RIR numbers (the prescription is owned elsewhere). Do NOT shame hard effort; reward the smart move of backing off, not heroics. It is consistent with effort_verdict / stimulus_grade / next_move_advisory — in the same note never also tell them to add load or push.',
-    '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription.',
+    '- The facts may include "calibration_status" — the engine\'s per-lift onboarding state. "calibrating" means Atlas does NOT yet have enough logged sessions to recommend a load for THIS lift (0–2 sessions): frame today as CALIBRATION, present any load only as a conservative START HINT ("start around {weight} and work up until ~2 reps are left in reserve"), NEVER as a recommendation, verdict, target, or "you should". Do NOT imply the lift is dialed in, and do NOT word a progression/effort verdict as settled. Frame the uncertainty as the process working — not a weakness — and never apologize for missing data. A user-stated number is a start hint only; it never becomes a confidence or a verdict. When the status is "graduated" or absent, normal verdict/recommendation phrasing is allowed.',
+    '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription. (For a "calibrating" lift, the forward line is about getting clean logged sessions in, not a load target.)',
     '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
     '- Output plain text only. No markdown headings, no bold, no code fences.',
     '- You never write to any database or sheet; you only talk.'
@@ -157,8 +158,22 @@ function sanitizeFacts(facts) {
     // recovery may be due. Present only for a genuine deload / recovery_reload signal;
     // the model words it CAUTIOUSLY (worth considering / hold the line), never as a
     // command, never with a number — the deload prescription is owned elsewhere.
-    recovery_advisory: sanitizeRecoveryAdvisory(f.recovery_advisory)
+    recovery_advisory: sanitizeRecoveryAdvisory(f.recovery_advisory),
+    // PR-O3 onboarding voice gate: the lift's per-lift calibration_status from
+    // onboardingState ('calibrating' = 0–2 logged sessions, no recommendation yet;
+    // 'graduated' = ≥3). When 'calibrating' the note frames a load as a conservative
+    // START HINT only, never a verdict/recommendation, and never "dialed in".
+    calibration_status: sanitizeCalibrationStatus(f.calibration_status ?? rec.calibration_status)
   };
+}
+
+// PR-O3: whitelist the per-lift onboarding calibration_status. Only the two enum
+// values from services/onboardingState.js survive; anything else (incl. absent or
+// an unknown confidence) → null, which the prompt reads as "no gate" (normal voice).
+const CALIBRATION_STATUSES = ['calibrating', 'graduated'];
+function sanitizeCalibrationStatus(value) {
+  const s = strOrNull(value);
+  return s && CALIBRATION_STATUSES.includes(s) ? s : null;
 }
 
 // Whitelist the Stimulus Governor grade — only the controlled-enum fields survive.

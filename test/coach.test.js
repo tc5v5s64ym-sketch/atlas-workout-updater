@@ -551,6 +551,29 @@ test('parseEditFromReply drops a proposal with an out-of-bounds number (ME-9)', 
   assert.equal(propose_edit, null, 'a negative-weight proposal must not become an approvable edit');
 });
 
+// ── PR-O3: onboarding voice gate (calibration_status) ─────────────────────────
+test('sanitizeFacts whitelists calibration_status to the two onboarding enum values', () => {
+  assert.equal(sanitizeFacts({ calibration_status: 'calibrating' }).calibration_status, 'calibrating');
+  assert.equal(sanitizeFacts({ calibration_status: 'graduated' }).calibration_status, 'graduated');
+  // Also accepted off the rec object (engine attaches it per lift).
+  assert.equal(sanitizeFacts({ rec: { calibration_status: 'calibrating' } }).calibration_status, 'calibrating');
+  // Anything else, including an unknown confidence word, absent, or junk → null (no gate).
+  assert.equal(sanitizeFacts({ calibration_status: 'medium' }).calibration_status, null);
+  assert.equal(sanitizeFacts({ calibration_status: 42 }).calibration_status, null);
+  assert.equal(sanitizeFacts({}).calibration_status, null);
+});
+
+test('buildCoachSystemPrompt gates load presentation for a calibrating lift (PR-O3)', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /calibration_status/, 'must document the calibration_status fact');
+  assert.match(prompt, /calibrating/, 'must name the calibrating state');
+  assert.match(prompt, /start hint/i, 'a calibrating load must be framed as a start hint');
+  // The gate must forbid presenting a calibrating load as a recommendation/verdict.
+  assert.match(prompt, /NEVER as a recommendation, verdict/i, 'never a recommendation/verdict for a calibrating lift');
+  assert.match(prompt, /dialed in/i, 'must forbid implying the lift is dialed in');
+  assert.match(prompt, /graduated/, 'must allow normal phrasing once graduated');
+});
+
 // ── structured constraints (P1 · 2.1) ─────────────────────────────────────────
 
 test('chat system prompt documents the PROPOSE_CONSTRAINT schema and the one-proposal rule', () => {
