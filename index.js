@@ -135,7 +135,11 @@ const upload = multer({
     }
   }),
   limits: {
-    fileSize: 10 * 1024 * 1024
+    fileSize: 10 * 1024 * 1024,
+    // Bound multipart text fields too — `log_rows_json` is a field, not a file, so
+    // `fileSize` does not cap it. Keep a multi-megabyte field from ever reaching
+    // JSON.parse (512 KB is far above a real session's ~tens of KB).
+    fieldSize: 512 * 1024
   },
   fileFilter: (req, file, cb) => {
     if (!imageMimeTypes.has(file.mimetype)) {
@@ -2849,6 +2853,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   if (!Array.isArray(parsedLogRows)) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: 'log_rows_json must be a JSON array' });
+  }
+
+  // Bound the array so an oversized payload can't drive unbounded row-by-row
+  // enrichment (DoS). A real session is well under this; 200 is a generous ceiling.
+  const MAX_LOG_ROWS = 200;
+  if (parsedLogRows.length > MAX_LOG_ROWS) {
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+    return standardError(req, res, `log_rows_json exceeds the ${MAX_LOG_ROWS}-row limit`, null, 400);
   }
 
   const effortOnly = parsedLogRows.length === 0;

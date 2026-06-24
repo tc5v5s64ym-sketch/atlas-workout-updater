@@ -2141,6 +2141,25 @@ test('api smoke: complete-workout allows effort-only screenshot preview with emp
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: complete-workout rejects an oversized log_rows_json (>200 rows) with 400 and never appends (ME-5)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // 201 rows — one over the cap. The guard fires before enrichment, so the row
+  // content is irrelevant; a valid 12-column shape is used to be realistic.
+  const oneRow = ['2026-06-11', 'OVERSIZE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675'];
+  const tooMany = Array.from({ length: 201 }, () => oneRow.slice());
+  const form = new FormData();
+  form.append('session_id', 'OVERSIZE-01');
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify(tooMany));
+  form.append('duration', '00:30:00'); // manual effort metric — clears the effort-required gate so we reach the row cap
+  form.append('test_mode', 'true');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.match(body.message || body.error || '', /200-row limit/);
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'an oversized payload must never reach the append path');
+});
+
 test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {
