@@ -351,7 +351,9 @@ function parseEffortCapture(rawText) {
   const total = parseNumberMatch(rawText.match(/\btotal(?:\s+calories)?\s*(\d+(?:\.\d+)?)/i));
   const avg = parseNumberMatch(rawText.match(/\b(?:avg|average)\s*hr\s*(\d+(?:\.\d+)?)/i));
   const peak = parseNumberMatch(rawText.match(/\bpeak\s*hr\s*(\d+(?:\.\d+)?)/i));
-  const locationMatch = rawText.match(/\bpeak\s*hr\s*\d+(?:\.\d+)?\s+(.+)$/i);
+  const locationKeyword = rawText.match(/\blocation[:\s]+(.+?)(?=\s+(?:duration|active|total|avg|average|peak|notes)\b|$)/i);
+  const locationTrail = rawText.match(/\bpeak\s*hr\s*\d+(?:\.\d+)?\s+(.+)$/i);
+  const location = (locationKeyword ? locationKeyword[1].trim() : null) || (locationTrail ? locationTrail[1].trim() : null);
 
   return {
     intent: 'effort_capture',
@@ -362,7 +364,7 @@ function parseEffortCapture(rawText) {
       total_calories: total,
       avg_hr: avg,
       peak_hr: peak,
-      location: locationMatch ? locationMatch[1].trim() : null,
+      location: location || null,
     },
   };
 }

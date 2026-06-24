@@ -1767,6 +1767,12 @@ test('workout parser detects correction, delete, finish, effort, and planning in
     location: 'Richmond',
   });
 
+  // LO-9(c): location captured via explicit keyword even without peak hr
+  const effortNoPeak = parseWorkoutText('Duration 53 Active 340 Total 390 Avg HR 142 location Richmond');
+  assert.equal(effortNoPeak.intent, 'effort_capture');
+  assert.equal(effortNoPeak.effort.location, 'Richmond', 'location keyword works without peak hr');
+  assert.equal(effortNoPeak.effort.peak_hr, null, 'peak hr absent when not provided');
+
   assert.equal(parseWorkoutText("It's June 9 and we're back at the gym, what are we doing").intent, 'plan_request');
 });
 
