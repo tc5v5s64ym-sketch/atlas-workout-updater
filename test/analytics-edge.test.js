@@ -1001,6 +1001,16 @@ test('scoreIntents: build_muscle thins a recovering push pattern to TWO movement
     `expected recovering_pattern_density_capped reason code, got [${bm.reason_codes.join(', ')}]`);
   assert.ok(bm.why_today.some(w => /still recovering/i.test(w) && /movements/i.test(w)),
     `expected a why_today line acknowledging the recovery trim, got [${bm.why_today.join(' | ')}]`);
+
+  // balanced runs the same parameterized cap — lock it in too (reviewer note #543).
+  const bal = result.intents.find(i => i.id === 'balanced');
+  assert.ok(bal, 'balanced must exist');
+  const balPush = bal.exercises.filter(ex => pushCodes.has(ex.lift_code));
+  assert.equal(balPush.length, 2, `balanced recovering push should also cap at 2, got ${balPush.length}`);
+  assert.ok(bal.reason_codes.includes('recovering_pattern_density_capped'),
+    'balanced carries the recovery cap reason code');
+  assert.ok(bal.why_today.some(w => /still recovering/i.test(w) && /movements/i.test(w)),
+    'balanced explains the recovery trim in why_today');
 });
 
 test('scoreIntents: the buildIntentSession density cap is recovery-gated — a fresh push keeps all THREE presses', () => {

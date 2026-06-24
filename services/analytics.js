@@ -1751,6 +1751,10 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const data = scheduledFresh.map(p => ({
       label: PLABEL[p.pattern], value: `${p.daysSince}d since last session`, context: 'overdue'
     }));
+    // If a recovering pattern was trimmed here, explain it too — keep the read↔
+    // prescription honesty parity with build_muscle / balanced (the reason code
+    // below would otherwise say "capped" while why_today stayed silent).
+    for (const line of recoveringTrimWhy(fbsTrims)) why.push(line);
 
     intents.push({
       id: 'fix_blind_spots',
