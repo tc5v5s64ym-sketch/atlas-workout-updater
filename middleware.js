@@ -67,11 +67,21 @@ function createRateLimiter({
 } = {}) {
   const hits = new Map();
 
-  return function rateLimitMiddleware(req, res, next) {
+  function rateLimitMiddleware(req, res, next) {
     if (req.method === 'OPTIONS') return next();
 
     const key = `${name}:${keyGenerator(req)}`;
     const currentTime = now();
+
+    // Prune expired windows so `hits` cannot grow unbounded — without this, one entry
+    // per distinct `name:ip` lives forever. An expired entry is already treated as a
+    // fresh window on next access (the record reset below), so deleting it changes no
+    // rate-limit behaviour; it only frees memory. Deleting visited keys mid-iteration
+    // is safe for a Map.
+    for (const [k, v] of hits) {
+      if (v.resetAt <= currentTime) hits.delete(k);
+    }
+
     const existing = hits.get(key);
     const record = existing && existing.resetAt > currentTime
       ? existing
@@ -96,7 +106,13 @@ function createRateLimiter({
     }
 
     return next();
-  };
+  }
+
+  // Read-only introspection for tests/diagnostics: how many windows are currently
+  // tracked (after pruning). Never consulted by request handling.
+  rateLimitMiddleware.trackedKeyCount = () => hits.size;
+
+  return rateLimitMiddleware;
 }
 
 module.exports = {

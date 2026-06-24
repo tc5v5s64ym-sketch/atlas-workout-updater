@@ -121,6 +121,37 @@ test('security: rate limiter blocks requests over the configured window', () => 
   assert.equal(resetRes.statusCode, 200);
 });
 
+test('security: rate limiter prunes expired windows so the hits map stays bounded (ME-6)', () => {
+  let currentTime = 1000;
+  const middleware = createRateLimiter({
+    name: 'prune',
+    max: 5,
+    windowMs: 1000,
+    now: () => currentTime,
+    keyGenerator: req => req.ip
+  });
+
+  // Three distinct clients hit within window 1 → three tracked windows.
+  for (const ip of ['10.0.0.1', '10.0.0.2', '10.0.0.3']) {
+    middleware(mockReq({ ip }), mockRes(), () => {});
+  }
+  assert.equal(middleware.trackedKeyCount(), 3, 'three distinct clients are tracked in-window');
+
+  // Advance past the window; a single request from a NEW client must prune all three
+  // expired entries before adding its own — the map cannot grow unbounded.
+  currentTime = 2500;
+  middleware(mockReq({ ip: '10.0.0.9' }), mockRes(), () => {});
+  assert.equal(middleware.trackedKeyCount(), 1, 'expired windows pruned; only the live client remains');
+
+  // And pruning is behaviour-preserving: a returning client past its window still gets
+  // a fresh allowance (not a stale blocked count).
+  let next = false;
+  const res = mockRes();
+  middleware(mockReq({ ip: '10.0.0.1' }), res, () => { next = true; });
+  assert.equal(next, true);
+  assert.equal(res.statusCode, 200, 'a returning client after expiry gets a fresh window');
+});
+
 test('security: live write logging redacts workout and effort row contents', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   const logLines = source.split(/\r?\n/).filter(line => line.includes('console.log'));
