@@ -1032,6 +1032,28 @@ test('conversational logger renders textbox first and parsed rows as fallback ed
   assert.match(appSource, /parsedRowsEditor\.hidden = false/);
 });
 
+test('local fallback parser mirrors the backend added-load (+NN) strip so it buffers offline', () => {
+  // Root cause of the live "added-load not entering session state" bug: the
+  // CLIENT local fallback parser could not parse "Dips +25 8/2" (splitWorkoutLine
+  // returned null), so the set routed to the coach and never buffered into
+  // sessionLog. The local parser must mirror the backend slice-2b strip.
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The strip runs inside the local parseWorkoutText line loop, BEFORE splitWorkoutLine.
+  const fn = appSource.slice(
+    appSource.indexOf('function parseWorkoutText(text)'),
+    appSource.indexOf('function parserStatusNode')
+  );
+  assert.ok(fn.length > 0, 'local parseWorkoutText(text) must exist');
+  assert.match(fn, /\.replace\(\/\(\^\|\\s\)\\\+\(\\d\)\/g, '\$1\$2'\)/,
+    'local parser must strip a token-leading "+" before a load (mirrors backend #526)');
+  // Anchored form only — a "+" between digits ("225+25") is NOT stripped.
+  assert.doesNotMatch(fn, /\.replace\(\/\\\+\(\\d\)\/g/, 'must not use the un-anchored global strip');
+  // The strip precedes the splitWorkoutLine call in the loop.
+  const stripIdx = fn.indexOf("replace(/(^|\\s)\\+(\\d)/g");
+  const splitIdx = fn.indexOf('splitWorkoutLine(line)');
+  assert.ok(stripIdx >= 0 && splitIdx > stripIdx, 'strip must run before splitWorkoutLine');
+});
+
 test('conversational logger calls backend parser before local parser fallback', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const rowsFunction = appSource.slice(
@@ -4623,8 +4645,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v33/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v32\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v34/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v33\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
