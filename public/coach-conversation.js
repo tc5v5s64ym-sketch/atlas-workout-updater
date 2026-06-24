@@ -756,20 +756,37 @@
     const subLine = (subVoice && subVoice.primary_line)
       || (sub && sub.classification ? coachVoiceTemplates.templatedSubstitutionLine(sub) : null);
     const withSub = base => (subLine ? base + '\n\n' + subLine : base);
+    // PR 484 — deterministic LLM-down voicing of the training-intelligence advisories.
+    // When Gemini is down the engine's next-move heads-up (Fatigue Router) and recovery
+    // read (Recovery/Deload Selection) still ride in `data` but go unworded; surface
+    // them so the engine's intelligence is never lost to an outage. When the LLM
+    // answered, it already worded them (coach prompt rules), so these are appended on
+    // the DETERMINISTIC paths ONLY — never on the LLM-prose path (which would duplicate).
+    const nextMoveLine = data ? coachVoiceTemplates.templatedNextMoveAdvisoryLine(data.next_move_advisory) : null;
+    const recoveryLine = data ? coachVoiceTemplates.templatedRecoveryAdvisoryLine(data.recovery_advisory) : null;
+    const joinLines = (...lines) => lines.filter(Boolean).join('\n\n');
     // Deterministic Coach Voice Renderer wins. When a non-neutral set-effort signal
     // (redline / rep-drop / pressing-yellow / underdose / isolation caution) owns
     // the reaction, render its primary_line and NEVER the generic/LLM prose — the
     // server has already nulled contradictory prose; this is the visual backstop.
+    // The advisories follow as complementary lines (a set signal and a back-off
+    // advisory never contradict; the server keeps them consistent).
     if (voice && voice.suppress_generic_prose && voice.primary_line) {
-      return { note: withSub(voice.primary_line), effort_note, reroute, voice };
+      return { note: withSub(joinLines(voice.primary_line, nextMoveLine, recoveryLine)), effort_note, reroute, voice };
     }
     // LLM prose present means the server did NOT suppress it (no good-pivot lecture);
-    // it already addresses the swap in one integrated voice, so trust it as-is.
+    // it already addresses the swap AND the advisories in one integrated voice — trust as-is.
     if (llm && llm.trim()) return { note: llm, effort_note, reroute, voice };
+    // LLM down: conclusion-first. A recovery read is the headline and OVERRIDES a
+    // progression-invite opener so the fallback never pairs "add load" with "back off".
+    if (recoveryLine) {
+      return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice };
+    }
     // LLM down / suppressed (incl. a good pivot): prefer the engine's correct-effort
-    // line (on-target praise) when offered, else the templated opener, then the swap.
+    // line (on-target praise) when offered, else the templated opener, then the
+    // next-move heads-up, then the swap.
     const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec);
-    return { note: withSub(opener), effort_note, reroute, voice };
+    return { note: withSub(joinLines(opener, nextMoveLine)), effort_note, reroute, voice };
   }
 
   // Returns the full /api/coach/message data object ({ message, effort_note,

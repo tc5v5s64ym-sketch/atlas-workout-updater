@@ -1045,6 +1045,34 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
+// ── PR 484: deterministic LLM-down voicing of the training-intelligence advisories ──
+
+test('PR 484: getInWorkoutNote voices next-move + recovery advisories on the deterministic paths only', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = ccSource.slice(
+    ccSource.indexOf('async function getInWorkoutNote('),
+    ccSource.indexOf('async function getLlmCoachingMessage(')
+  );
+  assert.ok(block, 'getInWorkoutNote block must be present');
+  // The two engine advisories are worded via the pure templates.
+  assert.match(block, /templatedNextMoveAdvisoryLine\(data\.next_move_advisory\)/,
+    'next-move advisory must be voiced from the engine fact');
+  assert.match(block, /templatedRecoveryAdvisoryLine\(data\.recovery_advisory\)/,
+    'recovery advisory must be voiced from the engine fact');
+  // The LLM-prose path must return BEFORE any advisory append, so the LLM (which
+  // already worded the advisories) is never duplicated by the deterministic lines.
+  const llmReturnIdx = block.indexOf('if (llm && llm.trim()) return { note: llm');
+  const nextMoveUseIdx = block.indexOf('joinLines(voice.primary_line, nextMoveLine, recoveryLine)');
+  const openerJoinIdx = block.indexOf('joinLines(opener, nextMoveLine)');
+  assert.ok(llmReturnIdx > -1, 'LLM-prose early return must exist');
+  assert.ok(openerJoinIdx > llmReturnIdx,
+    'the opener+advisory deterministic path must come AFTER the LLM early return');
+  assert.ok(nextMoveUseIdx > -1, 'the suppressed-prose path must also carry the advisories');
+  // Conclusion-first: a recovery read is the headline and overrides the opener.
+  assert.match(block, /if \(recoveryLine\) \{[\s\S]*joinLines\(recoveryLine, nextMoveLine\)/,
+    'a recovery read must lead and override the progression-invite opener');
+});
+
 // ── Suggested-workout display formatting (RIR must never be silently dropped) ──
 
 // Extract the pure formatPlanSetLine helper from the coach-conversation IIFE.
@@ -4759,8 +4787,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v37/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v36\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v38/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v37\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
