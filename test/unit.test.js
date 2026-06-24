@@ -5463,3 +5463,38 @@ test('suggestion acknowledgment: handleSetLogged suppresses substitution from LL
   assert.match(fn, /Good call.*you went with|you went with.*Intent preserved/, 'must append deterministic ack text on match');
   assert.match(fn, /if\s*\(\s*suggestMatch/, 'ack must be gated on suggestMatch');
 });
+
+// LO-2: NODE_ENV gating — error.message must not reach production responses in
+// the six identified routes without a NODE_ENV guard.
+test('LO-2: coach/chat graceful-degradation gates chatError with NODE_ENV check', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // chatError must be assigned from a NODE_ENV-gated expression, not raw error.message.
+  assert.match(src, /chatError\s*=\s*process\.env\.NODE_ENV\s*===\s*['"]production['"]\s*\?\s*null\s*:\s*error\.message/,
+    'chatError must be null in production, not raw error.message');
+});
+
+test('LO-2: /api/coach/message error path gates error.message with NODE_ENV spread', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // The coach/message catch block must use the NODE_ENV-gated spread, not bare error.message.
+  assert.match(src, /process\.env\.NODE_ENV\s*===\s*['"]production['"]\s*\?\s*\{\}\s*:\s*\{\s*error:\s*error\.message\s*\}/,
+    'coach/message catch must spread error: error.message only in non-production');
+});
+
+test('LO-2: /api/complete-workout does not embed raw err.message in the response body', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // The three complete-workout error paths must not embed ${err.message} directly in a
+  // res.status(400).json() body — they must use standardError with a NODE_ENV gate instead.
+  assert.doesNotMatch(src, /res\.status\(400\)\.json\([^)]*log_rows_json[^)]*\$\{err\.message\}/,
+    'log_rows_json parse error must not embed err.message directly in res.json');
+  assert.doesNotMatch(src, /res\.status\(400\)\.json\([^)]*Parsed metrics[^)]*\$\{error\.message\}/,
+    'metrics validation error must not embed error.message directly in res.json');
+  assert.doesNotMatch(src, /res\.status\(400\)\.json\([^)]*Log rows[^)]*\$\{error\.message\}/,
+    'log rows error must not embed error.message directly in res.json');
+  // The fixed paths must use standardError instead.
+  assert.match(src, /standardError\(req,\s*res,\s*'log_rows_json is not valid JSON'/,
+    'log_rows_json parse error must use standardError');
+  assert.match(src, /standardError\(req,\s*res,\s*'Parsed metrics validation failed'/,
+    'metrics validation error must use standardError');
+  assert.match(src, /standardError\(req,\s*res,\s*'Log rows validation\/enrichment failed'/,
+    'log rows error must use standardError');
+});

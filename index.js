@@ -1369,7 +1369,8 @@ app.post('/api/coach/message', async (req, res) => {
     // than surfacing an error in the chat.
     const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
     return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
+      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(),
+      ...(process.env.NODE_ENV === 'production' ? {} : { error: error.message }), ...effortExtras
     });
   }
 });
@@ -1643,7 +1644,7 @@ app.post('/api/coach/chat', async (req, res) => {
     // Degrade gracefully — never an error bubble. Fall through to the deterministic
     // fallback. allLog may be populated (throw came from Gemini after the read) or
     // empty (the Sheets read itself failed); the fallback handles both.
-    chatError = error.message;
+    chatError = process.env.NODE_ENV === 'production' ? null : error.message;
   }
   const answer = deterministicAnswer(allLog);
   return standardSuccess(req, res, answer
@@ -1718,7 +1719,8 @@ app.post('/api/session/compile', async (req, res) => {
   } catch (error) {
     console.log(JSON.stringify({ event: 'session_compile_error', error: error.message }));
     return standardSuccess(req, res, 'Session compile failed', {
-      workout_text: null, error: error.message
+      workout_text: null,
+      ...(process.env.NODE_ENV === 'production' ? {} : { error: error.message })
     });
   }
 });
@@ -2842,7 +2844,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     parsedLogRows = JSON.parse(formFields.log_rows_json);
   } catch (err) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: `log_rows_json is not valid JSON: ${err.message}` });
+    return standardError(req, res, 'log_rows_json is not valid JSON',
+      process.env.NODE_ENV === 'production' ? null : err.message, 400);
   }
 
   if (!Array.isArray(parsedLogRows)) {
@@ -2879,7 +2882,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       metricWarnings = result.warnings || [];
     } catch (error) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
+      return standardError(req, res, 'Parsed metrics validation failed',
+        process.env.NODE_ENV === 'production' ? null : error.message, 400);
     }
 
     // 3) Determine session/date
@@ -2942,7 +2946,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         }
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
+        return standardError(req, res, 'Log rows validation/enrichment failed',
+          process.env.NODE_ENV === 'production' ? null : error.message, 400);
       }
     }
 
