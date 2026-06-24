@@ -572,6 +572,16 @@ test('duration normalization supports mm:ss and hh:mm:ss', () => {
   assert.throws(() => normalizeDurationString('not a duration'), /Invalid duration format/);
 });
 
+test('duration normalization rolls mm:ss minutes over 59 into hours (LO-9b)', () => {
+  // A mm:ss minutes field over 59 previously emitted a malformed "00:90:30" (90 in
+  // the 0–59 minutes slot). It now rolls into hours, preserving the span.
+  assert.equal(normalizeDurationString('90:30'), '01:30:30');
+  assert.equal(normalizeDurationString('60:00'), '01:00:00');
+  assert.equal(normalizeDurationString('125:05'), '02:05:05');
+  // Sub-hour mm:ss is unchanged.
+  assert.equal(normalizeDurationString('59:59'), '00:59:59');
+});
+
 test('Mission Control extracts dry-run safety fields from top-level or nested response data', () => {
   assert.deepEqual(extractDryRunSafetyFields({
     status: 'ok',
