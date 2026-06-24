@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v33';
+const ATLAS_SHELL_BUILD = 'v34';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2489,7 +2489,14 @@ function parseWorkoutText(text) {
     .map(line => line.trim())
     .filter(Boolean);
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    // Added-load bodyweight ("Dips +25 8/2"): mirror the backend slash parser
+    // (services/workoutTextParser.js, PR 486 slice 2b/#526) so the OFFLINE local
+    // fallback recognizes it too — otherwise splitWorkoutLine can't find the load
+    // and the set silently routes to the coach instead of buffering. A token-LEADING
+    // "+" (start / after a space) is dropped so the external load reads as Weight;
+    // a "+" wedged between digits ("225+25") is left intact. No bodyweight auto-add.
+    const line = rawLine.replace(/(^|\s)\+(\d)/g, '$1$2');
     const parsedLine = splitWorkoutLine(line);
     if (!parsedLine) {
       errors.push(`Could not parse line: ${line}`);
