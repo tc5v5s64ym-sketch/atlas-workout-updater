@@ -32,7 +32,14 @@
     bubble.className = 'chat-bubble chat-bubble-user';
     bubble.textContent = text;
     thread.appendChild(bubble);
-    while (thread.children.length > MAX_BUBBLES) thread.removeChild(thread.firstChild);
+    // Only trim text-only bubbles; never detach a live button/form element.
+    let pruned = 0;
+    while (thread.children.length > MAX_BUBBLES && pruned < MAX_BUBBLES) {
+      const oldest = thread.firstChild;
+      if (!oldest || oldest.querySelector('button, input, select')) break;
+      thread.removeChild(oldest);
+      pruned++;
+    }
     bubble.scrollIntoView({ behavior: reduce() ? 'auto' : 'smooth', block: 'nearest' });
   }
 
