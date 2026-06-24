@@ -170,6 +170,39 @@ When Claude discovers a bug (in a live-test report, review, or its own work), it
 
 A PR is **merge-ready** only when: tests pass · required reviews pass · no open P0/P1 finding · no unresolved contract violation · risk classification done · merge card generated. Any skipped or failed required review blocks readiness.
 
+## Branch hygiene gate (mandatory — every PR)
+
+One concern per PR means **one branch per concern, cut fresh from `main`**. This gate is non-negotiable and applies to every PR the builder opens. (Precedent: the 2026-06-24 24-commit mixed-bundle PR, which had to be split into six clean one-concern PRs after the fact — never again.)
+
+**Before any new work — start clean:**
+
+1. `git checkout main`.
+2. `git pull` the latest `main`.
+3. Verify the working tree is **clean** (`git status` shows nothing to commit).
+4. Create a **fresh branch from `main`** (`git checkout -b claude/<concern> origin/main`).
+5. Verify the branch is **zero commits ahead of `main`** (`git rev-list --count origin/main..HEAD` → `0`).
+6. Build **exactly one concern**.
+
+**Before opening the PR — prove it's clean:**
+
+1. List the changed files (`git diff --stat origin/main..HEAD`).
+2. List the commits on the branch (`git log --oneline origin/main..HEAD`).
+3. Verify **every commit belongs to this one concern** — no drive-by edits.
+4. Verify **no prior autonomous work is bundled** — the branch contains only this PR's commits, never carry-over from an earlier session or branch. `BACKLOG.md` edits are limited to **this PR's own item**.
+
+**Before merging — reject the unclean:**
+
+- **Reject mixed PRs** (more than one concern).
+- **Reject branches carrying unrelated or prior-session commits** not part of this concern.
+- **Reject PRs where the required CI checks did not run** — a check that did not run is **not** a pass (the §2 pass/fail principle). The only exception is a missing check **explicitly documented in the merge card AND owner-approved**.
+
+**Always:**
+
+- **Never continue new roadmap/backlog work on an existing feature branch after its PR is opened.** A new concern means going back to "start clean" and cutting a new branch from `main` — no stacking.
+- **After every merge, return to `main` and resync** (`git checkout main && git pull`) before starting the next concern.
+
+If a branch is already dirty (mixed, or carrying prior commits), do **not** paper over it: split it into clean one-concern branches off `main` and reopen — exactly as the 2026-06-24 split did.
+
 ## Roadmap Refill Loop (continuous autonomy)
 
 Atlas does not idle when the active roadmap is exhausted. When the active queue in `docs/ACTIVE_ROADMAP.md` is empty (every step complete), the builder — automatically, without waiting for the owner:
@@ -193,6 +226,7 @@ A PR is not ready for Dale to merge unless:
 - CODEX Review is `READY FOR OWNER MERGE` or `NON-BLOCKING`.
 - The PR matches `docs/ACTIVE_ROADMAP.md` or an explicitly approved owner task.
 - No write-path/schema changes are present unless explicitly scoped.
+- The **Branch hygiene gate** above is satisfied — one concern, one branch cut fresh from `main`, no bundled prior/unrelated commits, and the required checks actually ran. A mixed PR, a branch carrying unrelated commits, or a PR whose checks did not run is **not** mergeable (split it first).
 
 ## Hold points
 
