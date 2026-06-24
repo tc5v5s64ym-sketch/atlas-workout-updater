@@ -570,6 +570,8 @@ test('duration normalization supports mm:ss and hh:mm:ss', () => {
   assert.equal(normalizeDurationString('45'), '00:45:00');
   assert.equal(normalizeDurationString('53.75'), '00:53:45');
   assert.throws(() => normalizeDurationString('not a duration'), /Invalid duration format/);
+  assert.throws(() => normalizeDurationString('60:00'), /Invalid duration values/, 'mm:ss with mm>59 must reject');
+  assert.throws(() => normalizeDurationString('90:30'), /Invalid duration values/, 'mm:ss with mm=90 must reject');
 });
 
 test('Mission Control extracts dry-run safety fields from top-level or nested response data', () => {

@@ -25,7 +25,7 @@ function normalizeDurationString(value) {
     if (!/^\d+$/.test(mm) || !/^\d+$/.test(ss)) throw new Error(`Invalid duration format: ${value}`);
     const m = Number(mm);
     const sec = Number(ss);
-    if (sec < 0 || sec > 59 || m < 0) throw new Error(`Invalid duration values: ${value}`);
+    if (sec < 0 || sec > 59 || m < 0 || m > 59) throw new Error(`Invalid duration values: ${value}`);
     return `${pad2(0)}:${pad2(m)}:${pad2(sec)}`;
   }
 
