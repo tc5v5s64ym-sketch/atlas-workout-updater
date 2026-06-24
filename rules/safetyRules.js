@@ -208,7 +208,7 @@ function evaluateSessionSafety(newRows, workoutNotes = '', historyRows = []) {
       const drift = rirDrift(history, code);
       if (drift) flags.push(drift);
 
-      const liftRows = rows.filter(r => String(r.lift_code || '').toUpperCase() === code);
+      const liftRows = rows.filter(r => r && typeof r === 'object' && String(r.lift_code || '').toUpperCase() === code);
       const jump = checkE1rmJump(bestE1rm(liftRows), previousSessionBestE1rm(history, code, previewSessionIds));
       if (jump) {
         flags.push(decision({
