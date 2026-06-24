@@ -1165,6 +1165,52 @@ test('#402: a multi-word lift with a muscle keyword still dedups (no regression)
   assert.deepEqual(codes, ['LP02'], 'Leg Press must still dedup to the newest code');
 });
 
+// ── short_session / test_progress ramp wiring (PR 456 deferred) ───────────────
+// structureSession now applies to short_session and test_progress, so their
+// lead main compounds pick up the same ascending warm-up ramps that
+// build_strength / build_muscle / balanced already had.
+
+test('scoreIntents: short_session lead compound gets a warm-up ramp after structureSession wiring', () => {
+  // Push (Bench Press) + Pull (Barbell Row), both ascending → fresh, not fatigued.
+  // today far after last session so patterns are fully rested.
+  const rows = [
+    ...makeRows('Bench Press', 'Chest', 'BEN01', [165, 170, 175, 180, 185], '2026-03-01'),
+    ...makeRows('Barbell Row', 'Back',  'ROW01', [140, 145, 150, 155, 160], '2026-03-01'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03' });
+  const ss = result.intents.find(i => i.id === 'short_session');
+  assert.ok(ss && Array.isArray(ss.exercises) && ss.exercises.length > 0, 'short_session must have exercises');
+
+  const mainEx = ss.exercises.find(ex => Array.isArray(ex.warmup_sets) && ex.warmup_sets.length > 0);
+  assert.ok(mainEx, 'at least one exercise in short_session must carry warmup_sets after structureSession wiring');
+  assert.ok(mainEx.warmup_sets.length >= 2, `ramp must have at least 2 priming sets; got ${mainEx.warmup_sets.length}`);
+  mainEx.warmup_sets.forEach(s => assert.equal(s.priming, true, 'each ramp set must be priming:true'));
+  const w = mainEx.warmup_sets.map(s => s.weight);
+  assert.ok(w[0] < mainEx.target_weight,
+    `ramp must be below working weight; got first ramp ${w[0]} vs target ${mainEx.target_weight}`);
+});
+
+test('scoreIntents: test_progress PR-attempt compound gets a warm-up ramp after structureSession wiring', () => {
+  // Ascending weights → e1rm_trend 'up' → appears in trendingFresh → PR candidate.
+  // today well after last session → low fatigue, no penalty on test_progress score.
+  const rows = [
+    ...makeRows('Bench Press', 'Chest', 'BEN01', [165, 170, 175, 180, 185], '2026-03-01'),
+    ...makeRows('Barbell Row', 'Back',  'ROW01', [140, 145, 150, 155, 160], '2026-03-01'),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-03' });
+  const tp = result.intents.find(i => i.id === 'test_progress');
+  assert.ok(tp, 'test_progress intent must exist');
+  assert.ok(tp.exercises && tp.exercises.length > 0, 'test_progress must have exercises for an upward-trending fixture');
+
+  const mainEx = tp.exercises.find(ex => Array.isArray(ex.warmup_sets) && ex.warmup_sets.length > 0);
+  assert.ok(mainEx, 'at least one compound in test_progress must carry warmup_sets after structureSession wiring');
+  assert.ok(mainEx.warmup_sets.length >= 2, `ramp must have at least 2 priming sets; got ${mainEx.warmup_sets.length}`);
+  mainEx.warmup_sets.forEach(s => assert.equal(s.priming, true, 'each ramp set must be priming:true'));
+  const w = mainEx.warmup_sets.map(s => s.weight);
+  assert.ok(w[0] < mainEx.target_weight,
+    `ramp must ascend into the working weight; got first ramp ${w[0]} vs target ${mainEx.target_weight}`);
+});
+
 test('#402: a bare single-word movement name ("Row") dedups (substring residual closed)', () => {
   const mk = (n, c, mg, d, w) => ({
     lift_code: c, exercise: n, canonical_exercise: n, muscle_group: mg,

@@ -1831,7 +1831,8 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (daysSinceLast >= 3) { score += 10; why.push('Been a few days — a short session gets training back on track'); }
     if (downCompounds.length >= 2) score += 8;
 
-    const exercises = exForPatterns(['push', 'pull'], 3).map(ex => ({ ...ex, target_sets: Math.min(ex.target_sets, 2) }));
+    const rawShort = exForPatterns(['push', 'pull'], 3).map(ex => ({ ...ex, target_sets: Math.min(ex.target_sets, 2) }));
+    const exercises = structureSession(rawShort, structureOpts);
     intents.push({
       id: 'short_session',
       label: 'Short Session',
@@ -1875,15 +1876,17 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     // Downward-trending push/pull compounds make a PR attempt risky — dampen aggressiveness.
     if (downCompounds.length >= 2) score -= 15;
 
-    const exercises = trendingFresh.slice(0, 3).map(r => ({
+    const rawPR = trendingFresh.slice(0, 3).map(r => ({
       exercise: r.exercise_name,
       lift_code: r.liftCode,
+      muscle_group: r.muscle_group,
       target_weight: r.next_target.weight,
       target_reps: r.next_target.reps,
       target_sets: 1,
       reason: `PR attempt — ${r.recommendation}`,
       confidence_factors: cfFor(r),
     }));
+    const exercises = structureSession(rawPR, structureOpts);
     intents.push({
       id: 'test_progress',
       label: 'Test Progress',

@@ -18,6 +18,8 @@ function makeRec(exercise, liftCode, coarsePattern, weight, reps, sets = 3, reco
     e1rm_trend: 'stable',
     last_working_sets: [],
     sessions_analyzed: 3,
+    days_since_last_session: 5,
+    confidence: 'medium',
   };
 }
 
@@ -839,4 +841,68 @@ test('orderByRole: a keyword-less accessory is ordered by its muscle group, not 
     orderByRole(nameOnly).map(e => e.exercise),
     ['Back Squat', 'Pallof Press', 'Leg Press'],
     'name-only classification leaves the core lift mid-pack (documents why threading matters)');
+});
+
+// ── buildIntentSession — confidence_factors shape (PR 370 deferred) ───────────
+// These guard the three inline literals (anchor/support/balance) so they can't
+// silently drift from the cfFor() version used in analytics.js's exForPatterns.
+
+describe('buildIntentSession — confidence_factors shape guard', () => {
+  const allRecs = [
+    makeRec('Barbell Row', 'BR01', 'pull', 185, 8),
+    makeRec('Seated Row',  'SR01', 'pull', 140, 12),
+    makeRec('Face Pull',   'FP01', 'pull', 50,  15),
+  ];
+
+  it('every exercise carries a confidence_factors object', () => {
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [] });
+    for (const ex of session.exercises) {
+      assert.ok(
+        ex.confidence_factors && typeof ex.confidence_factors === 'object',
+        `${ex.exercise} must carry confidence_factors`
+      );
+    }
+  });
+
+  it('confidence_factors has the 4 required keys on every exercise', () => {
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [] });
+    for (const ex of session.exercises) {
+      const cf = ex.confidence_factors;
+      for (const key of ['sessions', 'data_age_days', 'trend', 'lift_confidence']) {
+        assert.ok(key in cf, `${ex.exercise}.confidence_factors must have '${key}'`);
+      }
+    }
+  });
+
+  it('confidence_factors.sessions matches sessions_analyzed from allRecs', () => {
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [] });
+    for (const ex of session.exercises) {
+      assert.equal(ex.confidence_factors.sessions, 3,
+        `${ex.exercise}.confidence_factors.sessions should equal sessions_analyzed`);
+    }
+  });
+
+  it('confidence_factors.data_age_days matches days_since_last_session from allRecs', () => {
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [] });
+    for (const ex of session.exercises) {
+      assert.equal(ex.confidence_factors.data_age_days, 5,
+        `${ex.exercise}.confidence_factors.data_age_days should equal days_since_last_session`);
+    }
+  });
+
+  it('confidence_factors.trend matches e1rm_trend from allRecs', () => {
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [] });
+    for (const ex of session.exercises) {
+      assert.equal(ex.confidence_factors.trend, 'stable',
+        `${ex.exercise}.confidence_factors.trend should equal e1rm_trend`);
+    }
+  });
+
+  it('confidence_factors.lift_confidence matches confidence from allRecs', () => {
+    const session = buildIntentSession({ patterns: ['pull'], allRecs, underCoverageData: [] });
+    for (const ex of session.exercises) {
+      assert.equal(ex.confidence_factors.lift_confidence, 'medium',
+        `${ex.exercise}.confidence_factors.lift_confidence should equal confidence`);
+    }
+  });
 });
