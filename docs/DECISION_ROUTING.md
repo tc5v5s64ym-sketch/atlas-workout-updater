@@ -86,6 +86,8 @@ GitHub is the handoff bus. When Claude hits a decision panel:
 
 A Codex decision that was **skipped, errored, unavailable, or returned no answer is a failure, not an implicit yes** (`docs/AUTOMATION_PROTOCOL.md` §2). Claude proceeds on Codex's *answer*, or on the explicitly stated `Default-if-unanswered` only when the decision is low-risk and the request says so — never on silence for a consequential fork.
 
+**Branch hygiene is a gate, not a panel.** One concern per PR, a fresh branch off `main`, no bundled prior/unrelated commits, and "required checks actually ran" are **deterministic merge-eligibility rules** (`docs/AGENT_WORKFLOW.md` "Branch hygiene gate"; `docs/AUTOMATION_PROTOCOL.md` §4.8) — enforced by the build loop, **never routed to Codex or the owner**. A mixed PR or a branch carrying unrelated commits is simply not merge-ready: split it into clean one-concern PRs, no decision panel required.
+
 ## Setup / cost
 
 The automated responder needs **no new paid API by default** — it reuses the existing `CLAUDE_CODE_OAUTH_TOKEN` (the Claude Max/Pro subscription already configured for the Claude review action), with an agent playing the Codex contract-guard role to answer the panels. Three responder modes:

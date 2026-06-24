@@ -134,6 +134,7 @@ A PR is **merge-ready** only when ALL of the following hold. (The builder holds 
 5. **Risk classification completed** — exactly one primary risk label applied.
 6. **Merge card generated** and complete.
 7. **Vision Alignment Check stated** — the merge card / PR body names the Vision/Roadmap/Architecture principle advanced, why this is the smallest safe step, the invariant protected, and whether any user-facing trust change is introduced (`docs/AGENT_WORKFLOW.md` "Vision Alignment Check"). A PR that does not clearly advance the Vision is not merge-ready — stop and report the conflict.
+8. **Branch hygiene satisfied** — the PR is **one concern** on a branch cut **fresh from `main`**, carrying **only this concern's commits** (no bundled prior-session or unrelated work; `BACKLOG.md` edits limited to this PR's own item), and the **required checks actually ran** (a check that did not run is not a pass — §2; the only exception is a missing check explicitly documented in the merge card and owner-approved). **Mixed PRs and branches with unrelated commits are not merge-ready** — split them into clean one-concern PRs off `main` first. Full gate (start-clean / pre-PR / pre-merge / always-resync-after-merge): `docs/AGENT_WORKFLOW.md` "Branch hygiene gate".
 
 > Any skipped or failed required review **blocks** readiness, per §2. There is no "merge-ready with a missing review."
 
