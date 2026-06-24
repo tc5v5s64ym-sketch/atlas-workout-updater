@@ -136,3 +136,34 @@ test('LLM brief locks prescription numbers and prevents invention', () => {
   assert.equal(result.llmBrief.lockedNumbers.targetSets, result.targetSets);
   assert.match(result.llmBrief.instruction, /Do not change/);
 });
+
+// Missed-target branch: when the previous set was NOT completed (completed:false),
+// the engine holds — repeat or reduce, never auto-progress. (Regression lock for
+// the AUDIT LO-10 redundant-condition cleanup: `!completed && completed === false`
+// simplified to `completed === false`, which is behavior-identical for every value.)
+test('missed previous target (completed:false) holds — repeat_or_reduce, never progression', () => {
+  const result = recommendExercisePrescription({
+    goal: 'hypertrophy',
+    exerciseName: 'Bench Press',
+    previousPerformance: { weight: 185, reps: 8, sets: 3, rir: 2, completed: false },
+    recentTrends: { fatigueStatus: 'low' },
+    availableIncrement: 5,
+  });
+  assert.equal(result.progression, 'repeat_or_reduce');
+  assert.equal(result.adjustment, 'missed_previous_target');
+  assert.ok(result.reasonCodes.includes('missed_target_maintain_or_reduce'));
+});
+
+// A completed previous set must NOT take the missed-target branch (guards the
+// simplification: the dropped `!completed` term never excluded a completed set).
+test('completed previous target does NOT route to the missed-target hold', () => {
+  const result = recommendExercisePrescription({
+    goal: 'hypertrophy',
+    exerciseName: 'Bench Press',
+    previousPerformance: { weight: 185, reps: 8, sets: 3, rir: 2, completed: true },
+    recentTrends: { fatigueStatus: 'low' },
+    availableIncrement: 5,
+  });
+  assert.notEqual(result.adjustment, 'missed_previous_target');
+  assert.ok(!result.reasonCodes.includes('missed_target_maintain_or_reduce'));
+});
