@@ -1079,6 +1079,39 @@ test('PR 484: getInWorkoutNote voices next-move + recovery advisories on the det
     'a recovery read must override a bump set line on the suppressed-prose path too');
 });
 
+// ── Coach's Pick engagement gate: a displayed suggestion is not an active plan ──
+
+test('coach-pick gate: plannedExerciseEntries treats lastIntentData as a plan ONLY when engaged', () => {
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The engagement flag exists, defaults false, and has accessors for the coach layer.
+  assert.match(appSrc, /let coachSuggestionEngaged = false;/, 'engagement flag must default false');
+  assert.match(appSrc, /function setCoachSuggestionEngaged\(v\)/, 'a setter must be exposed for the coach layer');
+  // plannedExerciseEntries() short-circuits to [] for the lastIntentData branch unless engaged.
+  const block = appSrc.slice(
+    appSrc.indexOf('function plannedExerciseEntries('),
+    appSrc.indexOf('function plannedExerciseOrder(')
+  );
+  assert.ok(block, 'plannedExerciseEntries block must be present');
+  const activeIdx = block.indexOf('activePlannedSession && activePlannedSession.exercises.length');
+  const gateIdx = block.indexOf('if (!coachSuggestionEngaged) return [];');
+  const intentIdx = block.indexOf('lastIntentData && lastIntentData.intents');
+  assert.ok(gateIdx > -1, 'the engagement gate must be present');
+  // The gate must sit AFTER the activePlannedSession branch (a started session always wins)
+  // and BEFORE the lastIntentData branch (so a displayed-but-unengaged pick is never the plan).
+  assert.ok(activeIdx > -1 && activeIdx < gateIdx, 'active session branch precedes the gate');
+  assert.ok(gateIdx < intentIdx, 'the gate must guard the lastIntentData branch');
+});
+
+test('coach-pick gate: engaged on Coach\'s Pick, cleared on Freestyle', () => {
+  const ccSrc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const pick = ccSrc.slice(ccSrc.indexOf('async function typeSuggestedWorkout('), ccSrc.indexOf('async function typeSuggestedWorkout(') + 600);
+  assert.match(pick, /setCoachSuggestionEngaged === 'function'\) setCoachSuggestionEngaged\(true\)/,
+    'tapping Coach\'s Pick must engage the suggestion');
+  const free = ccSrc.slice(ccSrc.indexOf('async function startFreestyle('), ccSrc.indexOf('async function startFreestyle(') + 400);
+  assert.match(free, /setCoachSuggestionEngaged === 'function'\) setCoachSuggestionEngaged\(false\)/,
+    'Freestyle must clear any prior engagement');
+});
+
 // ── Suggested-workout display formatting (RIR must never be silently dropped) ──
 
 // Extract the pure formatPlanSetLine helper from the coach-conversation IIFE.
@@ -4375,7 +4408,7 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
 
   // A suggested workout routes through setWorkoutPlaceholder, so viewing a suggestion
   // fires the ownership event before the next 4.5s rotation tick.
-  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2000);
+  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2400);
   assert.match(suggestFn, /setWorkoutPlaceholder\(/, 'typeSuggestedWorkout must set a contextual placeholder (which announces ownership)');
 
   // nav.js suppresses the rotation on the ownership event (same flag as a logged set).
@@ -4793,8 +4826,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v38/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v37\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v39/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v38\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

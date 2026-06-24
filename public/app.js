@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v38';
+const ATLAS_SHELL_BUILD = 'v39';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1208,6 +1208,17 @@ function normalizePlanExercise(raw) {
  * No persistence; logging/preview/save stays exactly as it was. */
 let activePlannedSession = null;
 
+// Whether the lifter has ENGAGED today's coach suggestion (tapped Coach's Pick),
+// as opposed to merely having the dashboard open. `loadDashboard()` always loads
+// `lastIntentData` to render the home-screen pick, but a *displayed* suggestion is
+// not an *active plan* — so plannedExerciseEntries() must only treat lastIntentData
+// as the plan once the lifter actually engages it. Without this gate, a cold
+// direct-composer log was narrated as if mid-plan ("Moving on — next up: …") and
+// the composer was pre-filled with the next suggested lift. Set true by Coach's
+// Pick (typeSuggestedWorkout), false by Freestyle; an active planned session takes
+// precedence regardless. Defaults false on every load (no persistence).
+let coachSuggestionEngaged = false;
+
 // Step 373b: when the lifter declares a swap for the current step ("Lat bar is
 // taken, I'll do seated rows instead"), we record the prescribed (swapped-out)
 // lift here. The NEXT logged exercise is treated as the substitute and replaces
@@ -1219,6 +1230,11 @@ let pendingSubstitution = null;
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
 function getActivePlannedSession() { return activePlannedSession; }
+
+// Coach-suggestion engagement flag accessors for the coach layer (coach-conversation.js).
+// markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
+function getCoachSuggestionEngaged() { return coachSuggestionEngaged; }
+function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 
 // Step 373b: replace a prescribed slot in the LIVE planned session with the
 // actually-logged substitute, so the swapped-out lift leaves remaining and the
@@ -2907,6 +2923,12 @@ function plannedExerciseEntries() {
       liftCode: ex.liftCode || ''
     })).filter(e => e.name);
   }
+  // A displayed home-screen suggestion is NOT an active plan: only treat
+  // lastIntentData as the plan once the lifter has ENGAGED Coach's Pick. Without
+  // this gate, a cold direct-composer log (no session started, no pick tapped) was
+  // narrated as if mid-plan — "Moving on — next up: <suggested lift>" + composer
+  // pre-fill + a phantom next_move_advisory. Freestyle / ad-hoc logging stays clean.
+  if (!coachSuggestionEngaged) return [];
   const intents = (lastIntentData && lastIntentData.intents) || [];
   const recommended = intents.find(i => i.recommended);
   const exs = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
