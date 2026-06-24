@@ -792,6 +792,63 @@ test('live-audit PR3: "log it" with an empty buffer after a save says "nothing n
   assert.ok(bufferIdx >= 0 && bufferIdx < nothingNewIdx, 'the sessionLog branch precedes the nothing-new guard');
 });
 
+// ---------------------------------------------------------------------------
+// Fix A — multi-line, one-exercise-per-line strength logging (PR1)
+// ---------------------------------------------------------------------------
+
+// Extract the PURE client local parser functions (no DOM refs) and run them, so we
+// can prove behaviour, not just source shape.
+function loadLocalParser() {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const start = src.indexOf('function splitWorkoutLine(');
+  const end = src.indexOf('function parserStatusNode');
+  assert.ok(start >= 0 && end > start, 'local parser functions must exist');
+  return new Function(src.slice(start, end) + '; return { parseWorkoutText, splitWorkoutLine, parseSetSegment };')();
+}
+
+test('Fix A: the local parser logs ALL rows for one-exercise-per-line input (the failed live case)', () => {
+  const local = loadLocalParser();
+  const r = local.parseWorkoutText('Bench 225 5/2 x3\nWeighted dips +50 10/2 x3\nSeated row 190 10/2 x3');
+  assert.equal(r.errors.length, 0, 'no per-line errors');
+  assert.equal(r.rows.length, 9, '3 lines × 3 sets = 9 rows');
+  const exercises = [...new Set(r.rows.map(x => x.exercise))];
+  assert.deepEqual(exercises, ['Bench', 'Weighted dips', 'Seated row'], 'all three exercises present');
+  // Each exercise keeps its own weight (added-load +50 → 50; no cross-line bleed).
+  assert.deepEqual(r.rows.filter(x => x.exercise === 'Weighted dips').map(x => x.weight), ['50', '50', '50']);
+  assert.deepEqual(r.rows.filter(x => x.exercise === 'Bench').map(x => [x.weight, x.reps, x.rir]), [['225', '5', '2'], ['225', '5', '2'], ['225', '5', '2']]);
+});
+
+test('Fix A: a single line still parses to exactly one exercise (no regression)', () => {
+  const local = loadLocalParser();
+  const r = local.parseWorkoutText('Seated row 190 10/2 x3');
+  assert.equal(r.errors.length, 0);
+  assert.equal(r.rows.length, 3);
+  assert.deepEqual([...new Set(r.rows.map(x => x.exercise))], ['Seated row']);
+});
+
+test('Fix A: multi-line routing is gated to newline-separated input with a CLEAN local parse', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The backend rejection carries the multi-exercise flag.
+  assert.match(appSource, /err\.multipleExercises = Array\.isArray\(parsed\?\.warnings\) && parsed\.warnings\.includes\('multiple_exercises_in_input'\)/);
+  // The routing branch sits inside rowsFromWorkoutInput's catch, BEFORE the
+  // noFallback throw (which would otherwise drop to the coach).
+  const fn = appSource.slice(
+    appSource.indexOf('async function rowsFromWorkoutInput()'),
+    appSource.indexOf('if (parsed.intent ===')
+  );
+  const branchIdx = fn.indexOf('if (backendError.multipleExercises && /\\n/.test(workoutText))');
+  const throwIdx = fn.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;');
+  assert.ok(branchIdx > 0, 'the multi-line branch must exist');
+  assert.ok(throwIdx > branchIdx, 'it must run BEFORE the noFallback throw (so it never drops to the coach)');
+  const branch = fn.slice(branchIdx, throwIdx);
+  // Requires a newline (same-line mixing stays blocked) and a CLEAN parse (no silent
+  // logging of uncertain rows), and it returns (no coach fallback for this case).
+  assert.match(branch, /\/\\n\/\.test\(workoutText\)/, 'gated on a newline → same-line mixing not routed here');
+  assert.match(branch, /!multi\.errors\.length && multi\.rows\.length/, 'only a clean, non-empty local parse is used');
+  assert.match(branch, /populateSetRows\(multi\.rows\)/);
+  assert.match(branch, /return;/, 'on success it returns — never reaches the coach path');
+});
+
 test('Step 373: currentPlanForChat reads the live planned session before the cached recommendation', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
@@ -1180,11 +1237,23 @@ test('clarification_blocks_local_parser_invocation', () => {
   );
   const catchStart = rowsFunction.indexOf('catch (backendError)');
   const rethrowCheck = rowsFunction.indexOf('if (!shouldUseLocalFallback(backendError)) throw backendError;', catchStart);
-  const localParserCall = rowsFunction.indexOf('parseWorkoutText(workoutText', catchStart);
 
   assert.ok(catchStart >= 0);
   assert.ok(rethrowCheck > catchStart);
-  assert.ok(localParserCall > rethrowCheck);
+  // The GENERAL local fallback (labelled 'local') stays AFTER the rethrow — a
+  // clarification is never silently re-parsed locally into uncertain rows.
+  const generalFallback = rowsFunction.indexOf("lastParserStatus = { source: 'local' }", catchStart);
+  assert.ok(generalFallback > rethrowCheck, 'the general local fallback must follow the rethrow check');
+  // EXCEPTION (Fix A, authorized): a `multiple_exercises_in_input` clarification with
+  // newline-separated lines IS routed to the local parser — but ONLY inside that
+  // explicit guard, and only when the local parse is clean. Any pre-rethrow local
+  // parse must sit inside that guard, so no OTHER clarification can trigger it.
+  const preRethrow = rowsFunction.slice(catchStart, rethrowCheck);
+  const preCall = preRethrow.indexOf('parseWorkoutText(workoutText');
+  if (preCall >= 0) {
+    const guardIdx = preRethrow.indexOf('backendError.multipleExercises && /\\n/.test(workoutText)');
+    assert.ok(guardIdx >= 0 && guardIdx < preCall, 'a pre-rethrow local parse must be inside the multi-line guard');
+  }
 });
 
 test('parser_status_label_cannot_lie', () => {
@@ -4169,7 +4238,7 @@ test('bodyweight: rowsFromBackendParsedWorkout converts null weight to "0"', () 
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fnStart = appSource.indexOf('function rowsFromBackendParsedWorkout(');
   assert.ok(fnStart >= 0, 'rowsFromBackendParsedWorkout must exist');
-  const fnBody = appSource.slice(fnStart, fnStart + 1700);
+  const fnBody = appSource.slice(fnStart, fnStart + 2100);
   // Must map null weight to '0', not to '' which fails backend validation
   assert.match(fnBody, /weight.*null.*'0'|'0'.*null.*weight/,
     "null weight must convert to '0' (not '') so backend validation passes for bodyweight exercises");
@@ -4690,8 +4759,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v36/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v35\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v37/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v36\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
