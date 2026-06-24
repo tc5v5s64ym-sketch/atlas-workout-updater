@@ -1071,6 +1071,12 @@ test('PR 484: getInWorkoutNote voices next-move + recovery advisories on the det
   // Conclusion-first: a recovery read is the headline and overrides the opener.
   assert.match(block, /if \(recoveryLine\) \{[\s\S]*joinLines\(recoveryLine, nextMoveLine\)/,
     'a recovery read must lead and override the progression-invite opener');
+  // The same override must also apply on the SUPPRESSED-prose path for a `bump`
+  // severity — `bump` is itself an add-load invite, so a co-occurring recovery read
+  // must override it (never "add weight" + "deload" in one breath). Other suppressed
+  // severities (block/caution/on_target) are back-off-consistent and keep the headline.
+  assert.match(block, /recoveryLine && voice\.severity === 'bump'[\s\S]*joinLines\(recoveryLine, nextMoveLine\)/,
+    'a recovery read must override a bump set line on the suppressed-prose path too');
 });
 
 // ── Suggested-workout display formatting (RIR must never be silently dropped) ──

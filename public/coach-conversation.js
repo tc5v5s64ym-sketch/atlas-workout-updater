@@ -769,9 +769,17 @@
     // (redline / rep-drop / pressing-yellow / underdose / isolation caution) owns
     // the reaction, render its primary_line and NEVER the generic/LLM prose — the
     // server has already nulled contradictory prose; this is the visual backstop.
-    // The advisories follow as complementary lines (a set signal and a back-off
-    // advisory never contradict; the server keeps them consistent).
     if (voice && voice.suppress_generic_prose && voice.primary_line) {
+      // A recovery read OVERRIDES a `bump` set line. `bump` ("more left in the tank —
+      // add weight") is the one suppressed-prose severity that is itself a progression
+      // invite, so pairing it with a back-off recovery read would be the exact
+      // "add load + back off" contradiction this slice prevents (the two are computed
+      // independently server-side, so they CAN co-occur). Every other suppressed
+      // severity (block / caution / on_target) is consistent with backing off and keeps
+      // the headline; the advisories then follow as complementary lines.
+      if (recoveryLine && voice.severity === 'bump') {
+        return { note: withSub(joinLines(recoveryLine, nextMoveLine)), effort_note, reroute, voice };
+      }
       return { note: withSub(joinLines(voice.primary_line, nextMoveLine, recoveryLine)), effort_note, reroute, voice };
     }
     // LLM prose present means the server did NOT suppress it (no good-pivot lecture);
