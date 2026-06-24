@@ -36,10 +36,10 @@ For an **owner-gated or ambiguous IMPLEMENTATION decision** — one Claude can't
    - `APPROVED: proceed with <option>`
    - `REJECTED: do not proceed because <reason>`
    - `SPLIT: build as <PR plan>`
-   - `ESCALATE-TO-OWNER: <reason>` — only the **five reserved categories** (`docs/OWNER_CHECKIN_RULES.md`): live app testing, new product scope / new trust contract, schema/storage changes, destructive operations, or a genuine Vision/Roadmap/Architecture/invariant conflict.
+   - `ESCALATE-TO-OWNER: <reason>` — only the **four reserved categories** (Escalation Policy v3, `docs/OWNER_CHECKIN_RULES.md`): (1) a live test only the owner can perform; (2) a change to product vision, coaching philosophy, or new product scope (incl. app/runtime model selection); (3) destructive or irreversible operations (schema, migrations, deletion, credentials, security-sensitive infra); (4) a genuine, unresolvable Vision/Roadmap/Architecture/invariant conflict. Coach wording/rendering/UX is **not** reserved when derivable.
 4. **Claude reads the verdict comment and continues** — proceeds on `APPROVED`/`SPLIT`, drops the line on `REJECTED`, and only on `ESCALATE-TO-OWNER` brings in Dale.
 
-Relationship to the **Codex Decision Desk**: the Codex desk (comment-based `## 🧭 Codex Decision Request`) answers inline decision *panels* on a PR/issue; the **Atlas Decision Desk** (issue-based, this section) is the canonical route for a standalone owner-gated/ambiguous *implementation* decision. Both reach a PM verdict from the docs and reserve Dale for the five categories — they never authorize a real production write.
+Relationship to the **Codex Decision Desk**: the Codex desk (comment-based `## 🧭 Codex Decision Request`) answers inline decision *panels* on a PR/issue; the **Atlas Decision Desk** (issue-based, this section) is the canonical route for a standalone owner-gated/ambiguous *implementation* decision. Both reach a PM verdict from the docs and reserve Dale for the four categories (Escalation Policy v3) — they never authorize a real production write.
 
 ## The one thing this does NOT change (data-write safety)
 

@@ -153,17 +153,16 @@ P0/P1 must be fixed in-scope before readiness. P2/P3 are filed in `BACKLOG.md` a
 
 ## 5. What automation must NOT decide alone
 
-Automation may build, test, review, classify, merge merge-ready PRs, and continue to the next task. Under **Escalation Policy v2** (`docs/OWNER_CHECKIN_RULES.md`), it has **PM authority** for any decision derivable from the Atlas docs/principles/prior accepted behavior — root-cause, fix selection, PR sizing, test design, regression strategy, refactors, parser-routing clearly derivable from principles, and whether to fix a bug that clearly violates an Atlas principle. These are **pre-authorized**: decide and proceed, no owner and no Codex panel.
+Automation may build, test, review, classify, merge merge-ready PRs, and continue to the next task. Under **Escalation Policy v3** (`docs/OWNER_CHECKIN_RULES.md`), it has **PM authority** for any decision derivable from the Atlas docs/principles/prior accepted behavior — root-cause, fix selection, PR sizing, test design, regression strategy, refactors, parser-routing clearly derivable from principles, whether to fix a bug that clearly violates an Atlas principle, **and coach wording / rendering / frontend / UX work whose correct behavior is already determined by governance**. These are **pre-authorized**: decide and proceed, no owner and no Codex panel. **The default behavior is to continue shipping; do not escalate simply because a change touches the coach surface or UX.**
 
-It must **stop and escalate to the owner** only for the **five reserved categories**:
+It must **stop and escalate to the owner** only for the **four reserved categories** (Escalation Policy v3):
 
-1. **Live app testing** — owner-initiated/advisory: flag `owner-live-test` with a script and keep going; the owner calls the hold.
-2. **Product-scope changes** — a new user-facing capability, workflow, logging model, or new trust contract.
-3. **Schema / storage changes** — Sheet schema, database schema, data migrations.
-4. **Destructive operations** — deletion, backfills, historical rewrites, irreversible actions.
-5. **Genuine conflicts** — two Atlas principles, or the **Vision / Roadmap / Architecture / invariants**, point to different outcomes and no documented precedent resolves it; or a highest-priority item does not clearly advance the Vision / conflicts with the Roadmap or Architecture. Stop and report the conflict rather than ship.
+1. **A live test only the owner can perform** — owner-initiated/advisory: flag `owner-live-test` with a script and keep going; the owner calls the hold.
+2. **Changes to product vision, coaching philosophy, or new product scope** — a new user-facing capability, workflow, logging model, new trust contract, or a change to *what Atlas believes about training*. App/runtime/prompt/API **model** selection stays here (the *builder's* model is fixed at Opus 4.8 — not a stop). Coach **wording/rendering** is **not** here — that is PM authority.
+3. **Destructive or irreversible operations** — Sheet/DB schema changes, data migrations, deletion/backfills/historical rewrites, credentials, or security-sensitive infrastructure.
+4. **A genuine, unresolvable principle conflict** — the Decision Kernel finds two principles, or the **Vision / Roadmap / Architecture / invariants**, point to different outcomes with no documented precedent (incl. a highest-priority item that does not clearly advance the Vision). Stop and report the conflict rather than ship.
 
-A genuinely non-derivable fork that is **not** in those five goes to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner. App/runtime/prompt/API model changes remain owner-reserved as a product-scope/trust item (the *builder's* model is fixed at Opus 4.8 — not a stop).
+A genuinely non-derivable fork that is **not** in those four goes to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner. When uncertain, do not default to escalation: **document the reasoning, cite the governing docs, make the smallest safe decision, and continue.**
 
 **Bug loop:** investigate → root cause → smallest safe fix → check Atlas principles → build → test → open PR → merge if §4 authorizes it; stop only if a reserved category triggers (typically just live validation afterward).
 

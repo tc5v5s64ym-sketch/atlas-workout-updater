@@ -72,7 +72,7 @@ When choosing the next item, take the highest-priority **eligible** backlog/road
 - Holds **PM authority** (Escalation Policy v2, `docs/OWNER_CHECKIN_RULES.md`): a decision derivable from the Atlas docs/principles/prior accepted behavior is **pre-authorized** — Claude decides and proceeds, with no owner stop and no Codex panel (root-cause, fix selection, PR sizing, test design, regression strategy, refactors, principle-derivable parser-routing, fixing a clear-principle-violation bug).
 - Routes only a **genuinely non-derivable** decision panel — one the docs do not settle and that is not owner-reserved — to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), never to the owner.
 - Merges a PR once it is merge-ready (`docs/AUTOMATION_PROTOCOL.md` §4) and continues to the next approved task; refills `docs/ACTIVE_ROADMAP.md` from `BACKLOG.md` when the queue empties (Roadmap Refill Loop).
-- Stops for the owner only on one of the **five reserved categories** (`docs/OWNER_CHECKIN_RULES.md` Escalation Policy v2): live app testing (owner-initiated), product-scope changes, schema/storage changes, destructive operations, or a genuine principle conflict with no precedent.
+- Stops for the owner only on one of the **four reserved categories** (`docs/OWNER_CHECKIN_RULES.md` Escalation Policy v3): a live test only the owner can perform; a change to product vision / coaching philosophy / new product scope; destructive or irreversible operations (schema, migrations, deletion, credentials, security-sensitive infra); or a genuine, unresolvable principle conflict. Coach wording/rendering/UX is not a stop when derivable.
 
 ### GitHub
 
@@ -240,7 +240,7 @@ ChatGPT interprets app-test results with Dale.
 
 Only Dale resumes the held phase.
 
-(Per **Escalation Policy v2** in `docs/OWNER_CHECKIN_RULES.md`, the loop stops for the owner only on one of the **five reserved categories** — live app testing (owner-initiated), product-scope, schema/storage, destructive operations, or a genuine principle conflict with no precedent. Everything derivable from the Atlas docs/principles is PM authority and does not stop the loop.)
+(Per **Escalation Policy v3** in `docs/OWNER_CHECKIN_RULES.md`, the loop stops for the owner only on one of the **four reserved categories** — a live test only the owner can perform; a change to product vision / coaching philosophy / new product scope; destructive or irreversible operations (schema, migrations, deletion, credentials, security-sensitive infra); or a genuine, unresolvable principle conflict. Everything derivable from the Atlas docs/principles — including coach wording/rendering/UX — is PM authority and does not stop the loop.)
 
 ## Compact Atlas Prompt Mode
 

@@ -79,7 +79,7 @@ Maps the surface of a change to who must act (the primary risk label records thi
 
 - **Tier 1 — autonomous.** Derivable, no reserved-category trigger; all signals green. Builder decides, merges, continues. (`auto-safe`.)
 - **Tier 2 — Codex-review gated.** A genuinely non-derivable, non-reserved fork: route to the Codex / Atlas Decision Desk for a verdict, then proceed (`docs/DECISION_ROUTING.md`). Does not reach the owner.
-- **Tier 3 — owner approval.** One of the five reserved categories (live app testing, product-scope/new trust contract, schema/storage, destructive ops, genuine principle conflict). Stop and escalate. (`owner-live-test` / `owner-decision`.)
+- **Tier 3 — owner approval.** One of the **four reserved categories** (Escalation Policy v3, `docs/OWNER_CHECKIN_RULES.md`): (1) a live test only the owner can perform; (2) a change to product vision, coaching philosophy, or new product scope (incl. app/runtime model selection); (3) destructive or irreversible operations (schema, migrations, deletion, credentials, security-sensitive infra); (4) a genuine, unresolvable principle conflict. Stop and escalate. (`owner-live-test` / `owner-decision`.) **Coach wording / rendering / frontend / UX is NOT Tier 3 when derivable** — it is Tier 1 PM authority.
 
 ### Decision Kernel response format
 
