@@ -95,7 +95,7 @@ This policy governs *who decides*, not data safety. The "Absolute data-safety" s
 
 ## Decision criteria and disposition
 
-> Read through **Escalation Policy v2** above: a criterion's disposition is **owner** only when it maps to one of the five reserved categories; otherwise a derivable call is **PM authority** (Claude decides) and a genuine non-derivable fork is **Codex**.
+> Read through **Escalation Policy v3** above (authoritative; v2 retained as superseded): a criterion's disposition is **owner** only when it maps to one of the **four** reserved categories; otherwise a derivable call is **PM authority** (Claude decides) — including coach wording/rendering/UX — and a genuine non-derivable fork is **Codex**.
 
 For each, "Codex decides" means Codex answers the panel and Claude proceeds; "escalate-to-owner" means Codex routes that specific item to the owner.
 

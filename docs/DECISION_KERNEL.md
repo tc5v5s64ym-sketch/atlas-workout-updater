@@ -115,7 +115,7 @@ Those five are also the boundary where the owner or a decision desk may be invol
 
 ## Operational completeness
 
-With this kernel in place, **Atlas automation is considered operationally complete.** The decision machinery — PM authority, the five reserved categories, the Codex and Atlas Decision Desks, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine autonomous execution.
+With this kernel in place, **Atlas automation is considered operationally complete.** The decision machinery — PM authority, the four reserved categories (Escalation Policy v3, `docs/OWNER_CHECKIN_RULES.md`), the Codex and Atlas Decision Desks, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine autonomous execution.
 
 **Future process changes require evidence of an actual bottleneck** — a concrete, observed friction in the loop, not a hypothetical refinement. Absent that evidence, default effort returns to **building Atlas** (the product), not refining the workflow.
 
