@@ -1744,7 +1744,16 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     const exercises = applyReadinessDose(structureSession(fbsCapped, structureOpts));
 
     // AC1: only mention patterns that actually have exercises in today's session.
-    const scheduledFresh = freshPatterns.filter(p => session.coveredPatterns.has(p.pattern));
+    // Recompute coverage from the FINAL exercise list (after structureSession's
+    // role-order + density cap + lower-body cap + dose). buildIntentSession's
+    // coveredPatterns is computed BEFORE structuring, so a capped/dropped accessory
+    // could otherwise leave a coarse pattern in the brief with no matching exercise.
+    const finalCoveredPatterns = new Set(
+      exercises
+        .map(ex => (allRecs.find(r => r.liftCode === ex.lift_code) || {}).pattern)
+        .filter(Boolean)
+    );
+    const scheduledFresh = freshPatterns.filter(p => finalCoveredPatterns.has(p.pattern));
     const why = scheduledFresh.map(p =>
       `${PLABEL[p.pattern]} has not been trained in ${p.daysSince} days — rotation overdue`
     );

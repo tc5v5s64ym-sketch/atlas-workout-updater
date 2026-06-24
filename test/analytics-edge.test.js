@@ -826,6 +826,56 @@ test('scoreIntents: consistent training with genuinely neglected LOADED patterns
   assert.ok(/Lower body|Hinge/.test(why), `the neglected loaded pattern must be the one surfaced; got "${why}"`);
 });
 
+// ── fix_blind_spots brief ↔ exercise consistency (coverage from the FINAL list) ──
+// The brief must only name patterns that survive structureSession (role-order +
+// density cap + lower-body cap + dose). Coverage is recomputed from the final
+// exercise list, not buildIntentSession's pre-structure coveredPatterns, so a
+// capped/dropped accessory can never leave a coarse pattern in the brief with no
+// matching exercise.
+test('scoreIntents: every pattern named in the fix_blind_spots brief has a matching exercise in the final session', () => {
+  const mk = (ex, mg, code, ws, start, step) => ws.map((w, i) => {
+    const d = new Date(start); d.setDate(d.getDate() + i * step);
+    return [d.toISOString().split('T')[0], `${ex}-${i}`, ex, ex, mg, code, '1', String(w), '8', '2', '', ''];
+  });
+  // Same consistent-training contrast as the credit test: pressing + pulling trained
+  // right up to today; Back Squat (lower) + RDL (hinge) neglected → fresh blind spots.
+  const rows = [
+    ...mk('Bench Press', 'Chest', 'BEN01', [185, 188, 190, 192, 195, 198, 200, 202], '2026-04-20', 2),
+    ...mk('Barbell Row', 'Back', 'BOR01', [155, 158, 160, 162, 165, 168, 170, 172], '2026-04-21', 2),
+    ...mk('Back Squat', 'Quads', 'SQT01', [225, 230, 235], '2026-04-01', 5),
+    ...mk('Romanian Deadlift', 'Hamstrings', 'RDL01', [185, 190, 195], '2026-04-02', 5),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-06' });
+  const fbs = result.intents.find(i => i.id === 'fix_blind_spots');
+  assert.ok(fbs, 'fix_blind_spots intent must exist');
+
+  // Coarse patterns present in the FINAL prescribed exercises.
+  const PLABEL = { lower: 'Lower body', push: 'Pressing', pull: 'Pulling', hinge: 'Hinge', core: 'Core' };
+  const labelToPattern = Object.fromEntries(Object.entries(PLABEL).map(([k, v]) => [v, k]));
+
+  // Every pattern the brief surfaces (data_points / focus) must be schedulable: it
+  // had at least one exercise that made it into the final session. We check via the
+  // reason_codes (pattern_overdue) ↔ a prescribed exercise of that coarse pattern.
+  const overduePatterns = (fbs.reason_codes || [])
+    .filter(c => /_overdue$/.test(c))
+    .map(c => c.replace(/_overdue$/, ''));
+  // A non-empty brief is required for this fixture to be meaningful.
+  assert.ok(overduePatterns.length > 0, `fixture must surface overdue patterns; got [${fbs.reason_codes.join(', ')}]`);
+
+  // For each surfaced pattern, the final session must actually contain an exercise of
+  // that pattern (the lower/hinge mains for this fixture). We assert by code identity.
+  const codeToPattern = { SQT01: 'lower', RDL01: 'hinge', BEN01: 'push', BOR01: 'pull' };
+  const finalPatterns = new Set((fbs.exercises || []).map(ex => codeToPattern[ex.lift_code]).filter(Boolean));
+  for (const p of overduePatterns) {
+    assert.ok(finalPatterns.has(p),
+      `brief names ${p} as overdue but no ${p} exercise survived into the final session [${[...finalPatterns].join(', ')}]`);
+  }
+  // Sanity: the data_point labels are all real patterns (no stale label).
+  for (const dp of (fbs.data_points || [])) {
+    assert.ok(labelToPattern[dp.label], `data_point label "${dp.label}" must be a known pattern`);
+  }
+});
+
 // ── e1RM trend uses each session's BEST set, not its first (warm-up) set ───────
 // For lifters who log warm-ups first, the per-session FIRST set is a priming set;
 // computing the trend from it masks real working-set progression.
