@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine, templatedRecoveryAdvisoryLine } = require('../public/coachVoiceTemplates');
+const { liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine, templatedRecoveryAdvisoryLine, governorOverridesProgressionInvite, templatedGovernorHoldLine } = require('../public/coachVoiceTemplates');
 
 /* ===== liftLabel ===== */
 
@@ -270,4 +270,49 @@ test('app.js attaches a bare set sequence to the first unlogged planned lift', (
   assert.match(src, /function firstUnloggedPlannedLift\(\)/, 'helper that finds the current planned lift');
   assert.match(src, /activeExercise:\s*activeExercise \|\| firstUnloggedPlannedLift\(\)/,
     'parse context falls back to the first unlogged planned lift when no lift is active');
+});
+
+/* ===== governor grade fallback voice (PR 484 — LLM-down stimulus_grade voicing) ===== */
+
+test('governorOverridesProgressionInvite: true when the governor holds / backs off / flags fatigue', () => {
+  assert.equal(governorOverridesProgressionInvite({ progression_verdict: 'hold', fatigue_signal: 'none' }), true);
+  assert.equal(governorOverridesProgressionInvite({ progression_verdict: 'back_off', fatigue_signal: 'none' }), true);
+  assert.equal(governorOverridesProgressionInvite({ progression_verdict: '+load', fatigue_signal: 'elevated' }), true);
+  assert.equal(governorOverridesProgressionInvite({ progression_verdict: '+reps', fatigue_signal: 'high' }), true);
+});
+
+test('governorOverridesProgressionInvite: false when the governor invites progression with no fatigue', () => {
+  assert.equal(governorOverridesProgressionInvite({ progression_verdict: '+load', fatigue_signal: 'none' }), false);
+  assert.equal(governorOverridesProgressionInvite(null), false);
+  assert.equal(governorOverridesProgressionInvite(undefined), false);
+  assert.equal(governorOverridesProgressionInvite({}), false);
+});
+
+test('templatedGovernorHoldLine: a back_off / high-fatigue read words a firm hold (no numbers)', () => {
+  const backOff = templatedGovernorHoldLine({ profile: 'strength', progression_verdict: 'back_off', fatigue_signal: 'none' });
+  const highFatigue = templatedGovernorHoldLine({ profile: 'hypertrophy', progression_verdict: 'hold', fatigue_signal: 'high' });
+  for (const line of [backOff, highFatigue]) {
+    assert.equal(typeof line, 'string');
+    assert.match(line, /back off|hold/i);
+    assert.doesNotMatch(line, /\d/, 'the governor hold line must never state a number');
+  }
+});
+
+test('templatedGovernorHoldLine: general_fitness hold names the goal is met, never celebrates chasing more', () => {
+  const line = templatedGovernorHoldLine({ profile: 'general_fitness', progression_verdict: 'hold', fatigue_signal: 'elevated' });
+  assert.match(line, /goal/i);
+  assert.match(line, /hold/i);
+  assert.doesNotMatch(line, /\d/);
+});
+
+test('templatedGovernorHoldLine: default hold says repeat, not jump (no numbers)', () => {
+  const line = templatedGovernorHoldLine({ profile: 'strength', progression_verdict: 'hold', fatigue_signal: 'none' });
+  assert.match(line, /hold/i);
+  assert.match(line, /repeat|not a jump/i);
+  assert.doesNotMatch(line, /\d/);
+});
+
+test('templatedGovernorHoldLine: null when the governor does not override (progression invited, no fatigue)', () => {
+  assert.equal(templatedGovernorHoldLine({ profile: 'strength', progression_verdict: '+load', fatigue_signal: 'none' }), null);
+  assert.equal(templatedGovernorHoldLine(null), null);
 });

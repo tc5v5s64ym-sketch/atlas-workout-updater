@@ -2802,7 +2802,7 @@ test('in-workout note: handleSetLogged anchors the recommendation on the just-lo
 
 test('in-workout note: coachOpener leads with the engine effort verdict, de-templated (PR4)', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const opener = cc.slice(cc.indexOf('function coachOpener('), cc.indexOf('function coachOpener(') + 900);
+  const opener = cc.slice(cc.indexOf('function coachOpener('), cc.indexOf('function coachOpener(') + 1700);
   assert.match(opener, /effort_verdict/, 'opener must consult the verdict');
   assert.match(opener, /pickVerdictLine\(verdict\.level\)/, 'opener must route the verdict through the de-templating picker');
 
@@ -2821,6 +2821,23 @@ test('in-workout note: coachOpener leads with the engine effort verdict, de-temp
   assert.match(block, /add real weight|too light|under-effort/i, 'far_easy → add-weight language, not praise');
   assert.match(block, /add load or reps/i, 'easy → room to add load or reps');
   assert.match(cc, /verdictRotation/, 'must rotate phrasings per level to de-template within a session');
+});
+
+// PR 484 (LLM-down stimulus_grade voicing): the offline opener must defer to the
+// profile-aware governor grade so an `easy`/`far_easy` raw verdict never invites
+// progression the governor is holding.
+test('coachOpener: defers to the governor grade to suppress a held progression invite (PR 484)', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('function coachOpener(');
+  const opener = cc.slice(start, start + 1700);
+  // The opener takes the grade and only overrides on the progression-invite levels.
+  assert.match(opener, /function coachOpener\(todaySets, rec, grade\)/, 'opener must accept the set_grade');
+  assert.match(opener, /verdict\.level === 'easy' \|\| verdict\.level === 'far_easy'/, 'override gated to progression-invite verdicts only');
+  assert.match(opener, /governorOverridesProgressionInvite\(grade\)/, 'opener must consult the governor override predicate');
+  assert.match(opener, /templatedGovernorHoldLine\(grade\)/, 'opener must word the governor hold line when overriding');
+  // It must be fed the grade from the server response (the LLM-down path carries set_grade).
+  assert.match(cc, /coachOpener\(facts\.todaySets \|\| \[\], facts\.rec, data && data\.set_grade\)/,
+    'the fallback call site must pass data.set_grade into the opener');
 });
 
 // De-templating guarantee (re-implemented rotation, mirrors pickVerdictLine):
@@ -4868,8 +4885,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v39/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v38\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v40/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v39\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
