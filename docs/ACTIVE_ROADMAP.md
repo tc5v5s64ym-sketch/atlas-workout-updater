@@ -401,7 +401,7 @@ After Steps 383-384 are merged, pause for owner review and app-test before front
 
 ### P3 — Coach Brevity Pass
 
-**Status:** not started. Responses should prefer Conclusion first, Reason second, Details only when asked (e.g. "Hold 116. You're right on target." over "Trend is flat over the last 8 sessions…").
+**Status:** ✅ **shipped.** `buildCoachSystemPrompt` word limit ~120→~80; opening-line rule rewritten to CONCLUSION FIRST with a bad/good example pair ("Hold 116 — you're right on target." not "Trend is flat over the last 8 sessions…"); preamble anti-pattern added. Same conclusion-first instruction propagated to `buildPlanSystemPrompt` and `buildVerdictReactionSystemPrompt` for consistency.
 
 ### P4 — Session-State Stress Testing
 
@@ -421,7 +421,7 @@ loop, or any LLM/prompt.
 
 ### Roadmap Step 386 — PR-O1: onboarding state engine
 
-**Status:** in progress (this PR).
+**Status:** ✅ complete (merged to main).
 
 **Type:** Correctness (engine, pure). **Risk level:** Low. **Recommended model:** Opus 4.8.
 
@@ -443,7 +443,7 @@ no schema, no route, no `index.js`/`public/app.js` edit.
 
 ### Roadmap Step 387 — PR-O2: onboarding session-template builder
 
-**Status:** in progress (this PR) — owner released the hold (2026-06-21, "Go O2").
+**Status:** ✅ complete (merged to main, owner released hold 2026-06-21 "Go O2").
 
 **Type:** Correctness (engine, pure). **Risk level:** Low–Medium. **Recommended model:** Opus 4.8.
 
@@ -486,9 +486,9 @@ Promoted by owner decision (2026-06-22) as the build series implementing the Tra
 - ✅ **PR 481 — Stimulus Governor Fixtures** — shipped: pure `services/stimulusGovernorRules.js` (`governorRuleFor` + frozen vocabularies) pinning the §5 profile×modality RIR/effort rules.
 - ✅ **PR 482 — Profile-aware Stimulus Governor** — shipped (pure + unwired): `services/stimulusGovernor.js::gradeStimulus` grades a logged effort by profile + modality, emitting `progression_verdict` + `fatigue_signal` per the PR 481 rules. Not wired into any live path.
 - ✅ **PR 483 — Live Fatigue Router expansion** — shipped (pure + unwired): `services/fatigueRouter.js::routeNextMove` reroutes the next move from logged fatigue (block_pr / reduce_intensity / reduce_density / promote_alternative / make_optional / reduce / keep). Not wired into the live path.
-- ◐ **PR 484 — Coach Voice Renderer** — next: words the new engine facts. **`[trust-critical]` coach-surface → owner-gated** (confirm scope before editing `services/coach.js`).
+- ✅ **PR 484 — Coach Voice Renderer** — **fully shipped (all 7 slices)**. Words new engine facts; LLM never invents numbers. Slices 1/1b/2/3/4/5/6/7 all merged. Slice 7 (2026-06-24): `coachOpener` now defers to `stimulus_grade` governor verdict on LLM-down path — suppresses progression-invite language when `progression_verdict` is hold/back_off or `fatigue_signal` is high; general_fitness failure path cues clean reps instead of celebrating grinding. See `BACKLOG.md` for deferred items (objective-scorer voicing future slice; hard-verdict praise line polish).
 - ✅ **PR 485 — Recovery / Deload Engine** — shipped (engine-only selection layer): `services/recoveryDeloadSelection.js::assessRecoveryDeload` (SPE §10 ladder + convergence triggers + profile-aware style descriptors; no prescription numbers, unwired).
-- **Remaining (both owner-gated, autonomous build paused here):** PR 484 — Coach Voice Renderer (coach-surface) · PR 486 — Multi-modality logging (owner-gated parser + schema migration). The pure deterministic engine layer (478–483, 485) is complete; the rest crosses trust-sensitive lines and awaits owner direction.
+- **Remaining (owner-gated, autonomous build paused here):** PR 486 — Multi-modality logging (owner-gated parser + schema migration; slices 1-5 + 2b + audit fixes shipped). The pure deterministic engine layer (477–485) is complete.
 
 ### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
 

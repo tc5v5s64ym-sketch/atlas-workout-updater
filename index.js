@@ -1,5 +1,4 @@
-const dotenv = require('dotenv');
-dotenv.config();
+try { require('dotenv').config(); } catch {}
 
 const express = require('express');
 const fs = require('fs');
