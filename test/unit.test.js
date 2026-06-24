@@ -2551,6 +2551,16 @@ test('previewTestRows identifies test session IDs and test notes', () => {
   assert.equal(preview.effort_candidates.length, 0);
 });
 
+test('previewTestRows matches session-20YY ids beyond 2026 (no year hardcode)', () => {
+  const rows = [
+    ['2027-01-01', 'session-2027-01-01', 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', ''],
+    ['2030-06-01', 'session-2030-06-01', 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', ''],
+    ['2026-05-01', 'real-20260501-PM-01', 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', ''],
+  ];
+  const preview = previewTestRows(rows, []);
+  assert.equal(preview.log_candidates.length, 2);
+});
+
 test('detectStalls flags lifts with no weight progression over minSessions', () => {
   const rows = [
     ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
