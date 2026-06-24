@@ -1470,9 +1470,6 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
 // { message: string, history?: [{role,text}], context?: { current_preview } }.
 // When Gemini is unconfigured or fails, returns message:null so the client shows
 // a deterministic fallback — the chat is never blocked by an LLM outage.
-// Engine target for a lift name, used by the LLM-down chat fallback. Resolves the
-// lift code from the name and reads the same recommendNextSet the "Next" card uses,
-// so a deterministic answer reports the exact numbers the engine already owns.
 // True when the chat client context carries an active session (a previewed lift or a
 // planned lift). Used to gate the engine-fill Sheets read so it only happens during a
 // real session, never on a bare-shorthand message typed with no active workout.
@@ -1482,6 +1479,9 @@ function hasActiveSessionContext(ctx) {
     || (Array.isArray(c.current_plan) && c.current_plan.length > 0);
 }
 
+// Engine target for a lift name, used by the LLM-down chat fallback. Resolves the
+// lift code from the name and reads the same recommendNextSet the "Next" card uses,
+// so a deterministic answer reports the exact numbers the engine already owns.
 function recommendTargetForLift(liftName, logRows) {
   const code = generateLiftCode(liftName);
   if (!code) return null;
