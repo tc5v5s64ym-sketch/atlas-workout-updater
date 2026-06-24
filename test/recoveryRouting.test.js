@@ -20,6 +20,24 @@ test('isTirednessExpression: detects genuine self-reported fatigue', () => {
   }
 });
 
+test('isTirednessExpression: detects muscle-specific fatigue slang (P4 FRAMING gap)', () => {
+  for (const m of [
+    'quads are fried', 'hamstrings are toast', 'chest is cooked', 'glutes are wrecked',
+    'calves are toast', 'lats are fried', 'delts are cooked', 'core is toast', 'triceps are fried',
+  ]) {
+    assert.equal(isTirednessExpression(m), true, `should detect muscle-specific fatigue: ${m}`);
+  }
+});
+
+test('isTirednessExpression: a muscle name without fatigue slang is not a fatigue report', () => {
+  for (const m of [
+    'quads day tomorrow', 'training chest today', 'add a glute exercise', 'what hits the lats?',
+    'dead bug for core',
+  ]) {
+    assert.equal(isTirednessExpression(m), false, `muscle mention alone should NOT detect: ${m}`);
+  }
+});
+
 test('isTirednessExpression: ignores impatience and unrelated uses (no over-capture)', () => {
   for (const m of [
     'tired of waiting for a rack', "I'm sick and tired of these light weights", 'beat my PR today',
