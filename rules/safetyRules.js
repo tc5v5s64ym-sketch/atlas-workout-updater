@@ -9,6 +9,7 @@
 // weight, reps, rir, notes }) with numeric weight/reps/rir (or null).
 
 const { decision } = require('./ruleTypes');
+const { checkE1rmJump } = require('./validationRules');
 
 function num(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -145,17 +146,49 @@ function rirDrift(historyRows, liftCode, config = {}) {
   });
 }
 
+// ── e1rm_jump: a new set's estimated 1RM jumping implausibly vs last session ──
+
+// Best (max) e1RM across a set of normalized rows. null when none computable.
+function bestE1rm(rows) {
+  let best = null;
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue;
+    const v = e1rm(r.weight, r.reps);
+    if (v !== null && (best === null || v > best)) best = v;
+  }
+  return best;
+}
+
+// Best e1RM the lift reached in its most recent PRIOR session (sessions whose
+// id appears in excludeSessionIds — i.e. the one being previewed — are skipped
+// so a set never compares against itself). null when there is no prior session.
+function previousSessionBestE1rm(historyRows, liftCode, excludeSessionIds) {
+  const code = String(liftCode || '').trim().toUpperCase();
+  const rows = historyRows.filter(r =>
+    r && typeof r === 'object' && String(r.lift_code || '').toUpperCase() === code);
+  const sessions = groupBySession(rows).filter(s => !excludeSessionIds.has(s.session_id));
+  if (!sessions.length) return null;
+  return bestE1rm(sessions[sessions.length - 1].rows);
+}
+
 // ── Orchestrator: evaluate all session-level safety rules for a preview ───────
 
 // newRows: the rows about to be written (normalized objects).
 // workoutNotes: top-level notes string, if any.
+// historyRows: the lift's prior logged rows (normalized objects), optional. When
+//   provided, the history-dependent guards run per distinct lift in newRows:
+//   rirDrift (RIR declining at the same load) and the e1RM typo guard (a new set's
+//   estimated 1RM jumping >15% above the lift's last-session best). Omitting it (or
+//   passing []) preserves the original behavior — only the row-local checks run — so
+//   existing two-arg callers are unaffected.
 // Returns an array of decision objects (possibly empty), ready to surface as
 // rule_flags in a preview response.
 // Degrades safely on bad input. Malformed rows coerce to an empty array, but the
 // checks still run: painFlag reads top-level workoutNotes, so a notes-only session
 // (no rows) must still surface a pain warning. Each check tolerates empty rows.
-function evaluateSessionSafety(newRows, workoutNotes = '') {
+function evaluateSessionSafety(newRows, workoutNotes = '', historyRows = []) {
   const rows = Array.isArray(newRows) ? newRows : [];
+  const history = Array.isArray(historyRows) ? historyRows : [];
   const flags = [];
   const checks = [
     rirCaution(rows),
@@ -165,7 +198,32 @@ function evaluateSessionSafety(newRows, workoutNotes = '') {
   for (const f of checks) {
     if (f) flags.push(f);
   }
+
+  if (history.length) {
+    const codes = [...new Set(rows
+      .map(r => (r && typeof r === 'object' ? String(r.lift_code || '').toUpperCase() : ''))
+      .filter(Boolean))];
+    const previewSessionIds = new Set(rows.map(r => r && r.session_id).filter(Boolean));
+    for (const code of codes) {
+      const drift = rirDrift(history, code);
+      if (drift) flags.push(drift);
+
+      const liftRows = rows.filter(r => String(r.lift_code || '').toUpperCase() === code);
+      const jump = checkE1rmJump(bestE1rm(liftRows), previousSessionBestE1rm(history, code, previewSessionIds));
+      if (jump) {
+        flags.push(decision({
+          decision: 'caution',
+          rule_id: 'e1rm_jump',
+          severity: 'warning',
+          reasoning: jump.warning,
+          criterion_progress: `e1RM jump: +${(jump.pct * 100).toFixed(1)}%`,
+          lift_code: code,
+        }));
+      }
+    }
+  }
+
   return flags;
 }
 
-module.exports = { rirCaution, junkRepGuard, painFlag, rirDrift, evaluateSessionSafety, groupBySession, e1rm };
+module.exports = { rirCaution, junkRepGuard, painFlag, rirDrift, evaluateSessionSafety, groupBySession, e1rm, bestE1rm, previousSessionBestE1rm };

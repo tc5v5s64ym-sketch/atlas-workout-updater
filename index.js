@@ -3344,6 +3344,17 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   if (testMode) {
+    // ME-13: history-aware safety guards (rirDrift + the e1RM typo guard) run on
+    // the dry-run preview only. They need the lift's logged history, and surfacing
+    // them before the owner approves is exactly where a fatigue-drift / mistyped-
+    // weight caution is useful. Best-effort: a history read failure must never block
+    // the preview — the row-local ruleFlags computed above still stand. The live-write
+    // path is intentionally left untouched (no extra Sheets read on the write hot path).
+    try {
+      const historyRows = (await getSheetRows(logSheetName)).map(normalizeAnalyticsLogRow);
+      ruleFlags = evaluateSessionSafety(enrichedRowObjects, payload.notes || '', historyRows);
+    } catch { /* keep the row-local ruleFlags already computed above */ }
+
     // Substitution-intent classification (read-only). Best-effort: a failure here
     // must never block a dry-run preview, and it never changes the no-write proof.
     let substitutions = [];

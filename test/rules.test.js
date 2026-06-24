@@ -196,6 +196,50 @@ test('evaluateSessionSafety returns empty for a clean session', () => {
   assert.deepEqual(flags, []);
 });
 
+// ME-13: the history-dependent guards only fire when history is supplied.
+test('evaluateSessionSafety surfaces e1rm_jump when history is supplied', () => {
+  const history = [
+    { session_id: 'S1', date_clean: '2026-05-01', lift_code: 'BP01', weight: 185, reps: 5, rir: 2 },
+  ];
+  const newRows = [
+    { session_id: 'NEW', date_clean: '2026-05-08', lift_code: 'BP01', weight: 250, reps: 5, rir: 2 },
+  ];
+  const flags = evaluateSessionSafety(newRows, '', history);
+  const jump = flags.find(f => f.rule_id === 'e1rm_jump');
+  assert.ok(jump, 'e1rm_jump flag should be present');
+  assert.equal(jump.lift_code, 'BP01');
+  assert.equal(jump.severity, 'warning');
+  // Same input without history must NOT fabricate the history-dependent flag.
+  assert.deepEqual(evaluateSessionSafety(newRows, ''), []);
+});
+
+test('evaluateSessionSafety surfaces rir_drift when history is supplied', () => {
+  const history = [
+    { session_id: 'S1', date_clean: '2026-05-01', lift_code: 'BP01', weight: 185, reps: 5, rir: 3 },
+    { session_id: 'S2', date_clean: '2026-05-05', lift_code: 'BP01', weight: 185, reps: 5, rir: 1 },
+  ];
+  const newRows = [
+    { session_id: 'NEW', date_clean: '2026-05-08', lift_code: 'BP01', weight: 185, reps: 5, rir: 2 },
+  ];
+  const ids = evaluateSessionSafety(newRows, '', history).map(f => f.rule_id);
+  assert.ok(ids.includes('rir_drift'), 'rir_drift flag should be present');
+  // No implausible e1RM jump here (same load), so the typo guard must stay quiet.
+  assert.ok(!ids.includes('e1rm_jump'));
+});
+
+test('evaluateSessionSafety never compares a previewed set against its own session', () => {
+  // History already contains the previewed session id — it must be excluded so a
+  // big set never flags itself as a jump vs. itself.
+  const sameSession = [
+    { session_id: 'NEW', date_clean: '2026-05-08', lift_code: 'BP01', weight: 250, reps: 5, rir: 2 },
+  ];
+  const newRows = [
+    { session_id: 'NEW', date_clean: '2026-05-08', lift_code: 'BP01', weight: 250, reps: 5, rir: 2 },
+  ];
+  const ids = evaluateSessionSafety(newRows, '', sameSession).map(f => f.rule_id);
+  assert.ok(!ids.includes('e1rm_jump'));
+});
+
 /* ===== progressionRules: holdUntilClean ===== */
 
 function bpSession(sessionId, date, sets) {

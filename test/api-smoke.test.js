@@ -1722,6 +1722,35 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: log-workout preview surfaces the e1rm typo guard from history (ME-13, no write)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // BEN01 history in logRows tops out at 225×5 (e1RM ≈ 262.5). Logging 285×5
+  // (e1RM ≈ 332.5, +26.7%) is an implausible jump → the previously-dark
+  // checkE1rmJump guard must now surface as a non-blocking rule_flag.
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-E1RM-JUMP',
+      date: '2026-06-12',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 285, reps: 5, rir: 2, notes: 'big jump' }
+      ]
+    })
+  });
+
+  assert.equal(response.status, 200);
+  // Proof fields untouched — the preview path stays read-only.
+  assert.equal(body.data.test_mode, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.ok(Array.isArray(body.data.rule_flags), 'rule_flags should be present');
+  const jump = body.data.rule_flags.find(f => f.rule_id === 'e1rm_jump');
+  assert.ok(jump, 'e1rm_jump flag should surface in the preview');
+  assert.equal(jump.lift_code, 'BEN01');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: log-workout preview attaches substitution block for a swap (no write)', async () => {
   fakeSheetsState.appendCalls.length = 0;
   // Prescribed Back Squat (SQ01 — has history in logRows); logged Leg Press instead.
