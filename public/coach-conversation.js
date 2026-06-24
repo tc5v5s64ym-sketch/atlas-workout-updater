@@ -675,6 +675,10 @@
 
   async function typeSuggestedWorkout() {
     hideHomeEmpty();
+    // The lifter engaged Coach's Pick — only now does today's suggestion count as an
+    // active plan (so the post-log handoff / composer / next_move advisory may follow
+    // it). A merely-displayed pick must never drive those; see app.js plannedExerciseEntries.
+    if (typeof setCoachSuggestionEngaged === 'function') setCoachSuggestionEngaged(true);
     const handle = appendAtlasBubble();
     if (!handle) return;
     const { body } = handle;
@@ -1183,6 +1187,9 @@
   // tapped, so the lifter taps the box themselves when ready to type.
   async function startFreestyle() {
     hideHomeEmpty();
+    // Freestyle is an explicit "no plan" choice — clear any prior Coach's Pick
+    // engagement so logging here is never narrated as following today's suggestion.
+    if (typeof setCoachSuggestionEngaged === 'function') setCoachSuggestionEngaged(false);
     setWorkoutPlaceholder('Bench 135 10/4, 225 5/2 x3');
     const handle = appendAtlasBubble();
     if (handle) {

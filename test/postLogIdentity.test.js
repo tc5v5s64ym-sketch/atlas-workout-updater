@@ -30,12 +30,17 @@ function loadIdentityHarness() {
   const factory = new Function(`
     let activePlannedSession = null;
     let lastIntentData = null;
+    let coachSuggestionEngaged = false;
     let sessionCompleted = [];
     ${slice1}
     ${slice2}
     return {
       setActiveSession: s => { activePlannedSession = s; },
-      setIntentData: d => { lastIntentData = d; },
+      // Setting a coach-suggested plan in the harness models the ENGAGED Coach's
+      // Pick flow (the lifter tapped the pick), so engagement rides with it. A
+      // merely-displayed-but-unengaged suggestion is exercised via setEngaged(false).
+      setIntentData: d => { lastIntentData = d; coachSuggestionEngaged = !!d; },
+      setEngaged: v => { coachSuggestionEngaged = !!v; },
       logCompleted: (raw, enr) => { sessionCompleted.push(resolveCompletedIdentity(raw, enr)); },
       getCompleted: () => sessionCompleted.slice(),
       plannedExerciseOrder,
@@ -108,6 +113,20 @@ test('post-log identity: remaining queue excludes a completed lift logged under 
   const remaining = h.remainingPlannedExercises();
   assert.ok(!remaining.includes('Weighted Dip'), 'completed Weighted Dip must not remain');
   assert.deepEqual(remaining, ['Lat Pulldown', 'Incline DB Press', 'Face Pull']);
+});
+
+// 2b — the engagement gate: a DISPLAYED-but-unengaged suggestion is not a plan.
+// loadDashboard() always loads lastIntentData to render the home-screen pick, but a
+// cold direct-composer log (Coach's Pick never tapped) must see an EMPTY plan — no
+// nextPlanned / handoff / composer pre-fill. Engaging the pick turns it into a plan.
+test('coach-pick gate: lastIntentData is NOT a plan until Coach\'s Pick is engaged', () => {
+  const h = loadIdentityHarness();
+  h.setIntentData(SUGGESTED_PLAN);
+  h.setEngaged(false); // suggestion shown on the dashboard, but not engaged
+  assert.deepEqual(h.plannedExerciseOrder(), [], 'an unengaged suggestion is not an active plan');
+  assert.deepEqual(h.remainingPlannedExercises(), [], 'no next-up is offered for a cold direct-composer log');
+  h.setEngaged(true); // lifter taps Coach's Pick → now it is the plan
+  assert.equal(h.plannedExerciseOrder()[0], 'Bench Press', 'engaging the pick activates the plan');
 });
 
 // 3 — reroute must never defer the lift that was just completed.
@@ -186,6 +205,7 @@ function loadEmitHarness(catalogOptions) {
     'document', 'CustomEvent', 'setsTableBody', 'parsedRowsEditor', 'invalidatePreview',
     `let activePlannedSession = null;
      let lastIntentData = null;
+     let coachSuggestionEngaged = false;
      let sessionCompleted = [];
      let sessionLog = [];
      let pendingSubstitution = null;
@@ -193,7 +213,9 @@ function loadEmitHarness(catalogOptions) {
      function applySessionSubstitution() {}
      ${slice}
      return {
-       setIntentData: d => { lastIntentData = d; },
+       // setIntentData models the ENGAGED Coach's Pick flow (see loadIdentityHarness).
+       setIntentData: d => { lastIntentData = d; coachSuggestionEngaged = !!d; },
+       setEngaged: v => { coachSuggestionEngaged = !!v; },
        getCompleted: () => sessionCompleted.slice(),
        emitSetLogged,
      };`
