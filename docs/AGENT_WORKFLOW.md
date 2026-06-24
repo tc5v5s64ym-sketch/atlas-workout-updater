@@ -7,7 +7,7 @@ This document defines the Atlas build workflow between Dale, ChatGPT, Claude Cod
 Atlas is **not a backlog grinder**. Every autonomous loop builds toward the owner's Vision and Dream, in the Roadmap's sequence, within the Architecture's boundaries. Before **selecting, planning, or implementing any work**, read, in this order:
 
 1. **Atlas Vision** — `docs/ATLAS_PRODUCT_VISION.md` (the product **north star**)
-2. **Atlas Roadmap** — `docs/ROADMAP.md` (the **sequencing map**; the live queue is `docs/ACTIVE_ROADMAP.md`, read at #7)
+2. **Atlas Roadmap (the sequencing layer)** — `docs/ROADMAP.md` for **directional milestones only** (historical/reference per `docs/DOCS_INDEX.md`; **NOT** used to select or sequence PRs). The **live sequencing** comes from `docs/ACTIVE_ROADMAP.md` (the active queue, #7) + `BACKLOG.md` (the work queue, #8).
 3. **Atlas Architecture** — `docs/ARCHITECTURE.md` / `docs/export/atlas-architecture.html` (the **system boundary**)
 4. `CLAUDE.md`
 5. `docs/CONSTITUTION.md`
@@ -18,7 +18,7 @@ Atlas is **not a backlog grinder**. Every autonomous loop builds toward the owne
 10. `docs/OWNER_CHECKIN_RULES.md`
 11. `docs/AUTOMATION_PROTOCOL.md`
 
-**Operating rule.** The Vision is the product north star; the Roadmap is the sequencing map; the Architecture defines the system boundaries; the Backlog is the work queue. **A backlog item is valid to build only if it moves Atlas toward the Vision and respects the Architecture.** The Vision's load-bearing principles: **conversational logging · deterministic engine ownership · approve-before-write trust loop · coach restraint · depth-before-breadth training intelligence · eventual multi-user product path.**
+**Operating rule.** The Vision is the product north star; the Roadmap **layer** is the sequencing map — directional milestones live in `docs/ROADMAP.md` (reference only), and the **live sequence** is `docs/ACTIVE_ROADMAP.md` + `BACKLOG.md`; the Architecture defines the system boundaries; the Backlog is the work queue. **A backlog item is valid to build only if it moves Atlas toward the Vision and respects the Architecture.** The Vision's load-bearing principles: **conversational logging · deterministic engine ownership · approve-before-write trust loop · coach restraint · depth-before-breadth training intelligence · eventual multi-user product path.**
 
 ### Vision Alignment Check (required before every autonomous PR)
 
