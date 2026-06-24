@@ -140,7 +140,7 @@ function applyProgression({ prescription, policy, previousPerformance = {}, rece
     return result;
   }
 
-  if (!previousPerformance.completed && previousPerformance.completed === false) {
+  if (previousPerformance.completed === false) {
     result.progression = 'repeat_or_reduce';
     result.adjustment = 'missed_previous_target';
     result.reasonCodes.push(REASON_CODES.MISSED_TARGET_MAINTAIN_OR_REDUCE);
