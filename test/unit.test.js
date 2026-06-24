@@ -2270,6 +2270,11 @@ test('normalizeDate converts a numeric Excel/Sheets serial, not as a year (HI-4)
   assert.equal(normalizeDate(45000), '2023-03-15');
   assert.match(normalizeDate(45000), /^\d{4}-\d{2}-\d{2}$/);
   assert.doesNotMatch(normalizeDate(45000), /^45000/); // never the year-45000 date
+  // String serial (FORMATTED_VALUE from Sheets returns strings): must also convert
+  assert.equal(normalizeDate('45000'), '2023-03-15', 'string serial treated same as numeric');
+  assert.doesNotMatch(normalizeDate('45000'), /^45000/);
+  // Bare 4-digit year must NOT be treated as serial
+  assert.equal(normalizeDate('2026'), new Date('2026').toISOString().slice(0, 10), '4-digit year left to Date()');
 });
 
 test('parseDurationMinutes converts hh:mm:ss, mm:ss, and numeric to minutes', () => {
