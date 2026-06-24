@@ -2842,7 +2842,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     parsedLogRows = JSON.parse(formFields.log_rows_json);
   } catch (err) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-    return res.status(400).json({ error: `log_rows_json is not valid JSON: ${err.message}` });
+    return standardError(req, res, 'log_rows_json is not valid JSON', process.env.NODE_ENV === 'production' ? null : err.message, 400);
   }
 
   if (!Array.isArray(parsedLogRows)) {
@@ -2873,7 +2873,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       metricWarnings = result.warnings || [];
     } catch (error) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-      return res.status(400).json({ error: `Parsed metrics validation failed: ${error.message}` });
+      return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
     }
 
     // 3) Determine session/date
@@ -2931,7 +2931,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         }
       } catch (error) {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-        return res.status(400).json({ error: `Log rows validation/enrichment failed: ${error.message}` });
+        return standardError(req, res, 'Log rows validation/enrichment failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
       }
     }
 
