@@ -2496,6 +2496,18 @@ test('previewTestRows identifies test session IDs and test notes', () => {
   assert.equal(preview.effort_candidates.length, 0);
 });
 
+test('previewTestRows: session-20XX pattern matches any year, not just 2026', () => {
+  const mkRow = (sessionId) => ['2026-01-01', sessionId, 'Squat', 'Squat', 'Legs', 'SQ', '1', '135', '5', '3', ''];
+  const rows = [
+    mkRow('session-2026'), // old format — must still match
+    mkRow('session-2027'), // next year — must match after fix
+    mkRow('session-2099'), // future year — must match
+    mkRow('normal-session'), // plain ID — must NOT match
+  ];
+  const preview = previewTestRows(rows, []);
+  assert.equal(preview.log_candidates.length, 3, 'session-2026, -2027, -2099 all caught; plain session not');
+});
+
 test('detectStalls flags lifts with no weight progression over minSessions', () => {
   const rows = [
     ['2026-04-01', 'S1', 'Bench Press', 'Bench Press', 'Chest', 'BP', '1', '185', '5', '1', ''],
