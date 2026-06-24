@@ -139,6 +139,12 @@ test('templatedNextMoveAdvisoryLine: names the next exercise when present', () =
   assert.match(line, /Weighted Dips/);
 });
 
+test('templatedNextMoveAdvisoryLine: promote_alternative reads cleanly with a named lift (no "instead of on")', () => {
+  const line = templatedNextMoveAdvisoryLine({ action: 'promote_alternative', next_exercise: 'Incline Press' });
+  assert.match(line, /instead of Incline Press\./);
+  assert.doesNotMatch(line, /instead of on/);
+});
+
 test('templatedNextMoveAdvisoryLine: missing next_exercise still reads cleanly', () => {
   const line = templatedNextMoveAdvisoryLine({ action: 'make_optional' });
   assert.match(line, /the next move/);

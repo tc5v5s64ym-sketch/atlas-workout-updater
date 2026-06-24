@@ -70,7 +70,7 @@
     switch (adv.action) {
       case 'reduce':              return `Heads up — ease off${onNext} next: trim a set or take a little off the bar.`;
       case 'make_optional':       return `Heads up — ${nextUp} is optional today; skip it if you're cooked.`;
-      case 'promote_alternative': return `Heads up — pull a rested or antagonist move forward next instead of${onNext || ' the same muscle'}.`;
+      case 'promote_alternative': return `Heads up — pull a rested or antagonist move forward next instead of ${next || 'the same muscle'}.`;
       case 'block_pr':            return `Heads up — no PR attempts on the next lift until you've recovered.`;
       case 'reduce_intensity':    return `Heads up — keep${onNext || ' the next round'} easy: lower the zone or cut it short.`;
       case 'reduce_density':      return `Heads up — cut the rounds or density on ${nextUp}.`;
