@@ -6,7 +6,7 @@ const {
   validateLogRowBounds, validateLogRowsBounds, checkBound, checkE1rmJump, BOUNDS
 } = require('../rules/validationRules');
 const {
-  rirCaution, junkRepGuard, painFlag, rirDrift, evaluateSessionSafety, groupBySession
+  rirCaution, junkRepGuard, painFlag, rirDrift, e1rmJumpGuard, evaluateSessionSafety, groupBySession
 } = require('../rules/safetyRules');
 const { holdUntilClean, isLowerBodyGroup } = require('../rules/progressionRules');
 
@@ -194,6 +194,35 @@ test('evaluateSessionSafety returns empty for a clean session', () => {
     'good day'
   );
   assert.deepEqual(flags, []);
+});
+
+test('evaluateSessionSafety wires rirDrift when historyRows show declining RIR (ME-13)', () => {
+  // Three sessions of BP01 at 225: RIR declining 3 → 2 → 1
+  const historyRows = [
+    { session_id: 'S1', lift_code: 'BP01', weight: 225, reps: 5, rir: 3 },
+    { session_id: 'S2', lift_code: 'BP01', weight: 225, reps: 5, rir: 2 },
+    { session_id: 'S3', lift_code: 'BP01', weight: 225, reps: 5, rir: 1 },
+  ];
+  const newRows = [{ lift_code: 'BP01', weight: 225, reps: 5, rir: 2, notes: '' }];
+  const flags = evaluateSessionSafety(newRows, '', historyRows);
+  assert.ok(flags.some(f => f.rule_id === 'rir_drift'), 'rirDrift now fires through evaluateSessionSafety');
+});
+
+test('e1rmJumpGuard fires when new e1RM exceeds 15% of previous best (ME-13)', () => {
+  const history = [{ lift_code: 'SQ01', weight: 225, reps: 5, rir: 2 }]; // e1rm ≈ 262.5
+  const newRows  = [{ lift_code: 'SQ01', weight: 315, reps: 5, rir: 2 }]; // e1rm ≈ 367.5 (+40%)
+  const flags = e1rmJumpGuard(newRows, history);
+  assert.equal(flags.length, 1);
+  assert.equal(flags[0].rule_id, 'e1rm_jump');
+  assert.equal(flags[0].severity, 'warning');
+  assert.ok(flags[0].lift_code === 'SQ01');
+});
+
+test('e1rmJumpGuard is quiet when jump is within 15% or history is empty (ME-13)', () => {
+  const history = [{ lift_code: 'SQ01', weight: 225, reps: 5, rir: 2 }];
+  const smallJump = [{ lift_code: 'SQ01', weight: 235, reps: 5, rir: 2 }]; // <15%
+  assert.deepEqual(e1rmJumpGuard(smallJump, history), [], 'small jump is quiet');
+  assert.deepEqual(e1rmJumpGuard([{ lift_code: 'SQ01', weight: 315, reps: 5 }], []), [], 'no history → no flag');
 });
 
 /* ===== progressionRules: holdUntilClean ===== */

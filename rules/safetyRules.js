@@ -9,6 +9,7 @@
 // weight, reps, rir, notes }) with numeric weight/reps/rir (or null).
 
 const { decision } = require('./ruleTypes');
+const { checkE1rmJump } = require('./validationRules');
 
 function num(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -145,27 +146,68 @@ function rirDrift(historyRows, liftCode, config = {}) {
   });
 }
 
+// Wraps checkE1rmJump (from validationRules) as a decision-shaped flag.
+// Computes new vs. previous best e1RM per unique lift code.
+// historyRows: analytics-normalized rows from Log_Cleaned (prior sessions only).
+function e1rmJumpGuard(newRows, historyRows) {
+  if (!Array.isArray(newRows) || !newRows.length) return [];
+  const history = Array.isArray(historyRows) ? historyRows : [];
+  const liftCodes = [...new Set(newRows.map(r => r && String(r.lift_code || '').toUpperCase()).filter(Boolean))];
+  const flags = [];
+  for (const lc of liftCodes) {
+    const newBest = newRows
+      .filter(r => r && String(r.lift_code || '').toUpperCase() === lc)
+      .reduce((max, r) => Math.max(max, e1rm(num(r.weight), num(r.reps)) || 0), 0);
+    if (!(newBest > 0)) continue;
+    const prevBest = history
+      .filter(r => r && String(r.lift_code || '').toUpperCase() === lc)
+      .reduce((max, r) => Math.max(max, e1rm(num(r.weight), num(r.reps)) || 0), 0);
+    if (!(prevBest > 0)) continue;
+    const jump = checkE1rmJump(newBest, prevBest);
+    if (jump) {
+      flags.push(decision({
+        decision: 'caution',
+        rule_id: 'e1rm_jump',
+        severity: 'warning',
+        reasoning: jump.warning,
+        criterion_progress: `e1RM jump: ${(jump.pct * 100).toFixed(1)}%`,
+        lift_code: lc,
+      }));
+    }
+  }
+  return flags;
+}
+
 // ── Orchestrator: evaluate all session-level safety rules for a preview ───────
 
 // newRows: the rows about to be written (normalized objects).
 // workoutNotes: top-level notes string, if any.
+// historyRows: analytics-normalized rows from Log_Cleaned (prior sessions);
+//   used by rirDrift and e1rmJumpGuard. Pass [] to skip history-dependent checks.
 // Returns an array of decision objects (possibly empty), ready to surface as
 // rule_flags in a preview response.
 // Degrades safely on bad input. Malformed rows coerce to an empty array, but the
 // checks still run: painFlag reads top-level workoutNotes, so a notes-only session
 // (no rows) must still surface a pain warning. Each check tolerates empty rows.
-function evaluateSessionSafety(newRows, workoutNotes = '') {
+function evaluateSessionSafety(newRows, workoutNotes = '', historyRows = []) {
   const rows = Array.isArray(newRows) ? newRows : [];
+  const history = Array.isArray(historyRows) ? historyRows : [];
   const flags = [];
   const checks = [
     rirCaution(rows),
     junkRepGuard(rows),
     painFlag(rows, workoutNotes),
+    ...e1rmJumpGuard(rows, history),
   ];
+  // rirDrift is per lift code and needs history rows
+  const liftCodes = [...new Set(rows.map(r => r && r.lift_code).filter(Boolean))];
+  for (const lc of liftCodes) {
+    checks.push(rirDrift(history, lc));
+  }
   for (const f of checks) {
     if (f) flags.push(f);
   }
   return flags;
 }
 
-module.exports = { rirCaution, junkRepGuard, painFlag, rirDrift, evaluateSessionSafety, groupBySession, e1rm };
+module.exports = { rirCaution, junkRepGuard, painFlag, rirDrift, e1rmJumpGuard, evaluateSessionSafety, groupBySession, e1rm };

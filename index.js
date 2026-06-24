@@ -2917,6 +2917,11 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     let pendingExercises = [];
     let autoMatches = [];
     let completeRuleFlags = [];
+    let completeHistoryRows = [];
+    try {
+      const rawAllLog = await getSheetRows(logSheetName);
+      completeHistoryRows = rawAllLog.filter(r => Array.isArray(r)).map(normalizeAnalyticsLogRow);
+    } catch (_e) { /* history unavailable — rirDrift/e1rmJumpGuard skip gracefully */ }
     if (!effortOnly) {
       try {
         // fetch catalog once and pass the map to the enricher to ensure consistent lookup
@@ -2927,7 +2932,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         enrichWarnings = enrichResult.warnings || [];
         pendingExercises = enrichResult.pending_exercises || [];
         autoMatches = enrichResult.auto_matches || [];
-        completeRuleFlags = evaluateSessionSafety(enrichResult.enrichedRowObjects || [], formFields.notes || '');
+        completeRuleFlags = evaluateSessionSafety(enrichResult.enrichedRowObjects || [], formFields.notes || '', completeHistoryRows);
         // store pending exercises in memory (dedupe by exercise)
         for (const pe of pendingExercises) {
           const key = String(pe.exercise || '').trim().toLowerCase();
@@ -3315,6 +3320,11 @@ app.post('/api/log-workout', async (req, res) => {
   let autoMatchesForPreview = [];
   let ruleFlags = [];
   let enrichedRowObjects = [];
+  let safetyHistoryRows = [];
+  try {
+    const rawAllLog = await getSheetRows(logSheetName);
+    safetyHistoryRows = rawAllLog.filter(r => Array.isArray(r)).map(normalizeAnalyticsLogRow);
+  } catch (_e) { /* history unavailable — rirDrift/e1rmJumpGuard skip gracefully */ }
   try {
     const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
     formattedLogRows = logResult.formattedRows;
@@ -3322,7 +3332,7 @@ app.post('/api/log-workout', async (req, res) => {
     pendingExercisesForPreview = logResult.pending_exercises || [];
     autoMatchesForPreview = logResult.auto_matches || [];
     enrichedRowObjects = logResult.enrichedRowObjects || [];
-    ruleFlags = evaluateSessionSafety(enrichedRowObjects, payload.notes || '');
+    ruleFlags = evaluateSessionSafety(enrichedRowObjects, payload.notes || '', safetyHistoryRows);
   } catch (error) {
     return standardError(req, res, error.message, null, 400);
   }
