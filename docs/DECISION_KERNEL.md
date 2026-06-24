@@ -61,6 +61,40 @@ These are the operating rules. Each routine decision should be checkable against
 
 The Vision Alignment Check (`docs/AGENT_WORKFLOW.md`) is still required on every autonomous PR — it can be satisfied from this kernel for routine work.
 
+### Roadmap eligibility criteria
+
+An item is **eligible** for autonomous execution only when **all** hold:
+
+- **Clear acceptance criteria** — what "done" means is unambiguous.
+- **No unresolved dependencies** — nothing it waits on is still open.
+- **Smallest safe slice** — it is one concern, sized to a tiny PR (split it if not).
+- **Obvious test approach** — the live path / closest integration path is testable without inventing scaffolding.
+- **No schema or destructive work** unless the item **explicitly** marks it (and such items are owner-reserved, not autonomous).
+
+If an item fails any criterion, it is not eligible — narrow it, file the blocker in `BACKLOG.md`, or escalate per the reserved categories; do not start it.
+
+### Risk tiers
+
+Maps the surface of a change to who must act (the primary risk label records this on the merge card — `docs/RISK_LABELS.md`):
+
+- **Tier 1 — autonomous.** Derivable, no reserved-category trigger; all signals green. Builder decides, merges, continues. (`auto-safe`.)
+- **Tier 2 — Codex-review gated.** A genuinely non-derivable, non-reserved fork: route to the Codex / Atlas Decision Desk for a verdict, then proceed (`docs/DECISION_ROUTING.md`). Does not reach the owner.
+- **Tier 3 — owner approval.** One of the five reserved categories (live app testing, product-scope/new trust contract, schema/storage, destructive ops, genuine principle conflict). Stop and escalate. (`owner-live-test` / `owner-decision`.)
+
+### Decision Kernel response format
+
+When recording a kernel-derived decision (on the merge card, a Decision Desk issue, or a PR note), keep it short and structured:
+
+```
+Decision:           <what was decided>
+Rationale:          <the kernel principle / doc it derives from>
+Invariants checked: <which INVARIANTS / trust-contract rules were verified safe>
+Confidence:         <high / medium / low>
+Owner needed:       <yes / no — and which reserved category if yes>
+```
+
+Low confidence on a consequential fork is itself a signal to route to a decision desk (Tier 2) rather than guess.
+
 ### When the kernel is not enough — consult the full sources
 
 Read the full **`docs/ATLAS_PRODUCT_VISION.md`**, **`docs/ROADMAP.md`**, and **`docs/ARCHITECTURE.md`** (`docs/export/atlas-architecture.html`) **only** when:
@@ -84,3 +118,7 @@ Those five are also the boundary where the owner or a decision desk may be invol
 With this kernel in place, **Atlas automation is considered operationally complete.** The decision machinery — PM authority, the five reserved categories, the Codex and Atlas Decision Desks, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine autonomous execution.
 
 **Future process changes require evidence of an actual bottleneck** — a concrete, observed friction in the loop, not a hypothetical refinement. Absent that evidence, default effort returns to **building Atlas** (the product), not refining the workflow.
+
+### Post-merge learning rule
+
+After a PR merges, **propose a governance/kernel update only when a real new precedent was discovered** — a decision the existing docs genuinely did not settle, whose resolution should bind future loops. **Do not create process churn for routine work:** a normal bugfix, a derivable call, or a Tier-1 merge is not a precedent and needs no doc change. When a real precedent does appear, capture it in the smallest fitting doc (this kernel or the specific governance file) in a tiny docs PR — not a broad rewrite.
