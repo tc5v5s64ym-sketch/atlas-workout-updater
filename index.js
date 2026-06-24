@@ -135,7 +135,11 @@ const upload = multer({
     }
   }),
   limits: {
-    fileSize: 10 * 1024 * 1024
+    fileSize: 10 * 1024 * 1024,
+    // Bound multipart text fields too — `log_rows_json` is a field, not a file, so
+    // `fileSize` does not cap it. Keep a multi-megabyte field from ever reaching
+    // JSON.parse (512 KB is far above a real session's ~tens of KB).
+    fieldSize: 512 * 1024
   },
   fileFilter: (req, file, cb) => {
     if (!imageMimeTypes.has(file.mimetype)) {
@@ -2851,6 +2855,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
     return res.status(400).json({ error: 'log_rows_json must be a JSON array' });
   }
 
+  // Bound the array so an oversized payload can't drive unbounded row-by-row
+  // enrichment (DoS). A real session is well under this; 200 is a generous ceiling.
+  const MAX_LOG_ROWS = 200;
+  if (parsedLogRows.length > MAX_LOG_ROWS) {
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+    return standardError(req, res, `log_rows_json exceeds the ${MAX_LOG_ROWS}-row limit`, null, 400);
+  }
+
   const effortOnly = parsedLogRows.length === 0;
   if (effortOnly && !req.file && !hasManualEffortMetrics) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
@@ -3787,6 +3799,12 @@ app.use((err, req, res, next) => {
 
   if (err && err.code === 'LIMIT_FILE_SIZE') {
     return standardError(req, res, 'File too large. Max size is 10MB.', null, 413);
+  }
+
+  // An oversized multipart text field (e.g. log_rows_json past the 512 KB fieldSize
+  // cap) must return a clean 4xx like the file-size path, not fall through to 500.
+  if (err && err.code === 'LIMIT_FIELD_VALUE') {
+    return standardError(req, res, 'Request field too large.', null, 413);
   }
 
   if (err && err.message && /^Only image\/(png|jpeg|jpg|webp)/.test(err.message)) {

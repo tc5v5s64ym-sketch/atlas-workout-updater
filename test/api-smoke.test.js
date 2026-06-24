@@ -2141,6 +2141,40 @@ test('api smoke: complete-workout allows effort-only screenshot preview with emp
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: complete-workout rejects an oversized log_rows_json (>200 rows) with 400 and never appends (ME-5)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  // 201 rows — one over the cap. The guard fires before enrichment, so the row
+  // content is irrelevant; a valid 12-column shape is used to be realistic.
+  const oneRow = ['2026-06-11', 'OVERSIZE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675'];
+  const tooMany = Array.from({ length: 201 }, () => oneRow.slice());
+  const form = new FormData();
+  form.append('session_id', 'OVERSIZE-01');
+  form.append('date', '2026-06-11');
+  form.append('log_rows_json', JSON.stringify(tooMany));
+  form.append('duration', '00:30:00'); // manual effort metric — clears the effort-required gate so we reach the row cap
+  form.append('test_mode', 'true');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.match(body.message || body.error || '', /200-row limit/);
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'an oversized payload must never reach the append path');
+});
+
+test('api smoke: complete-workout returns a clean 413 (not 500) when log_rows_json exceeds the field-size cap (ME-5)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const form = new FormData();
+  form.append('session_id', 'FIELD-OVERSIZE-01');
+  form.append('duration', '00:30:00');
+  // A log_rows_json field well over the 512 KB fieldSize cap → multer LIMIT_FIELD_VALUE,
+  // which the error middleware now maps to a clean 413 (not a generic 500).
+  form.append('log_rows_json', 'x'.repeat(600 * 1024));
+  form.append('test_mode', 'true');
+
+  const { response } = await requestMultipart('/api/complete-workout', form);
+  assert.equal(response.status, 413);
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'an oversized field must never reach the append path');
+});
+
 test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeVisionParsedMetrics = {
