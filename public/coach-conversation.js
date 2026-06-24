@@ -4,7 +4,10 @@
  * type out today's session, and each logged exercise gets a typed coaching note
  * with an inline "Save to Sheets" confirm.
  *
- * THE TRUST LOOP IS NEVER TOUCHED. This file only narrates. It never writes:
+ * THE TRUST LOOP IS NEVER TOUCHED. This file narrates; it has exactly one write:
+ *   - "Save note?" prompt (showSaveNotePrompt) → user-approved POST /api/coaching-notes
+ *     This is a text note append to Coaching_Notes, gated on an explicit user tap,
+ *     idempotent, and separate from the log-write trust loop.
  *   - "Save to Sheets" just clicks the existing #approve-btn (app.js owns the
  *     dry-run preview + approval gate + write, unchanged).
  *   - It reacts to the read-only atlas:preview-ready event app.js dispatches
