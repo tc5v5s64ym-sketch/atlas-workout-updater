@@ -2329,6 +2329,22 @@ test('normalizeDate converts a numeric Excel/Sheets serial, not as a year (HI-4)
   assert.doesNotMatch(normalizeDate(45000), /^45000/); // never the year-45000 date
 });
 
+test('normalizeDate converts an Excel serial that arrives as a STRING (HI-4 string form)', () => {
+  // FORMATTED_VALUE sheet reads return numbers as strings, so a serial can arrive as
+  // "45000" — which `new Date("45000")` would parse as the YEAR 45000. An EXACTLY-5-digit
+  // all-digit string in the serial range is converted like the numeric form.
+  assert.equal(normalizeDate('45000'), '2023-03-15');
+  assert.equal(normalizeDate('45000'), normalizeDate(45000));
+});
+
+test('normalizeDate does NOT treat a 4-digit year or an 8-digit YYYYMMDD as a serial', () => {
+  // A bare 4-digit year stays a year (new Date("2026") → 2026-01-01), never a serial.
+  assert.equal(normalizeDate('2026'), '2026-01-01');
+  // An 8-digit all-digit string is not a 5-digit serial → not converted (new Date
+  // rejects it → blank), so it can never be misread as a far-future serial date.
+  assert.equal(normalizeDate('20260618'), '');
+});
+
 test('parseDurationMinutes converts hh:mm:ss, mm:ss, and numeric to minutes', () => {
   assert.equal(parseDurationMinutes('01:00:00'), 60);
   assert.equal(parseDurationMinutes('00:30:00'), 30);

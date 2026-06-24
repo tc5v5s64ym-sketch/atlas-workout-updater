@@ -16,6 +16,16 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Convert an Excel/Sheets serial day-count to an ISO `YYYY-MM-DD` string, or null if
+// it does not yield a valid date. Epoch is 1899-12-30 (the Excel/Lotus convention).
+function excelSerialToIso(serial) {
+  if (!Number.isFinite(serial)) return null;
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const excelEpoch = new Date(Date.UTC(1899, 11, 30)).getTime();
+  const date = new Date(excelEpoch + Math.round(serial) * msPerDay);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
 function normalizeDate(value) {
   if (value === null || value === undefined) {
     return '';
@@ -36,18 +46,22 @@ function normalizeDate(value) {
     return isoDateTimeMatch[1];
   }
 
-  // Excel/Sheets serial dates arrive as a bare number. Convert these BEFORE the
-  // generic `new Date(text)` fallback below — that fallback parses "45000" as the
-  // YEAR 45000 (a valid Date), so without this ordering the serial branch is
-  // unreachable and a serial date is silently saved as a wrong far-future ISO
-  // date (AUDIT HI-4).
+  // Excel/Sheets serial dates arrive as a bare number — OR, when a sheet is read via
+  // FORMATTED_VALUE, as an all-digit STRING ("45000"). Convert these BEFORE the generic
+  // `new Date(text)` fallback below — that fallback parses "45000" as the YEAR 45000 (a
+  // valid Date), so without this ordering the serial branch is unreachable and a serial
+  // date is silently saved as a wrong far-future ISO date (AUDIT HI-4).
   if (typeof value === 'number' && Number.isFinite(value)) {
-    const msPerDay = 24 * 60 * 60 * 1000;
-    const excelEpoch = new Date(Date.UTC(1899, 11, 30)).getTime();
-    const date = new Date(excelEpoch + Math.round(value) * msPerDay);
-    if (!Number.isNaN(date.getTime())) {
-      return date.toISOString().slice(0, 10);
-    }
+    const iso = excelSerialToIso(value);
+    if (iso) return iso;
+  }
+  // String form (FORMATTED_VALUE read): treat an EXACTLY-5-digit all-digit string as a
+  // serial — that range (10000–99999 ≈ 1927–2173) covers every realistic modern date
+  // (the 2020s are ~43000–47000). A 4-digit "2026" is a bare YEAR and an 8-digit
+  // "20260618" is YYYYMMDD, so both are deliberately excluded by the digit count.
+  if (/^\d{5}$/.test(text)) {
+    const iso = excelSerialToIso(Number(text));
+    if (iso) return iso;
   }
 
   const parsedDate = new Date(text);
