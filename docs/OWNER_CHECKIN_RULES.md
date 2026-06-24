@@ -83,7 +83,7 @@ Nothing outside these five is an owner stop. A genuinely non-derivable fork that
 
 ### Bug-handling routing (the default loop)
 
-When Claude discovers a bug it does **not** stop to ask. It: **investigate → produce root cause → determine the smallest safe fix → check it against Atlas principles → build → test → open PR → merge if the existing automation rules authorize it** (`docs/AUTOMATION_PROTOCOL.md` §4). It stops only when one of the five reserved categories is triggered — typically just a request for **live validation afterward**.
+When Claude discovers a bug it does **not** stop to ask. It: **investigate → produce root cause → determine the smallest safe fix → check it against Atlas principles → build → test → open PR → merge if the existing automation rules authorize it** (`docs/AUTOMATION_PROTOCOL.md` §4). It stops only when one of the reserved categories is triggered (four under Escalation Policy v3 — see above) — typically just a request for **live validation afterward**.
 
 > **Precedent (2026-06-24):** the multi-line strength-logging bug (#530) and the bodyweight-dips bug (#531) both **clearly violated existing Atlas principles** (deterministically-loggable input was routed to the coach; valid gym language was unloggable; the trust path silently discarded user intent). Under this policy they were **pre-authorized**: Claude should have root-caused, chosen the smallest safe fix, implemented, merged, and requested only a live validation test — without owner authorization to proceed.
 
