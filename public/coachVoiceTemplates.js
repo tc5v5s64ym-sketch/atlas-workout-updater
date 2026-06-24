@@ -111,12 +111,51 @@
     return null;
   }
 
+  // PR 484 — deterministic LLM-down voicing of the profile-aware Stimulus Governor
+  // grade (`set_grade`). The raw effort verdict the offline opener words is profile-
+  // BLIND: an `easy`/`far_easy` set reads as "room to add load", but the governor may
+  // HOLD it (e.g. a general_fitness lifter whose effort already meets the goal) or flag
+  // fatigue. These helpers let the opener defer to the governor so the fallback never
+  // invites progression the engine wants held. Direction only — never a number (the
+  // load math stays in recommendNextSet). Mirrors the slice-3 prompt rule in
+  // services/coach.js for `stimulus_grade`.
+
+  // True when the governor's read should OVERRIDE a raw progression-invite opener:
+  // it wants to hold / back off, or it flags elevated/high fatigue. (`set_grade` shape:
+  // { profile, effort_interpretation, progression_verdict, fatigue_signal }.)
+  function governorOverridesProgressionInvite(grade) {
+    if (!grade || typeof grade !== 'object') return false;
+    return grade.progression_verdict === 'hold'
+      || grade.progression_verdict === 'back_off'
+      || grade.fatigue_signal === 'elevated'
+      || grade.fatigue_signal === 'high';
+  }
+
+  // The deterministic hold line that replaces a progression invite when the governor
+  // overrides → null when it does not. No numbers; conclusion-first. A back_off /
+  // high-fatigue read is firmer; a general_fitness hold names that the goal is already
+  // met (never celebrate chasing more / grinding); the default is a plain "repeat,
+  // don't jump".
+  function templatedGovernorHoldLine(grade) {
+    if (!governorOverridesProgressionInvite(grade)) return null;
+    const backOff = grade.progression_verdict === 'back_off' || grade.fatigue_signal === 'high';
+    if (backOff) {
+      return 'Hold here — back off rather than push; keep this load (or a touch less) next time.';
+    }
+    if (grade.profile === 'general_fitness') {
+      return "That's enough stimulus for your goal — hold this load next time, no need to chase more.";
+    }
+    return 'Hold this load next time — that effort earned a repeat, not a jump.';
+  }
+
   const exported = {
     liftLabel,
     templatedSubstitutionLine,
     formatSubstituteCoachLine,
     templatedNextMoveAdvisoryLine,
     templatedRecoveryAdvisoryLine,
+    governorOverridesProgressionInvite,
+    templatedGovernorHoldLine,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

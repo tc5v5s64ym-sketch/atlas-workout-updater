@@ -797,7 +797,7 @@
     // LLM down / suppressed (incl. a good pivot): prefer the engine's correct-effort
     // line (on-target praise) when offered, else the templated opener, then the
     // next-move heads-up, then the swap.
-    const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec);
+    const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec, data && data.set_grade);
     return { note: withSub(joinLines(opener, nextMoveLine)), effort_note, reroute, voice };
   }
 
@@ -856,12 +856,23 @@
     return variants[i];
   }
 
-  function coachOpener(todaySets, rec) {
+  function coachOpener(todaySets, rec, grade) {
     // The engine's effort verdict (logged RIR vs target) is authoritative — lead
     // with it so the note reflects what actually happened, not canned praise.
     // Phrasing rotates per verdict level (see pickVerdictLine) to de-template.
     const verdict = rec && rec.effort_verdict;
     if (verdict && verdict.level) {
+      // PR 484 (LLM-down stimulus_grade voicing): the raw effort verdict is profile-
+      // BLIND. When it is a progression invite (`easy`/`far_easy` → "add load") but the
+      // profile-aware governor grade wants to HOLD / back off (or flags fatigue), word
+      // the governor's hold instead — so the offline opener never invites progression
+      // the engine is holding (e.g. a general_fitness lifter already at goal effort).
+      if (verdict.level === 'easy' || verdict.level === 'far_easy') {
+        const holdLine = coachVoiceTemplates.governorOverridesProgressionInvite(grade)
+          ? coachVoiceTemplates.templatedGovernorHoldLine(grade)
+          : null;
+        if (holdLine) return holdLine;
+      }
       const line = pickVerdictLine(verdict.level);
       if (line) return line;
     }
