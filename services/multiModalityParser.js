@@ -173,12 +173,20 @@ function recognizeCircuit(t) {
   if (SLASH_SET.test(t)) return null; // weighted workflow, not ours
   const kind = kindM[1].toLowerCase();
   const colonIdx = t.indexOf(':');
+  const roundsM = t.match(/(\d+)\s*rounds?\b/i);
+  // The generic word "circuit" also appears inside steady-cardio names
+  // ("Bike circuit 20 min"). When the ONLY circuit signal is a bare "circuit"
+  // with no circuit STRUCTURE (no colon-delimited movement list, no explicit
+  // rounds count) AND the input reads as steady cardio (a machine/locomotion
+  // name), it is a steady ride — return null so recognizeCardio claims it and the
+  // persistence layer doesn't file a ride as a circuit. AMRAP/EMOM/WOD/metcon
+  // (unambiguous conditioning formats) and any structured circuit are unaffected.
+  if (kind === 'circuit' && colonIdx < 0 && !roundsM && CARDIO_NAME.test(t)) return null;
   // Anchor the time cap to the keyword header (before the colon, where
   // "AMRAP 12 min:" puts it) so a movement's own duration ("plank 2 min")
   // is never misread as the cap.
   const capHead = colonIdx >= 0 ? t.slice(0, colonIdx) : t;
   const capM = capHead.match(/(\d+(?:\.\d+)?)\s*(?:min(?:ute)?s?|mins)\b/i);
-  const roundsM = t.match(/(\d+)\s*rounds?\b/i);
   const { rpe, avg_hr } = extractCommon(t);
   let movements = null;
   if (colonIdx >= 0) {

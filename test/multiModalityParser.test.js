@@ -138,6 +138,33 @@ test('circuit wins over a hold-name listed inside it', () => {
   assert.equal(r.kind, 'amrap');
 });
 
+// PR 486 close-out (slice-3 follow-up edge): a bare "circuit" keyword inside a
+// steady-cardio name, with no circuit structure, is a steady ride — not a circuit.
+test('a bare "circuit" inside a cardio name is steady cardio, not a circuit', () => {
+  const r = recognizeModalityInput('Bike circuit 20 min');
+  assert.equal(r.modality, 'cardio_steady');
+  assert.equal(r.duration_min, 20);
+});
+
+test('a structured bike circuit (rounds / movement list) is still a circuit', () => {
+  const rounds = recognizeModalityInput('Bike circuit 5 rounds');
+  assert.equal(rounds.modality, 'circuit');
+  assert.equal(rounds.rounds, 5);
+  const listed = recognizeModalityInput('Bike circuit: sprint 30 sec, easy 60 sec - 4 rounds');
+  assert.equal(listed.modality, 'circuit');
+});
+
+test('a bare "circuit" without a cardio name is still a circuit', () => {
+  const r = recognizeModalityInput('Circuit 15 min');
+  assert.equal(r.modality, 'circuit');
+  assert.equal(r.cap_min, 15);
+});
+
+test('AMRAP/EMOM strong formats are unaffected by the cardio-name guard', () => {
+  assert.equal(recognizeModalityInput('AMRAP 20 min').modality, 'circuit');
+  assert.equal(recognizeModalityInput('EMOM 12 min').modality, 'circuit');
+});
+
 // ── The contract guard: resistance / slash-notation inputs are NOT ours ───────
 test('the slash-notation resistance contract is never hijacked (returns null)', () => {
   const resistance = [
