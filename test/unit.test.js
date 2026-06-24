@@ -2118,6 +2118,20 @@ test('coach set-reaction stimulus_grade is engine-only (always overwritten, no c
     'index.js must overwrite stimulus_grade with the engine value or null (engine-only)');
 });
 
+test('LO-2: complete-workout validation 400s gate error.message behind NODE_ENV (no raw leak)', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // The three /api/complete-workout validation failures must NOT interpolate a raw
+  // err/error.message into a client-facing JSON body — they route through
+  // standardError with the detail gated on NODE_ENV (null in production).
+  assert.doesNotMatch(indexSource, /log_rows_json is not valid JSON: \$\{err\.message\}/, 'log_rows_json parse error must not leak err.message');
+  assert.doesNotMatch(indexSource, /Parsed metrics validation failed: \$\{error\.message\}/, 'metrics validation error must not leak error.message');
+  assert.doesNotMatch(indexSource, /Log rows validation\/enrichment failed: \$\{error\.message\}/, 'log rows enrichment error must not leak error.message');
+  // …and each now uses the NODE_ENV-gated standardError pattern.
+  assert.match(indexSource, /standardError\(req, res, 'log_rows_json is not valid JSON', process\.env\.NODE_ENV === 'production' \? null : err\.message, 400\)/);
+  assert.match(indexSource, /standardError\(req, res, 'Parsed metrics validation failed', process\.env\.NODE_ENV === 'production' \? null : error\.message, 400\)/);
+  assert.match(indexSource, /standardError\(req, res, 'Log rows validation\/enrichment failed', process\.env\.NODE_ENV === 'production' \? null : error\.message, 400\)/);
+});
+
 test('route_definitions_include_last_session', () => {
   const route = routeDefinitions.find(candidate => candidate.path === '/api/exercises/last-session');
 
