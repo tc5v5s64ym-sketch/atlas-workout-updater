@@ -747,6 +747,30 @@ test('two-way chat: non-loggable text routes to the coach instead of erroring', 
   assert.doesNotMatch(routeBlock, /\/api\/log-workout|\/api\/complete-workout|approve/);
 });
 
+test('live-audit PR2: a malformed SET surfaces a format hint instead of silently becoming coach chat', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // The parser verdict is carried on the thrown error so the caller can tell a
+  // failed LOG ATTEMPT apart from a question.
+  assert.match(appSource, /err\.parsedIntent = parsed\?\.intent \|\| null;/);
+  assert.match(appSource, /err\.recognizedExercise = \(parsed\?\.partial && parsed\.partial\.exercise\) \|\| null;/);
+
+  // The interception is precise: needs_clarification + a recognized exercise + slash
+  // notation in the input. It fires BEFORE the modality/coach routing, and returns
+  // (does not also route to the coach).
+  const guard = appSource.slice(
+    appSource.indexOf("err.parsedIntent === 'needs_clarification' && err.recognizedExercise"),
+    appSource.indexOf('if (await tryPreviewModality(pendingChatText')
+  );
+  assert.ok(guard.length > 0, 'the malformed-set guard must run before the modality/coach routing');
+  assert.match(guard, /\/\\d\+\\s\*\\\/\\s\*\\d\+\/\.test\(pendingChatText\)/, 'must require slash-set notation');
+  assert.match(guard, /setStatus\(loggerStatus, .*Check the format/, 'must surface a format hint');
+  assert.match(guard, /return;/, 'must NOT fall through to the coach');
+  // It must NOT suppress questions: the guard requires a recognized exercise + slash,
+  // so a bare question (no recognized exercise, no slash) still reaches the coach.
+  assert.doesNotMatch(guard, /routeMessageToCoach/, 'the guard itself never calls the coach');
+});
+
 test('Step 373: currentPlanForChat reads the live planned session before the cached recommendation', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
@@ -4124,7 +4148,7 @@ test('bodyweight: rowsFromBackendParsedWorkout converts null weight to "0"', () 
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fnStart = appSource.indexOf('function rowsFromBackendParsedWorkout(');
   assert.ok(fnStart >= 0, 'rowsFromBackendParsedWorkout must exist');
-  const fnBody = appSource.slice(fnStart, fnStart + 1100);
+  const fnBody = appSource.slice(fnStart, fnStart + 1700);
   // Must map null weight to '0', not to '' which fails backend validation
   assert.match(fnBody, /weight.*null.*'0'|'0'.*null.*weight/,
     "null weight must convert to '0' (not '') so backend validation passes for bodyweight exercises");
@@ -4645,8 +4669,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v34/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v33\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v35/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v34\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

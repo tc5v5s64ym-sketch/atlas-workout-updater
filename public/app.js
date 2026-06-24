@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v34';
+const ATLAS_SHELL_BUILD = 'v35';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2553,6 +2553,12 @@ function rowsFromBackendParsedWorkout(parsed) {
     const err = new Error(message);
     err.noFallback = true;
     err.displayMessage = message;
+    // Carry the parser's verdict so the caller can tell a FAILED LOG ATTEMPT (a
+    // recognized exercise whose sets didn't resolve) apart from a question/chat.
+    // This lets a malformed set surface a format hint instead of silently becoming
+    // a coach message (the live-audit "looks logged but wasn't" trust gap).
+    err.parsedIntent = parsed?.intent || null;
+    err.recognizedExercise = (parsed?.partial && parsed.partial.exercise) || null;
     throw err;
   }
 
@@ -3751,6 +3757,18 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // first. If a card was dispatched, skip the coach route (one response per message).
     // If no recommendation exists in the catalog, fall through to the coach as normal.
     if (pendingChatText && !hasAnyEffortInput()) {
+      // Trust gap (live-audit PR 2): a MALFORMED SET must not silently become a coach
+      // message — the coach's confident readback then "looks logged" but never wrote.
+      // Fire only on an unambiguous failed slash-log: the parser recognized an
+      // exercise (recognizedExercise), returned needs_clarification, AND the input
+      // carried slash-set notation. Surface the format hint instead of routing to the
+      // coach. Questions (no recognized exercise / no slash) and bare partials like
+      // "Bench 225" (no slash → coach still asks conversationally) are unaffected.
+      if (err.parsedIntent === 'needs_clarification' && err.recognizedExercise && /\d+\s*\/\s*\d+/.test(pendingChatText)) {
+        setStatus(loggerStatus, `${err.displayMessage} Check the format, e.g. "Bench 225 5/2".`, 'warn');
+        activeExercise = null;
+        return;
+      }
       // A cardio / interval / circuit / timed-hold input isn't a slash workout, so
       // the slash parser threw above. Try the modality trust loop (dry-run preview
       // → approve → /api/log-modality) before treating it as a coach question. On a
