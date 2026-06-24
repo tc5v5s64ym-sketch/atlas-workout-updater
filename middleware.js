@@ -72,6 +72,13 @@ function createRateLimiter({
 
     const key = `${name}:${keyGenerator(req)}`;
     const currentTime = now();
+
+    // Prune expired entries so the Map never grows without bound.
+    // Safe to delete during for-of iteration in Node's single-threaded model.
+    for (const [k, v] of hits) {
+      if (v.resetAt <= currentTime) hits.delete(k);
+    }
+
     const existing = hits.get(key);
     const record = existing && existing.resetAt > currentTime
       ? existing
