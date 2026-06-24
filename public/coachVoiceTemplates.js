@@ -55,7 +55,69 @@
     return `No ${prescribed} today — switch to ${recommendation}.${reasonPart} Not a perfect one-for-one, but it covers the session — get ${prescribed} back in when the equipment's free.`;
   }
 
-  const exported = { liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine };
+  // Deterministic one-line voicing of the Fatigue Router's next-move SUGGESTION
+  // (PR 483/484), used when the LLM is unavailable so the engine's heads-up for
+  // the planned next move is never lost to a Gemini outage. Conclusion-first,
+  // suggestion-only (never an order, never a reorder), no invented numbers — the
+  // action is the engine's, the wording is ours. `keep`/unknown carry no advice
+  // (the server already drops them) → null. Mirrors the LLM prompt rule in
+  // services/coach.js for `next_move_advisory`.
+  function templatedNextMoveAdvisoryLine(adv) {
+    if (!adv || typeof adv !== 'object') return null;
+    const next = (typeof adv.next_exercise === 'string' && adv.next_exercise.trim()) ? adv.next_exercise.trim() : null;
+    const onNext = next ? ` on ${next}` : '';
+    const nextUp = next || 'the next move';
+    switch (adv.action) {
+      case 'reduce':              return `Heads up — ease off${onNext} next: trim a set or take a little off the bar.`;
+      case 'make_optional':       return `Heads up — ${nextUp} is optional today; skip it if you're cooked.`;
+      case 'promote_alternative': return `Heads up — pull a rested or antagonist move forward next instead of ${next || 'the same muscle'}.`;
+      case 'block_pr':            return `Heads up — no PR attempts on the next lift until you've recovered.`;
+      case 'reduce_intensity':    return `Heads up — keep${onNext || ' the next round'} easy: lower the zone or cut it short.`;
+      case 'reduce_density':      return `Heads up — cut the rounds or density on ${nextUp}.`;
+      default:                    return null; // 'keep'/unknown → no advice
+    }
+  }
+
+  // Humanize the engine's snake_case convergence-signal labels for prose
+  // (e.g. "performance_decline" → "performance decline"). Engine-owned values only.
+  function humanizeSignals(signals) {
+    if (!Array.isArray(signals)) return null;
+    const clean = signals
+      .filter(s => typeof s === 'string' && s.trim())
+      .map(s => s.trim().replace(/_/g, ' '));
+    return clean.length ? clean.join(', ') : null;
+  }
+
+  // Deterministic one-line voicing of the Recovery/Deload SELECTION engine's
+  // convergence read (PR 485/484), used when the LLM is unavailable. Worded
+  // CAUTIOUSLY — never a command ("worth considering" / "hold the line"), never a
+  // number (the prescription is owned elsewhere). Only the two recovery-oriented
+  // decisions are voiced; anything else carries no recovery advice → null. Mirrors
+  // the LLM prompt rule in services/coach.js for `recovery_advisory`.
+  function templatedRecoveryAdvisoryLine(adv) {
+    if (!adv || typeof adv !== 'object') return null;
+    const reason = humanizeSignals(adv.converged_signals);
+    const reasonPart = reason ? ` Your last few sessions are stacking fatigue (${reason}).` : '';
+    const focusArr = adv.deload_style && Array.isArray(adv.deload_style.focus)
+      ? adv.deload_style.focus.filter(f => typeof f === 'string' && f.trim())
+      : [];
+    if (adv.decision === 'deload') {
+      const focusPart = focusArr.length ? ` Keep it simple: ${focusArr[0].trim()}.` : '';
+      return `A deload's worth considering — recovery may be the smarter play right now.${reasonPart}${focusPart}`;
+    }
+    if (adv.decision === 'recovery_reload') {
+      return `Might be worth holding the line this week — a lighter touch, not a full deload.${reasonPart}`;
+    }
+    return null;
+  }
+
+  const exported = {
+    liftLabel,
+    templatedSubstitutionLine,
+    formatSubstituteCoachLine,
+    templatedNextMoveAdvisoryLine,
+    templatedRecoveryAdvisoryLine,
+  };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exported;

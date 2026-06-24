@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine } = require('../public/coachVoiceTemplates');
+const { liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine, templatedRecoveryAdvisoryLine } = require('../public/coachVoiceTemplates');
 
 /* ===== liftLabel ===== */
 
@@ -108,6 +108,85 @@ test('templatedSubstitutionLine: unknown classification falls back gracefully', 
 test('templatedSubstitutionLine: null input does not throw', () => {
   const line = templatedSubstitutionLine(null);
   assert.equal(typeof line, 'string');
+});
+
+/* ===== templatedNextMoveAdvisoryLine (PR 484 — Fatigue Router fallback voice) ===== */
+
+// Every voiced ROUTE_ACTION yields a suggestion-only heads-up — never an order,
+// never a number, never a plan reorder. Mirrors the LLM prompt rule in coach.js.
+const NEXT_MOVE_CASES = [
+  ['reduce', /heads up/i, /ease off|trim a set|off the bar/i],
+  ['make_optional', /optional/i, /skip it/i],
+  ['promote_alternative', /rested|antagonist/i, /instead/i],
+  ['block_pr', /no PR attempts|until you've recovered/i, /recover/i],
+  ['reduce_intensity', /easy/i, /lower the zone|cut it short/i],
+  ['reduce_density', /rounds|density/i, /cut/i],
+];
+
+for (const [action, headRe, bodyRe] of NEXT_MOVE_CASES) {
+  test(`templatedNextMoveAdvisoryLine: ${action} → suggestion-only heads-up, no command/number`, () => {
+    const line = templatedNextMoveAdvisoryLine({ action, next_exercise: 'Incline Press', reason: 'engine reason' });
+    assert.equal(typeof line, 'string');
+    assert.match(line, headRe);
+    assert.match(line, bodyRe);
+    assert.doesNotMatch(line, /\d/, 'deterministic next-move line must never carry a number');
+    assert.doesNotMatch(line, /\byou (must|need to|have to)\b/i, 'never a command');
+  });
+}
+
+test('templatedNextMoveAdvisoryLine: names the next exercise when present', () => {
+  const line = templatedNextMoveAdvisoryLine({ action: 'reduce', next_exercise: 'Weighted Dips' });
+  assert.match(line, /Weighted Dips/);
+});
+
+test('templatedNextMoveAdvisoryLine: promote_alternative reads cleanly with a named lift (no "instead of on")', () => {
+  const line = templatedNextMoveAdvisoryLine({ action: 'promote_alternative', next_exercise: 'Incline Press' });
+  assert.match(line, /instead of Incline Press\./);
+  assert.doesNotMatch(line, /instead of on/);
+});
+
+test('templatedNextMoveAdvisoryLine: missing next_exercise still reads cleanly', () => {
+  const line = templatedNextMoveAdvisoryLine({ action: 'make_optional' });
+  assert.match(line, /the next move/);
+});
+
+test('templatedNextMoveAdvisoryLine: keep / unknown / null carry no advice', () => {
+  assert.equal(templatedNextMoveAdvisoryLine({ action: 'keep' }), null);
+  assert.equal(templatedNextMoveAdvisoryLine({ action: 'mystery' }), null);
+  assert.equal(templatedNextMoveAdvisoryLine(null), null);
+});
+
+/* ===== templatedRecoveryAdvisoryLine (PR 484 — Recovery/Deload fallback voice) ===== */
+
+test('templatedRecoveryAdvisoryLine: deload → cautious, never a command, no numbers', () => {
+  const line = templatedRecoveryAdvisoryLine({
+    decision: 'deload',
+    converged_signals: ['performance_decline', 'subjective_fatigue'],
+    deload_style: { profile: 'strength', focus: ['cut accessory volume first'] }
+  });
+  assert.match(line, /worth considering/i, 'deload is suggested, never commanded');
+  assert.doesNotMatch(line, /\byou (must|need to|have to)\b/i);
+  assert.doesNotMatch(line, /\d/, 'no prescription numbers in the deload fallback line');
+  assert.match(line, /performance decline, subjective fatigue/, 'humanizes the converged signals');
+  assert.match(line, /cut accessory volume first/, 'names the deload-style focus when present');
+});
+
+test('templatedRecoveryAdvisoryLine: recovery_reload → hold-the-line, lighter not a full deload', () => {
+  const line = templatedRecoveryAdvisoryLine({ decision: 'recovery_reload', converged_signals: ['effort_drift'] });
+  assert.match(line, /holding the line/i);
+  assert.match(line, /not a full deload/i);
+  assert.doesNotMatch(line, /\d/);
+});
+
+test('templatedRecoveryAdvisoryLine: no signals → still a clean cautious line', () => {
+  const line = templatedRecoveryAdvisoryLine({ decision: 'deload' });
+  assert.match(line, /worth considering/i);
+});
+
+test('templatedRecoveryAdvisoryLine: non-recovery decisions and null carry no advice', () => {
+  assert.equal(templatedRecoveryAdvisoryLine({ decision: 'normal' }), null);
+  assert.equal(templatedRecoveryAdvisoryLine({ decision: 'taper' }), null);
+  assert.equal(templatedRecoveryAdvisoryLine(null), null);
 });
 
 /* ===== formatSubstituteCoachLine ===== */
