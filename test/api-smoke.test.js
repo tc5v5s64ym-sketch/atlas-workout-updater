@@ -2557,6 +2557,28 @@ test('api smoke: complete-workout still previews workout rows alongside screensh
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: ME-5 — complete-workout rejects log_rows_json over 200-row cap with 400', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const overCapRows = Array.from({ length: 201 }, (_, i) => ({
+    exercise: 'Bench Press', set_number: i + 1, weight: 225, reps: 5, rir: 2, notes: ''
+  }));
+  const form = new FormData();
+  form.append('session_id', 'ME5-CAP-TEST');
+  form.append('date', '2026-06-24');
+  form.append('log_rows_json', JSON.stringify(overCapRows));
+  form.append('test_mode', 'true');
+  // Include manual effort metrics so the request passes the early image/effort guard
+  // and reaches the row-count cap check.
+  form.append('duration', '00:45:00');
+  form.append('active_calories', '400');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  assert.equal(response.status, 400, JSON.stringify(body));
+  assert.match(body.error || body.message || '', /200-row cap/i,
+    'must mention the cap in the error');
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'must not write anything');
+});
+
 test('api smoke: log-workout invalid payload errors without append', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/log-workout', {

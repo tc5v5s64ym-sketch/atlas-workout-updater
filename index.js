@@ -133,7 +133,8 @@ const upload = multer({
     }
   }),
   limits: {
-    fileSize: 10 * 1024 * 1024
+    fileSize: 10 * 1024 * 1024,
+    fieldSize: 512 * 1024
   },
   fileFilter: (req, file, cb) => {
     if (!imageMimeTypes.has(file.mimetype)) {
@@ -2847,6 +2848,12 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   if (!Array.isArray(parsedLogRows)) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: 'log_rows_json must be a JSON array' });
+  }
+
+  const LOG_ROWS_CAP = 200;
+  if (parsedLogRows.length > LOG_ROWS_CAP) {
+    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+    return res.status(400).json({ error: `log_rows_json exceeds the ${LOG_ROWS_CAP}-row cap` });
   }
 
   const effortOnly = parsedLogRows.length === 0;
