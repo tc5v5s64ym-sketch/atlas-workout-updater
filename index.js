@@ -2567,7 +2567,7 @@ app.post('/api/admin/preview-test-rows', async (req, res) => {
 app.get('/api/coaching/insights', async (req, res) => {
   try {
     const allLog = await getSheetRows(logSheetName);
-    const stalls = detectStalls(allLog, 3);
+    const stalls = detectStalls(allLog, 4);
     const deloadSuggestions = suggestDeloads(allLog, 4);
     const fatigue = computeFatigueStatus(allLog);
     return standardSuccess(req, res, 'Coaching insights', {

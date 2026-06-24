@@ -5498,3 +5498,13 @@ test('LO-2: /api/complete-workout does not embed raw err.message in the response
   assert.match(src, /standardError\(req,\s*res,\s*'Log rows validation\/enrichment failed'/,
     'log rows error must use standardError');
 });
+
+test('PR #411 deferred — /api/coaching/insights uses aligned minSessions=4 for both stalls and deload_suggestions', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // Both calls at the /api/coaching/insights handler must use minSessions=4 so
+  // the stalls list and deload_suggestions list agree on what qualifies.
+  assert.doesNotMatch(src, /detectStalls\(allLog,\s*3\)/,
+    'detectStalls in /api/coaching/insights must not use minSessions=3 (mismatched with suggestDeloads)');
+  assert.match(src, /detectStalls\(allLog,\s*4\)/,
+    'detectStalls in /api/coaching/insights must use minSessions=4 (aligned with suggestDeloads)');
+});
