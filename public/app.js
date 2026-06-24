@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v35';
+const ATLAS_SHELL_BUILD = 'v36';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -3400,6 +3400,18 @@ async function handleLogIt() {
     populateSetRows(buildRowsFromSessionLog());
     sessionCompiledAwaitingPreview = true;
     document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    return;
+  }
+
+  // Live-audit Bug #2: after a save the buffer is reset. With an EMPTY buffer AND a
+  // prior save this session (lastWrite set), "log it" has nothing new — say so
+  // plainly instead of recompiling the already-saved chat history, which both
+  // implied a fresh save ("session logged / great work") and risked re-writing the
+  // sets already on the sheet. New sets logged after a save DO buffer (sessionLog
+  // non-empty → the branch above), so this only fires when there is genuinely
+  // nothing new to log.
+  if (lastWrite) {
+    setStatus(loggerStatus, 'Nothing new to log since your last save — log some sets first.', 'warn');
     return;
   }
 
