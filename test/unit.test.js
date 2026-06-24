@@ -28,6 +28,7 @@ const { isTransientAppendError, retryWithBackoff } = require('../sheets');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
 const { generateSessionId, nextAvailableSessionId, formatDateForSessionId, formatAmPmSuffix } = require('../services/sessionId');
+const { createTtlCache } = require('../services/cache');
 
 const repoRoot = path.resolve(__dirname, '..');
 
@@ -2275,6 +2276,22 @@ test('normalizeDate converts a numeric Excel/Sheets serial, not as a year (HI-4)
   assert.doesNotMatch(normalizeDate('45000'), /^45000/);
   // Bare 4-digit year must NOT be treated as serial
   assert.equal(normalizeDate('2026'), new Date('2026').toISOString().slice(0, 10), '4-digit year left to Date()');
+});
+
+test('createTtlCache: maxSize evicts oldest entry when capacity is reached', () => {
+  const cache = createTtlCache(60000, 2);
+  cache.set('a', 1);
+  cache.set('b', 2);
+  assert.equal(cache.get('a'), 1);
+  assert.equal(cache.get('b'), 2);
+  cache.set('c', 3); // should evict 'a' (oldest)
+  assert.equal(cache.get('a'), null, 'oldest entry evicted on overflow');
+  assert.equal(cache.get('b'), 2);
+  assert.equal(cache.get('c'), 3);
+  // updating an existing key must NOT evict anything
+  cache.set('b', 99);
+  assert.equal(cache.get('b'), 99);
+  assert.equal(cache.get('c'), 3, 'update-in-place does not evict sibling');
 });
 
 test('parseDurationMinutes converts hh:mm:ss, mm:ss, and numeric to minutes', () => {

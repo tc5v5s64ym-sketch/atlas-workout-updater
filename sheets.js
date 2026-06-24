@@ -169,6 +169,9 @@ async function getRecentRows(tabName, maxRows = 100) {
   return dataRows.slice(-maxRows);
 }
 
+// Returns data rows from the HEAD of the tab (oldest first), up to maxRows.
+// Use getRecentRows() when you want the most-recent N rows (tail).
+// All current callers pass Infinity (default) and receive every row.
 async function getSheetRows(tabName, maxRows = Infinity) {
   const sheets = await getSheetsClient();
   const range = `${tabName}!A:Z`;
