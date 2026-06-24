@@ -37,7 +37,7 @@ When the answer is derivable from those, Claude holds **PM authority**: it decid
 2. **Product-scope changes** — a new user-facing capability, a new workflow, a new logging model, or a **new trust contract**.
 3. **Schema / storage changes** — Sheet schema, any database schema, data migrations.
 4. **Destructive operations** — data deletion, backfills, historical rewrites, any irreversible action.
-5. **Genuine principle conflicts** — two Atlas principles point to different outcomes and **no documented precedent** resolves it.
+5. **Genuine conflicts (incl. Vision-first)** — two Atlas principles, or the **Vision / Roadmap / Architecture / invariants**, point to different outcomes and **no documented precedent** resolves it; **or** the highest-priority backlog item does not clearly advance the Vision (`docs/ATLAS_PRODUCT_VISION.md`) / conflicts with the Roadmap or Architecture. Per `docs/AGENT_WORKFLOW.md` ("Vision-first execution" + the Vision Alignment Check): **stop and report the conflict** rather than ship around it.
 
 Nothing outside these five is an owner stop. A genuinely non-derivable fork that is **not** owner-reserved goes to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner.
 

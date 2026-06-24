@@ -2,6 +2,37 @@
 
 This document defines the Atlas build workflow between Dale, ChatGPT, Claude Code, Codex Review, GitHub PRs, and GitHub checks.
 
+## North-star context — read FIRST, every loop (Vision-first execution)
+
+Atlas is **not a backlog grinder**. Every autonomous loop builds toward the owner's Vision and Dream, in the Roadmap's sequence, within the Architecture's boundaries. Before **selecting, planning, or implementing any work**, read, in this order:
+
+1. **Atlas Vision** — `docs/ATLAS_PRODUCT_VISION.md` (the product **north star**)
+2. **Atlas Roadmap** — `docs/ROADMAP.md` + `docs/ACTIVE_ROADMAP.md` (the **sequencing map**)
+3. **Atlas Architecture** — `docs/ARCHITECTURE.md` / `docs/export/atlas-architecture.html` (the **system boundary**)
+4. `CLAUDE.md`
+5. `docs/CONSTITUTION.md`
+6. `docs/INVARIANTS.md`
+7. `docs/ACTIVE_ROADMAP.md`
+8. `BACKLOG.md` (the **work queue**)
+9. `docs/DECISION_ROUTING.md`
+10. `docs/OWNER_CHECKIN_RULES.md`
+11. `docs/AUTOMATION_PROTOCOL.md`
+
+**Operating rule.** The Vision is the product north star; the Roadmap is the sequencing map; the Architecture defines the system boundaries; the Backlog is the work queue. **A backlog item is valid to build only if it moves Atlas toward the Vision and respects the Architecture.** The Vision's load-bearing principles: **conversational logging · deterministic engine ownership · approve-before-write trust loop · coach restraint · depth-before-breadth training intelligence · eventual multi-user product path.**
+
+### Vision Alignment Check (required before every autonomous PR)
+
+State this on the merge card / in the PR body before opening any autonomous PR:
+
+- **Vision/Roadmap/Architecture principle advanced** — which north-star principle this PR moves toward (name it).
+- **Smallest safe step** — why this slice is the smallest safe increment of that principle.
+- **Invariant protected** — which `docs/INVARIANTS.md` rule (or trust-contract guarantee) it upholds.
+- **User-facing trust change** — whether it introduces any user-facing trust change (and if so, that it is owner-gated per `docs/OWNER_CHECKIN_RULES.md`).
+
+### Selection rule (Vision-first)
+
+When choosing the next item, take the highest-priority **eligible** backlog/roadmap item that **clearly advances the Vision** and respects the Roadmap and Architecture. If the highest-priority item does **not** clearly advance the Vision, or conflicts with the Roadmap/Architecture/invariants, **stop and report the conflict** (do not ship it) — that is a genuine-conflict escalation (`docs/OWNER_CHECKIN_RULES.md` category 5 / `docs/DECISION_ROUTING.md`), not a license to silently reorder product direction.
+
 ## Roles
 
 ### Dale

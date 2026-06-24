@@ -8,6 +8,16 @@ It does not change any production application behavior, model, prompt, or write 
 
 ---
 
+## 0. Vision-first execution (north star before the queue)
+
+Atlas is **not a backlog grinder.** Every autonomous loop builds toward the owner's Vision and Dream, in the Roadmap's sequence, within the Architecture's boundaries. Before selecting, planning, or implementing any work, the builder reads the **north-star context order** in `docs/AGENT_WORKFLOW.md` ("North-star context — read FIRST"): **Vision (`docs/ATLAS_PRODUCT_VISION.md`) → Roadmap (`docs/ROADMAP.md` / `docs/ACTIVE_ROADMAP.md`) → Architecture (`docs/ARCHITECTURE.md`)**, then `CLAUDE.md` / `CONSTITUTION.md` / `INVARIANTS.md` / `ACTIVE_ROADMAP.md` / `BACKLOG.md` / `DECISION_ROUTING.md` / `OWNER_CHECKIN_RULES.md` / this file.
+
+- **The Vision is the product north star; the Roadmap is the sequencing map; the Architecture defines system boundaries; the Backlog is the work queue.**
+- **A backlog item is eligible only if it moves Atlas toward the Vision and respects the Architecture.** If the highest-priority item does not clearly advance the Vision, or conflicts with the Roadmap/Architecture/invariants, the builder **stops and reports the conflict** instead of shipping it (a genuine-conflict escalation, §5 / `docs/OWNER_CHECKIN_RULES.md` category 5).
+- **Vision Alignment Check is part of merge-readiness** (§4): every autonomous PR states which Vision/Roadmap/Architecture principle it advances, why this is the smallest safe step, which invariant it protects, and whether it introduces any user-facing trust change.
+
+---
+
 ## 1. Roles
 
 Atlas automation has four roles. Each has one job. None may silently assume another's.
@@ -107,6 +117,7 @@ A PR is **merge-ready** only when ALL of the following hold. (The builder holds 
 4. **No unresolved contract violations** — no open INVARIANT, trust-loop, 12-column/Effort/Constraints/Deload_State schema, or write-path-safety finding.
 5. **Risk classification completed** — exactly one primary risk label applied.
 6. **Merge card generated** and complete.
+7. **Vision Alignment Check stated** — the merge card / PR body names the Vision/Roadmap/Architecture principle advanced, why this is the smallest safe step, the invariant protected, and whether any user-facing trust change is introduced (`docs/AGENT_WORKFLOW.md` "Vision Alignment Check"). A PR that does not clearly advance the Vision is not merge-ready — stop and report the conflict.
 
 > Any skipped or failed required review **blocks** readiness, per §2. There is no "merge-ready with a missing review."
 
@@ -133,7 +144,7 @@ It must **stop and escalate to the owner** only for the **five reserved categori
 2. **Product-scope changes** — a new user-facing capability, workflow, logging model, or new trust contract.
 3. **Schema / storage changes** — Sheet schema, database schema, data migrations.
 4. **Destructive operations** — deletion, backfills, historical rewrites, irreversible actions.
-5. **Genuine principle conflicts** — two principles point to different outcomes and no documented precedent resolves it.
+5. **Genuine conflicts** — two Atlas principles, or the **Vision / Roadmap / Architecture / invariants**, point to different outcomes and no documented precedent resolves it; or a highest-priority item does not clearly advance the Vision / conflicts with the Roadmap or Architecture. Stop and report the conflict rather than ship.
 
 A genuinely non-derivable fork that is **not** in those five goes to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner. App/runtime/prompt/API model changes remain owner-reserved as a product-scope/trust item (the *builder's* model is fixed at Opus 4.8 — not a stop).
 
