@@ -906,3 +906,13 @@ test('added-load: modality inputs stay NON-slash (parser does not claim them)', 
   assert.notEqual(parseWorkoutText('Plank 60 sec x3').intent, 'log_sets');
   assert.notEqual(parseWorkoutText('Elliptical 30 min').intent, 'log_sets');
 });
+
+test('added-load: a "+" wedged between digits is NOT stripped (no silent concatenation)', () => {
+  // The strip is anchored to a token-leading "+"; "225+25" must never become
+  // "22525". Not a current notation — this guards the anchoring so a future
+  // weight+addedload style can't be silently mis-parsed into a bogus weight.
+  const r = parseWorkoutText('Bench 225+25 5/2');
+  if (r.intent === 'log_sets') {
+    assert.ok(!r.sets.some(s => s.weight === 22525), 'must never concatenate into 22525');
+  }
+});
