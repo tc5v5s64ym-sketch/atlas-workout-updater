@@ -16,7 +16,7 @@ Before routing anything, apply **Escalation Policy v2** (`docs/OWNER_CHECKIN_RUL
 
 The Codex Decision Desk is for a **genuine fork that the docs do not settle** and that is not owner-reserved — not for decisions the principles already answer.
 
-**Vision-first selection (owner-reserved, not a Codex panel).** Before any autonomous PR, the builder runs the **Vision Alignment Check** (`docs/AGENT_WORKFLOW.md`) and confirms the item advances the Vision (`docs/ATLAS_PRODUCT_VISION.md`), in the Roadmap's sequence, within the Architecture's boundaries (`docs/ARCHITECTURE.md`). A **genuine conflict between the Vision, Roadmap, Architecture, or invariants** — or a highest-priority item that does **not** clearly advance the Vision — is **owner-reserved** (`docs/OWNER_CHECKIN_RULES.md` category 5): **stop and report the conflict**, do not route it to Codex and do not ship around it.
+**Vision-first selection (owner-reserved, not a Codex panel).** Before any autonomous PR, the builder runs the **Vision Alignment Check** (`docs/AGENT_WORKFLOW.md`) and confirms the item advances the Vision (`docs/ATLAS_PRODUCT_VISION.md`), in the live sequence (`docs/ACTIVE_ROADMAP.md` + `BACKLOG.md`; `docs/ROADMAP.md` is directional reference only), within the Architecture's boundaries (`docs/ARCHITECTURE.md`). A **genuine conflict between the Vision, Roadmap, Architecture, or invariants** — or a highest-priority item that does **not** clearly advance the Vision — is **owner-reserved** (`docs/OWNER_CHECKIN_RULES.md` category 5): **stop and report the conflict**, do not route it to Codex and do not ship around it.
 
 ## What is a "decision panel" (routes to Codex)
 
