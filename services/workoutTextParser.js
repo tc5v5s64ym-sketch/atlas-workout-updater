@@ -564,6 +564,13 @@ function parseWithExercise(rawText, exercise) {
 function parseSetGroups(text) {
   const cleaned = normalizeParserText(text)
     .replace(/\b(today|i did|did|was|were)\b/gi, ' ')
+    // Added-load bodyweight notation: a leading "+" on a load ("Dips +25 8/2",
+    // "Pull-ups +25 6/2") marks EXTERNAL load. Atlas has no separate added-load
+    // column, so within the slash-notation contract the "+" is dropped and the
+    // number is read as Weight — the movement NAME is unchanged, and reps/RIR/xN
+    // then parse exactly like any normal slash set. Bare slash sets (no "+") are
+    // untouched. Bodyweight is NOT auto-added here (no existing rule does that).
+    .replace(/\+(\d)/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 

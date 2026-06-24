@@ -865,3 +865,44 @@ test('mixed: bare-pair support does not turn prose into a log', () => {
   const r = parseWorkoutText('we should move up to 10 reps after 8 felt easy');
   assert.notEqual(r.intent, 'log_sets');
 });
+
+// ---------------------------------------------------------------------------
+// Added-load bodyweight (486 slice 2b) — "+NN" external load reads as Weight,
+// the movement name is unchanged, reps/RIR/xN parse exactly like normal slash.
+// ---------------------------------------------------------------------------
+
+test('added-load: "Dips +25 8/2" → Weighted Dips, +25 is the weight', () => {
+  const r = parseWorkoutText('Dips +25 8/2');
+  assert.equal(r.canonical_name, 'Dips (Weighted)');
+  assert.deepEqual(sets(r), [[25, 8, 2]]);
+});
+
+test('added-load: "Weighted dips +50 10/2 x3" → 3 sets, +50 weight, xN expands', () => {
+  const r = parseWorkoutText('Weighted dips +50 10/2 x3');
+  assert.equal(r.canonical_name, 'Dips (Weighted)');
+  assert.deepEqual(sets(r), [[50, 10, 2], [50, 10, 2], [50, 10, 2]]);
+});
+
+test('added-load: "Pull-ups +25 6/2" → Pull-Up, +25 weight', () => {
+  const r = parseWorkoutText('Pull-ups +25 6/2');
+  assert.equal(r.canonical_name, 'Pull-Up');
+  assert.deepEqual(sets(r), [[25, 6, 2]]);
+});
+
+test('added-load: "Chin-ups +10 8/2" → Chin-Up, +10 weight', () => {
+  const r = parseWorkoutText('Chin-ups +10 8/2');
+  assert.equal(r.canonical_name, 'Chin-Up');
+  assert.deepEqual(sets(r), [[10, 8, 2]]);
+});
+
+test('added-load: a normal weighted lift is unchanged — "Bench 225 5/2 x3"', () => {
+  // No "+" present → the strip is a no-op; behaviour is byte-identical to before.
+  assert.deepEqual(sets(parseWorkoutText('Bench 225 5/2 x3')), [[225, 5, 2], [225, 5, 2], [225, 5, 2]]);
+});
+
+test('added-load: modality inputs stay NON-slash (parser does not claim them)', () => {
+  // The slash/resistance parser must NOT log these — they are modality inputs,
+  // recognized additively by services/multiModalityParser.js, not here.
+  assert.notEqual(parseWorkoutText('Plank 60 sec x3').intent, 'log_sets');
+  assert.notEqual(parseWorkoutText('Elliptical 30 min').intent, 'log_sets');
+});
