@@ -113,7 +113,6 @@ const PREFERRED_ALIAS_TARGETS = {
   dips: ['dips weighted', 'weighted dips', 'dips'],
   lateral: ['lateral raises', 'lateral raise'],
   laterals: ['lateral raises', 'lateral raise'],
-  lats: ['lat pulldown', 'lat pulldowns'],
   'knee raises': ['hanging knee raises'],
   hammers: ['hammer curls', 'hammer curl'],
   'face pulls': ['face pull'],

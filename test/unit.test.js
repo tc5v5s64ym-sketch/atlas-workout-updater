@@ -428,14 +428,18 @@ test('enrichLogRow never maps Lats shorthand to Lateral Raises', () => {
   assert.ok(result.warnings[0].startsWith('Unknown exercise:'));
 });
 
-test('enrichLogRow resolves Lats to Lat Pulldown when present', () => {
+test('enrichLogRow treats Lats as ambiguous (blocked alias, not resolved to Lat Pulldown)', () => {
+  // PR #335 demoted "lats" to a contextual alias; the parser clarifies before enrichment,
+  // so the PREFERRED_ALIAS_TARGETS mapping was dead code. It is now removed.
+  // "lats" remains in BLOCKED_AMBIGUOUS_ALIASES so any direct enrichment hit is blocked,
+  // not silently resolved.
   const map = new Map([
     ['lateral raises', { canonical_exercise: 'Lateral Raises', muscle_group: 'Shoulders', lift_code: 'LAT01' }],
     ['lat pulldown', { canonical_exercise: 'Lat Pulldown', muscle_group: 'Back', lift_code: 'LPD01' }]
   ]);
   const result = enrichLogRow({ exercise: 'Lats' }, map);
-  assert.equal(result.enriched.canonical_exercise, 'Lat Pulldown');
-  assert.equal(result.enriched.lift_code, 'LPD01');
+  assert.equal(result.enriched.canonical_exercise, 'Lats', 'ambiguous lats not auto-resolved to Lat Pulldown — stays as raw input');
+  assert.notEqual(result.enriched.canonical_exercise, 'Lat Pulldown', 'must not silently pick up Lat Pulldown');
 });
 
 test('enrichLogRow resolves common conversational aliases safely', () => {
