@@ -7,7 +7,7 @@ This document defines the Atlas build workflow between Dale, ChatGPT, Claude Cod
 Atlas is **not a backlog grinder**. Every autonomous loop builds toward the owner's Vision and Dream, in the Roadmap's sequence, within the Architecture's boundaries. Before **selecting, planning, or implementing any work**, read, in this order:
 
 1. **Atlas Vision** — `docs/ATLAS_PRODUCT_VISION.md` (the product **north star**)
-2. **Atlas Roadmap** — `docs/ROADMAP.md` + `docs/ACTIVE_ROADMAP.md` (the **sequencing map**)
+2. **Atlas Roadmap** — `docs/ROADMAP.md` (the **sequencing map**; the live queue is `docs/ACTIVE_ROADMAP.md`, read at #7)
 3. **Atlas Architecture** — `docs/ARCHITECTURE.md` / `docs/export/atlas-architecture.html` (the **system boundary**)
 4. `CLAUDE.md`
 5. `docs/CONSTITUTION.md`
