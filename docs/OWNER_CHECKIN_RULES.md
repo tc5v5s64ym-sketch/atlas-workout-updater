@@ -8,7 +8,54 @@ This document lists the decision criteria and, for each, **who answers** — Cod
 
 ---
 
+## Escalation Policy v2 — Atlas PM authority (owner standing instruction, 2026-06-24)
+
+The owner is pulled in **only when human judgment or live testing is genuinely required.** Everything else is **pre-authorized**: Claude makes the call and proceeds. This section is authoritative; where the criteria table below differs, read it through this policy.
+
+### Pre-authorized — Atlas PM authority (decide and proceed; no owner, no Codex panel)
+
+A decision is **pre-authorized** when it is derivable from any of:
+
+- `CLAUDE.md`, `docs/CONSTITUTION.md`, `docs/INVARIANTS.md`, `docs/ACTIVE_ROADMAP.md`, `docs/DECISION_ROUTING.md`, this file, **or**
+- previously accepted Atlas behavior / the existing trust-contract rules.
+
+When the answer is derivable from those, Claude holds **PM authority**: it decides and keeps going. **Never escalate** (and do not route to Codex) for:
+
+- Root-cause analysis
+- Implementation selection
+- PR sizing
+- Test design
+- Regression strategy
+- Refactors (no behavior change)
+- Parser-routing decisions clearly derivable from Atlas principles
+- Whether a bug should be fixed when the behavior **clearly violates** an existing Atlas principle (e.g. deterministically-loggable input must not be routed to the coach; valid gym language must be loggable; the trust path must not silently discard user intent)
+- Any decision resolvable from repository documentation, roadmap items, invariants, constitution rules, prior accepted behavior, or existing trust-contract rules
+
+### Escalate to the owner ONLY for these five
+
+1. **Live app testing** — browser/UI behavior, mobile behavior, real user-workflow validation, verifying a fix works in production. (Owner-initiated/advisory, per criterion 1: flag `owner-live-test` with a live test script and **keep going**; the owner calls the hold.)
+2. **Product-scope changes** — a new user-facing capability, a new workflow, a new logging model, or a **new trust contract**.
+3. **Schema / storage changes** — Sheet schema, any database schema, data migrations.
+4. **Destructive operations** — data deletion, backfills, historical rewrites, any irreversible action.
+5. **Genuine principle conflicts** — two Atlas principles point to different outcomes and **no documented precedent** resolves it.
+
+Nothing outside these five is an owner stop. A genuinely non-derivable fork that is **not** owner-reserved goes to the **Codex Decision Desk** (`docs/DECISION_ROUTING.md`), not the owner.
+
+### Bug-handling routing (the default loop)
+
+When Claude discovers a bug it does **not** stop to ask. It: **investigate → produce root cause → determine the smallest safe fix → check it against Atlas principles → build → test → open PR → merge if the existing automation rules authorize it** (`docs/AUTOMATION_PROTOCOL.md` §4). It stops only when one of the five reserved categories is triggered — typically just a request for **live validation afterward**.
+
+> **Precedent (2026-06-24):** the multi-line strength-logging bug (#530) and the bodyweight-dips bug (#531) both **clearly violated existing Atlas principles** (deterministically-loggable input was routed to the coach; valid gym language was unloggable; the trust path silently discarded user intent). Under this policy they were **pre-authorized**: Claude should have root-caused, chosen the smallest safe fix, implemented, merged, and requested only a live validation test — without owner authorization to proceed.
+
+### Unchanged: absolute data-safety
+
+This policy governs *who decides*, not data safety. The "Absolute data-safety" section below is unchanged: no real Google Sheets write without explicit owner approval, the preview→approve→write trust loop, the proof fields, and no secret/`GOOGLE_SHEETS_ID`/env exposure. **PM authority never authorizes a real production write, a data migration, or an INVARIANT/Constitution amendment** — those remain owner-reserved (categories 2–4 above and absolute data-safety).
+
+---
+
 ## Decision criteria and disposition
+
+> Read through **Escalation Policy v2** above: a criterion's disposition is **owner** only when it maps to one of the five reserved categories; otherwise a derivable call is **PM authority** (Claude decides) and a genuine non-derivable fork is **Codex**.
 
 For each, "Codex decides" means Codex answers the panel and Claude proceeds; "escalate-to-owner" means Codex routes that specific item to the owner.
 

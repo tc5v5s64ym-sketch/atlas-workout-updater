@@ -10,11 +10,17 @@ The owner is removed from the decision-panel loop. The owner is engaged again on
 
 This is the owner's explicit instruction: *"When Claude presents a panel of questions, I want Codex to answer them — all of them."*
 
-## What is a "decision panel"
+## First: is it even a decision panel? (Atlas PM authority)
 
-Any point where Claude would otherwise stop and ask the owner to choose between options on **how to proceed** — the `AskUserQuestion`-style choices. Examples: which approach to take, whether something is in scope, how to interpret ambiguous review feedback, which of two designs fits the roadmap, whether a premise still holds, how to sequence work, whether a finding is in-scope or future-scope.
+Before routing anything, apply **Escalation Policy v2** (`docs/OWNER_CHECKIN_RULES.md`). A decision **derivable** from the Atlas docs (`CLAUDE.md`, `CONSTITUTION.md`, `INVARIANTS.md`, `ACTIVE_ROADMAP.md`, this file, `OWNER_CHECKIN_RULES.md`) or from previously accepted Atlas behavior / the trust-contract rules is **pre-authorized** — Claude decides with **PM authority and proceeds. It does NOT go to Codex and it does NOT go to the owner.** This explicitly covers root-cause analysis, implementation selection, PR sizing, test design, regression strategy, refactors, parser-routing clearly derivable from principles, and whether to fix a bug that clearly violates an Atlas principle.
 
-All of these now go to Codex.
+The Codex Decision Desk is for a **genuine fork that the docs do not settle** and that is not owner-reserved — not for decisions the principles already answer.
+
+## What is a "decision panel" (routes to Codex)
+
+A point where Claude would otherwise stop and ask the owner to choose between options on **how to proceed** — the `AskUserQuestion`-style choices — **and the docs/principles do not already settle it**. Examples: two designs that both fit the roadmap with real unsettled tradeoffs, genuinely ambiguous review feedback the docs don't resolve, sequencing with no documented precedent.
+
+These go to Codex. A panel whose answer is derivable is **not** a panel — Claude resolves it under PM authority (above).
 
 ## The one thing this does NOT change (data-write safety)
 
