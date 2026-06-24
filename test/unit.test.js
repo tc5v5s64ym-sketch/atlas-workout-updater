@@ -771,6 +771,27 @@ test('live-audit PR2: a malformed SET surfaces a format hint instead of silently
   assert.doesNotMatch(guard, /routeMessageToCoach/, 'the guard itself never calls the coach');
 });
 
+test('live-audit PR3: "log it" with an empty buffer after a save says "nothing new", not a false closeout', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(
+    appSource.indexOf('async function handleLogIt()'),
+    appSource.indexOf('async function handleLogIt()') + 2000
+  );
+  assert.ok(fn.length > 0, 'handleLogIt must exist');
+  // The empty-buffer save path: lastWrite set → "nothing new", returns BEFORE the
+  // /api/session/compile fallback (so the already-saved chat history is never
+  // recompiled/re-written).
+  const nothingNewIdx = fn.indexOf("Nothing new to log since your last save");
+  const compileIdx = fn.indexOf('/api/session/compile');
+  assert.ok(nothingNewIdx > 0, 'must surface a "nothing new" status');
+  assert.match(fn, /if \(lastWrite\) \{[\s\S]*Nothing new to log[\s\S]*return;/, 'guarded by lastWrite, returns');
+  assert.ok(compileIdx > nothingNewIdx, 'the nothing-new guard must precede the compile fallback');
+  // The structured-buffer branch still wins first, so NEW sets logged after a save
+  // (sessionLog non-empty) are unaffected.
+  const bufferIdx = fn.indexOf('if (sessionLog.length)');
+  assert.ok(bufferIdx >= 0 && bufferIdx < nothingNewIdx, 'the sessionLog branch precedes the nothing-new guard');
+});
+
 test('Step 373: currentPlanForChat reads the live planned session before the cached recommendation', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
@@ -4669,8 +4690,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v35/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v34\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v36/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v35\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
