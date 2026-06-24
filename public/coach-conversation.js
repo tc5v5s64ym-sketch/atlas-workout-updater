@@ -793,7 +793,10 @@
     // LLM down / suppressed (incl. a good pivot): prefer the engine's correct-effort
     // line (on-target praise) when offered, else the templated opener, then the
     // next-move heads-up, then the swap.
-    const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec);
+    // Pass the profile-aware stimulus_grade from the coach-API response so coachOpener
+    // never invites progression the governor wants held (slice 7).
+    const stimulusGrade = (data && data.set_grade) || null;
+    const opener = (voice && voice.primary_line) || coachOpener(facts.todaySets || [], facts.rec, stimulusGrade);
     return { note: withSub(joinLines(opener, nextMoveLine)), effort_note, reroute, voice };
   }
 
@@ -852,12 +855,34 @@
     return variants[i];
   }
 
-  function coachOpener(todaySets, rec) {
+  function coachOpener(todaySets, rec, stimulusGrade) {
     // The engine's effort verdict (logged RIR vs target) is authoritative — lead
     // with it so the note reflects what actually happened, not canned praise.
     // Phrasing rotates per verdict level (see pickVerdictLine) to de-template.
+    // When the profile-aware governor (stimulus_grade) says hold/back_off or
+    // fatigue is high, suppress progression-invite variants so the opener never
+    // contradicts the engine's verdict (slice 7).
+    const govVerdict = stimulusGrade && stimulusGrade.progression_verdict;
+    const govFatigue = stimulusGrade && stimulusGrade.fatigue_signal;
+    const govProfile = stimulusGrade && stimulusGrade.profile;
+    const isHeld = govVerdict === 'hold' || govVerdict === 'back_off';
+    const isHighFatigue = govFatigue === 'high';
+    const isGeneralFitness = govProfile === 'general_fitness';
+
     const verdict = rec && rec.effort_verdict;
     if (verdict && verdict.level) {
+      // For general_fitness: failure is a form cue, not a praise moment — re-route
+      // before the rotation table so no "Strong work" variant surfaces.
+      if (isGeneralFitness && verdict.level === 'failure') {
+        return 'Keep the reps clean — stay short of failure. Consistent work within your range is the goal here.';
+      }
+      // When the governor says hold/back_off or fatigue is high, easy/far_easy
+      // verdicts would invite progression the engine wants deferred — swap them.
+      if ((isHeld || isHighFatigue) && (verdict.level === 'easy' || verdict.level === 'far_easy')) {
+        return govVerdict === 'back_off'
+          ? 'The engine is calling a step back here — ease off the load rather than pushing up.'
+          : 'Solid — the engine wants you to hold the load here. Let consistency do the work.';
+      }
       const line = pickVerdictLine(verdict.level);
       if (line) return line;
     }
@@ -868,9 +893,18 @@
     const lastSets = (rec && rec.last_working_sets) || [];
     const lastTop = lastSets.length ? Math.max(0, ...lastSets.map(s => Number(s.weight) || 0)) : null;
 
-    if (hitFailure) return 'Strong work — but that got spicy at the end. You left nothing in the tank on the last set.';
-    if (lastTop != null && topWeight > lastTop) return `Nice — that's a step up on your last session (top set was ${lastTop} lb).`;
-    if (lastTop != null && topWeight === lastTop) return 'Solid — you matched your last top set. Clean reps bank the next jump.';
+    if (hitFailure) {
+      if (isGeneralFitness) return 'Stay short of failure — clean reps within your range build the base here.';
+      return 'Strong work — but that got spicy at the end. You left nothing in the tank on the last set.';
+    }
+    if (lastTop != null && topWeight > lastTop) {
+      if (isHeld || isHighFatigue) return 'Solid. The load is dialled in for this phase — let the reps build.';
+      return `Nice — that's a step up on your last session (top set was ${lastTop} lb).`;
+    }
+    if (lastTop != null && topWeight === lastTop) {
+      if (isHeld || isHighFatigue) return 'Solid — matched your last top set. Stay consistent here.';
+      return 'Solid — you matched your last top set. Clean reps bank the next jump.';
+    }
     if (lastTop == null) return "Logged. That sets your baseline — I'll track your progress from here.";
     return 'Logged. Steady work.';
   }

@@ -2727,7 +2727,8 @@ test('in-workout note: handleSetLogged anchors the recommendation on the just-lo
 
 test('in-workout note: coachOpener leads with the engine effort verdict, de-templated (PR4)', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const opener = cc.slice(cc.indexOf('function coachOpener('), cc.indexOf('function coachOpener(') + 900);
+  const fnStart = cc.indexOf('function coachOpener(');
+  const opener = cc.slice(fnStart, cc.indexOf('/* ===== Event wiring', fnStart));
   assert.match(opener, /effort_verdict/, 'opener must consult the verdict');
   assert.match(opener, /pickVerdictLine\(verdict\.level\)/, 'opener must route the verdict through the de-templating picker');
 
@@ -2762,6 +2763,70 @@ test('coachOpener de-templating: a per-level rotation yields non-identical conse
   const first = pick('failure');
   const second = pick('failure');
   assert.notEqual(first, second, 'two failure notes in a session must differ');
+});
+
+// PR 484 slice 7: coachOpener governor-verdict gate (stimulus_grade awareness)
+test('coachOpener slice 7: accepts stimulusGrade as third param and reads progression_verdict + fatigue_signal', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fnStart = cc.indexOf('function coachOpener(');
+  const fnEnd = cc.indexOf('/* ===== Event wiring', fnStart);
+  const opener = cc.slice(fnStart, fnEnd);
+  assert.match(opener, /function coachOpener\(todaySets, rec, stimulusGrade\)/,
+    'coachOpener must accept stimulusGrade as third param');
+  assert.match(opener, /progression_verdict/, 'must read progression_verdict from stimulusGrade');
+  assert.match(opener, /fatigue_signal/, 'must read fatigue_signal from stimulusGrade');
+  assert.match(opener, /isHeld/, 'must compute isHeld flag for hold/back_off suppression');
+  assert.match(opener, /isHighFatigue/, 'must compute isHighFatigue flag');
+  assert.match(opener, /isGeneralFitness/, 'must compute isGeneralFitness flag for failure-celebration suppression');
+});
+
+test('coachOpener slice 7: hold verdict suppresses easy/far_easy progression invite', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fnStart = cc.indexOf('function coachOpener(');
+  const fnEnd = cc.indexOf('/* ===== Event wiring', fnStart);
+  const opener = cc.slice(fnStart, fnEnd);
+  // When isHeld and verdict is easy/far_easy, must not fall through to pickVerdictLine
+  assert.match(opener, /\(isHeld \|\| isHighFatigue\) && \(verdict\.level === 'easy' \|\| verdict\.level === 'far_easy'\)/,
+    'must suppress easy/far_easy verdicts when held or high-fatigue');
+  // back_off gets a distinct "ease off" line
+  assert.match(opener, /ease off the load rather than pushing up/,
+    'back_off suppression must direct to ease off');
+  // hold gets a "hold the load" line
+  assert.match(opener, /hold the load here/,
+    'hold suppression must direct to hold the load');
+});
+
+test('coachOpener slice 7: hold/high-fatigue suppresses weight-step-up progression language', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fnStart = cc.indexOf('function coachOpener(');
+  const fnEnd = cc.indexOf('/* ===== Event wiring', fnStart);
+  const opener = cc.slice(fnStart, fnEnd);
+  // The weight-comparison fallback must also gate on isHeld/isHighFatigue
+  assert.match(opener, /if \(isHeld \|\| isHighFatigue\) return 'Solid\. The load is dialled in/,
+    'step-up path must return neutral "dialled in" line when held/high-fatigue');
+  assert.match(opener, /if \(isHeld \|\| isHighFatigue\) return 'Solid — matched your last top set\. Stay consistent here\./,
+    'matched-weight path must return stable line when held/high-fatigue');
+});
+
+test('coachOpener slice 7: general_fitness failure re-routes to clean-reps cue before rotation table', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fnStart = cc.indexOf('function coachOpener(');
+  const fnEnd = cc.indexOf('/* ===== Event wiring', fnStart);
+  const opener = cc.slice(fnStart, fnEnd);
+  assert.match(opener, /isGeneralFitness && verdict\.level === 'failure'/,
+    'must detect general_fitness + failure before pickVerdictLine');
+  assert.match(opener, /stay short of failure|short of failure/i,
+    'general_fitness failure path must cue clean reps, not celebrate');
+});
+
+test('coachOpener slice 7: getInWorkoutNote passes data.set_grade to coachOpener', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fnStart = cc.indexOf('async function getInWorkoutNote(');
+  const fnEnd = cc.indexOf('// Returns the full /api/coach/message', fnStart);
+  const fn = cc.slice(fnStart, fnEnd);
+  assert.match(fn, /data && data\.set_grade/, 'must extract set_grade from data');
+  assert.match(fn, /coachOpener\(facts\.todaySets \|\| \[\], facts\.rec, stimulusGrade\)/,
+    'must pass stimulusGrade as third arg to coachOpener');
 });
 
 test('reaction layer: renderAtlasSuggestion and extractLiftCodes exist', () => {
