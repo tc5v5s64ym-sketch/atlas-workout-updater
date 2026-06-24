@@ -562,7 +562,7 @@
   const greeting = document.getElementById('coach-greeting');
   if (greeting) {
     const h = new Date().getHours();
-    const part = h < 12 ? 'Morning' : h < 18 ? 'Afternoon' : 'Evening';
+    const part = h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : 'Evening';
     greeting.textContent = `${part}. Ready when you are.`;
   }
 
