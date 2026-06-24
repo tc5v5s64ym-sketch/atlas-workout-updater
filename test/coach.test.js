@@ -512,6 +512,45 @@ test('isValidEditSchema accepts known actions and rejects unknown or negative in
   assert.ok(!isValidEditSchema([]), 'array rejected');
 });
 
+// ME-9: defense-in-depth numeric validation. A proposal carrying a present but
+// non-finite/negative/absurd weight/reps/rir must never become an approvable edit.
+test('isValidEditSchema validates present weight/reps/rir numbers (ME-9)', () => {
+  // Valid numbers pass on every action that carries them.
+  assert.ok(isValidEditSchema({ action: 'update_set', index: 0, weight: 235, reps: 5, rir: 2 }));
+  assert.ok(isValidEditSchema({ action: 'add_set', weight: 225, reps: 8, rir: 1 }));
+  assert.ok(isValidEditSchema({ action: 'add_set', reps: 12, rir: 0 }), 'bodyweight set (no weight) is fine');
+  // Absent fields stay valid — the client supplies/bounds them (back-compat).
+  assert.ok(isValidEditSchema({ action: 'add_set' }), 'bare add_set still structurally valid');
+  assert.ok(isValidEditSchema({ action: 'update_set', index: 1 }), 'partial update with no numbers still valid');
+
+  // Garbage weights rejected.
+  assert.ok(!isValidEditSchema({ action: 'add_set', weight: -5, reps: 5 }), 'negative weight rejected');
+  assert.ok(!isValidEditSchema({ action: 'add_set', weight: 0, reps: 5 }), 'zero weight rejected');
+  assert.ok(!isValidEditSchema({ action: 'update_set', index: 0, weight: 99999 }), 'absurd weight rejected');
+  assert.ok(!isValidEditSchema({ action: 'add_set', weight: Infinity, reps: 5 }), 'Infinity weight rejected');
+  assert.ok(!isValidEditSchema({ action: 'add_set', weight: '235', reps: 5 }), 'string weight rejected');
+
+  // Garbage reps rejected.
+  assert.ok(!isValidEditSchema({ action: 'add_set', reps: 0 }), 'zero reps rejected');
+  assert.ok(!isValidEditSchema({ action: 'add_set', reps: 5.5 }), 'fractional reps rejected');
+  assert.ok(!isValidEditSchema({ action: 'add_set', reps: 1000 }), 'absurd reps rejected');
+  assert.ok(!isValidEditSchema({ action: 'update_set', index: 0, reps: NaN }), 'NaN reps rejected');
+
+  // Garbage RIR rejected.
+  assert.ok(!isValidEditSchema({ action: 'add_set', reps: 5, rir: -1 }), 'negative rir rejected');
+  assert.ok(!isValidEditSchema({ action: 'add_set', reps: 5, rir: 50 }), 'out-of-range rir rejected');
+  assert.ok(!isValidEditSchema({ action: 'update_set', index: 0, rir: NaN }), 'NaN rir rejected');
+});
+
+// ME-9 end-to-end through the reply parser: a model reply proposing an absurd
+// number is stripped to prose with no propose_edit (never offered for approval).
+test('parseEditFromReply drops a proposal with an out-of-bounds number (ME-9)', () => {
+  const raw = 'Bumping you up.\nPROPOSE_EDIT: {"action":"add_set","weight":-50,"reps":5,"rir":2}';
+  const { reply, propose_edit } = parseEditFromReply(raw);
+  assert.match(reply, /Bumping you up\./);
+  assert.equal(propose_edit, null, 'a negative-weight proposal must not become an approvable edit');
+});
+
 // ── structured constraints (P1 · 2.1) ─────────────────────────────────────────
 
 test('chat system prompt documents the PROPOSE_CONSTRAINT schema and the one-proposal rule', () => {

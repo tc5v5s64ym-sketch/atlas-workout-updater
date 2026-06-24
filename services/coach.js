@@ -619,15 +619,37 @@ function parseEditFromReply(text) {
   return { reply: prose || text.trim(), propose_edit };
 }
 
-// Structural schema check only — bounds are validated by the client against
-// the visible rows so the server never needs to know row count.
+// Defense-in-depth numeric validation for an edit proposal (ME-9). The client
+// still bounds-checks against the visible rows and the write path re-parses, but
+// a proposal carrying a non-finite or absurd weight/reps/rir must never be offered
+// to the lifter as an approvable edit. Each field is validated ONLY when present:
+// update_set omits the fields it is not changing, and a bare add_set is allowed to
+// let the client supply the numbers — so absence is valid, but a present value must
+// be finite and within sane rule-engine bounds (weight lb >0..2000, reps int 1..100,
+// rir 0..10). Catches NaN/Infinity/negative/string/out-of-range from a flaky model.
+function editNumbersValid(obj) {
+  if (obj.weight != null && !(Number.isFinite(obj.weight) && obj.weight > 0 && obj.weight <= 2000)) return false;
+  if (obj.reps   != null && !(Number.isInteger(obj.reps) && obj.reps >= 1 && obj.reps <= 100)) return false;
+  if (obj.rir    != null && !(Number.isFinite(obj.rir) && obj.rir >= 0 && obj.rir <= 10)) return false;
+  return true;
+}
+
+// Structural schema check + numeric bounds. The row-count bounds (index vs visible
+// rows) are still validated by the client; the server adds finiteness/range guards
+// so a malformed proposal never reaches the approval gate.
 function isValidEditSchema(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
   const { action } = obj;
-  if (action === 'update_set' || action === 'delete_set') {
+  if (action === 'update_set') {
+    return Number.isInteger(obj.index) && obj.index >= 0 && editNumbersValid(obj);
+  }
+  if (action === 'delete_set') {
     return Number.isInteger(obj.index) && obj.index >= 0;
   }
-  return action === 'add_set';
+  if (action === 'add_set') {
+    return editNumbersValid(obj);
+  }
+  return false;
 }
 
 // Fixed vocabularies for structured constraints. A constraint is a typed,
