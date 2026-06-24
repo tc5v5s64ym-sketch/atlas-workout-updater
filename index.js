@@ -56,7 +56,7 @@ const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
-const { buildSessionQuestionAnswer, answerBareShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('./services/recoveryRouting');
 const {
   evaluateCurrentDeload,
@@ -1473,6 +1473,15 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
 // Engine target for a lift name, used by the LLM-down chat fallback. Resolves the
 // lift code from the name and reads the same recommendNextSet the "Next" card uses,
 // so a deterministic answer reports the exact numbers the engine already owns.
+// True when the chat client context carries an active session (a previewed lift or a
+// planned lift). Used to gate the engine-fill Sheets read so it only happens during a
+// real session, never on a bare-shorthand message typed with no active workout.
+function hasActiveSessionContext(ctx) {
+  const c = ctx && typeof ctx === 'object' ? ctx : {};
+  return (Array.isArray(c.current_preview) && c.current_preview.length > 0)
+    || (Array.isArray(c.current_plan) && c.current_plan.length > 0);
+}
+
 function recommendTargetForLift(liftName, logRows) {
   const code = generateLiftCode(liftName);
   if (!code) return null;
@@ -1501,7 +1510,18 @@ app.post('/api/coach/chat', async (req, res) => {
   // not generic education. Ambiguous current lift → ask which one. No active lift
   // context → returns null so the normal flow (SME education) still applies.
   // Context-only (no Sheets/LLM): the live plan/preview already carries the target.
-  const bare = answerBareShorthand(message, clientCtx);
+  let bare = answerBareShorthand(message, clientCtx);
+  // Preview-of-unplanned-lift parity (#452 follow-up): when the current lift is in an
+  // active PREVIEW that isn't in current_plan, the preview row carries sets:null, so
+  // the context-only attempt above can't answer a bare "how many sets?" and would drop
+  // to the LLM. Engine-fill via recommendNextSet — the SAME resolveTarget the named-lift
+  // fallback (deterministicAnswer) uses — so the lifter gets the deterministic target,
+  // not an LLM guess. Gated to bare shorthand during an active session that the context
+  // couldn't answer, so the Sheets read is rare (not on every chat message).
+  if (!bare && isBareSessionShorthand(message) && hasActiveSessionContext(clientCtx)) {
+    const bareLog = await getSheetRows(logSheetName).catch(() => []);
+    bare = answerBareShorthand(message, clientCtx, (liftName) => recommendTargetForLift(liftName, bareLog));
+  }
   if (bare) {
     return standardSuccess(req, res, bare.kind === 'clarify'
       ? 'Coach chat — clarify which lift'

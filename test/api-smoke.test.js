@@ -995,6 +995,48 @@ test('api smoke: coach/chat asks which lift when bare shorthand is ambiguous (#4
   }
 });
 
+test('api smoke: coach/chat engine-fills a bare "how many sets?" during a preview of an UNPLANNED lift (#452 follow-up)', async () => {
+  // The lifter has previewed Bench Press (an unplanned lift), so the preview row
+  // carries sets:null — the context-only attempt can't answer "How many sets?" and
+  // would drop to the LLM. With Gemini UP, the bare pre-empt must engine-fill via
+  // recommendNextSet (BEN01 history → 3 sets), the SAME deterministic target the
+  // named-lift fallback uses, so the lifter gets the engine number, not an LLM guess.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  const before = fakeSheetsState.appendCalls.length;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'How many sets?', context: { current_preview: [{ exercise: 'Bench Press' }] } })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'preview-of-unplanned-lift bare set question answers from the engine, not the LLM');
+    assert.equal(body.data.message, 'Bench Press: 3 sets.', 'reports the engine-recommended set count for the previewed lift');
+    assert.equal(fakeSheetsState.appendCalls.length, before, 'engine-fill is read-only — never writes a sheet');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke: coach/chat does NOT engine-fill a bare shorthand with NO active session (stays LLM-eligible) (#452 follow-up)', async () => {
+  // Guard: the engine-fill Sheets read is gated on an active session. A bare
+  // "How many sets?" with no preview and no plan must NOT short-circuit to the
+  // engine — it falls through to the normal flow (Gemini answers when up).
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatMessage = 'Sets depend on your goal — usually 3 to 5 working sets.';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'How many sets?' })
+    });
+    assert.equal(response.status, 200);
+    assert.notEqual(body.data.source, 'engine', 'with no active session, the bare pre-empt must not engine-fill');
+  } finally {
+    fakeCoachState.configured = false;
+  }
+});
+
 test('api smoke: coach/chat preserves a proposal even when the Gemini prose comes back empty', async () => {
   // Empty reply must not drop a structured proposal — the proposal is the payload.
   fakeCoachState.configured = true;
