@@ -26,7 +26,12 @@ function normalizeDurationString(value) {
     const m = Number(mm);
     const sec = Number(ss);
     if (sec < 0 || sec > 59 || m < 0) throw new Error(`Invalid duration values: ${value}`);
-    return `${pad2(0)}:${pad2(m)}:${pad2(sec)}`;
+    // mm may exceed 59 (e.g. "90:30" = a 90½-minute cardio session). Roll the
+    // overflow into hours so the canonical HH:MM:SS stays well-formed — the
+    // 3-part branch already rejects a minutes field > 59, and "00:90:30" would
+    // put 90 in that same 0–59 slot. The span is preserved (00:90:30 ≡ 01:30:30).
+    const totalSeconds = m * 60 + sec;
+    return `${pad2(Math.floor(totalSeconds / 3600))}:${pad2(Math.floor((totalSeconds % 3600) / 60))}:${pad2(totalSeconds % 60)}`;
   }
 
   if (parts.length === 3) {
