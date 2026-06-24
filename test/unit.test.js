@@ -2118,6 +2118,14 @@ test('coach set-reaction stimulus_grade is engine-only (always overwritten, no c
     'index.js must overwrite stimulus_grade with the engine value or null (engine-only)');
 });
 
+test('ME-12: dotenv config is guarded so a missing dotenv never blocks app load', () => {
+  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // The bootstrap must not hard-require dotenv (Render injects env directly); a
+  // missing dotenv must not crash module load.
+  assert.doesNotMatch(indexSource, /^const dotenv = require\('dotenv'\);/m, 'dotenv must not be a hard top-level require');
+  assert.match(indexSource, /try\s*\{\s*require\('dotenv'\)\.config\(\);\s*\}\s*catch/, 'dotenv.config must be wrapped in try/catch');
+});
+
 test('LO-2: complete-workout validation 400s gate error.message behind NODE_ENV (no raw leak)', () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   // The three /api/complete-workout validation failures must NOT interpolate a raw

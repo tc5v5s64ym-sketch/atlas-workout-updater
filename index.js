@@ -1,5 +1,6 @@
-const dotenv = require('dotenv');
-dotenv.config();
+// dotenv is a local-dev convenience only — Render (and any production host) injects
+// env vars directly. Guard the require so a missing dotenv never blocks app load.
+try { require('dotenv').config(); } catch { /* dotenv not installed — env injected by the host */ }
 
 const express = require('express');
 const fs = require('fs');
