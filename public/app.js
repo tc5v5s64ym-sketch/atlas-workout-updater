@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v36';
+const ATLAS_SHELL_BUILD = 'v37';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2559,6 +2559,11 @@ function rowsFromBackendParsedWorkout(parsed) {
     // a coach message (the live-audit "looks logged but wasn't" trust gap).
     err.parsedIntent = parsed?.intent || null;
     err.recognizedExercise = (parsed?.partial && parsed.partial.exercise) || null;
+    // True when the backend BLOCKED a multi-exercise blob. Lets the caller route a
+    // newline-separated, one-exercise-per-line message to the line-based local parser
+    // (each line is unambiguous) instead of dropping it to the coach. Same-line mixing
+    // (no newline) stays blocked — see rowsFromWorkoutInput.
+    err.multipleExercises = Array.isArray(parsed?.warnings) && parsed.warnings.includes('multiple_exercises_in_input');
     throw err;
   }
 
@@ -2712,6 +2717,28 @@ async function rowsFromWorkoutInput() {
       lastParsedWorkoutText = workoutText;
       lastPrescribed = null;
       return;
+    }
+    // Multi-line, one-exercise-per-line strength logging (Fix A). The backend
+    // INTENTIONALLY blocks a multi-exercise blob (ambiguous same-line mixing), but
+    // newline-separated lines are each unambiguous, so route them to the line-based
+    // local parser — which the noFallback block would otherwise bypass — so ALL lines
+    // log instead of dropping to the coach (the "looks logged but wasn't" trust gap).
+    // Guards: only when the backend flagged multiple_exercises_in_input AND the input
+    // actually spans newlines (so same-line mixing stays blocked), AND the local parse
+    // is CLEAN (no per-line errors) — an uncertain line is never silently logged.
+    if (backendError.multipleExercises && /\n/.test(workoutText)) {
+      const multi = parseWorkoutText(workoutText, { activeExercise: activeExercise || firstUnloggedPlannedLift() });
+      if (!multi.errors.length && multi.rows.length) {
+        populateSetRows(multi.rows);
+        lastParserStatus = { source: 'local-multiline' };
+        activeExercise = multi.rows[0]?.exercise || null;
+        parsedRowsEditor.hidden = true;
+        lastParsedWorkoutText = workoutText;
+        lastPrescribed = null;
+        return;
+      }
+      // Ambiguous/partial multi-line → fall through to the existing path (never log
+      // uncertain rows). Same-line mixing (no newline) never reaches here.
     }
     if (!shouldUseLocalFallback(backendError)) throw backendError;
     console.warn('[atlas] parse-workout-text unavailable, using local fallback:', backendError.message);
