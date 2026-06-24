@@ -37,6 +37,8 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 | Label | Meaning / when applied |
 |---|---|
 | **`codex-decision`** | Applied to a PR/issue carrying a **Codex Decision Request** — a decision panel routed to the Codex Decision Desk to answer (`docs/DECISION_ROUTING.md`). Applied by the decision-desk flow, not a risk classification. |
+| **`atlas-decision-desk`** | Applied (via the "🧭 Atlas Decision Desk" issue template) to an owner-gated/ambiguous **implementation** decision routed to the Atlas Decision Desk for a PM verdict (`docs/DECISION_ROUTING.md` "The Atlas Decision Desk"). Triggers `.github/workflows/atlas-decision-desk.yml`. |
+| **`needs-pm-decision`** | On an Atlas Decision Desk issue, marks it **awaiting** the verdict; the desk removes it once it posts `APPROVED` / `REJECTED` / `SPLIT` / `ESCALATE-TO-OWNER`. |
 
 A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR could be `write-path` + `approval-path` + `trust-sensitive`, with primary `owner-decision`). Category labels make the surface area visible at a glance; the primary label decides who must act.
 

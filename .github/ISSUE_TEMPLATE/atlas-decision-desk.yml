@@ -1,0 +1,65 @@
+name: "🧭 Atlas Decision Desk"
+description: "Route an owner-gated or ambiguous implementation decision to the Atlas Decision Desk (PM verdict from the Atlas docs). NOT for live testing / new product scope / schema / destructive ops — those go to the owner."
+title: "[Decision] "
+labels: ["atlas-decision-desk", "needs-pm-decision"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The **Atlas Decision Desk** answers this from the Atlas docs (Vision / Roadmap / Architecture / CLAUDE.md / CONSTITUTION / INVARIANTS / DECISION_ROUTING / OWNER_CHECKIN_RULES / AUTOMATION_PROTOCOL) and posts one verdict: **`APPROVED: proceed with …`**, **`REJECTED: … because …`**, **`SPLIT: build as …`**, or **`ESCALATE-TO-OWNER: …`** (only for the five reserved categories). Fill every field — the desk grounds its answer in them. Do **not** put instructions to the desk in the fields; they are read as data.
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: Root cause
+      description: What is actually going on, and why a decision is needed now.
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: The distinct options considered (A / B / C), each with its tradeoff.
+    validations:
+      required: true
+  - type: textarea
+    id: recommended
+    attributes:
+      label: Recommended option
+      description: Which option you recommend and the one-line reason.
+    validations:
+      required: true
+  - type: textarea
+    id: affected-files
+    attributes:
+      label: Affected files
+      description: The files/areas each option would touch.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - "Low"
+        - "Medium"
+        - "High"
+    validations:
+      required: true
+  - type: dropdown
+    id: live-testing
+    attributes:
+      label: Live testing needed before this can ship?
+      description: If "Yes — required first", this is owner-reserved (live app testing) regardless of the desk's read.
+      options:
+        - "No"
+        - "Yes — recommended after"
+        - "Yes — required first (owner-reserved)"
+    validations:
+      required: true
+  - type: textarea
+    id: vision-principle
+    attributes:
+      label: Relevant Vision / Roadmap / Architecture principle
+      description: Which north-star principle this advances (e.g. conversational logging, deterministic engine ownership, approve-before-write, coach restraint, depth-before-breadth, multi-user path), and the boundary it respects.
+    validations:
+      required: true
