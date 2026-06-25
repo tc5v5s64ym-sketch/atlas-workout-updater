@@ -836,7 +836,12 @@ function buildBodyweightHistory(rows, days = 30) {
 
 function detectStalls(logRows, minSessions = 3) {
   const count = Math.max(2, Number.isFinite(Number(minSessions)) ? Number(minSessions) : 3);
-  const rows = asArray(logRows).map(normalizeLogRow).filter(row => isPositiveFinite(row.weight) && isPositiveFinite(row.reps));
+  // A stall is a progression/working-set decision (it drives plateau warnings and,
+  // via suggestDeloads, the deload weight off stall.last_best_weight) — so note-tagged
+  // warm-ups are excluded (owner warm-up rule): a heavy tagged feeler must not set a
+  // session's best and skew the stall verdict or the deload weight. Volume counting
+  // (computeMuscleGroupVolume) still includes warm-ups; only this decision excludes them.
+  const rows = asArray(logRows).map(normalizeLogRow).filter(row => isPositiveFinite(row.weight) && isPositiveFinite(row.reps) && !isWarmupNote(row.notes));
   const byLiftCode = new Map();
 
   rows.forEach(row => {
