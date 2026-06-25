@@ -256,6 +256,49 @@ test('insertExercise: insert → markCompleted records an off-plan exercise as i
   assert.ok(done && done.status === 'completed' && done.source === 'inserted', 'off-plan log is inserted+completed');
 });
 
+// ── Wiring guards (PR-565 review notes, hardened for the live mutation path) ───
+
+test('guard: replaceExercise never re-opens a completed or skipped slot', () => {
+  const { createActiveSession, markCompleted, skipExercise, replaceExercise, completedExercises } = require('../public/activeSession');
+  let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
+  s = markCompleted(s, 'Deadlift');
+  assert.equal(replaceExercise(s, 'Deadlift', { name: 'Back Squat' }), s, 'replacing a COMPLETED slot is a no-op');
+  assert.deepEqual(completedExercises(s).map(e => e.name), ['Deadlift'], 'the finished slot is untouched');
+  let s2 = skipExercise(createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] }), 'Deadlift');
+  assert.equal(replaceExercise(s2, 'Deadlift', { name: 'Back Squat' }), s2, 'replacing a SKIPPED slot is a no-op');
+});
+
+test('guard: correctIdentity never downgrades a finished `to`, and never orphans a second logged set', () => {
+  const { createActiveSession, markCompleted, correctIdentity, completedExercises, remaining } = require('../public/activeSession');
+
+  // from pending + to completed → must NOT downgrade the completed `to`; the
+  // redundant pending mislabel is reconciled away (kept completed, not re-opened).
+  let s = createActiveSession({ exercises: ['Deadlift', 'Lat Pulldown'] });
+  s = markCompleted(s, 'Lat Pulldown');                 // to is completed
+  s = correctIdentity(s, { from: 'Deadlift', to: 'Lat Pulldown' }); // from is pending
+  assert.equal(completedExercises(s).filter(e => e.name === 'Lat Pulldown').length, 1, 'the completed Lat Pulldown is preserved (not downgraded)');
+  assert.ok(!remaining(s).some(e => e.name === 'Lat Pulldown'), 'Lat Pulldown is not re-opened as pending');
+  assert.ok(!s.exercises.some(e => e.name === 'Deadlift'), 'the redundant pending mislabel is gone');
+
+  // both completed (two separately-logged sets) → keep both, do not collapse/orphan.
+  let s2 = createActiveSession({ exercises: ['Deadlift', 'Lat Pulldown'] });
+  s2 = markCompleted(s2, 'Deadlift');
+  s2 = markCompleted(s2, 'Lat Pulldown');
+  s2 = correctIdentity(s2, { from: 'Deadlift', to: 'Lat Pulldown' });
+  assert.equal(completedExercises(s2).filter(e => e.name === 'Lat Pulldown').length, 2, 'both logged sets kept (no orphan)');
+});
+
+test('guard: hasLoggedWork distinguishes a real session from an all-skipped one', () => {
+  const { createActiveSession, skipExercise, markCompleted, isComplete, hasLoggedWork } = require('../public/activeSession');
+  let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
+  s = skipExercise(s, 'Deadlift');
+  s = skipExercise(s, 'Overhead Press');
+  assert.equal(isComplete(s), true, 'nothing pending → isComplete true');
+  assert.equal(hasLoggedWork(s), false, 'but nothing was logged → not a real session');
+  const t = markCompleted(createActiveSession({ exercises: ['Deadlift'] }), 'Deadlift');
+  assert.equal(hasLoggedWork(t), true, 'a completed exercise counts as logged work');
+});
+
 test('activeSession: isComplete flips only when the plan exists and nothing pending remains', () => {
   const { createActiveSession, markCompleted, skipExercise, isComplete } = require('../public/activeSession');
   assert.equal(isComplete(createActiveSession({ exercises: [] })), false, 'empty plan is not "complete"');
