@@ -1369,9 +1369,13 @@ function resolveCatalogExercise(phrase) {
   return opt ? { name: opt.value, liftCode: opt.label || '' } : { name: raw, liftCode: '' };
 }
 
-// Mark a planned exercise skipped: drop it from the live queue (it stops showing as
-// current/remaining) and clamp the cursor. Mirrors skipExercise in the canonical
-// model for the activePlannedSession store.
+// Skip a planned exercise: SPLICE it out of the live queue (it stops showing as
+// current/remaining) and clamp the cursor. Note this differs from
+// activeSession.skipExercise, which RETAINS the slot as status:'skipped' — here the
+// live activePlannedSession store has no skipped state, so we remove the slot
+// (consistent with the existing applySessionSubstitution dedupe path). Representing
+// a skipped slot as skipped (vs absent) in the canonical recap is deferred to 2b
+// (see BACKLOG.md).
 function skipPlannedExercise(name) {
   if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
   const key = String(name || '').toLowerCase();
