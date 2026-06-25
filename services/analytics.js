@@ -1536,7 +1536,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     else { score -= 15; why.push('Weekly volume is elevated — monitor total load'); }
     if (daysSinceLast === 0) score -= 15;
     if (daysSinceLast >= 2) score += 10;
-    if (isFatigued('lower')) { score += 5; why.push('Lower body is recovering — upper strength is the smart target'); protects.push('Lower-body recovery'); }
+    if (isFatigued('lower')) { score += 5; why.push('Lower body is recovering — leaning into upper-body strength while keeping legs light today'); protects.push('Lower-body recovery'); }
     if (isFatigued('push')) score -= 20;
     if (canTrain('push', 'pull')) score += 15;
     const upPush = upwardLifts.filter(r => r.pattern === 'push');
