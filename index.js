@@ -1502,6 +1502,11 @@ function recommendTargetForLift(liftName, logRows) {
   };
 }
 
+// Gemini timeout for the interactive coach chat. Higher than coach.js's 8s default
+// because the chat client waits 15s (CHAT_REPLY_TIMEOUT_MS) — a slow-but-successful
+// reply should land rather than be aborted early and dead-end on "Coach unavailable".
+const COACH_CHAT_TIMEOUT_MS = 12000;
+
 app.post('/api/coach/chat', async (req, res) => {
   const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
   if (!message) {
@@ -1633,7 +1638,12 @@ app.post('/api/coach/chat', async (req, res) => {
         message: recoveryReply, configured: true, model: coach.coachModel(), source: 'engine'
       });
     }
-    const { reply, propose_edit, propose_note, propose_constraint } = await coach.generateChatReply({ message, context, history });
+    // Chat is interactive and the client waits 15s (CHAT_REPLY_TIMEOUT_MS), so give
+    // Gemini more than the 8s default before aborting — a merely-SLOW (not-down)
+    // response then lands instead of being killed early and dead-ending the lifter
+    // on "Coach is unavailable." Stays under the client budget with network margin.
+    const { reply, propose_edit, propose_note, propose_constraint } =
+      await coach.generateChatReply({ message, context, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
     const hasReply = Boolean(reply && String(reply).trim());
     // Return the Gemini result when it has usable prose OR carries a structured
     // proposal (edit/note/constraint) — a proposal must never be dropped just
