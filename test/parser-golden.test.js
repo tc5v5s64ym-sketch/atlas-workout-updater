@@ -165,13 +165,14 @@ test('golden: bare "Press" is ambiguous — parser asks which press', () => {
   assert.match(result.message, /Which press/i);
 });
 
-test('golden: mixed exercises in one input are blocked', () => {
-  // Two distinct canonicalized exercises detected → clarification required.
-  // Prevents silent mixing of bench and squat rows.
+test('golden: mixed exercises in one input split and log both (no row leak)', () => {
+  // Two distinct canonicalized exercises are split on their names and each parsed
+  // independently — bench rows stay bench (225), squat rows stay squat (185).
   const result = parseWorkoutText('Bench 225 5/2 squats 185 5/2');
-  assert.equal(result.intent, 'needs_clarification');
-  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
-  assert.match(result.message, /mixed exercise/i);
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.exercises.map(e => e.canonical_name), ['Bench Press', 'Back Squat']);
+  assert.deepEqual(result.exercises[0].sets.map(s => [s.weight, s.reps, s.rir]), [[225, 5, 2]]);
+  assert.deepEqual(result.exercises[1].sets.map(s => [s.weight, s.reps, s.rir]), [[185, 5, 2]]);
 });
 
 test('golden: knee raises slash-pair format produces bodyweight sets with reps and RIR', () => {
