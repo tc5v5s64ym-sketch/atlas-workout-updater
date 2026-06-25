@@ -3049,6 +3049,10 @@ test('effort-only preview: complete-workout preview shows no-workout copy and ef
   assert.match(previewFn, /Effort-only preview/);
   assert.match(previewFn, /Write Effort to Google Sheets/);
   assert.match(previewFn, /data\.effort_source === 'manual'/);
+  // Screenshot graceful-degrade: when effort couldn't be read, the heading must
+  // say so instead of "Parsed effort (from screenshot)" over a blank table.
+  assert.match(previewFn, /effort_source === 'screenshot_unreadable' \|\| data\.screenshot_unreadable/);
+  assert.match(previewFn, /Effort couldn't be read from the screenshot/);
 });
 
 test('reaction layer: approve-btn captures lift codes and fires write reaction', () => {
@@ -5007,8 +5011,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v52/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v51\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v53/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v52\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
