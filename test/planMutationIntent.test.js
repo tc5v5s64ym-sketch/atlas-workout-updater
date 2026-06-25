@@ -7,7 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyMutationIntent } = require('../public/planMutationIntent');
+const { classifyMutationIntent, splitTargets, resolvePlanTargets } = require('../public/planMutationIntent');
 
 test('repro: "skip deadlifts/rdls and do squats" → replace deadlift with squats', () => {
   const r = classifyMutationIntent('skip deadlifts/rdls and do squats');
@@ -78,6 +78,28 @@ test('a QUESTION is never a mutation (questions → null), even with swap/skip w
   // imperatives are still mutations (not blocked by the question guard)
   assert.equal(classifyMutationIntent('do squats instead of deadlift').action, 'replace');
   assert.equal(classifyMutationIntent('skip deadlift').action, 'skip');
+});
+
+// The headline repro must resolve against a REALISTICALLY-named plan, not just the
+// classifier in isolation: "skip deadlifts/rdls and do squats" → the compound target
+// resolves the pending posterior-chain slot(s), singular-aware.
+test('resolvePlanTargets: compound "deadlifts/rdls" resolves realistic plan slots', () => {
+  assert.deepEqual(splitTargets('deadlifts/rdls'), ['deadlifts', 'rdls']);
+  // bare "Deadlift" slot
+  assert.deepEqual(resolvePlanTargets('deadlifts/rdls', [{ name: 'Deadlift' }, { name: 'Overhead Press' }]), ['Deadlift']);
+  // realistically-named "Romanian Deadlift" slot (singular substring match)
+  assert.deepEqual(resolvePlanTargets('deadlifts/rdls', [{ name: 'Romanian Deadlift' }, { name: 'Seated Row' }]), ['Romanian Deadlift']);
+  // both planned → both resolved (compound removal), in plan order
+  assert.deepEqual(resolvePlanTargets('deadlifts/rdls', [{ name: 'Deadlift' }, { name: 'Romanian Deadlift' }]), ['Deadlift', 'Romanian Deadlift']);
+  // a single lift target
+  assert.deepEqual(resolvePlanTargets('squats', [{ name: 'Back Squat' }, { name: 'Leg Curl' }]), ['Back Squat']);
+});
+
+test('resolvePlanTargets: never matches a completed/skipped slot (no re-opening), or unknown targets', () => {
+  assert.deepEqual(resolvePlanTargets('deadlift', [{ name: 'Deadlift', status: 'completed' }]), []);
+  assert.deepEqual(resolvePlanTargets('deadlift', [{ name: 'Deadlift', status: 'skipped' }]), []);
+  assert.deepEqual(resolvePlanTargets('deadlift', [{ name: 'Deadlift', status: 'pending' }]), ['Deadlift']);
+  assert.deepEqual(resolvePlanTargets('bench', [{ name: 'Deadlift' }, { name: 'Overhead Press' }]), []);
 });
 
 test('a drop-set technique mention is not read as a skip', () => {

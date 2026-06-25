@@ -4956,12 +4956,13 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.ok(mutIdx !== -1 && subIdx !== -1, 'both routes present');
   assert.ok(mutIdx < subIdx, 'deterministic mutation is tried before the suggest/coach route');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 1400);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2000);
   assert.match(fn, /classifyMutationIntent\(/, 'uses the deterministic classifier (not LLM prose)');
   assert.match(fn, /activePlannedSession/, 'guarded on an active plan (freestyle logging untouched)');
-  assert.match(fn, /findMatchIndex\(/, 'resolves the target against the plan via the canonical matcher');
+  assert.match(fn, /resolvePlanTargets\(/, 'resolves the (compound) target against the canonical session, pending-aware');
+  assert.match(fn, /getCanonicalSession\(\)/, 'target resolution uses the canonical session state');
   assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
-  assert.match(fn, /skipPlannedExercise\(/, 'a skip mutates the live session');
+  assert.match(fn, /skipPlannedExercise/, 'a skip mutates the live session');
   // The announced "current" is derived from the cursor, not hardcoded to the
   // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
   assert.match(fn, /activePlannedSession\.exercises\[activePlannedSession\.index\]/,

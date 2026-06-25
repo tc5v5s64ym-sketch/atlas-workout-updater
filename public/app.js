@@ -1402,29 +1402,37 @@ function announcePlanMutation(summary, currentName) {
 // through). Freestyle/no-plan logging is untouched (guarded on activePlannedSession).
 function tryApplyPlanMutation(text) {
   const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
-  const AS = (typeof window !== 'undefined' && window.activeSession) || null;
   if (!PM || !activePlannedSession || !Array.isArray(activePlannedSession.exercises) || !activePlannedSession.exercises.length) return false;
   const intent = PM.classifyMutationIntent(text);
   if (!intent) return false;
-  // Resolve the target to an actual planned slot via the canonical matcher.
-  const entries = activePlannedSession.exercises.map(e => ({ name: e.canonicalName || e.name, liftCode: e.liftCode || '' }));
-  const targetIdx = AS ? AS.findMatchIndex(entries, intent.target, false) : -1;
-  if (targetIdx === -1) return false; // not a planned lift → let the coach handle it
-  const targetName = entries[targetIdx].name;
+  // Resolve the (possibly compound, e.g. "deadlifts/rdls") target to PENDING plan
+  // slots via the canonical session — singular-aware (matches "Romanian Deadlift")
+  // and never matching a completed/skipped slot (no re-opening finished work).
+  const canon = getCanonicalSession();
+  const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
+    ? canon.exercises
+    : activePlannedSession.exercises.map(e => ({ name: e.canonicalName || e.name, status: 'pending' }));
+  const targetNames = PM.resolvePlanTargets(intent.target, planEntries);
+  if (!targetNames.length) return false; // not a (pending) planned lift → let the coach handle it
+  const curName = () => {
+    const cur = activePlannedSession.exercises[activePlannedSession.index];
+    return cur ? (cur.canonicalName || cur.name) : null;
+  };
 
   if (intent.action === 'skip') {
-    skipPlannedExercise(targetName);
-    const cur = activePlannedSession.exercises[activePlannedSession.index];
-    announcePlanMutation(`Skipped ${targetName}.`, cur ? (cur.canonicalName || cur.name) : null);
+    targetNames.forEach(skipPlannedExercise);
+    announcePlanMutation(`Skipped ${targetNames.join(', ')}.`, curName());
     return true;
   }
+  // Replace: swap the first matched target with the substitute; skip any other
+  // matched targets (a compound "skip deadlifts/rdls and do squats" removes both).
   const resolved = resolveCatalogExercise(intent.substitute);
-  applySessionSubstitution(targetName, resolved.name, resolved.liftCode);
+  applySessionSubstitution(targetNames[0], resolved.name, resolved.liftCode);
+  targetNames.slice(1).forEach(skipPlannedExercise);
   // Re-point to the ACTUAL current lift (the cursor) — swapping a LATER slot must
   // not yank the composer off the lift in progress. When the swapped slot is the
-  // current one, cur already equals the substitute (repro phrasing unchanged).
-  const cur = activePlannedSession.exercises[activePlannedSession.index];
-  announcePlanMutation(`Swapped ${targetName} → ${resolved.name}.`, cur ? (cur.canonicalName || cur.name) : resolved.name);
+  // current one, curName() equals the substitute (repro phrasing unchanged).
+  announcePlanMutation(`Swapped ${targetNames[0]} → ${resolved.name}.`, curName() || resolved.name);
   return true;
 }
 

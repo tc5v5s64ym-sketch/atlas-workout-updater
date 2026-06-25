@@ -43,6 +43,45 @@
     return t;
   }
 
+  // Conservative singularization: drop a trailing plural "s" only after a non-"s"
+  // ("deadlifts"→"deadlift", "rows"→"row") so genuine "ss" endings survive ("press").
+  function singular(s) {
+    const t = String(s == null ? '' : s).toLowerCase().trim();
+    return /[^s]s$/.test(t) ? t.slice(0, -1) : t;
+  }
+
+  // Split a compound target phrase into individual exercise tokens:
+  // "deadlifts/rdls" → ["deadlifts","rdls"]; "deadlift and rdl" → ["deadlift","rdl"].
+  function splitTargets(s) {
+    return String(s == null ? '' : s)
+      .split(/\s*(?:\/|,|&|\+|\band\b|\bor\b)\s*/i)
+      .map(x => x.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * resolvePlanTargets(targetPhrase, planEntries) → string[]
+   * Resolve a (possibly compound) target phrase to the matching PENDING plan-slot
+   * names, in plan order. planEntries: [{ name, status? }]. A token matches a slot
+   * by exact name, equal singular, or singular substring (either direction) — so
+   * "deadlifts/rdls" resolves "Deadlift" AND a realistically-named "Romanian
+   * Deadlift". Completed/skipped slots are NEVER matched (a swap/skip can't re-open
+   * finished work). Returns [] when nothing matches (caller falls through).
+   */
+  function resolvePlanTargets(targetPhrase, planEntries) {
+    const entries = (Array.isArray(planEntries) ? planEntries : [])
+      .filter(e => e && e.name && (e.status === undefined || e.status === 'pending'));
+    const tokens = splitTargets(targetPhrase).map(singular).filter(Boolean);
+    if (!tokens.length) return [];
+    const names = [];
+    for (const e of entries) {
+      const en = singular(e.name);
+      const hit = tokens.some(tok => en === tok || en.includes(tok) || tok.includes(en));
+      if (hit && !names.includes(e.name)) names.push(e.name);
+    }
+    return names;
+  }
+
   // A phrase is plausibly an exercise name (not empty, not a set-notation log).
   function looksLikeExercise(s) {
     if (!s) return false;
@@ -108,7 +147,7 @@
     return null;
   }
 
-  const exported = { classifyMutationIntent, cleanName };
+  const exported = { classifyMutationIntent, cleanName, splitTargets, resolvePlanTargets };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = exported;
