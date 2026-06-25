@@ -773,6 +773,44 @@ for (const goal of ['hypertrophy']) {
   });
 }
 
+// ── Full session by default (owner directive 2026-06-25) ──────────────────────
+// The non-abbreviated intents must produce a COMPLETE, multi-pattern session for a
+// lifter with a rich training history — blind spots / hypertrophy / balance days
+// are full workouts, not 2-3 exercise gap days. The explicitly-abbreviated intents
+// (recovery_pump / short_session / test_progress) stay small by design.
+test('scoreIntents: non-abbreviated intents build a full multi-pattern session for a rich history', () => {
+  const mk = (ex, mg, code, ws, start, step) => ws.map((w, i) => {
+    const d = new Date(start); d.setDate(d.getDate() + i * step);
+    return [d.toISOString().split('T')[0], `S-${ex}-${i}`, ex, ex, mg, code, '1', String(w), '8', '2', '', ''];
+  });
+  // ~6 weeks, weekly cadence, ~5 lifts/session spanning push/pull/lower/hinge/core.
+  const rows = [
+    ...mk('Bench Press', 'Chest', 'BEN01', [185, 188, 190, 192, 195, 198], '2026-04-01', 7),
+    ...mk('Overhead Press', 'Shoulders', 'OHP01', [95, 98, 100, 102, 105, 108], '2026-04-01', 7),
+    ...mk('Barbell Row', 'Back', 'BOR01', [155, 158, 160, 162, 165, 168], '2026-04-03', 7),
+    ...mk('Lat Pulldown', 'Back', 'LPD01', [120, 122, 125, 128, 130, 132], '2026-04-03', 7),
+    ...mk('Back Squat', 'Quads', 'SQT01', [225, 230, 235, 240, 245, 250], '2026-04-05', 7),
+    ...mk('Romanian Deadlift', 'Hamstrings', 'RDL01', [185, 190, 195, 200, 205, 210], '2026-04-05', 7),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-13' });
+  const byId = id => result.intents.find(i => i.id === id);
+
+  // The buildIntentSession intents (hypertrophy / balance / blind-spots) are full,
+  // multi-pattern sessions — not a narrow gap-only day.
+  for (const id of ['build_muscle', 'balanced', 'fix_blind_spots']) {
+    const intent = byId(id);
+    assert.ok(intent && Array.isArray(intent.exercises), `${id} exists with exercises`);
+    assert.ok(intent.exercises.length >= 4, `${id} is a full session (≥4 exercises), got ${intent.exercises.length}`);
+    const muscles = new Set(intent.exercises.map(e => e.muscle_group).filter(Boolean));
+    assert.ok(muscles.size >= 3, `${id} spans ≥3 muscle groups, got [${[...muscles].join(', ')}]`);
+  }
+
+  // The explicitly-abbreviated intents stay small by design (focused modes).
+  assert.ok((byId('recovery_pump').exercises || []).length <= 4, 'recovery_pump stays ≤4');
+  assert.ok((byId('short_session').exercises || []).length <= 3, 'short_session stays ≤3');
+  assert.ok((byId('test_progress').exercises || []).length <= 3, 'test_progress stays ≤3');
+});
+
 // ── fix_blind_spots is gated on a consistent-training baseline ─────────────────
 // Owner insight (2026-06-21): missing the gym for a week makes EVERY pattern read
 // "overdue", which used to make fix_blind_spots win (+20 per fresh pattern). A
