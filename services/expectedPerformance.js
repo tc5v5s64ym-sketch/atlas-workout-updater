@@ -20,12 +20,15 @@
  */
 'use strict';
 
+const { isWarmupNote } = require('./warmupTag');
+
 const COL_DATE    = 0;
 const COL_SESSION = 1;
 const COL_LIFT    = 5;
 const COL_WEIGHT  = 7;
 const COL_REPS    = 8;
 const COL_RIR     = 9;
+const COL_NOTES   = 10;
 
 const WEIGHT_WINDOW       = 0.10;   // ±10% of todayWeight
 const WARMUP_RIR_THRESHOLD = 4;    // rir >= 4 → warm-up, excluded
@@ -64,7 +67,9 @@ function computeExpectedPerformance(liftCode, rows, todayWeight) {
     if (w < weightMin || w > weightMax) continue;
     const rirRaw = row[COL_RIR];
     const rir = (rirRaw == null || rirRaw === '') ? null : Number(rirRaw);
-    // Exclude sets that are clearly warm-ups at this weight (high RIR).
+    // Exclude warm-ups: an explicit notes tag is authoritative (even at this
+    // weight); otherwise fall back to the high-RIR heuristic.
+    if (isWarmupNote(row[COL_NOTES])) continue;
     if (rir !== null && Number.isFinite(rir) && rir >= WARMUP_RIR_THRESHOLD) continue;
     const sessionId = String(row[COL_SESSION] || '') || String(row[COL_DATE] || '');
     const date      = String(row[COL_DATE] || '');

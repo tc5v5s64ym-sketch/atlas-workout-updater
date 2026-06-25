@@ -24,12 +24,15 @@
  */
 'use strict';
 
+const { isWarmupNote } = require('./warmupTag');
+
 const COL_DATE    = 0;
 const COL_SESSION = 1;
 const COL_LIFT    = 5;
 const COL_WEIGHT  = 7;
 const COL_REPS    = 8;
 const COL_RIR     = 9;
+const COL_NOTES   = 10;
 
 const WARMUP_RIR_THRESHOLD   = 4;
 const WARMUP_WEIGHT_FRACTION = 0.60;
@@ -74,9 +77,10 @@ function detectTrend(liftCode, rows) {
     if (!Number.isFinite(reps)   || reps   <= 0) continue;
     const rirRaw = row[COL_RIR];
     const rir = (rirRaw == null || rirRaw === '') ? null : Number(rirRaw);
+    const warmup = isWarmupNote(row[COL_NOTES]);
     const sessionId = String(row[COL_SESSION] || '') || String(row[COL_DATE] || '');
     const date      = String(row[COL_DATE] || '');
-    parsed.push({ sessionId, date, weight, reps, rir });
+    parsed.push({ sessionId, date, weight, reps, rir, warmup });
   }
 
   if (!parsed.length) return nullTrend();
@@ -93,6 +97,9 @@ function detectTrend(liftCode, rows) {
   for (const [, { date, sets }] of sessionMap) {
     const maxWeight = Math.max(...sets.map(s => s.weight));
     let working = sets.filter(s =>
+      // An explicit warm-up tag (notes) is authoritative — excluded even if heavy
+      // or low-RIR (closes the heavy-warm-up hole the weight/RIR heuristic leaves).
+      !s.warmup &&
       s.weight >= maxWeight * WARMUP_WEIGHT_FRACTION &&
       (s.rir === null || !Number.isFinite(s.rir) || s.rir < WARMUP_RIR_THRESHOLD)
     );

@@ -5,6 +5,7 @@ const { sanitizeLoad } = require('./loadSanity');
 // Deload policy decisions (post-deload recovery + filler-weight) housed in one
 // module (Step 1C). Pure extract — behaviour unchanged.
 const { deloadFillerWeight, detectDeloadRecovery } = require('./deloadPolicy');
+const { isWarmupNote } = require('./warmupTag');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -512,6 +513,10 @@ function progressionBand(rows, excludeSessionId = null, window = 5) {
   for (const r of asArray(rows)) {
     if (excludeSessionId != null && r.session_id === excludeSessionId) continue;
     if (!isPositiveFinite(r.weight)) continue;
+    // A note-tagged warm-up must never set the working-weight band — a heavy
+    // tagged feeler would otherwise inflate range_high/ceiling (the per-session-max
+    // assumption only holds for working sets).
+    if (isWarmupNote(r.notes)) continue;
     const cur = bySession.get(r.session_id) || 0;
     if (r.weight > cur) bySession.set(r.session_id, r.weight);
   }
@@ -638,6 +643,9 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   const sessionBestOrder = [];
   for (const row of rows) {
     if (!row.weight || !row.reps) continue;
+    // Exclude note-tagged warm-ups from the e1RM trend (same leak trendDetector
+    // was wired to prevent) — a heavy tagged feeler must not spike a session best.
+    if (isWarmupNote(row.notes)) continue;
     const e1rm = Math.round(row.weight * (1 + row.reps / 30) * 100) / 100;
     if (!sessionBestMap.has(row.session_id)) sessionBestOrder.push(row.session_id);
     sessionBestMap.set(row.session_id, Math.max(sessionBestMap.get(row.session_id) || 0, e1rm));
