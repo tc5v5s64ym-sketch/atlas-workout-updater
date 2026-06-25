@@ -218,13 +218,15 @@ test('card-routing: looksLikeSessionRequest rejects text with digits — workout
 // Mixed multi-exercise: parser signals clarification (no silent split)
 // ---------------------------------------------------------------------------
 
-test('card-routing: mixed exercises in single input → needs_clarification, no partial card', () => {
-  // The parser blocks mixed-exercise inputs to prevent silent row mixing.
-  // The correct pattern is one exercise per submission — each gets its own card.
+test('card-routing: mixed exercises in single input split into per-exercise results (no row mixing)', () => {
+  // Mixed-exercise input is split on the recognized names and parsed per exercise,
+  // so each lift keeps its own sets (no silent row mixing) and the client renders
+  // one combined confirm card from all of them.
   const result = parseWorkoutText('Deadlift 315 5/2 Bench 225 5/2');
-  assert.equal(result.intent, 'needs_clarification');
-  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
-  assert.equal(result.sets, undefined, 'must not produce sets for a mixed input');
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.exercises.map(e => e.canonical_name), ['Deadlift', 'Bench Press']);
+  assert.deepEqual(result.exercises[0].sets.map(s => [s.weight, s.reps, s.rir]), [[315, 5, 2]]);
+  assert.deepEqual(result.exercises[1].sets.map(s => [s.weight, s.reps, s.rir]), [[225, 5, 2]]);
 });
 
 // ---------------------------------------------------------------------------

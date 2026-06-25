@@ -1494,6 +1494,23 @@ test('api smoke: parse-workout-text dry-run proves no write', async () => {
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: parse-workout-text splits inline multi-exercise (dry-run, no write)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({
+      text: 'Deadlift 315 5/2 Bench 225 5/2',
+      test_mode: true
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal(body.data.sheet_written, false);
+  assert.equal(body.data.parsed.intent, 'log_sets_multi');
+  assert.deepEqual(body.data.parsed.exercises.map(e => e.canonical_name), ['Deadlift', 'Bench Press']);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 // PR 486 slice 3: the dry-run preview attaches recognized non-slash modality
 // metadata (timed holds / steady cardio / intervals / circuits) so the client can
 // show what was understood — still without writing anything. Real route + real

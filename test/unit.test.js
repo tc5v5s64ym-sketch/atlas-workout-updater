@@ -1909,13 +1909,14 @@ test('rdl_code_still_works', () => {
   assert.deepEqual(compactParsedSets(result), [[185, 5, 2]]);
 });
 
-test('rdl_and_deadlift_together_is_still_mixed', () => {
+test('rdl_and_deadlift_together_split_and_log_both', () => {
+  // Two recognized lifts on one line now SPLIT and log both (owner: "log it however")
+  // — each parsed independently, so RDL keeps 185 and Deadlift keeps 225 (no leak).
   const result = parseWorkoutText('RDL 185 5/2 deadlift 225 3/2');
-  assert.equal(result.intent, 'needs_clarification');
-  assert.match(result.message, /multiple exercises|mixed exercise/i);
-  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
-  assert.equal(result.sets, undefined);
-  assert.notDeepEqual(result.sets?.map(set => [set.weight, set.reps, set.rir]), [[185, 5, 2], [225, 3, 2]]);
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.exercises.map(e => e.canonical_name), ['RDL', 'Deadlift']);
+  assert.deepEqual(result.exercises[0].sets.map(s => [s.weight, s.reps, s.rir]), [[185, 5, 2]]);
+  assert.deepEqual(result.exercises[1].sets.map(s => [s.weight, s.reps, s.rir]), [[225, 3, 2]]);
 });
 
 test('skip note on same line as exercise name does not trigger multiple_exercises', () => {
@@ -1939,11 +1940,14 @@ test('sentence starting with skipped does not trigger multiple_exercises', () =>
   assert.notEqual(result.intent, 'needs_clarification', 'should not need clarification due to skip sentence');
 });
 
-test('real mixed exercise input without skip word still asks for clarification', () => {
-  // Existing behaviour preserved — genuinely ambiguous input must still clarify.
-  const result = parseWorkoutText('RDL 185 5/2 deadlift 225 3/2');
+test('mixed exercise input that cannot be cleanly split still asks for clarification', () => {
+  // Never mis-log: when a chunk has no resolvable sets (here "squats" with no set
+  // tokens), the split is not clean, so Atlas asks rather than logging a partial.
+  const result = parseWorkoutText('Bench 225 5/2 and then some squats');
   assert.equal(result.intent, 'needs_clarification');
   assert.ok(result.warnings.includes('multiple_exercises_in_input'));
+  assert.equal(result.sets, undefined);
+  assert.equal(result.exercises, undefined);
 });
 
 test('skip note without a period separator never drops the real sets', () => {
@@ -1974,12 +1978,15 @@ test('finish_session_log_everything', () => {
 });
 
 test('parser does not leak implied weight across multiple exercises', () => {
+  // Inline multi-exercise now logs both — and the split must keep each lift's own
+  // weight: Bench stays 225, squats are 185 (NOT 225 leaked across the boundary).
   const result = parseWorkoutText('Bench 225 5/2 squats 185 5/2');
-  assert.equal(result.intent, 'needs_clarification');
-  assert.match(result.message, /multiple exercises|mixed exercise/i);
-  assert.ok(result.warnings.includes('multiple_exercises_in_input'));
-  assert.equal(result.sets, undefined);
-  assert.notDeepEqual(result.sets?.map(set => [set.weight, set.reps, set.rir]), [[225, 5, 2], [185, 5, 2]]);
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.exercises.map(e => e.canonical_name), ['Bench Press', 'Back Squat']);
+  assert.deepEqual(result.exercises[0].sets.map(s => [s.weight, s.reps, s.rir]), [[225, 5, 2]]);
+  assert.deepEqual(result.exercises[1].sets.map(s => [s.weight, s.reps, s.rir]), [[185, 5, 2]]);
+  // Explicit no-leak guard: the second lift's weight is its own, not the first's.
+  assert.equal(result.exercises[1].sets[0].weight, 185);
 });
 
 test('bare correction number asks clarification instead of defaulting to RIR', () => {
