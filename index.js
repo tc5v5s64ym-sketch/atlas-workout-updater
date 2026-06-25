@@ -59,6 +59,7 @@ const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
 const { buildSessionQuestionAnswer, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('./services/recoveryRouting');
+const { applyBarbellLoadabilityToExercises } = require('./services/barbellLoadabilitySurface');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -2117,6 +2118,17 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
       getSheetRows(effortSheetName)
     ]);
     const result = scoreIntents(allLog, allEffort, { goal: req.query.goal ? normalizeTrainingGoal(req.query.goal) : getProfileGoal() });
+    // P0 AC12: snap each intent's BARBELL target weights to loadable plate totals
+    // (45 lb bar, 5 lb jumps) + attach a short note, gated on barbell equipment
+    // classification. Read-only — this is the recommendation/composer surface, not
+    // the write path; the lifter still logs what they actually do.
+    if (result && Array.isArray(result.intents)) {
+      for (const intent of result.intents) {
+        if (intent && Array.isArray(intent.exercises)) {
+          intent.exercises = applyBarbellLoadabilityToExercises(intent.exercises);
+        }
+      }
+    }
     return standardSuccess(req, res, 'Intent recommendation', result);
   } catch (error) {
     return standardError(req, res, 'Failed to build intent recommendation', error.message, 500);

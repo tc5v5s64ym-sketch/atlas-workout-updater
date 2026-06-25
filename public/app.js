@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v43';
+const ATLAS_SHELL_BUILD = 'v44';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1635,6 +1635,9 @@ function openIntentDrawer(intent) {
         : el('span', { class: 'drawer-exercise-target muted', text: 'best effort' });
       exList.appendChild(el('div', { class: 'drawer-exercise-row' }, [nameEl, targetEl]));
       if (ex.reason) exList.appendChild(el('div', { class: 'drawer-exercise-reason', text: ex.reason }));
+      // P0 AC12: surface the barbell loadability note (server-snapped target) so the
+      // lifter sees why the weight was nudged to a loadable plate total.
+      if (raw && raw.loadability_note) exList.appendChild(el('div', { class: 'drawer-exercise-reason muted', text: raw.loadability_note }));
     }
     content.appendChild(exList);
 
