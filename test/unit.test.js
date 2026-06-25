@@ -4956,8 +4956,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v48/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v47\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v49/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v48\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5011,9 +5011,19 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.ok(mutIdx !== -1 && subIdx !== -1, 'both routes present');
   assert.ok(mutIdx < subIdx, 'deterministic mutation is tried before the suggest/coach route');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2600);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2900);
   assert.match(fn, /classifyMutationIntent\(/, 'uses the deterministic classifier (not LLM prose)');
-  assert.match(fn, /activePlannedSession/, 'guarded on an active plan (freestyle logging untouched)');
+  // v48 fix: classify FIRST, then materialize an engaged Coach's Pick suggestion into
+  // a live session — so a swap fires even when the session wasn't formally "started"
+  // (the live-gym "let's do rdls instead of deadlifts" fell through to the coach).
+  const classifyAt = fn.indexOf('classifyMutationIntent(');
+  const ensureAt = fn.indexOf('ensureActivePlannedSession()');
+  assert.ok(ensureAt > classifyAt, 'materializes the session only AFTER classifying a genuine mutation');
+  // The materializer promotes an engaged suggestion (coachSuggestionEngaged + lastIntentData).
+  const ensureFn = appSrc.slice(appSrc.indexOf('function ensureActivePlannedSession('), appSrc.indexOf('function ensureActivePlannedSession(') + 800);
+  assert.match(ensureFn, /coachSuggestionEngaged/, 'materializes from an engaged Coach\'s Pick suggestion');
+  assert.match(ensureFn, /lastIntentData/, 'sources the suggestion plan from lastIntentData');
+  assert.match(ensureFn, /normalizePlanExercise/, 'carries the suggestion prescription into the live session');
   assert.match(fn, /resolvePlanTargets\(/, 'resolves the (compound) target against the canonical session, pending-aware');
   assert.match(fn, /getCanonicalSession\(\)/, 'target resolution uses the canonical session state');
   assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
@@ -5083,7 +5093,7 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   assert.match(sub, /return true;/, 'a real swap/dedupe returns true');
 
   // tryApplyPlanMutation only announces when something changed.
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 3400);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 3800);
   assert.match(fn, /const swapped = applySessionSubstitution\(/, 'captures whether the swap changed the plan');
   assert.match(fn, /if \(!swapped && !extraSkipped\.length\) return false/, 'a no-op swap with no skips falls through (no phantom announce)');
   // The announce text reflects what ACTUALLY happened: a real swap, or a skip-only

@@ -109,7 +109,10 @@
    *                              | null
    */
   function classifyMutationIntent(text) {
-    const raw = String(text == null ? '' : text).trim();
+    // Normalize curly apostrophes (’ U+2019) to straight — mobile keyboards
+    // autocorrect to curly, which would otherwise defeat the lead-in strip ("Let’s")
+    // and leave the lead-in glued onto the captured substitute ("let's do rdls").
+    const raw = String(text == null ? '' : text).replace(/’/g, "'").trim();
     if (!raw) return null;
     if (/\?\s*$/.test(raw)) return null;               // a question is never a mutation
     if (/\d+\s*\/\s*\d+/.test(raw)) return null;       // a slash-set log, never a mutation

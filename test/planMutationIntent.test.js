@@ -102,6 +102,16 @@ test('resolvePlanTargets: never matches a completed/skipped slot (no re-opening)
   assert.deepEqual(resolvePlanTargets('bench', [{ name: 'Deadlift' }, { name: 'Overhead Press' }]), []);
 });
 
+test('a curly apostrophe lead-in is stripped (mobile autocorrect) — substitute is clean', () => {
+  // "Let's" with a curly ’ (U+2019) must strip like the straight form, not glue the
+  // lead-in onto the captured substitute (live-gym v48 repro).
+  const r = classifyMutationIntent('Let’s do rdls instead of deadlifts');
+  assert.equal(r && r.action, 'replace');
+  assert.equal(r.target, 'deadlifts');
+  assert.equal(r.substitute, 'rdls', 'lead-in "let’s" stripped, substitute is just "rdls"');
+  assert.equal(classifyMutationIntent("Let's do rdls instead of deadlifts").substitute, 'rdls');
+});
+
 test('a drop-set technique mention is not read as a skip', () => {
   assert.equal(classifyMutationIntent('drop set on bench'), null);
   assert.equal(classifyMutationIntent('dropset bench'), null);
