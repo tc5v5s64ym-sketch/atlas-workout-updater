@@ -4661,7 +4661,10 @@ test('chat: form keeps date, effort and notes reachable', () => {
 
 test('chat: chat.js is a visual layer that never touches write endpoints', () => {
   const chat = fs.readFileSync(path.join(repoRoot, 'public', 'chat.js'), 'utf8');
-  assert.match(chat, /addEventListener\('submit'/, 'must narrate form submission as a user bubble');
+  // chat.js exposes the user-bubble painter; app.js calls it first thing on submit
+  // (so the paste bubble precedes its response — fixes the inversion). chat.js no
+  // longer paints on the form submit itself.
+  assert.match(chat, /window\.atlasAddUserBubble\s*=\s*addUserBubble/, 'must expose the user-bubble painter for app.js');
   assert.match(chat, /chat-bubble-user/, 'must append user bubbles');
   assert.match(chat, /MutationObserver/, 'must observe app.js-owned panels rather than drive them');
   assert.doesNotMatch(chat, /appendRows|sheet_write|confirm_delete|\/api\//, 'chat.js must never call the API or write paths');
@@ -5011,8 +5014,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v54/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v53\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v55/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v54\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

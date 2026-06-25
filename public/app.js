@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v54';
+const ATLAS_SHELL_BUILD = 'v55';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -4206,6 +4206,17 @@ function routeMessageToCoach(text) {
 
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
+
+  // Paint the user's message bubble FIRST — before any routing, coach reply,
+  // preview card, or logged-set reaction can append an Atlas bubble. Doing this
+  // synchronously at the top of the handler guarantees the pasted workout shows
+  // ABOVE its response (the owner-reported inversion where a multi-exercise paste's
+  // ✓ confirmation rendered above the paste bubble). chat.js's addUserBubble
+  // dedupes a repeated consecutive bubble, so this never double-paints.
+  const submittedText = (workoutTextInput.value || '').trim();
+  if (submittedText && typeof window.atlasAddUserBubble === 'function') {
+    window.atlasAddUserBubble(submittedText);
+  }
 
   // Training-plan questions ("what should I train", "today's plan") are routed
   // to the coach chat so Atlas replies naturally in the thread — no modal first.
