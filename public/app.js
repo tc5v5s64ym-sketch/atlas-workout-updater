@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v48';
+const ATLAS_SHELL_BUILD = 'v49';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1406,15 +1406,43 @@ function announcePlanMutation(summary, currentName) {
   }));
 }
 
+// Materialize a mutable active session from an ENGAGED Coach's Pick suggestion.
+// A typed Coach's Pick (typeSuggestedWorkout) sets coachSuggestionEngaged + leaves
+// the plan in lastIntentData WITHOUT a started activePlannedSession — so an explicit
+// swap/skip had nothing mutable to act on and fell through to the coach (live-gym
+// v48: "let's do rdls instead of deadlifts" hit the coach-down fallback instead of
+// swapping). On the first mutation, promote the suggestion to a live session
+// (carrying its prescription) so the deterministic swap/skip works in BOTH states.
+// Returns true when an active session exists (or was just materialized).
+function ensureActivePlannedSession() {
+  if (activePlannedSession && Array.isArray(activePlannedSession.exercises) && activePlannedSession.exercises.length) return true;
+  if (!coachSuggestionEngaged || !lastIntentData) return false;
+  const intents = (lastIntentData && lastIntentData.intents) || [];
+  const rec = intents.find(i => i.recommended);
+  const exercises = (rec && Array.isArray(rec.exercises) ? rec.exercises : [])
+    .map(normalizePlanExercise).filter(ex => ex.name);
+  if (!exercises.length) return false;
+  activePlannedSession = {
+    label: (rec && rec.label) || 'Recommended session',
+    intentId: (rec && rec.id) || null,
+    exercises,
+    index: 0
+  };
+  renderActiveSessionBanner();
+  return true;
+}
+
 // Classify an explicit swap/skip and apply it to the canonical session. Returns
-// true when handled (caller then skips the substitute/coach routing). No active
-// plan, or a target not in the plan, or a non-mutation message → false (fall
-// through). Freestyle/no-plan logging is untouched (guarded on activePlannedSession).
+// true when handled (caller then skips the substitute/coach routing). A non-mutation
+// message, or no active plan (freestyle), or a target not in the plan → false (fall
+// through). Materializes an engaged suggestion into a live session ONLY for a genuine
+// mutation, so freestyle/no-plan logging stays untouched.
 function tryApplyPlanMutation(text) {
   const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
-  if (!PM || !activePlannedSession || !Array.isArray(activePlannedSession.exercises) || !activePlannedSession.exercises.length) return false;
+  if (!PM) return false;
   const intent = PM.classifyMutationIntent(text);
-  if (!intent) return false;
+  if (!intent) return false;                  // classify FIRST — never materialize on non-mutations
+  if (!ensureActivePlannedSession()) return false; // no plan at all (freestyle) → fall through
   // Resolve the (possibly compound, e.g. "deadlifts/rdls") target to PENDING plan
   // slots via the canonical session — singular-aware (matches "Romanian Deadlift")
   // and never matching a completed/skipped slot (no re-opening finished work).
