@@ -377,7 +377,9 @@ function searchSessions(logRows, filters) {
 }
 
 function detectRecentPrs(logRows) {
-  const rows = asArray(logRows).map(normalizeLogRow).filter(row => isPositiveFinite(row.weight) && isPositiveFinite(row.reps));
+  // Exclude note-tagged warm-ups: a heavy feeler logged as a warm-up must never
+  // register as a personal record (owner rule — PR uses working sets only).
+  const rows = asArray(logRows).map(normalizeLogRow).filter(row => isPositiveFinite(row.weight) && isPositiveFinite(row.reps) && !isWarmupNote(row.notes));
   const byLiftCode = new Map();
 
   rows.forEach(row => {
@@ -2486,6 +2488,7 @@ function buildWeeklyReport(logRows, options = {}) {
   weekRows.forEach(row => {
     const liftCode = String(cell(row, 5, 'lift_code') || '').trim();
     if (!liftCode) return;
+    if (isWarmupNote(cell(row, 10, 'notes'))) return;   // warm-ups don't set a weekly PR
     const weight = Number(cell(row, 7, 'weight')) || 0;
     const exercise = String(cell(row, 3, 'canonical_exercise') || cell(row, 2, 'exercise') || '').trim();
     if (!thisBest.has(liftCode) || weight > thisBest.get(liftCode).best_weight) {
@@ -2496,6 +2499,7 @@ function buildWeeklyReport(logRows, options = {}) {
   priorRows.forEach(row => {
     const liftCode = String(cell(row, 5, 'lift_code') || '').trim();
     if (!liftCode) return;
+    if (isWarmupNote(cell(row, 10, 'notes'))) return;   // warm-ups don't set the prior-week baseline
     const weight = Number(cell(row, 7, 'weight')) || 0;
     if (!priorBest.has(liftCode) || weight > priorBest.get(liftCode).best_weight) {
       priorBest.set(liftCode, { best_weight: weight });

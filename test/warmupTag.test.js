@@ -7,7 +7,7 @@ const { isWarmupNote, tagWarmupNote, WARMUP_NOTE_TOKEN } = require('../services/
 const { computeBenchmark, resolveWorkingWeight } = require('../services/exerciseBenchmark');
 const { computeExpectedPerformance } = require('../services/expectedPerformance');
 const { detectTrend } = require('../services/trendDetector');
-const { progressionBand, recommendNextSet } = require('../services/analytics');
+const { progressionBand, recommendNextSet, detectRecentPrs } = require('../services/analytics');
 
 // 12-column Log_Cleaned row builder:
 // date|session|exercise|canonical|muscle|lift_code|set_number|weight|reps|rir|notes|volume_calc
@@ -155,4 +155,22 @@ test('sessionBestByLift / historicalBestByLift skip note-tagged warm-ups', () =>
   const historicalBest = src.slice(src.indexOf('function historicalBestByLift('), src.indexOf('function buildSessionSummary('));
   assert.match(sessionBest, /isWarmupNote\(row\.notes\)/, 'sessionBestByLift must skip tagged warm-ups (no false PR)');
   assert.match(historicalBest, /isWarmupNote\(row\.notes\)/, 'historicalBestByLift must skip tagged warm-ups (PR baseline = working sets)');
+});
+
+test('detectRecentPrs: a tagged heavy warm-up does not register as a personal record', () => {
+  const rows = [
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '245', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '300', '2', '', 'warm-up']
+  ];
+  const prs = detectRecentPrs(rows);
+  const sq = prs.find(p => p.liftCode === 'SQ');
+  assert.ok(sq, 'SQ PR entry exists');
+  assert.equal(sq.bestWeightSet.weight, 245, 'the tagged 300 feeler is not the weight PR');
+
+  // Control: untagged, the 300 becomes the (false) weight PR.
+  const control = detectRecentPrs([
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '245', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '300', '2', '', '']
+  ]).find(p => p.liftCode === 'SQ');
+  assert.equal(control.bestWeightSet.weight, 300);
 });
