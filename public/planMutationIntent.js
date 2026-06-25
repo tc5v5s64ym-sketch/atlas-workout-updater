@@ -72,8 +72,15 @@
   function classifyMutationIntent(text) {
     const raw = String(text == null ? '' : text).trim();
     if (!raw) return null;
+    if (/\?\s*$/.test(raw)) return null;               // a question is never a mutation
     if (/\d+\s*\/\s*\d+/.test(raw)) return null;       // a slash-set log, never a mutation
+    if (/\bdrop[\s-]?set/.test(raw.toLowerCase())) return null; // "drop set" is a technique, not a skip
     const t = stripLeads(raw.toLowerCase());
+    // Interrogative lead → a question, never a plan mutation (contract: questions → null).
+    // The single-word forms are unambiguous; the auxiliary forms require a following
+    // pronoun ("do you" / "should i") so the imperative "do squats…" is preserved.
+    if (/^(?:why|how|what'?s?|when|where|which|who|should|could|would|can)\b/.test(t)) return null;
+    if (/^(?:do|does|did|is|are|am|was|were|will|have|has)\s+(?:i|you|we|it|they|he|she)\b/.test(t)) return null;
 
     let m;
     // "swap/replace/switch/sub X for|with|to Y"

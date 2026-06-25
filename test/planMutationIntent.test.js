@@ -62,3 +62,28 @@ test('a slash-set log is never read as a mutation', () => {
   assert.equal(classifyMutationIntent('skip 225 5/2'), null);
   assert.equal(classifyMutationIntent('back squat 225 5/2 5/2'), null);
 });
+
+test('a QUESTION is never a mutation (questions → null), even with swap/skip words', () => {
+  for (const q of [
+    'should i do squats instead of deadlift?',          // trailing ?
+    'should i do squats instead of deadlift',           // leading "should", no ?
+    'what if i did squats instead of deadlifts',        // leading "what"
+    'do you think i should skip deadlift',              // "do you …"
+    'should I skip deadlift?',
+    'skip deadlift?',
+    'is squat better than deadlift?',
+  ]) {
+    assert.equal(classifyMutationIntent(q), null, `question should be null: "${q}"`);
+  }
+  // imperatives are still mutations (not blocked by the question guard)
+  assert.equal(classifyMutationIntent('do squats instead of deadlift').action, 'replace');
+  assert.equal(classifyMutationIntent('skip deadlift').action, 'skip');
+});
+
+test('a drop-set technique mention is not read as a skip', () => {
+  assert.equal(classifyMutationIntent('drop set on bench'), null);
+  assert.equal(classifyMutationIntent('dropset bench'), null);
+  assert.equal(classifyMutationIntent('drop-set the leg press'), null);
+  // a genuine "drop X" skip (no "set") still classifies
+  assert.equal(classifyMutationIntent('drop the leg curl').action, 'skip');
+});
