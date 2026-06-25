@@ -958,7 +958,9 @@ function looksLikeCorrection(text) {
 const LOG_IT_PATTERNS = /^\s*(?:(?:ok(?:ay)?|alright|cool|great|sweet|nice|yep|yeah|done|finished|that'?s\s+(?:it|all)|we'?re?\s+done)[,.\s]+){0,2}(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i;
 
 function looksLikeLogIt(text) {
-  const t = typeof text === 'string' ? text : '';
+  // Normalize curly apostrophes (’→') so a mobile-autocorrected "that’s it, log it"
+  // matches here too — true parity with the app.js copy's ['’] classes (PR-581 review).
+  const t = (typeof text === 'string' ? text : '').replace(/’/g, "'");
   if (/\?\s*$/.test(t)) return false;          // a question ("should I log it?") never closes out
   return LOG_IT_PATTERNS.test(t);
 }
