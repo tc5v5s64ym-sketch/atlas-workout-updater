@@ -952,10 +952,15 @@ function looksLikeCorrection(text) {
 // Detects end-of-session "log it" triggers — phrases that mean the lifter is
 // done logging sets conversationally and wants Atlas to compile the session from
 // the chat history into a single preview.
-const LOG_IT_PATTERNS = /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i;
+// An OPTIONAL leading closeout-acknowledgment ("done," / "ok" / "that's it") may
+// precede the core phrase so natural combined commands ("Done, log it.") close out.
+// Mirrors public/app.js looksLikeLogIt (the browser copy) — keep the two in sync.
+const LOG_IT_PATTERNS = /^\s*(?:(?:ok(?:ay)?|alright|cool|great|sweet|nice|yep|yeah|done|finished|that'?s\s+(?:it|all)|we'?re?\s+done)[,.\s]+){0,2}(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that'?s?\s+all|we'?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i;
 
 function looksLikeLogIt(text) {
-  return LOG_IT_PATTERNS.test(typeof text === 'string' ? text : '');
+  const t = typeof text === 'string' ? text : '';
+  if (/\?\s*$/.test(t)) return false;          // a question ("should I log it?") never closes out
+  return LOG_IT_PATTERNS.test(t);
 }
 
 module.exports = {
