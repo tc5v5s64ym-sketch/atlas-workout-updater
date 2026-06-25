@@ -626,6 +626,25 @@ function normalizeManualEffortMetrics(formFields) {
   return normalizeAndValidateParsedMetrics(parsedMetrics);
 }
 
+// Effort placeholder used when a screenshot can't be read (e.g. Gemini 429 /
+// timeout) but there ARE logged sets to save. The workout is saved without
+// effort data instead of failing the whole request; the effort row lands with
+// blank metrics (date + session_id only) so session linkage and duplicate
+// protection stay intact. buildEffortRowFromParsedMetrics coerces these to ''.
+const EMPTY_EFFORT_METRICS = Object.freeze({
+  duration: '',
+  activeCalories: '',
+  totalCalories: '',
+  averageHR: '',
+  peakHR: '',
+  workoutType: null
+});
+
+// Owner-specified copy shown when the screenshot effort parse fails but the
+// logged sets are still saved.
+const SCREENSHOT_UNREADABLE_MESSAGE =
+  "I couldn't read effort from the screenshot. I can still save the workout without effort data.";
+
 async function enrichAndFormatLogRows(logRows, topLevelSessionId, topLevelDate, catalogMap = null) {
   // Hard bounds before anything else — including the catalog fetch. A 2250-lb
   // typo must never reach the sheet, and implausible input shouldn't cost an
@@ -2911,20 +2930,51 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   }
 
   try {
-    // 1) Parse image to get effort metrics
-    const visionResult = req.file
-      ? await parseWorkoutScreenshot(req.file.path)
-      : { status: 'manual_effort', parsed_metrics: null };
+    // 1) Parse image to get effort metrics.
+    //
+    // Graceful degrade: a screenshot parse failure (e.g. Gemini 429 / timeout)
+    // must NOT sink the whole save. If there are logged sets, save them WITHOUT
+    // effort data and tell the owner. Only an effort-only request (no rows) has
+    // nothing left to save, so that case returns an honest 422 — never a 500.
+    let visionResult;
+    let screenshotUnreadable = false;
+    if (req.file) {
+      try {
+        visionResult = await parseWorkoutScreenshot(req.file.path);
+      } catch (error) {
+        console.warn('⚠️ Screenshot effort parse failed; degrading:', error.message);
+        if (effortOnly) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return standardError(
+            req,
+            res,
+            "I couldn't read effort from the screenshot, and there are no logged sets to save without it.",
+            process.env.NODE_ENV === 'production' ? null : error.message,
+            422
+          );
+        }
+        screenshotUnreadable = true;
+        visionResult = { status: 'screenshot_unreadable', parsed_metrics: null };
+      }
+    } else {
+      visionResult = { status: 'manual_effort', parsed_metrics: null };
+    }
 
     // 2) Validate parsed effort metrics (required before any writes)
     let normalizedMetrics;
     let metricWarnings = [];
     try {
-      const result = req.file
-        ? normalizeAndValidateParsedMetrics(visionResult.parsed_metrics)
-        : normalizeManualEffortMetrics(formFields);
-      normalizedMetrics = result.normalized;
-      metricWarnings = result.warnings || [];
+      if (screenshotUnreadable) {
+        // No effort to validate — save the sets with a blank effort row.
+        normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
+        metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
+      } else {
+        const result = req.file
+          ? normalizeAndValidateParsedMetrics(visionResult.parsed_metrics)
+          : normalizeManualEffortMetrics(formFields);
+        normalizedMetrics = result.normalized;
+        metricWarnings = result.warnings || [];
+      }
     } catch (error) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
@@ -3175,7 +3225,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           duplicate_session: duplicateSession,
           duplicate_log_rows: skippedDuplicates.length
         },
-        effort_source: req.file ? 'screenshot' : 'manual',
+        effort_source: req.file ? (screenshotUnreadable ? 'screenshot_unreadable' : 'screenshot') : 'manual',
+        screenshot_unreadable: screenshotUnreadable,
         parsed_effort: normalizedMetrics,
         quality_score: qualityScore,
         quality_breakdown: qualityBreakdown

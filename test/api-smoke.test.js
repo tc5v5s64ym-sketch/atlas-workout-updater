@@ -185,10 +185,16 @@ let fakeVisionParsedMetrics = {
 };
 
 let fakeVisionCalls = 0;
+// Set to an Error (or message string) to simulate a screenshot parse failure
+// (e.g. Gemini 429 / timeout). Reset to null after each test that flips it.
+let fakeVisionThrow = null;
 
 const fakeVision = {
   parseWorkoutScreenshot: async () => {
     fakeVisionCalls += 1;
+    if (fakeVisionThrow) {
+      throw fakeVisionThrow instanceof Error ? fakeVisionThrow : new Error(String(fakeVisionThrow));
+    }
     return { parsed_metrics: { ...fakeVisionParsedMetrics } };
   }
 };
@@ -2363,6 +2369,80 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
       assert.equal(fakeSheetsState.appendCalls[0].rows.length, 1);
     });
   } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// Screenshot graceful-degrade: a screenshot effort parse failure (e.g. Gemini
+// 429 / timeout) must NOT 500 the whole save. With logged sets present, the sets
+// are saved WITHOUT effort (blank effort row) and the owner is told.
+test('api smoke: complete-workout saves logged sets without effort when the screenshot parse fails (graceful degrade, not 500)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeVisionThrow = new Error('Gemini request failed (429): RESOURCE_EXHAUSTED');
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-DEGRADE-01');
+      form.append('date', '2026-06-11');
+      form.append('write_id', 'complete-shot-degrade-01');
+      form.append('log_rows_json', JSON.stringify([
+        ['2026-06-11', 'SHOT-DEGRADE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675']
+      ]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(body.status, 'ok');
+      assert.equal(data.screenshot_unreadable, true);
+      assert.equal(data.effort_source, 'screenshot_unreadable');
+      assert.equal(data.sheet_written, true);
+      assert.equal(data.log_rows_written, 1);
+      // The owner-facing message is surfaced as a warning.
+      assert.ok((body.data.warnings || []).some(w => /couldn't read effort from the screenshot/i.test(w)),
+        `expected the screenshot-unreadable warning, got ${JSON.stringify(body.data.warnings)}`);
+      // Both tabs were written; the effort row is blank for the metric columns.
+      const tabs = fakeSheetsState.appendCalls.map(c => c.tabName);
+      assert.ok(tabs.includes('Effort'), 'effort row still appended for session linkage');
+      const effortCall = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort');
+      const effortRow = effortCall.rows[0];
+      // columns: date|session_id|duration|active|total|avg_hr|peak_hr|location|notes
+      assert.equal(effortRow[2], '', 'duration blank when screenshot unreadable');
+      assert.equal(effortRow[3], '', 'active calories blank when screenshot unreadable');
+      assert.equal(effortRow[5], '', 'average HR blank when screenshot unreadable');
+    });
+  } finally {
+    fakeVisionThrow = null;
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// Effort-only (no logged sets) + screenshot parse failure → nothing left to save,
+// so an honest 422 (never a 500), and no append happens.
+test('api smoke: complete-workout returns 422 (not 500) when an effort-only screenshot parse fails and never appends', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeVisionThrow = new Error('Gemini request failed (429): RESOURCE_EXHAUSTED');
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-DEGRADE-EFFORTONLY-01');
+      form.append('date', '2026-06-11');
+      form.append('write_id', 'complete-shot-degrade-effortonly-01');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      assert.equal(response.status, 422, JSON.stringify(body));
+      assert.match(body.message || body.error || '', /couldn't read effort from the screenshot/i);
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'nothing must be appended when there is nothing to save');
+    });
+  } finally {
+    fakeVisionThrow = null;
     fakeSheetsState.allowAppend = false;
   }
 });
