@@ -198,6 +198,31 @@
     return { ...session, exercises };
   }
 
+  /**
+   * insertExercise(session, ref, opts) → session
+   * Add an unplanned accessory / finisher (Hammer Curls, Hanging Knee Raises) into
+   * the live queue as a pending, source:'inserted' entry — so an exercise the
+   * lifter does off-plan is REPRESENTED in the session (and its recap/write rows),
+   * not silently buffered. Position:
+   *   - default: appended to the end of the queue (a finisher).
+   *   - opts.after = name/ref: inserted immediately AFTER that entry (when found).
+   * The caller logs it via markCompleted(...) next (insert → complete). No-op when
+   * ref is blank. (AC 8/9/10.)
+   */
+  function insertExercise(session, ref, opts = {}) {
+    const e = toEntry(ref);
+    if (!e) return session;
+    const exercises = cloneExercises(session.exercises);
+    const entry = { name: e.name, liftCode: e.liftCode, status: STATUS.PENDING, source: 'inserted' };
+    let at = exercises.length;
+    if (opts && opts.after != null) {
+      const afterIdx = findMatchIndex(exercises, opts.after, false);
+      if (afterIdx !== -1) at = afterIdx + 1;
+    }
+    exercises.splice(at, 0, entry);
+    return { ...session, exercises };
+  }
+
   // ── Selectors (every consumer derives from these — no parallel state) ───────
 
   // The current exercise = the first PENDING entry, in order. Composer prefill and
@@ -238,6 +263,7 @@
     skipExercise,
     markCompleted,
     correctIdentity,
+    insertExercise,
     currentExercise,
     nextUp,
     remaining,

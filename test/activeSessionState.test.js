@@ -98,7 +98,7 @@ test('AC7: correcting a logged identity relabels the entry in session state', ()
   assert.ok(!done.includes('Deadlift'), 'the wrong Deadlift identity is gone');
 });
 
-test('AC8/AC9: inserted accessories are represented as inserted entries in the queue', { todo: 'PR5 — insert/finisher handling' }, () => {
+test('AC8/AC9: inserted accessories are represented as inserted entries in the queue', () => {
   const { createActiveSession, insertExercise, markCompleted, completedExercises } = loadActiveSession();
   let s = createActiveSession({ exercises: COACHES_PICK });
   s = insertExercise(s, { name: 'Hammer Curls' });
@@ -112,7 +112,7 @@ test('AC8/AC9: inserted accessories are represented as inserted entries in the q
   assert.ok(raises && raises.source === 'inserted', 'Knee Raises tracked as inserted (core finisher)');
 });
 
-test('AC10: the fully-modified session resolves to a clean, writable completed set', { todo: 'PR5 — recap/save for modified sessions' }, () => {
+test('AC10: the fully-modified session resolves to a clean, writable completed set', () => {
   const { createActiveSession, replaceExercise, markCompleted, correctIdentity, insertExercise, completedExercises } = loadActiveSession();
   let s = createActiveSession({ exercises: COACHES_PICK });
   s = replaceExercise(s, 'Deadlift', { name: 'Back Squat' });
@@ -232,6 +232,28 @@ test('correctIdentity: no-op for unknown `from`, blank `to`, or an already-corre
   assert.equal(correctIdentity(s, { from: 'Bench', to: 'Squat' }), s, 'unknown from → no-op');
   assert.equal(correctIdentity(s, { from: 'Deadlift', to: '' }), s, 'blank to → no-op');
   assert.equal(correctIdentity(s, { from: 'Deadlift', to: 'Deadlift' }), s, 'already-correct → no-op');
+});
+
+test('insertExercise: appends a finisher by default and inserts after a named entry on request', () => {
+  const { createActiveSession, insertExercise, remaining } = require('../public/activeSession');
+  let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
+  s = insertExercise(s, { name: 'Hanging Knee Raises' });            // default: end
+  assert.deepEqual(remaining(s).map(e => e.name), ['Deadlift', 'Overhead Press', 'Hanging Knee Raises']);
+  s = insertExercise(s, { name: 'Hammer Curls', liftCode: 'HC01' }, { after: 'Deadlift' });
+  assert.deepEqual(remaining(s).map(e => e.name), ['Deadlift', 'Hammer Curls', 'Overhead Press', 'Hanging Knee Raises']);
+  const inserted = s.exercises.filter(e => e.source === 'inserted');
+  assert.equal(inserted.length, 2, 'both are tracked as inserted');
+  assert.equal(s.exercises.find(e => e.name === 'Hammer Curls').liftCode, 'HC01', 'inserted liftCode preserved');
+});
+
+test('insertExercise: insert → markCompleted records an off-plan exercise as inserted+completed; blank is a no-op', () => {
+  const { createActiveSession, insertExercise, markCompleted, completedExercises } = require('../public/activeSession');
+  let s = createActiveSession({ exercises: ['Deadlift'] });
+  assert.equal(insertExercise(s, ''), s, 'blank ref → no-op');
+  s = insertExercise(s, { name: 'Side Bends' });
+  s = markCompleted(s, 'Side Bends');
+  const done = completedExercises(s).find(e => e.name === 'Side Bends');
+  assert.ok(done && done.status === 'completed' && done.source === 'inserted', 'off-plan log is inserted+completed');
 });
 
 test('activeSession: isComplete flips only when the plan exists and nothing pending remains', () => {
