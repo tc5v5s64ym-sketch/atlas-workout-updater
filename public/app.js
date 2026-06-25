@@ -1340,18 +1340,21 @@ function startPlannedSession(intent) {
 // canonical session IMMEDIATELY — the app state owns the change, not LLM prose.
 
 // Resolve a free-text exercise phrase to a catalog canonical name + lift code, so
-// a swapped-in slot carries the canonical identity a later log will match. Crude
-// singularization handles "squats" → "Squat". Falls back to the raw phrase.
+// a swapped-in slot carries the canonical identity a later log will match.
+// Singularization is conservative: it drops a trailing plural "s" ONLY when it
+// follows a non-"s" character ("squats"→"squat", "curls"→"curl") so genuine
+// "ss" endings are preserved ("press" stays "press", "leg press" stays intact) —
+// the loose every-word strip mis-bound lifts (PR-570 review). Falls back to the raw phrase.
 function resolveCatalogExercise(phrase) {
   const raw = String(phrase == null ? '' : phrase).trim();
   if (!raw || typeof document === 'undefined') return { name: raw, liftCode: '' };
   const dl = document.getElementById('exercise-catalog');
   const opts = dl ? Array.from(dl.options || []) : [];
-  const norm = s => String(s || '').toLowerCase().replace(/s\b/g, '').trim();
+  const singular = s => { const t = String(s || '').toLowerCase().trim(); return /[^s]s$/.test(t) ? t.slice(0, -1) : t; };
   const key = raw.toLowerCase();
-  const nkey = norm(raw);
+  const skey = singular(raw);
   let opt = opts.find(o => (o.value || '').toLowerCase() === key);
-  if (!opt) opt = opts.find(o => { const v = norm(o.value); return v && (v === nkey || v.includes(nkey) || nkey.includes(v)); });
+  if (!opt) opt = opts.find(o => { const v = singular(o.value); return v && (v === skey || v.includes(skey) || skey.includes(v)); });
   return opt ? { name: opt.value, liftCode: opt.label || '' } : { name: raw, liftCode: '' };
 }
 

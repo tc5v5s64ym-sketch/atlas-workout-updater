@@ -4963,6 +4963,12 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
   assert.match(fn, /skipPlannedExercise\(/, 'a skip mutates the live session');
 
+  // resolveCatalogExercise must use the conservative singularization (drop a plural
+  // "s" only after a non-"s"), never the loose every-word strip that mangled "press".
+  const resolve = appSrc.slice(appSrc.indexOf('function resolveCatalogExercise('), appSrc.indexOf('function resolveCatalogExercise(') + 800);
+  assert.match(resolve, /\[\^s\]s\$/, 'conservative singularization (preserves "press"/"leg press")');
+  assert.doesNotMatch(resolve, /\/s\\b\/g/, 'must not use the loose every-word-final-s strip');
+
   // The coach layer narrates the mutation + re-points the composer (does not own it).
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   assert.match(cc, /addEventListener\('atlas:plan-mutated'/, 'coach layer listens for the mutation');
