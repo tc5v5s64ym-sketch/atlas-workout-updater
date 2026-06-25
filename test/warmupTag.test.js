@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { isWarmupNote, tagWarmupNote, WARMUP_NOTE_TOKEN } = require('../services/warmupTag');
 const { computeBenchmark, resolveWorkingWeight } = require('../services/exerciseBenchmark');
 const { computeExpectedPerformance } = require('../services/expectedPerformance');
+const { detectTrend } = require('../services/trendDetector');
 
 // 12-column Log_Cleaned row builder:
 // date|session|exercise|canonical|muscle|lift_code|set_number|weight|reps|rir|notes|volume_calc
@@ -80,4 +81,25 @@ test('computeExpectedPerformance: a tagged warm-up at the target weight does not
   assert.equal(computeExpectedPerformance('DL', tagged, 245).expectedReps, 5);
   // Control: untagged, the 12-rep set (most reps at this weight) becomes the representative.
   assert.equal(computeExpectedPerformance('DL', untagged, 245).expectedReps, 12);
+});
+
+// --- trendDetector: a note-tagged heavy warm-up must not distort the e1RM trend ---
+
+test('detectTrend: a tagged heavy warm-up does not pollute the e1RM trajectory', () => {
+  const dates = ['2026-06-01', '2026-06-03', '2026-06-05', '2026-06-07'];
+  const sessions = ['S1', 'S2', 'S3', 'S4'];
+  const tagged = [];
+  const untagged = [];
+  sessions.forEach((s, i) => {
+    tagged.push(row({ session: s, date: dates[i], weight: 200, reps: 5, rir: 2 }));
+    untagged.push(row({ session: s, date: dates[i], weight: 200, reps: 5, rir: 2 }));
+  });
+  // Session 1 also has a heavy feeler logged as a warm-up — a high e1RM outlier.
+  tagged.push(row({ session: 'S1', date: dates[0], weight: 300, reps: 5, rir: '', notes: 'warm-up' }));
+  untagged.push(row({ session: 'S1', date: dates[0], weight: 300, reps: 5, rir: '' }));
+
+  // Tagged: the outlier is excluded → every session e1RM is equal → a clean 'flat' trend.
+  assert.equal(detectTrend('DL', tagged).trend, 'flat');
+  // Control: untagged, the 300-lb feeler spikes session 1's e1RM → the trend is no longer flat.
+  assert.notEqual(detectTrend('DL', untagged).trend, 'flat');
 });
