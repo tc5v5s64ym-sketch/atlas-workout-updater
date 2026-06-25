@@ -23,6 +23,26 @@
 9. Sheet formulas update summary views.
 10. History, progress, recommendation, and volume endpoints read from the sheet.
 
+## LLM Layer
+
+Atlas uses LLM providers (OpenAI, Gemini) for two purposes only:
+
+1. **Vision** — parsing Apple Watch / workout screenshot images (`services/vision.js`).
+2. **Coaching voice** — wording facts the deterministic engine emits and answering grounded session questions (`services/coach.js`).
+
+The deterministic engine is authoritative. LLMs are an optional coaching layer, never a source of truth. A provider outage must never interrupt workout logging, preview, save, or session mutation.
+
+See [`docs/LLM_ARCHITECTURE.md`](./LLM_ARCHITECTURE.md) for:
+- Core principles (P1–P6): determinism-first, optional coaching layer, error boundary, provider interface, cost via determinism
+- Routing tiers: Tier 0 deterministic / Tier 1 cheap+fast coach / Tier 2 capable model
+- Provider candidate scoring (June 2026 data, with sources)
+- Error boundary specification and error class taxonomy
+- Provider interface definition
+- Implementation PR sequence (8 slices, boundary-first order)
+- Sequencing rule: build only after P0 workout reliability is stable in live use
+
+---
+
 ## Future Options
 
 ### Option A: Sheets Primary

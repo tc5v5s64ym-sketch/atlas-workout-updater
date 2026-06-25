@@ -67,3 +67,19 @@ Violating any of them requires explicit owner approval before merging.
 **PR3. Route additions require `config/routes.js` update.** Any new Express route must also appear in the route manifest so `/routes` stays accurate.
 
 **PR4. No restoration of removed features without owner request.** Features removed from the UI (e.g. the Dashboard tab) must not be re-added by an AI agent acting autonomously.
+
+---
+
+## 6. LLM / Provider Invariants
+
+> **Status note:** L1 and L5 are binding today — the deterministic paths are verified LLM-free. L2, L3, and L4 are **build targets**: they describe the required end-state that the 8-PR implementation sequence in [`docs/LLM_ARCHITECTURE.md`](./LLM_ARCHITECTURE.md) will establish. They become binding as each corresponding PR lands (error boundary → L2/L3; provider interface → L4). Until then, the existing `services/vision.js` and `services/coach.js` code is the known baseline — reviewers should not flag those files for L2–L4 violations until the relevant implementation PR has shipped.
+
+**L1. Deterministic core is LLM-free.** *(binding now)* Parsing, logging, preview, save, undo, exercise identity, substitution classification, plate math, next-up calculation, and session mutation must never call an LLM provider. If behavior can be made deterministic, it must be. A review finding or test that detects an LLM call on any of these paths is a blocking finding — do not merge.
+
+**L2. Provider failure must not reach the workout flow.** *(build target — binding after error boundary PR lands)* If any provider call fails (any error class: 429, 5xx, timeout, auth, malformed response), the deterministic core continues to completion. Workout state — session log, preview rows, save, session mutation — is never blocked or corrupted by a provider outage. The coach voice degrades to silence or a friendly message; the workout never does.
+
+**L3. No raw provider output in any client response.** *(build target — binding after error boundary PR lands)* Every LLM provider call is wrapped in an error boundary that catches all exceptions and maps them to a fixed user-facing message. Raw provider error bodies, status codes, response metadata, and exception payloads are logged server-side only — never returned to the client.
+
+**L4. Provider-specific code lives behind a provider interface.** *(build target — binding after provider interface PR lands)* Vendor SDK calls, auth, error classification, and retry behavior for each provider are isolated in that provider's adapter module. Application code (`services/coach.js`, `services/vision.js`) calls the interface, not the SDK directly. See [`docs/LLM_ARCHITECTURE.md`](./LLM_ARCHITECTURE.md) for the interface spec and implementation PR sequence.
+
+**L5. Structured LLM output is validated before use.** *(binding now)* When a provider returns structured output (JSON for a composer command, a parsed intent), the response is validated server-side against the expected schema before it reaches application logic. A validation failure falls back to the deterministic intent-matching path — it never corrupts workout state or reaches the write path.
