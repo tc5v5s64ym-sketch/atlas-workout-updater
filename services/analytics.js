@@ -1536,7 +1536,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     else { score -= 15; why.push('Weekly volume is elevated — monitor total load'); }
     if (daysSinceLast === 0) score -= 15;
     if (daysSinceLast >= 2) score += 10;
-    if (isFatigued('lower')) { score += 5; why.push('Lower body is recovering — upper strength is the smart target'); protects.push('Lower-body recovery'); }
+    if (isFatigued('lower')) { score += 5; why.push('Lower body is recovering — leaning into upper-body strength while keeping legs light today'); protects.push('Lower-body recovery'); }
     if (isFatigued('push')) score -= 20;
     if (canTrain('push', 'pull')) score += 15;
     const upPush = upwardLifts.filter(r => r.pattern === 'push');
@@ -1553,11 +1553,17 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     if (isFresh('pull')) { why.push('Pulling work is overdue — important for shoulder balance'); protects.push('Shoulder health via pulling rotation'); }
     if (rm.lower?.daysSince) data.push({ label: 'Lower body', value: `${rm.lower.daysSince}d since last session`, context: rm.lower.status });
 
-    // When the user's goal is strength and legs are well rested, include lower-body
-    // compounds (squat/hinge) so a full strength session is offered, not just upper work.
-    const strengthPatterns = (goal === 'strength' && isFresh('lower'))
-      ? ['lower', 'hinge', 'push', 'pull']
-      : ['push', 'pull'];
+    // build_strength generates a FULL-PROFILE session by default — lower + hinge +
+    // push + pull — so the whole body is trained, not just upper work. Upper-only is
+    // reachable ONLY via an explicit request (options.upperOnly, set when a user or
+    // the coach asks for an upper day); it is NEVER the silent default. Recovery is
+    // honored downstream by capRecoveringPatternDensity, which thins a fatigued
+    // pattern to a single movement rather than dropping a whole half of the body —
+    // so a fatigued-lower day still includes a (reduced) lower lift, not upper-only.
+    const upperOnlyRequested = !!(options && options.upperOnly);
+    const strengthPatterns = upperOnlyRequested
+      ? ['push', 'pull']
+      : ['lower', 'hinge', 'push', 'pull'];
     if (goal === 'strength' && isFresh('lower')) {
       score += 10;
       why.push('Legs are well rested — lead with a heavy lower-body compound');
@@ -1603,7 +1609,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       id: 'build_strength',
       label: 'Build Strength',
       score,
-      focus: isFatigued('lower') ? 'Upper body — press + pull' : 'Heavy compound work',
+      focus: upperOnlyRequested ? 'Upper body — press + pull' : 'Heavy compound work',
       confidence: score >= 75 ? 'high' : score >= 55 ? 'medium' : 'low',
       confidence_reasons: confReasons.length ? confReasons : ['Training data available'],
       why_today: why.length ? why : ['Good time for heavy compound work'],
