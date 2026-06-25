@@ -20,6 +20,7 @@
 'use strict';
 
 const { computeBenchmark } = require('./exerciseBenchmark');
+const { isWarmupNote } = require('./warmupTag');
 
 const COL_DATE    = 0;
 const COL_SESSION = 1;
@@ -27,6 +28,7 @@ const COL_LIFT    = 5;
 const COL_WEIGHT  = 7;
 const COL_REPS    = 8;
 const COL_RIR     = 9;
+const COL_NOTES   = 10;
 
 const WARMUP_RIR_THRESHOLD   = 4;
 const WARMUP_WEIGHT_FRACTION = 0.60;
@@ -77,6 +79,9 @@ function workingSets(sessionRows) {
   const working = sessionRows.filter(r => {
     const w = parseFloat(r[COL_WEIGHT]) || 0;
     const rir = r[COL_RIR] != null && r[COL_RIR] !== '' ? parseFloat(r[COL_RIR]) : null;
+    // An explicit warm-up tag (notes) is authoritative — excluded even if heavy
+    // or low-RIR; the weight/RIR checks remain as a fallback for untagged rows.
+    if (isWarmupNote(r[COL_NOTES])) return false;
     if (w < sessionMax * WARMUP_WEIGHT_FRACTION) return false;
     if (rir !== null && rir >= WARMUP_RIR_THRESHOLD) return false;
     return true;
