@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v44';
+const ATLAS_SHELL_BUILD = 'v45';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1462,6 +1462,49 @@ function tryApplyPlanMutation(text) {
     : `Skipped ${extraSkipped.join(', ')}.`;
   announcePlanMutation(summary, curName() || (swapped ? resolved.name : null));
   return true;
+}
+
+// ── P0 PR 4: deterministic exercise-identity correction (AC7) ──────────────────
+// "sorry that was squats" relabels the JUST-LOGGED lift in the session buffers, so
+// the card/recap/write rows agree — deterministically, even when the coach LLM is
+// down (the exact live-gym failure). The app state owns the relabel; the coach only
+// confirms it.
+function tryApplyIdentityCorrection(text) {
+  const IC = (typeof window !== 'undefined' && window.identityCorrection) || null;
+  if (!IC || !Array.isArray(sessionLog) || !sessionLog.length) return false; // nothing logged to correct
+  const intent = IC.classifyIdentityCorrection(text);
+  if (!intent) return false;
+  const resolved = resolveCatalogExercise(intent.to);
+  const newName = resolved.name;
+  if (!newName) return false;
+  // The lift being corrected is the most-recently-logged one — relabel its TRAILING
+  // contiguous run of sets (an earlier, separately-logged occurrence is untouched).
+  const oldName = sessionLog[sessionLog.length - 1].exercise;
+  if (!oldName || oldName.toLowerCase() === newName.toLowerCase()) return false;
+  for (let i = sessionLog.length - 1; i >= 0 && sessionLog[i].exercise === oldName; i--) {
+    sessionLog[i] = { ...sessionLog[i], exercise: newName };
+  }
+  // Reconcile completion identity: drop the old resolved name iff no remaining set
+  // still backs it, and ensure the new resolved name is present (in log order).
+  const oldResolved = resolveCompletedIdentity(oldName);
+  const newResolved = resolveCompletedIdentity(newName);
+  const oldStillBacked = sessionLog.some(s => resolveCompletedIdentity(s.exercise) === oldResolved);
+  if (!oldStillBacked) {
+    const idx = sessionCompleted.indexOf(oldResolved);
+    if (idx !== -1) sessionCompleted.splice(idx, 1);
+  }
+  if (!sessionCompleted.includes(newResolved)) sessionCompleted.push(newResolved);
+  announceIdentityCorrection(oldName, newName);
+  return true;
+}
+
+// Tell the coach layer a correction happened so it can confirm it (read-only
+// narration; the engine owns the relabel). Mirrors announcePlanMutation.
+function announceIdentityCorrection(fromName, toName) {
+  renderActiveSessionBanner();
+  document.dispatchEvent(new CustomEvent('atlas:identity-corrected', {
+    detail: { from: fromName || '', to: toName || '' }
+  }));
 }
 
 function renderActiveSessionBanner() {
@@ -4022,6 +4065,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // the canonical session deterministically — before the suggest/coach routes,
       // so the change lands in app state, not just chat prose.
       if (tryApplyPlanMutation(pendingChatText)) {
+        activeExercise = null;
+        return;
+      }
+      // P0 PR 4: an EXPLICIT identity correction ("sorry that was squats") relabels
+      // the just-logged lift deterministically — before the suggest/coach routes, so
+      // it lands in app state even when the coach LLM is down.
+      if (tryApplyIdentityCorrection(pendingChatText)) {
         activeExercise = null;
         return;
       }

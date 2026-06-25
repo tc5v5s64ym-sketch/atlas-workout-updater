@@ -4901,8 +4901,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v44/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v43\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v45/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v44\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4918,7 +4918,7 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(appSrc, /load-session-state-btn'\)\?\.addEventListener/, 'the session-state debug handler must be wired');
   assert.match(appSrc, /remainingPlannedExercises\(\),/, 'the dump must include remainingPlannedExercises');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
-    '/app/sessionQuestion.js', '/app/activeSession.js', '/app/planMutationIntent.js',
+    '/app/sessionQuestion.js', '/app/activeSession.js', '/app/planMutationIntent.js', '/app/identityCorrection.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
@@ -5050,6 +5050,31 @@ test('P0 wiring 2c: barbell loadability snap is applied on the intent-recommenda
   // The drawer surfaces the per-exercise loadability note.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSrc, /raw\.loadability_note\) exList\.appendChild/, 'the drawer renders the loadability note when present');
+});
+
+// P0 PR 4 (AC7): an explicit identity correction relabels the just-logged lift
+// deterministically in the session buffers, before the suggest/coach routes.
+test('P0 PR4: identity correction is wired into the message flow and relabels the buffers', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /<script src="identityCorrection\.js"><\/script>/, 'index.html must load identityCorrection.js');
+
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The correction check runs BEFORE checkAndSuggestSubstitute, AFTER the plan mutation.
+  const corrIdx = appSrc.indexOf('tryApplyIdentityCorrection(pendingChatText)');
+  const mutIdx = appSrc.indexOf('tryApplyPlanMutation(pendingChatText)');
+  const subIdx = appSrc.indexOf('checkAndSuggestSubstitute(pendingChatText)');
+  assert.ok(corrIdx !== -1, 'correction route present in the flow');
+  assert.ok(mutIdx < corrIdx && corrIdx < subIdx, 'correction runs after plan-mutation, before suggest/coach');
+
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 1700);
+  assert.match(fn, /classifyIdentityCorrection\(/, 'uses the deterministic classifier (not LLM prose)');
+  assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'targets the most-recently-logged lift');
+  assert.match(fn, /sessionLog\[i\] = \{ \.\.\.sessionLog\[i\], exercise: newName \}/, 'relabels the trailing run of logged sets');
+  assert.match(fn, /resolveCompletedIdentity\(/, 'reconciles completion identity in sessionCompleted');
+  assert.match(fn, /announceIdentityCorrection\(/, 'announces the correction for the coach to confirm');
+
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(cc, /addEventListener\('atlas:identity-corrected'/, 'coach layer confirms the correction');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
