@@ -163,6 +163,10 @@ function formatSet(row) {
 function sessionBestByLift(rows) {
   const best = {};
   for (const row of rows) {
+    // A note-tagged warm-up must never register as a personal record — a heavy
+    // feeler logged as a warm-up is not a working best (owner rule: warm-ups don't
+    // drive PR/progression).
+    if (isWarmupNote(row.notes)) continue;
     if (!row.lift_code || row.lift_code === 'UNKNOWN' || !row.weight || row.weight <= 0) continue;
     const existing = best[row.lift_code];
     if (!existing || row.weight > existing.weight) {
@@ -185,6 +189,8 @@ function historicalBestByLift(allRows, currentSessionId, sessionDate) {
   for (const row of asArray(allRows).map(normalizeLogRow)) {
     if (row.session_id.toLowerCase() === normId) continue;
     if (beforeDate && row.date_clean >= beforeDate) continue;
+    // Warm-ups never set the historical PR baseline (owner rule: PR uses working sets).
+    if (isWarmupNote(row.notes)) continue;
     if (!row.lift_code || row.lift_code === 'UNKNOWN' || !row.weight || row.weight <= 0) continue;
     if (!best[row.lift_code] || row.weight > best[row.lift_code]) {
       best[row.lift_code] = row.weight;
@@ -620,14 +626,19 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   // Count distinct sessions for this lift
   const sessions = [...new Set(rows.map(r => r.session_id))];
 
-  const lastSets = rows.slice(-5).map(formatSet);
+  // The bump anchor must be a WORKING set — a warm-up logged last (e.g. a back-off
+  // feeler) must not drive the "increase to X" recommendation (owner rule). Fall
+  // back to all rows only if every row is a warm-up, so the rec is never blanked.
+  const workingRows = rows.filter(row => !isWarmupNote(row.notes));
+  const anchorRows = workingRows.length ? workingRows : rows;
+  const lastSets = anchorRows.slice(-5).map(formatSet);
   const lastSet = lastSets[lastSets.length - 1];
   // Compare against the previous DISTINCT session's last working set — not merely
   // the prior set, which is usually in the same session. This makes the
   // "stable reps across two sessions" progression check a true session-over-session
   // signal, so a single session of equal-rep sets no longer triggers a load bump.
   const lastSessionId = lastSet ? lastSet.session_id : null;
-  const priorSessionRows = rows.filter(row => row.session_id !== lastSessionId);
+  const priorSessionRows = anchorRows.filter(row => row.session_id !== lastSessionId);
   const priorSet = priorSessionRows.length ? formatSet(priorSessionRows[priorSessionRows.length - 1]) : null;
   const muscleGroup = lastSet.muscle_group || '';
   const lowerBody = isLowerBodyGroup(muscleGroup);
