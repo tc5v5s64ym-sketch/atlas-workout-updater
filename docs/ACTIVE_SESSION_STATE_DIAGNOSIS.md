@@ -46,7 +46,7 @@ The preview/save flow (`/api/log-workout` and `/api/complete-workout`, `index.js
 
 ## Target design: one canonical `ActiveSession`
 
-Introduce a **pure, deterministic, unit-testable** canonical session model (`services/activeSession.js`, UMD so both the browser IIFEs and Node tests use the *same* logic — the pattern already used by `public/coachVoiceTemplates.js`). Every client holder and the write-row assembly derive from it; the LLM never owns mutation.
+Introduce a **pure, deterministic, unit-testable** canonical session model (`public/activeSession.js`, UMD so both the browser IIFEs and Node tests use the *same* logic — the pattern already used by `public/coachVoiceTemplates.js`). Every client holder and the write-row assembly derive from it; the LLM never owns mutation.
 
 Proposed shape (contract pinned by PR 1's tests):
 
@@ -71,7 +71,7 @@ Pure selectors (every consumer derives from these — no parallel state):
   completedExercises(session)// for recap + write rows
 ```
 
-The existing `services/sessionPlanExecutor.js` (`applySubstitution`, `computePlanState`, `nextExerciseFromPlan`) is the server-side seam this consolidates around; `services/activeSession.js` becomes the single client-and-server-shared mutation/selection model.
+The existing `services/sessionPlanExecutor.js` (`applySubstitution`, `computePlanState`, `nextExerciseFromPlan`) is the server-side seam this consolidates around; `public/activeSession.js` becomes the single client-and-server-shared mutation/selection model.
 
 ## Acceptance criteria → PR mapping
 
@@ -93,7 +93,7 @@ The existing `services/sessionPlanExecutor.js` (`applySubstitution`, `computePla
 ## Slice plan (one concern per PR, fresh branch each, tests required)
 
 1. **(this PR)** Diagnosis + failing repro tests (the stale composer/next-up after Deadlift→Squat, plus the canonical-`ActiveSession` contract as `todo` specs).
-2. Canonical `services/activeSession.js` mutation/selection for swap/replace/skip; wire next-up + composer to derive from it (AC 1,2,4,5,6,11).
+2. Canonical `public/activeSession.js` mutation/selection for swap/replace/skip; wire next-up + composer to derive from it (AC 1,2,4,5,6,11).
 3. Regenerate full replacement prescription incl. warm-up/ramp on substitution (AC 3).
 4. Exercise-identity correction so card/log/session agree (AC 7).
 5. Insert/finisher handling for unplanned accessories + recap/save (AC 8,9,10).
