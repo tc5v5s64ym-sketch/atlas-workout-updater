@@ -1,11 +1,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { isWarmupNote, tagWarmupNote, WARMUP_NOTE_TOKEN } = require('../services/warmupTag');
 const { computeBenchmark, resolveWorkingWeight } = require('../services/exerciseBenchmark');
 const { computeExpectedPerformance } = require('../services/expectedPerformance');
 const { detectTrend } = require('../services/trendDetector');
-const { progressionBand } = require('../services/analytics');
+const { progressionBand, recommendNextSet, detectRecentPrs } = require('../services/analytics');
 
 // 12-column Log_Cleaned row builder:
 // date|session|exercise|canonical|muscle|lift_code|set_number|weight|reps|rir|notes|volume_calc
@@ -123,4 +125,52 @@ test('progressionBand: a note-tagged heavy warm-up does not inflate the working-
     { session_id: 'S1', weight: 300, notes: '' }
   ]);
   assert.equal(control.ceiling, 300);
+});
+
+// --- recommendNextSet: the immediate bump anchor must be a WORKING set ---
+
+test('recommendNextSet: a warm-up logged LAST does not become the bump anchor', () => {
+  // 12-col rows: working 225×5 @2, then a warm-up 135×10 logged last (tagged).
+  const rows = [
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '135', '10', '', 'warm-up']
+  ];
+  const rec = recommendNextSet(rows, 'SQ', { today: '2026-05-13' });
+  // The anchor is the 225 working set, not the trailing 135 warm-up.
+  assert.equal(rec.next_target.weight, 225, 'bump anchors on the working set, not the trailing warm-up');
+
+  // Control: same rows but the last set is untagged → it becomes the anchor.
+  const control = recommendNextSet([
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '225', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '135', '10', '', '']
+  ], 'SQ', { today: '2026-05-13' });
+  assert.equal(control.next_target.weight, 135, 'without the tag the trailing 135 anchors the rec');
+});
+
+// --- PR / personal-best detection excludes tagged warm-ups (internal funcs) ---
+
+test('sessionBestByLift / historicalBestByLift skip note-tagged warm-ups', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'analytics.js'), 'utf8');
+  const sessionBest = src.slice(src.indexOf('function sessionBestByLift('), src.indexOf('function historicalBestByLift('));
+  const historicalBest = src.slice(src.indexOf('function historicalBestByLift('), src.indexOf('function buildSessionSummary('));
+  assert.match(sessionBest, /isWarmupNote\(row\.notes\)/, 'sessionBestByLift must skip tagged warm-ups (no false PR)');
+  assert.match(historicalBest, /isWarmupNote\(row\.notes\)/, 'historicalBestByLift must skip tagged warm-ups (PR baseline = working sets)');
+});
+
+test('detectRecentPrs: a tagged heavy warm-up does not register as a personal record', () => {
+  const rows = [
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '245', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '300', '2', '', 'warm-up']
+  ];
+  const prs = detectRecentPrs(rows);
+  const sq = prs.find(p => p.liftCode === 'SQ');
+  assert.ok(sq, 'SQ PR entry exists');
+  assert.equal(sq.bestWeightSet.weight, 245, 'the tagged 300 feeler is not the weight PR');
+
+  // Control: untagged, the 300 becomes the (false) weight PR.
+  const control = detectRecentPrs([
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '1', '245', '5', '2', ''],
+    ['2026-05-12', 'S1', 'Back Squat', 'Back Squat', 'Legs', 'SQ', '2', '300', '2', '', '']
+  ]).find(p => p.liftCode === 'SQ');
+  assert.equal(control.bestWeightSet.weight, 300);
 });
