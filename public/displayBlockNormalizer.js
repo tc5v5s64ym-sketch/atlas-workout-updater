@@ -75,6 +75,19 @@
     return SET_LINE_RE.test(normalizeText(line));
   }
 
+  // True when a set line carries leftover numeric content AFTER the first
+  // weight/reps[/rir] — a "packed" multi-set line like "225 5/2 225 5/2 225 5/2".
+  // SET_LINE_RE only captures the first set (the rest fall into the trailing group),
+  // so logging such a line would silently drop sets. The caller bails the whole
+  // paste to the proven parser instead — never log only the first of several sets
+  // ("looks logged but wasn't"). Warm-up markers (· warm-up / wu / (W)) carry no
+  // digits, so a normal one-set-per-line warm-up never trips this.
+  function setLineHasLeftoverSets(line) {
+    const m = normalizeText(line).match(SET_LINE_RE);
+    if (!m) return false;
+    return /\d/.test(m[5] || '');
+  }
+
   // A header line is a non-empty, non-set line that plausibly names an exercise:
   // it must contain a letter (so a stray numeric/symbol line isn't taken as a
   // name) and not itself be a set line.
@@ -168,6 +181,9 @@
         // no preceding header is left for the proven parser — bail entirely so we
         // never half-normalize a mixed/ambiguous paste.
         if (!currentName) return { isDisplayBlock: false, blocks: [] };
+        // A packed multi-set line (e.g. "225 5/2 225 5/2") would lose all but the
+        // first set — bail to the proven parser rather than silently drop sets.
+        if (setLineHasLeftoverSets(line)) return { isDisplayBlock: false, blocks: [] };
         currentSets.push(set);
         continue;
       }
@@ -200,6 +216,7 @@
     looksLikeDisplayBlock,
     parseDisplaySetLine,
     isSetLine,
+    setLineHasLeftoverSets,
     isHeaderLine,
     cleanHeaderName
   };

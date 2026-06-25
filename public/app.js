@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v53';
+const ATLAS_SHELL_BUILD = 'v54';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -2819,6 +2819,39 @@ function parseWorkoutText(text) {
   return { rows, errors };
 }
 
+// Atlas writes this token into a log row's `notes` to mark a warm-up set. It MUST
+// stay in sync with services/warmupTag.js (WARMUP_NOTE_TOKEN / isWarmupNote) — the
+// server-side reader that keeps tagged warm-ups OUT of the weight-bump decision
+// while they still count in volume. A unit test cross-checks that what we write
+// here is recognized by isWarmupNote.
+const WARMUP_LOG_NOTE = 'warm-up';
+
+// Build editable set-rows directly from a display-block paste the normalizer has
+// already parsed (exercise-name headers + per-line sets — the live composer/app
+// export format like "135lbs 10 · warm-up" / "245lbs 6/2"). Warm-up sets are tagged
+// in `notes` (logged + counted in volume, excluded only from the bump decision per
+// the owner rule) — never dropped, never given a fabricated RIR. The exercise NAME
+// is passed through; canonical/lift_code/muscle are resolved server-side on write
+// (enrichAndFormatLogRows), exactly as for any other parsed row.
+function rowsFromDisplayBlocks(blocks) {
+  const rows = [];
+  for (const block of blocks) {
+    let setNumber = 1;
+    for (const s of block.sets) {
+      rows.push({
+        exercise: block.name,
+        set_number: String(setNumber),
+        weight: s.weight == null ? '0' : String(s.weight),
+        reps: s.reps == null ? '' : String(s.reps),
+        rir: s.rir == null ? '' : String(s.rir),
+        notes: s.warmup ? WARMUP_LOG_NOTE : ''
+      });
+      setNumber += 1;
+    }
+  }
+  return rows;
+}
+
 function parserStatusNode(status) {
   if (!status) return null;
   const label = status.source === 'backend' ? 'Parsed by backend parser' : 'Parsed locally';
@@ -2978,6 +3011,43 @@ async function rowsFromUnresolvedPlannedLead(workoutText) {
 async function rowsFromWorkoutInput() {
   const workoutText = workoutTextInput.value.trim();
   if (!workoutText || workoutText === lastParsedWorkoutText) return;
+
+  // Multi-exercise display-block paste — the live composer / app-export format:
+  // bare exercise-name headers with per-line sets ("135lbs 10 · warm-up" warm-ups,
+  // "245lbs 6/2" working sets), several exercises stacked. The proven single-line
+  // parser can't read it (name and sets are on separate lines), so it dropped to the
+  // coach ("Noted — keep logging") and lost every set. Detect it deterministically
+  // and build the rows here; warm-ups are tagged, and the rows flow through the SAME
+  // preview → approve → write loop, unchanged. Conservative: the normalizer returns
+  // isDisplayBlock:false for single-line / slash / ambiguous input, so existing
+  // parsing is untouched.
+  if (typeof displayBlockNormalizer !== 'undefined' && displayBlockNormalizer &&
+      typeof displayBlockNormalizer.normalizeDisplayBlocks === 'function') {
+    const blocked = displayBlockNormalizer.normalizeDisplayBlocks(workoutText);
+    if (blocked.isDisplayBlock && blocked.blocks.length) {
+      // kg gate: Atlas logs in pounds. Never silently log kg as lb — ask the lifter
+      // to convert rather than corrupt the weight. `handled` keeps the catch from
+      // routing this to the coach.
+      const hasKg = blocked.blocks.some(b => b.sets.some(s => s.unit === 'kg'));
+      if (hasKg) {
+        lastParsedWorkoutText = workoutText;
+        const e = new Error('Atlas logs in pounds — convert the kg values and paste again.');
+        e.displayMessage = e.message;
+        e.handled = true;
+        throw e;
+      }
+      const blockRows = rowsFromDisplayBlocks(blocked.blocks);
+      if (blockRows.length) {
+        populateSetRows(blockRows);
+        lastParserStatus = { source: 'display-block' };
+        activeExercise = blockRows[blockRows.length - 1].exercise || null;
+        parsedRowsEditor.hidden = true;
+        lastParsedWorkoutText = workoutText;
+        lastPrescribed = null;
+        return;
+      }
+    }
+  }
 
   let parsed;
   try {
@@ -4210,6 +4280,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     await rowsFromWorkoutInput();
     logRows = collectLogRows(sessionId, date);
   } catch (err) {
+    // An already-handled, user-facing condition (e.g. the kg gate) shows its own
+    // message and must NOT fall through to the coach/parse-error routing.
+    if (err && err.handled) {
+      setStatus(loggerStatus, err.displayMessage || err.message, 'warn');
+      activeExercise = null;
+      return;
+    }
     // Text that isn't a loggable workout, with no effort attached, is treated as
     // a question for the coach rather than a parse error — so "was that a good
     // session?" or just "Bench" gets a conversation instead of a red dead-end.

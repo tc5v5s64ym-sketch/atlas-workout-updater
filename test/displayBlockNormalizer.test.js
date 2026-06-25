@@ -6,6 +6,7 @@ const {
   looksLikeDisplayBlock,
   parseDisplaySetLine,
   isSetLine,
+  setLineHasLeftoverSets,
   isHeaderLine,
   cleanHeaderName
 } = require('../public/displayBlockNormalizer');
@@ -148,6 +149,17 @@ test('normalizeDisplayBlocks: a set line with no preceding header bails out enti
 test('normalizeDisplayBlocks: a mid-paste prose line makes it ambiguous → bail', () => {
   const text = 'Bench Press\n185 × 5\nfelt strong today, moving up next week';
   assert.equal(normalizeDisplayBlocks(text).isDisplayBlock, false);
+});
+
+test('normalizeDisplayBlocks: a header + PACKED multi-set line bails (never drops sets silently)', () => {
+  // SET_LINE_RE captures only the first set on a line; a packed line would lose the
+  // rest. The whole paste must bail to the proven parser, not log one of three sets.
+  assert.equal(setLineHasLeftoverSets('225 5/2 225 5/2 225 5/2'), true);
+  assert.equal(setLineHasLeftoverSets('245lbs 6/2'), false);
+  assert.equal(setLineHasLeftoverSets('135lbs 10 · warm-up'), false);
+  const result = normalizeDisplayBlocks('Bench Press\n225 5/2 225 5/2 225 5/2');
+  assert.equal(result.isDisplayBlock, false, 'packed multi-set line → bail to proven parser');
+  assert.deepEqual(result.blocks, []);
 });
 
 test('normalizeDisplayBlocks: empty / whitespace input is not a display block', () => {
