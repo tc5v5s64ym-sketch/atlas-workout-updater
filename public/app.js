@@ -1424,11 +1424,14 @@ function tryApplyPlanMutation(text) {
     announcePlanMutation(`Skipped ${targetNames.join(', ')}.`, curName());
     return true;
   }
-  // Replace: swap the first matched target with the substitute; skip any other
-  // matched targets (a compound "skip deadlifts/rdls and do squats" removes both).
+  // Replace: swap the first matched target with the substitute. Only skip the OTHER
+  // matched slots when the user named a GENUINELY COMPOUND target ("skip
+  // deadlifts/rdls and do squats" removes both). A single token that fuzzily
+  // over-matched several slots (e.g. "curls" → Bicep Curl + Leg Curl) replaces only
+  // the first — it must never silently drop un-named planned work.
   const resolved = resolveCatalogExercise(intent.substitute);
   applySessionSubstitution(targetNames[0], resolved.name, resolved.liftCode);
-  targetNames.slice(1).forEach(skipPlannedExercise);
+  if (PM.splitTargets(intent.target).length > 1) targetNames.slice(1).forEach(skipPlannedExercise);
   // Re-point to the ACTUAL current lift (the cursor) — swapping a LATER slot must
   // not yank the composer off the lift in progress. When the swapped slot is the
   // current one, curName() equals the substitute (repro phrasing unchanged).

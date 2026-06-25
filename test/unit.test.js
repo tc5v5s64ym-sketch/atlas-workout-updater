@@ -4963,6 +4963,12 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(fn, /getCanonicalSession\(\)/, 'target resolution uses the canonical session state');
   assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
   assert.match(fn, /skipPlannedExercise/, 'a skip mutates the live session');
+  // A replace skips the OTHER matched slots ONLY for a genuinely compound target
+  // ("deadlifts/rdls"). A single token that fuzzily over-matches several slots
+  // ("curls" → Bicep Curl + Leg Curl) must replace only the first and never
+  // silently drop the un-named planned work (PR-570 review).
+  assert.match(fn, /splitTargets\(intent\.target\)\.length\s*>\s*1\s*\)\s*targetNames\.slice\(1\)\.forEach\(skipPlannedExercise\)/,
+    'extra-slot skip on a replace is gated on a genuinely compound target');
   // The announced "current" is derived from the cursor, not hardcoded to the
   // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
   assert.match(fn, /activePlannedSession\.exercises\[activePlannedSession\.index\]/,
