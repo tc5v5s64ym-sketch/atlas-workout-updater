@@ -1114,7 +1114,7 @@ test('coach-pick gate: plannedExerciseEntries treats lastIntentData as a plan ON
 
 test('coach-pick gate: engaged on Coach\'s Pick, cleared on Freestyle', () => {
   const ccSrc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const pick = ccSrc.slice(ccSrc.indexOf('async function typeSuggestedWorkout('), ccSrc.indexOf('async function typeSuggestedWorkout(') + 600);
+  const pick = ccSrc.slice(ccSrc.indexOf('async function typeSuggestedWorkout('), ccSrc.indexOf('async function typeSuggestedWorkout(') + 900);
   assert.match(pick, /setCoachSuggestionEngaged === 'function'\) setCoachSuggestionEngaged\(true\)/,
     'tapping Coach\'s Pick must engage the suggestion');
   const free = ccSrc.slice(ccSrc.indexOf('async function startFreestyle('), ccSrc.indexOf('async function startFreestyle(') + 400);
@@ -4483,7 +4483,7 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
 
   // A suggested workout routes through setWorkoutPlaceholder, so viewing a suggestion
   // fires the ownership event before the next 4.5s rotation tick.
-  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2400);
+  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2800);
   assert.match(suggestFn, /setWorkoutPlaceholder\(/, 'typeSuggestedWorkout must set a contextual placeholder (which announces ownership)');
 
   // nav.js suppresses the rotation on the ownership event (same flag as a logged set).
@@ -5090,8 +5090,11 @@ test('coach next-up: repeated identical next-up is suppressed; placeholder uses 
   assert.match(cc, /const sameAsLast = lastAnnouncedNextUp/, 'compares the new next-up to the last announced');
   assert.match(cc, /if \(isReroute \|\| !sameAsLast\)/, 'announces only on a changed next-up (or a reroute)');
   assert.match(cc, /if \(!isReroute\) lastAnnouncedNextUp = nextEx/, 'records the announced next-up');
-  // Closeout resets it so a fresh session re-announces.
+  // Resets so a fresh session re-announces: at closeout AND on session (re)start
+  // (PR-575 review — cross-session staleness if the prior session never closed out).
   assert.match(cc, /lastAnnouncedNextUp = null;\s*\/\/ plan done/, 'resets at closeout');
+  const start = cc.slice(cc.indexOf('async function typeSuggestedWorkout('), cc.indexOf('async function typeSuggestedWorkout(') + 400);
+  assert.match(start, /lastAnnouncedNextUp = null/, 'resets on session (re)start');
   // Placeholder prefers the active PLAN entry's own prescription before /api/plan/today.
   const fn = cc.slice(cc.indexOf('function nextUpPlaceholderFromPlan('), cc.indexOf('function nextUpPlaceholderFromPlan(') + 700);
   assert.match(fn, /getActivePlannedSession/, 'reads the active plan entry for the next-up prescription');

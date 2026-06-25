@@ -675,6 +675,10 @@
 
   async function typeSuggestedWorkout() {
     hideHomeEmpty();
+    // A fresh session re-announces its first next-up: clear any stale handoff memory
+    // from a prior (possibly abandoned, no-closeout) session so the first handoff is
+    // never wrongly suppressed by a name collision (PR-575 review).
+    lastAnnouncedNextUp = null;
     // The lifter engaged Coach's Pick — only now does today's suggestion count as an
     // active plan (so the post-log handoff / composer / next_move advisory may follow
     // it). A merely-displayed pick must never drive those; see app.js plannedExerciseEntries.
