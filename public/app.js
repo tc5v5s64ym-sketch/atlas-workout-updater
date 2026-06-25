@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v42';
+const ATLAS_SHELL_BUILD = 'v43';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1267,17 +1267,20 @@ function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 // substitute is what gets marked done. Inline mirror of applySubstitution in
 // services/sessionPlanExecutor.js (the browser can't require() the service).
 // keep in sync with applySubstitution in services/sessionPlanExecutor.js
+// Returns true when the live plan actually changed (a slot was swapped or a
+// duplicate slot removed), false on any no-op/early-return — so the caller only
+// announces a swap that really happened (PR-570 cosmetic note).
 function applySessionSubstitution(prescribedName, subName, subLiftCode) {
-  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return;
-  if (!prescribedName || !subName) return;
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+  if (!prescribedName || !subName) return false;
   const exs = activePlannedSession.exercises;
   const prescKey = String(prescribedName).toLowerCase();
   const subKey = String(subName).toLowerCase();
-  if (subKey === prescKey) return; // nothing to swap
+  if (subKey === prescKey) return false; // nothing to swap
   const idx = exs.findIndex(e =>
     (e.canonicalName || e.name || '').toLowerCase() === prescKey ||
     (e.name || '').toLowerCase() === prescKey);
-  if (idx === -1) return;
+  if (idx === -1) return false;
   const subCode = String(subLiftCode || '').toLowerCase();
   // Dedupe: if the substitute is already a slot elsewhere, drop the prescribed
   // slot instead of duplicating it (one logged set must not close two slots).
@@ -1301,6 +1304,7 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode) {
     };
   }
   renderActiveSessionBanner();
+  return true;
 }
 
 function startPlannedSession(intent) {
@@ -1439,11 +1443,16 @@ function tryApplyPlanMutation(text) {
   // over-matched several slots (e.g. "curls" → Bicep Curl + Leg Curl) replaces only
   // the first — it must never silently drop un-named planned work.
   const resolved = resolveCatalogExercise(intent.substitute);
-  applySessionSubstitution(targetNames[0], resolved.name, resolved.liftCode);
-  if (PM.splitTargets(intent.target).length > 1) targetNames.slice(1).forEach(skipPlannedExercise);
-  // Re-point to the ACTUAL current lift (the cursor) — swapping a LATER slot must
-  // not yank the composer off the lift in progress. When the swapped slot is the
-  // current one, curName() equals the substitute (repro phrasing unchanged).
+  const swapped = applySessionSubstitution(targetNames[0], resolved.name, resolved.liftCode);
+  const extraSkipped = PM.splitTargets(intent.target).length > 1
+    ? targetNames.slice(1).filter(skipPlannedExercise)
+    : [];
+  // Only announce a change that actually happened — a no-op swap (the resolved
+  // substitute collapsed to the target, applySessionSubstitution early-returned)
+  // with no extra slots skipped must not narrate a phantom "Swapped X → Y"
+  // (PR-570 cosmetic note). Re-point to the ACTUAL current lift (the cursor) —
+  // swapping a LATER slot must not yank the composer off the lift in progress.
+  if (!swapped && !extraSkipped.length) return false;  // nothing changed → fall through
   announcePlanMutation(`Swapped ${targetNames[0]} → ${resolved.name}.`, curName() || resolved.name);
   return true;
 }
@@ -3023,10 +3032,32 @@ function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions) {
         liftCodes: liftCodes || [],
         effortOnly: Boolean(effortOnly),
         effort: effort || null,
-        substitutions: Array.isArray(substitutions) ? substitutions : []
+        substitutions: Array.isArray(substitutions) ? substitutions : [],
+        // P0 wiring 2b: the recap's completed/remaining view derives from the ONE
+        // canonical session (identity reconciled against the mutated plan), so it
+        // can't disagree with what was logged. null when nothing was logged.
+        recap: canonicalSessionRecap()
       }
     }));
   } catch { /* narration is optional */ }
+}
+
+// P0 wiring 2b: derive the end-of-session recap from the canonical ActiveSession,
+// so "what you did / what's still on the plan" reconciles each logged lift's
+// identity against the (possibly swapped/skipped) plan through the shared model —
+// never the divergent raw-string remaining. Returns null when there is no session
+// OR when nothing was actually logged (hasLoggedWork()=false), so an all-skipped /
+// empty session is never narrated as a completed workout. Read-only: it informs
+// narration only and never changes which rows are written (the written sets still
+// come from sessionLog — the canonical model carries identity, not set data).
+function canonicalSessionRecap() {
+  const AS = (typeof window !== 'undefined' && window.activeSession) || (typeof activeSession !== 'undefined' ? activeSession : null);
+  const s = AS ? getCanonicalSession() : null;
+  if (!AS || !s || !AS.hasLoggedWork(s)) return null;
+  return {
+    completed: AS.completedExercises(s).map(e => e.name).filter(Boolean),
+    remaining: AS.remaining(s).map(e => e.name).filter(Boolean)
+  };
 }
 
 // In-workout: hand a just-LOGGED (not previewed) set to the conversation layer

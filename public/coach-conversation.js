@@ -1136,7 +1136,7 @@
   // / Undo delegate to the existing #approve-btn / #parsed-rows-editor /
   // window.atlasUndoLastWrite — the write path itself is unchanged.
   async function handlePreviewReady(detail) {
-    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [] } = detail || {};
+    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [], recap = null } = detail || {};
     if (!effortOnly && !liftCodes.length) return;       // nothing to review
 
     const handle = appendAtlasBubble();
@@ -1151,6 +1151,12 @@
       .filter(s => s && s.classification)
       .map(s => coachVoiceTemplates.templatedSubstitutionLine(s));
     if (subLines.length) intro += '\n\n' + subLines.join('\n');
+    // P0 wiring 2b: surface the canonical session's still-pending plan lifts (after
+    // any swap/skip) so the recap reflects the ONE session state, not a stale plan.
+    // recap is null unless work was actually logged (hasLoggedWork), so an
+    // all-skipped/empty session never shows a "still on your plan" tail.
+    const remaining = (recap && Array.isArray(recap.remaining)) ? recap.remaining.filter(Boolean) : [];
+    if (remaining.length) intro += `\n\nStill on your plan: ${remaining.join(', ')}.`;
     await typeOut(body, intro);
     bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort));
   }
