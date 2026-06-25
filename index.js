@@ -43,6 +43,7 @@ const {
   detectSwap
 } = require('./services/analytics');
 const { classifySubstitution } = require('./services/substitutionIntent');
+const { isWarmupNote } = require('./services/warmupTag');
 const { inferPrescribedPairs } = require('./services/planMatcher');
 const { assessLayoff } = require('./services/layoffGuard');
 const { isConstraintMessage } = require('./services/constraintDetector');
@@ -329,11 +330,20 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
   // (BACKLOG ME-4.)
   result.volume_calc = calculateVolumeCalc(result.weight, result.reps);
 
+  // Warm-up rows are logged WITHOUT an RIR — Atlas never invents a rating the
+  // lifter didn't give (owner rule 2026-06-25). So `rir` is required on working
+  // sets but optional on a note-tagged warm-up; a blank RIR cell is valid there.
+  // Without this, logging warm-ups (now a supported flow) failed the whole save
+  // with "Missing required log row field: rir".
+  const isWarmupRow = isWarmupNote(result.notes);
   for (const field of ['date_clean', 'session_id', 'exercise', 'set_number', 'weight', 'reps', 'rir']) {
+    if (field === 'rir' && isWarmupRow) continue;
     if (result[field] === undefined || result[field] === null || result[field] === '') {
       throw new Error(`Missing required log row field: ${field}`);
     }
   }
+  // Normalize a warm-up's missing RIR to a writable empty string (column stays present).
+  if (isWarmupRow && (result.rir === undefined || result.rir === null)) result.rir = '';
 
   return result;
 }

@@ -1772,6 +1772,43 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// A warm-up row carries no RIR (Atlas never invents one). The write path must NOT
+// reject it with "Missing required log row field: rir" — logging warm-ups (a
+// supported flow) was failing the whole save on this. Working sets still require RIR.
+test('api smoke: a warm-up row (blank RIR + warm-up note) is accepted; a working row with blank RIR is not', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const warmup = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-WARMUP-RIR',
+      date: '2026-06-11',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 10, rir: '', notes: 'warm-up' },
+        { exercise: 'Bench Press', set_number: 2, weight: 225, reps: 5, rir: 2, notes: '' }
+      ]
+    })
+  });
+  assert.equal(warmup.response.status, 200, JSON.stringify(warmup.body));
+  assert.equal(warmup.body.data.no_write_confirmed, true);
+  // Both rows survive to the preview (the warm-up wasn't rejected for a blank RIR).
+  assert.equal(warmup.body.data.log_rows_preview.length, 2);
+
+  // Control: a WORKING row (no warm-up note) with a blank RIR is still rejected.
+  const working = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'API-SMOKE-WORKING-RIR',
+      date: '2026-06-11',
+      test_mode: true,
+      log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: '', notes: '' }]
+    })
+  });
+  assert.equal(working.response.status, 400, JSON.stringify(working.body));
+  assert.match(working.body.message || working.body.error || '', /rir/i);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
 test('api smoke: log-workout preview surfaces the e1rm typo guard from history (ME-13, no write)', async () => {
   fakeSheetsState.appendCalls.length = 0;
   // BEN01 history in logRows tops out at 225×5 (e1RM ≈ 262.5). Logging 285×5
