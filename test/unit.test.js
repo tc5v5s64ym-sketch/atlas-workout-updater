@@ -5011,8 +5011,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v53/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v52\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v54/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v53\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5034,9 +5034,13 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(appSrc, /\/api\/coach\/health/, 'the handler must call the coach health endpoint');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js', '/app/activeSession.js', '/app/planMutationIntent.js', '/app/identityCorrection.js',
+    '/app/displayBlockNormalizer.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
+  // The display-block normalizer must be loaded in the page (it powers the
+  // multi-exercise composer paste) — a precached-but-unincluded module would 404 at runtime.
+  assert.match(html, /<script src="displayBlockNormalizer\.js"><\/script>/, 'displayBlockNormalizer.js must be included in index.html');
   // The API must still never be intercepted
   assert.match(sw, /startsWith\('\/api'\)/, 'API traffic must stay uncached');
 });
