@@ -97,7 +97,7 @@ The existing `services/sessionPlanExecutor.js` (`applySubstitution`, `computePla
 3. Regenerate full replacement prescription incl. warm-up/ramp on substitution (AC 3).
 4. Exercise-identity correction so card/log/session agree (AC 7).
 5. Insert/finisher handling for unplanned accessories + recap/save (AC 8,9,10).
-6. Barbell loadability guard against the owner's plate inventory (AC 12).
+6. Barbell loadability guard against the owner's plate inventory (AC 12) — pure `services/barbellLoadability.js` (`roundToLoadableBarbell`/`isLoadableBarbell`); **surfacing** the rounded value + note into the recommendation/coach (gated on barbell equipment classification) happens in the wiring slice.
 7. End-to-end regression: Coach's Pick → replace DL→Squat → log Squat → OHP → corrected Lat Pulldown → insert Hammer Curl → insert Knee Raises → preview/save succeeds (AC 10).
 
 ## Deferred notes (from PR-565 review — address in the slices below)
