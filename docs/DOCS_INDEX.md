@@ -47,6 +47,7 @@ These are reference docs. Use them when relevant, but do not treat them as the a
 - `docs/CONSTITUTION.md`
 - `docs/ARCHITECTURE.md`
 - `docs/INVARIANTS.md`
+- `docs/LLM_ARCHITECTURE.md` — LLM provider architecture: core principles (P1–P6), tier design, June 2026 provider scoring, error boundary spec, provider interface, implementation PR sequence. **Not active roadmap** — build trigger is after P0 workout reliability is stable in live use. See `BACKLOG.md` → Operational resilience → GitHub issue #586.
 - `docs/SHEET_CONTRACT.md`
 - `docs/SAFETY_RULES.md`
 - `docs/MISSION_CONTROL.md`

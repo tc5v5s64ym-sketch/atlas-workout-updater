@@ -531,6 +531,7 @@ Do not start these from this roadmap refill unless the owner explicitly promotes
 - Friendly errors / contradictory panel polish.
 - Pending-exercise queue persistence decision.
 - Lift-code history merge for pre-override rows (`SESSION_DESIGN AC5a`) unless separately promoted.
+- **Provider resilience and cost-aware LLM routing** (GitHub issue #586 / [`docs/LLM_ARCHITECTURE.md`](./LLM_ARCHITECTURE.md)) — **promote only after P0 workout reliability is stable in live use.** Eight-PR sequence starting with the error boundary; see `BACKLOG.md` → "Operational resilience" for the full entry and trigger condition.
 - Nutrition, bodyweight expansion, signature programs, auth/productization, multi-user, and platform/API work.
 
 ---
