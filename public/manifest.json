@@ -1,5 +1,5 @@
 {
-  "name": "Atlas — Workout Companion",
+  "name": "Atlas",
   "short_name": "Atlas",
   "description": "Personal workout logging with approve-before-save safety.",
   "start_url": "/app/",

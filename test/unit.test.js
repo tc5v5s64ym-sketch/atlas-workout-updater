@@ -4965,10 +4965,50 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
   assert.match(html, /test_mode=true/, 'the no-write promise must remain visible');
 });
 
+// Mobile PWA test shell: standalone manifest + iOS meta + data-loss safety
+// (pull-to-refresh off, unsaved-session warning, persist/restore session).
+test('mobile PWA: manifest + iOS meta are present and named "Atlas"', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'public', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.name, 'Atlas', 'manifest name is Atlas');
+  assert.equal(manifest.short_name, 'Atlas', 'manifest short_name is Atlas');
+  assert.equal(manifest.display, 'standalone', 'standalone display mode');
+  assert.ok(manifest.theme_color && manifest.background_color, 'theme + background colors set');
+  assert.ok(Array.isArray(manifest.icons) && manifest.icons.length >= 2, 'app icons present');
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /name="apple-mobile-web-app-capable" content="yes"/, 'iOS standalone capable');
+  assert.match(html, /name="apple-mobile-web-app-title" content="Atlas"/, 'iOS app title');
+  assert.match(html, /rel="apple-touch-icon"/, 'apple touch icon');
+});
+
+test('mobile PWA: pull-to-refresh is disabled (overscroll-behavior)', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /overscroll-behavior-y:\s*none/, 'page disables pull-to-refresh / scroll-chain bounce');
+});
+
+test('mobile PWA: unsaved-session warning + persist/restore session safety', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // beforeunload warns ONLY when there are unsaved logged sets.
+  assert.match(app, /addEventListener\('beforeunload'/, 'a beforeunload handler exists');
+  assert.match(app, /function hasUnsavedSessionState\(\)/, 'the unsaved-state guard exists');
+  assert.match(app, /sessionLog\) && sessionLog\.length > 0/, 'warns based on logged-but-unsaved sets');
+  // Snapshot save/restore/clear of the in-progress session.
+  assert.match(app, /function saveSessionSnapshot\(\)/, 'saves a session snapshot');
+  assert.match(app, /function restoreSessionSnapshot\(\)/, 'restores a session snapshot on load');
+  assert.match(app, /function clearSessionSnapshot\(\)/, 'clears the snapshot');
+  assert.match(app, /SESSION_SNAPSHOT_MAX_AGE_MS/, 'recency-gated (stale snapshot ignored)');
+  // Wired: restore at init, clear on save + start-over.
+  assert.match(app, /restoreSessionSnapshot\(\);\n?\s*loadDashboard\(\)|restoreSessionSnapshot\(\);/, 'restore runs at startup');
+  assert.match(app, /clearSessionSnapshot\(\);\s*\/\/ saved/, 'snapshot cleared on a successful save');
+  assert.match(app, /clearSessionSnapshot\(\);\s*\/\/ a deliberate reset/, 'snapshot cleared on Start Over');
+  // Persistence/resume only — must NOT touch the write/proof path here.
+  const snapBlock = app.slice(app.indexOf('function saveSessionSnapshot('), app.indexOf('function hasUnsavedSessionState('));
+  assert.doesNotMatch(snapBlock, /sheet_write|no_write_confirmed|\/api\/log-workout|beginWrite/, 'persistence never touches the write/proof path');
+});
+
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v51/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v50\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v52/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v51\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

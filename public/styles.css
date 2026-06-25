@@ -98,10 +98,16 @@
 * { box-sizing: border-box; }
 [hidden], .hidden { display: none !important; }
 
-html { -webkit-text-size-adjust: 100%; }
+/* Disable the browser's pull-to-refresh / scroll-chain bounce so an accidental
+   downward drag at the top during a gym session can't reload the page and drop
+   unsaved state. Inner scroll containers (the coach thread) still scroll normally.
+   In an installed (standalone) PWA there's no browser chrome to refresh anyway;
+   this also protects in-Safari testing. */
+html { -webkit-text-size-adjust: 100%; overscroll-behavior-y: none; }
 
 body {
   margin: 0;
+  overscroll-behavior-y: none;
   font-family: var(--font);
   background: var(--bg);
   color: var(--ink);

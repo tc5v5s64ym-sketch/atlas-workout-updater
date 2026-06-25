@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v51';
+const ATLAS_SHELL_BUILD = 'v52';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1358,6 +1358,7 @@ function startPlannedSession(intent) {
       body: JSON.stringify({ focus: 'strength', reason: 'owner started deload session' })
     }).catch(() => {});
   }
+  saveSessionSnapshot();   // persist the started plan for resume safety
   const first = exercises[0];
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
 }
@@ -3196,6 +3197,83 @@ let sessionCompleted = [];
 let closeoutScreenshotFile = null;
 let closeoutScreenshotEffort = null;
 
+/* ===== Mobile PWA session persistence/resume safety =====
+ * Live gym testing on a phone home-screen icon can lose the in-memory session to a
+ * reload, force-quit, or accidental swipe. We snapshot ONLY the in-progress session
+ * buffers — sessionLog (the set data), sessionCompleted (resolved identities), and
+ * activePlannedSession (the live plan/cursor) — to localStorage, and restore them on
+ * load so the lifter resumes mid-session. This is persistence/resume ONLY: it never
+ * changes coaching, parsing, or the preview→approve→write trust loop — the snapshot
+ * is the SAME data the buffers already hold, written/read defensively. The snapshot
+ * is cleared on a successful save and on Start Over. Recency-gated so a stale snapshot
+ * (>12h) is ignored rather than resurrecting yesterday's half-session. */
+const SESSION_SNAPSHOT_KEY = 'atlas_session_snapshot_v1';
+const SESSION_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+function saveSessionSnapshot() {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    // Nothing in progress → don't keep a stale snapshot around.
+    if (!(Array.isArray(sessionLog) && sessionLog.length) && !activePlannedSession) {
+      localStorage.removeItem(SESSION_SNAPSHOT_KEY);
+      return;
+    }
+    localStorage.setItem(SESSION_SNAPSHOT_KEY, JSON.stringify({
+      v: 1,
+      ts: Date.now(),
+      sessionLog,
+      sessionCompleted,
+      activePlannedSession,
+    }));
+  } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
+}
+
+function clearSessionSnapshot() {
+  try { if (typeof localStorage !== 'undefined') localStorage.removeItem(SESSION_SNAPSHOT_KEY); } catch { /* ignore */ }
+}
+
+// Restore a recent in-progress session on load. Defensive: a malformed/old snapshot
+// is ignored (and cleared), never partially applied. Returns true when a session was
+// resumed (caller re-renders the banner). Read-only restore — no network, no writes.
+function restoreSessionSnapshot() {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    const raw = localStorage.getItem(SESSION_SNAPSHOT_KEY);
+    if (!raw) return false;
+    const snap = JSON.parse(raw);
+    if (!snap || snap.v !== 1 || typeof snap.ts !== 'number' || (Date.now() - snap.ts) > SESSION_SNAPSHOT_MAX_AGE_MS) {
+      clearSessionSnapshot();
+      return false;
+    }
+    if (!Array.isArray(snap.sessionLog) || !Array.isArray(snap.sessionCompleted)) { clearSessionSnapshot(); return false; }
+    // Only resume when there is genuinely something in progress.
+    if (!snap.sessionLog.length && !snap.activePlannedSession) { clearSessionSnapshot(); return false; }
+    sessionLog = snap.sessionLog;
+    sessionCompleted = snap.sessionCompleted;
+    activePlannedSession = (snap.activePlannedSession && Array.isArray(snap.activePlannedSession.exercises))
+      ? snap.activePlannedSession : null;
+    if (activePlannedSession) { coachSuggestionEngaged = true; renderActiveSessionBanner(); }
+    return true;
+  } catch { clearSessionSnapshot(); return false; }
+}
+
+// Warn before a refresh/close ONLY when there are logged sets not yet saved — so an
+// accidental swipe/reload during a session can't silently drop unsaved work. No
+// warning when nothing is logged (a fresh app or a just-saved session). Standard
+// beforeunload contract: setting returnValue triggers the browser's native prompt.
+function hasUnsavedSessionState() {
+  return Array.isArray(sessionLog) && sessionLog.length > 0;
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', e => {
+    saveSessionSnapshot();                 // persist first so even "Leave" resumes
+    if (hasUnsavedSessionState()) { e.preventDefault(); e.returnValue = ''; }
+  });
+  // Backgrounding the PWA (app switch / lock) is the common loss point on iOS —
+  // snapshot on hide so a later force-quit still resumes.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveSessionSnapshot(); });
+}
+
 // The planned exercises the lifter is working through, in the VISIBLE plan order,
 // WITH their identity fields (name + canonical + liftCode). Source: a formally-
 // started planned session if one exists, else the cached coach-suggested plan
@@ -3421,6 +3499,8 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (parsedRowsEditor) parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = '';
   invalidatePreview();
+  // persist the just-logged set for resume safety (guarded for the emit test harness)
+  if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot();
 }
 
 // `justLoggedSet` (optional) anchors the recommendation on the set the lifter
@@ -3703,6 +3783,7 @@ function startOverWorkout() {
   lastParsedWorkoutText = '';
   sessionLog = [];
   sessionCompleted = [];
+  clearSessionSnapshot();   // a deliberate reset must not resume the old session
   closeoutScreenshotFile = null;
   closeoutScreenshotEffort = null;
   setsTableBody.innerHTML = '';
@@ -4845,6 +4926,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     if (pendingLastWrite) sessionCompleted = [];
     if (pendingLastWrite) closeoutScreenshotFile = null;
     if (pendingLastWrite) closeoutScreenshotEffort = null;
+    clearSessionSnapshot();   // saved — don't resume this (now-written) session
+
     if (pendingLastWrite) {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
       undoBtn.addEventListener('click', handleUndoLastWrite);
@@ -5173,6 +5256,9 @@ function setDefaultDate() {
 
 setDefaultDate();
 checkConnection();
+// Mobile resume safety: if a recent in-progress session was snapshotted before a
+// reload/force-quit/background, restore it so the lifter picks up mid-session.
+restoreSessionSnapshot();
 loadDashboard();
 loadCoachPlan();
 loadWeeklyCoach();
