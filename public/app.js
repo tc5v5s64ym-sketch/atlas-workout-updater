@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v47';
+const ATLAS_SHELL_BUILD = 'v48';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -3671,9 +3671,21 @@ document.getElementById('start-over-btn')?.addEventListener('click', startOverWo
 // to extract the workout sets the lifter logged conversationally, then populate
 // the composer and trigger a normal parse → preview → approve flow.
 async function handleLogIt() {
-  // Prefer the structured session buffer — no Gemini, no re-parse. The
-  // conversational compile below is only a fallback (e.g. after a page reload
-  // when the buffer is empty but the chat history survived).
+  // P0 closeout trust: NEVER return silently. Every path below either drives the
+  // preview or sets a visible status; this wrapper guarantees a visible message even
+  // if an unexpected throw occurs (the "log it disappeared" bug must be impossible).
+  try {
+    await runCloseout();
+  } catch (err) {
+    setStatus(loggerStatus, `Couldn't close out the session: ${err && err.message ? err.message : 'unexpected error'}. Nothing was saved — try again.`, 'error');
+  }
+}
+
+async function runCloseout() {
+  // CANONICAL SOURCE OF TRUTH: build the closeout rows from the structured set
+  // buffer (sessionLog) — the same source getCanonicalSession() derives from. No
+  // Gemini, no re-parse. This is what the visible logged cards were rendered from,
+  // so if cards exist, this finds them.
   if (sessionLog.length) {
     populateSetRows(buildRowsFromSessionLog());
     sessionCompiledAwaitingPreview = true;
@@ -3695,8 +3707,19 @@ async function handleLogIt() {
 
   const turns = typeof window.getChatHistory === 'function' ? window.getChatHistory() : [];
 
+  // The buffer is empty AND nothing was saved. Before the LLM compile, check the
+  // canonical session: if it shows completed work (e.g. after a reload the plan +
+  // completions survived but the raw set buffer didn't), the set details aren't in
+  // memory to rebuild — say so honestly and route to manual entry, NEVER the false
+  // "no sets" while the lifter can see logged cards (P0 closeout trust).
+  const canon = typeof getCanonicalSession === 'function' ? getCanonicalSession() : null;
+  const AS = (typeof window !== 'undefined' && window.activeSession) || null;
+  const canonHasWork = !!(canon && AS && typeof AS.hasLoggedWork === 'function' && AS.hasLoggedWork(canon));
+
   if (!turns.length) {
-    setStatus(loggerStatus, "No conversation yet — log some sets in the chat first, then say 'log it'.", 'error');
+    setStatus(loggerStatus, canonHasWork
+      ? "I can see your logged exercises, but their set details aren't in memory to compile (the app may have reloaded). Re-enter the sets in the composer and tap Save — nothing was lost on your sheet."
+      : "No conversation yet — log some sets in the chat first, then say 'log it'.", 'error');
     return;
   }
 
@@ -3711,12 +3734,19 @@ async function handleLogIt() {
     });
     workoutText = res.data?.workout_text || null;
   } catch (err) {
-    setStatus(loggerStatus, `Could not compile session: ${err.message}`, 'error');
+    // Compile is the LLM fallback; when it's down, do NOT claim "no sets". Say the
+    // compile is unavailable and route to manual entry.
+    setStatus(loggerStatus, `Couldn't compile the session right now (the coach may be offline). Type your sets in the composer and tap Save — nothing was saved yet.`, 'error');
     return;
   }
 
   if (!workoutText) {
-    setStatus(loggerStatus, "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", 'error');
+    // Distinguish a genuine empty conversation from "the compiler found nothing but
+    // the lifter clearly logged work" — never a flat false "no sets" when canonical
+    // state shows completed exercises.
+    setStatus(loggerStatus, canonHasWork
+      ? "I couldn't recompile your sets from the conversation, but I can see you logged exercises. Re-enter them in the composer and tap Save — nothing was saved yet."
+      : "Couldn't find any sets in the conversation — did you log any exercises? You can type them in the composer directly.", 'error');
     return;
   }
 
@@ -4030,7 +4060,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       closeoutScreenshotEffort = await parseWorkoutImage(file);
       setStatus(loggerStatus, 'Effort read from screenshot. Say done to preview your workout with effort data.', 'ok');
     } catch {
-      setStatus(loggerStatus, "Screenshot attached, but effort couldn't be read. Say done to save the workout without effort data.", 'warn');
+      setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data — say done to preview.", 'warn');
     }
     return;
   }

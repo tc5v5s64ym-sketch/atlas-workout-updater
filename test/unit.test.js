@@ -783,11 +783,12 @@ test('live-audit PR2: a malformed SET surfaces a format hint instead of silently
 
 test('live-audit PR3: "log it" with an empty buffer after a save says "nothing new", not a false closeout', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The closeout logic lives in runCloseout (handleLogIt is the never-silent wrapper).
   const fn = appSource.slice(
-    appSource.indexOf('async function handleLogIt()'),
-    appSource.indexOf('async function handleLogIt()') + 2000
+    appSource.indexOf('async function runCloseout()'),
+    appSource.indexOf('async function runCloseout()') + 3200
   );
-  assert.ok(fn.length > 0, 'handleLogIt must exist');
+  assert.ok(fn.length > 0, 'runCloseout must exist');
   // The empty-buffer save path: lastWrite set → "nothing new", returns BEFORE the
   // /api/session/compile fallback (so the already-saved chat history is never
   // recompiled/re-written).
@@ -800,6 +801,46 @@ test('live-audit PR3: "log it" with an empty buffer after a save says "nothing n
   // (sessionLog non-empty) are unaffected.
   const bufferIdx = fn.indexOf('if (sessionLog.length)');
   assert.ok(bufferIdx >= 0 && bufferIdx < nothingNewIdx, 'the sessionLog branch precedes the nothing-new guard');
+});
+
+// P0 closeout/save trust (live test 2026-06-25): "log it"/"done" must never fail
+// silently, must read the canonical state, and must not falsely claim "no sets".
+test('P0 closeout: handleLogIt is a never-silent wrapper around runCloseout', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const wrap = src.slice(src.indexOf('async function handleLogIt()'), src.indexOf('async function runCloseout()'));
+  // Wrapper try/catch guarantees a VISIBLE status even on an unexpected throw.
+  assert.match(wrap, /try \{\s*await runCloseout\(\);/, 'handleLogIt awaits runCloseout in a try');
+  assert.match(wrap, /catch[\s\S]*setStatus\(loggerStatus,[\s\S]*Nothing was saved/, 'an unexpected throw surfaces a visible error (never silent)');
+});
+
+test('P0 closeout: runCloseout reads the canonical buffer first and never gives a false "no sets" when work exists', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 3200);
+  // Canonical source: sessionLog buffer first (what the visible cards were built from).
+  const bufIdx = fn.indexOf('if (sessionLog.length)');
+  assert.ok(bufIdx >= 0, 'closeout builds from the sessionLog buffer (canonical set data)');
+  // When the buffer is empty it consults the canonical session before declaring nothing.
+  assert.match(fn, /hasLoggedWork\(canon\)/, 'checks canonical hasLoggedWork before any "no sets" verdict');
+  // A coach-offline compile failure must NOT become a flat "no sets" — and never a
+  // false "no sets" while canonical work exists.
+  assert.match(fn, /coach may be offline/, 'compile failure says the coach is offline, not "no sets"');
+  assert.match(fn, /canonHasWork\s*\?/, 'the "no sets" copy is gated on whether canonical work exists');
+});
+
+test('P0 closeout: the preview-ready listener surfaces render errors instead of swallowing them', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf("addEventListener('atlas:preview-ready'");
+  // Scope to just this listener (up to the next addEventListener) so the assertion
+  // doesn't pick up the following listeners' own catch handlers.
+  const block = cc.slice(start, cc.indexOf('addEventListener(', start + 30));
+  assert.doesNotMatch(block, /catch\(\(\) => \{\}\)/, 'must NOT swallow a failed review-card render');
+  assert.match(block, /appendAtlasBubble\(\)/, 'a failed render posts a visible thread message (never silent)');
+  assert.match(block, /Nothing was saved/, 'tells the lifter nothing was written');
+});
+
+test('P0 closeout: a screenshot effort-parse failure uses the owner-specified copy', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(src, /I couldn't read effort from the screenshot\. I can still save the workout without effort data/, 'exact parse-fail copy');
 });
 
 // ---------------------------------------------------------------------------
@@ -4658,7 +4699,7 @@ test('closeout screenshot: plan-complete attachment parses effort without workou
   assert.match(guard, /closeoutScreenshotFile = file/, 'must remember the attachment locally');
   assert.match(guard, /parseWorkoutImage\(file\)/, 'must try parse-only effort extraction');
   assert.match(guard, /Effort read from screenshot\. Say done to preview your workout with effort data\./, 'successful parse must say effort data will be included');
-  assert.match(guard, /Screenshot attached, but effort couldn't be read\. Say done to save the workout without effort data\./, 'failed parse must be explicit and non-blocking');
+  assert.match(guard, /I couldn't read effort from the screenshot\. I can still save the workout without effort data — say done to preview\./, 'failed parse must be explicit and non-blocking');
   assert.match(guard, /return;/, 'must not fall through into /api/complete-workout preview');
   assert.doesNotMatch(guard, /submitCompleteWorkout|complete-workout/, 'closeout attachment must not call workout ingestion');
 });
@@ -4915,8 +4956,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v47/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v46\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v48/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v47\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

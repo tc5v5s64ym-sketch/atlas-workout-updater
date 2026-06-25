@@ -1268,7 +1268,22 @@
     el.textContent = `Good ${part}, Dale.`;
   })();
 
-  document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
+  document.addEventListener('atlas:preview-ready', e => {
+    handlePreviewReady(e.detail).catch(() => {
+      // NEVER SILENT (P0 closeout trust): the dry-run preview succeeded server-side,
+      // but rendering the in-thread review card threw. The composer was already
+      // cleared by submit, so swallowing this left the lifter with no card, no save,
+      // and no error (the live-gym "log it disappeared" bug). Surface it instead, and
+      // point at the still-armed logger Save so the (no-write-proven) preview can be
+      // approved manually — nothing was written.
+      try {
+        const node = appendAtlasBubble();
+        if (node && node.body) {
+          node.body.textContent = "I previewed your workout but couldn't render the review card here. Nothing was saved. Open the logger and tap Save to write it, or say \"done\" again.";
+        }
+      } catch { /* last-resort: never throw out of the listener */ }
+    });
+  });
   document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
   document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
   // P0 Sub-PR 2a: a deterministic plan mutation (swap/skip applied to the canonical
