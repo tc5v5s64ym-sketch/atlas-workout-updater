@@ -1248,6 +1248,16 @@
     if (d.current) setWorkoutPlaceholder(buildWorkoutPlaceholder([{ name: d.current }]) || d.current);
   });
 
+  // P0 PR 4: a deterministic identity correction ("sorry that was squats") — app.js
+  // already relabeled the logged lift in the session buffers; confirm it in the
+  // thread. Read-only narration; the engine OWNS the relabel.
+  document.addEventListener('atlas:identity-corrected', e => {
+    const d = (e && e.detail) || {};
+    if (!d.to) return;
+    const node = appendAtlasBubble();
+    if (node && node.body) node.body.textContent = `Got it — relabeled that to ${d.to}.`;
+  });
+
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
 
   // In-session conversation memory only — resets on reload (no persistence, per
