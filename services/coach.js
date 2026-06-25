@@ -482,12 +482,20 @@ function buildPlanUserPrompt(facts) {
 // Single Gemini call shared by every voice (set-coaching, plan, chat). Accepts a
 // ready-made `contents` array so the chat voice can pass multi-turn history while
 // the one-shot voices pass a single user turn. Throws when unconfigured, on a
-// Deterministic unit guard on coach LLM output (G4). The coach contract is
+// Deterministic unit guard on coach DISPLAY-VOICE output (G4). The coach contract is
 // numbers-only, no units — every weight Atlas stores and shows is lbs. The prompt
 // says so (buildCoachSystemPrompt), but a model can IGNORE the instruction and
 // fabricate a unit it was never given ("70kg", "best of 50kg") — the live 2026-06-25
 // bug. The prompt is not trustworthy on its own, so this strips any weight-unit
-// token the model emits, AFTER generation, BEFORE the text reaches the user.
+// token the model emits, AFTER generation, BEFORE the prose reaches the user.
+//
+// Applied ONLY to the human-facing voices (generateCoachMessage / generatePlanMessage
+// / generateChatReply), NOT at the shared callGeminiContents layer — because that
+// layer also serves compileSessionFromHistory, whose slash-notation `workout_text`
+// feeds the parser → preview → approve → write path. The guard must stay off any
+// write-feeding text (owner scope: do not touch preview→approve→write). It is a no-op
+// on valid numbers-only slash notation anyway, but scoping it to display prose keeps
+// the write path genuinely untouched rather than relying on that no-op.
 //
 // Surgical: removes a unit ONLY when it immediately follows a number (a weight
 // value), keeping the number and the rest of the sentence intact — "best of 50kg"
@@ -544,10 +552,7 @@ async function callGeminiContents(systemText, contents, { timeoutMs = DEFAULT_TI
   const data = await response.json();
   const text = extractText(data);
   if (!text) throw new Error('Gemini returned no text output.');
-  // G4 — deterministic unit guard at the single chokepoint every coach voice
-  // (set-reaction, plan, chat) and the health probe pass through: strip any
-  // fabricated weight-unit token before the prose ever leaves the server.
-  return stripFabricatedUnits(text);
+  return text;
 }
 
 // Single-turn convenience wrapper — preserves the original set/plan call shape.
@@ -569,11 +574,13 @@ async function pingGemini({ timeoutMs = 8000 } = {}) {
 }
 
 async function generateCoachMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  return callGemini(buildCoachSystemPrompt(), buildCoachUserPrompt(facts), timeoutMs);
+  // G4 unit guard — display prose only (this is the set-reaction voice).
+  return stripFabricatedUnits(await callGemini(buildCoachSystemPrompt(), buildCoachUserPrompt(facts), timeoutMs));
 }
 
 async function generatePlanMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  return callGemini(buildPlanSystemPrompt(), buildPlanUserPrompt(facts), timeoutMs);
+  // G4 unit guard — display prose only (this is the plan "why today" voice).
+  return stripFabricatedUnits(await callGemini(buildPlanSystemPrompt(), buildPlanUserPrompt(facts), timeoutMs));
 }
 
 // ── Conversational chat voice ────────────────────────────────────────────────
@@ -968,7 +975,10 @@ async function generateChatReply({ message, context, history } = {}, { timeoutMs
   for (const t of turns) contents.push({ role: t.role, parts: [{ text: t.text }] });
   contents.push({ role: 'user', parts: [{ text: userMessage }] });
 
-  const raw = await callGeminiContents(buildChatSystemPrompt(snapshot), contents, { timeoutMs, maxOutputTokens: 450 });
+  // G4 unit guard — strip fabricated weight units from the chat prose before
+  // parsing. Safe on the trailing PROPOSE_EDIT/PROPOSE_NOTE directive: its numbers
+  // carry no unit suffix, so the strip is a no-op on the structured last line.
+  const raw = stripFabricatedUnits(await callGeminiContents(buildChatSystemPrompt(snapshot), contents, { timeoutMs, maxOutputTokens: 450 }));
   return parseReplyWithProposals(raw);
 }
 
