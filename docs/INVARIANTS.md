@@ -60,9 +60,9 @@ Violating any of them requires explicit owner approval before merging.
 
 ## 5. PR Scope Invariants
 
-**PR1. Tiny PRs only.** Each PR changes one thing. A backend endpoint, a UI component, a test suite, or a doc file — not all of them together.
+**PR1. Tiny PRs only.** Each PR changes one thing — a backend endpoint, a UI component, a test suite, a doc file, or an infrastructure change (CI/workflows, templates, labels, scripts, repo config) — not all of them together.
 
-**PR2. Docs PRs touch only `docs/` and root markdown files.** No production code, no tests, no config changes in a documentation PR.
+**PR2. Docs PRs touch only `docs/` and root markdown files.** No production code, no tests, no config changes in a *documentation* PR. This defines what a docs PR is; it is not a blanket ban on config changes. An **infrastructure** PR (CI/workflows, templates, labels, scripts, automation, repo config — no production application behavior change, per [`docs/RISK_LABELS.md`](./RISK_LABELS.md)) is a distinct category from both docs PRs and app-code PRs: it may change those config surfaces and carries no `docs/`-only restriction, while still obeying PR1 (one concern per PR).
 
 **PR3. Route additions require `config/routes.js` update.** Any new Express route must also appear in the route manifest so `/routes` stays accurate.
 
