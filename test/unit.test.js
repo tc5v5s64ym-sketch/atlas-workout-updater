@@ -4901,8 +4901,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v40/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v39\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v41/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v40\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4918,12 +4918,29 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(appSrc, /load-session-state-btn'\)\?\.addEventListener/, 'the session-state debug handler must be wired');
   assert.match(appSrc, /remainingPlannedExercises\(\),/, 'the dump must include remainingPlannedExercises');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
-    '/app/sessionQuestion.js',
+    '/app/sessionQuestion.js', '/app/activeSession.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
   // The API must still never be intercepted
   assert.match(sw, /startsWith\('\/api'\)/, 'API traffic must stay uncached');
+});
+
+// P0 wiring Sub-PR 1: the canonical ActiveSession is loaded into the browser shell
+// and exposed as the single derived session view (readers switch to it in Sub-PR 2).
+test('P0 wiring: public/activeSession.js is loaded in index.html and app.js exposes getCanonicalSession', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /<script src="activeSession\.js"><\/script>/, 'index.html must load activeSession.js');
+
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSrc.slice(appSrc.indexOf('function getCanonicalSession('), appSrc.indexOf('function getCanonicalSession(') + 1100);
+  assert.ok(fn.length > 50, 'getCanonicalSession must exist');
+  // Built from the authoritative store through the shared model — never a second copy.
+  assert.match(fn, /window\.activeSession/, 'derives from the shared activeSession model');
+  assert.match(fn, /createActiveSession\(/, 'builds the canonical session from the planned order');
+  assert.match(fn, /plannedExerciseEntries\(\)/, 'uses the planned order as the source');
+  assert.match(fn, /markCompleted\(/, 'replays logged completions onto the canonical session');
+  assert.match(fn, /insertExercise\(/, 'an off-plan logged lift is represented, not dropped');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────

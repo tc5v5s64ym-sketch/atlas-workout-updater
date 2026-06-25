@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v40';
+const ATLAS_SHELL_BUILD = 'v41';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1230,6 +1230,32 @@ let pendingSubstitution = null;
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
 function getActivePlannedSession() { return activePlannedSession; }
+
+// P0 Active Workout State Unification — the ONE canonical view of the in-progress
+// workout, derived from the authoritative store (the planned order from
+// plannedExerciseEntries() + the logged set sessionCompleted[]) through the shared
+// public/activeSession.js model. Every consumer (composer prefill, next-up router,
+// recap, preview/save) derives from THIS in the read-consolidation slice, so they
+// can never disagree about identity / completion / order again. Built fresh on each
+// call from the store, so there is no second copy to keep in sync. Returns null
+// when no plan is active. (Sub-PR 1 establishes it; Sub-PR 2 wires the readers.)
+function getCanonicalSession() {
+  const AS = (typeof window !== 'undefined' && window.activeSession) || (typeof activeSession !== 'undefined' ? activeSession : null);
+  if (!AS) return null;
+  const entries = plannedExerciseEntries();
+  if (!entries.length && !(Array.isArray(sessionCompleted) && sessionCompleted.length)) return null;
+  let s = AS.createActiveSession({
+    exercises: entries.map(e => ({ name: e.canonical || e.name, liftCode: e.liftCode || '' }))
+  });
+  // Replay logged completions onto the canonical session. A logged name that
+  // matches a planned slot marks it done; one that doesn't is an off-plan insert
+  // (Hammer Curls / Knee Raises) so it is represented, not dropped.
+  for (const name of (Array.isArray(sessionCompleted) ? sessionCompleted : [])) {
+    const after = AS.markCompleted(s, name);
+    s = after !== s ? after : AS.markCompleted(AS.insertExercise(s, { name }), name);
+  }
+  return s;
+}
 
 // Coach-suggestion engagement flag accessors for the coach layer (coach-conversation.js).
 // markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.

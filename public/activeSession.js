@@ -119,14 +119,16 @@
   /**
    * replaceExercise(session, targetName, substitute) → session
    * Swap the target's slot IN PLACE (order preserved) for the substitute, marked
-   * pending + source 'substituted'. No-op when the target is not found or the
-   * substitute is blank / resolves to the same name. (AC 2.)
+   * pending + source 'substituted'. Only a PENDING slot can be replaced — replacing
+   * an already completed/skipped slot would silently re-open finished work, so that
+   * is a no-op (guard, PR-565 review). Also no-op when the target is not found or
+   * the substitute is blank / resolves to the same name. (AC 2.)
    */
   function replaceExercise(session, targetName, substitute) {
     const sub = toEntry(substitute);
     if (!sub) return session;
     const exercises = cloneExercises(session.exercises);
-    const idx = findMatchIndex(exercises, targetName, false);
+    const idx = findMatchIndex(exercises, targetName, true); // pending-only: never re-open a finished slot
     if (idx === -1) return session;
     if (lc(exercises[idx].name) === lc(sub.name)) return session;
     exercises[idx] = { name: sub.name, liftCode: sub.liftCode, status: STATUS.PENDING, source: 'substituted' };
@@ -168,9 +170,11 @@
    * `from` and gives it the `to` identity, preserving its status (a logged set
    * stays logged). Two cases:
    *   - `to` matches a DIFFERENT existing entry (the real exercise was already in
-   *     the plan): the mislabeled set actually fulfilled that planned entry, so
-   *     transfer the logged status onto it and DROP the mislabel — no duplicate,
-   *     and the planned `to` stops showing as remaining.
+   *     the plan): reconcile by STATUS PRECEDENCE — give the `to` entry the
+   *     more-done of the two statuses and drop the mislabel, so the mislabel can
+   *     never DOWNGRADE a finished `to` (PR-565 review). But when BOTH are already
+   *     completed they are two separately-logged sets — collapsing would orphan
+   *     one, so relabel the `from` in place instead (keep both logged entries).
    *   - otherwise: relabel the `from` entry in place.
    * No-op when `from` isn't found, `to` is blank, or it already is `to`. (AC 7.)
    */
@@ -182,20 +186,32 @@
     if (fromIdx === -1) return session;
     if (lc(exercises[fromIdx].name) === lc(target.name)) return session; // already corrected
 
+    const rank = { [STATUS.PENDING]: 0, [STATUS.SKIPPED]: 1, [STATUS.COMPLETED]: 2 };
+    const relabelInPlace = () => {
+      exercises[fromIdx] = {
+        ...exercises[fromIdx],
+        name: target.name,
+        liftCode: target.liftCode || exercises[fromIdx].liftCode,
+      };
+      return { ...session, exercises };
+    };
+
     const existingIdx = exercises.findIndex((e, i) => i !== fromIdx && lc(e.name) === lc(target.name));
     if (existingIdx !== -1) {
-      // The mislabeled set fulfilled an exercise already in the session: move the
-      // logged status onto it and remove the wrong label (no duplicate identity).
-      exercises[existingIdx] = { ...exercises[existingIdx], status: exercises[fromIdx].status };
+      const fromStatus = exercises[fromIdx].status;
+      const toStatus = exercises[existingIdx].status;
+      // Two separately-logged completions → keep both (don't orphan a logged set).
+      if (fromStatus === STATUS.COMPLETED && toStatus === STATUS.COMPLETED) {
+        return relabelInPlace();
+      }
+      // Reconcile onto the planned `to`, but never downgrade it: keep the more-done
+      // status, then drop the mislabel so there's no duplicate identity.
+      const merged = rank[fromStatus] >= rank[toStatus] ? fromStatus : toStatus;
+      exercises[existingIdx] = { ...exercises[existingIdx], status: merged };
       exercises.splice(fromIdx, 1);
       return { ...session, exercises };
     }
-    exercises[fromIdx] = {
-      ...exercises[fromIdx],
-      name: target.name,
-      liftCode: target.liftCode || exercises[fromIdx].liftCode,
-    };
-    return { ...session, exercises };
+    return relabelInPlace();
   }
 
   /**
@@ -256,6 +272,14 @@
     return remaining(session).length === 0;
   }
 
+  // True when at least one exercise was actually logged. Lets the recap/save layer
+  // tell a real completed session from an all-skipped one (isComplete is true for
+  // both — "nothing pending"), so an all-skipped session isn't saved as a workout
+  // (PR-565 review).
+  function hasLoggedWork(session) {
+    return completedExercises(session).length > 0;
+  }
+
   const exported = {
     STATUS,
     createActiveSession,
@@ -269,6 +293,7 @@
     remaining,
     completedExercises,
     isComplete,
+    hasLoggedWork,
     // exposed for the later slices (identity correction PR4 / insert PR5) and tests
     entryMatches,
     findMatchIndex,
