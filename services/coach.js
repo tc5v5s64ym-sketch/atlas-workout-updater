@@ -482,6 +482,33 @@ function buildPlanUserPrompt(facts) {
 // Single Gemini call shared by every voice (set-coaching, plan, chat). Accepts a
 // ready-made `contents` array so the chat voice can pass multi-turn history while
 // the one-shot voices pass a single user turn. Throws when unconfigured, on a
+// Deterministic unit guard on coach LLM output (G4). The coach contract is
+// numbers-only, no units — every weight Atlas stores and shows is lbs. The prompt
+// says so (buildCoachSystemPrompt), but a model can IGNORE the instruction and
+// fabricate a unit it was never given ("70kg", "best of 50kg") — the live 2026-06-25
+// bug. The prompt is not trustworthy on its own, so this strips any weight-unit
+// token the model emits, AFTER generation, BEFORE the text reaches the user.
+//
+// Surgical: removes a unit ONLY when it immediately follows a number (a weight
+// value), keeping the number and the rest of the sentence intact — "best of 50kg"
+// → "best of 50", "225 lbs" → "225", "100 pounds" → "100". The `\b` boundary means
+// only a standalone unit token is removed, never letters inside another word
+// ("club"), and because it requires a leading number it never touches rep/RIR/set
+// counts, percentages, dates, durations, calories, or HR (none are followed by a
+// weight-unit word). Idempotent; safe on the chat path's trailing `PROPOSE_EDIT:`
+// JSON (its numbers carry no unit suffix). Pure.
+// Leading number is REQUIRED (so it only fires on a weight value and never on a
+// word that merely contains the letters). The optional space is INSIDE the match
+// (consumed), so "50 kg" → "50" with no leftover double space. The trailing \b
+// keeps it to a standalone unit token — "lbs" not "lbsomething", "kilo" not
+// "kilojoule". A trailing period/comma is left intact so the sentence survives
+// ("best of 50kg." → "best of 50.").
+const WEIGHT_UNIT_AFTER_NUMBER_RE = /(\d)\s*(?:kgs?|kilograms?|kilos?|lbs?|pounds?)\b/gi;
+function stripFabricatedUnits(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text.replace(WEIGHT_UNIT_AFTER_NUMBER_RE, '$1');
+}
+
 // non-OK response, on timeout, or on empty output — the route turns any throw
 // into a graceful "fall back to templated" response so the UI is never blocked.
 async function callGeminiContents(systemText, contents, { timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputTokens = 320 } = {}) {
@@ -517,7 +544,10 @@ async function callGeminiContents(systemText, contents, { timeoutMs = DEFAULT_TI
   const data = await response.json();
   const text = extractText(data);
   if (!text) throw new Error('Gemini returned no text output.');
-  return text;
+  // G4 — deterministic unit guard at the single chokepoint every coach voice
+  // (set-reaction, plan, chat) and the health probe pass through: strip any
+  // fabricated weight-unit token before the prose ever leaves the server.
+  return stripFabricatedUnits(text);
 }
 
 // Single-turn convenience wrapper — preserves the original set/plan call shape.
@@ -1177,6 +1207,7 @@ module.exports = {
   coachModel,
   pingGemini,
   callGemini,
+  stripFabricatedUnits,
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
   sanitizeFacts,
