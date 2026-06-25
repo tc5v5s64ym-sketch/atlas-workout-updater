@@ -1450,10 +1450,17 @@ function tryApplyPlanMutation(text) {
   // Only announce a change that actually happened — a no-op swap (the resolved
   // substitute collapsed to the target, applySessionSubstitution early-returned)
   // with no extra slots skipped must not narrate a phantom "Swapped X → Y"
-  // (PR-570 cosmetic note). Re-point to the ACTUAL current lift (the cursor) —
-  // swapping a LATER slot must not yank the composer off the lift in progress.
+  // (PR-570 cosmetic note).
   if (!swapped && !extraSkipped.length) return false;  // nothing changed → fall through
-  announcePlanMutation(`Swapped ${targetNames[0]} → ${resolved.name}.`, curName() || resolved.name);
+  // Narrate what ACTUALLY happened: a real swap (optionally noting extra compound
+  // slots skipped), or — when the first slot no-op'd but later compound slots were
+  // skipped — a skip-only outcome. Never announce a swap that didn't occur (PR-571
+  // review). Re-point to the ACTUAL current lift (the cursor) — swapping a LATER
+  // slot must not yank the composer off the lift in progress.
+  const summary = swapped
+    ? `Swapped ${targetNames[0]} → ${resolved.name}.${extraSkipped.length ? ` Skipped ${extraSkipped.join(', ')}.` : ''}`
+    : `Skipped ${extraSkipped.join(', ')}.`;
+  announcePlanMutation(summary, curName() || (swapped ? resolved.name : null));
   return true;
 }
 

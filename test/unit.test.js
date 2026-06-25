@@ -5031,6 +5031,11 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 3400);
   assert.match(fn, /const swapped = applySessionSubstitution\(/, 'captures whether the swap changed the plan');
   assert.match(fn, /if \(!swapped && !extraSkipped\.length\) return false/, 'a no-op swap with no skips falls through (no phantom announce)');
+  // The announce text reflects what ACTUALLY happened: a real swap, or a skip-only
+  // outcome when the first slot no-op'd but later compound slots were skipped — it
+  // never says "Swapped" when no swap occurred (PR-571 review).
+  assert.match(fn, /const summary = swapped\s*\n?\s*\?\s*`Swapped /, 'announces a swap only when one occurred');
+  assert.match(fn, /:\s*`Skipped \$\{extraSkipped\.join/, 'a skip-only outcome is narrated as a skip, not a swap');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
