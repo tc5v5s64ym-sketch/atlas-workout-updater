@@ -1409,7 +1409,11 @@ function tryApplyPlanMutation(text) {
   }
   const resolved = resolveCatalogExercise(intent.substitute);
   applySessionSubstitution(targetName, resolved.name, resolved.liftCode);
-  announcePlanMutation(`Swapped ${targetName} → ${resolved.name}.`, resolved.name);
+  // Re-point to the ACTUAL current lift (the cursor) — swapping a LATER slot must
+  // not yank the composer off the lift in progress. When the swapped slot is the
+  // current one, cur already equals the substitute (repro phrasing unchanged).
+  const cur = activePlannedSession.exercises[activePlannedSession.index];
+  announcePlanMutation(`Swapped ${targetName} → ${resolved.name}.`, cur ? (cur.canonicalName || cur.name) : resolved.name);
   return true;
 }
 

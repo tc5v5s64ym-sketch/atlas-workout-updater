@@ -4962,6 +4962,10 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(fn, /findMatchIndex\(/, 'resolves the target against the plan via the canonical matcher');
   assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
   assert.match(fn, /skipPlannedExercise\(/, 'a skip mutates the live session');
+  // The announced "current" is derived from the cursor, not hardcoded to the
+  // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
+  assert.match(fn, /activePlannedSession\.exercises\[activePlannedSession\.index\]/,
+    'current lift is read from the cursor after a mutation');
 
   // resolveCatalogExercise must use the conservative singularization (drop a plural
   // "s" only after a non-"s"), never the loose every-word strip that mangled "press".
