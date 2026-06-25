@@ -4901,8 +4901,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v43/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v42\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v44/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v43\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5036,6 +5036,20 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   // never says "Swapped" when no swap occurred (PR-571 review).
   assert.match(fn, /const summary = swapped\s*\n?\s*\?\s*`Swapped /, 'announces a swap only when one occurred');
   assert.match(fn, /:\s*`Skipped \$\{extraSkipped\.join/, 'a skip-only outcome is narrated as a skip, not a swap');
+});
+
+// P0 wiring Sub-PR 2c: barbell loadability rounding is surfaced on the
+// recommendation targets (server snap) and the drawer shows the note.
+test('P0 wiring 2c: barbell loadability snap is applied on the intent-recommendation surface', () => {
+  const idx = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  assert.match(idx, /require\('\.\/services\/barbellLoadabilitySurface'\)/, 'the surfacing helper is imported');
+  // The snap runs on the intent-recommendation result (the composer/plan source).
+  const handler = idx.slice(idx.indexOf("app.get('/api/plan/intent-recommendation'"), idx.indexOf("app.get('/api/plan/intent-recommendation'") + 900);
+  assert.match(handler, /applyBarbellLoadabilityToExercises\(intent\.exercises\)/, 'each intent\'s exercises are snapped');
+
+  // The drawer surfaces the per-exercise loadability note.
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSrc, /raw\.loadability_note\) exList\.appendChild/, 'the drawer renders the loadability note when present');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
