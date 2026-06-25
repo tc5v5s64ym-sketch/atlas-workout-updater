@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v41';
+const ATLAS_SHELL_BUILD = 'v42';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1335,7 +1335,80 @@ function startPlannedSession(intent) {
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
 }
 
-function renderActiveSessionBanner() {
+// ── P0 Sub-PR 2a: deterministic plan mutation from explicit user intent ────────
+// A swap/skip the lifter STATES ("skip deadlifts and do squats") mutates the
+// canonical session IMMEDIATELY — the app state owns the change, not LLM prose.
+
+// Resolve a free-text exercise phrase to a catalog canonical name + lift code, so
+// a swapped-in slot carries the canonical identity a later log will match. Crude
+// singularization handles "squats" → "Squat". Falls back to the raw phrase.
+function resolveCatalogExercise(phrase) {
+  const raw = String(phrase == null ? '' : phrase).trim();
+  if (!raw || typeof document === 'undefined') return { name: raw, liftCode: '' };
+  const dl = document.getElementById('exercise-catalog');
+  const opts = dl ? Array.from(dl.options || []) : [];
+  const norm = s => String(s || '').toLowerCase().replace(/s\b/g, '').trim();
+  const key = raw.toLowerCase();
+  const nkey = norm(raw);
+  let opt = opts.find(o => (o.value || '').toLowerCase() === key);
+  if (!opt) opt = opts.find(o => { const v = norm(o.value); return v && (v === nkey || v.includes(nkey) || nkey.includes(v)); });
+  return opt ? { name: opt.value, liftCode: opt.label || '' } : { name: raw, liftCode: '' };
+}
+
+// Mark a planned exercise skipped: drop it from the live queue (it stops showing as
+// current/remaining) and clamp the cursor. Mirrors skipExercise in the canonical
+// model for the activePlannedSession store.
+function skipPlannedExercise(name) {
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+  const key = String(name || '').toLowerCase();
+  const idx = activePlannedSession.exercises.findIndex(e =>
+    (e.canonicalName || e.name || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
+  if (idx === -1) return false;
+  activePlannedSession.exercises.splice(idx, 1);
+  let next = activePlannedSession.index;
+  if (next > idx) next -= 1;
+  if (next >= activePlannedSession.exercises.length) next = Math.max(0, activePlannedSession.exercises.length - 1);
+  activePlannedSession.index = Math.max(0, next);
+  renderActiveSessionBanner();
+  return true;
+}
+
+// Tell the coach layer a mutation happened so it can confirm it + re-point the
+// composer to the new current exercise (composer ownership stays in coach-conversation).
+function announcePlanMutation(summary, currentName) {
+  renderActiveSessionBanner();
+  document.dispatchEvent(new CustomEvent('atlas:plan-mutated', {
+    detail: { summary: summary || '', current: currentName || null }
+  }));
+}
+
+// Classify an explicit swap/skip and apply it to the canonical session. Returns
+// true when handled (caller then skips the substitute/coach routing). No active
+// plan, or a target not in the plan, or a non-mutation message → false (fall
+// through). Freestyle/no-plan logging is untouched (guarded on activePlannedSession).
+function tryApplyPlanMutation(text) {
+  const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
+  const AS = (typeof window !== 'undefined' && window.activeSession) || null;
+  if (!PM || !activePlannedSession || !Array.isArray(activePlannedSession.exercises) || !activePlannedSession.exercises.length) return false;
+  const intent = PM.classifyMutationIntent(text);
+  if (!intent) return false;
+  // Resolve the target to an actual planned slot via the canonical matcher.
+  const entries = activePlannedSession.exercises.map(e => ({ name: e.canonicalName || e.name, liftCode: e.liftCode || '' }));
+  const targetIdx = AS ? AS.findMatchIndex(entries, intent.target, false) : -1;
+  if (targetIdx === -1) return false; // not a planned lift → let the coach handle it
+  const targetName = entries[targetIdx].name;
+
+  if (intent.action === 'skip') {
+    skipPlannedExercise(targetName);
+    const cur = activePlannedSession.exercises[activePlannedSession.index];
+    announcePlanMutation(`Skipped ${targetName}.`, cur ? (cur.canonicalName || cur.name) : null);
+    return true;
+  }
+  const resolved = resolveCatalogExercise(intent.substitute);
+  applySessionSubstitution(targetName, resolved.name, resolved.liftCode);
+  announcePlanMutation(`Swapped ${targetName} → ${resolved.name}.`, resolved.name);
+  return true;
+}
   const banner = document.getElementById('active-session-banner');
   if (!banner) return;
   banner.innerHTML = '';
@@ -3864,9 +3937,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      // P0 Sub-PR 2a: an EXPLICIT swap/skip ("skip deadlift, do squats") mutates
+      // the canonical session deterministically — before the suggest/coach routes,
+      // so the change lands in app state, not just chat prose.
+      if (tryApplyPlanMutation(pendingChatText)) {
+        activeExercise = null;
+        return;
+      }
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
-      if (!suggested) routeMessageToCoach(pendingChatText);
-      // Clear the stale active-exercise context so the next bare shorthand input
+      if (!suggested) routeMessageToCoach(pendingChatText);      // Clear the stale active-exercise context so the next bare shorthand input
       // (e.g. "15 12/2 x3" after "leg extension is taken, doing laterals first")
       // cannot silently attach to the wrong exercise. The parser will ask
       // "Which exercise is this for?" instead of inheriting the prior lift.
