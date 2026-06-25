@@ -101,11 +101,16 @@
       sets,
       warmupCount: sets.length - working.length,
       workingSetCount: working.length,
-      // Faithful: every pasted set, warm-ups included.
+      // `canonicalText` is the FAITHFUL line — every pasted set, warm-ups included.
+      // Owner decision (2026-06-25): warm-ups are real training history and MUST be
+      // logged as rows; they are only excluded from working-set volume/progression
+      // (via each set's `warmup` flag), never dropped from the saved log. So the
+      // wiring slice logs from `canonicalText` (or the full `sets[]`) and uses the
+      // flag to keep warm-ups out of volume — it must NOT log from the field below.
       canonicalText: `${name} ${setTokens(sets)}`.trim(),
-      // Working sets only — warm-ups dropped (volume model is working-set based).
-      // Falls back to the faithful line if every set was a warm-up, so nothing is
-      // ever reduced to a bare name with no sets.
+      // `canonicalTextWorkingOnly` is the working-set SUBSET — for volume/progression
+      // analysis only, NOT a log filter. Falls back to the faithful line if every
+      // set was a warm-up, so it is never reduced to a bare name with no sets.
       canonicalTextWorkingOnly: working.length
         ? `${name} ${setTokens(working)}`.trim()
         : `${name} ${setTokens(sets)}`.trim()
