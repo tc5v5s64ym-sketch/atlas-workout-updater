@@ -100,6 +100,27 @@ The existing `services/sessionPlanExecutor.js` (`applySubstitution`, `computePla
 6. Barbell loadability guard against the owner's plate inventory (AC 12) — pure `services/barbellLoadability.js` (`roundToLoadableBarbell`/`isLoadableBarbell`); **surfacing** the rounded value + note into the recommendation/coach (gated on barbell equipment classification) happens in the wiring slice.
 7. End-to-end regression: Coach's Pick → replace DL→Squat → log Squat → OHP → corrected Lat Pulldown → insert Hammer Curl → insert Knee Raises → preview/save succeeds (AC 10).
 
+## P0 — Final closeout/save trust failure (live test, 2026-06-25)
+
+The closeout/save path (`done` / `log it`) failed on a heavily-modified session, in two ways:
+
+**(1) `log it` swallowed silently** — after uploading an Apple Watch screenshot, `log it` cleared from the composer with NO user bubble, NO preview, NO save, NO error. Worse than a preview failure: the command vanished.
+**(2) `done` falsely claimed "no sets"** — `done` showed *"Couldn't find any sets in the conversation — did you log any exercises?"* while the UI visibly contained logged exercise cards + a typed workout block.
+
+### Root causes (verified by code reading)
+
+- **Silent `log it`:** `public/coach-conversation.js` registered the preview listener as `handlePreviewReady(e.detail).catch(() => {})` — it **swallows any render error**. The dry-run preview succeeds server-side, then the in-thread review card render throws (heavily-modified session / recap path) and is silently discarded → composer already cleared by the submit handler → no card, no save, no error. The submit handler's own paths all set a visible status or render a preview; the silent hole is this swallowed listener.
+- **False "no sets":** `handleLogIt` (`public/app.js`) builds closeout rows from the `sessionLog` buffer; when that buffer is empty (page reload, or after a prior save reset it) it falls back to the Gemini `/api/session/compile`. With Gemini **down/throttled** (as in this live session) the compile returns null → the false "no sets found", even though the canonical session / visible cards prove work was logged. The closeout's source of truth must be the canonical completed state, never a fragile LLM transcript parse.
+- **Screenshot vs text command:** a screenshot attached (effort mode) must not block a text closeout command; if screenshot effort parsing fails, save must still proceed without effort data, with a clear message.
+
+### Acceptance criteria (owner)
+
+- `log it` / `done` must ALWAYS either (a) show a user message + trigger preview/save, or (b) stay in the composer with a visible error — **never disappear silently**.
+- Closeout reads the **canonical completed workout state**, not transcript parsing; if visible logged cards exist, closeout must find them; never say "no sets" when cards are visible.
+- Uploading an Apple Watch screenshot must not block text command submission; screenshot parse failure → *"I couldn't read effort from the screenshot. I can still save the workout without effort data."*
+- Works for planned + swapped + inserted + skipped + corrected + multi-exercise typed + bodyweight/core entries, with/without effort data.
+- No blind writes; approve-before-write preserved. If save can't proceed, preserve the command or show a visible actionable error; if canonical rows miss a required field, name the exercise/set/field.
+
 ## Deferred notes (from PR-565 review — address in the slices below)
 
 - **`replaceExercise` can re-open a completed/skipped slot.** It matches by `findMatchIndex(..., pendingOnly=false)`, so replacing an already-`completed`/`skipped` exercise flips it back to `pending`. Harmless pre-wiring, but the **frontend wiring PR** (which lets live coach/user text drive replacement) must add a guard/test so a swap can't silently re-open finished work.
