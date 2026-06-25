@@ -308,3 +308,24 @@ test('activeSession: isComplete flips only when the plan exists and nothing pend
   s = skipExercise(s, 'Overhead Press');
   assert.equal(isComplete(s), true, 'completed + skipped leaves nothing pending');
 });
+
+// ── Sub-PR 2b CARRY-OVER GUARD: a swap/skip can't re-open already-logged work ──
+// The live path (tryApplyPlanMutation) resolves targets via resolvePlanTargets
+// against getCanonicalSession(), which marks logged lifts completed. This pins the
+// model+resolver seam: once a lift is logged (completed), it is invisible to a
+// later swap/skip target — so an accepted mutation can never re-open finished work.
+test('guard 2b: a logged (completed) lift is never a swap/skip target (no re-opening)', () => {
+  const { createActiveSession, markCompleted } = require('../public/activeSession');
+  const { resolvePlanTargets } = require('../public/planMutationIntent');
+
+  // Build the canonical session the way getCanonicalSession() does, then log one lift.
+  let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press', 'Seated Row'] });
+  s = markCompleted(s, 'Deadlift');                       // Deadlift is now logged work
+
+  // resolvePlanTargets is fed the model's own entries (status carried through).
+  const entries = s.exercises.map(e => ({ name: e.name, status: e.status }));
+  assert.deepEqual(resolvePlanTargets('deadlift', entries), [], 'a completed lift cannot be re-targeted (skip/swap)');
+  assert.deepEqual(resolvePlanTargets('overhead press', entries), ['Overhead Press'], 'a still-pending lift resolves normally');
+  // A compound target spanning a completed + pending lift only resolves the pending one.
+  assert.deepEqual(resolvePlanTargets('deadlift/overhead press', entries), ['Overhead Press'], 'the finished half of a compound target is dropped');
+});

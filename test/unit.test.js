@@ -4901,8 +4901,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v42/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v41\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v43/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v42\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4967,7 +4967,7 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   // ("deadlifts/rdls"). A single token that fuzzily over-matches several slots
   // ("curls" → Bicep Curl + Leg Curl) must replace only the first and never
   // silently drop the un-named planned work (PR-570 review).
-  assert.match(fn, /splitTargets\(intent\.target\)\.length\s*>\s*1\s*\)\s*targetNames\.slice\(1\)\.forEach\(skipPlannedExercise\)/,
+  assert.match(fn, /splitTargets\(intent\.target\)\.length\s*>\s*1\s*\n?\s*\?\s*targetNames\.slice\(1\)\.filter\(skipPlannedExercise\)/,
     'extra-slot skip on a replace is gated on a genuinely compound target');
   // The skip branch mirrors the replace guard: a single token that over-matches
   // several slots skips only the first; only a compound target skips them all
@@ -4991,6 +4991,51 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(cc, /addEventListener\('atlas:plan-mutated'/, 'coach layer listens for the mutation');
   const lis = cc.slice(cc.indexOf("addEventListener('atlas:plan-mutated'"), cc.indexOf("addEventListener('atlas:plan-mutated'") + 400);
   assert.match(lis, /setWorkoutPlaceholder\(/, 'composer re-points to the new current exercise');
+});
+
+// P0 wiring Sub-PR 2b: the end-of-session recap derives from the ONE canonical
+// session (completed/remaining reconciled), gated on hasLoggedWork; and a no-op
+// swap no longer narrates a phantom mutation.
+test('P0 wiring 2b: the recap derives from the canonical session and is gated on logged work', () => {
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // emitCoachPreview threads the canonical recap into the preview event.
+  const emit = appSrc.slice(appSrc.indexOf('function emitCoachPreview('), appSrc.indexOf('function emitCoachPreview(') + 900);
+  assert.match(emit, /recap:\s*canonicalSessionRecap\(\)/, 'preview event carries the canonical recap');
+
+  // canonicalSessionRecap builds from getCanonicalSession + the model selectors,
+  // and returns null unless work was actually logged (hasLoggedWork).
+  const recap = appSrc.slice(appSrc.indexOf('function canonicalSessionRecap('), appSrc.indexOf('function canonicalSessionRecap(') + 800);
+  assert.match(recap, /getCanonicalSession\(\)/, 'recap derives from the canonical session');
+  assert.match(recap, /hasLoggedWork\(s\)/, 'an all-skipped/empty session returns null (not narrated as a workout)');
+  assert.match(recap, /completedExercises\(s\)/, 'recap reads completed from the model');
+  assert.match(recap, /remaining\(s\)/, 'recap reads remaining from the model');
+  assert.match(recap, /return null/, 'returns null when there is no session or no logged work');
+
+  // The coach layer renders the canonical remaining lifts in the review bubble.
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 1700);
+  assert.match(handler, /recap\s*=\s*null/, 'handlePreviewReady destructures the recap (default null)');
+  assert.match(handler, /Still on your plan:/, 'still-pending plan lifts are surfaced in the recap');
+});
+
+test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 cosmetic)', () => {
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // applySessionSubstitution reports whether it actually changed the plan.
+  const sub = appSrc.slice(appSrc.indexOf('function applySessionSubstitution('), appSrc.indexOf('function applySessionSubstitution(') + 1800);
+  assert.match(sub, /return false; \/\/ nothing to swap/, 'a same-name swap returns false (no-op)');
+  assert.match(sub, /return true;/, 'a real swap/dedupe returns true');
+
+  // tryApplyPlanMutation only announces when something changed.
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 3400);
+  assert.match(fn, /const swapped = applySessionSubstitution\(/, 'captures whether the swap changed the plan');
+  assert.match(fn, /if \(!swapped && !extraSkipped\.length\) return false/, 'a no-op swap with no skips falls through (no phantom announce)');
+  // The announce text reflects what ACTUALLY happened: a real swap, or a skip-only
+  // outcome when the first slot no-op'd but later compound slots were skipped — it
+  // never says "Swapped" when no swap occurred (PR-571 review).
+  assert.match(fn, /const summary = swapped\s*\n?\s*\?\s*`Swapped /, 'announces a swap only when one occurred');
+  assert.match(fn, /:\s*`Skipped \$\{extraSkipped\.join/, 'a skip-only outcome is narrated as a skip, not a swap');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
