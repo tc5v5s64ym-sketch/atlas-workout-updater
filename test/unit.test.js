@@ -966,12 +966,26 @@ test('Step 379: a declared swap advances the session cursor so subsequent checks
 test('two-way chat: coach-conversation handles the chat event read-only via /api/coach/chat', () => {
   const convSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
 
+  // The coach-chat route gives Gemini more than the 8s default before aborting, so a
+  // slow-but-successful reply lands within the client's 15s budget instead of
+  // dead-ending early. (Resilience PR — reduces spurious "Coach is unavailable".)
+  const idxSrc = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const chatTimeout = Number((idxSrc.match(/const COACH_CHAT_TIMEOUT_MS = (\d+)/) || [])[1]);
+  assert.ok(chatTimeout > 8000 && chatTimeout <= 15000, `chat timeout must be >8s default and <=15s client budget, got ${chatTimeout}`);
+  assert.match(idxSrc, /generateChatReply\(\{ message, context, history \}, \{ timeoutMs: COACH_CHAT_TIMEOUT_MS \}\)/,
+    'the chat route must pass the longer chat timeout to generateChatReply');
+
   assert.match(convSource, /addEventListener\('atlas:chat-message'/);
   assert.match(convSource, /'\/api\/coach\/chat'/);
   assert.match(convSource, /method: 'POST'/);
   // In-session history, bounded; falls back when the voice is unavailable.
   assert.match(convSource, /chatTurns/);
   assert.match(convSource, /function chatFallback/);
+  // The free-form fallback (Gemini down) is never a bare dead-end during a session —
+  // it keeps the lifter logging and invites a retry (no "Coach is unavailable").
+  const fbBlock = convSource.slice(convSource.indexOf('function chatFallback'), convSource.indexOf('function chatFallback') + 1400);
+  assert.match(fbBlock, /keep logging and say .* or ask again in a moment/, 'fallback nudges to logging + retry, not a dead-end');
+  assert.doesNotMatch(fbBlock, /Coach is unavailable right now/, 'no bare dead-end line');
   // History sent must be PRIOR turns only (no double-send), but the current user
   // turn is recorded immediately after capture so an in-flight second message
   // still sees it. Atlas's reply is appended after it arrives.
@@ -4901,8 +4915,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v46/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v45\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v47/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v46\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

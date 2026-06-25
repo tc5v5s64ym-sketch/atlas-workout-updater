@@ -1572,7 +1572,11 @@
     if (/\d/.test(t)) {
       return "Noted — keep logging and say \"log it\" when you're done; I'll compile everything then.";
     }
-    return "Coach is unavailable right now — try again in a moment.";
+    // Genuine free-form chat with the coach voice down: never a bare dead-end during
+    // a session — keep the lifter productive (logging works without the LLM) and
+    // invite a retry. The deterministic engine already owns session questions; this
+    // is only reached for conversational prose the LLM would have voiced.
+    return "I couldn't reach the coach just now — keep logging and say \"log it\" when you're done, or ask again in a moment.";
   }
 
   async function handleChatMessage(detail) {
