@@ -1507,6 +1507,25 @@ function recommendTargetForLift(liftName, logRows) {
 // reply should land rather than be aborted early and dead-end on "Coach unavailable".
 const COACH_CHAT_TIMEOUT_MS = 12000;
 
+// GET /api/coach/health — READ-ONLY coach LLM connectivity probe. No Sheets, no
+// writes. Surfaces WHY coaching degrades to deterministic templates: returns
+// { configured, model, ok, reason } so the owner can distinguish a missing key,
+// bad model id (404), bad key (401/403), quota (429), or timeout — instead of the
+// silent "Coach is unavailable" fallback.
+app.get('/api/coach/health', async (req, res) => {
+  const configured = coach.isConfigured();
+  const model = coach.coachModel();
+  if (!configured) {
+    return standardSuccess(req, res, 'coach health', { configured: false, model, ok: false, reason: 'GEMINI_API_KEY not set' });
+  }
+  try {
+    await coach.pingGemini();
+    return standardSuccess(req, res, 'coach health', { configured: true, model, ok: true, reason: null });
+  } catch (error) {
+    return standardSuccess(req, res, 'coach health', { configured: true, model, ok: false, reason: error.message });
+  }
+});
+
 app.post('/api/coach/chat', async (req, res) => {
   const message = req.body && typeof req.body.message === 'string' ? req.body.message.trim() : '';
   if (!message) {

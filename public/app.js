@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v50';
+const ATLAS_SHELL_BUILD = 'v51';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -559,6 +559,29 @@ document.getElementById('load-version-btn')?.addEventListener('click', async () 
     box.replaceChildren(pre);
   } catch (err) {
     setBoxSpan(box, 'muted', `Could not load: ${err.message}`);
+  }
+});
+
+// Diagnostic: probe the coach LLM (Gemini) so a "Coach is unavailable" / robotic
+// templated reply can be explained — shows configured/model/ok and the exact reason
+// (missing key, 401/403 bad key, 404 bad model, 429 quota, timeout). Read-only.
+document.getElementById('test-coach-btn')?.addEventListener('click', async () => {
+  const box = document.getElementById('debug-result');
+  setBoxSpan(box, 'muted', 'Testing coach connection…');
+  try {
+    const res = await api('/api/coach/health');
+    const d = (res && res.data) || {};
+    const pre = document.createElement('pre');
+    pre.className = 'debug-pre';
+    pre.textContent = [
+      `configured: ${d.configured}`,
+      `model:      ${d.model}`,
+      `ok:         ${d.ok}`,
+      d.ok ? 'The coach LLM is reachable — replies should be intelligent, not templated.' : `reason:     ${d.reason || 'unknown'}`,
+    ].join('\n');
+    box.replaceChildren(pre);
+  } catch (err) {
+    setBoxSpan(box, 'muted', `Could not run coach test: ${err.message}`);
   }
 });
 
@@ -4994,7 +5017,11 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     const gateNote = document.getElementById('bw-gate-note');
     if (gateNote) gateNote.textContent = 'Review above, then click to write.';
   } catch (err) {
-    setStatus(bwStatus, `Preview failed: ${err.message}`, 'error');
+    // Surface the server's inner cause when present (parity with the logger preview
+    // catch — PR-581 review note 2), so a bodyweight 500 is diagnosable too.
+    const bd = err && err.body && err.body.details;
+    const bdetail = bd && (typeof bd === 'string' ? bd : (bd.error || null));
+    setStatus(bwStatus, `Preview failed: ${err.message}${bdetail ? ` — ${bdetail}` : ''}`, 'error');
   } finally {
     previewBtn.disabled = false;
     previewBtn.textContent = 'Preview — no data saved';

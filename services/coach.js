@@ -525,6 +525,16 @@ async function callGemini(systemText, userText, timeoutMs) {
   return callGeminiContents(systemText, [{ role: 'user', parts: [{ text: userText }] }], { timeoutMs });
 }
 
+// Minimal connectivity probe for the coach LLM — used by GET /api/coach/health so
+// the owner can see WHY coaching falls back to robotic templates (401 bad key, 404
+// bad model, 429 quota, timeout). Tiny call (≤5 tokens); throws the same
+// "Gemini request failed (status): detail" / "GEMINI_API_KEY is not configured" the
+// real coach paths throw, so the surfaced reason matches production behavior.
+async function pingGemini({ timeoutMs = 8000 } = {}) {
+  return callGeminiContents('You are a connectivity probe. Reply with the word OK.',
+    [{ role: 'user', parts: [{ text: 'ping' }] }], { timeoutMs, maxOutputTokens: 5 });
+}
+
 async function generateCoachMessage(facts, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   return callGemini(buildCoachSystemPrompt(), buildCoachUserPrompt(facts), timeoutMs);
 }
@@ -1162,6 +1172,7 @@ async function generateVerdictReaction(verdict, { ruleDecisions = [], context = 
 module.exports = {
   isConfigured,
   coachModel,
+  pingGemini,
   callGemini,
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
