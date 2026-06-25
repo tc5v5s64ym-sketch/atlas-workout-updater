@@ -1674,8 +1674,21 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
     }
 
     const freshIds = freshPatterns.map(p => p.pattern);
-    const targetPatterns = freshIds.length ? freshIds : ['pull', 'core'];
-    const session = buildIntentSession({ patterns: targetPatterns, allRecs, underCoverageData });
+    // Blind spots are a STIMULUS MODIFIER on a COMPLETE session — not the whole
+    // session. Build a full structured workout across ALL major patterns and
+    // EMPHASIZE the overdue ones (anchor + early fill via priorityPatterns), rather
+    // than filtering the pool down to just the gaps (which produced 2-3 exercise
+    // "blind-spot-only" days). The owner planning hierarchy (2026-06-25) is goal →
+    // readiness → structure → blind spots → selection: overdue patterns INFLUENCE a
+    // complete session, they don't replace it. readiness density caps + the learned
+    // session-volume profile (structureSession) still right-size it afterward.
+    const priorityPatterns = freshIds.length ? freshIds : ['pull', 'core'];
+    const session = buildIntentSession({
+      patterns: ['push', 'pull', 'lower', 'hinge', 'core'],
+      priorityPatterns,
+      allRecs,
+      underCoverageData,
+    });
     // Recovery-aware density (hypertrophy cap): this intent targets fresh/neglected
     // patterns, so a recovering pattern here is rare — but cap it the same way for
     // safety, never stacking volume on a pattern the readiness model marks recovering.

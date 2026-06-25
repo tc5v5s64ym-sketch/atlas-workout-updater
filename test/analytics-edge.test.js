@@ -876,6 +876,42 @@ test('scoreIntents: every pattern named in the fix_blind_spots brief has a match
   }
 });
 
+// ── Blind spots are a STIMULUS MODIFIER on a COMPLETE session, not the whole session ──
+// Owner planning hierarchy (2026-06-25): goal → readiness → structure → blind spots.
+// The "Fix Blind Spots" pick must build a full, structured session that EMPHASIZES
+// the overdue patterns — not a 2-3 exercise blind-spot-only day. Same fixture as the
+// brief↔exercise test: pressing + pulling trained right up to today (staples), lower
+// + hinge neglected (overdue). The session must include the overdue work AND the
+// recently-trained staples, woven into one complete workout.
+test('scoreIntents: fix_blind_spots builds a FULL session emphasizing overdue patterns (not a blind-spot-only day)', () => {
+  const mk = (ex, mg, code, ws, start, step) => ws.map((w, i) => {
+    const d = new Date(start); d.setDate(d.getDate() + i * step);
+    return [d.toISOString().split('T')[0], `${ex}-${i}`, ex, ex, mg, code, '1', String(w), '8', '2', '', ''];
+  });
+  const rows = [
+    ...mk('Bench Press', 'Chest', 'BEN01', [185, 188, 190, 192, 195, 198, 200, 202], '2026-04-20', 2),
+    ...mk('Barbell Row', 'Back', 'BOR01', [155, 158, 160, 162, 165, 168, 170, 172], '2026-04-21', 2),
+    ...mk('Back Squat', 'Quads', 'SQT01', [225, 230, 235], '2026-04-01', 5),
+    ...mk('Romanian Deadlift', 'Hamstrings', 'RDL01', [185, 190, 195], '2026-04-02', 5),
+  ];
+  const result = scoreIntents(rows, [], { today: '2026-05-06' });
+  const fbs = result.intents.find(i => i.id === 'fix_blind_spots');
+  assert.ok(fbs && Array.isArray(fbs.exercises), 'fix_blind_spots intent must exist with exercises');
+
+  const codeToPattern = { SQT01: 'lower', RDL01: 'hinge', BEN01: 'push', BOR01: 'pull' };
+  const present = new Set(fbs.exercises.map(ex => codeToPattern[ex.lift_code]).filter(Boolean));
+
+  // The overdue patterns are emphasized (present), AND at least one recently-trained
+  // staple pattern is woven in — proving the session is COMPLETE, not gap-only.
+  assert.ok(present.has('lower') || present.has('hinge'), 'an overdue pattern is in the session');
+  assert.ok(present.has('push') || present.has('pull'),
+    `a recently-trained staple must be woven into the blind-spot session (got patterns [${[...present].join(', ')}])`);
+  // It is a fuller session than the old gap-only behavior (which produced only the
+  // 2 overdue mains). With staples woven in it spans 3+ exercises across 3+ patterns.
+  assert.ok(fbs.exercises.length >= 3, `expected a full session, got ${fbs.exercises.length} exercises`);
+  assert.ok(present.size >= 3, `expected coverage across 3+ patterns, got [${[...present].join(', ')}]`);
+});
+
 // ── e1RM trend uses each session's BEST set, not its first (warm-up) set ───────
 // For lifters who log warm-ups first, the per-session FIRST set is a priming set;
 // computing the trend from it masks real working-set progression.

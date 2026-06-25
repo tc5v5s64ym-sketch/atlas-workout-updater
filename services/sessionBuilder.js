@@ -105,14 +105,28 @@ function buildIntentSession({
   allRecs = [],
   underCoverageData = [],
   maxExercises = 6,
+  priorityPatterns = [],
 } = {}) {
   const underMuscles = underCoverageData
     .filter(m => m.status === 'under')
     .map(m => m.muscle);
 
-  const candidates = allRecs.filter(
+  let candidates = allRecs.filter(
     r => r.exercise_name && r.next_target && patterns.includes(r.pattern)
   );
+
+  // Stimulus-modifier emphasis: when priorityPatterns is set, stable-sort those
+  // patterns' candidates to the FRONT so they win the anchor + early fill slots.
+  // The session stays FULL (drawn from all `patterns`) but EMPHASIZES the priority
+  // (e.g. overdue / blind-spot) patterns rather than being filtered down to them —
+  // blind spots modify a complete session instead of becoming the whole session.
+  if (priorityPatterns.length) {
+    const pri = new Set(priorityPatterns);
+    candidates = candidates
+      .map((r, i) => ({ r, i }))
+      .sort((a, b) => (Number(pri.has(b.r.pattern)) - Number(pri.has(a.r.pattern))) || (a.i - b.i))
+      .map(x => x.r);
+  }
 
   const seen = new Set();           // lowercase exercise_name → de-dup by name
   const seenCodes = new Set();      // lift_code → de-dup by code
