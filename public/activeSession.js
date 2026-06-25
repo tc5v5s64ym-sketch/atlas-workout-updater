@@ -161,6 +161,43 @@
     return { ...session, exercises };
   }
 
+  /**
+   * correctIdentity(session, { from, to }) → session
+   * Relabel a mis-logged exercise ("sorry, that was lat pulls" — the card said
+   * Deadlift but it was Lat Pulldown). Finds the entry currently identified as
+   * `from` and gives it the `to` identity, preserving its status (a logged set
+   * stays logged). Two cases:
+   *   - `to` matches a DIFFERENT existing entry (the real exercise was already in
+   *     the plan): the mislabeled set actually fulfilled that planned entry, so
+   *     transfer the logged status onto it and DROP the mislabel — no duplicate,
+   *     and the planned `to` stops showing as remaining.
+   *   - otherwise: relabel the `from` entry in place.
+   * No-op when `from` isn't found, `to` is blank, or it already is `to`. (AC 7.)
+   */
+  function correctIdentity(session, { from, to } = {}) {
+    const target = toEntry(to);
+    if (!target) return session;
+    const exercises = cloneExercises(session.exercises);
+    const fromIdx = findMatchIndex(exercises, from, false);
+    if (fromIdx === -1) return session;
+    if (lc(exercises[fromIdx].name) === lc(target.name)) return session; // already corrected
+
+    const existingIdx = exercises.findIndex((e, i) => i !== fromIdx && lc(e.name) === lc(target.name));
+    if (existingIdx !== -1) {
+      // The mislabeled set fulfilled an exercise already in the session: move the
+      // logged status onto it and remove the wrong label (no duplicate identity).
+      exercises[existingIdx] = { ...exercises[existingIdx], status: exercises[fromIdx].status };
+      exercises.splice(fromIdx, 1);
+      return { ...session, exercises };
+    }
+    exercises[fromIdx] = {
+      ...exercises[fromIdx],
+      name: target.name,
+      liftCode: target.liftCode || exercises[fromIdx].liftCode,
+    };
+    return { ...session, exercises };
+  }
+
   // ── Selectors (every consumer derives from these — no parallel state) ───────
 
   // The current exercise = the first PENDING entry, in order. Composer prefill and
@@ -200,6 +237,7 @@
     replaceExercise,
     skipExercise,
     markCompleted,
+    correctIdentity,
     currentExercise,
     nextUp,
     remaining,
