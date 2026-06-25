@@ -843,6 +843,17 @@ test('P0 closeout: a screenshot effort-parse failure uses the owner-specified co
   assert.match(src, /I couldn't read effort from the screenshot\. I can still save the workout without effort data/, 'exact parse-fail copy');
 });
 
+test('P0 closeout: a failed preview surfaces the server INNER cause, not just the generic message', () => {
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // api() carries the response body on err.body; standardError puts the detail at
+  // body.details(.error). The preview catch must append it so "Failed to complete
+  // workout ingestion" reveals WHY (live-gym v49 diagnosability).
+  const catchBlock = src.slice(src.indexOf('Preview failed: ${err.message}') - 400, src.indexOf('Preview failed: ${err.message}') + 80);
+  assert.match(catchBlock, /err\.body\b/, 'reads the response body from the api() error');
+  assert.match(catchBlock, /details/, 'extracts the standardError details');
+  assert.match(catchBlock, /\$\{detail \? ` — \$\{detail\}`/, 'appends the inner cause to the visible message');
+});
+
 // ---------------------------------------------------------------------------
 // Fix A — multi-line, one-exercise-per-line strength logging (PR1)
 // ---------------------------------------------------------------------------
@@ -4956,8 +4967,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v49/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v48\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v50/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v49\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5406,8 +5417,22 @@ test('looksLikeLogIt: recognises end-of-session triggers', () => {
     'end session',
     'end the session',
     'we\'re done logging',
+    // v49: natural COMBINED closeout commands (a closeout-ack prefix + the phrase).
+    'Done, log it.',
+    'done, log it',
+    'done. log it',
+    'Done log it',
+    'ok done log it',
+    'that\'s it, log it',
+    'alright, save it',
   ];
   yes.forEach(p => assert.ok(looksLikeLogIt(p), `should detect log-it in: "${p}"`));
+});
+
+test('looksLikeLogIt: a question is never a closeout (even "should I log it?")', () => {
+  for (const q of ['should I log it?', 'log it?', 'done?', 'are we done?', 'can I log it?']) {
+    assert.ok(!looksLikeLogIt(q), `question must not close out: "${q}"`);
+  }
 });
 
 test('looksLikeLogIt: does not flag workout text or coach questions', () => {

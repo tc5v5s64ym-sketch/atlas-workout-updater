@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v49';
+const ATLAS_SHELL_BUILD = 'v50';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1625,7 +1625,15 @@ function looksLikeCorrection(text) {
 // conversationally and now wants Atlas to compile them into one preview.
 function looksLikeLogIt(text) {
   // Accept straight or curly apostrophes — mobile keyboards autocorrect to curly.
-  return /^\s*(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that['’]?s?\s+all|that['’]?s\s+it(\s+for\s+(today|now))?|we['’]?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(String(text || ''));
+  // An OPTIONAL leading closeout-acknowledgment ("done," / "ok" / "that's it" /
+  // "finished") may precede the core phrase, so natural combined commands like
+  // "Done, log it." / "that's it, log it" / "ok done log it" still close out (live-gym
+  // v49: "Done, log it." was wrongly routed to the coach). The whole string must still
+  // match end-to-end and must not end in "?" — a question ("should I log it?") never
+  // closes out.
+  const t = String(text || '');
+  if (/\?\s*$/.test(t)) return false;
+  return /^\s*(?:(?:ok(?:ay)?|alright|cool|great|sweet|nice|yep|yeah|done|finished|that['’]?s\s+(?:it|all)|we['’]?re?\s+done)[,.\s]+){0,2}(log\s+it|log\s+that|log\s+the\s+session|log\s+this\s+session|log\s+this\s+workout|save\s+the\s+session|save\s+it|ok\s+log\s+it|alright\s+log\s+it|compile\s+(the\s+)?session|that['’]?s?\s+all|that['’]?s\s+it(\s+for\s+(today|now))?|we['’]?re?\s+done(\s+logging)?|done(\s+for\s+today)?|finish(\s+session)?|end\s+(the\s+)?session)\s*[.!]?\s*$/i.test(t);
 }
 
 function showCorrectionPrompt(capturedText) {
@@ -4371,7 +4379,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       ? 'Review the dry-run above, then click to write Effort only.'
       : 'Review the dry-run above, then click to write.';
   } catch (err) {
-    setStatus(loggerStatus, `Preview failed: ${err.message}`, 'error');
+    // Surface the server's INNER cause when present (api() carries the response body
+    // on err.body; standardError puts the detail at body.details.error). The generic
+    // "Failed to complete workout ingestion" hid WHY the screenshot/effort preview
+    // 500'd — show the cause so it's diagnosable from the gym (live-gym v49).
+    const d = err && err.body && err.body.details;
+    const detail = d && (typeof d === 'string' ? d : (d.error || null));
+    setStatus(loggerStatus, `Preview failed: ${err.message}${detail ? ` — ${detail}` : ''}`, 'error');
   } finally {
     previewBtn.disabled = false;
     previewBtn.textContent = 'Preview — no data saved';
