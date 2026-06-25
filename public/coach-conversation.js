@@ -675,6 +675,10 @@
 
   async function typeSuggestedWorkout() {
     hideHomeEmpty();
+    // A fresh session re-announces its first next-up: clear any stale handoff memory
+    // from a prior (possibly abandoned, no-closeout) session so the first handoff is
+    // never wrongly suppressed by a name collision (PR-575 review).
+    lastAnnouncedNextUp = null;
     // The lifter engaged Coach's Pick — only now does today's suggestion count as an
     // active plan (so the post-log handoff / composer / next_move advisory may follow
     // it). A merely-displayed pick must never drive those; see app.js plannedExerciseEntries.
@@ -980,6 +984,24 @@
     return `${name} ${weight} ${Array(sets).fill(`${reps}/${rir}`).join(' ')}`;
   }
 
+  // The next-up lift last announced via a "Moving on — next up: X" handoff. Used to
+  // suppress re-announcing the SAME next-up after every off-plan log (the live-gym
+  // "Moving on — next up: Dumbbell Side Bend" broken-record). Reset at closeout.
+  let lastAnnouncedNextUp = null;
+
+  // Build the composer placeholder for the next planned lift from the ACTIVE PLAN
+  // entry's own prescription (it carries weight/reps/sets) — so a plan lift with no
+  // training history (absent from /api/plan/today) still shows its full prescription
+  // instead of falling back to the bare name. Returns null when not derivable.
+  function nextUpPlaceholderFromPlan(nextEx) {
+    const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
+    if (!session || !Array.isArray(session.exercises)) return null;
+    const key = String(nextEx == null ? '' : nextEx).toLowerCase();
+    const entry = session.exercises.find(e =>
+      (e.canonicalName || e.name || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
+    return entry ? buildWorkoutPlaceholder([entry]) : null;
+  }
+
   // In-workout: a logged set → readback (RIR in ember) + coach note + adjusted-
   // next prescription + next-exercise handoff. NO Save/preview/approve — the only
   // Save is the end-of-session review card below. Rendered purely from the
@@ -1105,26 +1127,39 @@
         : 'Plan complete. Say "done" or take a screenshot to save.';
       bubble.appendChild(closeout);
       setWorkoutPlaceholder('Say "done" to save your session');
+      lastAnnouncedNextUp = null;   // plan done — a fresh session re-announces
     } else {
       if (nextEx) {
-        const handoff = document.createElement('div');
-        handoff.className = 'next-exercise-handoff';
-        // When the engine flags a same-prime-mover conflict, word its reroute
-        // suggestion instead of the plain next-up. Suggestion-only — the plan,
-        // cursor, and composer placeholder below are unchanged.
-        handoff.textContent = (reaction.reroute && reaction.reroute.line)
-          ? reaction.reroute.line
-          : `Moving on — next up: ${nextEx}.`;
-        bubble.appendChild(handoff);
-        // Advance the composer placeholder to the next exercise’s FULL prescription
-        // (each set written out) so the lifter can log it without scrolling back to
-        // the plan. Falls back to the bare name if the plan entry has no numbers.
-        let placeholder = nextEx;
-        try {
-          const map = (typeof getPlanTodayByName === 'function') ? await getPlanTodayByName() : null;
-          const nextRec = map ? map.get(String(nextEx).toLowerCase()) : null;
-          placeholder = formatNextPlaceholder(nextRec) || nextEx;
-        } catch { /* best effort — fall back to the name */ }
+        // Don't re-nag the SAME next-up after an off-plan log: announce a handoff
+        // line only when the next-up actually changed since the last announcement
+        // (a reroute suggestion always speaks — it's context-specific to this set).
+        const isReroute = Boolean(reaction.reroute && reaction.reroute.line);
+        const sameAsLast = lastAnnouncedNextUp
+          && String(nextEx).toLowerCase() === String(lastAnnouncedNextUp).toLowerCase();
+        if (isReroute || !sameAsLast) {
+          const handoff = document.createElement('div');
+          handoff.className = 'next-exercise-handoff';
+          // When the engine flags a same-prime-mover conflict, word its reroute
+          // suggestion instead of the plain next-up. Suggestion-only — the plan,
+          // cursor, and composer placeholder below are unchanged.
+          handoff.textContent = isReroute
+            ? reaction.reroute.line
+            : `Moving on — next up: ${nextEx}.`;
+          bubble.appendChild(handoff);
+          if (!isReroute) lastAnnouncedNextUp = nextEx;
+        }
+        // Keep the composer pointed at the next exercise’s FULL prescription (each
+        // set written out) so the lifter can log it without scrolling back to the
+        // plan. Prefer the active PLAN entry's own numbers (a no-history plan lift
+        // is absent from /api/plan/today); then the plan-today rec; then the name.
+        let placeholder = nextUpPlaceholderFromPlan(nextEx);
+        if (!placeholder) {
+          try {
+            const map = (typeof getPlanTodayByName === 'function') ? await getPlanTodayByName() : null;
+            const nextRec = map ? map.get(String(nextEx).toLowerCase()) : null;
+            placeholder = formatNextPlaceholder(nextRec) || nextEx;
+          } catch { placeholder = nextEx; /* best effort — fall back to the name */ }
+        }
         setWorkoutPlaceholder(placeholder);
       }
     }

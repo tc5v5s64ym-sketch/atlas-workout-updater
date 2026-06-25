@@ -1114,7 +1114,7 @@ test('coach-pick gate: plannedExerciseEntries treats lastIntentData as a plan ON
 
 test('coach-pick gate: engaged on Coach\'s Pick, cleared on Freestyle', () => {
   const ccSrc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const pick = ccSrc.slice(ccSrc.indexOf('async function typeSuggestedWorkout('), ccSrc.indexOf('async function typeSuggestedWorkout(') + 600);
+  const pick = ccSrc.slice(ccSrc.indexOf('async function typeSuggestedWorkout('), ccSrc.indexOf('async function typeSuggestedWorkout(') + 900);
   assert.match(pick, /setCoachSuggestionEngaged === 'function'\) setCoachSuggestionEngaged\(true\)/,
     'tapping Coach\'s Pick must engage the suggestion');
   const free = ccSrc.slice(ccSrc.indexOf('async function startFreestyle('), ccSrc.indexOf('async function startFreestyle(') + 400);
@@ -4483,7 +4483,7 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
 
   // A suggested workout routes through setWorkoutPlaceholder, so viewing a suggestion
   // fires the ownership event before the next 4.5s rotation tick.
-  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2400);
+  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2800);
   assert.match(suggestFn, /setWorkoutPlaceholder\(/, 'typeSuggestedWorkout must set a contextual placeholder (which announces ownership)');
 
   // nav.js suppresses the rotation on the ownership event (same flag as a logged set).
@@ -4901,8 +4901,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v45/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v44\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v46/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v45\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5078,6 +5078,29 @@ test('P0 PR4: identity correction is wired into the message flow and relabels th
 
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   assert.match(cc, /addEventListener\('atlas:identity-corrected'/, 'coach layer confirms the correction');
+});
+
+// Coach next-up polish: don't re-nag the same next-up after an off-plan log, and
+// give the composer the next plan lift's FULL prescription (not the bare name).
+test('coach next-up: repeated identical next-up is suppressed; placeholder uses the plan prescription', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  // Repetition guard: a handoff line only speaks when the next-up changed (or it's a
+  // context-specific reroute) — no "Moving on — next up: X" after every off-plan log.
+  assert.match(cc, /let lastAnnouncedNextUp = null/, 'tracks the last announced next-up');
+  assert.match(cc, /const sameAsLast = lastAnnouncedNextUp/, 'compares the new next-up to the last announced');
+  assert.match(cc, /if \(isReroute \|\| !sameAsLast\)/, 'announces only on a changed next-up (or a reroute)');
+  assert.match(cc, /if \(!isReroute\) lastAnnouncedNextUp = nextEx/, 'records the announced next-up');
+  // Resets so a fresh session re-announces: at closeout AND on session (re)start
+  // (PR-575 review — cross-session staleness if the prior session never closed out).
+  assert.match(cc, /lastAnnouncedNextUp = null;\s*\/\/ plan done/, 'resets at closeout');
+  const start = cc.slice(cc.indexOf('async function typeSuggestedWorkout('), cc.indexOf('async function typeSuggestedWorkout(') + 400);
+  assert.match(start, /lastAnnouncedNextUp = null/, 'resets on session (re)start');
+  // Placeholder prefers the active PLAN entry's own prescription before /api/plan/today.
+  const fn = cc.slice(cc.indexOf('function nextUpPlaceholderFromPlan('), cc.indexOf('function nextUpPlaceholderFromPlan(') + 700);
+  assert.match(fn, /getActivePlannedSession/, 'reads the active plan entry for the next-up prescription');
+  assert.match(fn, /buildWorkoutPlaceholder\(\[entry\]\)/, 'builds the full prescription from the plan entry');
+  const handler = cc.slice(cc.indexOf('let placeholder = nextUpPlaceholderFromPlan('), cc.indexOf('let placeholder = nextUpPlaceholderFromPlan(') + 500);
+  assert.match(handler, /if \(!placeholder\)/, 'falls back to /api/plan/today only when the plan entry has no numbers');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
