@@ -1420,8 +1420,13 @@ function tryApplyPlanMutation(text) {
   };
 
   if (intent.action === 'skip') {
-    targetNames.forEach(skipPlannedExercise);
-    announcePlanMutation(`Skipped ${targetNames.join(', ')}.`, curName());
+    // Skip ALL matched slots only for a GENUINELY COMPOUND target ("skip
+    // deadlifts/rdls"). A single token that fuzzily over-matched several slots
+    // ("skip press" → Bench Press + Overhead Press) skips only the first — it must
+    // not remove planned work the lifter never named (mirrors the replace path).
+    const toSkip = PM.splitTargets(intent.target).length > 1 ? targetNames : targetNames.slice(0, 1);
+    toSkip.forEach(skipPlannedExercise);
+    announcePlanMutation(`Skipped ${toSkip.join(', ')}.`, curName());
     return true;
   }
   // Replace: swap the first matched target with the substitute. Only skip the OTHER

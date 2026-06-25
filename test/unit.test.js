@@ -4956,7 +4956,7 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.ok(mutIdx !== -1 && subIdx !== -1, 'both routes present');
   assert.ok(mutIdx < subIdx, 'deterministic mutation is tried before the suggest/coach route');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2000);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2600);
   assert.match(fn, /classifyMutationIntent\(/, 'uses the deterministic classifier (not LLM prose)');
   assert.match(fn, /activePlannedSession/, 'guarded on an active plan (freestyle logging untouched)');
   assert.match(fn, /resolvePlanTargets\(/, 'resolves the (compound) target against the canonical session, pending-aware');
@@ -4969,6 +4969,11 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   // silently drop the un-named planned work (PR-570 review).
   assert.match(fn, /splitTargets\(intent\.target\)\.length\s*>\s*1\s*\)\s*targetNames\.slice\(1\)\.forEach\(skipPlannedExercise\)/,
     'extra-slot skip on a replace is gated on a genuinely compound target');
+  // The skip branch mirrors the replace guard: a single token that over-matches
+  // several slots skips only the first; only a compound target skips them all
+  // (PR-570 review — no removing planned work the lifter never named).
+  assert.match(fn, /PM\.splitTargets\(intent\.target\)\.length\s*>\s*1\s*\?\s*targetNames\s*:\s*targetNames\.slice\(0,\s*1\)/,
+    'a single-token skip that over-matches skips only the first slot');
   // The announced "current" is derived from the cursor, not hardcoded to the
   // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
   assert.match(fn, /activePlannedSession\.exercises\[activePlannedSession\.index\]/,
