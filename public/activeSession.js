@@ -52,7 +52,9 @@
 
   // Does an exercise entry match a target ref? Name (exact, case-insensitive) →
   // liftCode → bidirectional substring (alias-ish), mirroring the identity ladder
-  // the client already uses (resolveCompletedIdentity). Pure.
+  // the client already uses (resolveCompletedIdentity). Pure. NOTE: the substring
+  // tier is intentionally loose; to pick a *slot to mutate*, use findMatchIndex
+  // below, which refuses to guess when the loose tier is ambiguous.
   function entryMatches(entry, ref) {
     const t = toEntry(ref);
     if (!entry || !t) return false;
@@ -61,6 +63,38 @@
     const a = lc(entry.name), b = lc(t.name);
     if (a && b && (a.includes(b) || b.includes(a))) return true;
     return false;
+  }
+
+  // Pick the index of the single exercise a mutation should act on — SAFELY. A
+  // mutation (replace/skip/complete) must never silently hit the wrong slot when a
+  // loose name overlaps two lifts ("Row" → "Seated Row" AND "Barbell Row";
+  // "Press" → "Overhead Press" AND "Bench Press"). Tiers over the candidate set
+  // (optionally pending-only):
+  //   1. exact name (case-insensitive) — first match
+  //   2. liftCode                       — first match
+  //   3. bidirectional substring        — ONLY when exactly one entry matches
+  // Returns -1 when nothing matches OR the only matches are an ambiguous substring
+  // (>1) — the caller no-ops rather than guess, so the wiring layer can disambiguate.
+  function findMatchIndex(exercises, ref, pendingOnly) {
+    const t = toEntry(ref);
+    if (!t) return -1;
+    const cand = exercises
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => !pendingOnly || e.status === STATUS.PENDING);
+
+    const exact = cand.filter(({ e }) => lc(e.name) === lc(t.name));
+    if (exact.length) return exact[0].i;
+
+    if (t.liftCode) {
+      const byCode = cand.filter(({ e }) => e.liftCode && lc(e.liftCode) === lc(t.liftCode));
+      if (byCode.length) return byCode[0].i;
+    }
+
+    const sub = cand.filter(({ e }) => {
+      const a = lc(e.name), b = lc(t.name);
+      return a && b && (a.includes(b) || b.includes(a));
+    });
+    return sub.length === 1 ? sub[0].i : -1; // ambiguous (or none) → no guess
   }
 
   function cloneExercises(exercises) {
@@ -92,7 +126,7 @@
     const sub = toEntry(substitute);
     if (!sub) return session;
     const exercises = cloneExercises(session.exercises);
-    const idx = exercises.findIndex(e => entryMatches(e, targetName));
+    const idx = findMatchIndex(exercises, targetName, false);
     if (idx === -1) return session;
     if (lc(exercises[idx].name) === lc(sub.name)) return session;
     exercises[idx] = { name: sub.name, liftCode: sub.liftCode, status: STATUS.PENDING, source: 'substituted' };
@@ -106,7 +140,7 @@
    */
   function skipExercise(session, name) {
     const exercises = cloneExercises(session.exercises);
-    const idx = exercises.findIndex(e => e.status === STATUS.PENDING && entryMatches(e, name));
+    const idx = findMatchIndex(exercises, name, true);
     if (idx === -1) return session;
     exercises[idx] = { ...exercises[idx], status: STATUS.SKIPPED };
     return { ...session, exercises };
@@ -121,7 +155,7 @@
    */
   function markCompleted(session, nameOrRef) {
     const exercises = cloneExercises(session.exercises);
-    const idx = exercises.findIndex(e => e.status === STATUS.PENDING && entryMatches(e, nameOrRef));
+    const idx = findMatchIndex(exercises, nameOrRef, true);
     if (idx === -1) return session;
     exercises[idx] = { ...exercises[idx], status: STATUS.COMPLETED };
     return { ...session, exercises };
@@ -173,6 +207,7 @@
     isComplete,
     // exposed for the later slices (identity correction PR4 / insert PR5) and tests
     entryMatches,
+    findMatchIndex,
     toEntry,
   };
 

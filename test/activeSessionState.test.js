@@ -171,6 +171,39 @@ test('activeSession: replaceExercise is a no-op for an unknown target or an iden
   assert.equal(replaceExercise(s, 'Deadlift', { name: 'deadlift' }), s, 'same-name substitute → no-op');
 });
 
+test('activeSession: an ambiguous loose name never silently mutates the wrong slot (review #565)', () => {
+  const { createActiveSession, markCompleted, replaceExercise, skipExercise, completedExercises, remaining } = require('../public/activeSession');
+  const s = createActiveSession({ exercises: ['Seated Row', 'Barbell Row', 'Overhead Press'] });
+
+  // "Row" substring-matches BOTH rows → ambiguous → no-op (no guess).
+  assert.equal(markCompleted(s, 'Row'), s, 'ambiguous markCompleted is a no-op');
+  assert.equal(completedExercises(markCompleted(s, 'Row')).length, 0, 'nothing completed on ambiguity');
+  assert.equal(replaceExercise(s, 'Row', { name: 'Cable Row' }), s, 'ambiguous replace is a no-op');
+  assert.equal(skipExercise(s, 'Row'), s, 'ambiguous skip is a no-op');
+
+  // An UNambiguous substring still resolves: only one "Press" here.
+  const done = completedExercises(markCompleted(s, 'Press')).map(e => e.name);
+  assert.deepEqual(done, ['Overhead Press'], 'a unique substring still completes the one match');
+
+  // Exact name is unaffected by the ambiguity guard.
+  assert.deepEqual(
+    completedExercises(markCompleted(s, 'Seated Row')).map(e => e.name),
+    ['Seated Row'],
+    'exact name still completes the right slot'
+  );
+});
+
+test('activeSession: findMatchIndex prefers liftCode over a loose name and refuses ambiguous substrings', () => {
+  const { createActiveSession, findMatchIndex } = require('../public/activeSession');
+  const s = createActiveSession({ exercises: [
+    { name: 'Seated Row', liftCode: 'ROW01' },
+    { name: 'Barbell Row', liftCode: 'BBR01' },
+  ] });
+  assert.equal(findMatchIndex(s.exercises, { name: 'whatever', liftCode: 'BBR01' }, false), 1, 'liftCode wins');
+  assert.equal(findMatchIndex(s.exercises, 'Row', false), -1, 'ambiguous substring → -1 (no guess)');
+  assert.equal(findMatchIndex(s.exercises, 'Seated Row', false), 0, 'exact name resolves');
+});
+
 test('activeSession: isComplete flips only when the plan exists and nothing pending remains', () => {
   const { createActiveSession, markCompleted, skipExercise, isComplete } = require('../public/activeSession');
   assert.equal(isComplete(createActiveSession({ exercises: [] })), false, 'empty plan is not "complete"');
