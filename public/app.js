@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v41';
+const ATLAS_SHELL_BUILD = 'v42';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -1333,6 +1333,119 @@ function startPlannedSession(intent) {
   }
   const first = exercises[0];
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
+}
+
+// ── P0 Sub-PR 2a: deterministic plan mutation from explicit user intent ────────
+// A swap/skip the lifter STATES ("skip deadlifts and do squats") mutates the
+// canonical session IMMEDIATELY — the app state owns the change, not LLM prose.
+
+// Resolve a free-text exercise phrase to a catalog canonical name + lift code, so
+// a swapped-in slot carries the canonical identity a later log will match.
+// Singularization is conservative: it drops a trailing plural "s" ONLY when it
+// follows a non-"s" character ("squats"→"squat", "curls"→"curl") so genuine
+// "ss" endings are preserved ("press" stays "press", "leg press" stays intact) —
+// the loose every-word strip mis-bound lifts (PR-570 review). Falls back to the raw phrase.
+function resolveCatalogExercise(phrase) {
+  const raw = String(phrase == null ? '' : phrase).trim();
+  if (!raw || typeof document === 'undefined') return { name: raw, liftCode: '' };
+  const dl = document.getElementById('exercise-catalog');
+  const opts = dl ? Array.from(dl.options || []) : [];
+  const singular = s => { const t = String(s || '').toLowerCase().trim(); return /[^s]s$/.test(t) ? t.slice(0, -1) : t; };
+  const key = raw.toLowerCase();
+  const skey = singular(raw);
+  // Refuse to guess on ambiguity (mirrors findMatchIndex, PR-570 review): exact name
+  // → UNIQUE singular-equal → UNIQUE substring. If >1 (or 0) match, leave the slot as
+  // the raw phrase rather than arbitrarily binding by catalog order; a later log
+  // re-resolves identity through the trust loop anyway.
+  let opt = opts.find(o => (o.value || '').toLowerCase() === key);
+  if (!opt) {
+    const eq = opts.filter(o => singular(o.value) === skey);
+    if (eq.length === 1) opt = eq[0];
+  }
+  if (!opt) {
+    const sub = opts.filter(o => { const v = singular(o.value); return v && (v.includes(skey) || skey.includes(v)); });
+    if (sub.length === 1) opt = sub[0];
+  }
+  return opt ? { name: opt.value, liftCode: opt.label || '' } : { name: raw, liftCode: '' };
+}
+
+// Skip a planned exercise: SPLICE it out of the live queue (it stops showing as
+// current/remaining) and clamp the cursor. Note this differs from
+// activeSession.skipExercise, which RETAINS the slot as status:'skipped' — here the
+// live activePlannedSession store has no skipped state, so we remove the slot
+// (consistent with the existing applySessionSubstitution dedupe path). Representing
+// a skipped slot as skipped (vs absent) in the canonical recap is deferred to 2b
+// (see BACKLOG.md).
+function skipPlannedExercise(name) {
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+  const key = String(name || '').toLowerCase();
+  const idx = activePlannedSession.exercises.findIndex(e =>
+    (e.canonicalName || e.name || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
+  if (idx === -1) return false;
+  activePlannedSession.exercises.splice(idx, 1);
+  let next = activePlannedSession.index;
+  if (next > idx) next -= 1;
+  if (next >= activePlannedSession.exercises.length) next = Math.max(0, activePlannedSession.exercises.length - 1);
+  activePlannedSession.index = Math.max(0, next);
+  renderActiveSessionBanner();
+  return true;
+}
+
+// Tell the coach layer a mutation happened so it can confirm it + re-point the
+// composer to the new current exercise (composer ownership stays in coach-conversation).
+function announcePlanMutation(summary, currentName) {
+  renderActiveSessionBanner();
+  document.dispatchEvent(new CustomEvent('atlas:plan-mutated', {
+    detail: { summary: summary || '', current: currentName || null }
+  }));
+}
+
+// Classify an explicit swap/skip and apply it to the canonical session. Returns
+// true when handled (caller then skips the substitute/coach routing). No active
+// plan, or a target not in the plan, or a non-mutation message → false (fall
+// through). Freestyle/no-plan logging is untouched (guarded on activePlannedSession).
+function tryApplyPlanMutation(text) {
+  const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
+  if (!PM || !activePlannedSession || !Array.isArray(activePlannedSession.exercises) || !activePlannedSession.exercises.length) return false;
+  const intent = PM.classifyMutationIntent(text);
+  if (!intent) return false;
+  // Resolve the (possibly compound, e.g. "deadlifts/rdls") target to PENDING plan
+  // slots via the canonical session — singular-aware (matches "Romanian Deadlift")
+  // and never matching a completed/skipped slot (no re-opening finished work).
+  const canon = getCanonicalSession();
+  const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
+    ? canon.exercises
+    : activePlannedSession.exercises.map(e => ({ name: e.canonicalName || e.name, status: 'pending' }));
+  const targetNames = PM.resolvePlanTargets(intent.target, planEntries);
+  if (!targetNames.length) return false; // not a (pending) planned lift → let the coach handle it
+  const curName = () => {
+    const cur = activePlannedSession.exercises[activePlannedSession.index];
+    return cur ? (cur.canonicalName || cur.name) : null;
+  };
+
+  if (intent.action === 'skip') {
+    // Skip ALL matched slots only for a GENUINELY COMPOUND target ("skip
+    // deadlifts/rdls"). A single token that fuzzily over-matched several slots
+    // ("skip press" → Bench Press + Overhead Press) skips only the first — it must
+    // not remove planned work the lifter never named (mirrors the replace path).
+    const toSkip = PM.splitTargets(intent.target).length > 1 ? targetNames : targetNames.slice(0, 1);
+    toSkip.forEach(skipPlannedExercise);
+    announcePlanMutation(`Skipped ${toSkip.join(', ')}.`, curName());
+    return true;
+  }
+  // Replace: swap the first matched target with the substitute. Only skip the OTHER
+  // matched slots when the user named a GENUINELY COMPOUND target ("skip
+  // deadlifts/rdls and do squats" removes both). A single token that fuzzily
+  // over-matched several slots (e.g. "curls" → Bicep Curl + Leg Curl) replaces only
+  // the first — it must never silently drop un-named planned work.
+  const resolved = resolveCatalogExercise(intent.substitute);
+  applySessionSubstitution(targetNames[0], resolved.name, resolved.liftCode);
+  if (PM.splitTargets(intent.target).length > 1) targetNames.slice(1).forEach(skipPlannedExercise);
+  // Re-point to the ACTUAL current lift (the cursor) — swapping a LATER slot must
+  // not yank the composer off the lift in progress. When the swapped slot is the
+  // current one, curName() equals the substitute (repro phrasing unchanged).
+  announcePlanMutation(`Swapped ${targetNames[0]} → ${resolved.name}.`, curName() || resolved.name);
+  return true;
 }
 
 function renderActiveSessionBanner() {
@@ -3861,6 +3974,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // → approve → /api/log-modality) before treating it as a coach question. On a
       // 422 / non-modality this returns false and we fall through to the coach.
       if (await tryPreviewModality(pendingChatText, sessionId, date)) {
+        activeExercise = null;
+        return;
+      }
+      // P0 Sub-PR 2a: an EXPLICIT swap/skip ("skip deadlift, do squats") mutates
+      // the canonical session deterministically — before the suggest/coach routes,
+      // so the change lands in app state, not just chat prose.
+      if (tryApplyPlanMutation(pendingChatText)) {
         activeExercise = null;
         return;
       }

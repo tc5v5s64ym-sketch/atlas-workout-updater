@@ -1230,6 +1230,17 @@
   document.addEventListener('atlas:preview-ready', e => { handlePreviewReady(e.detail).catch(() => {}); });
   document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
   document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
+  // P0 Sub-PR 2a: a deterministic plan mutation (swap/skip applied to the canonical
+  // session by app.js) — confirm it in the thread and re-point the composer to the
+  // new current exercise. The engine OWNS the mutation; this only narrates it.
+  document.addEventListener('atlas:plan-mutated', e => {
+    const d = (e && e.detail) || {};
+    if (d.summary) {
+      const node = appendAtlasBubble();
+      if (node && node.body) node.body.textContent = d.current ? `${d.summary} Next up: ${d.current}.` : d.summary;
+    }
+    if (d.current) setWorkoutPlaceholder(buildWorkoutPlaceholder([{ name: d.current }]) || d.current);
+  });
 
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
 

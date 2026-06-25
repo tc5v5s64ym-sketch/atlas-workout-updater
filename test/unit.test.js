@@ -4901,8 +4901,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v41/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v40\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v42/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v41\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4918,7 +4918,7 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(appSrc, /load-session-state-btn'\)\?\.addEventListener/, 'the session-state debug handler must be wired');
   assert.match(appSrc, /remainingPlannedExercises\(\),/, 'the dump must include remainingPlannedExercises');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
-    '/app/sessionQuestion.js', '/app/activeSession.js',
+    '/app/sessionQuestion.js', '/app/activeSession.js', '/app/planMutationIntent.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
@@ -4941,6 +4941,56 @@ test('P0 wiring: public/activeSession.js is loaded in index.html and app.js expo
   assert.match(fn, /plannedExerciseEntries\(\)/, 'uses the planned order as the source');
   assert.match(fn, /markCompleted\(/, 'replays logged completions onto the canonical session');
   assert.match(fn, /insertExercise\(/, 'an off-plan logged lift is represented, not dropped');
+});
+
+// P0 wiring Sub-PR 2a: an explicit swap/skip mutates the canonical session
+// deterministically (before the suggest/coach routes), and the composer re-points.
+test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message flow', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /<script src="planMutationIntent\.js"><\/script>/, 'index.html must load planMutationIntent.js');
+
+  const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The mutation check runs BEFORE checkAndSuggestSubstitute / routeMessageToCoach.
+  const mutIdx = appSrc.indexOf('tryApplyPlanMutation(pendingChatText)');
+  const subIdx = appSrc.indexOf('checkAndSuggestSubstitute(pendingChatText)');
+  assert.ok(mutIdx !== -1 && subIdx !== -1, 'both routes present');
+  assert.ok(mutIdx < subIdx, 'deterministic mutation is tried before the suggest/coach route');
+
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2600);
+  assert.match(fn, /classifyMutationIntent\(/, 'uses the deterministic classifier (not LLM prose)');
+  assert.match(fn, /activePlannedSession/, 'guarded on an active plan (freestyle logging untouched)');
+  assert.match(fn, /resolvePlanTargets\(/, 'resolves the (compound) target against the canonical session, pending-aware');
+  assert.match(fn, /getCanonicalSession\(\)/, 'target resolution uses the canonical session state');
+  assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
+  assert.match(fn, /skipPlannedExercise/, 'a skip mutates the live session');
+  // A replace skips the OTHER matched slots ONLY for a genuinely compound target
+  // ("deadlifts/rdls"). A single token that fuzzily over-matches several slots
+  // ("curls" → Bicep Curl + Leg Curl) must replace only the first and never
+  // silently drop the un-named planned work (PR-570 review).
+  assert.match(fn, /splitTargets\(intent\.target\)\.length\s*>\s*1\s*\)\s*targetNames\.slice\(1\)\.forEach\(skipPlannedExercise\)/,
+    'extra-slot skip on a replace is gated on a genuinely compound target');
+  // The skip branch mirrors the replace guard: a single token that over-matches
+  // several slots skips only the first; only a compound target skips them all
+  // (PR-570 review — no removing planned work the lifter never named).
+  assert.match(fn, /PM\.splitTargets\(intent\.target\)\.length\s*>\s*1\s*\?\s*targetNames\s*:\s*targetNames\.slice\(0,\s*1\)/,
+    'a single-token skip that over-matches skips only the first slot');
+  // The announced "current" is derived from the cursor, not hardcoded to the
+  // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
+  assert.match(fn, /activePlannedSession\.exercises\[activePlannedSession\.index\]/,
+    'current lift is read from the cursor after a mutation');
+
+  // resolveCatalogExercise must use the conservative singularization (drop a plural
+  // "s" only after a non-"s"), never the loose every-word strip that mangled "press".
+  const resolve = appSrc.slice(appSrc.indexOf('function resolveCatalogExercise('), appSrc.indexOf('function resolveCatalogExercise(') + 1300);
+  assert.match(resolve, /\[\^s\]s\$/, 'conservative singularization (preserves "press"/"leg press")');
+  assert.doesNotMatch(resolve, /\/s\\b\/g/, 'must not use the loose every-word-final-s strip');
+  assert.match(resolve, /\.length === 1/, 'binds only on a UNIQUE match — refuses to guess on ambiguity');
+
+  // The coach layer narrates the mutation + re-points the composer (does not own it).
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(cc, /addEventListener\('atlas:plan-mutated'/, 'coach layer listens for the mutation');
+  const lis = cc.slice(cc.indexOf("addEventListener('atlas:plan-mutated'"), cc.indexOf("addEventListener('atlas:plan-mutated'") + 400);
+  assert.match(lis, /setWorkoutPlaceholder\(/, 'composer re-points to the new current exercise');
 });
 
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
