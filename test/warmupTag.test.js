@@ -5,6 +5,7 @@ const { isWarmupNote, tagWarmupNote, WARMUP_NOTE_TOKEN } = require('../services/
 const { computeBenchmark, resolveWorkingWeight } = require('../services/exerciseBenchmark');
 const { computeExpectedPerformance } = require('../services/expectedPerformance');
 const { detectTrend } = require('../services/trendDetector');
+const { progressionBand } = require('../services/analytics');
 
 // 12-column Log_Cleaned row builder:
 // date|session|exercise|canonical|muscle|lift_code|set_number|weight|reps|rir|notes|volume_calc
@@ -102,4 +103,24 @@ test('detectTrend: a tagged heavy warm-up does not pollute the e1RM trajectory',
   assert.equal(detectTrend('DL', tagged).trend, 'flat');
   // Control: untagged, the 300-lb feeler spikes session 1's e1RM → the trend is no longer flat.
   assert.notEqual(detectTrend('DL', untagged).trend, 'flat');
+});
+
+// --- analytics.recommendNextSet (progressionBand): the primary live weight-bump path ---
+
+test('progressionBand: a note-tagged heavy warm-up does not inflate the working-weight band', () => {
+  // Normalized row objects (as recommendNextSet passes them).
+  const tagged = [
+    { session_id: 'S1', weight: 245, notes: '' },
+    { session_id: 'S1', weight: 300, notes: 'warm-up' } // heavy feeler, tagged
+  ];
+  const band = progressionBand(tagged);
+  assert.equal(band.range_high, 245, 'tagged 300 feeler excluded from range_high');
+  assert.equal(band.ceiling, 245, 'tagged 300 feeler excluded from ceiling');
+
+  // Control: untagged, the 300 leaks into the band (the hole this closes).
+  const control = progressionBand([
+    { session_id: 'S1', weight: 245, notes: '' },
+    { session_id: 'S1', weight: 300, notes: '' }
+  ]);
+  assert.equal(control.ceiling, 300);
 });
