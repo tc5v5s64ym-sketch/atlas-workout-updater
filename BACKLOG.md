@@ -119,6 +119,58 @@ The spearhead: the engine already emits verdicts (PR 3.3 ✅) and detects swaps 
 
 ---
 
+## Deterministic Coach Voice Renderer — APPROVED, build not started
+
+`[correctness]` Atlas currently falls back to generic robotic templates when the LLM is unavailable, rate-limited, or too expensive to call. Known gym events should render deterministically from facts — still human, specific, and coach-like — without requiring a model call. Many set-reaction and next-up responses do not need model reasoning at all. **Principle: the deterministic engine owns facts and decisions; the LLM is optional narration; non-LLM responses should still feel like Atlas, not like system messages.**
+
+**Scope:** create `services/deterministicCoachRenderer.js` — a pure, stateless renderer for these event types:
+
+- `set_logged` — set was recorded cleanly
+- `target_hit` — actual result matched the prescribed target
+- `reps_missed` — fell short of the rep target
+- `rir_too_low` — RIR came in below the prescribed floor (grinding)
+- `rir_too_high` — RIR came in above the prescribed ceiling (undershooting)
+- `hold_weight` — engine verdict is hold; explain why
+- `progress_next_time` — engine verdict is progress; give the exact next load
+- `next_up_handoff` — hand off to the next planned exercise
+- `substitution_accepted` — swap was classified and accepted
+- `skipped_exercise` — exercise removed from the active session
+- `inserted_accessory` — exercise added mid-session
+- `identity_corrected` — exercise name re-resolved to a canonical
+- `warmup_logged` — warm-up set recorded; excluded from progression
+- `first_session_back` — returning after a gap; ease-back framing
+- `coach_unavailable` — LLM is down; deterministic path is the output, not an apology
+- `save_succeeded` — session written to Sheets successfully
+- `save_failed` — session write failed; actionable message, not a system dump
+
+**Renderer input shape** (all fields optional/nullable — renderer must never invent a number absent from its input):
+
+```
+{ exercise, target: { weight, reps, rir, sets }, actual: { weight, reps, rir },
+  previousHistory, trainingGap, progressionStatus, sessionContext,
+  mutationContext, readinessContext }
+```
+
+**Output shape:** `{ message: string, evidenceCited: boolean }` — short enough for live gym use.
+
+**Acceptance criteria:**
+
+- No generic praise without evidence (facts from input only; no invented numbers).
+- Messages short enough for live gym use (1–3 sentences max per event).
+- Multiple phrasing variants per event type (minimum 2; chosen by a deterministic hash/index, not random).
+- Format: evidence → verdict → next action (mirrors the conclusion-first ordering in `docs/COACHING_NOTE_VOICE.md`).
+- LLM outage path (`coach_unavailable` + `coachVoiceTemplates.js` fallbacks) routes to this renderer instead of raw system text.
+- Logging, save, and next-up surfaces remain deterministic and do not acquire new LLM dependency.
+- Unit tests cover each event type; each test asserts no hallucinated facts (output contains only values present in the input, or stock phrases).
+
+**Example (target_hit event):**
+- Before: `"Dialled in — that landed right on target."`
+- After: `"Good set. You hit 225×8 at RIR 2, so this is right where we want it. Hold 225 for the next set and keep the reps clean."`
+
+**Priority:** after the current P0 ActiveSession / save / preview-reliability work and coach robustness fixes, but before deep multi-provider LLM routing. This directly improves coach trust and reduces LLM dependency for routine gym events.
+
+**Build order (suggested):** engine + tests first (pure renderer, no route/LLM change) → wire into the coach-unavailable fallback path → wire into set-reaction as a pre-LLM fast path for simple events → voice phrasing pass.
+
 ## New-user onboarding + working-weight discovery (B8) — DESIGN APPROVED, build not started
 
 Owner-approved design pack: [`docs/ONBOARDING_WORKING_WEIGHT_SPEC.md`](./docs/ONBOARDING_WORKING_WEIGHT_SPEC.md) (Owner Review Pack #2, approved 2026-06-20). Not promoted to `docs/ACTIVE_ROADMAP.md` — owner did not reorder roadmap priorities. Build only when promoted. Owner calls locked in the spec's "Owner-approved decisions" section: full-body ×3 default shape; graduation **per-lift at `medium` (3 logged sessions)**, copy-only (never imply fully dialed in); **per-lift** calibration state only (if squat is calibrated and deadlift is unknown, Atlas says so); a user-stated number seeds the start hint but **never** raises confidence (confidence comes only from logged sessions). All numbers trace to existing engine facts (`buildWorkingWeightProtocol` 70% start hint; `exerciseBenchmark` ladder 0=none / 1–2=low / 3–4=medium / 5+=high; `buildWarmupRamp`; `confidence_factors`; `assessLayoff`; `loadSanity`; AC8 phantom-set floor). Deterministic-engine-first, voice-second; tiny PRs. **Approved implementation order:**
