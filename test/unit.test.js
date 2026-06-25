@@ -4967,8 +4967,8 @@ test('declutter: safety note still proves test_mode and stays compact', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v50/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v49\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v51/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v50\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -4983,6 +4983,11 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(html, /id="load-session-state-btn"/, 'a "Show session state" debug button must exist');
   assert.match(appSrc, /load-session-state-btn'\)\?\.addEventListener/, 'the session-state debug handler must be wired');
   assert.match(appSrc, /remainingPlannedExercises\(\),/, 'the dump must include remainingPlannedExercises');
+  // Coach health diagnostic — a Settings button + handler that hits /api/coach/health
+  // so a robotic/templated reply (Gemini down) is diagnosable (401/404/429/timeout).
+  assert.match(html, /id="test-coach-btn"/, 'a "Test coach connection" button must exist');
+  assert.match(appSrc, /test-coach-btn'\)\?\.addEventListener/, 'the coach-test handler must be wired');
+  assert.match(appSrc, /\/api\/coach\/health/, 'the handler must call the coach health endpoint');
   for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js', '/app/activeSession.js', '/app/planMutationIntent.js', '/app/identityCorrection.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {

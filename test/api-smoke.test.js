@@ -212,12 +212,17 @@ const fakeCoachState = {
   chatNoteProposal: null, // set to a note object in tests that exercise the note path
   chatConstraintProposal: null, // set to a constraint object in tests that exercise the constraint path
   throwError: null,
+  pingError: null, // set to a string to simulate a failed Gemini ping (coach health)
   lastChatContext: null, // captures the context passed to generateChatReply for assertions
   lastPlanFacts: null // captures the facts passed to generatePlanMessage for assertions
 };
 const fakeCoach = {
   isConfigured: () => fakeCoachState.configured,
   coachModel: () => 'gemini-2.5-flash-lite',
+  pingGemini: async () => {
+    if (fakeCoachState.pingError) throw new Error(fakeCoachState.pingError);
+    return 'OK';
+  },
   generateCoachMessage: async () => {
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return fakeCoachState.message;
@@ -271,6 +276,8 @@ test.after(async () => {
 
 test.beforeEach(() => {
   resetIdempotencyStore();
+  fakeCoachState.pingError = null;
+  fakeCoachState.configured = false;
 });
 
 async function requestJson(path, options = {}) {
@@ -735,6 +742,43 @@ test('api smoke: coach/message kind=plan falls back to null when unconfigured', 
   assert.equal(response.status, 200);
   assert.equal(body.data.configured, false);
   assert.equal(body.data.message, null);
+});
+
+test('api smoke: coach/health is registered read-only and never write-capable', async () => {
+  const { body } = await requestJson('/routes');
+  const routeByPath = new Map(body.data.routes.map(route => [route.path, route]));
+  assert.ok(routeByPath.has('/api/coach/health'), 'coach health route must be in the manifest');
+  assert.equal(routeByPath.get('/api/coach/health').writeCapable, false, 'health endpoint must never be write-capable');
+  assert.equal(routeByPath.get('/api/coach/health').readOnly, true);
+});
+
+test('api smoke: coach/health reports not-configured when GEMINI_API_KEY is unset', async () => {
+  fakeCoachState.configured = false;
+  const { response, body } = await requestJson('/api/coach/health');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, false);
+  assert.equal(body.data.ok, false);
+  assert.match(body.data.reason, /GEMINI_API_KEY/);
+});
+
+test('api smoke: coach/health reports ok when the Gemini ping succeeds', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.pingError = null;
+  const { response, body } = await requestJson('/api/coach/health');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, true);
+  assert.equal(body.data.ok, true);
+  assert.equal(body.data.model, 'gemini-2.5-flash-lite');
+});
+
+test('api smoke: coach/health surfaces the Gemini failure reason (the diagnosable cause)', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.pingError = 'Gemini request failed (404): model not found';
+  const { response, body } = await requestJson('/api/coach/health');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.configured, true);
+  assert.equal(body.data.ok, false);
+  assert.match(body.data.reason, /404/);
 });
 
 test('api smoke: coach/chat is registered read-only and never write-capable', async () => {
