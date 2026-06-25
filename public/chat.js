@@ -36,11 +36,13 @@
     bubble.scrollIntoView({ behavior: reduce() ? 'auto' : 'smooth', block: 'nearest' });
   }
 
-  // app.js's submit handler runs preview; we only narrate the send.
-  form.addEventListener('submit', () => {
-    const text = (workoutText?.value || '').trim();
-    if (text) addUserBubble(text);
-  });
+  // Expose the bubble painter so app.js's submit handler can paint the user's
+  // message FIRST — before any routing/coach reply/preview/log reaction appends an
+  // Atlas bubble. Painting here on submit would race app.js's synchronous appends
+  // and could land the user bubble BELOW the response (the owner-reported inversion).
+  // app.js now owns the on-submit paint; the dedupe guard in addUserBubble keeps a
+  // double-submit from stacking.
+  window.atlasAddUserBubble = addUserBubble;
 
   // A chosen screenshot is the user's "message" — drop the attachment bubble in
   // the moment it's picked, before the auto-preview fires (see nav.js).
