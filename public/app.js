@@ -3950,7 +3950,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         return;
       }
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
-      if (!suggested) routeMessageToCoach(pendingChatText);      // Clear the stale active-exercise context so the next bare shorthand input
+      if (!suggested) routeMessageToCoach(pendingChatText);
+      // Clear the stale active-exercise context so the next bare shorthand input
       // (e.g. "15 12/2 x3" after "leg extension is taken, doing laterals first")
       // cannot silently attach to the wrong exercise. The parser will ask
       // "Which exercise is this for?" instead of inheriting the prior lift.
