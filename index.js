@@ -43,7 +43,6 @@ const {
   detectSwap
 } = require('./services/analytics');
 const { classifySubstitution } = require('./services/substitutionIntent');
-const { isWarmupNote } = require('./services/warmupTag');
 const { inferPrescribedPairs } = require('./services/planMatcher');
 const { assessLayoff } = require('./services/layoffGuard');
 const { isConstraintMessage } = require('./services/constraintDetector');
@@ -330,20 +329,18 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
   // (BACKLOG ME-4.)
   result.volume_calc = calculateVolumeCalc(result.weight, result.reps);
 
-  // Warm-up rows are logged WITHOUT an RIR — Atlas never invents a rating the
-  // lifter didn't give (owner rule 2026-06-25). So `rir` is required on working
-  // sets but optional on a note-tagged warm-up; a blank RIR cell is valid there.
-  // Without this, logging warm-ups (now a supported flow) failed the whole save
-  // with "Missing required log row field: rir".
-  const isWarmupRow = isWarmupNote(result.notes);
-  for (const field of ['date_clean', 'session_id', 'exercise', 'set_number', 'weight', 'reps', 'rir']) {
-    if (field === 'rir' && isWarmupRow) continue;
+  // RIR is OPTIONAL (owner 2026-06-25: "log it however"). The lifter can log a set
+  // with just weight × reps — Atlas never invents a rating they didn't give, and a
+  // missing RIR is a valid blank cell, not a malformed row. weight/reps (and the
+  // identity fields) remain required so a genuinely garbled row is still rejected.
+  // A blank RIR is normalized to '' so column 10 stays present and in order; the
+  // progression/PR engines already treat a blank RIR as "no signal" (NaN-filtered).
+  for (const field of ['date_clean', 'session_id', 'exercise', 'set_number', 'weight', 'reps']) {
     if (result[field] === undefined || result[field] === null || result[field] === '') {
       throw new Error(`Missing required log row field: ${field}`);
     }
   }
-  // Normalize a warm-up's missing RIR to a writable empty string (column stays present).
-  if (isWarmupRow && (result.rir === undefined || result.rir === null)) result.rir = '';
+  if (result.rir === undefined || result.rir === null) result.rir = '';
 
   return result;
 }
