@@ -2859,6 +2859,28 @@ function parserStatusNode(status) {
 }
 
 function rowsFromBackendParsedWorkout(parsed) {
+  // Multi-exercise log (several lifts in one message, split + parsed server-side):
+  // flatten every exercise's sets into rows so they all land in the one preview →
+  // approve → write card, exactly like a single-exercise log. Same row shape as
+  // the single-exercise branch below; the server already resolved each exercise.
+  if (parsed && parsed.intent === 'log_sets_multi' && Array.isArray(parsed.exercises)) {
+    const rows = [];
+    for (const ex of parsed.exercises) {
+      const name = ex.canonical_name || ex.exercise || ex.raw_name || '';
+      if (!name || !Array.isArray(ex.sets)) continue;
+      ex.sets.forEach((set, index) => rows.push({
+        exercise: name,
+        set_number: String(index + 1),
+        weight: set.weight == null ? '0' : String(set.weight),
+        reps: set.reps == null ? '' : String(set.reps),
+        rir: set.rir == null ? '' : String(set.rir),
+        notes: set.load_note ? set.load_note : ''
+      }));
+    }
+    if (rows.length) return rows;
+    // No rows resolved → fall through to the clarification error below.
+  }
+
   if (!parsed || parsed.intent !== 'log_sets' || !Array.isArray(parsed.sets)) {
     let message = parsed?.message || parsed?.warnings?.join(' | ') || 'Parser needs clarification.';
     if (parsed?.intent === 'finish_session') {

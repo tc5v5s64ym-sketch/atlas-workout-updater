@@ -168,6 +168,46 @@ function hasMultipleExerciseMentions(text) {
   return canonicalNames.size > 1;
 }
 
+// Split a multi-exercise message into one sub-string per exercise, using the
+// recognized exercise names as boundaries — so "Deadlift 245 6/2 5/2 bench 185 8/2"
+// (several lifts on one line, the way the lifter actually types) becomes
+// ["Deadlift 245 6/2 5/2", "bench 185 8/2"], each of which the proven
+// single-exercise parser already handles. Returns null when it can't split safely:
+//   - fewer than two DISTINCT recognized exercises (nothing to split), or
+//   - the lowercase-key token count doesn't match the raw token count (punctuation
+//     made the mention indices unreliable) — in which case the caller must NOT
+//     guess; it falls back to asking, never mis-logging.
+// Boundaries are the FIRST occurrence of each distinct canonical (so two aliases of
+// the same lift don't over-split). Indices come from findExerciseMentions, which
+// counts normalizeKey tokens; we slice the raw (slash-preserving) tokens at the
+// same indices, guarded by the equal-length check above.
+function splitMultiExerciseSegments(text) {
+  const mentions = findExerciseMentions(text);
+  if (!mentions.length) return null;
+
+  const firstIdxByCanon = new Map();
+  for (const m of mentions) {
+    if (!firstIdxByCanon.has(m.canonicalName) || m.index < firstIdxByCanon.get(m.canonicalName)) {
+      firstIdxByCanon.set(m.canonicalName, m.index);
+    }
+  }
+  if (firstIdxByCanon.size < 2) return null;
+
+  const keyTokens = normalizeKey(text).split(' ').filter(Boolean);
+  const rawTokens = normalizeParserText(text).split(' ').filter(Boolean);
+  if (keyTokens.length !== rawTokens.length) return null; // index mapping unreliable
+
+  const starts = [...firstIdxByCanon.values()].sort((a, b) => a - b);
+  const segments = [];
+  for (let k = 0; k < starts.length; k += 1) {
+    const from = starts[k];
+    const to = k + 1 < starts.length ? starts[k + 1] : rawTokens.length;
+    const seg = rawTokens.slice(from, to).join(' ').trim();
+    if (seg) segments.push(seg);
+  }
+  return segments.length >= 2 ? segments : null;
+}
+
 function stripExerciseText(text, exerciseKey) {
   const normalizedWords = normalizeKey(text).split(' ');
   const exerciseWords = exerciseKey.split(' ');
@@ -261,6 +301,13 @@ function parseWorkoutText(input, context = {}) {
 
   const skipped = extractSkipNotes(rawText);
   const result = parseLogSets(rawText, context);
+
+  // A multi-exercise log is unambiguous (every chunk resolved to real sets, or
+  // parseLogSets would have asked for clarification) — return it directly, past the
+  // single-exercise question-floor / skip handling below.
+  if (result?.intent === 'log_sets_multi') {
+    return skipped.length > 0 ? { ...result, prescribed: skipped } : result;
+  }
 
   // AC8 credibility floor (CONVERSATION_DESIGN.md): never log a phantom set.
   // If the message reads as a question and did NOT resolve to a real logged set,
@@ -431,10 +478,29 @@ function parseLogSets(rawText, context = {}) {
   const textForParsing = stripSkipNoteSentences(rawText);
 
   if (hasMultipleExerciseMentions(textForParsing)) {
+    // Several exercises in one message — split on the recognized names and parse
+    // each chunk with the normal single-exercise path, so the lifter can log them
+    // however they type (inline or stacked). NEVER mis-log: only return the
+    // combined result if EVERY chunk cleanly resolves to real sets; any ambiguous
+    // chunk falls through to the clarification ask below.
+    const segments = splitMultiExerciseSegments(textForParsing);
+    if (segments && segments.length >= 2) {
+      const parsedSegments = segments.map(seg => parseLogSets(seg, context));
+      const allClean = parsedSegments.every(r =>
+        r && r.intent === 'log_sets' && Array.isArray(r.sets) && r.sets.length);
+      if (allClean) {
+        return {
+          intent: 'log_sets_multi',
+          raw_text: rawText,
+          exercises: parsedSegments,
+          warnings: [...new Set(parsedSegments.flatMap(r => r.warnings || []))],
+        };
+      }
+    }
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
-      message: 'This looks like mixed exercise input. Log one exercise at a time or split the exercises first.',
+      message: 'This looks like mixed exercise input — I couldn’t cleanly tell the exercises apart. Log one at a time, or put each exercise on its own line.',
       warnings: ['multiple_exercises_in_input'],
     };
   }
@@ -970,6 +1036,7 @@ module.exports = {
   buildWorkoutTextParseDryRunResponse,
   normalizeParserText,
   canonicalizeExerciseName: findExerciseInText,
+  splitMultiExerciseSegments,
   looksLikeCorrection,
   looksLikeLogIt
 };
