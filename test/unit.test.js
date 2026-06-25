@@ -5066,8 +5066,11 @@ test('P0 PR4: identity correction is wired into the message flow and relabels th
   assert.ok(corrIdx !== -1, 'correction route present in the flow');
   assert.ok(mutIdx < corrIdx && corrIdx < subIdx, 'correction runs after plan-mutation, before suggest/coach');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 1700);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 1900);
   assert.match(fn, /classifyIdentityCorrection\(/, 'uses the deterministic classifier (not LLM prose)');
+  // Only relabel to a phrase that resolves to a KNOWN catalog exercise — an ordinary
+  // cued remark ("actually that was tough") must NOT relabel (PR-574 review).
+  assert.match(fn, /if \(!newName \|\| !resolved\.matched\) return false/, 'gates the relabel on an actual catalog match');
   assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'targets the most-recently-logged lift');
   assert.match(fn, /sessionLog\[i\] = \{ \.\.\.sessionLog\[i\], exercise: newName \}/, 'relabels the trailing run of logged sets');
   assert.match(fn, /resolveCompletedIdentity\(/, 'reconciles completion identity in sessionCompleted');

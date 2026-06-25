@@ -1370,7 +1370,9 @@ function resolveCatalogExercise(phrase) {
     const sub = opts.filter(o => { const v = singular(o.value); return v && (v.includes(skey) || skey.includes(v)); });
     if (sub.length === 1) opt = sub[0];
   }
-  return opt ? { name: opt.value, liftCode: opt.label || '' } : { name: raw, liftCode: '' };
+  // `matched` is true ONLY when a catalog option was found (not an echoed raw
+  // phrase) — callers that must not act on an unknown phrase gate on it.
+  return opt ? { name: opt.value, liftCode: opt.label || '', matched: true } : { name: raw, liftCode: '', matched: false };
 }
 
 // Skip a planned exercise: SPLICE it out of the live queue (it stops showing as
@@ -1476,7 +1478,11 @@ function tryApplyIdentityCorrection(text) {
   if (!intent) return false;
   const resolved = resolveCatalogExercise(intent.to);
   const newName = resolved.name;
-  if (!newName) return false;
+  // Only relabel to a phrase that resolves to a KNOWN catalog exercise. An ordinary
+  // in-session remark that happens to carry a cue ("actually that was tough", "make
+  // that lighter") does NOT name a real lift → fall through to the coach instead of
+  // relabeling the logged lift to "tough" (PR-574 review).
+  if (!newName || !resolved.matched) return false;
   // The lift being corrected is the most-recently-logged one — relabel its TRAILING
   // contiguous run of sets (an earlier, separately-logged occurrence is untouched).
   const oldName = sessionLog[sessionLog.length - 1].exercise;
