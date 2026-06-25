@@ -87,7 +87,7 @@ test('AC11: a session with logged work is never reported as "no plan"', () => {
   assert.ok(remaining(s).length >= 1, 'the session still has a plan — not "no session plan"');
 });
 
-test('AC7: correcting a logged identity relabels the entry in session state', { todo: 'PR4 — identity correction' }, () => {
+test('AC7: correcting a logged identity relabels the entry in session state', () => {
   const { createActiveSession, markCompleted, correctIdentity, completedExercises } = loadActiveSession();
   let s = createActiveSession({ exercises: COACHES_PICK });
   // A set mis-logged as Deadlift that was actually Lat Pulldown ("sorry, that was lat pulls").
@@ -202,6 +202,36 @@ test('activeSession: findMatchIndex prefers liftCode over a loose name and refus
   assert.equal(findMatchIndex(s.exercises, { name: 'whatever', liftCode: 'BBR01' }, false), 1, 'liftCode wins');
   assert.equal(findMatchIndex(s.exercises, 'Row', false), -1, 'ambiguous substring → -1 (no guess)');
   assert.equal(findMatchIndex(s.exercises, 'Seated Row', false), 0, 'exact name resolves');
+});
+
+test('correctIdentity: reconciles a mislabel onto a planned entry (no duplicate, planned one done)', () => {
+  const { createActiveSession, markCompleted, correctIdentity, completedExercises, remaining } = require('../public/activeSession');
+  let s = createActiveSession({ exercises: COACHES_PICK });
+  s = markCompleted(s, 'Deadlift');                          // mis-logged as Deadlift
+  s = correctIdentity(s, { from: 'Deadlift', to: 'Lat Pulldown' });
+  const names = s.exercises.map(e => e.name);
+  assert.equal(names.filter(n => n === 'Lat Pulldown').length, 1, 'no duplicate Lat Pulldown');
+  assert.ok(!names.includes('Deadlift'), 'the wrong Deadlift label is gone');
+  assert.deepEqual(completedExercises(s).map(e => e.name), ['Lat Pulldown'], 'the planned Lat Pulldown is now the completed one');
+  assert.ok(!remaining(s).some(e => e.name === 'Lat Pulldown'), 'Lat Pulldown no longer shows as remaining');
+});
+
+test('correctIdentity: relabels in place when the corrected identity is not already in the plan', () => {
+  const { createActiveSession, markCompleted, correctIdentity, completedExercises } = require('../public/activeSession');
+  let s = createActiveSession({ exercises: ['Incline', 'Overhead Press'] });
+  s = markCompleted(s, 'Incline');
+  s = correctIdentity(s, { from: 'Incline', to: { name: 'Incline DB Press', liftCode: 'IDB01' } });
+  const done = completedExercises(s);
+  assert.deepEqual(done.map(e => e.name), ['Incline DB Press'], 'relabeled in place, status preserved');
+  assert.equal(done[0].liftCode, 'IDB01', 'corrected liftCode carried over');
+});
+
+test('correctIdentity: no-op for unknown `from`, blank `to`, or an already-correct identity', () => {
+  const { createActiveSession, correctIdentity } = require('../public/activeSession');
+  const s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
+  assert.equal(correctIdentity(s, { from: 'Bench', to: 'Squat' }), s, 'unknown from → no-op');
+  assert.equal(correctIdentity(s, { from: 'Deadlift', to: '' }), s, 'blank to → no-op');
+  assert.equal(correctIdentity(s, { from: 'Deadlift', to: 'Deadlift' }), s, 'already-correct → no-op');
 });
 
 test('activeSession: isComplete flips only when the plan exists and nothing pending remains', () => {

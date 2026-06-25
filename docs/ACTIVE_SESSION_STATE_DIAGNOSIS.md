@@ -100,6 +100,11 @@ The existing `services/sessionPlanExecutor.js` (`applySubstitution`, `computePla
 6. Barbell loadability guard against the owner's plate inventory (AC 12).
 7. End-to-end regression: Coach's Pick → replace DL→Squat → log Squat → OHP → corrected Lat Pulldown → insert Hammer Curl → insert Knee Raises → preview/save succeeds (AC 10).
 
+## Deferred notes (from PR-565 review — address in the slices below)
+
+- **`replaceExercise` can re-open a completed/skipped slot.** It matches by `findMatchIndex(..., pendingOnly=false)`, so replacing an already-`completed`/`skipped` exercise flips it back to `pending`. Harmless pre-wiring, but the **frontend wiring PR** (which lets live coach/user text drive replacement) must add a guard/test so a swap can't silently re-open finished work.
+- **`isComplete` returns `true` for an all-`skipped` session.** Consistent with the "nothing pending remains" definition, but **PR 5 (recap/save)** must treat "all skipped, nothing logged" deliberately (not a normal completed session) when assembling the recap/write rows.
+
 ## Notes / constraints
 
 - **No schema change planned.** The canonical session is in-memory + request context; write rows are unchanged 12-column `Log_Cleaned`. If any slice turns out to *require* a schema/storage change, stop and report the smallest proposal (owner-gated).
