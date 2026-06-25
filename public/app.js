@@ -1409,6 +1409,8 @@ function tryApplyPlanMutation(text) {
   announcePlanMutation(`Swapped ${targetName} → ${resolved.name}.`, resolved.name);
   return true;
 }
+
+function renderActiveSessionBanner() {
   const banner = document.getElementById('active-session-banner');
   if (!banner) return;
   banner.innerHTML = '';
