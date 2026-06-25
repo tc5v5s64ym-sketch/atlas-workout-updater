@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v52';
+const ATLAS_SHELL_BUILD = 'v53';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -4722,7 +4722,11 @@ function renderCompleteWorkoutPreview(result) {
   const effort = data.parsed_effort || {};
   const peakHrCell = effort.peakHR == null ? 'not visible in screenshot' : effort.peakHR;
   const effortDetailsInner = el('div', {}, [
-    el('h3', { text: data.effort_source === 'manual' ? 'Parsed effort (manual entry)' : 'Parsed effort (from screenshot)' }),
+    el('h3', { text: data.effort_source === 'manual'
+      ? 'Parsed effort (manual entry)'
+      : (data.effort_source === 'screenshot_unreadable' || data.screenshot_unreadable)
+        ? "Effort couldn't be read from the screenshot"
+        : 'Parsed effort (from screenshot)' }),
     renderTable(
       ['Duration', 'Active cal', 'Total cal', 'Avg HR', 'Peak HR', 'Type'],
       [[effort.duration, effort.activeCalories, effort.totalCalories, effort.averageHR, peakHrCell, effort.workoutType]]
