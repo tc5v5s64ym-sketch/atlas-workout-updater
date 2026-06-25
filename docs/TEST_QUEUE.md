@@ -36,6 +36,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | If gate silently inert: add the builder bot's exact GitHub login to the `if` condition allowlist in the workflow. File a PR (workflow-only change, `[infrastructure]`). |
 
+### LT-002 — build_strength full-profile default
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-002 |
+| **Related PR / feature** | PR1 — `build_strength` full-profile default (upper-only = explicit intent) |
+| **Shell / app version expected** | Any version with the full-profile `build_strength` change deployed |
+| **Steps** | 1. Ask Atlas to build a strength session with no special intent (e.g. "build me a strength session"). 2. Then explicitly request an upper-only day (e.g. "give me an upper-body strength day"). |
+| **Expected result** | The first session is a full-profile session (covers lower + hinge + push + pull — whole body). The second session is upper-only (push + pull, no lower-body/hinge work). |
+| **Screenshot** | Both generated sessions. |
+| **Owner result** | PASS / FAIL — |
+| **Follow-up if FAIL** | — |
+
 ---
 
 ## Completed

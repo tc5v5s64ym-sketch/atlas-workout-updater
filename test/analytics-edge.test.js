@@ -728,6 +728,61 @@ test('scoreIntents: build_strength caps lower-body accessories when 2+ main lowe
   assert.ok(lowerLifts.length < 5, `double-heavy-leg overload trimmed; got ${lowerLifts.length} lower lifts`);
 });
 
+// ── build_strength is FULL-PROFILE by default; upper-only only on explicit intent ──
+// Owner contract (2026-06-25): build_strength generates a whole-body strength
+// session by default (lower + hinge + push + pull). Upper-only must NEVER be the
+// silent default — it is reachable only when an explicit upper-only intent/flag is
+// passed (options.upperOnly), so a user (or the coach) has to ask for it. This
+// changes which movements populate the session, not how loads/progression/RIR are
+// computed. All four patterns are logged and well-rested so nothing is recovery-trimmed.
+function fullProfileStrengthRows() {
+  return [
+    ...makeRows('Bench Press', 'chest',           'BPR01', [185, 188, 190, 193, 195], '2026-03-01'),
+    ...makeRows('Barbell Row', 'back',            'ROW01', [155, 158, 160, 163, 165], '2026-03-01'),
+    ...makeRows('Back Squat',  'Quads',           'SQT01', [225, 230, 235, 240, 245], '2026-03-01'),
+    ...makeRows('Deadlift',    'Posterior Chain', 'DL01',  [275, 285, 295, 305, 315], '2026-03-01'),
+  ];
+}
+
+test('scoreIntents: build_strength is FULL-PROFILE by default (lower + hinge present, not just upper)', () => {
+  const result = scoreIntents(fullProfileStrengthRows(), [], { today: '2026-05-03' });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs && Array.isArray(bs.exercises) && bs.exercises.length, 'build_strength must have exercises');
+  const names = bs.exercises.map(e => (e.exercise || '').toLowerCase());
+  // Whole body: lower-body compound (squat = lower) + hinge (deadlift) + push (bench) + pull (row).
+  assert.ok(names.some(n => n.includes('squat')),    `default session must include lower-body work; got [${names.join(', ')}]`);
+  assert.ok(names.some(n => n.includes('deadlift')), `default session must include hinge work; got [${names.join(', ')}]`);
+  assert.ok(names.some(n => n.includes('bench')),    `default session must include pressing; got [${names.join(', ')}]`);
+  assert.ok(names.some(n => n.includes('row')),      `default session must include pulling; got [${names.join(', ')}]`);
+  // It is NOT the silent upper-only session.
+  assert.notEqual(bs.focus, 'Upper body — press + pull', 'default must not carry the upper-only focus');
+});
+
+test('scoreIntents: build_strength yields an UPPER-ONLY session only on the explicit upperOnly intent', () => {
+  const result = scoreIntents(fullProfileStrengthRows(), [], { today: '2026-05-03', upperOnly: true });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  assert.ok(bs && Array.isArray(bs.exercises) && bs.exercises.length, 'build_strength must have exercises');
+  const names = bs.exercises.map(e => (e.exercise || '').toLowerCase());
+  // Upper work present…
+  assert.ok(names.some(n => n.includes('bench')), `upper-only must include pressing; got [${names.join(', ')}]`);
+  assert.ok(names.some(n => n.includes('row')),   `upper-only must include pulling; got [${names.join(', ')}]`);
+  // …and explicitly NO lower-body / hinge work.
+  assert.ok(!names.some(n => n.includes('squat')),    `upper-only must exclude lower-body; got [${names.join(', ')}]`);
+  assert.ok(!names.some(n => n.includes('deadlift')), `upper-only must exclude hinge; got [${names.join(', ')}]`);
+  assert.equal(bs.focus, 'Upper body — press + pull', 'explicit upper-only carries the upper focus');
+});
+
+test('scoreIntents: full-profile default preserves progression targets (loads/sets unchanged)', () => {
+  // The change is which movements populate the session, not how loads/progression
+  // are computed — every emitted exercise keeps a positive working weight and ≥1 set.
+  const result = scoreIntents(fullProfileStrengthRows(), [], { today: '2026-05-03' });
+  const bs = result.intents.find(i => i.id === 'build_strength');
+  for (const ex of bs.exercises) {
+    assert.ok(ex.target_weight > 0, `${ex.exercise} keeps a working weight`);
+    assert.ok(ex.target_sets >= 1, `${ex.exercise} keeps working sets`);
+  }
+});
+
 // ── The buildIntentSession intents are structured too (build_muscle / fix_blind_spots / balanced) ──
 // The live "Back Squat flat + buried + 5-lift overload" was a buildIntentSession
 // intent (shown when the goal isn't strength). structureSession now applies the
@@ -1240,7 +1295,7 @@ test('scoreIntents: a recovering push pattern does NOT collapse Build Strength t
     `expected volume_shifted_to_ready_patterns reason code, got [${bs.reason_codes.join(', ')}]`);
 });
 
-test('scoreIntents: a 3-exercise Build Strength day is allowed when GLOBAL fatigue is high (no backfill)', () => {
+test('scoreIntents: high GLOBAL fatigue does not backfill/pad the Build Strength day (no volume shifting)', () => {
   const rows = [
     ...densityHistory(),
     // A tiny baseline-window session (days 8–28) so fatigue has a baseline to beat.
@@ -1262,7 +1317,7 @@ test('scoreIntents: a 3-exercise Build Strength day is allowed when GLOBAL fatig
   const today = '2026-05-01';
 
   // Precondition: global fatigue really is high, and a profile exists (so the only
-  // reason a short session is allowed is fatigue, not missing data).
+  // reason backfill is withheld is fatigue, not missing data).
   assert.equal(computeFatigueStatus(rows, new Date(today + 'T12:00:00')).status, 'high',
     'fixture must drive global fatigue high');
   assert.equal(buildMuscleGroupReadiness(rows, { today }).find(r => r.pattern === 'push')?.status, 'recovering');
@@ -1273,11 +1328,16 @@ test('scoreIntents: a 3-exercise Build Strength day is allowed when GLOBAL fatig
 
   assert.equal(bs.exercises.filter(ex => new Set(['BPR01', 'DIP01', 'INC01']).has(ex.lift_code)).length, 1,
     'push still thinned to one movement');
-  // High fatigue → no backfill → the short session is allowed.
+  // build_strength is full-profile by default (push + pull + lower + hinge), so the
+  // recovering push is thinned to one but the day still spans the rest of the body —
+  // high fatigue does NOT silently drop it to upper-only. What high fatigue DOES do
+  // is withhold the backfill: no extra volume is shifted onto rested patterns to pad
+  // the day back up to the learned norm.
   assert.ok(!bs.reason_codes.includes('volume_shifted_to_ready_patterns'), 'no backfill under high fatigue');
-  assert.ok(bs.reason_codes.includes('high_fatigue'), 'the short session carries the global-fatigue reason');
-  assert.ok(bs.exercises.length <= 3,
-    `expected a short session under high fatigue, got ${bs.exercises.length}`);
+  assert.ok(bs.reason_codes.includes('high_fatigue'), 'the day carries the global-fatigue reason');
+  // The session stays within the learned norm (it is not padded past it).
+  assert.ok(bs.exercises.length <= 6,
+    `expected a restrained session within the learned norm, got ${bs.exercises.length}`);
 });
 
 // Threading fix: scoreIntents' exForPatterns now carries `muscle_group` on every
