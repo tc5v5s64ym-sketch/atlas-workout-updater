@@ -208,6 +208,64 @@ function splitMultiExerciseSegments(text) {
   return segments.length >= 2 ? segments : null;
 }
 
+// Set-notation words that appear BETWEEN set tokens in normal single-exercise
+// entries ("205 lb 5 reps RIR 2", "70 x 12 @2", "205 for 7"). A word run that
+// contains any of these is notation, never a second exercise name.
+const SET_NOTATION_WORD_RE = /^(x\d*|reps?|rir|rpe|lbs?|kgs?|for|at|by|to|of|with|secs?|s|amrap|ss|dropset|drop)$/i;
+// Continuation / connector words that join sets within ONE exercise or describe
+// effort across them ("then 245", "6 and 6", "all around RIR", "three times").
+// Number words are included so "three times" is never read as an exercise name.
+const SET_CONTINUATION_WORD_RE = /^(today|i|did|was|were|then|and|another|next|same|again|also|plus|times?|all|around|about|roughly|approx|approximately|each|per|set|sets|one|two|three|four|five|six|seven|eight|nine|ten)$/i;
+
+// Refuse-to-merge guard (G1). Detect leftover set tokens that CANNOT be confidently
+// attributed to the recognized exercise: a trailing set-group separated from the
+// first set-group by a word run that is ENTIRELY "name-like" — every word an ordinary
+// noun token, NONE of which is set notation (reps/rir/lb/for/x…), a continuation
+// filler (then/and/all/around/times…), a number word, or a known contextual/ambiguous
+// alias (incline/lats/press/row). That precise shape is a SECOND exercise's name the
+// catalog didn't recognize ("…Dumbbell Side Bend 70 15/1…"); its sets must never be
+// silently merged into the first lift. Natural-language notation between sets always
+// contains a notation/filler word, so the run is not entirely name-like and this never
+// fires on it. Pure; NO catalog/KB lookup — conservative (errs toward NOT firing, i.e.
+// today's behavior) so it adds a new refuse branch without changing any existing parse.
+const CONTEXTUAL_ALIAS_WORDS = new Set(
+  [].concat(
+    ...Object.values(CONTEXTUAL_ALIASES).map(list => list.join(' ').split(/\s+/)),
+    Object.keys(AMBIGUOUS_ALIASES)
+  ).map(w => w.toLowerCase()).filter(Boolean)
+);
+function hasUnattributableTrailingSets(rest) {
+  const tokens = normalizeParserText(rest)
+    .split(' ')
+    .map(t => t.replace(/[,.;:]+$/, '').trim())
+    .filter(Boolean);
+  if (tokens.length < 3) return false;
+
+  const isSet = t => looksLikeSetToken(t);
+  const isNameWord = t =>
+    /^[a-z][a-z-]*$/i.test(t) &&
+    !SET_NOTATION_WORD_RE.test(t) &&
+    !SET_CONTINUATION_WORD_RE.test(t) &&
+    !CONTEXTUAL_ALIAS_WORDS.has(t.toLowerCase());
+
+  let sawSetBefore = false;
+  let i = 0;
+  while (i < tokens.length) {
+    if (isSet(tokens[i])) { sawSetBefore = true; i += 1; continue; }
+    // Start of a non-set word run — collect it.
+    const runStart = i;
+    while (i < tokens.length && !isSet(tokens[i])) i += 1;
+    const run = tokens.slice(runStart, i);
+    const setAfter = i < tokens.length; // a set token follows this run
+    // A pure name run (≥1 token, all name-like) sandwiched between set groups means
+    // the trailing sets belong to an unrecognized second exercise → unattributable.
+    if (sawSetBefore && setAfter && run.length && run.every(isNameWord)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function stripExerciseText(text, exerciseKey) {
   const normalizedWords = normalizeKey(text).split(' ');
   const exerciseWords = exerciseKey.split(' ');
@@ -575,6 +633,21 @@ function parseLogSets(rawText, context = {}) {
         return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
       }, exercise.rest) }
     : exercise;
+
+  // G1 refuse-to-merge: if the rest carries a trailing set-group that can't be
+  // confidently attributed to this exercise (separated by a pure exercise-name word
+  // run, e.g. "…Dumbbell Side Bend 70 15/1…"), do NOT silently absorb those sets into
+  // this lift. Surface them as unresolved so the lifter re-enters the second exercise
+  // — never a phantom merged PR. (Splitting it into its own exercise is a separate,
+  // owner-gated piece of work; see BACKLOG.)
+  if (hasUnattributableTrailingSets(resolvedExercise.rest)) {
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: `I logged sets for ${resolvedExercise.canonicalName}, but it looks like another exercise is stacked in the same entry and I can't tell its sets apart. Please re-enter that exercise on its own so nothing is mis-logged.`,
+      warnings: ['unattributable_trailing_sets'],
+    };
+  }
 
   if (resolvedExercise.canonicalName === 'Hanging Knee Raises') {
     const bodyweightSets = parseBodyweightReps(resolvedExercise.rest);
