@@ -4969,9 +4969,10 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
 
   // resolveCatalogExercise must use the conservative singularization (drop a plural
   // "s" only after a non-"s"), never the loose every-word strip that mangled "press".
-  const resolve = appSrc.slice(appSrc.indexOf('function resolveCatalogExercise('), appSrc.indexOf('function resolveCatalogExercise(') + 800);
+  const resolve = appSrc.slice(appSrc.indexOf('function resolveCatalogExercise('), appSrc.indexOf('function resolveCatalogExercise(') + 1300);
   assert.match(resolve, /\[\^s\]s\$/, 'conservative singularization (preserves "press"/"leg press")');
   assert.doesNotMatch(resolve, /\/s\\b\/g/, 'must not use the loose every-word-final-s strip');
+  assert.match(resolve, /\.length === 1/, 'binds only on a UNIQUE match — refuses to guess on ambiguity');
 
   // The coach layer narrates the mutation + re-points the composer (does not own it).
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');

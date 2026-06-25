@@ -1353,8 +1353,19 @@ function resolveCatalogExercise(phrase) {
   const singular = s => { const t = String(s || '').toLowerCase().trim(); return /[^s]s$/.test(t) ? t.slice(0, -1) : t; };
   const key = raw.toLowerCase();
   const skey = singular(raw);
+  // Refuse to guess on ambiguity (mirrors findMatchIndex, PR-570 review): exact name
+  // → UNIQUE singular-equal → UNIQUE substring. If >1 (or 0) match, leave the slot as
+  // the raw phrase rather than arbitrarily binding by catalog order; a later log
+  // re-resolves identity through the trust loop anyway.
   let opt = opts.find(o => (o.value || '').toLowerCase() === key);
-  if (!opt) opt = opts.find(o => { const v = singular(o.value); return v && (v === skey || v.includes(skey) || skey.includes(v)); });
+  if (!opt) {
+    const eq = opts.filter(o => singular(o.value) === skey);
+    if (eq.length === 1) opt = eq[0];
+  }
+  if (!opt) {
+    const sub = opts.filter(o => { const v = singular(o.value); return v && (v.includes(skey) || skey.includes(v)); });
+    if (sub.length === 1) opt = sub[0];
+  }
   return opt ? { name: opt.value, liftCode: opt.label || '' } : { name: raw, liftCode: '' };
 }
 
