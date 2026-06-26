@@ -132,3 +132,36 @@ test('chat prompt: conclusion-first rule is presentation order only, not a conte
     'chat conclusion-first rule must declare it changes presentation order, not what is answered'
   );
 });
+
+// ── G5: coach claims grounding audit (PR / personal-best / session count) ──────
+
+test('set-reaction prompt: PR language IRON RULE requires progression_verdict.level new_ground', () => {
+  // G5 grounding audit: the model may only say "personal best", "new PR", etc.
+  // when the engine verdict is new_ground — not merely when best_weight is present.
+  assert.ok(prompt.includes('new_ground'), 'PR iron rule must reference new_ground');
+  assert.ok(
+    prompt.includes('personal best') && prompt.includes('new_ground'),
+    'prompt must explicitly tie personal-best language to new_ground'
+  );
+});
+
+test('set-reaction prompt: best_weight alone does not authorize PR language', () => {
+  assert.ok(
+    prompt.includes('best_weight') && prompt.includes('does NOT authorize PR language'),
+    'prompt must clarify that best_weight alone does not license PR claims'
+  );
+});
+
+test('set-reaction prompt: session count must come from trend.sessions_analyzed', () => {
+  // G5 grounding audit: session counts in evidence_context rules must be sourced
+  // from the forwarded trend.sessions_analyzed field, not by counting reference_sets
+  // (which are individual sets, not session counts).
+  assert.ok(
+    prompt.includes('sessions_analyzed'),
+    'prompt must direct the model to use trend.sessions_analyzed for session counts'
+  );
+  assert.ok(
+    prompt.includes('NEVER derive a session count by counting'),
+    'prompt must forbid the model from counting the reference_sets array'
+  );
+});
