@@ -293,6 +293,10 @@ test('post-log live path: a coach-suggested plan registers COMPLETE after the la
   const last = events[events.length - 1].detail;
   assert.equal(last.planIsComplete, true, 'suggestion-flow plan must register complete after the last lift');
   assert.equal(last.nextPlanned, null, 'no next-up may be resurrected at session end');
+  // The engaged plan order is threaded so the handoff can reject an off-plan fallback
+  // next-up (the live "next up: Hammer Curls" that wasn't part of today's plan).
+  assert.ok(Array.isArray(last.plannedOrder) && last.plannedOrder.length > 0,
+    'emitSetLogged threads the engaged plan order for the off-plan handoff guard');
   // Mid-session it must NOT prematurely flag complete, and next-up advances normally.
   const afterFirst = events[0].detail;
   assert.equal(afterFirst.planIsComplete, false);

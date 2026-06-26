@@ -5024,8 +5024,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v58/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v57\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v59/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v58\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5302,6 +5302,12 @@ test('handoff: the /api/plan/today fallback never resurrects an already-complete
   // app.js threads the completed-lift names into the event for that rejection.
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /completed: \[\.\.\.sessionCompleted\]/);
+  // A fallback next-up must ALSO belong to the engaged plan — an off-plan stored-program
+  // lift (the live "next up: Hammer Curls") is rejected so it can't override the closeout
+  // or appear during freestyle logging. app.js threads the engaged plan order for it.
+  assert.match(block, /detail\.plannedOrder \|\| \[\]/, 'handoff reads the engaged plan order from the event');
+  assert.match(block, /inEngagedPlan/, 'a fallback next-up outside the engaged plan is rejected');
+  assert.match(appSource, /plannedOrder: plannedExerciseOrder\(\)/, 'emitSetLogged threads the engaged plan order');
 });
 
 // ── Glanceable dashboard ───────────────────────────────────────────────────────
