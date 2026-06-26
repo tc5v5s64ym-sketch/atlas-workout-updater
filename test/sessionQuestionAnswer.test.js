@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('../services/sessionQuestionAnswer');
 
 // Engine target stub — stands in for recommendNextSet-derived numbers.
 const benchTarget = { exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 };
@@ -62,6 +62,26 @@ test('context values win over the engine where both are present', () => {
 
 test('returns null when no session attribute is asked (defers to caller fallback)', () => {
   assert.equal(buildSessionQuestionAnswer('what should we do about my deadlift form', { resolveTarget: resolveBench }), null);
+});
+
+test('buildSessionAdviceFallback words an engine target only for advice-shaped lift questions', () => {
+  const ans = buildSessionAdviceFallback('Should I go heavier on bench?', {
+    resolveTarget: () => ({
+      exercise_name: 'Bench Press',
+      weight: 230,
+      reps: 5,
+      sets: 3,
+      rir: 2,
+      reasoning: 'RIR 2 with stable reps over two sessions.'
+    })
+  });
+  assert.equal(ans, 'Bench Press: use 230 lbs, 5 reps, 3 sets, RIR 2. Engine read: RIR 2 with stable reps over two sessions.');
+});
+
+test('buildSessionAdviceFallback defers when the lift or target cannot be resolved', () => {
+  assert.equal(buildSessionAdviceFallback('Should I go heavier?', { resolveTarget: resolveBench }), null);
+  assert.equal(buildSessionAdviceFallback('Should I go heavier on bench?', { resolveTarget: () => null }), null);
+  assert.equal(buildSessionAdviceFallback('Bench reps?', { resolveTarget: resolveBench }), null);
 });
 
 test('returns null when the lift cannot be resolved', () => {

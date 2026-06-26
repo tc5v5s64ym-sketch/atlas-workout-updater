@@ -57,7 +57,7 @@ const { detectTrend } = require('./services/trendDetector');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
-const { buildSessionQuestionAnswer, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
+const { buildSessionQuestionAnswer, buildSessionAdviceFallback, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('./services/recoveryRouting');
 const { applyBarbellLoadabilityToExercises, applyBarbellLoadability } = require('./services/barbellLoadabilitySurface');
 const {
@@ -1524,7 +1524,8 @@ function recommendTargetForLift(liftName, logRows) {
     weight: rec.next_target.weight ?? null,
     reps: rec.next_target.reps ?? null,
     sets: rec.next_target.sets ?? null,
-    rir: rec.target_rir ?? null
+    rir: rec.target_rir ?? null,
+    reasoning: rec.reasoning || null
   };
 }
 
@@ -1629,7 +1630,13 @@ app.post('/api/coach/chat', async (req, res) => {
   const deterministicAnswer = (logRowsForTarget) => {
     const close = buildSessionCloseAnswer(message, planStateFromContext(clientCtx));
     if (close) return close;
-    return buildSessionQuestionAnswer(message, {
+    const valueAnswer = buildSessionQuestionAnswer(message, {
+      history,
+      clientContext: clientCtx,
+      resolveTarget: (liftName) => recommendTargetForLift(liftName, logRowsForTarget)
+    });
+    if (valueAnswer) return valueAnswer;
+    return buildSessionAdviceFallback(message, {
       history,
       clientContext: clientCtx,
       resolveTarget: (liftName) => recommendTargetForLift(liftName, logRowsForTarget)

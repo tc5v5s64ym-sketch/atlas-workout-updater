@@ -92,6 +92,16 @@ function formatAnswer(liftName, attrs, target) {
   return `${name}: ${parts.join(', ')}.`;
 }
 
+function formatTargetPrescription(target) {
+  if (!target || typeof target !== 'object') return null;
+  const parts = [];
+  if (target.weight != null) parts.push(`${target.weight} lbs`);
+  if (target.reps != null) parts.push(`${target.reps} reps`);
+  if (target.sets != null) parts.push(`${target.sets} sets`);
+  if (target.rir != null) parts.push(`RIR ${target.rir}`);
+  return parts.length ? parts.join(', ') : null;
+}
+
 // Fill any attribute the primary target is missing from the fallback target.
 // Primary (client context) wins wherever it has a value.
 function mergeTargets(primary, fallback) {
@@ -137,6 +147,32 @@ function buildSessionQuestionAnswer(message, { history = [], clientContext = nul
   if (!target) return null;
 
   return formatAnswer(liftName, attrs, target);
+}
+
+/**
+ * Provider-down advice fallback. This runs ONLY from the caller's Gemini
+ * unavailable/error path, never before a healthy coach. It gives a useful
+ * deterministic floor for advice-shaped lift questions by wording the existing
+ * current-plan target or recommendNextSet target. No new math, no LLM, no writes.
+ */
+function buildSessionAdviceFallback(message, { history = [], clientContext = null, resolveTarget = null } = {}) {
+  const raw = String(message == null ? '' : message);
+  if (!ADVICE_RE.test(raw)) return null;
+
+  const liftName = resolveLiftName(message, history, clientContext);
+  if (!liftName) return null;
+
+  const ctxTarget = targetFromContext(liftName, clientContext);
+  const engineTarget = typeof resolveTarget === 'function' ? resolveTarget(liftName) : null;
+  const target = mergeTargets(ctxTarget, engineTarget);
+  const prescription = formatTargetPrescription(target);
+  if (!prescription) return null;
+
+  const name = (target && target.exercise_name) || liftName;
+  const reason = engineTarget && typeof engineTarget.reasoning === 'string' && engineTarget.reasoning.trim()
+    ? ` Engine read: ${engineTarget.reasoning.trim()}`
+    : '';
+  return `${name}: use ${prescription}.${reason}`;
 }
 
 // A "bare" in-session shorthand question — pure attribute shorthand with NO lift
@@ -307,4 +343,4 @@ function answerTotalRepsQuestion(message, { history = [], clientContext = null }
   return `${name} today: ${total} total reps planned (${target.sets} sets × ${target.reps}).`;
 }
 
-module.exports = { buildSessionQuestionAnswer, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion };
+module.exports = { buildSessionQuestionAnswer, buildSessionAdviceFallback, attributesAsked, resolveLiftName, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion };
