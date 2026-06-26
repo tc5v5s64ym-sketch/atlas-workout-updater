@@ -1763,12 +1763,14 @@ app.post('/api/suggest-substitute', async (req, res) => {
   // AC3: fetch the substitute's prescription from logged history so the replacement
   // slot gets weight/reps/sets instead of null. Best-effort — a missing prescription
   // (no history for the substitute) is non-fatal; the client treats null gracefully.
+  // generateLiftCode derives the short Sheets lift_code (e.g. "RDL01") used to match
+  // Log_Cleaned rows — NOT exercise_id from the KB, which is a different namespace.
   let next_target = null;
   try {
-    const resolved = resolveExercise(rec.recommendation);
-    if (resolved && resolved.exercise_id) {
+    const code = generateLiftCode(rec.recommendation);
+    if (code) {
       const allLog = await getSheetRows(logSheetName);
-      const prescription = recommendNextSet(allLog, resolved.exercise_id);
+      const prescription = recommendNextSet(allLog, code);
       next_target = (prescription && prescription.next_target) || null;
     }
   } catch { /* best-effort */ }

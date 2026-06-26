@@ -30,7 +30,10 @@ const logRows = [
   ['2026-06-01', 'SESSION-OLD', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '205', '5', '3', 'old bench'],
   ['2026-06-10', 'SESSION-NEW', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '225', '5', '2', 'top set'],
   ['2026-06-10', 'SESSION-NEW', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '2', '215', '6', '2', 'backoff'],
-  ['2026-06-10', 'SESSION-NEW', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '315', '3', '2', '']
+  ['2026-06-10', 'SESSION-NEW', 'Back Squat', 'Back Squat', 'Legs', 'SQ01', '1', '315', '3', '2', ''],
+  // AC3: RDL history so suggest-substitute can return a populated next_target when
+  // Deadlift is unavailable and Romanian Deadlift (RDL01) is the recommended substitute.
+  ['2026-06-08', 'SESSION-RDL', 'Romanian Deadlift', 'Romanian Deadlift', 'Hamstrings', 'RDL01', '1', '185', '5', '2', '']
 ];
 
 const exerciseCatalogRows = [
@@ -3390,11 +3393,11 @@ test('api smoke: undo-last returns 409 and does not delete on session_id mismatc
 
 test('api smoke: undo-last returns 409 and does not delete when target row is missing', async () => {
   fakeSheetsState.deleteCalls.length = 0;
-  // Sheet row 6 is beyond logRows (which only covers rows 2–5), so allRows[4] is undefined
+  // Sheet row 7 is beyond logRows (which covers rows 2–6), so allRows[5] is undefined
   const { response, body } = await requestJson('/api/log-workout/undo-last', {
     method: 'POST',
     body: JSON.stringify({
-      log_appended_range: 'Log_Cleaned!A6:L6',
+      log_appended_range: 'Log_Cleaned!A7:L7',
       session_id: 'SESSION-NEW',
       rows_to_delete: 1,
       confirm_delete: true
@@ -4347,33 +4350,34 @@ test('api smoke: suggest-substitute never writes to any sheet', async () => {
 
 // ── AC3: suggest-substitute includes next_target prescription (Step AC3) ──────
 
-test('api smoke: suggest-substitute — response always includes next_target field (AC3)', async () => {
-  // The response must carry next_target on the recommendation so the client can
-  // populate the replacement exercise slot with weight/reps/sets instead of null.
-  // next_target is null when no log history exists for the substitute (non-fatal).
+test('api smoke: suggest-substitute — next_target is populated when substitute has log history (AC3)', async () => {
+  // logRows includes Romanian Deadlift at RDL01 (185×5 @ RIR 2). The endpoint uses
+  // generateLiftCode('Romanian Deadlift') → 'RDL01' to match Log_Cleaned history,
+  // so next_target must be a non-null object with weight/reps/sets when Deadlift
+  // is unavailable and the substitute (Romanian Deadlift) has history.
   const { response, body } = await requestJson('/api/suggest-substitute', {
     method: 'POST',
     body: JSON.stringify({ message: 'Platform busy', current_exercise: 'Deadlift' })
   });
   assert.equal(response.status, 200);
   assert.ok(body.data.recommendation, 'recommendation must not be null');
-  assert.ok(
-    Object.prototype.hasOwnProperty.call(body.data.recommendation, 'next_target'),
-    'recommendation must carry a next_target field (AC3 prescription)'
-  );
+  const nt = body.data.recommendation.next_target;
+  assert.ok(nt !== null && typeof nt === 'object', 'next_target must be a prescription object when substitute has history');
+  assert.ok(typeof nt.weight === 'number' && nt.weight > 0, 'next_target.weight must be a positive number from RDL history');
+  assert.ok(typeof nt.reps === 'number' && nt.reps > 0, 'next_target.reps must be a positive number from RDL history');
+  assert.ok(typeof nt.sets === 'number' && nt.sets > 0, 'next_target.sets must be a positive number from RDL history');
 });
 
-test('api smoke: suggest-substitute — next_target is an object when substitute has history (AC3)', async () => {
-  // The stub logRows include Back Squat at SQ01 — so when Back Squat is prescribed
-  // and Leg Press is the substitute, Leg Press (no stub history) → next_target null.
-  // For Deadlift→Romanian Deadlift the stub has no RDL history → next_target null.
-  // For Back Squat→Leg Press: stub has SQ01 history; Leg Press resolves to a
-  // different code with no stub history → next_target null.
-  // This test verifies the field shape is always safe (object | null), never undefined.
-  const { body } = await requestJson('/api/suggest-substitute', {
+test('api smoke: suggest-substitute — next_target is null when substitute has no history (AC3 graceful degrade)', async () => {
+  // Leg Press (LPX01) has no stub history — next_target must be null, not an error.
+  const { response, body } = await requestJson('/api/suggest-substitute', {
     method: 'POST',
     body: JSON.stringify({ message: 'Rack unavailable', current_exercise: 'Back Squat' })
   });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'recommendation must not be null');
+  // next_target may be null (no Leg Press history in stub) — that is the correct
+  // graceful-degrade: the replacement slot gets null rather than throwing.
   const nt = body.data.recommendation.next_target;
   assert.ok(
     nt === null || (typeof nt === 'object' && nt !== null),
