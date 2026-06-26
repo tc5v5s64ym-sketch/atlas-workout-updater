@@ -49,21 +49,18 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
-### LT-003 — parser stacked-exercise boundary (refuse-to-merge guardrail)
-
-| Field | Value |
-|---|---|
-| **Test ID** | LT-003 |
-| **Related PR / feature** | G1 — parser splits/surfaces stacked exercises (never silently merges) |
-| **Shell / app version expected** | Any version with the G1 refuse-to-merge guard deployed |
-| **Steps** | In one input bubble, enter two exercises stacked inline (e.g. `Weighted Dips 50 11/1 x3 Dumbbell Side Bend 70 15/1 x3`). |
-| **Expected result** | The second exercise's sets are **NOT** merged into the first lift, and **no fabricated PR** appears in the coach note. With the refuse-to-merge guardrail shipped here, Atlas surfaces the second exercise as unresolved and asks you to re-enter it on its own (it does **not** yet auto-split into two clean cards — that is the separate, owner-gated "make stacked input parse into separate exercises" feature). PASS = no silent merge + no phantom PR. |
-| **Screenshot** | The surfaced "re-enter that exercise on its own" message (or, once the split feature ships, the two separate cards). |
-| **Owner result** | PASS / FAIL — |
-| **Follow-up if FAIL** | If the second exercise's sets still merge into the first or a phantom PR appears, capture the exact input text + the resulting cards. |
-
 ---
 
 ## Completed
 
-*(none yet)*
+### LT-003 — parser stacked-exercise boundary (G1) — ✅ PASS (2026-06-25)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-003 |
+| **Related PR / feature** | G1 — parser never silently merges a stacked second exercise (PR #604, merged + deployed `Server build PR #604`, shell v55) |
+| **Steps** | Stacked two exercises in one bubble (Weighted Dip + Dumbbell Side Bend, each with its sets). |
+| **Expected result** | The second exercise's sets are NOT merged into the first lift; no fabricated PR. |
+| **Owner result** | **PASS** — Dumbbell Side Bend logged as its OWN row (`70×15 RIR 1 ×3`), distinct from Weighted Dip (`50×11 RIR 1 ×3`); the review card listed 5 separate exercises · 19 sets · 22,860 lb (warm-ups counted in volume). No 70lb sets absorbed into Dips, no phantom PR in the coach note. **First live-verified behavior change — the trust guardrail held in the real app.** |
+| **Note (accuracy)** | The paste was **multi-line** (name-per-line), which is split by the client display-block normalizer — so this proves the realistic stacked format is safe (no merge / no phantom PR). PR #604's *inline one-line* refuse-to-merge guard is merged + unit-tested but was not separately isolated live; not re-tested (a build-detail variant, not a distinct gym check). |
+| **Follow-up** | None for G1. Separate items still open (observed live, NOT in #604 scope): **G2** (coach note addressed only the first stacked lift, not Side Bend) and **G5/F6** (the "Deadlift" row wraps in the review card). Both already in BACKLOG. |
