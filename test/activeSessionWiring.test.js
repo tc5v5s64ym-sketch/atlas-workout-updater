@@ -154,3 +154,36 @@ test('wiring: tryApplyPlanMutation curName() uses firstUnloggedPlannedLift(), no
     'tryApplyPlanMutation curName() must call firstUnloggedPlannedLift() for the post-mutation current exercise'
   );
 });
+
+// ── AC3: checkAndSuggestSubstitute stores prescription in pendingSubstitution ─
+
+test('wiring: checkAndSuggestSubstitute stores rec.next_target as pendingSubstitution.prescription (AC3)', () => {
+  const start = appSrc.indexOf('async function checkAndSuggestSubstitute(');
+  assert.ok(start !== -1, 'checkAndSuggestSubstitute must exist');
+  const next = appSrc.indexOf('\nasync function ', start + 1);
+  const body = appSrc.slice(start, next === -1 ? start + 2000 : next);
+  // The prescription from the suggest-substitute API must be stored on
+  // pendingSubstitution so applySessionSubstitution can populate the replacement
+  // slot with weight/reps/sets instead of null (AC3).
+  assert.ok(
+    body.includes('prescription') && body.includes('rec.next_target'),
+    'checkAndSuggestSubstitute must store rec.next_target as pendingSubstitution.prescription'
+  );
+});
+
+test('wiring: applySessionSubstitution accepts prescription arg and uses it for weight/reps/sets (AC3)', () => {
+  const start = appSrc.indexOf('function applySessionSubstitution(');
+  assert.ok(start !== -1, 'applySessionSubstitution must exist');
+  const next = appSrc.indexOf('\nfunction ', start + 1);
+  const body = appSrc.slice(start, next === -1 ? start + 1500 : next);
+  // Must accept a prescription argument.
+  assert.ok(
+    body.includes('prescription'),
+    'applySessionSubstitution must accept and use a prescription argument'
+  );
+  // Must derive weight, reps, sets from the prescription when present.
+  assert.ok(
+    body.includes('p.weight') && body.includes('p.reps') && body.includes('p.sets'),
+    'applySessionSubstitution must read weight/reps/sets from the prescription object'
+  );
+});
