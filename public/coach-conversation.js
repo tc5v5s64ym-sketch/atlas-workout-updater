@@ -1167,11 +1167,15 @@
       const count = session ? session.exercises.length : null;
       const closeout = document.createElement('div');
       closeout.className = 'session-closeout';
+      // G3: the PLAN being exhausted does not mean the lifter is done — they may log
+      // extra work beyond the plan. Word this as "planned work done, keep going or
+      // save", never "session over", so Atlas doesn't surprise the lifter by declaring
+      // them finished (the live "I'm not done, these are the first two" repro).
       closeout.textContent = count
-        ? `That's your plan done — ${count} exercise${count !== 1 ? 's' : ''} complete. Say "done" or take a screenshot to save.`
-        : 'Plan complete. Say "done" or take a screenshot to save.';
+        ? `That's your planned work done — ${count} exercise${count !== 1 ? 's' : ''} logged. Log anything else you do, or say "done" or upload a screenshot to save.`
+        : 'Planned work done. Log anything else you do, or say "done" or upload a screenshot to save.';
       bubble.appendChild(closeout);
-      setWorkoutPlaceholder('Say "done" to save your session');
+      setWorkoutPlaceholder('Log more, or say "done" to save');
       lastAnnouncedNextUp = null;   // plan done — a fresh session re-announces
     } else {
       if (nextEx) {

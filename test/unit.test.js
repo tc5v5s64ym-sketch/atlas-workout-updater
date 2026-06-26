@@ -4723,8 +4723,11 @@ test('closeout screenshot: plan-complete attachment parses effort without workou
   assert.ok(guardAt > submitStart && guardAt < parseAt, 'closeout screenshot guard must run before workout parsing');
   assert.match(guard, /closeoutScreenshotFile = file/, 'must remember the attachment locally');
   assert.match(guard, /parseWorkoutImage\(file\)/, 'must try parse-only effort extraction');
-  assert.match(guard, /Effort read from screenshot\. Say done to preview your workout with effort data\./, 'successful parse must say effort data will be included');
-  assert.match(guard, /I couldn't read effort from the screenshot\. I can still save the workout without effort data — say done to preview\./, 'failed parse must be explicit and non-blocking');
+  assert.match(guard, /Effort read from screenshot — opening your preview to save\./, 'successful parse opens the preview (effort included)');
+  assert.match(guard, /I couldn't read effort from the screenshot\. I can still save the workout without effort data\./, 'failed parse is explicit, non-blocking, and still opens the preview');
+  // FB: the screenshot upload IS the completion signal — it drives the existing closeout
+  // (preview→approve→write) directly instead of waiting for a separate "done".
+  assert.match(guard, /await handleLogIt\(\);/, 'the screenshot upload triggers the existing closeout/preview');
   assert.match(guard, /return;/, 'must not fall through into /api/complete-workout preview');
   assert.doesNotMatch(guard, /submitCompleteWorkout|complete-workout/, 'closeout attachment must not call workout ingestion');
 });
@@ -5021,8 +5024,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v57/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v56\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v58/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v57\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

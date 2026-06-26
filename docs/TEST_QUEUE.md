@@ -49,6 +49,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
+### LT-006 — completion-flow: screenshot → preview + plan-complete stops nagging (G3+FB)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-006 |
+| **Related PR / feature** | G3+FB — closeout screenshot drives the existing preview; plan-complete message stops implying the session is over (shell v58) |
+| **Shell / app version expected** | shell v58 (confirm "Running shell: v58" in Settings before testing) |
+| **Steps** | 1. Log a planned session to completion so the coach posts the plan-complete line. Confirm it reads as "keep logging or save" — NOT "session over / say done" nagging — and that you can log another exercise after it without being pushed to finish. 2. At closeout, upload an Apple Watch effort screenshot (instead of typing "done"). |
+| **Expected result** | (1) The plan-complete line invites continued logging and offers save as an option, not a forced end. (2) The screenshot upload opens the normal **preview** (read effort → preview to save) — it does NOT one-tap save and does NOT write directly. Approve-before-write is preserved: nothing is written to Sheets until you approve the preview. The saved row carries the screenshot's effort data. |
+| **Screenshot** | Plan-complete line + the preview opened from the screenshot upload. |
+| **Owner result** | PASS / FAIL — |
+| **Follow-up if FAIL** | If the screenshot writes without a preview, STOP — that is a trust-loop regression; revert FB. If the plan-complete line still nags, refine G3 copy. |
+
 ---
 
 ## Completed

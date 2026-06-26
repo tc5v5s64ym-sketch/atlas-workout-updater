@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v57';
+const ATLAS_SHELL_BUILD = 'v58';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -4301,10 +4301,18 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     setStatus(loggerStatus, 'Reading screenshot effort...', 'ok');
     try {
       closeoutScreenshotEffort = await parseWorkoutImage(file);
-      setStatus(loggerStatus, 'Effort read from screenshot. Say done to preview your workout with effort data.', 'ok');
+      setStatus(loggerStatus, 'Effort read from screenshot — opening your preview to save.', 'ok');
     } catch {
-      setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data — say done to preview.", 'warn');
+      setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
     }
+    // FB: the screenshot upload IS the completion signal at closeout — drive the
+    // EXISTING closeout (handleLogIt → runCloseout → preview → approve → write) directly
+    // instead of staging the effort and waiting for a separate "done". On re-entry the
+    // closeoutAttachmentOnly path (below) folds the parsed effort into the normal
+    // log-workout preview. Approve-before-write is preserved — this never writes
+    // directly; it opens the same preview "done" would, so write_id idempotency and the
+    // lastWrite "nothing new" guard still backstop any later "done".
+    await handleLogIt();
     return;
   }
 
