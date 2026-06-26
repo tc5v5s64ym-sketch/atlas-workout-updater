@@ -941,7 +941,7 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   // The swap is recorded when the lifter declares it (substitute suggestion path).
   const suggestFn = appSource.slice(
     appSource.indexOf('async function checkAndSuggestSubstitute'),
-    appSource.indexOf('async function checkAndSuggestSubstitute') + 900
+    appSource.indexOf('async function checkAndSuggestSubstitute') + 1200
   );
   assert.match(suggestFn, /pendingSubstitution = \{ prescribed:/, 'must record the prescribed lift on a declared swap');
 
@@ -988,12 +988,13 @@ test('Step 379: a declared swap advances the session cursor so subsequent checks
     appSource.indexOf('async function checkAndSuggestSubstitute') + 2200
   );
 
-  // current_exercise is sourced from the cursor — so the cursor must move once a
-  // swap is declared, or the next conversational message re-sends the taken lift.
-  const currentExIdx = suggestFn.indexOf('activePlannedSession.exercises[activePlannedSession.index]');
+  // current_exercise is sourced from the canonical session (currentPlannedExercise()),
+  // not the stale index cursor — so the swap is declared against the correct exercise
+  // and the cursor still moves so the next check sees the next slot.
+  const currentExIdx = suggestFn.indexOf('currentPlannedExercise()');
   const recordIdx = suggestFn.indexOf('pendingSubstitution = { prescribed:');
   const advanceIdx = suggestFn.indexOf('activePlannedSession.index += 1');
-  assert.ok(currentExIdx !== -1, 'current_exercise must be read from the cursor slot');
+  assert.ok(currentExIdx !== -1, 'current_exercise must be read via currentPlannedExercise() (canonical session)');
   assert.ok(recordIdx !== -1, 'must record the prescribed lift before advancing');
   assert.ok(advanceIdx !== -1, 'must advance the authoritative session cursor after a declared swap');
   // Order matters: the prescribed (taken) lift is recorded against the PRE-advance
