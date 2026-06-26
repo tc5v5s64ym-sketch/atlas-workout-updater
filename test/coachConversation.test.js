@@ -301,18 +301,47 @@ test('G2: handleSetLogged coaches every ADDITIONAL logged lift (not just exercis
     'the additional lift’s prose is attributed by lift name (both lifts referenced)');
 });
 
-test('G2: single-exercise entry is unchanged (the multi-lift loop is over slice(1), empty for one lift)', () => {
+// FA — coach renders per-lift blocks [card -> coaching -> Next] in order, not all
+// cards then all coaching. (Updated from the prior G2 "all-cards readback loop"
+// structural assertions, which pinned the pre-FA implementation; the behavioral
+// guarantees they protected — every lift coached, single-lift unchanged, no double-
+// coach — are preserved and re-asserted here against the new interleaved structure.)
+
+test('FA: single-exercise entry renders one block, byte-identical (no upfront all-cards loop)', () => {
   const fn = handleSetLoggedSource();
-  // A one-lift entry has no exercises.slice(1) members, so the new coaching loop is a
-  // no-op and the primary path (the only output) is identical to before — no doubled prose.
+  // The pre-FA batched "for (const ex of exercises) { ...readback... }" loop is GONE —
+  // cards are no longer all rendered up front.
+  assert.doesNotMatch(fn, /for \(const ex of exercises\) \{/,
+    'the upfront all-cards readback loop must be removed (cards are now per-lift)');
+  // The PRIMARY lift's card is inserted before `body`, so a single-lift entry is exactly
+  // [card][coaching(body)][effort][Next] as before.
+  assert.match(fn, /bubble\.insertBefore\(buildReadback\(primary\.exercise[\s\S]*?\), body\)/,
+    'the primary card is inserted before body (single-lift order unchanged)');
+  // All additional rendering is scoped to exercises.slice(1) — empty for one lift, so a
+  // single-lift entry produces no extra block (no doubled output).
   assert.match(fn, /for \(const ex of exercises\.slice\(1\)\)/,
-    'the added coverage is scoped to the SECOND+ lift only');
-  // The all-exercises loop is the READBACK loop (renders a card per lift) — it must do
-  // buildReadback and must NOT coach (no getInWorkoutNote there), so the primary is
-  // never double-coached.
-  const readbackLoop = fn.slice(fn.indexOf('for (const ex of exercises) {'), fn.indexOf('const primary'));
-  assert.match(readbackLoop, /buildReadback\(/, 'the all-exercises loop renders readbacks');
-  assert.doesNotMatch(readbackLoop, /getInWorkoutNote/, 'the all-exercises loop must not also coach');
+    'additional lifts are rendered only inside the slice(1) loop');
+});
+
+test('FA: a stacked entry renders each lift as card -> coaching -> Next, in order', () => {
+  const fn = handleSetLoggedSource();
+  const loop = fn.slice(fn.indexOf('for (const ex of exercises.slice(1))'));
+  const end = loop.indexOf('\n    }');
+  const body = end === -1 ? loop : loop.slice(0, end);
+  // Within each additional lift's block, the three pieces appear in order:
+  // card (buildReadback) -> coaching (getInWorkoutNote) -> Next (buildNextPrescription).
+  const cardIdx = body.indexOf('buildReadback(');
+  const coachIdx = body.indexOf('getInWorkoutNote(');
+  const nextIdx = body.indexOf('buildNextPrescription(');
+  assert.ok(cardIdx !== -1, 'each additional lift renders its own card');
+  assert.ok(coachIdx !== -1, 'each additional lift renders its own coaching note');
+  assert.ok(nextIdx !== -1, 'each additional lift renders its own Next prescription');
+  assert.ok(cardIdx < coachIdx && coachIdx < nextIdx,
+    'order per lift must be card -> coaching -> Next');
+  // The card is appended (interleaved with this lift's coaching), not inserted before body
+  // (which would batch it with the primary card at the top).
+  assert.match(body, /bubble\.appendChild\(buildReadback\(ex\.exercise/,
+    'the additional lift card is appended in sequence, not batched before body');
 });
 
 /* ===== governor grade fallback voice (PR 484 — LLM-down stimulus_grade voicing) ===== */
