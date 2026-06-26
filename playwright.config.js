@@ -1,3 +1,4 @@
+const path = require('path');
 const { defineConfig, devices } = require('@playwright/test');
 
 // In the Claude Code remote execution environment, PLAYWRIGHT_BROWSERS_PATH is
@@ -5,7 +6,7 @@ const { defineConfig, devices } = require('@playwright/test');
 // the revision @playwright/test expects. Use the stable system symlink when
 // PLAYWRIGHT_BROWSERS_PATH is set so the suite runs without a download.
 const executablePath = process.env.PLAYWRIGHT_BROWSERS_PATH
-  ? '/opt/pw-browsers/chromium'
+  ? path.join(process.env.PLAYWRIGHT_BROWSERS_PATH, 'chromium')
   : undefined;
 
 module.exports = defineConfig({
