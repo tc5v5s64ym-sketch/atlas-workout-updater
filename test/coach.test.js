@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeDeviation, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, isValidPlanEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -474,6 +474,15 @@ test('chat system prompt documents all three PROPOSE_EDIT actions', () => {
   assert.match(prompt, /VERY LAST LINE/i, 'must specify placement of the PROPOSE_EDIT line');
 });
 
+test('chat system prompt documents PROPOSE_PLAN_EDIT for workout plan mutations', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /PROPOSE_PLAN_EDIT/, 'must include the plan edit proposal token');
+  assert.match(prompt, /replace_plan/, 'must document full plan replacement');
+  assert.match(prompt, /add_exercises/, 'must document exercise additions');
+  assert.match(prompt, /remove_exercises/, 'must document exercise removals');
+  assert.match(prompt, /Omit unknown weight\/reps\/sets\/rir/i, 'must forbid invented plan numbers');
+});
+
 test('parseEditFromReply strips the PROPOSE_EDIT line and returns the edit object', () => {
   const raw = 'Updated set 2 to 235 lbs.\nPROPOSE_EDIT: {"action":"update_set","index":1,"weight":235,"reps":5}';
   const { reply, propose_edit } = parseEditFromReply(raw);
@@ -572,6 +581,29 @@ test('parseEditFromReply drops a proposal with an out-of-bounds number (ME-9)', 
   const { reply, propose_edit } = parseEditFromReply(raw);
   assert.match(reply, /Bumping you up\./);
   assert.equal(propose_edit, null, 'a negative-weight proposal must not become an approvable edit');
+});
+
+test('parseReplyWithProposals strips PROPOSE_PLAN_EDIT and returns a sanitized plan edit', () => {
+  const raw = [
+    'Added core at the end.',
+    'PROPOSE_PLAN_EDIT: {"action":"add_exercises","exercises":[{"name":"Hanging Knee Raises","sets":3,"reps":15,"rir":2},{"name":"Dumbbell Side Bend"}]}'
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(reply, 'Added core at the end.');
+  assert.deepEqual(propose_plan_edit, {
+    action: 'add_exercises',
+    exercises: [
+      { name: 'Hanging Knee Raises', sets: 3, reps: 15, rir: 2 },
+      { name: 'Dumbbell Side Bend' }
+    ]
+  });
+});
+
+test('isValidPlanEditSchema accepts plan actions and rejects empty or unknown edits', () => {
+  assert.ok(isValidPlanEditSchema({ action: 'replace_plan', exercises: ['Bench Press'] }));
+  assert.ok(isValidPlanEditSchema({ action: 'remove_exercises', exercises: ['Hanging Knee Raises'] }));
+  assert.ok(!isValidPlanEditSchema({ action: 'delete_set', exercises: ['Bench Press'] }));
+  assert.ok(!isValidPlanEditSchema({ action: 'add_exercises', exercises: [] }));
 });
 
 // ── structured constraints (P1 · 2.1) ─────────────────────────────────────────

@@ -637,6 +637,17 @@ function buildChatSystemPrompt(context) {
     '- The PROPOSE_EDIT line is stripped by the app and never shown to the lifter — write your prose as if it does not exist.',
     '- If the intent is ambiguous or current_preview is empty, respond in prose only with no PROPOSE_EDIT line.',
     '',
+    'PROPOSING PLAN EDITS TO THE CURRENT WORKOUT PLAN:',
+    '- When you give the lifter a workout plan in chat, or clearly add/remove exercises from the current plan, you MUST include a structured plan edit.',
+    '- This is only for the in-memory workout plan, not saved workout data. You still never write, save, log, edit sheets, undo, or delete anything.',
+    '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly one of:',
+    '  PROPOSE_PLAN_EDIT: {"action":"replace_plan","exercises":[{"name":"Bench Press","weight":225,"reps":5,"sets":3,"rir":2}]}',
+    '  or PROPOSE_PLAN_EDIT: {"action":"add_exercises","exercises":[{"name":"Hanging Knee Raises","sets":3,"reps":15,"rir":2}]}',
+    '  or PROPOSE_PLAN_EDIT: {"action":"remove_exercises","exercises":["Hanging Knee Raises","Dumbbell Side Bend"]}',
+    '- For replace_plan, include the full visible plan in order. For add_exercises, include only the exercises being added. For remove_exercises, include only the exercises being removed.',
+    '- Omit unknown weight/reps/sets/rir fields rather than inventing numbers.',
+    '- The PROPOSE_PLAN_EDIT line is stripped by the app and never shown to the lifter.',
+    '',
     'PROPOSING A COACHING NOTE (persistent background memory):',
     '- When the lifter reveals something durable and actionable — an injury, a mobility limit, a goal, a program change, an equipment constraint — you MAY propose saving it as a coaching note.',
     '- Only propose a note for facts worth persisting across sessions. Session observations ("great set today") do not qualify.',
@@ -719,6 +730,40 @@ function isValidEditSchema(obj) {
     return editNumbersValid(obj);
   }
   return false;
+}
+
+function sanitizePlanEditExercise(ex) {
+  if (typeof ex === 'string') {
+    const name = ex.trim();
+    return name ? { name } : null;
+  }
+  if (!ex || typeof ex !== 'object' || Array.isArray(ex)) return null;
+  const name = typeof ex.name === 'string'
+    ? ex.name.trim()
+    : (typeof ex.exercise === 'string' ? ex.exercise.trim() : '');
+  if (!name) return null;
+  const clean = { name };
+  const liftCode = ex.liftCode || ex.lift_code;
+  if (typeof liftCode === 'string' && liftCode.trim()) clean.liftCode = liftCode.trim();
+  const rationale = ex.rationale || ex.reason || ex.focus;
+  if (typeof rationale === 'string' && rationale.trim()) clean.rationale = rationale.trim().slice(0, 200);
+  for (const key of ['weight', 'reps', 'sets', 'rir']) {
+    if (ex[key] == null || ex[key] === '') continue;
+    const n = Number(ex[key]);
+    if (Number.isFinite(n)) clean[key] = n;
+  }
+  return clean;
+}
+
+function isValidPlanEditSchema(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const action = obj.action;
+  if (!['replace_plan', 'add_exercises', 'remove_exercises'].includes(action)) return false;
+  if (!Array.isArray(obj.exercises) || obj.exercises.length === 0) return false;
+  const exercises = obj.exercises.map(sanitizePlanEditExercise).filter(Boolean);
+  if (!exercises.length) return false;
+  obj.exercises = exercises.slice(0, 12);
+  return true;
 }
 
 // Fixed vocabularies for structured constraints. A constraint is a typed,
@@ -914,7 +959,7 @@ function parseNoteFromReply(text) {
 // Internal parser that handles PROPOSE_EDIT, PROPOSE_NOTE, and PROPOSE_CONSTRAINT
 // in one pass — the last non-blank line can carry at most one token per reply.
 function parseReplyWithProposals(text) {
-  const empty = { reply: '', propose_edit: null, propose_note: null, propose_constraint: null };
+  const empty = { reply: '', propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null };
   if (typeof text !== 'string') return empty;
   const lines = text.split('\n');
   let tokenLineIdx = -1;
@@ -925,15 +970,23 @@ function parseReplyWithProposals(text) {
     if (trimmed.startsWith('PROPOSE_EDIT:')) { tokenLineIdx = i; tokenType = 'edit'; }
     else if (trimmed.startsWith('PROPOSE_NOTE:')) { tokenLineIdx = i; tokenType = 'note'; }
     else if (trimmed.startsWith('PROPOSE_CONSTRAINT:')) { tokenLineIdx = i; tokenType = 'constraint'; }
+    else if (trimmed.startsWith('PROPOSE_PLAN_EDIT:')) { tokenLineIdx = i; tokenType = 'plan_edit'; }
     break;
   }
   if (tokenLineIdx === -1) return { ...empty, reply: text.trim() };
-  const prefix = tokenType === 'edit' ? 'PROPOSE_EDIT:' : tokenType === 'note' ? 'PROPOSE_NOTE:' : 'PROPOSE_CONSTRAINT:';
+  const prefix = tokenType === 'edit'
+    ? 'PROPOSE_EDIT:'
+    : tokenType === 'note'
+      ? 'PROPOSE_NOTE:'
+      : tokenType === 'constraint'
+        ? 'PROPOSE_CONSTRAINT:'
+        : 'PROPOSE_PLAN_EDIT:';
   const jsonPart = lines[tokenLineIdx].trim().slice(prefix.length).trim();
   const prose = lines.slice(0, tokenLineIdx).join('\n').trim();
   let propose_edit = null;
   let propose_note = null;
   let propose_constraint = null;
+  let propose_plan_edit = null;
   try {
     const parsed = JSON.parse(jsonPart);
     if (tokenType === 'edit' && isValidEditSchema(parsed)) propose_edit = parsed;
@@ -941,9 +994,11 @@ function parseReplyWithProposals(text) {
       propose_note = { note: parsed.note.trim().slice(0, 200) };
     } else if (tokenType === 'constraint') {
       propose_constraint = sanitizeConstraint(parsed);
+    } else if (tokenType === 'plan_edit' && isValidPlanEditSchema(parsed)) {
+      propose_plan_edit = parsed;
     }
   } catch { /* malformed JSON — no proposal */ }
-  return { reply: prose || text.trim(), propose_edit, propose_note, propose_constraint };
+  return { reply: prose || text.trim(), propose_edit, propose_note, propose_constraint, propose_plan_edit };
 }
 
 // Bound the conversation to the last few turns; only role + text survive. The
@@ -1243,6 +1298,7 @@ module.exports = {
   parseEditFromReply,
   parseNoteFromReply,
   parseReplyWithProposals,
+  isValidPlanEditSchema,
   isValidEditSchema,
   buildCompileSystemPrompt,
   compileSessionFromHistory,
