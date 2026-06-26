@@ -49,6 +49,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
+### LT-004 — coach speaks to all stacked lifts (G2)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-004 |
+| **Related PR / feature** | G2 — coach addresses every logged lift in a multi-exercise entry (not just the first) |
+| **Shell / app version expected** | Shell v56+ (server build with the G2 coach-conversation change deployed) |
+| **Steps** | Log two exercises in one entry (e.g. Deadlift sets + Bench sets stacked in one bubble). |
+| **Expected result** | The coach note comments on **BOTH** lifts, not just the first — each logged lift gets its own coaching prose (attributed by lift name). Single-lift entries read exactly as before. |
+| **Screenshot** | The coach note. |
+| **Owner result** | PASS / FAIL — |
+| **Follow-up if FAIL** | If only the first lift is coached, capture the entry text + the full coach note. |
+
 ---
 
 ## Completed

@@ -1090,6 +1090,42 @@
       bubble.appendChild(buildNextPrescription(rec));
     }
 
+    // G2 — coach EVERY logged lift, not just exercises[0]. A multi-exercise entry
+    // (e.g. stacked Deadlift + Bench) renders a readback per lift above, but the
+    // coaching prose only covered the first. For each ADDITIONAL lift, build its own
+    // coaching note (+ next-set prescription) so no logged lift goes un-coached. The
+    // prose is attributed by lift name so two lifts read as one coherent note, not an
+    // ambiguous second block. Single-exercise entries have no additional lifts, so
+    // this loop is empty and their output is byte-identical to before (session-level
+    // handoff/closeout below still runs once, off lastLogged).
+    for (const ex of exercises.slice(1)) {
+      const exCode = liftCodeForExercise(ex.exercise);
+      let exRec = null;
+      if (exCode) {
+        const exJustLogged = ex.sets && ex.sets.length ? ex.sets[ex.sets.length - 1] : null;
+        try { if (typeof fetchReaction === 'function') exRec = await fetchReaction(exCode, exJustLogged); } catch { /* best effort */ }
+      }
+      const exReaction = await getInWorkoutNote({
+        liftCode: exCode,
+        exerciseName: ex.exercise,
+        todaySets: ex.sets,
+        rec: exRec,
+        planned_queue: [],
+        substitution: undefined
+      });
+      if (exReaction && exReaction.note) {
+        const exMsg = document.createElement('div');
+        exMsg.className = 'coach-msg';
+        const exText = `${ex.exercise}: ${exReaction.note}`;
+        await typeOut(exMsg, exText);
+        bubble.appendChild(exMsg);
+        chatTurns.push({ role: 'atlas', text: exText });
+      }
+      if (exRec && exRec.recommendation) {
+        bubble.appendChild(buildNextPrescription(exRec));
+      }
+    }
+
     // If the input had more than one substitution (unusual), append each extra
     // inline below the prescription — still no separate box.
     for (const sub of substitutions.slice(1)) {

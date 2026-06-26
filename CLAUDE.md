@@ -192,6 +192,7 @@ Every PR must follow these rules without exception:
 - **Do not build future roadmap steps early.** Implement only what the current PR scope names.
 - **Do not refactor unrelated systems.** Fix only what is broken or in scope.
 - **Future discoveries go to `BACKLOG.md`.** Never carry them in memory or chat history. Append them in the same PR.
+- **Never self-author a PR from a review note.** A non-blocking review observation or follow-up idea becomes a backlog line **in the next authorized PR**, or a "want me to file this?" to the owner — it is **never** grounds to open a new unprompted PR. Agents do not spin up their own PRs from their own (or a reviewer's) notes; that is silent-momentum drift. Capture, then wait for an authorized scope to carry it.
 - **Stop for the owner only when an owner check-in criterion is met** (`docs/OWNER_CHECKIN_RULES.md`). Atlas is automation-first (`docs/AUTOMATION_PROTOCOL.md`): open the PR, run tests and review, classify risk, and generate the merge card. If no check-in criterion applies and the PR is merge-ready, merge it and proceed to the next approved task without blocking on the owner. Claude Code holds **full merge authority** under this automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`); keep going until the owner says stop.
 
 ---

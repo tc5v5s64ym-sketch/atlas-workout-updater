@@ -272,6 +272,49 @@ test('app.js attaches a bare set sequence to the first unlogged planned lift', (
     'parse context falls back to the first unlogged planned lift when no lift is active');
 });
 
+/* ===== G2 — coach addresses EVERY logged lift, not just the first ===== */
+
+// handleSetLogged is a DOM-bound handler in the IIFE, so this layer is verified by
+// source-introspection (the repo's pattern for this file). The fix: after the
+// primary lift's coaching, iterate the ADDITIONAL logged lifts and build a coaching
+// note for each, so a stacked multi-exercise entry coaches all lifts — not exercises[0].
+function handleSetLoggedSource() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const start = src.indexOf('async function handleSetLogged(');
+  assert.ok(start !== -1, 'handleSetLogged must exist');
+  const end = src.indexOf('\n  async function ', start + 1);
+  return src.slice(start, end === -1 ? start + 4000 : end);
+}
+
+test('G2: handleSetLogged coaches every ADDITIONAL logged lift (not just exercises[0])', () => {
+  const fn = handleSetLoggedSource();
+  // The primary lift is still coached exactly as before…
+  assert.match(fn, /const primary = exercises\[0\]/, 'primary lift coaching preserved');
+  // …and there is now a loop over the remaining lifts that builds a coaching note
+  // for each, attributing the prose to its lift name so both lifts are referenced.
+  assert.match(fn, /for \(const ex of exercises\.slice\(1\)\)/,
+    'must iterate the additional logged lifts');
+  const loop = fn.slice(fn.indexOf('for (const ex of exercises.slice(1))'));
+  assert.match(loop, /getInWorkoutNote\(/, 'each additional lift gets its own coaching note');
+  assert.match(loop, /exerciseName:\s*ex\.exercise/, 'the note is built for that lift');
+  assert.match(loop, /\$\{ex\.exercise\}:\s*\$\{exReaction\.note\}/,
+    'the additional lift’s prose is attributed by lift name (both lifts referenced)');
+});
+
+test('G2: single-exercise entry is unchanged (the multi-lift loop is over slice(1), empty for one lift)', () => {
+  const fn = handleSetLoggedSource();
+  // A one-lift entry has no exercises.slice(1) members, so the new coaching loop is a
+  // no-op and the primary path (the only output) is identical to before — no doubled prose.
+  assert.match(fn, /for \(const ex of exercises\.slice\(1\)\)/,
+    'the added coverage is scoped to the SECOND+ lift only');
+  // The all-exercises loop is the READBACK loop (renders a card per lift) — it must do
+  // buildReadback and must NOT coach (no getInWorkoutNote there), so the primary is
+  // never double-coached.
+  const readbackLoop = fn.slice(fn.indexOf('for (const ex of exercises) {'), fn.indexOf('const primary'));
+  assert.match(readbackLoop, /buildReadback\(/, 'the all-exercises loop renders readbacks');
+  assert.doesNotMatch(readbackLoop, /getInWorkoutNote/, 'the all-exercises loop must not also coach');
+});
+
 /* ===== governor grade fallback voice (PR 484 — LLM-down stimulus_grade voicing) ===== */
 
 test('governorOverridesProgressionInvite: true when the governor holds / backs off / flags fatigue', () => {
