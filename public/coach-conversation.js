@@ -1121,6 +1121,12 @@
         bubble.appendChild(exMsg);
         chatTurns.push({ role: 'atlas', text: exText });
       }
+      // NOTE: additional lifts get coaching PROSE here but not the deterministic
+      // `effort_note` line — mirroring it would add a second `coach-msg effort-note`
+      // element, which an existing coach test pins to "exactly one" (the "one short
+      // effort line, not per set" contract). Changing that is an owner-gated coach
+      // contract change, so the effort-line parity is filed as a BACKLOG follow-up
+      // rather than altered here. (G2 review #608.)
       if (exRec && exRec.recommendation) {
         bubble.appendChild(buildNextPrescription(exRec));
       }
