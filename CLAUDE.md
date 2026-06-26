@@ -218,6 +218,23 @@ Architecture reviews, audits, roadmap planning, and owner-requested analysis may
 
 ---
 
+## gstack Workflow
+
+When appropriate, use installed gstack skills. Apply judgment — not every task requires every skill.
+
+| Situation | Skill |
+|---|---|
+| Unknown bug or ambiguous root cause | `/investigate` |
+| Architecture or refactor decision | `/plan-eng-review` |
+| Trust-critical, write-path, state-management, or data-integrity work | `/careful` |
+| Before opening a PR | `/review` |
+| User-visible behavior requiring validation | `/qa` |
+| Release candidate work | `/ship` |
+
+**Atlas governance always takes precedence.** `CLAUDE.md`, `BACKLOG.md`, roadmap, owner decisions, one-concern PRs, and the trust-first development model override any gstack workflow step. Use gstack skills to support Atlas execution, not to replace it.
+
+---
+
 ## Model: Opus 4.8, always — no model check-in
 
 By owner standing instruction, the builder runs on **Opus 4.8 for all work**. There is no model-selection decision and **no owner stop for model**: the merge card records `Opus 4.8` and proceeds. Do not escalate model choice to the owner or to Codex.

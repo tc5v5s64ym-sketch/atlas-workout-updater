@@ -342,6 +342,20 @@ If a stale item is discovered, the same PR should either:
 
 The builder runs on Opus 4.8 for all work — there is no model gate after this verification gate.
 
+## gstack Skills (judgment-driven)
+
+When appropriate, use installed gstack skills to support workflow steps. Not every task requires every skill — apply judgment.
+
+```
+Read project docs (CLAUDE.md · ACTIVE_ROADMAP.md · BACKLOG.md · DOCS_INDEX.md · AGENT_WORKFLOW.md)
+↓
+Select applicable gstack skill(s) — /investigate · /plan-eng-review · /careful · /review · /qa · /ship
+↓
+Investigate / Plan  →  Implement  →  Self-review  →  Tests  →  PR
+```
+
+Atlas governance (this file, `CLAUDE.md`, roadmap, owner decisions, one-concern PRs, trust-first development) always takes precedence over gstack workflows.
+
 ## Non-negotiables
 
 - `BACKLOG.md` is the source of truth.
