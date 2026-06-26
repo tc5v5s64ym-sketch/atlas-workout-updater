@@ -5187,12 +5187,22 @@ test('P0 wiring 2c: barbell loadability snap is applied on the intent-recommenda
   const idx = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   assert.match(idx, /require\('\.\/services\/barbellLoadabilitySurface'\)/, 'the surfacing helper is imported');
   // The snap runs on the intent-recommendation result (the composer/plan source).
-  const handler = idx.slice(idx.indexOf("app.get('/api/plan/intent-recommendation'"), idx.indexOf("app.get('/api/plan/intent-recommendation'") + 900);
+  const handler = idx.slice(idx.indexOf("app.get('/api/plan/intent-recommendation'"), idx.indexOf("app.get('/api/plan/intent-recommendation'") + 1100);
   assert.match(handler, /applyBarbellLoadabilityToExercises\(intent\.exercises\)/, 'each intent\'s exercises are snapped');
 
   // The drawer surfaces the per-exercise loadability note.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSrc, /raw\.loadability_note\) exList\.appendChild/, 'the drawer renders the loadability note when present');
+});
+
+test('upperOnly wire: ?upperOnly=true and ?scope=upper are threaded into scoreIntents on the intent-recommendation route', () => {
+  const idx = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  const start = idx.indexOf("app.get('/api/plan/intent-recommendation'");
+  const handler = idx.slice(start, start + 1100);
+  assert.match(handler, /req\.query\.upperOnly/, 'route reads req.query.upperOnly');
+  assert.match(handler, /req\.query\.scope/, 'route reads req.query.scope');
+  // The upperOnly flag must reach scoreIntents, not silently be derived in a branch the test can't see.
+  assert.match(handler, /upperOnly/, 'scoreIntents options include the upperOnly flag');
 });
 
 // P0 PR 4 (AC7): an explicit identity correction relabels the just-logged lift

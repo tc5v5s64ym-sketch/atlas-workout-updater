@@ -421,7 +421,7 @@ loop, or any LLM/prompt.
 
 ### Roadmap Step 386 — PR-O1: onboarding state engine
 
-**Status:** in progress (this PR).
+**Status:** complete. Shipped: `services/onboardingState.js`.
 
 **Type:** Correctness (engine, pure). **Risk level:** Low. **Recommended model:** Opus 4.8.
 
@@ -443,7 +443,7 @@ no schema, no route, no `index.js`/`public/app.js` edit.
 
 ### Roadmap Step 387 — PR-O2: onboarding session-template builder
 
-**Status:** in progress (this PR) — owner released the hold (2026-06-21, "Go O2").
+**Status:** complete. Shipped: `services/onboardingSessionPlan.js` (owner released hold 2026-06-21, "Go O2").
 
 **Type:** Correctness (engine, pure). **Risk level:** Low–Medium. **Recommended model:** Opus 4.8.
 
@@ -486,10 +486,10 @@ Promoted by owner decision (2026-06-22) as the build series implementing the Tra
 - ✅ **PR 481 — Stimulus Governor Fixtures** — shipped: pure `services/stimulusGovernorRules.js` (`governorRuleFor` + frozen vocabularies) pinning the §5 profile×modality RIR/effort rules.
 - ✅ **PR 482 — Profile-aware Stimulus Governor** — shipped (pure + unwired): `services/stimulusGovernor.js::gradeStimulus` grades a logged effort by profile + modality, emitting `progression_verdict` + `fatigue_signal` per the PR 481 rules. Not wired into any live path.
 - ✅ **PR 483 — Live Fatigue Router expansion** — shipped (pure + unwired): `services/fatigueRouter.js::routeNextMove` reroutes the next move from logged fatigue (block_pr / reduce_intensity / reduce_density / promote_alternative / make_optional / reduce / keep). Not wired into the live path.
-- ◐ **PR 484 — Coach Voice Renderer** — next: words the new engine facts. **`[trust-critical]` coach-surface → owner-gated** (confirm scope before editing `services/coach.js`).
+- ✅ **PR 484 — Coach Voice Renderer** — shipped: all wiring slices (1–7 + 1/1b/2/3) complete. Full suite green.
 - ✅ **PR 485 — Recovery / Deload Engine** — shipped (engine-only selection layer): `services/recoveryDeloadSelection.js::assessRecoveryDeload` (SPE §10 ladder + convergence triggers + profile-aware style descriptors; no prescription numbers, unwired).
 - **PR 486 — Multi-modality logging: ✅ COMPLETE (owner live-validated 2026-06-24).** Shipped end-to-end as additive slices (recognition → dry-run preview → `Modality_Log` optional-tab schema + trust-loop write route → frontend wiring), the slash-notation contract untouched and the 12-col `Log_Cleaned`/9-col `Effort` schemas unchanged (`Modality_Log` is a new optional sibling tab, not a migration of either). Owner validated the live persistence path (tab created, cardio preview correct, write succeeded, row correct, strength logging unaffected). Only explicitly-deferred speculative parser edges remain (build only if such input appears) — see `BACKLOG.md`.
-- **Remaining (owner-gated):** PR 484 — Coach Voice Renderer (coach-surface). One concrete deferred slice remains (LLM-down voicing of the `stimulus_grade` governor verdict); coach-surface → confirm scope before editing `services/coach.js`. The pure deterministic engine layer (478–483, 485) is complete.
+- **Active queue status (2026-06-26): empty.** The full 477–486 Training Intelligence series is shipped. Active Workout State Unification (PR1–PR7) and substitute-prescription loadability (#630) also shipped. Next work requires owner direction or promotion from backlog.
 
 ### Roadmap Step / PR 477 — RIR-aware coach accountability + live pressing fatigue routing
 

@@ -2203,7 +2203,11 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
       getSheetRows(logSheetName),
       getSheetRows(effortSheetName)
     ]);
-    const result = scoreIntents(allLog, allEffort, { goal: req.query.goal ? normalizeTrainingGoal(req.query.goal) : getProfileGoal() });
+    const upperOnly = req.query.upperOnly === 'true' || req.query.scope === 'upper';
+    const result = scoreIntents(allLog, allEffort, {
+      goal: req.query.goal ? normalizeTrainingGoal(req.query.goal) : getProfileGoal(),
+      ...(upperOnly && { upperOnly }),
+    });
     // P0 AC12: snap each intent's BARBELL target weights to loadable plate totals
     // (45 lb bar, 5 lb jumps) + attach a short note, gated on barbell equipment
     // classification. Read-only — this is the recommendation/composer surface, not
