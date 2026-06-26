@@ -1687,16 +1687,16 @@ app.post('/api/coach/chat', async (req, res) => {
     // Gemini more than the 8s default before aborting — a merely-SLOW (not-down)
     // response then lands instead of being killed early and dead-ending the lifter
     // on "Coach is unavailable." Stays under the client budget with network margin.
-    const { reply, propose_edit, propose_note, propose_constraint } =
+    const { reply, propose_edit, propose_note, propose_constraint, propose_plan_edit } =
       await coach.generateChatReply({ message, context, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
     const hasReply = Boolean(reply && String(reply).trim());
     // Return the Gemini result when it has usable prose OR carries a structured
     // proposal (edit/note/constraint) — a proposal must never be dropped just
     // because the prose came back empty. Only a truly empty result (no prose, no
     // proposal) falls through to the deterministic engine fallback below.
-    if (hasReply || propose_edit || propose_note || propose_constraint) {
+    if (hasReply || propose_edit || propose_note || propose_constraint || propose_plan_edit) {
       return standardSuccess(req, res, 'Coach chat reply', {
-        message: hasReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, configured: true, model: coach.coachModel(), source: 'gemini'
+        message: hasReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, propose_plan_edit: propose_plan_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
       });
     }
     // Empty reply and no proposal → fall through to the deterministic fallback below.

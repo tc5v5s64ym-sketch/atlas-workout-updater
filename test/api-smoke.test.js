@@ -220,6 +220,7 @@ const fakeCoachState = {
   chatEditProposal: null, // set to an edit object in tests that exercise the edit path
   chatNoteProposal: null, // set to a note object in tests that exercise the note path
   chatConstraintProposal: null, // set to a constraint object in tests that exercise the constraint path
+  chatPlanEditProposal: null, // set to a plan edit object in tests that exercise the plan-edit path
   throwError: null,
   pingError: null, // set to a string to simulate a failed Gemini ping (coach health)
   lastChatContext: null, // captures the context passed to generateChatReply for assertions
@@ -244,7 +245,7 @@ const fakeCoach = {
   generateChatReply: async (args) => {
     fakeCoachState.lastChatContext = args && args.context ? args.context : null;
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
-    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal, propose_constraint: fakeCoachState.chatConstraintProposal };
+    return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal, propose_constraint: fakeCoachState.chatConstraintProposal, propose_plan_edit: fakeCoachState.chatPlanEditProposal };
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -1140,6 +1141,39 @@ test('api smoke: coach/chat passes propose_edit through to the client', async ()
   } finally {
     fakeCoachState.configured = false;
     fakeCoachState.chatEditProposal = null;
+  }
+});
+
+test('api smoke: coach/chat passes propose_plan_edit through to the client', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.chatPlanEditProposal = {
+    action: 'remove_exercises',
+    exercises: [{ name: 'Hanging Knee Raises' }, { name: 'Dumbbell Side Bend' }]
+  };
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'get rid of the core exercises',
+        context: {
+          current_plan: [
+            { name: 'Bench Press' },
+            { name: 'Hanging Knee Raises' },
+            { name: 'Dumbbell Side Bend' }
+          ],
+          plan_completed: []
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.data.propose_plan_edit, {
+      action: 'remove_exercises',
+      exercises: [{ name: 'Hanging Knee Raises' }, { name: 'Dumbbell Side Bend' }]
+    });
+    assert.equal(body.data.message, fakeCoachState.chatMessage, 'healthy Gemini prose must be returned, not fallback');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatPlanEditProposal = null;
   }
 });
 

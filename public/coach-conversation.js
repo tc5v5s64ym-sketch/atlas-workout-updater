@@ -1443,7 +1443,7 @@
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
   async function getChatReply(message, history, context) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null, propose_note: null };
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null };
 
     // P0 — Active Session Context Integrity: during an active workout, short
     // workout-state questions ("RIR?", "reps?", "how much", "what next") must be
@@ -1511,7 +1511,7 @@
     // the 9s reaction budget so that fallback actually reaches the lifter instead of
     // the generic "Coach is unavailable" line firing first.
     const CHAT_REPLY_TIMEOUT_MS = 15000;
-    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null }), CHAT_REPLY_TIMEOUT_MS));
+    const timeout = new Promise(resolve => setTimeout(() => resolve({ message: null, propose_edit: null, propose_note: null, propose_plan_edit: null }), CHAT_REPLY_TIMEOUT_MS));
     const request = api('/api/coach/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1520,7 +1520,8 @@
       message: (res && res.data && res.data.message) || null,
       propose_edit: (res && res.data && res.data.propose_edit) || null,
       propose_note: (res && res.data && res.data.propose_note) || null,
-      propose_constraint: (res && res.data && res.data.propose_constraint) || null
+      propose_constraint: (res && res.data && res.data.propose_constraint) || null,
+      propose_plan_edit: (res && res.data && res.data.propose_plan_edit) || null
     }));
     return Promise.race([request, timeout]);
   }
@@ -1674,7 +1675,7 @@
     const { bubble, body } = handle;
     body.textContent = 'Thinking…';
 
-    let chatResult = { message: null, propose_edit: null, propose_note: null, propose_constraint: null };
+    let chatResult = { message: null, propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null };
     try { chatResult = await getChatReply(text, priorTurns, detail && detail.context); } catch { /* stays null */ }
 
     let reply = chatResult.message;
@@ -1693,6 +1694,19 @@
         const note = document.createElement('div');
         note.className = 'edit-applied-note';
         note.textContent = 'Preview updated — review and tap Save when ready.';
+        bubble.appendChild(note);
+      }
+    }
+
+    if (chatResult.propose_plan_edit) {
+      const result = { applied: false };
+      document.dispatchEvent(new CustomEvent('atlas:plan-edit-proposed', {
+        detail: { edit: chatResult.propose_plan_edit, result }
+      }));
+      if (result.applied) {
+        const note = document.createElement('div');
+        note.className = 'edit-applied-note';
+        note.textContent = 'Plan updated.';
         bubble.appendChild(note);
       }
     }

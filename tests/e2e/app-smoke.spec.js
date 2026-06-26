@@ -430,6 +430,130 @@ test('Chat: propose_edit updates the preview row and still requires approve to w
   expect(capture.writeRequests).toHaveLength(0);
 });
 
+test('Chat: composer plan edits mutate the canonical session plan', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.route('**/api/parse-workout-text', route => route.fulfill(json({
+    status: 'success',
+    data: {
+      test_mode: true, sheet_written: false, no_write_confirmed: true, warnings: [],
+      parsed: { intent: 'needs_clarification', message: 'Could not find sets.' }
+    }
+  })));
+
+  const chatRequests = [];
+  const replies = [
+    {
+      message: 'Upper body today: Bench Press, Overhead Press, Lat Pulldown, Seated Row, Face Pull.',
+      propose_plan_edit: {
+        action: 'replace_plan',
+        exercises: [
+          { name: 'Bench Press' },
+          { name: 'Overhead Press' },
+          { name: 'Lat Pulldown' },
+          { name: 'Seated Row' },
+          { name: 'Face Pull' }
+        ]
+      }
+    },
+    {
+      message: 'Add Hanging Knee Raises and Dumbbell Side Bend at the end.',
+      propose_plan_edit: {
+        action: 'add_exercises',
+        exercises: [{ name: 'Hanging Knee Raises' }, { name: 'Dumbbell Side Bend' }]
+      }
+    },
+    {
+      message: 'Core is out. Keep Bench Press, Overhead Press, Lat Pulldown, Seated Row, and Face Pull.',
+      propose_plan_edit: {
+        action: 'remove_exercises',
+        exercises: ['Hanging Knee Raises', 'Dumbbell Side Bend']
+      }
+    }
+  ];
+  await page.route('**/api/coach/chat', route => {
+    chatRequests.push(route.request().postDataJSON());
+    const reply = replies.shift() || { message: 'No change.' };
+    return route.fulfill(json({
+      status: 'success',
+      data: { ...reply, configured: true, model: 'gemini-2.5-flash-lite', source: 'gemini' }
+    }));
+  });
+
+  await page.locator('#workout-text').fill('Plan an upper-body workout');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Face Pull');
+  await expect(page.locator('.edit-applied-note').last()).toHaveText('Plan updated.');
+
+  await page.locator('#workout-text').fill('Maybe a couple core exercises too');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Dumbbell Side Bend');
+  await expect(page.locator('.edit-applied-note')).toHaveCount(2);
+
+  let state = await page.evaluate(() => ({
+    active: getActivePlannedSession(),
+    order: plannedExerciseOrder(),
+    remaining: remainingPlannedExercises(),
+    first: firstUnloggedPlannedLift()
+  }));
+  expect(state.active).not.toBeNull();
+  expect(state.order).toEqual([
+    'Bench Press',
+    'Overhead Press',
+    'Lat Pulldown',
+    'Seated Row',
+    'Face Pull',
+    'Hanging Knee Raises',
+    'Dumbbell Side Bend'
+  ]);
+  expect(state.remaining).toEqual(state.order);
+  expect(state.first).toBe('Bench Press');
+
+  await page.locator('#workout-text').fill('You know what nvm get rid of the core exercises');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('Core is out');
+  await expect(page.locator('.edit-applied-note')).toHaveCount(3);
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).not.toContainText('Coach is unavailable');
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).not.toContainText("couldn't reach");
+
+  state = await page.evaluate(() => ({
+    active: getActivePlannedSession(),
+    order: plannedExerciseOrder(),
+    remaining: remainingPlannedExercises(),
+    first: firstUnloggedPlannedLift()
+  }));
+  expect(state.order).toEqual([
+    'Bench Press',
+    'Overhead Press',
+    'Lat Pulldown',
+    'Seated Row',
+    'Face Pull'
+  ]);
+  expect(state.remaining).toEqual(state.order);
+  expect(state.active.exercises.map(ex => ex.name)).toEqual(state.order);
+  expect(state.first).toBe('Bench Press');
+  expect(capture.writeRequests).toHaveLength(0);
+  expect(chatRequests[1].context.current_plan.map(ex => ex.name)).toEqual([
+    'Bench Press',
+    'Overhead Press',
+    'Lat Pulldown',
+    'Seated Row',
+    'Face Pull'
+  ]);
+  expect(chatRequests[1].context.plan_completed).toEqual([]);
+  expect(chatRequests[2].context.current_plan.map(ex => ex.name)).toEqual([
+    'Bench Press',
+    'Overhead Press',
+    'Lat Pulldown',
+    'Seated Row',
+    'Face Pull',
+    'Hanging Knee Raises',
+    'Dumbbell Side Bend'
+  ]);
+  expect(chatRequests[2].context.plan_completed).toEqual([]);
+});
+
 test('Session preview: logging then "done" renders a no-write review card from mocked APIs', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);

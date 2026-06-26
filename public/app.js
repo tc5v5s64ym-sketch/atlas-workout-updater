@@ -1651,6 +1651,123 @@ function endPlannedSession() {
   renderActiveSessionBanner();
 }
 
+function normalizePlanEditExercise(raw) {
+  if (!raw) return null;
+  if (typeof raw === 'string') return normalizePlanExercise({ exercise: raw });
+  const ex = normalizePlanExercise({
+    exercise: raw.name || raw.exercise,
+    canonical_exercise: raw.canonicalName || raw.canonical_exercise || raw.name || raw.exercise,
+    lift_code: raw.liftCode || raw.lift_code,
+    target_weight: raw.weight,
+    target_reps: raw.reps,
+    target_sets: raw.sets,
+    target_rir: raw.rir,
+    reason: raw.rationale || raw.reason || ''
+  });
+  return ex && ex.name ? ex : null;
+}
+
+function matchesPlanEditName(ex, wanted) {
+  const key = String(wanted || '').toLowerCase().trim();
+  if (!key) return false;
+  const names = [ex && ex.name, ex && ex.canonicalName].map(n => String(n || '').toLowerCase().trim()).filter(Boolean);
+  return names.some(n => n === key || n.includes(key) || key.includes(n));
+}
+
+function clampActivePlanIndex() {
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return;
+  if (!activePlannedSession.exercises.length) {
+    endPlannedSession();
+    return;
+  }
+  const max = activePlannedSession.exercises.length - 1;
+  activePlannedSession.index = Math.max(0, Math.min(Number(activePlannedSession.index) || 0, max));
+}
+
+function ensureChatPlannedSession() {
+  if (activePlannedSession && Array.isArray(activePlannedSession.exercises)) return activePlannedSession;
+  activePlannedSession = {
+    label: 'Coach plan',
+    intentId: null,
+    exercises: [],
+    index: 0
+  };
+  pendingSubstitution = null;
+  return activePlannedSession;
+}
+
+function applyProposedPlanEdit(edit) {
+  if (!edit || typeof edit !== 'object' || !Array.isArray(edit.exercises)) return false;
+  const action = edit.action;
+  const exercises = edit.exercises.map(normalizePlanEditExercise).filter(ex => ex && ex.name);
+  if (!exercises.length) return false;
+
+  if (action === 'replace_plan') {
+    activePlannedSession = {
+      label: edit.label || 'Coach plan',
+      intentId: null,
+      exercises,
+      index: 0
+    };
+    pendingSubstitution = null;
+    sessionCompleted = [];
+    renderActiveSessionBanner();
+    return true;
+  }
+
+  if (action === 'add_exercises') {
+    const session = ensureChatPlannedSession();
+    const existing = new Set(session.exercises.map(ex => String(ex.canonicalName || ex.name || '').toLowerCase()));
+    let changed = false;
+    for (const ex of exercises) {
+      const key = String(ex.canonicalName || ex.name || '').toLowerCase();
+      if (!key || existing.has(key)) continue;
+      session.exercises.push(ex);
+      existing.add(key);
+      changed = true;
+    }
+    if (changed) {
+      clampActivePlanIndex();
+      renderActiveSessionBanner();
+    }
+    return changed;
+  }
+
+  if (action === 'remove_exercises') {
+    if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+    const wanted = exercises.map(ex => ex.name).filter(Boolean);
+    const before = activePlannedSession.exercises.length;
+    activePlannedSession.exercises = activePlannedSession.exercises.filter(ex =>
+      !wanted.some(name => matchesPlanEditName(ex, name))
+    );
+    const removed = activePlannedSession.exercises.length !== before;
+    if (removed) {
+      sessionCompleted = sessionCompleted.filter(done =>
+        !wanted.some(name => {
+          const key = String(name || '').toLowerCase();
+          const d = String(done || '').toLowerCase();
+          return key && (d === key || d.includes(key) || key.includes(d));
+        })
+      );
+      clampActivePlanIndex();
+      renderActiveSessionBanner();
+    }
+    return removed;
+  }
+
+  return false;
+}
+
+document.addEventListener('atlas:plan-edit-proposed', e => {
+  const applied = applyProposedPlanEdit(e.detail && e.detail.edit);
+  if (e.detail && e.detail.result && typeof e.detail.result === 'object') e.detail.result.applied = applied;
+  try {
+    document.dispatchEvent(new CustomEvent('atlas:plan-edit-applied', {
+      detail: { applied, edit: e.detail && e.detail.edit }
+    }));
+  } catch { /* diagnostic event is optional */ }
+});
+
 // Open the recommended workout as a Today Session Plan (reuses the intent
 // drawer). Read-only fetch; failure is silent so logging is never blocked.
 async function openTodaySessionPlan() {
@@ -4298,11 +4415,12 @@ function routeMessageToCoach(text) {
   const context = {};
   if (preview.length) context.current_preview = preview;
   if (plan.length) context.current_plan = plan;
-  // Step 375: send plan_completed whenever a session is active — even when it's
-  // still empty ([]) — so the server always computes an authoritative plan_state.
-  // Gating on sessionCompleted.length left plan_state null until the first set
-  // was logged, so "what's left?" early in a session had no authoritative source.
-  if (activePlannedSession) context.plan_completed = [...sessionCompleted];
+  // Step 375 + composer plan edits: send plan_completed whenever the client has
+  // an authoritative visible plan (started OR chat/suggested) — even when it's
+  // still empty ([]). Gating only on activePlannedSession left chat-rendered plans
+  // without plan_state, so later composer edits were based on a non-authoritative
+  // transcript instead of the same plan state debug/composer use.
+  if (plannedExerciseOrder().length > 0) context.plan_completed = [...sessionCompleted];
   // Defer one tick so chat.js's submit listener paints the user bubble first —
   // without this, the Atlas "Thinking…" bubble appends before the user bubble.
   setTimeout(() => {
