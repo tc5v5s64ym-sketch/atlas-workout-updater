@@ -344,17 +344,13 @@ The builder runs on Opus 4.8 for all work — there is no model gate after this 
 
 ## gstack Skills (judgment-driven)
 
-When appropriate, use installed gstack skills to support workflow steps. Not every task requires every skill — apply judgment.
+Atlas assumes gstack is installed in Claude Code. Before beginning each phase, determine whether an installed gstack skill would improve the work and use the most appropriate skill(s) when they add value. Not every task requires a skill; do not invoke them mechanically.
 
 ```
-Read project docs (CLAUDE.md · ACTIVE_ROADMAP.md · BACKLOG.md · DOCS_INDEX.md · AGENT_WORKFLOW.md)
-↓
-Select applicable gstack skill(s) — /investigate · /plan-eng-review · /careful · /review · /qa · /ship
-↓
-Investigate / Plan  →  Implement  →  Self-review  →  Tests  →  PR
+Read project docs  →  Apply applicable gstack skill(s)  →  Investigate / Plan  →  Implement  →  Self-review  →  Tests  →  PR
 ```
 
-Atlas governance (this file, `CLAUDE.md`, roadmap, owner decisions, one-concern PRs, trust-first development) always takes precedence over gstack workflows.
+In cases of conflict, Atlas governance takes precedence: follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles.
 
 ## Non-negotiables
 

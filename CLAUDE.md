@@ -220,18 +220,9 @@ Architecture reviews, audits, roadmap planning, and owner-requested analysis may
 
 ## gstack Workflow
 
-When appropriate, use installed gstack skills. Apply judgment — not every task requires every skill.
+Atlas assumes gstack is installed in Claude Code. Before beginning implementation, determine whether an installed gstack skill would improve the current phase — planning, investigation, implementation, review, QA, or release — and use the most appropriate skill(s) when they add value. Do not invoke skills mechanically; not every task benefits from every skill.
 
-| Situation | Skill |
-|---|---|
-| Unknown bug or ambiguous root cause | `/investigate` |
-| Architecture or refactor decision | `/plan-eng-review` |
-| Trust-critical, write-path, state-management, or data-integrity work | `/careful` |
-| Before opening a PR | `/review` |
-| User-visible behavior requiring validation | `/qa` |
-| Release candidate work | `/ship` |
-
-**Atlas governance always takes precedence.** `CLAUDE.md`, `BACKLOG.md`, roadmap, owner decisions, one-concern PRs, and the trust-first development model override any gstack workflow step. Use gstack skills to support Atlas execution, not to replace it.
+**Atlas governance always takes precedence.** In cases of conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles. Use gstack skills to support Atlas execution, not to replace it.
 
 ---
 
