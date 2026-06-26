@@ -344,20 +344,22 @@ The builder runs on Opus 4.8 for all work — there is no model gate after this 
 
 ## gstack Skills (judgment-driven)
 
-Atlas assumes gstack is installed in Claude Code. Before beginning each phase, evaluate whether an installed gstack skill would materially improve the work. Use the most appropriate skill(s) when they add value; if none are appropriate, decide that explicitly and continue. Do not invoke skills mechanically or for trivial work.
+Atlas follows the gstack sprint philosophy: **Think → Plan → Build → Review → Test → Ship → Reflect**. gstack is intended to improve thinking and review quality — not to replace Atlas governance. Command reference and PR reporting format: `CLAUDE.md` → "gstack Workflow".
 
 ```
-Read project docs
+Read project documentation
 ↓
-Evaluate whether installed gstack skills should be used
+Evaluate available gstack commands
 ↓
-Investigate / Plan
+Plan / Investigate (if applicable)
 ↓
 Implement
 ↓
-Self-review
+Review
 ↓
-Tests
+QA
+↓
+Ship
 ↓
 PR
 ```

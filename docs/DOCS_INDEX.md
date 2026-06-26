@@ -14,7 +14,7 @@ When these two disagree, stop and ask the owner before changing direction.
 ## Agent entry points
 
 - `docs/GOVERNANCE.md` — **read first**. Defines how Dream, Vision, Constitution, Roadmap, and Backlog relate and where to file new ideas.
-- `CLAUDE.md` — operating brief for Claude Code and other AI agents. Includes the **gstack Workflow** section — the operating principle for determining when and how to use installed gstack skills.
+- `CLAUDE.md` — operating brief for Claude Code and other AI agents. Includes the **gstack Workflow** section — command reference table, Atlas-specific usage guidance, and PR reporting format for all gstack skills used during development.
 - `CODEX.md` — operating brief for Codex/coding agents.
 - `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Claude Code + CODEX Review + GitHub workflow.
 - `docs/ACTIVE_ROADMAP.md` — current queue; read before selecting the next PR.
