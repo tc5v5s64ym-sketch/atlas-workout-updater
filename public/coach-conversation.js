@@ -1161,6 +1161,20 @@
     if (nextEx && !detail.nextPlanned) {
       const done = (detail.completed || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
       if (done) nextEx = null;
+      // A fallback next-up (from /api/plan/today) must belong to the lifter's ENGAGED
+      // plan — never a lift from a stored program they aren't following today. When
+      // freestyling, plannedOrder is empty, so any fallback next-up is rejected and the
+      // thread stays clean (no phantom "next up: <off-plan lift>"). When the engaged
+      // plan is already complete, an off-plan program lift is rejected too, so the
+      // closeout fires instead of a bogus handoff. (Live "next up: Hammer Curls" — a
+      // lift that wasn't in today's plan — repro.) Fuzzy match mirrors
+      // getNextExerciseInPlan so a canonical/display name variant still counts as in-plan.
+      if (nextEx) {
+        const plan = (detail.plannedOrder || []).map(p => String(p || '').toLowerCase()).filter(Boolean);
+        const k = String(nextEx).toLowerCase();
+        const inEngagedPlan = plan.some(p => p === k || p.includes(k) || k.includes(p));
+        if (!inEngagedPlan) nextEx = null;
+      }
     }
     if (!nextEx && detail.planIsComplete) {
       const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;

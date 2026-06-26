@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v58';
+const ATLAS_SHELL_BUILD = 'v59';
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -3578,6 +3578,13 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
           // fallback can reject a next-up that's already done (its order can diverge
           // from what was actually logged — the source of the resurrected lift).
           completed: [...sessionCompleted],
+          // The engaged plan's exercise order (active session OR engaged Coach's Pick;
+          // empty when freestyling). The handoff uses it to reject a fallback next-up
+          // that isn't part of today's session — so the /api/plan/today lookup can't
+          // surface a stored-program lift the lifter isn't following (the live
+          // "next up: Hammer Curls" that wasn't in the plan, and the off-plan lift that
+          // overrode the closeout once the engaged plan was already complete).
+          plannedOrder: plannedExerciseOrder(),
           ...(plannedQueue.length ? { plannedQueue } : {}),
           ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
         }
