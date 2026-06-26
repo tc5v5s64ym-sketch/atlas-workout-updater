@@ -1743,10 +1743,12 @@ app.post('/api/coach/ask', async (req, res) => {
 // POST /api/suggest-substitute — deterministic substitute recommendation for an
 // unavailable exercise. Returns the best known alternative when the user message
 // signals a constraint (busy, unavailable, etc.) and a known substitute exists.
-// READ-ONLY: no Sheets access, no LLM, no writes.
+// AC3: also returns next_target prescription for the substitute so the client can
+// populate the replacement exercise slot instead of leaving weight/reps/sets null.
+// READ-ONLY: reads Log_Cleaned for prescription history, no LLM, no writes.
 // Body: { message: string, current_exercise: string }
-// Response: { recommendation: { recommendation, quality, reason } | null }
-app.post('/api/suggest-substitute', (req, res) => {
+// Response: { recommendation: { recommendation, quality, reason, next_target } | null }
+app.post('/api/suggest-substitute', async (req, res) => {
   const { message, current_exercise: currentExercise } = req.body || {};
   if (!message || !currentExercise) {
     return standardSuccess(req, res, 'No recommendation', { recommendation: null });
@@ -1755,7 +1757,24 @@ app.post('/api/suggest-substitute', (req, res) => {
     return standardSuccess(req, res, 'Not a constraint message', { recommendation: null });
   }
   const rec = recommendSubstitute(currentExercise);
-  return standardSuccess(req, res, 'Substitute recommendation', { recommendation: rec });
+  if (!rec) {
+    return standardSuccess(req, res, 'No substitute found', { recommendation: null });
+  }
+  // AC3: fetch the substitute's prescription from logged history so the replacement
+  // slot gets weight/reps/sets instead of null. Best-effort — a missing prescription
+  // (no history for the substitute) is non-fatal; the client treats null gracefully.
+  let next_target = null;
+  try {
+    const resolved = resolveExercise(rec.recommendation);
+    if (resolved && resolved.exercise_id) {
+      const allLog = await getSheetRows(logSheetName);
+      const prescription = recommendNextSet(allLog, resolved.exercise_id);
+      next_target = (prescription && prescription.next_target) || null;
+    }
+  } catch { /* best-effort */ }
+  return standardSuccess(req, res, 'Substitute recommendation', {
+    recommendation: { ...rec, next_target }
+  });
 });
 
 // POST /api/session/compile — extract logged sets from conversation history.

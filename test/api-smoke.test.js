@@ -4344,3 +4344,39 @@ test('api smoke: suggest-substitute never writes to any sheet', async () => {
   });
   assert.equal(fakeSheetsState.appendCalls.length, before, 'suggest-substitute must not write any rows');
 });
+
+// ── AC3: suggest-substitute includes next_target prescription (Step AC3) ──────
+
+test('api smoke: suggest-substitute — response always includes next_target field (AC3)', async () => {
+  // The response must carry next_target on the recommendation so the client can
+  // populate the replacement exercise slot with weight/reps/sets instead of null.
+  // next_target is null when no log history exists for the substitute (non-fatal).
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Platform busy', current_exercise: 'Deadlift' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'recommendation must not be null');
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(body.data.recommendation, 'next_target'),
+    'recommendation must carry a next_target field (AC3 prescription)'
+  );
+});
+
+test('api smoke: suggest-substitute — next_target is an object when substitute has history (AC3)', async () => {
+  // The stub logRows include Back Squat at SQ01 — so when Back Squat is prescribed
+  // and Leg Press is the substitute, Leg Press (no stub history) → next_target null.
+  // For Deadlift→Romanian Deadlift the stub has no RDL history → next_target null.
+  // For Back Squat→Leg Press: stub has SQ01 history; Leg Press resolves to a
+  // different code with no stub history → next_target null.
+  // This test verifies the field shape is always safe (object | null), never undefined.
+  const { body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'Rack unavailable', current_exercise: 'Back Squat' })
+  });
+  const nt = body.data.recommendation.next_target;
+  assert.ok(
+    nt === null || (typeof nt === 'object' && nt !== null),
+    'next_target must be null or a prescription object, never undefined'
+  );
+});

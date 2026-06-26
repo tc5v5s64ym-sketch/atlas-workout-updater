@@ -1293,7 +1293,7 @@ function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 // Returns true when the live plan actually changed (a slot was swapped or a
 // duplicate slot removed), false on any no-op/early-return — so the caller only
 // announces a swap that really happened (PR-570 cosmetic note).
-function applySessionSubstitution(prescribedName, subName, subLiftCode) {
+function applySessionSubstitution(prescribedName, subName, subLiftCode, prescription) {
   if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
   if (!prescribedName || !subName) return false;
   const exs = activePlannedSession.exercises;
@@ -1321,9 +1321,16 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode) {
     if (next >= exs.length) next = Math.max(0, exs.length - 1);
     activePlannedSession.index = Math.max(0, next);
   } else {
+    // AC3: use the prescription from the substitute-check API when available so the
+    // replacement slot carries the correct weight/reps/sets instead of null.
+    const p = prescription && typeof prescription === 'object' ? prescription : {};
     exs[idx] = {
       name: subName, canonicalName: subName, liftCode: subLiftCode || '',
-      weight: null, reps: null, sets: null, rir: null, reason: 'substituted'
+      weight: p.weight != null ? p.weight : null,
+      reps: p.reps != null ? p.reps : null,
+      sets: p.sets != null ? p.sets : null,
+      rir: p.rir != null ? p.rir : null,
+      reason: 'substituted'
     };
   }
   renderActiveSessionBanner();
@@ -3599,7 +3606,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (pendingSubstitution && activePlannedSession && Array.isArray(logObjs) && logObjs.length && logObjs[0].exercise) {
     const primaryRaw = logObjs[0].exercise;
     const enr = enrichMap.get(primaryRaw) || {};
-    applySessionSubstitution(pendingSubstitution.prescribed, enr.canonical_exercise || primaryRaw, enr.lift_code || '');
+    applySessionSubstitution(pendingSubstitution.prescribed, enr.canonical_exercise || primaryRaw, enr.lift_code || '', pendingSubstitution.prescription || null);
     pendingSubstitution = null;
   }
   for (const o of (logObjs || [])) {
@@ -3719,7 +3726,10 @@ async function checkAndSuggestSubstitute(text) {
       // Step 373b: the lifter declared a swap for the current step. Record the
       // prescribed (swapped-out) lift so the NEXT logged exercise replaces this
       // slot in the live session (applied in emitSetLogged).
-      pendingSubstitution = { prescribed: currentEx.canonicalName || currentEx.name };
+      // AC3: also store the prescription (weight/reps/sets) from the API response so
+      // applySessionSubstitution can populate the replacement slot instead of null.
+      pendingSubstitution = { prescribed: currentEx.canonicalName || currentEx.name,
+        prescription: rec.next_target || null };
       // Step 379: advance the authoritative session cursor past the taken/swapped
       // exercise. Otherwise the cursor stays on the lift the lifter just moved off,
       // and a subsequent conversational message would send that stale name as

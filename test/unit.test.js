@@ -5166,7 +5166,7 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
   // applySessionSubstitution reports whether it actually changed the plan.
-  const sub = appSrc.slice(appSrc.indexOf('function applySessionSubstitution('), appSrc.indexOf('function applySessionSubstitution(') + 1800);
+  const sub = appSrc.slice(appSrc.indexOf('function applySessionSubstitution('), appSrc.indexOf('function applySessionSubstitution(') + 2200);
   assert.match(sub, /return false; \/\/ nothing to swap/, 'a same-name swap returns false (no-op)');
   assert.match(sub, /return true;/, 'a real swap/dedupe returns true');
 
