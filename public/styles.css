@@ -1700,8 +1700,12 @@ a.lift-link:hover { text-decoration: underline; }
 .rv-t { font-family: var(--disp); font-weight: 600; font-size: 1rem; }
 .rv-d { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); }
 .rv-ex { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
-.rv-en { font-family: var(--disp); font-weight: 500; font-size: 0.88rem; }
-.rv-es { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); text-align: right; }
+/* The name must never be crushed by a long set list. flex:0 0 auto keeps it at its
+   natural width (one line); the set column takes the remaining space and wraps within
+   itself (min-width:0 lets it shrink below its content so the mono text wraps instead
+   of squeezing the name to one letter per line — the live "Deadlif/t" recap bug). */
+.rv-en { font-family: var(--disp); font-weight: 500; font-size: 0.88rem; flex: 0 0 auto; }
+.rv-es { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); text-align: right; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .rv-tot { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); padding: 11px 0 2px; }
 .rv-tot b { color: var(--ink); font-weight: 500; }
 .rv-eff { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); padding-top: 8px; border-top: 1px solid var(--border); margin-top: 6px; }
