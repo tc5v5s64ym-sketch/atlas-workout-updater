@@ -49,6 +49,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
+### LT-005 — coach interleaves per-lift blocks (FA)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-005 |
+| **Related PR / feature** | FA — coach renders per-lift blocks (card → coaching → Next) in order |
+| **Shell / app version expected** | Shell v57+ (server build with the FA coach-render change deployed) |
+| **Steps** | Log two exercises in one entry (e.g. Back Squat + Overhead Press). |
+| **Expected result** | Back Squat card, then its coaching, then its "Next"; THEN Overhead Press card, its coaching, its "Next"; then "Moving on — next up: X." once at the end. Each exercise is its own complete block in logged order — NOT both cards then a combined coaching paragraph. Single-exercise entries read exactly as before. |
+| **Screenshot** | The ordered per-exercise blocks. |
+| **Owner result** | PASS / FAIL — |
+| **Follow-up if FAIL** | If cards are still batched before the coaching, capture the entry + the rendered order. |
+
 ---
 
 ## Completed

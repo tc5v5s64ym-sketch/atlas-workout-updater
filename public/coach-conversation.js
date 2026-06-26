@@ -1017,11 +1017,11 @@
     const { bubble, body } = handle;
 
     const activeSession = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
-    for (const ex of exercises) {
-      bubble.insertBefore(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession)), body);
-    }
-
+    // FA: render per lift as [card -> coaching -> Next] in order. Primary card before
+    // `body` so a single-lift entry is byte-identical; additional lifts append their own
+    // blocks (slice(1) loop). Session handoff runs once at the end. (docs/INVESTIGATION_2026-06-25b.md)
     const primary = exercises[0];
+    bubble.insertBefore(buildReadback(primary.exercise, primary.sets, planStepFor(primary.exercise, activeSession)), body);
     const code = liftCodeForExercise(primary.exercise);
     let rec = null;
     if (code) {
@@ -1090,15 +1090,18 @@
       bubble.appendChild(buildNextPrescription(rec));
     }
 
-    // G2 — coach EVERY logged lift, not just exercises[0]. A multi-exercise entry
-    // (e.g. stacked Deadlift + Bench) renders a readback per lift above, but the
-    // coaching prose only covered the first. For each ADDITIONAL lift, build its own
-    // coaching note (+ next-set prescription) so no logged lift goes un-coached. The
-    // prose is attributed by lift name so two lifts read as one coherent note, not an
-    // ambiguous second block. Single-exercise entries have no additional lifts, so
-    // this loop is empty and their output is byte-identical to before (session-level
-    // handoff/closeout below still runs once, off lastLogged).
+    // G2 + FA — coach EVERY logged lift, not just exercises[0], and render each as its
+    // OWN block in order. The primary lift's [card -> coaching -> effort -> Next] is
+    // rendered above; for each ADDITIONAL lift, append its own [card -> coaching note ->
+    // next-set prescription] block so no logged lift goes un-coached and the blocks read
+    // sequentially per exercise. The coaching prose is attributed by lift name. Single-
+    // exercise entries have no additional lifts, so this loop is empty and their output
+    // is byte-identical to before (session-level handoff/closeout below runs once, off
+    // lastLogged).
     for (const ex of exercises.slice(1)) {
+      // FA: each additional lift is its OWN block — its card first (appended in order,
+      // after the primary block), then its coaching, then its Next.
+      bubble.appendChild(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession)));
       const exCode = liftCodeForExercise(ex.exercise);
       let exRec = null;
       if (exCode) {
