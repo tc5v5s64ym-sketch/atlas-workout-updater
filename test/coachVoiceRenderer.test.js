@@ -138,9 +138,12 @@ test('incline_70_8_2_x3_outputs_dialled_in_voice', () => {
 test('plan_complete_voice_is_short_and_closeout_focused', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const block = cc.slice(cc.indexOf('class = \'session-closeout\''), cc.indexOf('class = \'next-exercise-handoff\''));
-  // It must read as a closeout with a save cue, not a session summary.
-  assert.match(cc, /Plan complete\. Say "done"/, 'a short plan-complete line must exist');
-  assert.match(cc, /complete\. Say "done" or take a screenshot to save/, 'closeout offers the save cue');
+  // It must read as a closeout with a save cue, not a session summary. (G3: the wording
+  // says "planned work done — keep going or save", never "session over", so a lifter
+  // with more to log isn't told they're finished.)
+  assert.match(cc, /Planned work done\./, 'a short plan-complete line must exist');
+  assert.match(cc, /say "done" or upload a screenshot to save/, 'closeout offers the save cue');
+  assert.match(cc, /Log anything else you do/, 'closeout invites continued logging, not a forced end');
   // The closeout branch must not build a per-set or full-session recap.
   assert.doesNotMatch(block, /sessionLog\b/, 'closeout must not enumerate the whole session');
 });
