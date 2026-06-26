@@ -28,9 +28,38 @@ test('wiring: currentPlannedExercise() uses getCanonicalSession() + AS.currentEx
   assert.ok(start !== -1);
   // Read up to the next top-level function declaration.
   const next = appSrc.indexOf('\nfunction ', start + 1);
-  const body = appSrc.slice(start, next === -1 ? start + 1000 : next);
+  const body = appSrc.slice(start, next === -1 ? start + 1500 : next);
   assert.ok(body.includes('getCanonicalSession()'), 'must call getCanonicalSession()');
   assert.ok(body.includes('AS.currentExercise('), 'must call AS.currentExercise()');
+});
+
+test('wiring: currentPlannedExercise() has index fallback when AS unavailable', () => {
+  const start = appSrc.indexOf('function currentPlannedExercise()');
+  assert.ok(start !== -1);
+  const next = appSrc.indexOf('\nfunction ', start + 1);
+  const body = appSrc.slice(start, next === -1 ? start + 1500 : next);
+  // When window.activeSession is absent, must return exercises[index] not null.
+  assert.ok(
+    body.includes('activePlannedSession.exercises[activePlannedSession.index]'),
+    'must fall back to exercises[index] when AS is unavailable'
+  );
+});
+
+test('wiring: currentPlannedExercise() skips pending-swap exercise (Step 379 guard)', () => {
+  const start = appSrc.indexOf('function currentPlannedExercise()');
+  assert.ok(start !== -1);
+  const next = appSrc.indexOf('\nfunction ', start + 1);
+  const body = appSrc.slice(start, next === -1 ? start + 1500 : next);
+  // When pendingSubstitution is set, the swapped-out lift must be skipped so a second
+  // conversational message doesn't re-send the taken lift as current_exercise.
+  assert.ok(
+    body.includes('pendingSubstitution'),
+    'must check pendingSubstitution to skip the declared-taken lift'
+  );
+  assert.ok(
+    body.includes('remainingPlannedExercises()'),
+    'must use remainingPlannedExercises() to find the next unswapped lift'
+  );
 });
 
 // ── checkAndSuggestSubstitute uses canonical session ───────────────────────────

@@ -3496,14 +3496,38 @@ function firstUnloggedPlannedLift() {
 // (P0 PR 2 — docs/ACTIVE_SESSION_STATE_DIAGNOSIS.md)
 function currentPlannedExercise() {
   if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return null;
-  const AS = (typeof window !== 'undefined' && window.activeSession) || null;
-  const canon = AS ? getCanonicalSession() : null;
+  const AS = (typeof window !== 'undefined' && window.activeSession) ||
+             (typeof activeSession !== 'undefined' ? activeSession : null);
+  if (!AS) {
+    // activeSession module unavailable — fall back to index-based entry so
+    // advancePlannedSession() doesn't silently end the session.
+    return activePlannedSession.exercises[activePlannedSession.index] || null;
+  }
+  const canon = getCanonicalSession();
   const cur = canon && AS.currentExercise(canon);
-  if (!cur) return null;
-  const key = cur.name.toLowerCase();
+  if (!cur) return null; // all exercises logged — caller (advancePlannedSession) ends session correctly
+
+  // Step 379 guard: if the lifter declared a swap for this exact exercise
+  // (pendingSubstitution is set and the prescribed name matches the canonical current),
+  // the swap hasn't been applied yet (emitSetLogged applies it at log time), so
+  // sessionCompleted still excludes the swapped-out lift — meaning the canonical session
+  // would keep returning it as "current" on every subsequent message. Skip it here and
+  // peek at the next unswapped remaining exercise instead, so substitute checks and the
+  // plan payload always send the actual next-up lift, not the declared-taken one.
+  let name = cur.name;
+  if (pendingSubstitution) {
+    const prescKey = (pendingSubstitution.prescribed || '').toLowerCase();
+    if (prescKey && name.toLowerCase() === prescKey) {
+      const nextName = remainingPlannedExercises().find(n => n.toLowerCase() !== prescKey);
+      if (!nextName) return null;
+      name = nextName;
+    }
+  }
+
+  const key = name.toLowerCase();
   return activePlannedSession.exercises.find(
     ex => (ex.canonicalName || ex.name || '').toLowerCase() === key
-  ) || { name: cur.name, liftCode: cur.liftCode || '', canonicalName: cur.name };
+  ) || { name, liftCode: cur.liftCode || '', canonicalName: name };
 }
 
 // Editor-ready rows from the buffer, numbering sets per exercise.
