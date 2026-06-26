@@ -998,6 +998,51 @@ test('api smoke: coach/chat answers in-session shorthand from the engine when Ge
   }
 });
 
+test('api smoke: coach/chat gives deterministic lift advice when Gemini is 503/429/timeout', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  fakeCoachState.configured = true;
+  try {
+    for (const providerError of [
+      'Gemini request failed (503): UNAVAILABLE',
+      'Gemini request failed (429): RESOURCE_EXHAUSTED',
+      'The operation was aborted due to timeout'
+    ]) {
+      fakeCoachState.throwError = providerError;
+      const { response, body } = await requestJson('/api/coach/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: 'Should I go heavier on back squat?' })
+      });
+      assert.equal(response.status, 200, 'a provider failure must not surface as an HTTP error');
+      assert.equal(body.data.source, 'engine', providerError);
+      assert.match(body.data.message, /Back Squat/, 'names the resolved lift');
+      assert.match(body.data.message, /use \d+ lbs, \d+ reps, 3 sets/i, 'returns the engine prescription');
+      assert.match(body.data.message, /Engine read:/, 'includes the deterministic recommendation reason when available');
+    }
+    assert.equal(fakeSheetsState.appendCalls.length, before, 'provider-down advice fallback is read-only');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.throwError = null;
+  }
+});
+
+test('api smoke: healthy Gemini still owns advice-shaped coach chat', async () => {
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatMessage = 'Gemini advice stays in charge when available.';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Should I go heavier on back squat?' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini');
+    assert.equal(body.data.message, 'Gemini advice stays in charge when available.');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = 'Your bench has been flat for a few sessions â€” try 5Ã—5 at 225 this week.';
+  }
+});
+
 test('api smoke: coach/chat shorthand fallback resolves the lift from the client plan context', async () => {
   // Unconfigured (no Sheets read) — the lift + target come from the live plan the
   // client sent, so "RIR?" still answers without the LLM.
