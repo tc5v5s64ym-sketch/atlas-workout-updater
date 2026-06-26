@@ -268,12 +268,17 @@ Commands used:
 * /investigate
 * /review
 
-Reason:
-Root cause was not yet proven, then a staff-level review was performed before opening the PR.
+Why each command was or was not used:
+/investigate — root cause was not yet proven; ran first to confirm before writing any fix.
+/review — pre-landing review to catch trust-boundary and scope-drift issues before opening.
 
 Key findings:
 * Parser ambiguity was confirmed before implementation.
 * Added one regression test for an uncovered edge case.
+
+Changes made because of those findings:
+* Narrowed fix to the ambiguous token path only.
+* Regression test added to test/api-smoke.test.js.
 ```
 
 **Example B — no commands used:**
@@ -287,15 +292,16 @@ Commands considered:
 Commands used:
 * None
 
-Reason:
-Documentation-only change; no implementation, architecture, QA, or production risk.
+Why each command was or was not used:
+/review — documentation-only change; no implementation, architecture, QA, or production risk.
 ```
 
 Fields:
 - **Commands considered** — every command evaluated, even if rejected.
 - **Commands used** — commands actually invoked; `None` if none.
-- **Reason** — one or two sentences explaining the selection (or non-selection).
-- **Key findings** — only when a gstack command produced findings worth carrying into the PR; omit otherwise.
+- **Why each command was or was not used** — one line per command: name + reason it was included or skipped.
+- **Key findings** — only when a command produced findings worth carrying into the PR; omit if none.
+- **Changes made because of those findings** — only when key findings drove concrete changes; omit if none.
 
 ---
 
