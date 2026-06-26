@@ -1209,7 +1209,7 @@ async function generateVerdictReaction(verdict, { ruleDecisions = [], context = 
     context: context ? sanitizeReactionContext(context) : null,
   };
   const userPrompt = `REACTION INPUT:\n${JSON.stringify(payload, null, 2)}`;
-  return callGemini(buildVerdictReactionSystemPrompt(), userPrompt, timeoutMs);
+  return stripFabricatedUnits(await callGemini(buildVerdictReactionSystemPrompt(), userPrompt, timeoutMs));
 }
 
 module.exports = {
