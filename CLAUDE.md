@@ -220,13 +220,54 @@ Architecture reviews, audits, roadmap planning, and owner-requested analysis may
 
 ## gstack Workflow
 
-Atlas assumes gstack is installed in Claude Code. Before beginning implementation, determine whether one or more installed gstack skills would materially improve the task — for planning, investigation, implementation, review, QA, or release. Use the most appropriate skill(s) when they add value. If no skill is appropriate, explicitly decide that and continue normally. Do not invoke skills mechanically or for trivial work.
+Atlas follows the gstack sprint philosophy: **Think → Plan → Build → Review → Test → Ship → Reflect**.
 
-Every implementation PR must briefly report in the merge card or PR body:
-- **gstack skills used:** [skill(s) invoked] — or `None (not applicable)`
-- **Decision:** one sentence explaining why.
+Install gstack once (if not already present):
+```bash
+git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack && cd ~/.claude/skills/gstack && ./setup
+```
 
-**Atlas governance always takes precedence.** In cases of conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles. Use gstack skills to support Atlas execution, not to replace it.
+**Atlas governance always takes precedence.** In cases of conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles. Use gstack to improve thinking and review quality — not to replace Atlas governance.
+
+### Command reference
+
+The table below covers gstack commands applicable to the Atlas development workflow. Full documentation: https://github.com/garrytan/gstack
+
+| Command | Official purpose | Typical use cases | Atlas-specific examples | Consider when | Generally skip when |
+|---|---|---|---|---|---|
+| `/investigate` | Systematic root-cause debugging. Iron law: no fixes without root cause first. 3-strike rule before escalating. | Unknown bugs, regressions, unexpected behavior | Parser routes valid gym input to coach; proof fields missing from response; undo returns 409 unexpectedly | Root cause is unclear; first hypothesis already failed | Cause is already known; fix is an obvious one-liner |
+| `/plan-eng-review` | Architecture lock-in: data flow diagrams, edge cases, test planning, performance. Interactive walkthrough. | New service, new route, new data model, major refactor | New analytics endpoint; new tab in the sheet contract; multi-step deload state machine | Adding a new service, refactoring the write path, or touching the schema | Trivial single-file fix; docs-only PR |
+| `/spec` | Turn vague intent into precise executable specs. Files GitHub issues. Completeness-scored. | Underspecified backlog items before implementation | Speccing a new constraint kind; speccing the session planning engine | Backlog item is ambiguous and needs design decisions before coding | Item already has a full spec |
+| `/review` | Pre-landing PR review. Checks trust boundaries, race conditions, scope drift. Parallel specialist subagents. | Before opening any PR | Review `index.js` write-path changes; verify coach sanitization; check for proof-field drift | Before every non-trivial PR | Docs-only or single-line fix |
+| `/qa` | Systematic browser QA: find bugs, atomic-commit fixes, auto-generate regression tests. Three tiers: quick / standard / exhaustive. | User-visible behavior after implementation | Testing the preview→approve→write flow; verifying log tab renders correctly | User-visible behavior changed; frontend touched | No frontend change; pure backend or service logic |
+| `/ship` | Complete release workflow: merge base, run tests, bump version, generate changelog, push, open PR. | When ready to open a PR | End-to-end from final commit to PR open | PR involves multiple coordinated steps (test + lint + PR) | Atlas's own PR loop already covers the flow |
+| `/careful` | Safety guardrails: warns before `rm -rf`, `DROP TABLE`, force-push, `kubectl delete`. Session-scoped. | Any work near irreversible operations | Schema migrations; sheet tab deletion; undo-flow edits; credential rotation | Any PR touching destructive or irreversible operations | Routine read-only or docs-only work |
+| `/cso` | Infrastructure-first security audit: OWASP Top 10, secrets scanning, supply chain. Daily or comprehensive mode. | Security-sensitive PRs | Auth changes; `ATLAS_API_KEY` handling; new external API integration | Security-sensitive or credential-adjacent changes | No auth, security, or credential change |
+
+### Before implementation
+
+1. Evaluate whether one or more gstack commands would improve the task.
+2. If appropriate, invoke the command(s).
+3. If none are appropriate, decide that explicitly and continue normally.
+4. Record the decision in the PR.
+
+### PR reporting format
+
+Every implementation PR must include in the merge card or PR body:
+
+```
+gstack
+Commands used: /investigate, /review
+Reason: Used /investigate to confirm root cause before fixing; /review before opening PR.
+```
+
+or
+
+```
+gstack
+Commands used: None
+Reason: Docs-only change; no investigation or review phase warranted a skill invocation.
+```
 
 ---
 
