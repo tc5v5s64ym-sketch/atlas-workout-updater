@@ -102,7 +102,7 @@ test('the unit guard is wired on the display voices and NOT on the compile path'
     return src.slice(start, next === -1 ? undefined : next);
   };
   // Display voices apply the guard…
-  for (const voice of ['generateCoachMessage', 'generatePlanMessage', 'generateChatReply']) {
+  for (const voice of ['generateCoachMessage', 'generatePlanMessage', 'generateChatReply', 'generateVerdictReaction']) {
     assert.match(bodyOf(voice), /stripFabricatedUnits\(/, `${voice} must apply the unit guard`);
   }
   // …the compile path (feeds preview→approve→write) must NOT.
