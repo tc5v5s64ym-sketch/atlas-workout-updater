@@ -249,25 +249,53 @@ The table below covers gstack commands applicable to the Atlas development workf
 1. Evaluate whether one or more gstack commands would improve the task.
 2. If appropriate, invoke the command(s).
 3. If none are appropriate, decide that explicitly and continue normally.
-4. Record the decision in the PR.
+4. Record the decision using the PR reporting format below.
 
 ### PR reporting format
 
-Every implementation PR must include in the merge card or PR body:
+Every implementation PR must include a `gstack` section in the merge card or PR body. This creates an evidence trail showing the decision was made consciously and helps Atlas learn which workflows consistently add value.
+
+**Example A — commands used:**
 
 ```
 gstack
-Commands used: /investigate, /review
-Reason: Used /investigate to confirm root cause before fixing; /review before opening PR.
+
+Commands considered:
+* /investigate
+* /review
+
+Commands used:
+* /investigate
+* /review
+
+Reason:
+Root cause was not yet proven, then a staff-level review was performed before opening the PR.
+
+Key findings:
+* Parser ambiguity was confirmed before implementation.
+* Added one regression test for an uncovered edge case.
 ```
 
-or
+**Example B — no commands used:**
 
 ```
 gstack
-Commands used: None
-Reason: Docs-only change; no investigation or review phase warranted a skill invocation.
+
+Commands considered:
+* /review
+
+Commands used:
+* None
+
+Reason:
+Documentation-only change; no implementation, architecture, QA, or production risk.
 ```
+
+Fields:
+- **Commands considered** — every command evaluated, even if rejected.
+- **Commands used** — commands actually invoked; `None` if none.
+- **Reason** — one or two sentences explaining the selection (or non-selection).
+- **Key findings** — only when a gstack command produced findings worth carrying into the PR; omit otherwise.
 
 ---
 
