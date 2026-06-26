@@ -1477,6 +1477,10 @@ function tryApplyPlanMutation(text) {
   const targetNames = PM.resolvePlanTargets(intent.target, planEntries);
   if (!targetNames.length) return false; // not a (pending) planned lift → let the coach handle it
   const curName = () => {
+    // After a mutation (splice/replace), firstUnloggedPlannedLift gives the correct
+    // new current exercise — the stale cursor may not have advanced yet.
+    const unlogged = firstUnloggedPlannedLift();
+    if (unlogged) return unlogged;
     const cur = activePlannedSession.exercises[activePlannedSession.index];
     return cur ? (cur.canonicalName || cur.name) : null;
   };
@@ -1572,6 +1576,7 @@ function renderActiveSessionBanner() {
   if (!activePlannedSession) { banner.hidden = true; return; }
   const { label, exercises, index } = activePlannedSession;
   const current = exercises[index];
+  if (!current) { banner.hidden = true; return; }
   banner.appendChild(el('div', { class: 'active-session-title', text: `▶ ${label}` }));
   banner.appendChild(el('div', { class: 'active-session-step', text: `Step ${index + 1} of ${exercises.length}: ${current.name}` }));
   const row = el('div', { class: 'active-session-actions' });
@@ -1589,13 +1594,35 @@ function renderActiveSessionBanner() {
 
 function advancePlannedSession() {
   if (!activePlannedSession) return;
-  // Step 373b: a pending swap is tied to the current step — moving on invalidates it.
   pendingSubstitution = null;
-  if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
-  activePlannedSession.index += 1;
-  renderActiveSessionBanner();
-  const ex = activePlannedSession.exercises[activePlannedSession.index];
-  startLift(ex.name, ex.liftCode, ex.weight, ex.reps, ex.sets || 3);
+  // Advance past the banner's current exercise. Two cases:
+  // • Already logged (in sessionCompleted): just increment the cursor so the banner
+  //   moves to the next slot. The canonical session already shows the next exercise
+  //   because it derives "current" from the first-unlogged entry.
+  // • Not logged (user clicked "Next" without logging): treat as skipped (absent) —
+  //   splice it so the canonical session stays in sync with the banner position.
+  const bannerCur = activePlannedSession.exercises[activePlannedSession.index];
+  if (bannerCur) {
+    const completedSet = new Set((sessionCompleted || []).map(c => String(c).toLowerCase()));
+    const bannerKey = (bannerCur.canonicalName || bannerCur.name || '').toLowerCase();
+    if (bannerKey && !completedSet.has(bannerKey)) {
+      if (!skipPlannedExercise(bannerCur.canonicalName || bannerCur.name)) {
+        if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
+        activePlannedSession.index += 1;
+        renderActiveSessionBanner();
+      }
+      // skipPlannedExercise already called renderActiveSessionBanner if it spliced.
+    } else {
+      if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
+      activePlannedSession.index += 1;
+      renderActiveSessionBanner();
+    }
+  }
+  // Start the next exercise from the canonical session (first still-pending lift)
+  // so the composer and plan queue are always derived from the same source.
+  const next = currentPlannedExercise();
+  if (!next) { endPlannedSession(); return; }
+  startLift(next.canonicalName || next.name, next.liftCode, next.weight, next.reps, next.sets || 3);
 }
 
 function endPlannedSession() {
@@ -3461,6 +3488,24 @@ function firstUnloggedPlannedLift() {
   return remainingPlannedExercises()[0] || null;
 }
 
+// Returns the currently-active planned exercise (first unlogged) with prescription
+// details. Uses the canonical session to determine which exercise is current so
+// the stale `activePlannedSession.index` cursor (which lags after a logged set
+// until "Next exercise →" is clicked) never drives a substitute check or plan-step
+// payload. Falls back to the index-based entry when activeSession is unavailable.
+// (P0 PR 2 — docs/ACTIVE_SESSION_STATE_DIAGNOSIS.md)
+function currentPlannedExercise() {
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return null;
+  const AS = (typeof window !== 'undefined' && window.activeSession) || null;
+  const canon = AS ? getCanonicalSession() : null;
+  const cur = canon && AS.currentExercise(canon);
+  if (!cur) return null;
+  const key = cur.name.toLowerCase();
+  return activePlannedSession.exercises.find(
+    ex => (ex.canonicalName || ex.name || '').toLowerCase() === key
+  ) || { name: cur.name, liftCode: cur.liftCode || '', canonicalName: cur.name };
+}
+
 // Editor-ready rows from the buffer, numbering sets per exercise.
 function buildRowsFromSessionLog() {
   const counts = new Map();
@@ -3635,7 +3680,9 @@ async function fetchReaction(liftCode, justLoggedSet) {
 // exercise not in the ~14-entry catalog still gets a coach reply.
 async function checkAndSuggestSubstitute(text) {
   if (!text || !activePlannedSession || !activePlannedSession.exercises.length) return false;
-  const currentEx = activePlannedSession.exercises[activePlannedSession.index];
+  // Use canonical session to find the current exercise — exercises[index] lags after
+  // a logged set until "Next exercise →" is clicked, causing stale substitute checks.
+  const currentEx = currentPlannedExercise();
   if (!currentEx || !currentEx.name || !getApiKey()) return false;
   try {
     const res = await api('/api/suggest-substitute', {
@@ -4495,14 +4542,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
           log_rows: logRows
         };
         if (hasPlan) {
-          // Send only the current plan step, not the full plan. Sending all
-          // exercises with a single logged set causes the broad-region fallback
-          // to claim the wrong planned lift when plan order differs from the
-          // substituted exercise (e.g. Deadlift before Squat when Leg Press is logged).
-          const currentEx = activePlannedSession.exercises[activePlannedSession.index];
+          // Send only the current plan step, not the full plan. Use canonical session
+          // so a stale cursor (after logging without clicking "Next") never reports the
+          // already-logged exercise as the active plan step.
+          const currentEx = currentPlannedExercise();
           if (currentEx) {
             subPayload.plan_exercises = [{
-              name: currentEx.name,
+              name: currentEx.canonicalName || currentEx.name,
               ...(currentEx.liftCode ? { lift_code: currentEx.liftCode } : {})
             }];
           }
