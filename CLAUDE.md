@@ -218,6 +218,14 @@ Architecture reviews, audits, roadmap planning, and owner-requested analysis may
 
 ---
 
+## gstack Workflow
+
+Atlas assumes gstack is installed in Claude Code. Before beginning implementation, determine whether an installed gstack skill would improve the current phase — planning, investigation, implementation, review, QA, or release — and use the most appropriate skill(s) when they add value. Do not invoke skills mechanically; not every task benefits from every skill.
+
+**Atlas governance always takes precedence.** In cases of conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles. Use gstack skills to support Atlas execution, not to replace it.
+
+---
+
 ## Model: Opus 4.8, always — no model check-in
 
 By owner standing instruction, the builder runs on **Opus 4.8 for all work**. There is no model-selection decision and **no owner stop for model**: the merge card records `Opus 4.8` and proceeds. Do not escalate model choice to the owner or to Codex.

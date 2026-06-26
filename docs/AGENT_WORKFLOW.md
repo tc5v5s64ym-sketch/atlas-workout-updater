@@ -342,6 +342,16 @@ If a stale item is discovered, the same PR should either:
 
 The builder runs on Opus 4.8 for all work — there is no model gate after this verification gate.
 
+## gstack Skills (judgment-driven)
+
+Atlas assumes gstack is installed in Claude Code. Before beginning each phase, determine whether an installed gstack skill would improve the work and use the most appropriate skill(s) when they add value. Not every task requires a skill; do not invoke them mechanically.
+
+```
+Read project docs  →  Apply applicable gstack skill(s)  →  Investigate / Plan  →  Implement  →  Self-review  →  Tests  →  PR
+```
+
+In cases of conflict, Atlas governance takes precedence: follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles.
+
 ## Non-negotiables
 
 - `BACKLOG.md` is the source of truth.
