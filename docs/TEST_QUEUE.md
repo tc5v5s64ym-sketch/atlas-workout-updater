@@ -49,22 +49,20 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
-### LT-005 — coach interleaves per-lift blocks (FA)
+---
+
+## Completed
+
+### LT-005 — coach interleaves per-lift blocks (FA) — ✅ PASS (2026-06-26)
 
 | Field | Value |
 |---|---|
 | **Test ID** | LT-005 |
-| **Related PR / feature** | FA — coach renders per-lift blocks (card → coaching → Next) in order |
-| **Shell / app version expected** | Shell v57+ (server build with the FA coach-render change deployed) |
-| **Steps** | Log two exercises in one entry (e.g. Back Squat + Overhead Press). |
-| **Expected result** | Back Squat card, then its coaching, then its "Next"; THEN Overhead Press card, its coaching, its "Next"; then "Moving on — next up: X." once at the end. Each exercise is its own complete block in logged order — NOT both cards then a combined coaching paragraph. Single-exercise entries read exactly as before. |
-| **Screenshot** | The ordered per-exercise blocks. |
-| **Owner result** | PASS / FAIL — |
-| **Follow-up if FAIL** | If cards are still batched before the coaching, capture the entry + the rendered order. |
-
----
-
-## Completed
+| **Related PR / feature** | FA — coach renders per-lift blocks (card → coaching → Next) in order (PR #610, shell v57) |
+| **Steps** | Logged Back Squat + Overhead Press stacked in one entry. |
+| **Expected result** | Each exercise its own block in order: card → coaching → Next, then the closeout once. |
+| **Owner result** | **PASS** — verified live (2026-06-26): `[Back Squat card → coaching → Next: Hold 225×8] → [Overhead Press card → "Overhead Press: Dialled in…" → Next: Hold 115×9] → [Plan complete…]`. Sequential per-exercise blocks, not batched; all lbs (no fabricated units); the second lift's coaching attributed by name. |
+| **Follow-up** | FA PASS. Two unrelated observations the run surfaced: (1) "Plan complete. Say 'done'" fired after the 2-lift plan while the owner had more to log — captured in the **G3** BACKLOG item (premature closeout). (2) a free-form coach reply degraded ("couldn't reach the coach") — Gemini load/quota; owner has since enabled paid Gemini API. |
 
 ### LT-004 — coach speaks to all stacked lifts (G2) — ✅ PASS (2026-06-25)
 
