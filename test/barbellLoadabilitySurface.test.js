@@ -56,6 +56,26 @@ test('applyBarbellLoadability: ignores missing / non-positive / non-finite targe
   assert.equal(applyBarbellLoadability(null), null, 'a non-object passes through');
 });
 
+test('applyBarbellLoadability: weight→target_weight probe pattern covers the suggest-substitute bridge', () => {
+  // The suggest-substitute route maps next_target.weight → target_weight, calls
+  // applyBarbellLoadability, then maps target_weight back to weight. Verify the
+  // full round-trip: a non-loadable weight is snapped and the loadability_note lands.
+  const probe = { target_weight: 187, exercise: 'Romanian Deadlift' };
+  const snapped = applyBarbellLoadability(probe);
+  assert.equal(snapped.target_weight, 185, '187 → 185 (Romanian Deadlift is barbell; 187 not on 5 lb grid)');
+  assert.match(snapped.loadability_note, /Rounded 187 → 185/);
+  // Simulate the route's mapping back to next_target shape:
+  const next_target = {
+    weight: snapped.target_weight,
+    reps: 5,
+    sets: 3,
+    ...(snapped.loadability_note && { loadability_note: snapped.loadability_note }),
+  };
+  assert.equal(next_target.weight, 185, 'weight on next_target reflects the snapped value');
+  assert.equal(next_target.reps, 5, 'reps field preserved through bridge');
+  assert.match(next_target.loadability_note, /Rounded 187 → 185/);
+});
+
 test('applyBarbellLoadabilityToExercises: maps over the list; non-array passes through', () => {
   const list = [
     { exercise: 'Barbell Bench Press', target_weight: 116 },  // snapped → 115
