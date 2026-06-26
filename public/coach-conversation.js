@@ -1161,16 +1161,17 @@
     if (nextEx && !detail.nextPlanned) {
       const done = (detail.completed || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
       if (done) nextEx = null;
-      // A fallback next-up (from /api/plan/today) must belong to the lifter's ENGAGED
-      // plan — never a lift from a stored program they aren't following today. When
-      // freestyling, plannedOrder is empty, so any fallback next-up is rejected and the
-      // thread stays clean (no phantom "next up: <off-plan lift>"). When the engaged
-      // plan is already complete, an off-plan program lift is rejected too, so the
-      // closeout fires instead of a bogus handoff. (Live "next up: Hammer Curls" — a
-      // lift that wasn't in today's plan — repro.) Fuzzy match mirrors
+      // When an in-app plan IS engaged, a fallback next-up (from /api/plan/today) must
+      // belong to it — never a lift from a stored program the lifter isn't following in
+      // this session. So if the engaged plan is already complete (remaining empty →
+      // nextPlanned null) the /api/plan/today lookup can't override the closeout with an
+      // off-plan program lift (the live "next up: Hammer Curls" that wasn't in today's
+      // plan). With NO engaged plan (freeform logging straight against /api/plan/today),
+      // that lookup is the LEGITIMATE handoff source and must still work — so the guard
+      // only applies when plannedOrder is non-empty. Fuzzy match mirrors
       // getNextExerciseInPlan so a canonical/display name variant still counts as in-plan.
-      if (nextEx) {
-        const plan = (detail.plannedOrder || []).map(p => String(p || '').toLowerCase()).filter(Boolean);
+      const plan = (detail.plannedOrder || []).map(p => String(p || '').toLowerCase()).filter(Boolean);
+      if (nextEx && plan.length) {
         const k = String(nextEx).toLowerCase();
         const inEngagedPlan = plan.some(p => p === k || p.includes(k) || k.includes(p));
         if (!inEngagedPlan) nextEx = null;
