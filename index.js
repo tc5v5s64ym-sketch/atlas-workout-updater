@@ -59,7 +59,7 @@ const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
 const { buildSessionQuestionAnswer, answerBareShorthand, isBareSessionShorthand, answerPlannedLiftQuestion, answerTotalRepsQuestion } = require('./services/sessionQuestionAnswer');
 const { isTirednessExpression, buildTirednessRecoveryAnswer } = require('./services/recoveryRouting');
-const { applyBarbellLoadabilityToExercises } = require('./services/barbellLoadabilitySurface');
+const { applyBarbellLoadabilityToExercises, applyBarbellLoadability } = require('./services/barbellLoadabilitySurface');
 const {
   evaluateCurrentDeload,
   beginDeload,
@@ -1774,6 +1774,16 @@ app.post('/api/suggest-substitute', async (req, res) => {
       next_target = (prescription && prescription.next_target) || null;
     }
   } catch { /* best-effort */ }
+  if (next_target && Number.isFinite(next_target.weight) && next_target.weight > 0) {
+    const snapped = applyBarbellLoadability(
+      { target_weight: next_target.weight, exercise: rec.recommendation }
+    );
+    next_target = {
+      ...next_target,
+      weight: snapped.target_weight,
+      ...(snapped.loadability_note && { loadability_note: snapped.loadability_note }),
+    };
+  }
   return standardSuccess(req, res, 'Substitute recommendation', {
     recommendation: { ...rec, next_target }
   });
