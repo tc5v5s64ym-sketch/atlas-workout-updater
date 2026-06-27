@@ -92,8 +92,8 @@ Codex should use bug reports to reproduce and verify the reported behavior, but 
 ## Absolute Safety Rules
 
 - No real Google Sheets writes without explicit owner approval.
-- Codex must not manually append, edit, or delete Google Sheet rows unless the owner explicitly asks.
-- The Atlas app's user-triggered Report Bug flow may append to `Bug_Reports`; Codex may inspect that evidence but must not write to Sheets itself.
+- Codex must not manually append, edit, or delete Google Sheet rows. Owner-approved writes must go through the Atlas app/API flow, not direct manual Sheet edits.
+- Codex may inspect `Bug_Reports` evidence but must not write to Sheets itself.
 - Never expose secrets, API keys, auth tokens, or raw private bug-report payloads in PRs, logs, or issue bodies.
 - Always use `test_mode=true` for dry-runs.
 - Never run real workout ingestion unless the owner explicitly approves it for that turn.
@@ -165,7 +165,7 @@ Codex should use bug reports to reproduce and verify the reported behavior, but 
 
 - Do not change Render settings.
 - Do not change `GOOGLE_SHEETS_ID`.
-- Do not manually write to Google Sheets (no append/edit/delete rows). The in-app Report Bug flow is the only exception for `Bug_Reports`, and Codex does not trigger it.
+- Do not manually write to Google Sheets (no append/edit/delete rows). Owner-approved writes go through the Atlas app/API flow only.
 - Do not run real workout ingestion.
 - Do not expose credentials.
 - Do not restore Dashboard as required.
