@@ -4,12 +4,16 @@ const BUG_REPORT_TAB = 'Bug_Reports';
 const BUG_REPORT_COLUMNS = [
   'Created At',
   'Bug ID',
+  'Source',
+  'Severity',
+  'Status',
   'Note',
   'Route',
   'Session ID',
   'Last Error',
   'App Version',
   'User Agent',
+  'Screenshot/DOM Link',
   'Payload JSON'
 ];
 
@@ -78,12 +82,16 @@ function buildBugReportRow(payload) {
   return [
     timestamp,
     bugId,
+    safePayload.source || '',
+    safePayload.severity || '',
+    safePayload.status || '',
     safePayload.note || '',
     safePayload.route || safePayload.current_route || '',
     sessionId,
     safePayload.last_error?.message || safePayload.last_error || '',
     safePayload.app_version?.version || safePayload.app_version?.shell || safePayload.app_version || '',
     safePayload.browser?.userAgent || safePayload.userAgent || '',
+    safePayload.screenshot_url || safePayload.dom_url || '',
     JSON.stringify(safePayload)
   ];
 }

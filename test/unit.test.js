@@ -92,12 +92,16 @@ test('Bug_Reports append shape is stable', () => {
   assert.deepEqual(BUG_REPORT_COLUMNS, [
     'Created At',
     'Bug ID',
+    'Source',
+    'Severity',
+    'Status',
     'Note',
     'Route',
     'Session ID',
     'Last Error',
     'App Version',
     'User Agent',
+    'Screenshot/DOM Link',
     'Payload JSON'
   ]);
   const row = buildBugReportRow({
@@ -112,18 +116,22 @@ test('Bug_Reports append shape is stable', () => {
     api_key: 'must-redact'
   });
   assert.equal(row.length, BUG_REPORT_COLUMNS.length);
-  assert.deepEqual(row.slice(0, 8), [
+  assert.deepEqual(row.slice(0, 12), [
     '2026-01-02T03:04:05.000Z',
     'BUG-20260102-030405',
+    '',
+    '',
+    '',
     'save failed [REDACTED]',
     '/app | tab-logger',
     '20260102-PM-01',
     '500 from /api/log-workout with [REDACTED]',
     'abc1234',
-    'UnitTest/1.0'
+    'UnitTest/1.0',
+    ''
   ]);
-  assert.equal(JSON.parse(row[8]).api_key, '[REDACTED]');
-  assert.doesNotMatch(row[8], /sk-row-secret-token|abcdefghijklmnopqrstuvwxyz123456|must-redact/);
+  assert.equal(JSON.parse(row[12]).api_key, '[REDACTED]');
+  assert.doesNotMatch(row[12], /sk-row-secret-token|abcdefghijklmnopqrstuvwxyz123456|must-redact/);
 });
 
 test('/bug command creates payload before normal composer routing', () => {
