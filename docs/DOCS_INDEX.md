@@ -38,6 +38,7 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 
 - `docs/ACTIVE_ROADMAP.md` — active queue; current workstream is the Trust-Critical Coach Interaction Layer (P0–P4) after June 2026 live testing.
 - `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md` — active diagnosis doc for the Trust-Critical Coach Interaction Layer (P0 active-session context, P1 substitution-signal visibility). Read before implementing any P0/P1 fix.
+- `docs/QA_CAMPAIGN_2026-06-26_LIVE_GYM.md` — campaign controller for the 2026-06-26 live gym + composer trust/UX findings. Use it to sequence the B1-B10 follow-up PRs; it is not an implementation PR by itself.
 
 ## Product and architecture reference
 
