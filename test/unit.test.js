@@ -180,11 +180,13 @@ test('bug report capture includes pending write state and write_id', () => {
 test('bug report UI has settings trigger and failure copy fallback', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
   assert.match(html, /id="report-bug-btn"/);
   assert.match(appSource, /report-bug-btn'\)\?\.addEventListener/);
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
+  assert.match(sw, /atlas-shell-v61/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5181,8 +5183,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v60/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v59\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v61/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v60\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
