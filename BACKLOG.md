@@ -17,6 +17,23 @@ Each deferred item should carry one of these tags so future agents know the *ris
 
 ---
 
+## QA campaign — 2026-06-26 live gym + composer playtest (B1–B10)
+
+Ordered remediation of the findings in [`docs/UX_PLAYTEST_2026-06-26_LIVE_GYM_AND_COMPOSER_SESSION.md`](./docs/UX_PLAYTEST_2026-06-26_LIVE_GYM_AND_COMPOSER_SESSION.md) (the source-of-truth record; §2 = the B1–B10 findings, §5 = the follow-up PR split). One concern per PR, in priority order. Owner runs a model hold point between PRs.
+
+- ✅ **B1 — Idempotent workout save / no duplicate `Log_Cleaned` rows** `[trust-critical]` (this PR) — **Verdict: STILL BROKEN → fixed.** Root cause: `/api/log-workout`'s live path had per-`write_id` replay dedup but — unlike its sibling `/api/complete-workout` — **no row-level composite-key guard** on `Log_Cleaned`. Because `public/app.js` mints a fresh `write_id` on every re-preview (`generateWriteId()`) while reusing the stable `session_id`, a re-previewed/re-approved save (e.g. after a failed effort import forces a re-preview) appended the same rows again under one session_id — the "49 sets / 51,390 lb" duplication. Fix: mirror the proven `getLogCompositeKeys()` row-level dedup onto `/api/log-workout` — skip rows whose `session‖exercise‖set_number` already exists; an all-duplicate re-save appends nothing and replays an idempotent "already logged" response the client recognises. Row-level (not session-level) so legitimate incremental logging still appends. Server-only — no edit to the restricted trust-loop file. Tests: 4 new api-smoke cases (re-submit new write_id appends nothing; partial-duplicate appends only new rows + totals match; replayed write_id appends once; failed-effort re-save no duplicate log rows). No schema / write-path-semantics / proof-field / parser change.
+- **B2 — Canonical active session state** `[trust-critical]` — surfaces (parser/UI/coach/preview/save) disagree; a success card and "didn't catch lift" both fire. One authoritative `activeSession` every surface derives from. (Underpins B4/B8.)
+- **B3 — Failed effort import must not poison the workout save** `[correctness]` — effort & exercise as independent transactions; specific failure copy, not "Load failed."
+- **B4 — Freestyle logging must not auto-guide ("next up")** `[correctness]` — suppress "next up" unless an explicit guided plan/ask (cf. `BUG-20260627-030017`).
+- **B5 — Apple Watch screenshot import must preserve the source date** `[correctness]` — extract/show source date; dup-detect against intended date, not today.
+- **B6 — Coach's Pick / Blind Spot history correctness** `[trust-critical]` — HNR01/KR01 count as Core; recent (2026-06-24) work recognised; recent squat blocks a heavy-squat rec. (Depends on a clean ledger → after B1.)
+- **B7 — Active workout survives app switch / refresh / lock** `[correctness]` — restore canonical session with a visible notice; **no duplicate write on restore** (depends on B1 + B2).
+- **B8 — Stale plan cards / composer placeholders** `[polish]` — follow canonical session; never suggest a completed lift; clear after save.
+- **B9 — Busy Next Exercise UI** `[polish]` — quieter overlay during user-led logging.
+- **B10 — Generic accessory/core coaching** `[polish]` — specific or quiet; coach-wording (PM authority).
+
+---
+
 ## Multi-workout composer (owner 2026-06-25: "log two or more workouts at once")
 
 - ✅ **RIR is OPTIONAL on save (owner 2026-06-25: "log it however" / "it did like it without the rir")** `[correctness]` — `normalizeLogRowObject` (`index.js`) no longer requires `rir`: a set logged with just weight × reps (warm-up or working) saves with a blank RIR cell (column 10 stays present), Atlas never invents a rating. `weight`/`reps` + identity fields remain required so a garbled row is still rejected. Supersedes the #595 warm-up-only relaxation. Progression/PR engines already treat a blank RIR as no-signal (NaN-filtered). Tests updated in `test/api-smoke.test.js` (blank-RIR working + warm-up rows save; missing reps still 400). No proof-field/trust-loop/schema change; slash-notation contract unchanged (RIR still parsed when given).

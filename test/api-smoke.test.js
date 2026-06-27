@@ -63,6 +63,10 @@ const fakeSheetsState = {
   // Existing Effort session_ids returned by getEffortSessionIds. Tests set this
   // to exercise the duplicate-session guard; default empty (no duplicates).
   effortSessionIds: [],
+  // Existing Log_Cleaned composite keys (session‖exercise‖set, lowercased)
+  // returned by getLogCompositeKeys. Tests set this to exercise the row-level
+  // duplicate guard on the log-workout live-write path; default empty.
+  logCompositeKeys: [],
   // When set to a tab name, getHeaderRow throws for that tab — exercises the
   // header-drift guard's fail-closed read-failure branch.
   failHeaderReadForTab: null,
@@ -119,7 +123,7 @@ const fakeSheets = {
   },
   getLogCompositeKeys: async () => {
     fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
-    return [];
+    return [...fakeSheetsState.logCompositeKeys];
   },
   getRecentRows: async (tabName, maxRows = 100) => {
     if (tabName === 'Log_Cleaned') return logRows;
@@ -1869,6 +1873,131 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.equal(body.data.log_rows_preview[0][3], 'Bench Press');
   assert.equal(body.data.log_rows_preview[0][5], 'BEN01');
   assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+// B1 (2026-06-26 playtest): a re-previewed save mints a NEW write_id (public/app.js
+// regenerates it per preview) while reusing the stable session_id, so the write_id
+// replay guard alone could not stop it from appending the same rows again under one
+// session_id — the "49 sets / 51,390 lb" duplication. The row-level composite-key
+// guard on /api/log-workout closes that gap.
+test('api smoke (B1): re-submitting an already-logged session with a NEW write_id appends nothing', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // Simulate that this exact set is already on the Log_Cleaned sheet.
+  fakeSheetsState.logCompositeKeys = ['b1-dup||bench press||1'];
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'b1-dup',
+        date: '2026-06-26',
+        write_id: 'b1-fresh-write-id',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.all_rows_duplicate, true, 'every row was already logged for this session');
+    assert.equal(body.data.duplicate_write, true);
+    assert.equal(body.data.sheet_write, 'skipped_duplicate');
+    assert.equal(body.data.sheet_written, false);
+    assert.equal(body.data.log_rows_written, 0);
+    assert.equal(body.data.skipped_duplicates, 1);
+    assert.deepEqual(fakeSheetsState.appendCalls, [], 'a re-previewed save must never re-append rows');
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// Partial duplicate: only the genuinely new rows append; already-logged rows are
+// skipped. Proves incremental logging still works (row-level, not session-level).
+test('api smoke (B1): partial duplicate appends only the new rows; totals match rows written', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // Bench set 1 already logged; Back Squat set 1 is new.
+  fakeSheetsState.logCompositeKeys = ['b1-partial||bench press||1'];
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'b1-partial',
+        date: '2026-06-26',
+        write_id: 'b1-partial-write-id',
+        log_rows: [
+          { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
+          { exercise: 'Back Squat', set_number: 1, weight: 315, reps: 5, rir: 2 }
+        ]
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.sheet_write, 'success');
+    assert.equal(body.data.skipped_duplicates, 1, 'the already-logged Bench set is skipped');
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'one append call to Log_Cleaned');
+    const appended = fakeSheetsState.appendCalls.find(c => c.tabName === 'Log_Cleaned');
+    assert.equal(appended.rows.length, 1, 'only the new Back Squat row is appended');
+    assert.equal(appended.rows[0][2], 'Back Squat', 'the appended row is the new lift');
+    // Post-save total is derived from exactly the rows written, not the rows sent.
+    assert.equal(body.data.log_rows_written, 1);
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// The existing write_id replay guard is unchanged: a double-tap of the SAME
+// write_id appends exactly once even when the composite-key guard sees no prior rows.
+test('api smoke (B1): a replayed write_id (double-tap) appends exactly once', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.logCompositeKeys = [];
+  try {
+    const payload = JSON.stringify({
+      session_id: 'b1-doubletap',
+      date: '2026-06-26',
+      write_id: 'b1-doubletap-write-id',
+      log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]
+    });
+    const first = await requestJson('/api/log-workout', { method: 'POST', body: payload });
+    const second = await requestJson('/api/log-workout', { method: 'POST', body: payload });
+
+    assert.equal(first.body.data.sheet_write, 'success');
+    assert.equal(second.body.data.duplicate_write, true);
+    assert.equal(second.body.data.sheet_written, false);
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'a replayed write_id must not append twice');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// B1 × B3: a failed effort import forces the owner to re-preview and re-save (a new
+// write_id). Because the log rows are already on the sheet, the re-save appends no
+// duplicate log rows — the effort failure can never multiply the workout rows.
+test('api smoke (B1): a re-save after a failed effort import does not duplicate log rows', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // The first save already wrote the log rows.
+  fakeSheetsState.logCompositeKeys = ['b1-effort-retry||bench press||1'];
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'b1-effort-retry',
+        date: '2026-06-26',
+        write_id: 'b1-effort-retry-write-id',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }]
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.all_rows_duplicate, true);
+    assert.equal(body.data.log_rows_written, 0);
+    assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length, 0, 'no log rows re-appended');
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.allowAppend = false;
+  }
 });
 
 // RIR is OPTIONAL (owner 2026-06-25: "log it however"). A set logged with just

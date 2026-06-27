@@ -3617,12 +3617,72 @@ app.post('/api/log-workout', async (req, res) => {
     }
   }
 
+  // Row-level duplicate guard for Log_Cleaned (session_id + exercise + set_number).
+  // The write_id guard above only catches a replay of the SAME write_id; it does
+  // not stop a re-previewed save, which mints a fresh write_id (public/app.js
+  // regenerates it per preview) while reusing the stable session_id. Without this
+  // filter, re-approving an already-saved workout (e.g. after a failed effort
+  // import forces a re-preview) appends the same rows again under one session_id —
+  // the "49 sets / 51,390 lb" duplication from the 2026-06-26 playtest. Mirrors the
+  // proven row-level dedup already used by /api/complete-workout, so legitimate new
+  // rows still append and only exact (session‖exercise‖set) duplicates are skipped.
+  let rowsToWrite = formattedLogRows;
+  let skippedDuplicates = [];
+  try {
+    const existingLogKeys = await getLogCompositeKeys();
+    const intendedKeys = formattedLogRows.map(row => {
+      // formatted row order follows logCleanedColumns: session_id=1, exercise=2, set_number=6
+      const sid = String(row[1] || '').trim().toLowerCase();
+      const ex = String(row[2] || '').trim().toLowerCase();
+      const setn = String(row[6] || '').trim().toLowerCase();
+      return `${sid}||${ex}||${setn}`;
+    });
+    const newRows = [];
+    for (let i = 0; i < formattedLogRows.length; i += 1) {
+      if (existingLogKeys.includes(intendedKeys[i])) {
+        skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
+      } else {
+        newRows.push(formattedLogRows[i]);
+      }
+    }
+    rowsToWrite = newRows;
+  } catch (error) {
+    console.error('❌ Failed to check for duplicate log rows:', error);
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to validate duplicate log rows.', null, 500);
+  }
+
+  // Every intended row is already on the sheet for this session — this is a
+  // re-submission of an already-saved workout. Append nothing and replay an
+  // idempotent "already logged" response (the client recognises this duplicate
+  // shape and reports it as saved, not as an error). The effort tab has its own
+  // duplicate guard above, so it is intentionally not re-written here.
+  if (rowsToWrite.length === 0) {
+    const duplicateBody = {
+      message: 'All rows were already logged for this session; nothing appended.',
+      test_mode: false,
+      sheet_write: 'skipped_duplicate',
+      sheet_written: false,
+      original_sheet_write: 'success',
+      duplicate_write: true,
+      all_rows_duplicate: true,
+      log_rows_written: 0,
+      skipped_duplicates: skippedDuplicates.length
+    };
+    if (idempotency.enabled) {
+      duplicateBody.write_id = idempotency.write_id;
+      duplicateBody.idempotency_status = 'completed';
+      completeWrite(idempotency.write_id, idempotency.token, duplicateBody);
+    }
+    return standardSuccess(req, res, duplicateBody.message, duplicateBody, 200);
+  }
+
   // Header-drift guard: confirm the target tabs still match the column contract
   // before any append. A mismatch releases the write_id (nothing was written)
   // and refuses the write rather than misroute values into the wrong columns.
   try {
     const headerFailures = await assertWriteHeaderContracts({
-      checkLog: formattedLogRows.length > 0,
+      checkLog: rowsToWrite.length > 0,
       checkEffort: Boolean(formattedEffortRow)
     });
     if (headerFailures.length > 0) {
@@ -3646,11 +3706,12 @@ app.post('/api/log-workout', async (req, res) => {
     console.log(JSON.stringify({
       event: 'append_log_rows',
       tab: logSheetName,
-      row_count: formattedLogRows.length,
+      row_count: rowsToWrite.length,
+      skipped_duplicates: skippedDuplicates.length,
       session_id,
       requestId: req.requestId
     }));
-    logResponse = await appendRows(logSheetName, formattedLogRows);
+    logResponse = await appendRows(logSheetName, rowsToWrite);
     console.log(JSON.stringify({
       event: 'append_log_rows_success',
       tab: logSheetName,
@@ -3717,6 +3778,9 @@ app.post('/api/log-workout', async (req, res) => {
       test_mode: false,
       sheet_write: 'success'
     };
+    if (skippedDuplicates.length > 0) {
+      responseBody.skipped_duplicates = skippedDuplicates.length;
+    }
     if (effortResponse) {
       responseBody.effortAppendedRange = effortResponse.data.updates?.updatedRange;
     }
