@@ -1940,6 +1940,7 @@ test('api smoke (B1): all duplicate log rows still allow a new Effort row append
     assert.equal(response.status, 200);
     assert.equal(body.data.sheet_write, 'success');
     assert.equal(body.data.log_rows_written, 0, 'duplicate log rows are not appended');
+    assert.equal(body.data.effort_rows_written, 1, 'new Effort row count is reported as proof');
     assert.equal(body.data.skipped_duplicates, 1);
     assert.equal(body.data.effortWritten, true, 'new Effort row is still appended');
     assert.equal(body.data.effortAppendedRange, 'Effort!A100:K100');

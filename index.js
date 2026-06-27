@@ -3756,6 +3756,7 @@ app.post('/api/log-workout', async (req, res) => {
           : 'Log rows were already present and the effort row failed to write. Retrying with a new write_id can try the Effort append again without duplicating log rows.',
         logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
         log_rows_written: logRowsWritten,
+        effort_rows_written: 0,
         effortWritten: false,
         test_mode: false,
         sheet_write: 'partial',
@@ -3778,6 +3779,7 @@ app.post('/api/log-workout', async (req, res) => {
       message: 'Workout data appended successfully.',
       logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
       log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
+      effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
       effortWritten: Boolean(formattedEffortRow),
       test_mode: false,
       sheet_write: 'success'
@@ -3812,6 +3814,7 @@ app.post('/api/log-workout', async (req, res) => {
       completeWrite(idempotency.write_id, idempotency.token, {
         message: 'Workout data appended; response finalization failed.',
         log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
+        effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
         effortWritten: Boolean(formattedEffortRow),
         test_mode: false,
         sheet_write: 'success',
