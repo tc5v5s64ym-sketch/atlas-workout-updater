@@ -61,18 +61,42 @@ Required tabs:
 - `Logic`
 - `Session_Summary`
 
+Optional production/support tabs:
+
+- `Modality_Log` — optional sibling tab for non-slash modality logging (cardio, holds, circuits, etc.). Absent tab → `POST /api/log-modality` returns 503; sheet remains complete.
+- `Bug_Reports` — dev/QA support tab used by the in-app Report Bug feature (`POST /api/bug-report`). **Not workout history.** Do not consume for progression, fatigue, PR, deload, or coaching engines. May contain private workout/session/debug data — never commit, paste raw into public issues, or expose in logs.
+
 Dashboard:
 
 - intentionally absent
 - optional only
 - must never be required by health checks, code, tests, or docs
 
+## Bug Report Evidence
+
+When the owner references a bug ID like `BUG-YYYYMMDD-HHMMSS`, Codex may use that `Bug_Reports` row as QA evidence.
+
+Bug reports may include:
+
+- visible user/assistant messages
+- route/view
+- active session state
+- pending preview/write state
+- app version/git SHA
+- user agent/device info
+- recent API request metadata
+- redacted local/session storage
+
+Codex should use bug reports to reproduce and verify the reported behavior, but must still ground conclusions in code and tests.
+
 ## Absolute Safety Rules
 
 - No real Google Sheets writes without explicit owner approval.
+- Codex must not manually append, edit, or delete Google Sheet rows. Owner-approved writes must go through the Atlas app/API flow, not direct manual Sheet edits.
+- Codex may inspect `Bug_Reports` evidence but must not write to Sheets itself.
+- Never expose secrets, API keys, auth tokens, or raw private bug-report payloads in PRs, logs, or issue bodies.
 - Always use `test_mode=true` for dry-runs.
 - Never run real workout ingestion unless the owner explicitly approves it for that turn.
-- Never expose secrets or API keys.
 - Never print `ATLAS_API_KEY`.
 - Never commit `.env` files.
 - Never commit spreadsheets.
@@ -133,6 +157,7 @@ Dashboard:
 - Run GitHub Actions Mission Control when asked.
 - Summarize risks and blockers.
 - Perform CODEX Review after Claude Code opens a PR.
+- Inspect `Bug_Reports` evidence when the owner references a bug ID.
 - Flag roadmap drift, scope creep, and trust-contract risk.
 - Run the **Codex Decision Desk**: answer Claude's decision panels (`docs/DECISION_ROUTING.md`) so the owner is not asked. Answer every question in a `Codex Decision Request` grounded in roadmap fit, scope, and the trust contract; escalate to the owner only the reserved items (Vision/Dream/Constitution, app/runtime-model changes, INVARIANT amendments, or anything you cannot resolve). Do not punt routine scope/approach/roadmap-fit calls to the owner.
 
@@ -140,7 +165,7 @@ Dashboard:
 
 - Do not change Render settings.
 - Do not change `GOOGLE_SHEETS_ID`.
-- Do not write to Google Sheets.
+- Do not manually write to Google Sheets (no append/edit/delete rows). Owner-approved writes go through the Atlas app/API flow only.
 - Do not run real workout ingestion.
 - Do not expose credentials.
 - Do not restore Dashboard as required.
@@ -162,6 +187,7 @@ CODEX Review checks:
 - write-path/schema safety
 - accidental future-PR work
 - whether the original failure is actually fixed
+- when a PR claims to fix a reported bug, whether a matching `Bug_Reports` ID exists and its payload confirms the failing condition and acceptance test (example: `BUG-20260627-030017` captured freestyle logging incorrectly saying "Moving on — next up" while `active_planned_session` was null)
 
 CODEX Review outcomes:
 
