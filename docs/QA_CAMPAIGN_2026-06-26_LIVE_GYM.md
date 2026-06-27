@@ -75,6 +75,15 @@ Use this order unless current repo evidence proves a dependency should change:
 
 ---
 
+## Owner Live-Test Side Log
+
+These notes are evidence only. They do not start B2 or any implementation lane.
+
+- **B4 live evidence:** during B1 owner live testing, freestyle logging RDLs still offered "next up: Bench Press." This confirms user-led logging is still auto-guiding when it should parse, confirm, coach, and stop.
+- **Exercise catalog / normalization issue:** owner logged "RDLs" and Atlas saved the `Log_Cleaned` muscle group as `Unknown`. Atlas should normalize RDL/RDLs/Romanian Deadlift and classify the lift as hamstrings/glutes/posterior chain instead of unknown.
+
+---
+
 ## PR Sequence
 
 ### PR 1 - B1 duplicate workout rows / idempotent save
