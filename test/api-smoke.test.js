@@ -1910,6 +1910,49 @@ test('api smoke (B1): re-submitting an already-logged session with a NEW write_i
   }
 });
 
+test('api smoke (B1): all duplicate log rows still allow a new Effort row append', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.logCompositeKeys = ['b1-effort-new||bench press||1'];
+  fakeSheetsState.effortSessionIds = [];
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'b1-effort-new',
+        date: '2026-06-26',
+        write_id: 'b1-effort-new-write-id',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }],
+        effort_row: {
+          date: '2026-06-26',
+          session_id: 'b1-effort-new',
+          duration: '00:42:00',
+          active_calories: 410,
+          total_calories: 520,
+          average_hr: 148,
+          peak_hr: 171,
+          location: '',
+          notes: 'watch import'
+        }
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.sheet_write, 'success');
+    assert.equal(body.data.log_rows_written, 0, 'duplicate log rows are not appended');
+    assert.equal(body.data.skipped_duplicates, 1);
+    assert.equal(body.data.effortWritten, true, 'new Effort row is still appended');
+    assert.equal(body.data.effortAppendedRange, 'Effort!A100:K100');
+    assert.equal(fakeSheetsState.appendCalls.length, 1, 'only the Effort append fires');
+    assert.equal(fakeSheetsState.appendCalls[0].tabName, 'Effort');
+    assert.equal(fakeSheetsState.appendCalls[0].rows[0][1], 'b1-effort-new');
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.effortSessionIds = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 // Partial duplicate: only the genuinely new rows append; already-logged rows are
 // skipped. Proves incremental logging still works (row-level, not session-level).
 test('api smoke (B1): partial duplicate appends only the new rows; totals match rows written', async () => {

@@ -3652,12 +3652,11 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'Failed to validate duplicate log rows.', null, 500);
   }
 
-  // Every intended row is already on the sheet for this session — this is a
-  // re-submission of an already-saved workout. Append nothing and replay an
-  // idempotent "already logged" response (the client recognises this duplicate
-  // shape and reports it as saved, not as an error). The effort tab has its own
-  // duplicate guard above, so it is intentionally not re-written here.
-  if (rowsToWrite.length === 0) {
+  // Every intended log row is already on the sheet for this session. When there
+  // is no new Effort row, append nothing and replay an idempotent "already
+  // logged" response. When a valid new Effort row is present, continue so the
+  // Effort append can repair the missing tab without duplicating Log_Cleaned.
+  if (rowsToWrite.length === 0 && !formattedEffortRow) {
     const duplicateBody = {
       message: 'All rows were already logged for this session; nothing appended.',
       test_mode: false,
@@ -3701,29 +3700,31 @@ app.post('/api/log-workout', async (req, res) => {
   // append fails AFTER the log append → the write_id is recorded as completed
   // with a partial result, so a retried write_id replays that honest partial
   // response instead of appending the log rows a second time.
-  let logResponse;
-  try {
-    console.log(JSON.stringify({
-      event: 'append_log_rows',
-      tab: logSheetName,
-      row_count: rowsToWrite.length,
-      skipped_duplicates: skippedDuplicates.length,
-      session_id,
-      requestId: req.requestId
-    }));
-    logResponse = await appendRows(logSheetName, rowsToWrite);
-    console.log(JSON.stringify({
-      event: 'append_log_rows_success',
-      tab: logSheetName,
-      row_count: Number(logResponse.data.updates?.updatedRows || 0),
-      range: logResponse.data.updates?.updatedRange,
-      session_id,
-      requestId: req.requestId
-    }));
-  } catch (error) {
-    console.error('❌ Failed to append workout data:', error);
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+  let logResponse = null;
+  if (rowsToWrite.length > 0) {
+    try {
+      console.log(JSON.stringify({
+        event: 'append_log_rows',
+        tab: logSheetName,
+        row_count: rowsToWrite.length,
+        skipped_duplicates: skippedDuplicates.length,
+        session_id,
+        requestId: req.requestId
+      }));
+      logResponse = await appendRows(logSheetName, rowsToWrite);
+      console.log(JSON.stringify({
+        event: 'append_log_rows_success',
+        tab: logSheetName,
+        row_count: Number(logResponse.data.updates?.updatedRows || 0),
+        range: logResponse.data.updates?.updatedRange,
+        session_id,
+        requestId: req.requestId
+      }));
+    } catch (error) {
+      console.error('❌ Failed to append workout data:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+    }
   }
 
   let effortResponse = null;
@@ -3746,12 +3747,15 @@ app.post('/api/log-workout', async (req, res) => {
         requestId: req.requestId
       }));
     } catch (error) {
-      console.error('❌ Effort append failed after log rows were written:', error);
+      console.error('❌ Effort append failed:', error);
       invalidateSheetRowsCache();
+      const logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
       const partialBody = {
-        message: 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.',
-        logAppendedRange: logResponse.data.updates?.updatedRange,
-        log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+        message: logRowsWritten > 0
+          ? 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.'
+          : 'Log rows were already present and the effort row failed to write. Retrying with a new write_id can try the Effort append again without duplicating log rows.',
+        logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
+        log_rows_written: logRowsWritten,
         effortWritten: false,
         test_mode: false,
         sheet_write: 'partial',
@@ -3772,8 +3776,8 @@ app.post('/api/log-workout', async (req, res) => {
 
     const responseBody = {
       message: 'Workout data appended successfully.',
-      logAppendedRange: logResponse.data.updates?.updatedRange,
-      log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+      logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
+      log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
       effortWritten: Boolean(formattedEffortRow),
       test_mode: false,
       sheet_write: 'success'
@@ -3807,7 +3811,7 @@ app.post('/api/log-workout', async (req, res) => {
     if (idempotency.enabled) {
       completeWrite(idempotency.write_id, idempotency.token, {
         message: 'Workout data appended; response finalization failed.',
-        log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+        log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
         effortWritten: Boolean(formattedEffortRow),
         test_mode: false,
         sheet_write: 'success',
