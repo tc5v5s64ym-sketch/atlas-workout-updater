@@ -5422,8 +5422,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         if (writeData.sheet_write !== 'success') {
           throw new Error(`Write response did not confirm success (sheet_write=${writeData.sheet_write ?? 'missing'}). Check Sheets.`);
         }
-        if (!(Number(writeData.log_rows_written || 0) > 0)) {
-          throw new Error(`Write confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
+        const logRowsWritten = Number(writeData.log_rows_written || 0);
+        const effortRowsWritten = Number(writeData.effort_rows_written || 0);
+        if (!(logRowsWritten > 0 || effortRowsWritten > 0)) {
+          throw new Error(`Write confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'} and effort_rows_written=${writeData.effort_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
         }
       }
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.

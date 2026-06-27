@@ -3617,12 +3617,71 @@ app.post('/api/log-workout', async (req, res) => {
     }
   }
 
+  // Row-level duplicate guard for Log_Cleaned (session_id + exercise + set_number).
+  // The write_id guard above only catches a replay of the SAME write_id; it does
+  // not stop a re-previewed save, which mints a fresh write_id (public/app.js
+  // regenerates it per preview) while reusing the stable session_id. Without this
+  // filter, re-approving an already-saved workout (e.g. after a failed effort
+  // import forces a re-preview) appends the same rows again under one session_id —
+  // the "49 sets / 51,390 lb" duplication from the 2026-06-26 playtest. Mirrors the
+  // proven row-level dedup already used by /api/complete-workout, so legitimate new
+  // rows still append and only exact (session‖exercise‖set) duplicates are skipped.
+  let rowsToWrite = formattedLogRows;
+  let skippedDuplicates = [];
+  try {
+    const existingLogKeys = await getLogCompositeKeys();
+    const intendedKeys = formattedLogRows.map(row => {
+      // formatted row order follows logCleanedColumns: session_id=1, exercise=2, set_number=6
+      const sid = String(row[1] || '').trim().toLowerCase();
+      const ex = String(row[2] || '').trim().toLowerCase();
+      const setn = String(row[6] || '').trim().toLowerCase();
+      return `${sid}||${ex}||${setn}`;
+    });
+    const newRows = [];
+    for (let i = 0; i < formattedLogRows.length; i += 1) {
+      if (existingLogKeys.includes(intendedKeys[i])) {
+        skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
+      } else {
+        newRows.push(formattedLogRows[i]);
+      }
+    }
+    rowsToWrite = newRows;
+  } catch (error) {
+    console.error('❌ Failed to check for duplicate log rows:', error);
+    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+    return standardError(req, res, 'Failed to validate duplicate log rows.', null, 500);
+  }
+
+  // Every intended log row is already on the sheet for this session. When there
+  // is no new Effort row, append nothing and replay an idempotent "already
+  // logged" response. When a valid new Effort row is present, continue so the
+  // Effort append can repair the missing tab without duplicating Log_Cleaned.
+  if (rowsToWrite.length === 0 && !formattedEffortRow) {
+    const duplicateBody = {
+      message: 'All rows were already logged for this session; nothing appended.',
+      test_mode: false,
+      sheet_write: 'skipped_duplicate',
+      sheet_written: false,
+      original_sheet_write: 'success',
+      duplicate_write: true,
+      all_rows_duplicate: true,
+      log_rows_written: 0,
+      skipped_duplicates: skippedDuplicates.length
+    };
+    if (idempotency.enabled) {
+      duplicateBody.write_id = idempotency.write_id;
+      duplicateBody.idempotency_status = 'completed';
+      completeWrite(idempotency.write_id, idempotency.token, duplicateBody);
+    }
+    return standardSuccess(req, res, duplicateBody.message, duplicateBody, 200);
+  }
+
   // Header-drift guard: confirm the target tabs still match the column contract
   // before any append. A mismatch releases the write_id (nothing was written)
   // and refuses the write rather than misroute values into the wrong columns.
   try {
     const headerFailures = await assertWriteHeaderContracts({
-      checkLog: formattedLogRows.length > 0,
+      checkLog: rowsToWrite.length > 0,
       checkEffort: Boolean(formattedEffortRow)
     });
     if (headerFailures.length > 0) {
@@ -3641,28 +3700,31 @@ app.post('/api/log-workout', async (req, res) => {
   // append fails AFTER the log append → the write_id is recorded as completed
   // with a partial result, so a retried write_id replays that honest partial
   // response instead of appending the log rows a second time.
-  let logResponse;
-  try {
-    console.log(JSON.stringify({
-      event: 'append_log_rows',
-      tab: logSheetName,
-      row_count: formattedLogRows.length,
-      session_id,
-      requestId: req.requestId
-    }));
-    logResponse = await appendRows(logSheetName, formattedLogRows);
-    console.log(JSON.stringify({
-      event: 'append_log_rows_success',
-      tab: logSheetName,
-      row_count: Number(logResponse.data.updates?.updatedRows || 0),
-      range: logResponse.data.updates?.updatedRange,
-      session_id,
-      requestId: req.requestId
-    }));
-  } catch (error) {
-    console.error('❌ Failed to append workout data:', error);
-    if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
-    return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+  let logResponse = null;
+  if (rowsToWrite.length > 0) {
+    try {
+      console.log(JSON.stringify({
+        event: 'append_log_rows',
+        tab: logSheetName,
+        row_count: rowsToWrite.length,
+        skipped_duplicates: skippedDuplicates.length,
+        session_id,
+        requestId: req.requestId
+      }));
+      logResponse = await appendRows(logSheetName, rowsToWrite);
+      console.log(JSON.stringify({
+        event: 'append_log_rows_success',
+        tab: logSheetName,
+        row_count: Number(logResponse.data.updates?.updatedRows || 0),
+        range: logResponse.data.updates?.updatedRange,
+        session_id,
+        requestId: req.requestId
+      }));
+    } catch (error) {
+      console.error('❌ Failed to append workout data:', error);
+      if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
+      return standardError(req, res, 'Failed to append workout data', process.env.NODE_ENV === 'production' ? null : error.message, 500);
+    }
   }
 
   let effortResponse = null;
@@ -3685,12 +3747,16 @@ app.post('/api/log-workout', async (req, res) => {
         requestId: req.requestId
       }));
     } catch (error) {
-      console.error('❌ Effort append failed after log rows were written:', error);
+      console.error('❌ Effort append failed:', error);
       invalidateSheetRowsCache();
+      const logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
       const partialBody = {
-        message: 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.',
-        logAppendedRange: logResponse.data.updates?.updatedRange,
-        log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+        message: logRowsWritten > 0
+          ? 'Log rows were appended but the effort row failed to write. Retrying this write_id will not append the log rows again — use undo-last or add the effort separately.'
+          : 'Log rows were already present and the effort row failed to write. Retrying with a new write_id can try the Effort append again without duplicating log rows.',
+        logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
+        log_rows_written: logRowsWritten,
+        effort_rows_written: 0,
         effortWritten: false,
         test_mode: false,
         sheet_write: 'partial',
@@ -3711,12 +3777,16 @@ app.post('/api/log-workout', async (req, res) => {
 
     const responseBody = {
       message: 'Workout data appended successfully.',
-      logAppendedRange: logResponse.data.updates?.updatedRange,
-      log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+      logAppendedRange: logResponse?.data?.updates?.updatedRange || null,
+      log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
+      effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
       effortWritten: Boolean(formattedEffortRow),
       test_mode: false,
       sheet_write: 'success'
     };
+    if (skippedDuplicates.length > 0) {
+      responseBody.skipped_duplicates = skippedDuplicates.length;
+    }
     if (effortResponse) {
       responseBody.effortAppendedRange = effortResponse.data.updates?.updatedRange;
     }
@@ -3743,7 +3813,8 @@ app.post('/api/log-workout', async (req, res) => {
     if (idempotency.enabled) {
       completeWrite(idempotency.write_id, idempotency.token, {
         message: 'Workout data appended; response finalization failed.',
-        log_rows_written: Number(logResponse.data.updates?.updatedRows || 0),
+        log_rows_written: Number(logResponse?.data?.updates?.updatedRows || 0),
+        effort_rows_written: Number(effortResponse?.data?.updates?.updatedRows || 0),
         effortWritten: Boolean(formattedEffortRow),
         test_mode: false,
         sheet_write: 'success',

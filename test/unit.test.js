@@ -3353,7 +3353,7 @@ test('duplicate-write: finally block always clears writeInFlight', () => {
 test('duplicate-write: successful write sets button text to Written ✓', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12000);
   assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
   // Written ✓ must appear before the catch block
   const writtenIdx = handler.indexOf('Written');
@@ -5066,13 +5066,24 @@ test('write_id: fresh-write proof is not weakened by the duplicate path', () => 
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 9000);
-  // The success + rows-written checks must still guard every non-duplicate write
+  // The success + rows-written checks must still guard every non-duplicate write.
+  // A B1 repair write may legitimately write only Effort after duplicate log rows.
   const guardIdx = handler.indexOf('if (!duplicateBlocked)');
   const successIdx = handler.indexOf("sheet_write !== 'success'");
-  const rowsIdx = handler.indexOf('log_rows_written || 0) > 0');
+  const rowsIdx = handler.indexOf('logRowsWritten > 0 || effortRowsWritten > 0');
   assert.ok(guardIdx !== -1, 'non-duplicate branch must exist');
   assert.ok(successIdx > guardIdx, 'sheet_write success proof must remain inside the non-duplicate branch');
-  assert.ok(rowsIdx > guardIdx, 'rows-written proof must remain inside the non-duplicate branch');
+  assert.ok(rowsIdx > guardIdx, 'rows-written or effort-written proof must remain inside the non-duplicate branch');
+});
+
+test('write_id: manual log-workout accepts Effort-only success after duplicate log rows', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const handler = app.slice(app.indexOf(anchor), app.indexOf(anchor) + 9000);
+  assert.match(handler, /const logRowsWritten = Number\(writeData\.log_rows_written \|\| 0\)/, 'must read log row proof');
+  assert.match(handler, /const effortRowsWritten = Number\(writeData\.effort_rows_written \|\| 0\)/, 'must read Effort row proof');
+  assert.match(handler, /logRowsWritten > 0 \|\| effortRowsWritten > 0/, 'must accept a confirmed Effort-only append');
+  assert.match(handler, /log_rows_written=.*effort_rows_written=/, 'zero-log and zero-effort responses must still fail loudly');
 });
 
 test('write_id: blocked duplicate reports honestly instead of pretending to write', () => {
