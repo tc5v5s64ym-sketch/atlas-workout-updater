@@ -28,8 +28,122 @@ const { isTransientAppendError, retryWithBackoff } = require('../sheets');
 const { routeDefinitions } = require('../config/routes');
 const { extractDryRunSafetyFields, assertDryRunNoWrite } = require('../scripts/smoke-test-render');
 const { generateSessionId, nextAvailableSessionId, formatDateForSessionId, formatAmPmSuffix } = require('../services/sessionId');
+const {
+  BUG_REPORT_TAB,
+  BUG_REPORT_COLUMNS,
+  bugIdFromDate,
+  redactBugPayload,
+  buildBugReportRow
+} = require('../services/bugReport');
 
 const repoRoot = path.resolve(__dirname, '..');
+
+test('bug report id uses BUG-YYYYMMDD-HHMMSS format', () => {
+  assert.equal(bugIdFromDate(new Date('2026-01-02T03:04:05.000Z')), 'BUG-20260102-030405');
+});
+
+test('bug report redaction removes sensitive fields recursively', () => {
+  const safe = redactBugPayload({
+    note: 'preview failed',
+    atlas_api_key: 'secret-key',
+    nested: {
+      authToken: 'token-value',
+      visible: 'kept'
+    },
+    storage: {
+      atlas_session_snapshot_v1: '{"ok":true}',
+      atlas_secret: 'do-not-store'
+    }
+  });
+  assert.equal(safe.atlas_api_key, '[REDACTED]');
+  assert.equal(safe.nested.authToken, '[REDACTED]');
+  assert.equal(safe.nested.visible, 'kept');
+  assert.equal(safe.storage.atlas_secret, '[REDACTED]');
+  assert.doesNotMatch(JSON.stringify(safe), /secret-key|token-value|do-not-store/);
+});
+
+test('Bug_Reports append shape is stable', () => {
+  assert.equal(BUG_REPORT_TAB, 'Bug_Reports');
+  assert.deepEqual(BUG_REPORT_COLUMNS, [
+    'Created At',
+    'Bug ID',
+    'Note',
+    'Route',
+    'Session ID',
+    'Last Error',
+    'App Version',
+    'User Agent',
+    'Payload JSON'
+  ]);
+  const row = buildBugReportRow({
+    bug_id: 'BUG-20260102-030405',
+    timestamp: '2026-01-02T03:04:05.000Z',
+    note: 'save failed',
+    route: '/app | tab-logger',
+    current_sheet: { session_id: '20260102-PM-01' },
+    last_error: { message: '500 from /api/log-workout' },
+    app_version: { version: 'abc1234' },
+    browser: { userAgent: 'UnitTest/1.0' },
+    api_key: 'must-redact'
+  });
+  assert.equal(row.length, BUG_REPORT_COLUMNS.length);
+  assert.deepEqual(row.slice(0, 8), [
+    '2026-01-02T03:04:05.000Z',
+    'BUG-20260102-030405',
+    'save failed',
+    '/app | tab-logger',
+    '20260102-PM-01',
+    '500 from /api/log-workout',
+    'abc1234',
+    'UnitTest/1.0'
+  ]);
+  assert.equal(JSON.parse(row[8]).api_key, '[REDACTED]');
+});
+
+test('/bug command creates payload before normal composer routing', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function parseBugCommand/);
+  assert.match(appSource, /buildAtlasBugReportPayload/);
+  const submitStart = appSource.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  const bugIdx = appSource.indexOf('const bugNote = parseBugCommand', submitStart);
+  const sessionRequestIdx = appSource.indexOf('looksLikeSessionRequest', submitStart);
+  const logItIdx = appSource.indexOf('looksLikeLogIt', submitStart);
+  assert.ok(bugIdx > submitStart, '/bug handling must be inside composer submit');
+  assert.ok(bugIdx < sessionRequestIdx, '/bug must run before session-request routing');
+  assert.ok(bugIdx < logItIdx, '/bug must run before log-it routing');
+  assert.match(appSource.slice(bugIdx, bugIdx + 280), /await saveAtlasBugReport\(bugNote\)/);
+});
+
+test('bug report capture includes failed preview state and recent failed API metadata', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const builder = appSource.slice(appSource.indexOf('function buildAtlasBugReportPayload'), appSource.indexOf('async function exposeBugReportJson'));
+  assert.match(builder, /pending_preview:\s*previewContent/);
+  assert.match(builder, /last_error:\s*atlasLastError/);
+  assert.match(builder, /recent_api_requests:\s*atlasRecentApiRequests/);
+  const apiFn = appSource.slice(appSource.indexOf('async function api'), appSource.indexOf('function el'));
+  assert.match(apiFn, /atlasLastError\s*=\s*\{/);
+  assert.match(apiFn, /endpoint:\s*path/);
+  assert.match(apiFn, /failed:\s*res \? !res\.ok : true/);
+  assert.doesNotMatch(apiFn, /atlasRecentApiRequests[\s\S]{0,500}headers/);
+});
+
+test('bug report capture includes pending write state and write_id', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const builder = appSource.slice(appSource.indexOf('function buildAtlasBugReportPayload'), appSource.indexOf('async function exposeBugReportJson'));
+  assert.match(builder, /pending_write:\s*pendingWrite/);
+  assert.match(builder, /write_id:\s*pendingWrite\?\.writeId \|\| pendingWrite\?\.payload\?\.write_id/);
+  assert.match(builder, /current_sheet:\s*currentSheetForBugReport\(\)/);
+});
+
+test('bug report UI has settings trigger and failure copy fallback', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(html, /id="report-bug-btn"/);
+  assert.match(appSource, /report-bug-btn'\)\?\.addEventListener/);
+  assert.match(appSource, /Bug report saved/);
+  assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
+  assert.match(appSource, /navigator\.clipboard\?\.writeText/);
+});
 
 test('required sheet contract excludes Dashboard', () => {
   assert.deepEqual(requiredSheetTabs, ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary']);
@@ -3157,7 +3271,7 @@ test('duplicate-write: writeInFlight guard variable exists in app.js', () => {
 test('duplicate-write: approve handler checks guard and sets it before request', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 22000);
   // Guard must be the first check before stored preview-proof validation.
   const guardIdx = handler.indexOf('if (writeInFlight) return');
   const pendingIdx = handler.indexOf('if (!pendingWriteHasPreviewProof(pendingWrite))');
@@ -3185,7 +3299,7 @@ test('trust loop: approve handler requires stored dry-run proof before writing',
 test('duplicate-write: finally block always clears writeInFlight', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 22000);
   assert.match(handler, /finally\s*\{/, 'handler must have a finally block');
   const finallyIdx = handler.indexOf('finally');
   const clearIdx = handler.indexOf('writeInFlight = false', finallyIdx);
@@ -4404,7 +4518,7 @@ test('intent dashboard: openIntentDrawer and closeIntentDrawer exist and are wir
 
   const openFn = appSource.slice(
     appSource.indexOf('function openIntentDrawer('),
-    appSource.indexOf('function openIntentDrawer(') + 3600
+    appSource.indexOf('function openIntentDrawer(') + 5200
   );
   assert.match(openFn, /drawer-title/, 'must render drawer title');
   assert.match(openFn, /drawer-section-title/, 'must render section titles');
