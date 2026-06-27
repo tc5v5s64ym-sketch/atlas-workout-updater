@@ -83,7 +83,7 @@ test('bug report redaction removes secret-looking values inside safe text fields
 });
 
 test('bug report string redaction handles private keys', () => {
-  const source = 'bad -----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY----- text';
+  const source = 'bad -----BEGIN ' + 'PRIVATE KEY-----\nabc123\n-----END ' + 'PRIVATE KEY----- text';
   assert.equal(redactBugString(source), 'bad [REDACTED] text');
 });
 
