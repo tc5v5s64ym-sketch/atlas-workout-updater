@@ -11,6 +11,19 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
 const ATLAS_SHELL_BUILD = 'v60';
+const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
+const BUG_REPORT_SECRET_VALUE_PATTERNS = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g,
+  /\bAIza[A-Za-z0-9_-]{8,}\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi,
+  /\b([A-Z][A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Z0-9_]*)\s*=\s*["']?[^"',\s]+["']?/g
+];
+const BUG_REPORT_REDACTED = '[REDACTED]';
+const BUG_REPORT_RECENT_API_LIMIT = 20;
+const atlasRecentApiRequests = [];
+let atlasLastError = null;
+let atlasServerVersion = null;
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -18,16 +31,41 @@ function getApiKey() {
 
 async function api(path, options = {}) {
   const headers = { 'x-atlas-api-key': getApiKey(), ...(options.headers || {}) };
-  const res = await fetch(path, { ...options, headers });
-  const json = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = json?.message || json?.error || `Request failed (${res.status})`;
-    const err = new Error(message);
-    err.status = res.status;
-    err.body = json;
+  const method = options.method || 'GET';
+  const startedAt = Date.now();
+  let res = null;
+  let json = null;
+  try {
+    res = await fetch(path, { ...options, headers });
+    json = await res.json().catch(() => null);
+    if (!res.ok) {
+      const message = json?.message || json?.error || `Request failed (${res.status})`;
+      const err = new Error(message);
+      err.status = res.status;
+      err.body = json;
+      throw err;
+    }
+    return json;
+  } catch (err) {
+    atlasLastError = {
+      message: err && err.message ? err.message : String(err),
+      status: err && err.status,
+      endpoint: path,
+      at: new Date().toISOString()
+    };
     throw err;
+  } finally {
+    atlasRecentApiRequests.push({
+      at: new Date().toISOString(),
+      method,
+      endpoint: path,
+      status: res ? res.status : null,
+      ok: res ? res.ok : false,
+      duration_ms: Date.now() - startedAt,
+      failed: res ? !res.ok : true
+    });
+    while (atlasRecentApiRequests.length > BUG_REPORT_RECENT_API_LIMIT) atlasRecentApiRequests.shift();
   }
-  return json;
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -634,6 +672,7 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
     const res = await fetch('/version');
     const body = await res.json().catch(() => null);
     const v = (body && body.data) || body || {};
+    atlasServerVersion = v;
     const raw = String(v.version || 'unknown');
     const short = /^[0-9a-f]{7,40}(-dirty)?$/i.test(raw) ? raw.slice(0, 7) : raw;
     // Lead with the PR number when the build captured it — "PR #461" is something
@@ -662,6 +701,177 @@ document.getElementById('load-debug-config-btn')?.addEventListener('click', asyn
   } catch (err) {
     setBoxSpan(box, 'muted', `Could not load: ${err.message}`);
   }
+});
+
+function bugReportId(now = new Date()) {
+  const stamp = now.toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}Z$/, '')
+    .replace('T', '-');
+  return `BUG-${stamp}`;
+}
+
+function redactBugReportString(value) {
+  let out = value;
+  for (const pattern of BUG_REPORT_SECRET_VALUE_PATTERNS) {
+    out = out.replace(pattern, (match, keyName) => {
+      if (typeof keyName === 'string' && keyName) return `${keyName}=${BUG_REPORT_REDACTED}`;
+      return BUG_REPORT_REDACTED;
+    });
+  }
+  return out;
+}
+
+function redactBugReportValue(value, seen = new WeakSet()) {
+  if (value == null) return value;
+  if (typeof value === 'string') {
+    const safeValue = redactBugReportString(value);
+    return safeValue.length > 12000 ? `${safeValue.slice(0, 12000)}...[truncated]` : safeValue;
+  }
+  if (typeof value !== 'object') return value;
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+  if (Array.isArray(value)) return value.slice(0, 100).map(item => redactBugReportValue(item, seen));
+  const out = {};
+  for (const [key, raw] of Object.entries(value)) {
+    out[key] = BUG_REPORT_STORAGE_KEY_RE.test(key) ? BUG_REPORT_REDACTED : redactBugReportValue(raw, seen);
+  }
+  return out;
+}
+
+function collectAtlasStorage(storage) {
+  const out = {};
+  if (!storage) return out;
+  try {
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i);
+      if (!key || !/^atlas/i.test(key)) continue;
+      out[key] = BUG_REPORT_STORAGE_KEY_RE.test(key) ? BUG_REPORT_REDACTED : storage.getItem(key);
+    }
+  } catch (err) {
+    out.storage_error = err.message;
+  }
+  return out;
+}
+
+function currentRouteForBugReport() {
+  const activeSurface = document.querySelector('.surface-btn.active')?.id || null;
+  const activeTab = document.querySelector('.tab.active')?.id || null;
+  return [location.pathname + location.search + location.hash, activeSurface, activeTab].filter(Boolean).join(' | ');
+}
+
+function visibleMessagesForBugReport() {
+  return Array.from(document.querySelectorAll('#thread-messages .chat-bubble'))
+    .slice(-6)
+    .map(node => ({
+      role: node.classList.contains('chat-bubble-user') ? 'user' : 'assistant',
+      text: node.textContent.trim().slice(0, 2000)
+    }));
+}
+
+function pendingRowsForBugReport() {
+  const rows = [];
+  for (const tr of Array.from(setsTableBody?.children || [])) {
+    rows.push({
+      exercise: tr.querySelector('.set-exercise')?.value || '',
+      set_number: tr.querySelector('.set-number')?.value || '',
+      weight: tr.querySelector('.set-weight')?.value || '',
+      reps: tr.querySelector('.set-reps')?.value || '',
+      rir: tr.querySelector('.set-rir')?.value || '',
+      notes: tr.querySelector('.set-notes')?.value || ''
+    });
+  }
+  return rows;
+}
+
+function currentSheetForBugReport() {
+  return {
+    session_id: document.getElementById('log-session-id')?.value || pendingWrite?.sessionId || pendingWrite?.payload?.session_id || '',
+    date: document.getElementById('log-date')?.value || pendingWrite?.date || pendingWrite?.payload?.date || ''
+  };
+}
+
+function buildAtlasBugReportPayload(note, options = {}) {
+  const now = options.now || new Date();
+  const payload = {
+    bug_id: options.bugId || bugReportId(now),
+    timestamp: now.toISOString(),
+    note: note || '',
+    route: currentRouteForBugReport(),
+    composer_text: workoutTextInput?.value || '',
+    visible_messages: visibleMessagesForBugReport(),
+    active_session_object: typeof getCanonicalSession === 'function' ? getCanonicalSession() : null,
+    active_planned_session: activePlannedSession || null,
+    pending_exercises: pendingRowsForBugReport(),
+    parsed_rows: pendingRowsForBugReport(),
+    pending_preview: previewContent ? previewContent.textContent.trim().slice(0, 4000) : '',
+    pending_write: pendingWrite || null,
+    write_id: pendingWrite?.writeId || pendingWrite?.payload?.write_id || '',
+    last_error: atlasLastError,
+    current_sheet: currentSheetForBugReport(),
+    storage: {
+      localStorage: collectAtlasStorage(window.localStorage),
+      sessionStorage: collectAtlasStorage(window.sessionStorage)
+    },
+    app_version: {
+      shell: ATLAS_SHELL_BUILD,
+      version: atlasServerVersion?.version || null,
+      deployed_at: atlasServerVersion?.deployed_at || null,
+      pr: atlasServerVersion?.pr || null,
+      git_sha: atlasServerVersion?.version || null,
+      build_timestamp: atlasServerVersion?.deployed_at || null
+    },
+    browser: {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      language: navigator.language,
+      viewport: { width: window.innerWidth, height: window.innerHeight },
+      online: navigator.onLine
+    },
+    recent_api_requests: atlasRecentApiRequests.slice(-BUG_REPORT_RECENT_API_LIMIT)
+  };
+  return redactBugReportValue(payload);
+}
+
+async function exposeBugReportJson(payload, targetBox) {
+  const json = JSON.stringify(payload, null, 2);
+  try { await navigator.clipboard?.writeText(json); } catch { /* clipboard unavailable */ }
+  const pre = document.createElement('pre');
+  pre.className = 'debug-pre';
+  pre.textContent = json;
+  if (targetBox) targetBox.appendChild(pre);
+}
+
+async function saveAtlasBugReport(note, options = {}) {
+  const payload = buildAtlasBugReportPayload(note, options);
+  const statusTarget = options.statusTarget || loggerStatus || document.getElementById('debug-result');
+  try {
+    const res = await api('/api/bug-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const bugId = res?.data?.bug_id || payload.bug_id;
+    setStatus(statusTarget, `Bug report saved â€” ${bugId}`, 'ok');
+    return { ok: true, bugId, payload };
+  } catch (err) {
+    payload.recent_api_requests = atlasRecentApiRequests.slice(-BUG_REPORT_RECENT_API_LIMIT);
+    setStatus(statusTarget, 'Bug report could not be saved. Copy report JSON?', 'error');
+    await exposeBugReportJson(payload, statusTarget);
+    return { ok: false, error: err, payload };
+  }
+}
+
+function parseBugCommand(text) {
+  const match = String(text || '').match(/^\/bug(?:\s+([\s\S]*))?$/i);
+  return match ? (match[1] || '').trim() : null;
+}
+
+document.getElementById('report-bug-btn')?.addEventListener('click', () => {
+  const box = document.getElementById('debug-result');
+  box.innerHTML = '';
+  const note = window.prompt ? window.prompt('Bug note?') : '';
+  saveAtlasBugReport(note || '', { statusTarget: box });
 });
 
 /* ===== Dashboard (read-only) ===== */
@@ -4444,6 +4654,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const submittedText = (workoutTextInput.value || '').trim();
   if (submittedText && typeof window.atlasAddUserBubble === 'function') {
     window.atlasAddUserBubble(submittedText);
+  }
+
+  const bugNote = parseBugCommand(submittedText);
+  if (bugNote !== null) {
+    await saveAtlasBugReport(bugNote);
+    setTimeout(() => { workoutTextInput.value = ''; }, 0);
+    return;
   }
 
   // Training-plan questions ("what should I train", "today's plan") are routed

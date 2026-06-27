@@ -18,6 +18,7 @@ const {
   getSheetRows: getSheetRowsRaw,
   getHeaderRow,
   getSpreadsheetTabs,
+  ensureSheetTab,
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -102,6 +103,7 @@ const { routeNextMove } = require('./services/fatigueRouter');
 const { assessRecoveryDeload } = require('./services/recoveryDeloadSelection');
 const { patternFor } = require('./services/movementPattern');
 const { musclesFor } = require('./services/muscleCoverage');
+const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('./services/bugReport');
 const trainingStore = require('./services/trainingStore');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
@@ -190,7 +192,7 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality', '/api/bug-report'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
@@ -2098,6 +2100,24 @@ app.get('/api/debug/config', (req, res) => {
     apiKeyAuthEnabled: Boolean(process.env.ATLAS_API_KEY),
     openAiKeyConfigured: Boolean(process.env.OPENAI_API_KEY)
   });
+});
+
+// POST /api/bug-report — dev-only state capture sink. The browser builds the
+// diagnostic payload; the server redacts it again before appending so secrets do
+// not land in the sheet even if a client accidentally includes them.
+app.post('/api/bug-report', async (req, res) => {
+  try {
+    const payload = req.body && typeof req.body === 'object' ? req.body : {};
+    const row = buildBugReportRow(payload);
+    await ensureSheetTab(BUG_REPORT_TAB, BUG_REPORT_COLUMNS);
+    await appendRows(BUG_REPORT_TAB, [row]);
+    return standardSuccess(req, res, 'Bug report saved', {
+      bug_id: row[1],
+      tab: BUG_REPORT_TAB
+    }, 201);
+  } catch (error) {
+    return standardError(req, res, 'Failed to save bug report', error.message, 500);
+  }
 });
 
 // GET /api/schema/log

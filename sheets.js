@@ -202,9 +202,45 @@ async function getSpreadsheetTabs() {
   const sheets = await getSheetsClient();
   const response = await sheets.spreadsheets.get({
     spreadsheetId,
-    fields: 'sheets.properties.title'
+    fields: 'sheets.properties'
   });
   return (response.data.sheets || []).map(sheet => String(sheet.properties.title || ''));
+}
+
+async function ensureSheetTab(tabName, headerRow = []) {
+  const sheets = await getSheetsClient();
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties'
+  });
+  const existing = (meta.data.sheets || []).find(sheet => sheet.properties.title === tabName);
+  if (!existing) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          addSheet: {
+            properties: { title: tabName }
+          }
+        }]
+      }
+    });
+  }
+
+  if (Array.isArray(headerRow) && headerRow.length) {
+    const current = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${tabName}!1:1`
+    });
+    if (!current.data.values || !current.data.values.length) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${tabName}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [headerRow] }
+      });
+    }
+  }
 }
 
 async function getEffortSessionIds() {
@@ -280,6 +316,7 @@ module.exports = {
   getSheetRows,
   getHeaderRow,
   getSpreadsheetTabs,
+  ensureSheetTab,
   isTransientAppendError,
   retryWithBackoff,
   logSheetName,
