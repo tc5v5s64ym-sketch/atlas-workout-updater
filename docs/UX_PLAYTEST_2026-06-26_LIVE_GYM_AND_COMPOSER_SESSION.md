@@ -1,113 +1,253 @@
-# Atlas Live Gym & Composer Playtest — 2026-06-26
+# UX Playtest — 2026-06-26 Live Gym + Composer Session
 
-**Type:** Source-of-truth record  
-**Date:** 2026-06-26  
-**Scope:** Real-app gym session (live device, live Sheets) + post-session composer brainstorming
+**Status:** Active record. This is the source-of-truth document for the 2026-06-26 live Atlas testing + brainstorming session (real app, real gym workout). It captures what happened, the bugs discovered, the product/UX direction, and a clean follow-up issue split.
 
-> This document is a **read-only record**. It captures what happened, what worked, what broke, and what ideas surfaced. It is not an execution queue. Actionable items go to `BACKLOG.md` or a GitHub issue; product ideas go to the appropriate governance layer (`docs/GOVERNANCE.md`).
+**Type:** Docs / triage only. No code fixes, no composer refactor, and no bug-reporter work are part of this record. Implementation happens in separate, explicitly-requested PRs.
 
----
-
-## 1. Session overview
-
-| Field | Value |
-|---|---|
-| **Date** | 2026-06-26 |
-| **Location** | (gym name / home) |
-| **Device** | (iPhone / iPad / browser) |
-| **App version / commit** | (git SHA or deploy reference) |
-| **Sheets environment** | Live (production spreadsheet) |
-| **Atlas build** | Post PR #645 (Bug_Reports tab + CODEX.md update) |
+**Evidence source:** Findings come from the owner's live testing + brainstorming conversation while using the actual app. They are not derived from sheet/tooling rows. The in-app bug reporter is a separate tool and is intentionally out of scope here.
 
 ---
 
-## 2. Workout logged
+## 1. What happened during real app testing
 
-> Record the actual sets logged during the session. This is the ground truth for what Atlas processed.
+### Freestyle logging
 
-| Exercise | Sets logged (weight × reps / RIR) | Notes |
-|---|---|---|
-| | | |
-| | | |
-| | | |
+The owner opened Atlas and went straight into the main composer to log a real workout, freestyle — no guided session requested. Slash notation parsed well:
 
----
+* Bench 135 12 185 10 225 6/0 4/2 4/2
+* Seated rows 195 10/2 x3
+* Weighted Dips, Curls, Hanging Knee Raises followed.
 
-## 3. Live app observations
+Parsing, confirmation cards, and inline coaching were generally good. But after the Bench entry Atlas volunteered "Moving on — next up: Face Pull," and after Seated Rows, "Moving on — next up: Hammer Curls" — unprompted guided behavior the owner never asked for. Atlas also surfaced Leg Extension as a "next" suggestion at other points in the session. The owner was logging, not running a guided plan.
 
-### 3.1 What worked well
+### Coach's Pick / Blind Spot behavior
 
-<!-- Inputs that parsed correctly, coach responses that felt right, trust-loop moments that felt smooth. -->
+Coach's Pick recommended "Fix Blind Spots — Hinge and Core are fresh and overdue / Core 76 days ago" and prescribed Deadlift / Back Squat / Overhead Press. This contradicted the actual training history: Core and Back Squat were both trained on 2026-06-24. The recommendation prescribed heavy squats two days after heavy squats, and the rationale ("Core 76 days ago") was factually wrong.
 
--
+### Apple Watch screenshot import
 
-### 3.2 Bugs / trust failures observed
+Historical Apple Watch effort screenshots from June 24 and June 12 were imported but stamped with today's date, June 26. The preview did not clearly show the source workout date, and duplicate-session detection appeared tied to the wrong date/session identity rather than the screenshot's actual date.
 
-<!-- Anything that felt wrong, incorrect, or surprising. Include the exact input and what Atlas returned. -->
+### Manual effort entry
 
-| # | Input typed | Expected | Actual | Severity |
-|---|---|---|---|---|
-| 1 | | | | |
+When the screenshot effort import failed, manual effort entry was attempted. It behaved inconsistently: a manual entry eventually produced a preview, but the preview was missing logged exercises and the save then failed.
 
-### 3.3 Coach interaction quality
+### Save / preview flow
 
-<!-- How did the coach handle set-reaction, "what's next", history QA, and session-context questions? -->
+On save, the session summary showed impossible totals: 49 sets and 51,390 lb. Duplicate workout rows were written under a single session ID: 20260626-PM-01.
 
--
+Contradictory surfaces appeared mid-session: an exercise, Bench, was acknowledged/coached but later missing from the final preview/save. Curls were recognized and coached, but Atlas also showed "Didn't catch that lift — check the exercise name before saving."
 
-### 3.4 Parse / slash-notation behavior
+A failed Apple Watch effort screenshot, "Preview failed: active_calories is required," appeared to poison the workout save. A subsequent "log it" repeated the effort error instead of saving the exercises, and a later save failed with vague copy: "Write failed: Load failed."
 
-<!-- Any slash-notation or parser edge cases hit during the session. -->
+### App refresh / interruption behavior
 
--
+During normal gym multitasking, including opening Photos / Apple Watch to grab the effort screenshot, Atlas refreshed / lost state. Active workout context was not reliably preserved across the app switch.
 
----
+### Composer / home-screen observations
 
-## 4. Composer brainstorming
+The composer is where the real work happened — the owner logged, asked, and reacted there. This reinforced a product direction: the composer should be the primary interface, with tiles as shortcuts rather than separate workflows.
 
-> This section captures ideas that surfaced during or after the gym session about a workout composer / input UX. These are brainstorm notes, not committed scope.
-
-### 4.1 Problem statement
-
-<!-- What friction or gap in the current input flow prompted this discussion? -->
-
-### 4.2 Ideas surfaced
-
-<!-- Raw brainstorm — no filtering. Each idea on its own line. -->
-
--
-
-### 4.3 Ideas worth filing
-
-<!-- Ideas that crossed the threshold of "worth tracking" go here, then get filed in BACKLOG.md or a governance doc. -->
-
-| Idea | Governance layer | Filed? |
-|---|---|---|
-| | | No |
+Secondary UI friction was noted: the Next Exercise UI / overlay felt overly busy, plan cards and composer placeholders went stale, and some coaching language for accessories/core was generic.
 
 ---
 
-## 5. Defects to file
+## 2. Bugs discovered
 
-> Confirmed bugs from §3.2 that need GitHub issues or BACKLOG.md entries.
+| ID  | Priority | Title                                                                                                    |
+| --- | -------: | -------------------------------------------------------------------------------------------------------- |
+| B1  |       P0 | Workout save duplicated rows under the same session ID, producing impossible totals: 49 sets / 51,390 lb |
+| B2  |    P0/P1 | Active session state drifts between parser, UI, coach, preview, and save payload                         |
+| B3  |    P0/P1 | Failed effort import poisons / blocks the workout save                                                   |
+| B4  |       P1 | Freestyle logging incorrectly suggests the next exercise, auto-guide behavior                            |
+| B5  |       P1 | Apple Watch screenshot import uses the wrong date, today, instead of the source workout date             |
+| B6  |       P1 | Coach's Pick / Blind Spot engine uses wrong last-trained history                                         |
+| B7  |       P1 | Active workout does not survive app switching / refresh / lock screen                                    |
+| B8  |       P2 | Stale plan cards / stale composer placeholders                                                           |
+| B9  |       P2 | Overly busy Next Exercise UI / overlay behavior                                                          |
+| B10 |       P2 | Generic accessory / core coaching language                                                               |
 
-| Defect | Severity | Filed as |
-|---|---|---|
-| | | |
+### B1 — Duplicate workout rows (P0)
+
+Save wrote duplicate rows under 20260626-PM-01; the summary showed 49 sets / 51,390 lb. Duplicate rows corrupt the source of truth — progression, fatigue, volume, PR detection, deload logic, recommendations, and trust.
+
+Expected: each logical row is written exactly once. Save is idempotent across repeated taps, retries, refreshes, reconnects, failed previews, and resumed sessions. If duplicate-write risk is detected, Atlas stops and asks rather than appending. Post-save totals match Log_Cleaned exactly.
+
+### B2 — Active session state drift (P0/P1)
+
+Parser, confirmation cards, coach, preview, save payload, plan card, composer placeholder, and validation disagreed. Bench was acknowledged but missing from preview. Curls were confirmed/coached yet also flagged "Didn't catch that lift."
+
+Expected: one canonical ActiveSession that every surface derives from. A success card and a "didn't catch lift" warning must never both fire for the same input.
+
+### B3 — Failed effort import poisons workout save (P0/P1)
+
+The Apple Watch screenshot failed with "active_calories is required," and that failed-effort state blocked saving the exercises. "Log it" repeated the effort error.
+
+Expected: exercise save and effort metadata are separate, independently recoverable transactions. A failed or optional effort import never blocks the workout save. Manual effort replaces failed-screenshot state. Failure copy is specific, for example: "I couldn't read active calories. Add manually or continue without effort." It should not show vague copy like "Load failed."
+
+### B4 — Freestyle auto-guide (P1)
+
+In user-led / freestyle logging, Atlas volunteered "next up" lifts such as Face Pull, Hammer Curls, and Leg Extension without being asked.
+
+Expected: in logging mode, Atlas should parse, confirm, coach, update session, and stop. "Next up" only appears in an explicit guided session or when the user asks, such as "what's next?", taps Coach's Pick, accepts a plan, or says "start."
+
+### B5 — Screenshot import date (P1)
+
+June 24 and June 12 screenshots were saved as June 26. Preview did not show the source date. Duplicate detection used today's identity.
+
+Expected: extract the workout date if visible, show it in preview, confirm if ambiguous, and run duplicate detection against the intended final date/session rather than today. Historical backfill must work safely.
+
+### B6 — Blind Spot history correctness (P1)
+
+Coach's Pick claimed "Core 76 days ago" and prescribed squats despite recent squats. History actually has Core on 2026-06-24 from Hanging Knee Raises, muscle_group Core, lift_code HNR01, 3 sets, session 20260624-PM-01. History also has Back Squat on 2026-06-24.
+
+Expected: HNR01/KR01 count as Core. Recent bodyweight/core work is included. Last-trained dates resolve accurately. Recent squat work blocks an inappropriate heavy-squat recommendation. Blind spots are one input, not the whole objective.
+
+Priority stack: recovery/fatigue → progression → muscle-group stimulus → weekly balance → blind spots → novelty.
+
+### B7 — Session resilience (P1)
+
+App switching to Photos/Apple Watch and accidental refresh lost active state.
+
+Expected: Atlas preserves/restores active session, composer draft, pending input, confirmation state, active plan, pending preview, pending write, failed-optional-effort state, and unsaved rows across lock/unlock, app switch, and refresh. There should be a visible "restored session" notice, a continue-or-discard choice, and no duplicate write on restore.
+
+The gym is a hostile app environment — interruption is normal.
+
+### B8 — Stale plan cards / placeholders (P2)
+
+The plan card kept showing stale step info after an exercise was completed, and the composer placeholder kept suggesting a completed lift, such as "Hammer Curls 40 11/2 11/2 11/2."
+
+Expected: plan card and placeholder follow canonical session state. Placeholder never suggests a completed exercise and clears after save. In user-led logging, the placeholder should read like: "Log another lift, ask anything, or say done."
+
+### B9 — Overly busy Next Exercise UI / overlay (P2)
+
+The Next Exercise UI / overlay felt cluttered and intrusive during logging.
+
+Expected: quieter, less intrusive next-exercise presentation, consistent with user-led logging. It should not dominate when the user is just logging.
+
+### B10 — Generic accessory/core coaching language (P2)
+
+Coaching for accessories/core read generically compared to the strong, specific coaching seen elsewhere, such as the fatigue read on pressing.
+
+Expected: accessory/core coaching should be as specific and grounded as compound coaching, or stay quiet rather than generic.
 
 ---
 
-## 6. Deferred / out-of-scope
+## 3. Evidence that contradicted Coach's Pick
 
-- In-app bug reporter and Bug_Reports sheet: out of scope for this record.
-- Multi-user, nutrition, voice: not in scope.
+Spreadsheet: Atlas MASTER production/test workbook used by the owner during live testing.
+
+Log_Cleaned has Core on 2026-06-24: Hanging Knee Raises, muscle_group Core, lift_code HNR01, 3 sets, session 20260624-PM-01. It also has Core on 2026-06-18, 2026-06-11, 2026-06-09, and 2026-06-07.
+
+Exercise_Catalog maps Hanging Knee Raises → Core.
+
+Log_Cleaned has Back Squat on 2026-06-24.
+
+Therefore, "Core 76 days ago" and the heavy-squat prescription two days after a heavy squat are both wrong.
+
+### Corrected June 26 session after manual cleanup
+
+* Bench Press — 5 sets: 135×12, 185×10, 225×6 @ RIR 0, 225×4 @ RIR 2, 225×4 @ RIR 2
+* Seated Rows — 3 sets: 195×10 @ RIR 2 ×3
+* Weighted Dips — 3 sets: +60×8 @ RIR 2 ×3
+* Curls — 3 sets: 35×12 @ RIR 2 ×3
+* Hanging Knee Raises — 3 sets: 20 reps ×3
 
 ---
 
-## 7. Sign-off
+## 4. Product / UX insights
 
-| Field | Value |
-|---|---|
-| **Recorded by** | Dale (owner) |
-| **Reviewed by** | — |
-| **Status** | Draft — awaiting owner fill-in |
+Atlas should become composer-first. The composer is the product. Move the home screen away from tiles as the primary workflow toward one composer, plus button for attachments/manual entry, a send button, and optional grey placeholder examples like:
+
+* "Just log my workout…"
+* "What did I lift last time?"
+* "Let's do a chest day…"
+* "Import my Apple Watch workout…"
+
+Tiles are shortcuts / hidden prompts, not separate workflows or state machines.
+
+* Freestyle = focus the composer, no preloaded workflow.
+* Coach's Pick = a hidden "review my recent history, fatigue, progression, and goals, then recommend today's workout" prompt.
+* Screenshot import = an attachment-led composer flow.
+
+One composer, one session engine. Intent routing decides behavior. Do not build a separate state machine per tile.
+
+Logging intent must not become guided-session intent. Logging a lift is not a request to be guided to the next lift.
+
+The coach never steals the steering wheel — the user hands it over.
+
+User-led logging: parse, confirm, coach, stop. No "next up" unless guided.
+
+Guided mode only starts when the user explicitly asks or accepts a plan, such as Coach's Pick, "start", "what's next?", or an accepted plan.
+
+App switching is normal gym behavior. Apple Watch / Photos / Music / lock screen / notifications / flaky network / accidental refresh are expected; Atlas must survive them and restore state safely.
+
+### Intent model target
+
+* Information — "What did I bench last time?" → answer and stop.
+* Logging — "Bench 225 5/2 x3" → parse, confirm, coach, stop.
+* Planning — "Give me a chest workout" → propose a plan, do not start.
+* Guided session — user explicitly starts/accepts a plan → Atlas may queue and guide.
+
+---
+
+## 5. Suggested follow-up PR / issue split
+
+These are recommendations only. They are not implemented in this docs PR.
+
+1. **P0 — Workout save duplicated rows under same session ID.**
+   Covers B1. Add idempotent writes; prevent duplication on retry/refresh/double-tap/failed-effort/resume; post-save totals must match Log_Cleaned.
+
+2. **P0/P1 — Active session state drifts between parser, UI, preview, and save payload.**
+   Covers B2. One canonical ActiveSession; no contradictory success-card plus "didn't catch lift."
+
+3. **P1 — Composer should not auto-suggest next exercise during freestyle logging.**
+   Covers B4 plus B8 placeholder. Intent routing; "next up" only when guided or asked; placeholder follows state and clears after save.
+
+4. **P1 — Apple Watch screenshot import should preserve source workout date.**
+   Covers B5. Extract/show date; confirm if ambiguous; duplicate detection vs intended final date.
+
+5. **P1 — Failed effort import must not block workout save.**
+   Covers B3. Separate exercise/effort transactions; manual effort replaces failed screenshot; specific failure copy.
+
+6. **P1 — Coach's Pick / Blind Spot engine reports incorrect last-trained history.**
+   Covers B6. HNR01/KR01 count as Core; accurate last-trained; recovery-aware priority stack.
+
+7. **P1 — Active workout must survive app switching, refresh, and lock screen.**
+   Covers B7. Preserve/restore session with a visible notice; no duplicate write on restore.
+
+8. **UX — Move Atlas toward one composer-first home screen.**
+   Covers insights from section 4 and folds in B9 Next-Exercise overlay and B10 accessory/core coaching polish. Do this after the trust-critical work.
+
+---
+
+## 6. Do not regress behaviors that worked well
+
+Do not remove useful coaching/card behavior while fixing the state/idempotency bugs.
+
+Behaviors that worked well:
+
+* Confirmation cards, when they appear.
+* Green "Workout written to Google Sheets" success card.
+* "Saved to your sheet ✓" feedback.
+* Inline coaching after a lift.
+* Specific fatigue coaching, such as: "You went to zero and reps dropped after. Pressing is yellow now. Hold the load and clean up reps."
+* Progression notes, such as: "no progression in 3 sessions — consider a deload."
+* Direct slash-notation parsing for Bench, Seated Rows, Weighted Dips, Curls, Hanging Knee Raises.
+* The post-save card, which is valuable once the underlying data is accurate.
+
+---
+
+## 7. Out of scope for this PR
+
+This is a docs/triage record only — no code fixes unless the owner separately requests an implementation PR.
+
+Out of scope:
+
+* No composer refactor.
+* No implementation work.
+* No Bug_Reports work.
+* No sheet/header changes.
+* No in-app bug reporter changes.
+
+The in-app bug reporter is out of scope entirely for this work. Its sheet/headers are not touched here, and its test rows are not used as evidence.
