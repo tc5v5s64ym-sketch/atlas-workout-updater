@@ -32,6 +32,7 @@ const {
   BUG_REPORT_TAB,
   BUG_REPORT_COLUMNS,
   bugIdFromDate,
+  redactBugString,
   redactBugPayload,
   buildBugReportRow
 } = require('../services/bugReport');
@@ -62,6 +63,30 @@ test('bug report redaction removes sensitive fields recursively', () => {
   assert.doesNotMatch(JSON.stringify(safe), /secret-key|token-value|do-not-store/);
 });
 
+test('bug report redaction removes secret-looking values inside safe text fields', () => {
+  const safe = redactBugPayload({
+    note: 'preview failed after key sk-test-secret-token',
+    composer_text: 'ATLAS_API_KEY=abc123456789012345',
+    visible_messages: [
+      { role: 'user', text: 'google key AIzaSyD1234567890abcdefghi' }
+    ],
+    last_error: {
+      message: 'upstream returned Bearer abcdefghijklmnopqrstuvwxyz123456'
+    }
+  });
+  const json = JSON.stringify(safe);
+  assert.equal(safe.note, 'preview failed after key [REDACTED]');
+  assert.equal(safe.composer_text, 'ATLAS_API_KEY=[REDACTED]');
+  assert.equal(safe.visible_messages[0].text, 'google key [REDACTED]');
+  assert.equal(safe.last_error.message, 'upstream returned [REDACTED]');
+  assert.doesNotMatch(json, /sk-test-secret-token|abc123456789012345|AIzaSyD1234567890abcdefghi|abcdefghijklmnopqrstuvwxyz123456/);
+});
+
+test('bug report string redaction handles private keys', () => {
+  const source = 'bad -----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY----- text';
+  assert.equal(redactBugString(source), 'bad [REDACTED] text');
+});
+
 test('Bug_Reports append shape is stable', () => {
   assert.equal(BUG_REPORT_TAB, 'Bug_Reports');
   assert.deepEqual(BUG_REPORT_COLUMNS, [
@@ -78,10 +103,10 @@ test('Bug_Reports append shape is stable', () => {
   const row = buildBugReportRow({
     bug_id: 'BUG-20260102-030405',
     timestamp: '2026-01-02T03:04:05.000Z',
-    note: 'save failed',
+    note: 'save failed sk-row-secret-token',
     route: '/app | tab-logger',
     current_sheet: { session_id: '20260102-PM-01' },
-    last_error: { message: '500 from /api/log-workout' },
+    last_error: { message: '500 from /api/log-workout with Bearer abcdefghijklmnopqrstuvwxyz123456' },
     app_version: { version: 'abc1234' },
     browser: { userAgent: 'UnitTest/1.0' },
     api_key: 'must-redact'
@@ -90,14 +115,15 @@ test('Bug_Reports append shape is stable', () => {
   assert.deepEqual(row.slice(0, 8), [
     '2026-01-02T03:04:05.000Z',
     'BUG-20260102-030405',
-    'save failed',
+    'save failed [REDACTED]',
     '/app | tab-logger',
     '20260102-PM-01',
-    '500 from /api/log-workout',
+    '500 from /api/log-workout with [REDACTED]',
     'abc1234',
     'UnitTest/1.0'
   ]);
   assert.equal(JSON.parse(row[8]).api_key, '[REDACTED]');
+  assert.doesNotMatch(row[8], /sk-row-secret-token|abcdefghijklmnopqrstuvwxyz123456|must-redact/);
 });
 
 test('/bug command creates payload before normal composer routing', () => {
@@ -112,6 +138,22 @@ test('/bug command creates payload before normal composer routing', () => {
   assert.ok(bugIdx < sessionRequestIdx, '/bug must run before session-request routing');
   assert.ok(bugIdx < logItIdx, '/bug must run before log-it routing');
   assert.match(appSource.slice(bugIdx, bugIdx + 280), /await saveAtlasBugReport\(bugNote\)/);
+});
+
+test('browser bug report payload redacts secret-looking values before save or copy fallback', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const redactorIdx = appSource.indexOf('function redactBugReportString');
+  const valueRedactorIdx = appSource.indexOf('function redactBugReportValue');
+  const builderIdx = appSource.indexOf('function buildAtlasBugReportPayload');
+  assert.ok(redactorIdx > 0, 'browser string redactor must exist');
+  assert.ok(valueRedactorIdx > redactorIdx, 'value redactor should call string redactor');
+  assert.ok(builderIdx > valueRedactorIdx, 'payload builder should use the redacted value helper');
+  assert.match(appSource, /BUG_REPORT_SECRET_VALUE_PATTERNS/);
+  assert.match(appSource, /sk-\(\?:proj-\)\?/);
+  assert.match(appSource, /Bearer\\s\+/);
+  assert.match(appSource.slice(redactorIdx, valueRedactorIdx), /BUG_REPORT_SECRET_VALUE_PATTERNS/);
+  assert.match(appSource.slice(valueRedactorIdx, builderIdx), /redactBugReportString\(value\)/);
+  assert.match(appSource.slice(builderIdx, appSource.indexOf('async function exposeBugReportJson')), /return redactBugReportValue\(payload\)/);
 });
 
 test('bug report capture includes failed preview state and recent failed API metadata', () => {

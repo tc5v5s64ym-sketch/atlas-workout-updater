@@ -12,6 +12,13 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
 const ATLAS_SHELL_BUILD = 'v60';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
+const BUG_REPORT_SECRET_VALUE_PATTERNS = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  /\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g,
+  /\bAIza[A-Za-z0-9_-]{8,}\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi,
+  /\b([A-Z][A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Z0-9_]*)\s*=\s*["']?[^"',\s]+["']?/g
+];
 const BUG_REPORT_REDACTED = '[REDACTED]';
 const BUG_REPORT_RECENT_API_LIMIT = 20;
 const atlasRecentApiRequests = [];
@@ -704,9 +711,23 @@ function bugReportId(now = new Date()) {
   return `BUG-${stamp}`;
 }
 
+function redactBugReportString(value) {
+  let out = value;
+  for (const pattern of BUG_REPORT_SECRET_VALUE_PATTERNS) {
+    out = out.replace(pattern, (match, keyName) => {
+      if (typeof keyName === 'string' && keyName) return `${keyName}=${BUG_REPORT_REDACTED}`;
+      return BUG_REPORT_REDACTED;
+    });
+  }
+  return out;
+}
+
 function redactBugReportValue(value, seen = new WeakSet()) {
   if (value == null) return value;
-  if (typeof value === 'string') return value.length > 12000 ? `${value.slice(0, 12000)}...[truncated]` : value;
+  if (typeof value === 'string') {
+    const safeValue = redactBugReportString(value);
+    return safeValue.length > 12000 ? `${safeValue.slice(0, 12000)}...[truncated]` : safeValue;
+  }
   if (typeof value !== 'object') return value;
   if (seen.has(value)) return '[Circular]';
   seen.add(value);
