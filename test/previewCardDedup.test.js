@@ -29,9 +29,11 @@ assert.ok(fnStart >= 0, 'handlePreviewReady must exist in coach-conversation.js'
 // Grab enough source to cover the full function (up to buildReviewCard call).
 const fnSrc = src.slice(fnStart, fnStart + 2500);
 
-test('handlePreviewReady: checks for an existing .review card before appending a new bubble', () => {
-  assert.match(fnSrc, /querySelector.*\.chat-bubble-atlas.*\.review|querySelector.*\.review/,
-    'must query for an existing .review card in the thread');
+test('handlePreviewReady: checks for an existing unsaved .review card before appending a new bubble', () => {
+  // :not(.done) excludes already-saved cards so a second-workout preview in the
+  // same page session never clobbers a saved card from the first workout.
+  assert.match(fnSrc, /querySelector.*\.review:not\(\.done\)/,
+    'must query for an existing unsaved .review card (:not(.done)) to avoid clobbering saved cards');
 });
 
 test('handlePreviewReady: removes the existing .review card when updating in place', () => {

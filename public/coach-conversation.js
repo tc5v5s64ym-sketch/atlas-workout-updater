@@ -1244,7 +1244,7 @@
     // is: first preview shows sets-only, "Add effort & preview" re-fires this
     // handler — we want one card, not two.
     const thread = document.getElementById('thread-messages');
-    const existingCard = thread && thread.querySelector('.chat-bubble-atlas .review');
+    const existingCard = thread && thread.querySelector('.chat-bubble-atlas .review:not(.done)');
     let handle;
     if (existingCard) {
       const existingBubble = existingCard.closest('.chat-bubble-atlas');
