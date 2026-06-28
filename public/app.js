@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v64';
+const ATLAS_SHELL_BUILD = 'v65';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -5163,7 +5163,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(), previewProof: previewProofFromResult(result, 'effort-only') };
+      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(),
+        // Mirror the screenshot path: an already-saved session disables approve so the
+        // graceful "already saved" preview note doesn't lead to a live 409 on tap.
+        duplicateSession: Boolean(result?.data?.data?.duplicate_check?.duplicate_session),
+        previewProof: previewProofFromResult(result, 'effort-only') };
       renderCompleteWorkoutPreview(result);
     } else {
       const effortRow = manualEffort;

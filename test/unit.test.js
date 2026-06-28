@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v64/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v65/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5033,9 +5033,13 @@ test('dup-session: a re-used screenshot previews gracefully (already-saved note 
   const completeFn = app.slice(app.indexOf('function renderCompleteWorkoutPreview('), app.indexOf('function renderCompleteWorkoutPreview(') + 4000);
   assert.match(completeFn, /if \(dup\.duplicate_session\) \{/, 'renders an already-saved note when the session is a duplicate');
   assert.match(completeFn, /already saved/i, 'the note says "already saved", not a failure');
-  // The screenshot pendingWrite carries the duplicate flag from the dry-run response…
+  // BOTH complete-workout pendingWrite branches (screenshot + effort-only) carry the
+  // duplicate flag, so neither shows the "already saved" note with an enabled approve
+  // that 409s on tap (review #676 effort-only catch).
   assert.match(app, /duplicateSession: Boolean\(resolvedData\.duplicate_check && resolvedData\.duplicate_check\.duplicate_session\)/,
-    'pendingWrite carries the dry-run duplicate_session flag');
+    'screenshot pendingWrite carries the dry-run duplicate_session flag');
+  assert.match(app, /duplicateSession: Boolean\(result\?\.data\?\.data\?\.duplicate_check\?\.duplicate_session\)/,
+    'effort-only pendingWrite carries the dry-run duplicate_session flag too');
   // …and approve is disabled (with a clear note) when the session is already saved.
   assert.match(app, /const alreadySaved = Boolean\(pendingWrite && pendingWrite\.duplicateSession\);/, 'computes already-saved from pendingWrite');
   assert.match(app, /disabled = alreadySaved \|\| !pendingWriteHasPreviewProof\(pendingWrite\)/, 'approve is gated off on an already-saved session');
@@ -5333,8 +5337,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v64/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v63\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v65/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v64\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
