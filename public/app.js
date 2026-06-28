@@ -3610,6 +3610,18 @@ document.querySelectorAll('input[name="effort-mode"]').forEach(radio => {
   });
 });
 
+// The effort panel's own submit affordance. Manual effort (and the device-screenshot
+// sub-mode) live inside the logger form, but the only control that submitted them was
+// the composer's ↑ button — so after typing effort there was no obvious next step and
+// it "just sat there" (owner live-test gap, 2026-06-28). This button dispatches the
+// SAME logger-form submit the ↑ does, so manual effort + the buffered session flow
+// into one preview through the identical preview→approve→write path. It opens NO new
+// write path and changes no trust-loop semantics — it is purely a more discoverable
+// trigger for the existing submit handler (the same dispatch runCloseout already uses).
+document.getElementById('effort-preview-btn')?.addEventListener('click', () => {
+  document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+});
+
 function collectManualEffort(sessionId, date, location, notes) {
   const duration = document.getElementById('effort-duration').value.trim();
   const activeCal = document.getElementById('effort-active-cal').value;
