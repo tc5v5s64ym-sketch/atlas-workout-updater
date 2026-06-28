@@ -16,9 +16,9 @@ Full rules: docs/AUTOMATION_PROTOCOL.md · docs/OWNER_CHECKIN_RULES.md · docs/R
 | **Tests** | <!-- pass / fail / not-run — not-run = FAIL --> |
 | **Codex status** | <!-- READY FOR OWNER MERGE / NON-BLOCKING / BLOCKING / not-run(=FAIL) --> |
 | **Claude status** | <!-- review passed / changes-requested / errored(=FAIL) / not-run(=FAIL) --> |
-| **Owner action required** | <!-- No · or Yes + which check-in criterion 1–8 from OWNER_CHECKIN_RULES.md --> |
-| **Live test script** | <!-- steps for the owner if owner-live-test, else "n/a" --> |
-| **Merge recommendation** | <!-- merge-ready / fix-then-merge / hold-for-owner --> |
+| **Owner action required** | <!-- No · or Yes + which check-in criterion 2–8 from OWNER_CHECKIN_RULES.md — criterion 1 (live test) is NEVER "Yes": live tests are post-merge, not pre-merge gates --> |
+| **Live test script** | <!-- steps for the owner after deployment if owner-live-test, else "n/a" --> |
+| **Merge recommendation** | <!-- merge-ready / fix-then-merge / hold-for-owner — owner-live-test never produces hold-for-owner --> |
 
 <!--
 Reminder: skipped / errored / unavailable / incomplete review = FAILURE, not a pass.
