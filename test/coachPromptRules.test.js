@@ -165,3 +165,33 @@ test('set-reaction prompt: session count must come from trend.sessions_analyzed'
     'prompt must forbid the model from counting the reference_sets array'
   );
 });
+
+// ── B10: thin-history / accessory-core coaching discipline ────────────────────
+
+test('set-reaction prompt: THIN-HISTORY RULE present', () => {
+  assert.ok(
+    prompt.includes('THIN-HISTORY RULE'),
+    'prompt must contain the thin-history rule for lifts with no band/trend/fatigue picture'
+  );
+});
+
+test('set-reaction prompt: thin-history rule gates on all three absent-signal fields', () => {
+  assert.ok(
+    prompt.includes('progression_verdict') && prompt.includes('trend') && prompt.includes('readiness_signal'),
+    'thin-history rule must reference all three key signal fields'
+  );
+});
+
+test('set-reaction prompt: thin-history rule explicitly bans generic filler phrases', () => {
+  // The prompt must name specific banned filler so the model can\'t substitute synonyms.
+  const fillerPhrases = ['great work', 'keep it up', 'solid session', 'stay consistent', 'nice job', 'well done'];
+  for (const phrase of fillerPhrases) {
+    assert.ok(prompt.includes(phrase), `thin-history rule must name "${phrase}" in the banned-filler list`);
+  }
+});
+
+test('set-reaction prompt: thin-history rule placed after calibration_status rule', () => {
+  const calibrationIdx = prompt.indexOf('THIN-HISTORY RULE');
+  const calibStatusIdx = prompt.indexOf('calibration_status');
+  assert.ok(calibStatusIdx < calibrationIdx, 'thin-history rule must follow the calibration_status rule');
+});
