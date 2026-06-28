@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v65/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v67/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -3226,7 +3226,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 9000
+    appSource.indexOf(anchor) + 9600
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -3282,7 +3282,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 9000
+    appSource.indexOf(anchor) + 9600
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -5005,8 +5005,33 @@ test('RC2: the log-workout preview surfaces the chosen date + source from the wr
   assert.match(fn, /pendingWrite && pendingWrite\.payload && pendingWrite\.payload\.date/, 'date banner reads the actual write-payload date');
   assert.match(fn, /renderDateSourceNotice\(closeoutScreenshotDateSource, dsDate\)/, 'uses the shared date-source notice');
   // The source is reset on save and on start-over so a later manual save shows no banner.
-  assert.match(app, /if \(pendingLastWrite\) closeoutScreenshotDateSource = null;/, 'date source resets after a successful save');
+  assert.match(app, /closeoutScreenshotDateSource = null;\n    clearSessionSnapshot\(\)/, 'date source resets after a successful save (ungated — fires on screenshot/effort-only saves too)');
   assert.match(app, /closeoutScreenshotDateSource = null;\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
+});
+
+test('saved-no-restore: a confirmed save clears the in-memory session regardless of pendingLastWrite', () => {
+  // Owner live evidence (IMG_5125): a SAVED screenshot session came back as a "Session
+  // restored — 30 sets" ghost on reload, because the post-write session reset was gated
+  // on pendingLastWrite (undo state, null for screenshot/effort-only saves) — so the
+  // saved sessionLog survived in memory and re-snapshotted. The reset must be UNGATED.
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const block = app.slice(app.indexOf('lastWrite = pendingLastWrite;', app.indexOf(anchor)),
+    app.indexOf("dispatchEvent(new CustomEvent('atlas:session-reset'))", app.indexOf(anchor)) + 60);
+  // The buffers + active plan are cleared UNCONDITIONALLY (not behind `if (pendingLastWrite)`).
+  assert.match(block, /\n    sessionLog = \[\];/, 'sessionLog is cleared on any confirmed save');
+  assert.match(block, /\n    sessionCompleted = \[\];/, 'sessionCompleted is cleared on any confirmed save');
+  // The plan is ended via endPlannedSession() (deload-aware teardown), NOT a bare null —
+  // so the Step 385 Deload_State machine still advances on a saved deload session.
+  assert.match(block, /\n    endPlannedSession\(\);/, 'the active plan is ended (deload-aware) so it cannot re-snapshot');
+  assert.doesNotMatch(block, /\n    activePlannedSession = null;/, 'must not bypass endPlannedSession with a bare null (would stall the deload machine)');
+  assert.doesNotMatch(block, /if \(pendingLastWrite\) sessionLog = \[\]/, 'the reset must NOT be gated on the undo-only pendingLastWrite');
+  // The snapshot is still cleared, and undo state (lastWrite) still tracks pendingLastWrite.
+  assert.match(block, /clearSessionSnapshot\(\);/, 'the persisted snapshot is still cleared on save');
+  // saveSessionSnapshot removes the snapshot when nothing is in progress, so an empty
+  // buffer + null plan means a saved session can never be re-persisted/restored.
+  assert.match(app, /if \(!\(Array\.isArray\(sessionLog\) && sessionLog\.length\) && !activePlannedSession\) \{[\s\S]*?removeItem\(SESSION_SNAPSHOT_KEY\)/,
+    'saveSessionSnapshot drops the snapshot once the buffer and plan are clear');
 });
 
 test('RC2: an abandoned closeout preview does not leak its date-source label onto a later normal save', () => {
@@ -5337,8 +5362,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v65/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v64\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v67/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v66\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
