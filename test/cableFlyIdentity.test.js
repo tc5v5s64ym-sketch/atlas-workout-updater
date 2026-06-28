@@ -48,11 +48,15 @@ test('cable_fly_no_didnt_catch_lift_warning', () => {
 });
 
 test('cable_fly_save_preview_no_unknown_lift_warning', () => {
-  // There must be exactly ONE "didn't catch that lift" warning surface, and it must
-  // be gated by shouldWarnUnknownLift (which now honors the KB identity). No second,
-  // ungated unknown-lift warning may exist on the save/preview path.
-  const matches = appSrc.match(/Didn't catch that lift/g) || [];
-  assert.equal(matches.length, 1, 'exactly one unknown-lift warning surface');
+  // There must be exactly ONE unknown-lift advisory surface, and it must be gated by
+  // shouldWarnUnknownLift (which now honors the KB identity). No second, ungated
+  // unknown-lift warning may exist on the save/preview path. The advisory wording is
+  // a name-review note (B2 surface-consistency) — never a "didn't catch that lift"
+  // failure message that would contradict the confirmation card for the same input.
+  const matches = appSrc.match(/I don't recognize "/g) || [];
+  assert.equal(matches.length, 1, 'exactly one unknown-lift advisory surface');
+  assert.equal((appSrc.match(/Didn't catch that lift/g) || []).length, 0,
+    'the contradictory "didn\'t catch that lift" failure message must be gone (B2)');
   assert.match(appSrc, /shouldWarnUnknownLift\(parsed\.warnings, parsed\.rows\[0\]\?\.exercise, liftCodeFromCatalog, parsed\.kbIdentity\)/,
     'the warning must be gated by shouldWarnUnknownLift including the KB identity');
   // The backend-parsed result carries the KB identity through to the gate.

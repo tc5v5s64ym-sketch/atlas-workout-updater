@@ -3545,8 +3545,18 @@ async function rowsFromWorkoutInput() {
   // too — so a successfully-parsed, catalog-known lift never gets "didn't catch
   // that" on top of its confirmation card.
   if (shouldWarnUnknownLift(parsed.warnings, parsed.rows[0]?.exercise, liftCodeFromCatalog, parsed.kbIdentity)) {
+    // B2 — the composer status and the chat confirmation card must agree about the
+    // same input. The set IS captured: these rows flow to the very same confirmation
+    // card / preview as any other log (emitSetLogged buffers them, then closeout
+    // saves them), so the composer must NOT contradict that with a failure message
+    // implying the lift was dropped. Surface one consistent name-review advisory
+    // instead — true whether the set was just logged (card) or staged for preview —
+    // gated by the identical shouldWarnUnknownLift check as before (KB/catalog-known
+    // lifts still get no advisory). No write-path/trust-loop change; the unresolved
+    // name is still flagged for the lifter to correct.
     parsedRowsEditor.hidden = false;
-    setStatus(loggerStatus, "Didn't catch that lift — check the exercise name before saving.", 'warn');
+    const unrecognized = parsed.rows[0]?.exercise || 'that lift';
+    setStatus(loggerStatus, `I don't recognize "${unrecognized}" — check the exercise name before it's saved.`, 'warn');
   }
 }
 
