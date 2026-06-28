@@ -3058,6 +3058,12 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         screenshotUnreadable = true;
         normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
         metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
+        // Converge with the throw-based degrade (line ~3026), which sets
+        // parsed_metrics to null: discard the REJECTED screenshot's fields so its
+        // date can't flow into resolveWorkoutDate / buildEffortRowFromParsedMetrics
+        // on a no-manual-date save. Source-date handling for screenshots is B5's
+        // scope, not B3's — both degrade paths must behave identically here.
+        visionResult.parsed_metrics = null;
       } else if (req.file && effortOnly) {
         // Effort-only screenshot whose metrics parsed but were invalid/out-of-range:
         // there are no logged sets to fall back to, so fail closed — but with the

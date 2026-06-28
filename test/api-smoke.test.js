@@ -2905,6 +2905,50 @@ test('api smoke: live complete-workout saves sets with blank effort when parsed 
   }
 });
 
+// Convergence with the throw-based degrade: the invalid-metrics degrade must NOT
+// honor the REJECTED screenshot's date. With no manual date supplied, the rejected
+// screenshot's `date` must be discarded (parsed_metrics nulled) exactly like the
+// unreadable-screenshot path — source-date handling for screenshots is B5's scope.
+test('api smoke: invalid parsed screenshot metrics degrade discards the rejected screenshot date (no-manual-date convergence, B3)', async () => {
+  const savedMetrics = { ...fakeVisionParsedMetrics };
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: '2026-05-01', // a date is present, but the metrics are invalid (below) → rejected
+    duration: '00:42:00',
+    activeCalories: null, // missing → validation throws
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-INVALID-NODATE-01');
+      // No `date` field → resolveWorkoutDate would otherwise fall back to the
+      // screenshot's date if parsed_metrics were left intact.
+      form.append('test_mode', 'true');
+      form.append('log_rows_json', JSON.stringify([
+        ['', 'SHOT-INVALID-NODATE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675']
+      ]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.screenshot_unreadable, true);
+      // The rejected screenshot's date must NOT be honored — both degrade paths
+      // discard it and fall back (here, to local today).
+      assert.notEqual(data.date, '2026-05-01', 'rejected screenshot date must not drive the save date');
+      assert.notEqual((data.effort_row || [])[0], '2026-05-01', 'effort row must not carry the rejected screenshot date');
+    });
+  } finally {
+    fakeVisionParsedMetrics = savedMetrics;
+  }
+});
+
 // Guard the boundary: with NO logged sets there is nothing to fall back to, so an
 // effort-only screenshot whose parsed metrics are invalid must still fail closed
 // (honest error, never a silent blank-effort write).
