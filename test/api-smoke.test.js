@@ -67,6 +67,9 @@ const fakeSheetsState = {
   // returned by getLogCompositeKeys. Tests set this to exercise the row-level
   // duplicate guard on the log-workout live-write path; default empty.
   logCompositeKeys: [],
+  // When true, getLogCompositeKeys throws — exercises the preview's graceful
+  // degradation (read failure → preview shows all rows; live write still dedups).
+  failCompositeKeysRead: false,
   // When set to a tab name, getHeaderRow throws for that tab — exercises the
   // header-drift guard's fail-closed read-failure branch.
   failHeaderReadForTab: null,
@@ -123,6 +126,7 @@ const fakeSheets = {
   },
   getLogCompositeKeys: async () => {
     fakeSheetsState.safetyReadCalls.logCompositeKeys += 1;
+    if (fakeSheetsState.failCompositeKeysRead) throw new Error('Simulated composite-keys read failure');
     return [...fakeSheetsState.logCompositeKeys];
   },
   getRecentRows: async (tabName, maxRows = 100) => {
@@ -1951,6 +1955,119 @@ test('api smoke (B1): all duplicate log rows still allow a new Effort row append
     fakeSheetsState.logCompositeKeys = [];
     fakeSheetsState.effortSessionIds = [];
     fakeSheetsState.allowAppend = false;
+  }
+});
+
+// FB closeout trust failure (live 2026-06-28): the dry-run PREVIEW must show
+// EXACTLY the rows the live write will append — never more. Before the fix the
+// preview returned the raw rows (no dedup) while the live write silently dropped
+// already-logged rows, so a preview of "30 sets / 7 exercises" wrote only 22 and
+// Bench Press vanished. These tests lock preview↔write row parity.
+test('FB parity: dry-run preview applies the row-level dedup (preview rows == rows that will be written)', async () => {
+  // Bench Press sets 1-5 + Seated Row sets 1-3 already on the sheet for this session
+  // (an earlier partial write); the new save re-sends all of them plus genuinely new work.
+  fakeSheetsState.logCompositeKeys = [
+    'fb-parity-pm-01||bench press||1', 'fb-parity-pm-01||bench press||2', 'fb-parity-pm-01||bench press||3',
+    'fb-parity-pm-01||bench press||4', 'fb-parity-pm-01||bench press||5',
+    'fb-parity-pm-01||seated row||1', 'fb-parity-pm-01||seated row||2', 'fb-parity-pm-01||seated row||3'
+  ];
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'fb-parity-pm-01',
+        date: '2026-06-28',
+        test_mode: 'true',
+        log_rows: [
+          { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 15, rir: '' },
+          { exercise: 'Bench Press', set_number: 2, weight: 185, reps: 10, rir: '' },
+          { exercise: 'Bench Press', set_number: 3, weight: 235, reps: 5, rir: 2 },
+          { exercise: 'Bench Press', set_number: 4, weight: 235, reps: 5, rir: 2 },
+          { exercise: 'Bench Press', set_number: 5, weight: 235, reps: 5, rir: 2 },
+          { exercise: 'Seated Row', set_number: 1, weight: 195, reps: 8, rir: 2 },
+          { exercise: 'Seated Row', set_number: 2, weight: 195, reps: 8, rir: 2 },
+          { exercise: 'Seated Row', set_number: 3, weight: 195, reps: 8, rir: 2 },
+          { exercise: 'Overhead Press', set_number: 1, weight: 95, reps: 10, rir: 2 },
+          { exercise: 'Overhead Press', set_number: 2, weight: 115, reps: 8, rir: 2 }
+        ]
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.test_mode, true);
+    assert.equal(body.data.sheet_written, false, 'preview never writes');
+    assert.equal(body.data.no_write_confirmed, true);
+    // The 8 already-logged rows (Bench ×5 + Seated Row ×3) are excluded from the
+    // preview; only the 2 genuinely-new Overhead Press rows remain.
+    assert.equal(body.data.log_rows_preview.length, 2,
+      'preview shows only the rows that will actually be written, not the already-logged ones');
+    assert.equal(body.data.skipped_duplicates, 8, 'preview surfaces how many rows are already logged');
+    const previewNames = body.data.log_rows_preview.map(r => r[3]);
+    assert.deepEqual(previewNames, ['Overhead Press', 'Overhead Press'],
+      'only the new exercise survives the preview dedup');
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+  }
+});
+
+test('FB parity: preview row count equals the live write row count for the same payload', async () => {
+  // Same pre-existing rows; prove the dry-run preview count and the live append count
+  // agree exactly — they now share partitionLogRowsByExisting, so they cannot diverge.
+  fakeSheetsState.logCompositeKeys = ['fb-parity2-pm-01||bench press||1'];
+  const payloadRows = [
+    { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
+    { exercise: 'Back Squat', set_number: 1, weight: 315, reps: 5, rir: 2 }
+  ];
+  try {
+    const preview = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: 'fb-parity2-pm-01', date: '2026-06-28', test_mode: 'true', log_rows: payloadRows })
+    });
+    assert.equal(preview.body.data.log_rows_preview.length, 1, 'preview shows the single new row');
+
+    fakeSheetsState.appendCalls.length = 0;
+    fakeSheetsState.allowAppend = true;
+    const write = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: 'fb-parity2-pm-01', date: '2026-06-28', write_id: 'fb-parity2-write', log_rows: payloadRows })
+    });
+    assert.equal(write.body.data.log_rows_written, 1, 'live write appends exactly the previewed count');
+    assert.equal(write.body.data.skipped_duplicates, 1);
+    assert.equal(preview.body.data.log_rows_preview.length, write.body.data.log_rows_written,
+      'preview count and write count match exactly — no silent drop between preview and write');
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// Graceful degradation: a duplicate-read failure must never block the dry-run.
+// The preview falls back to showing ALL rows (the live write still applies the
+// authoritative dedup before any append), so a preview is never a hard dead-end.
+test('FB parity: preview degrades to all rows when the duplicate-read fails (live write still dedups)', async () => {
+  fakeSheetsState.failCompositeKeysRead = true;
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'fb-degrade-pm-01',
+        date: '2026-06-28',
+        test_mode: 'true',
+        log_rows: [
+          { exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
+          { exercise: 'Bench Press', set_number: 2, weight: 225, reps: 5, rir: 2 }
+        ]
+      })
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(body.data.sheet_written, false, 'a degraded preview still proves no-write');
+    assert.equal(body.data.no_write_confirmed, true);
+    // Read failed → show all rows rather than block; the live write still dedups.
+    assert.equal(body.data.log_rows_preview.length, 2, 'preview degrades to all rows on a read failure');
+    assert.equal(body.data.skipped_duplicates, undefined, 'no skipped count is claimed when the dedup read failed');
+  } finally {
+    fakeSheetsState.failCompositeKeysRead = false;
   }
 });
 
