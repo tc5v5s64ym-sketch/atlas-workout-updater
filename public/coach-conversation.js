@@ -549,6 +549,25 @@
     return parts.join(' ');
   }
 
+  // Build the compact composer hint from an ALREADY-NORMALIZED plan entry
+  // (one that has `name`/`weight`/`reps`/`rir`/`sets` from normalizePlanExercise).
+  // compactPrescription() expects the raw API shape and re-normalizes, which
+  // double-maps `name` → liftCode → null; this variant skips that step.
+  function compactPrescriptionFromNormalized(entry) {
+    const name = entry && (entry.canonicalName || entry.name);
+    const weight = entry && entry.weight;
+    const reps = entry && entry.reps;
+    const rir = entry && entry.rir;
+    if (!name || weight == null || reps == null) return name || null;
+    const alias = composerLiftAlias(name);
+    let sets = Number(entry.sets);
+    if (!Number.isFinite(sets) || sets < 1) sets = 1;
+    sets = Math.min(sets, 10);
+    if (rir == null || rir === '') return `${alias} ${weight} ${reps}`;
+    const working = `${weight} ${reps}/${rir}`;
+    return sets > 1 ? `${alias} ${working} x${sets}` : `${alias} ${working}`;
+  }
+
   // Build the composer placeholder from the first (current) plan exercise — the
   // compact full prescription (warm-ups + working sets), not just the lead set.
   function buildWorkoutPlaceholder(exercises) {
@@ -722,7 +741,14 @@
           : getSuggestedWorkoutMessage(data);
         await typeOut(body, message);
       }
-      setWorkoutPlaceholder(buildWorkoutPlaceholder(exercises));
+      const completedNow = typeof getSessionCompleted === 'function' ? getSessionCompleted() : [];
+      const pendingExercises = completedNow.length
+        ? exercises.filter(e => {
+            const n = ((typeof normalizePlanExercise === 'function' ? normalizePlanExercise(e) : e).name || '').toLowerCase();
+            return !completedNow.some(c => String(c || '').toLowerCase() === n);
+          })
+        : exercises;
+      setWorkoutPlaceholder(buildWorkoutPlaceholder(pendingExercises.length ? pendingExercises : exercises));
     } catch {
       body.textContent = '';
       await typeOut(body, "I couldn't pull a suggestion just now — but start logging and I'll react as you go.");
@@ -988,6 +1014,7 @@
   // suppress re-announcing the SAME next-up after every off-plan log (the live-gym
   // "Moving on — next up: Dumbbell Side Bend" broken-record). Reset at closeout.
   let lastAnnouncedNextUp = null;
+  document.addEventListener('atlas:session-reset', () => { lastAnnouncedNextUp = null; });
 
   // Build the composer placeholder for the next planned lift from the ACTIVE PLAN
   // entry's own prescription (it carries weight/reps/sets) — so a plan lift with no
@@ -999,7 +1026,9 @@
     const key = String(nextEx == null ? '' : nextEx).toLowerCase();
     const entry = session.exercises.find(e =>
       (e.canonicalName || e.name || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
-    return entry ? buildWorkoutPlaceholder([entry]) : null;
+    // entries in session.exercises are already normalized — use the normalized
+    // variant to avoid double-normalization (which maps name → liftCode → null).
+    return entry ? compactPrescriptionFromNormalized(entry) : null;
   }
 
   // In-workout: a logged set → readback (RIR in ember) + coach note + adjusted-
