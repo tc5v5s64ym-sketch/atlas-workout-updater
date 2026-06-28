@@ -5469,8 +5469,12 @@ test('handoff: the /api/plan/today fallback never resurrects an already-complete
     ccSource.indexOf('async function handleSetLogged(detail)'),
     ccSource.indexOf('async function handlePreviewReady')
   );
+  // B4: freestyle guard — only look up next-up when a plan is engaged.
+  assert.match(block, /const hasEngagedPlan = \(detail\.plannedOrder \|\| \[\]\)\.length > 0/,
+    'freestyle guard: hasEngagedPlan derived from detail.plannedOrder');
   // next-up is computed BEFORE the closeout decision, so a genuine next wins.
-  assert.match(block, /let nextEx = detail\.nextPlanned \|\| await getNextExerciseInPlan/);
+  assert.match(block, /let nextEx = detail\.nextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
+    'freestyle guard: getNextExerciseInPlan fires only when hasEngagedPlan is true');
   // A fallback next-up (only when there's no deterministic nextPlanned) that is
   // already in detail.completed is dropped — this is the "wanted weighted dips
   // again" fix.

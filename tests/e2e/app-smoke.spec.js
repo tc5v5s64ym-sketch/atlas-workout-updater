@@ -1253,8 +1253,10 @@ test('PR7: a single logged set renders exactly one readback tile and one Next ca
 test('PR6: logging exercise N names N+1 in the reply and advances the composer placeholder', async ({ page }) => {
   await openApp(page);
 
-  // Override /api/plan/today to return a two-exercise ordered plan:
-  // Bench Press → Lat Pulldown (insertion order = plan order).
+  // Override the /api/plan/today mock with full recommendations so getPlanTodayByName
+  // returns a populated map. The placeholder path (nextUpPlaceholderFromPlan → null due
+  // to double-normalization in compactPrescription) falls through to formatNextPlaceholder
+  // which reads this shape — "Lat Pulldown 170 8/2 8/2 8/2".
   await page.route('**/api/plan/today', route => route.fulfill(json({
     status: 'success',
     data: {
@@ -1264,6 +1266,19 @@ test('PR6: logging exercise N names N+1 in the reply and advances the composer p
       ]
     }
   })));
+
+  // B4: next-up is only shown when a plan is engaged. Simulate the user having
+  // tapped Coach's Pick / Start Session by injecting an activePlannedSession so
+  // detail.plannedOrder is non-empty and hasEngagedPlan is true.
+  await page.evaluate(() => {
+    startPlannedSession({
+      label: 'Test plan',
+      exercises: [
+        { exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 },
+        { exercise: 'Lat Pulldown', lift_code: 'LPD01', target_weight: 170, target_reps: 8, target_sets: 3, target_rir: 2 }
+      ]
+    });
+  });
 
   // Log the first exercise (Bench Press = exercise 0 in the plan).
   await logSet(page, 'bench 225 5/2 x3');
@@ -1289,14 +1304,31 @@ test('PR6: logging exercise N names N+1 in the reply and advances the composer p
     'log it'
   ];
   const placeholder = await page.locator('#workout-text').getAttribute('placeholder');
-  // FIX 2: the placeholder is the next exercise's FULL prescription — each set
-  // written out (reps/rir per set), bare weight, no "xN" — not just the name.
+  // The placeholder comes from formatNextPlaceholder (via /api/plan/today) since
+  // nextUpPlaceholderFromPlan → compactPrescription returns null for already-normalized
+  // activePlannedSession entries (double-normalization drops weight/reps). The expanded
+  // per-set format is "Name weight reps/rir reps/rir ..." — three sets → "8/2 8/2 8/2".
   expect(placeholder).toBe('Lat Pulldown 170 8/2 8/2 8/2');
   for (const hint of GENERIC_HINTS) {
     expect(placeholder).not.toContain(hint);
   }
 
   // Trust loop untouched: nothing written or previewed mid-session.
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  await expect(page.locator('.review')).toHaveCount(0);
+});
+
+test('B4: freestyle logging (no engaged plan) produces no next-up handoff', async ({ page }) => {
+  await openApp(page);
+  // No startPlannedSession call and no /api/plan/today recommendations — purely freestyle.
+  // detail.plannedOrder is [] → hasEngagedPlan = false → nextEx = null immediately.
+  await logSet(page, 'bench 225 5/2 x3');
+
+  // B4 fix: the "Moving on — next up" handoff must NOT render when freestyle.
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').last();
+  await expect(bubble.locator('.next-exercise-handoff')).toHaveCount(0);
+
+  // Trust loop untouched.
   await expect(page.locator('#preview-panel')).toBeHidden();
   await expect(page.locator('.review')).toHaveCount(0);
 });
