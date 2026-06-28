@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v61';
+const ATLAS_SHELL_BUILD = 'v62';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3716,6 +3716,14 @@ let sessionCompleted = [];
 // /api/complete-workout; "done" still saves the buffered session rows.
 let closeoutScreenshotFile = null;
 let closeoutScreenshotEffort = null;
+// RC2: the date source resolved for a closeout screenshot save
+// (manual | screenshot | today_fallback). Drives a preview banner so the chosen
+// workout date is visible — and correctable — before the owner approves.
+let closeoutScreenshotDateSource = null;
+// RC2: whether the owner EXPLICITLY typed a workout date. A closeout screenshot's
+// own date only wins when this is false. setDefaultDate() sets #log-date's value
+// programmatically (no input event), so the default-today never trips this.
+let logDateManuallyEntered = false;
 
 /* ===== Mobile PWA session persistence/resume safety =====
  * Live gym testing on a phone home-screen icon can lose the in-memory session to a
@@ -3885,6 +3893,50 @@ function isPlanCloseoutAwaitingSave() {
   return sessionLog.length > 0 &&
     plannedExerciseOrder().length > 0 &&
     remainingPlannedExercises().length === 0;
+}
+
+// RC2 (FB closeout date): the vision parser returns a screenshot date ONLY when it
+// is visible and unambiguous (strict YYYY-MM-DD), else null — so a present, valid ISO
+// date is a "confident" signal. Anything else is treated as absent (→ today fallback).
+function isConfidentScreenshotDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return false;
+  const d = new Date(`${value.trim()}T00:00:00`);
+  return !Number.isNaN(d.getTime()) && getLocalDateString(d) === value.trim();
+}
+
+// Resolve the workout date for a closeout SAVE carrying an Apple Watch screenshot.
+// Priority: an EXPLICITLY-entered manual date wins; else a confidently-parsed
+// screenshot date wins; else fall back to today (flagged so the preview warns). The
+// chosen date is authoritative for the log rows, session_id, effort row, and preview
+// copy so they can never disagree (the "July 27 screenshot saved as today" bug).
+// Returns { date, source } with source ∈ manual | screenshot | today_fallback.
+function resolveCloseoutWorkoutDate({ manualDate, manualEntered, screenshotDate, today }) {
+  if (manualEntered && typeof manualDate === 'string' && manualDate.trim()) {
+    return { date: manualDate.trim(), source: 'manual' };
+  }
+  if (isConfidentScreenshotDate(screenshotDate)) {
+    return { date: screenshotDate.trim(), source: 'screenshot' };
+  }
+  return { date: today, source: 'today_fallback' };
+}
+
+// Shared date-source notice for the save preview (used by both the log-workout and
+// complete-workout previews) — keeps the copy identical wherever a date is resolved.
+function renderDateSourceNotice(source, date) {
+  if (!date) return null;
+  if (source === 'today_fallback') {
+    const warn = el('div', { class: 'preview-warnings preview-date-warning' });
+    warn.innerHTML = `⚠️ Date not found in screenshot — saving as <strong>${date}</strong> (today). ` +
+      `If this workout is from a different day, change the date field above and preview again.`;
+    return warn;
+  }
+  if (source === 'screenshot') {
+    return el('div', { class: 'preview-ok preview-date-source', text: `Date from screenshot: ${date}` });
+  }
+  if (source === 'manual') {
+    return el('div', { class: 'preview-ok preview-date-source', text: `Date (manual): ${date}` });
+  }
+  return null;
 }
 
 function effortRowFromParsedEffort(effort, sessionId, date, location, notes) {
@@ -4401,6 +4453,7 @@ function startOverWorkout() {
   document.dispatchEvent(new CustomEvent('atlas:session-reset'));
   closeoutScreenshotFile = null;
   closeoutScreenshotEffort = null;
+  closeoutScreenshotDateSource = null;
   setsTableBody.innerHTML = '';
   parsedRowsEditor.hidden = true;
   const effortDetails = document.getElementById('effort-details');
@@ -4836,6 +4889,20 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     } catch {
       setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
     }
+    // RC2: the screenshot's own date is authoritative for this save unless the owner
+    // explicitly typed a date. Resolve it and apply to BOTH #log-date and the session_id
+    // BEFORE handleLogIt re-submits, so the rebuilt log rows, session_id, effort row,
+    // pendingWrite payload, and preview banner all share the chosen date — never silently
+    // today. An absent/ambiguous screenshot date falls back to today (and the preview warns).
+    const resolvedCloseout = resolveCloseoutWorkoutDate({
+      manualDate: date,
+      manualEntered: logDateManuallyEntered,
+      screenshotDate: closeoutScreenshotEffort && closeoutScreenshotEffort.date,
+      today: getLocalDateString()
+    });
+    closeoutScreenshotDateSource = resolvedCloseout.source;
+    document.getElementById('log-date').value = resolvedCloseout.date;
+    sessionIdInput.value = generateSessionId(resolvedCloseout.date);
     // FB: the screenshot upload IS the completion signal at closeout — drive the
     // EXISTING closeout (handleLogIt → runCloseout → preview → approve → write) directly
     // instead of staging the effort and waiting for a separate "done". On re-entry the
@@ -5298,6 +5365,15 @@ function renderLogWorkoutPreview(result, effortRow) {
   if (logRuleFlags) previewContent.appendChild(logRuleFlags);
   const logSuggestions = renderUnknownExerciseSuggestions(data.pending_exercises);
   if (logSuggestions) previewContent.appendChild(logSuggestions);
+  // RC2: when this save came from a closeout screenshot, show the chosen workout date
+  // and its source so the owner sees (and can correct) it before approving. The date
+  // shown is exactly the one in the write payload, so preview ↔ saved date can't drift.
+  if (closeoutScreenshotDateSource) {
+    const dsDate = (pendingWrite && pendingWrite.payload && pendingWrite.payload.date)
+      || document.getElementById('log-date').value || '';
+    const dsNotice = renderDateSourceNotice(closeoutScreenshotDateSource, dsDate);
+    if (dsNotice) previewContent.appendChild(dsNotice);
+  }
   previewContent.appendChild(renderRowsSummary(data.log_rows_preview || []));
   if (effortRow) {
     previewContent.appendChild(el('h3', { text: 'Effort row to write' }));
@@ -5354,18 +5430,8 @@ function renderCompleteWorkoutPreview(result) {
   // a mismatch (e.g. a June 12 screenshot imported on June 26 defaulting to today).
   // When the date fell back to today — because the screenshot date wasn't visible
   // or extractable — show a warning and prompt correction BEFORE the approve step.
-  const dateSource = data.date_source;
-  const resolvedDate = data.date || '';
-  if (dateSource === 'today_fallback' && resolvedDate) {
-    const warn = el('div', { class: 'preview-warnings preview-date-warning' });
-    warn.innerHTML = `⚠️ Date not found in screenshot — saving as <strong>${resolvedDate}</strong> (today). ` +
-      `If this workout is from a different day, change the date field above and preview again.`;
-    previewContent.appendChild(warn);
-  } else if (dateSource === 'screenshot' && resolvedDate) {
-    previewContent.appendChild(el('div', { class: 'preview-ok preview-date-source', text: `Date from screenshot: ${resolvedDate}` }));
-  } else if (dateSource === 'manual' && resolvedDate) {
-    previewContent.appendChild(el('div', { class: 'preview-ok preview-date-source', text: `Date (manual): ${resolvedDate}` }));
-  }
+  const completeDateNotice = renderDateSourceNotice(data.date_source, data.date || '');
+  if (completeDateNotice) previewContent.appendChild(completeDateNotice);
 
   const dup = data.duplicate_check || {};
   if (dup.duplicate_log_rows > 0) {
@@ -5604,6 +5670,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     if (pendingLastWrite) sessionCompleted = [];
     if (pendingLastWrite) closeoutScreenshotFile = null;
     if (pendingLastWrite) closeoutScreenshotEffort = null;
+    if (pendingLastWrite) closeoutScreenshotDateSource = null;
     clearSessionSnapshot();   // saved — don't resume this (now-written) session
     document.dispatchEvent(new CustomEvent('atlas:session-reset'));
 
@@ -5932,6 +5999,12 @@ function setDefaultDate() {
   document.getElementById('log-date').value = today;
   document.getElementById('bw-date').value = today;
 }
+
+// RC2: a real keystroke/picker change on the date field marks it as an EXPLICIT
+// manual entry, so a closeout screenshot's own date won't override the owner's choice.
+// Programmatic setDefaultDate()/value assignments don't fire 'input', so they never
+// trip this — only genuine owner input does.
+document.getElementById('log-date')?.addEventListener('input', () => { logDateManuallyEntered = true; });
 
 setDefaultDate();
 checkConnection();
