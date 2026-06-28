@@ -5511,9 +5511,13 @@ test('G2: handleSetLogged iterates exercises.slice(1) to coach every logged lift
   assert.match(block, /chatTurns\.push\(\{ role: 'atlas', text: exText \}\)/, 'additional-lift notes enter chatTurns');
   // The additional lift also gets a next-set prescription when the engine has one.
   assert.match(block, /buildNextPrescription\(exRec\)/, 'each additional lift renders a next-set prescription if available');
-  // The effort-note line is NOT mirrored for additional lifts (owner-gated contract).
-  assert.equal((block.match(/className = 'coach-msg effort-note'/g) || []).length, 1,
-    'effort-note is rendered exactly once (primary lift only) — additional lifts are prose-only');
+  // G2 follow-up (owner 2026-06-28): per-lift effort-line parity — each additional
+  // lift renders its OWN deterministic effort line (primary + slice(1) loop = two
+  // occurrences of the element). Guarded by suppress_generic_prose, same as primary.
+  assert.equal((block.match(/className = 'coach-msg effort-note'/g) || []).length, 2,
+    'effort-note is rendered once per logged lift (primary + each additional)');
+  assert.match(block, /exReaction\.effort_note && !\(exReaction\.voice && exReaction\.voice\.suppress_generic_prose\)/,
+    'additional-lift effort line carries the same suppress_generic_prose guard as the primary');
 });
 
 test('G2: single-exercise log is unchanged — slice(1) loop is empty, primary path is identical', () => {
@@ -5531,22 +5535,24 @@ test('G2: single-exercise log is unchanged — slice(1) loop is empty, primary p
     'primary getInWorkoutNote uses primary.exercise');
 });
 
-test('set-effort wiring: handleSetLogged renders one short effort line + folds reroute, no full-session recap', () => {
+test('set-effort wiring: handleSetLogged renders the effort line per lift (not per set) + folds reroute, no full-session recap', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const block = ccSource.slice(
     ccSource.indexOf('async function handleSetLogged(detail)'),
     ccSource.indexOf('async function handlePreviewReady')
   );
   assert.ok(block.length > 0, 'handleSetLogged must be found');
-  // The engine-backed effort line is rendered (one element), and the planned queue
-  // is forwarded to the coach facts.
+  // The engine-backed effort line is rendered, and the planned queue is forwarded to
+  // the coach facts.
   assert.match(block, /planned_queue:\s*Array\.isArray\(detail\.plannedQueue\)/);
   assert.match(block, /reaction\.effort_note/);
   assert.match(block, /effort-note/);
   // The reroute suggestion is folded into the existing single handoff line.
   assert.match(block, /reaction\.reroute && reaction\.reroute\.line/);
-  // Exactly one effort line — the deterministic line is rendered once, not per set.
-  assert.equal((block.match(/className = 'coach-msg effort-note'/g) || []).length, 1);
+  // One effort line PER LIFT (primary + each additional via the slice(1) loop), never
+  // per set — a single lift's multiple sets still collapse to one engine effort line.
+  // G2 follow-up (owner 2026-06-28): the prior "exactly one" pin became "one per lift".
+  assert.equal((block.match(/className = 'coach-msg effort-note'/g) || []).length, 2);
   // No full-session recap: the per-set handler must not iterate the whole session
   // log / sessionLog to print a summary after each set.
   assert.doesNotMatch(block, /sessionLog\b/, 'no full-session recap may be built per set');

@@ -1160,12 +1160,20 @@
         bubble.appendChild(exMsg);
         chatTurns.push({ role: 'atlas', text: exText });
       }
-      // NOTE: additional lifts get coaching PROSE here but not the deterministic
-      // `effort_note` line — mirroring it would add a second `coach-msg effort-note`
-      // element, which an existing coach test pins to "exactly one" (the "one short
-      // effort line, not per set" contract). Changing that is an owner-gated coach
-      // contract change, so the effort-line parity is filed as a BACKLOG follow-up
-      // rather than altered here. (G2 review #608.)
+      // G2 follow-up (owner 2026-06-28): per-lift effort-line parity. Each additional
+      // lift now renders its OWN deterministic, engine-backed effort line — the same
+      // treatment the primary lift gets above — so a stacked entry surfaces every
+      // lift's effort signal, not just the first. Same `suppress_generic_prose` guard
+      // as the primary: when the voice renderer already folds the effort observation
+      // into the prose note above, skip the separate line so it isn't said twice. Still
+      // ONE line per LIFT, never one per set (the per-set contract is unchanged — a
+      // lift's multiple sets collapse to a single effort line in the engine).
+      if (exReaction && exReaction.effort_note && !(exReaction.voice && exReaction.voice.suppress_generic_prose)) {
+        const exEff = document.createElement('div');
+        exEff.className = 'coach-msg effort-note';
+        await typeOut(exEff, exReaction.effort_note);
+        bubble.appendChild(exEff);
+      }
       if (exRec && exRec.recommendation) {
         bubble.appendChild(buildNextPrescription(exRec));
       }
