@@ -5998,6 +5998,11 @@ function setDefaultDate() {
   const today = getLocalDateString();
   document.getElementById('log-date').value = today;
   document.getElementById('bw-date').value = today;
+  // RC2: returning the field to the default today is NOT an explicit owner choice, so
+  // clear the manual-entry latch. Without this, a one-time manual date edit would stay
+  // "manual" for the PWA's lifetime — and after a post-save reset (which calls this) a
+  // later closeout screenshot would be forced under today, re-introducing the RC2 bug.
+  logDateManuallyEntered = false;
 }
 
 // RC2: a real keystroke/picker change on the date field marks it as an EXPLICIT

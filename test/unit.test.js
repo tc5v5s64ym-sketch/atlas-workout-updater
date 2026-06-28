@@ -4974,10 +4974,26 @@ test('RC2: only an explicit keystroke marks the date as manually entered (defaul
   assert.match(app, /let logDateManuallyEntered = false;/, 'tracks explicit manual date entry');
   assert.match(app, /getElementById\('log-date'\)\?\.addEventListener\('input', \(\) => \{ logDateManuallyEntered = true; \}\)/,
     'an input event (real keystroke/picker change) marks manual entry');
-  // setDefaultDate assigns .value programmatically, which does NOT fire input — so the
-  // default-today must never set the flag.
-  const setDefault = app.slice(app.indexOf('function setDefaultDate()'), app.indexOf('function setDefaultDate()') + 200);
-  assert.doesNotMatch(setDefault, /logDateManuallyEntered/, 'setDefaultDate must not touch the manual-entry flag');
+  // setDefaultDate assigns .value programmatically (no input event), so it must never
+  // SET the flag true — but it MUST CLEAR it (returning the field to today-default is
+  // not an explicit choice). Without the clear, a one-time manual edit latches "manual"
+  // for the PWA's lifetime and a later closeout screenshot is forced under today.
+  const setDefault = app.slice(app.indexOf('function setDefaultDate()'), app.indexOf('function setDefaultDate()') + 700);
+  assert.doesNotMatch(setDefault, /logDateManuallyEntered = true/, 'setDefaultDate must not set the manual-entry flag true');
+  assert.match(setDefault, /logDateManuallyEntered = false/, 'setDefaultDate must CLEAR the manual-entry flag (post-save reset un-latches it)');
+});
+
+test('RC2: a manual date edit does not latch "manual" past a save (no stale-flag regression)', () => {
+  // Regression for the #674 review catch: the post-save reset calls setDefaultDate(),
+  // which must clear logDateManuallyEntered so the NEXT closeout screenshot date wins
+  // again instead of being forced under today and mislabeled "Date (manual)".
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The post-save success block resets the form and calls setDefaultDate().
+  const saveResetIdx = app.indexOf('setDefaultDate();', app.indexOf("document.getElementById('logger-form').reset()"));
+  assert.ok(saveResetIdx > 0, 'the post-save reset calls setDefaultDate()');
+  // setDefaultDate clears the latch (asserted above), so the post-save path un-latches it.
+  const setDefault = app.slice(app.indexOf('function setDefaultDate()'), app.indexOf('function setDefaultDate()') + 700);
+  assert.match(setDefault, /logDateManuallyEntered = false/, 'post-save reset (via setDefaultDate) clears the manual-entry latch');
 });
 
 test('RC2: the log-workout preview surfaces the chosen date + source from the write payload', () => {
