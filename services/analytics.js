@@ -1165,7 +1165,9 @@ function readinessStatus(recovery) {
 function buildMuscleGroupReadiness(logRows, options = {}) {
   const { today = null, effortRows = [] } = options || {};
   const todayStr = safeDateString(today);
-  const normalized = asArray(logRows).map(normalizeLogRow).filter(r => isPositiveFinite(r.weight) && isPositiveFinite(r.reps) && r.date_clean);
+  // Bodyweight exercises (weight=0 or null) must count toward muscle-group readiness —
+  // the last-trained date for a pattern should include any real set regardless of weight.
+  const normalized = asArray(logRows).map(normalizeLogRow).filter(r => isPositiveFinite(r.reps) && r.date_clean);
   const effortIntensity = effortIntensityBySession(effortRows);
 
   // key = `${session_id}:${pattern}` → { session_id, date, volume, minRir }
