@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v65';
+const ATLAS_SHELL_BUILD = 'v66';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -5693,12 +5693,19 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // this clears any stale manual range — otherwise a correction after an
     // effort save would Replace-via-undo the wrong (older) rows.
     lastWrite = pendingLastWrite;
-    // The session is saved — start the next session's buffer fresh.
-    if (pendingLastWrite) sessionLog = [];
-    if (pendingLastWrite) sessionCompleted = [];
-    if (pendingLastWrite) closeoutScreenshotFile = null;
-    if (pendingLastWrite) closeoutScreenshotEffort = null;
-    if (pendingLastWrite) closeoutScreenshotDateSource = null;
+    // The session is SAVED (or a confirmed duplicate) — start the next session's buffer
+    // fresh. This MUST NOT be gated on pendingLastWrite: that is UNDO state (the appended
+    // log range), which is null for screenshot / effort-only saves even though they DID
+    // save the session. Gating the reset on it left a saved screenshot session in memory,
+    // so the next set-log / background event re-snapshotted it and it came back as a
+    // "Session restored — 30 sets" ghost on reload — every later save then collided on the
+    // already-saved session_id. A saved workout must never restore (owner, 2026-06-28).
+    sessionLog = [];
+    sessionCompleted = [];
+    activePlannedSession = null;
+    closeoutScreenshotFile = null;
+    closeoutScreenshotEffort = null;
+    closeoutScreenshotDateSource = null;
     clearSessionSnapshot();   // saved — don't resume this (now-written) session
     document.dispatchEvent(new CustomEvent('atlas:session-reset'));
 
