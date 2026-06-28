@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v61/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v62/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -4929,6 +4929,86 @@ test('closeout screenshot: done save uses normal log-workout preview and include
   assert.match(manualBranch, /\/api\/log-workout/, 'normal done preview must still use the log-workout dry-run');
 });
 
+// ── RC2: closeout screenshot date must win over today's default ───────────────
+// FB live failure (2026-06-28): a July 27 Apple Watch screenshot saved under today
+// (2026-06-28) because the closeout path never read the screenshot's own date. The
+// fix resolves the date (manual > screenshot > today) and applies it to the date
+// field + session_id BEFORE the re-submit so every date surface matches.
+test('RC2: resolveCloseoutWorkoutDate prioritizes manual > screenshot > today', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function resolveCloseoutWorkoutDate('), app.indexOf('function renderDateSourceNotice('));
+  assert.ok(fn.length > 0, 'resolveCloseoutWorkoutDate must exist');
+  // 1. An explicitly-entered manual date wins.
+  assert.match(fn, /if \(manualEntered && typeof manualDate === 'string' && manualDate\.trim\(\)\) \{[\s\S]*source: 'manual'/,
+    'an explicit manual date wins first');
+  // 2. Else a confidently-parsed screenshot date wins.
+  assert.match(fn, /if \(isConfidentScreenshotDate\(screenshotDate\)\) \{[\s\S]*source: 'screenshot'/,
+    'a confident screenshot date wins when no manual date');
+  // 3. Else fall back to today, flagged.
+  assert.match(fn, /return \{ date: today, source: 'today_fallback' \}/, 'absent/ambiguous date falls back to today');
+  // The screenshot-date check is strict ISO (the vision parser only emits YYYY-MM-DD
+  // when unambiguous, else null), so ambiguity degrades to the today fallback.
+  const validator = app.slice(app.indexOf('function isConfidentScreenshotDate('), app.indexOf('function resolveCloseoutWorkoutDate('));
+  assert.match(validator, /\/\^\\d\{4\}-\\d\{2\}-\\d\{2\}\$\//, 'screenshot date must be strict YYYY-MM-DD');
+});
+
+test('RC2: the closeout branch resolves the date and applies it to #log-date + session_id before re-submit', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const guardStart = app.indexOf('if (file && !pendingChatText && !sessionCompiledAwaitingPreview && isPlanCloseoutAwaitingSave())');
+  const guard = app.slice(guardStart, app.indexOf('await handleLogIt();', guardStart) + 30);
+  // It resolves using the screenshot's own date and the manual-entry flag…
+  assert.match(guard, /resolveCloseoutWorkoutDate\(\{[\s\S]*manualEntered: logDateManuallyEntered,[\s\S]*screenshotDate: closeoutScreenshotEffort && closeoutScreenshotEffort\.date/,
+    'resolves from the screenshot date + manual-entry flag');
+  // …then applies the chosen date to BOTH the date field and the session_id, and
+  // records the source — all BEFORE handleLogIt() re-submits.
+  assert.match(guard, /closeoutScreenshotDateSource = resolvedCloseout\.source/, 'records the date source for the preview banner');
+  assert.match(guard, /document\.getElementById\('log-date'\)\.value = resolvedCloseout\.date/, 'applies the chosen date to the date field');
+  assert.match(guard, /sessionIdInput\.value = generateSessionId\(resolvedCloseout\.date\)/, 'regenerates the session_id from the chosen date');
+  const applyIdx = guard.indexOf('document.getElementById(\'log-date\').value = resolvedCloseout.date');
+  const submitIdx = guard.indexOf('await handleLogIt();');
+  assert.ok(applyIdx > 0 && applyIdx < submitIdx, 'the date is applied BEFORE the re-submit so the rebuilt rows use it');
+});
+
+test('RC2: only an explicit keystroke marks the date as manually entered (default-today never trips it)', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(app, /let logDateManuallyEntered = false;/, 'tracks explicit manual date entry');
+  assert.match(app, /getElementById\('log-date'\)\?\.addEventListener\('input', \(\) => \{ logDateManuallyEntered = true; \}\)/,
+    'an input event (real keystroke/picker change) marks manual entry');
+  // setDefaultDate assigns .value programmatically (no input event), so it must never
+  // SET the flag true — but it MUST CLEAR it (returning the field to today-default is
+  // not an explicit choice). Without the clear, a one-time manual edit latches "manual"
+  // for the PWA's lifetime and a later closeout screenshot is forced under today.
+  const setDefault = app.slice(app.indexOf('function setDefaultDate()'), app.indexOf('function setDefaultDate()') + 700);
+  assert.doesNotMatch(setDefault, /logDateManuallyEntered = true/, 'setDefaultDate must not set the manual-entry flag true');
+  assert.match(setDefault, /logDateManuallyEntered = false/, 'setDefaultDate must CLEAR the manual-entry flag (post-save reset un-latches it)');
+});
+
+test('RC2: a manual date edit does not latch "manual" past a save (no stale-flag regression)', () => {
+  // Regression for the #674 review catch: the post-save reset calls setDefaultDate(),
+  // which must clear logDateManuallyEntered so the NEXT closeout screenshot date wins
+  // again instead of being forced under today and mislabeled "Date (manual)".
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The post-save success block resets the form and calls setDefaultDate().
+  const saveResetIdx = app.indexOf('setDefaultDate();', app.indexOf("document.getElementById('logger-form').reset()"));
+  assert.ok(saveResetIdx > 0, 'the post-save reset calls setDefaultDate()');
+  // setDefaultDate clears the latch (asserted above), so the post-save path un-latches it.
+  const setDefault = app.slice(app.indexOf('function setDefaultDate()'), app.indexOf('function setDefaultDate()') + 700);
+  assert.match(setDefault, /logDateManuallyEntered = false/, 'post-save reset (via setDefaultDate) clears the manual-entry latch');
+});
+
+test('RC2: the log-workout preview surfaces the chosen date + source from the write payload', () => {
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function renderLogWorkoutPreview('), app.indexOf('function renderCompleteWorkoutPreview('));
+  assert.match(fn, /if \(closeoutScreenshotDateSource\) \{/, 'shows a date banner only for a closeout screenshot save');
+  // The shown date is read from the write payload (pendingWrite.payload.date), so the
+  // preview date and the saved date are the same value — they cannot drift.
+  assert.match(fn, /pendingWrite && pendingWrite\.payload && pendingWrite\.payload\.date/, 'date banner reads the actual write-payload date');
+  assert.match(fn, /renderDateSourceNotice\(closeoutScreenshotDateSource, dsDate\)/, 'uses the shared date-source notice');
+  // The source is reset on save and on start-over so a later manual save shows no banner.
+  assert.match(app, /if \(pendingLastWrite\) closeoutScreenshotDateSource = null;/, 'date source resets after a successful save');
+  assert.match(app, /closeoutScreenshotDateSource = null;\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
+});
+
 test('chips: nav.js chip handlers are read-only and never touch write paths', () => {
   const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
   // nav.js may call read-only API endpoints for chip answer cards, but must never
@@ -5220,8 +5300,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v61/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v60\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v62/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v61\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
