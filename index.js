@@ -3058,6 +3058,21 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         screenshotUnreadable = true;
         normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
         metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
+      } else if (req.file && effortOnly) {
+        // Effort-only screenshot whose metrics parsed but were invalid/out-of-range:
+        // there are no logged sets to fall back to, so fail closed — but with the
+        // SAME 422 + specific owner copy as the unreadable-screenshot effort-only
+        // branch above, so a "parsed but unusable" screenshot isn't handed a vaguer
+        // error than an unreadable one. Manual effort-only (no file) keeps the 400
+        // below — that's form-field validation, which surfaces its own field errors.
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(
+          req,
+          res,
+          "I couldn't read usable effort from the screenshot, and there are no logged sets to save without it.",
+          process.env.NODE_ENV === 'production' ? null : error.message,
+          422
+        );
       } else {
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);

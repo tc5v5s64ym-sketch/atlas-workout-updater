@@ -2931,8 +2931,12 @@ test('api smoke: complete-workout effort-only with invalid parsed metrics fails 
       form.append('log_rows_json', JSON.stringify([]));
       form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
 
-      const { response } = await requestMultipart('/api/complete-workout', form);
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
       assert.notEqual(response.status, 200, 'effort-only invalid metrics must not silently succeed');
+      // Mirror the unreadable-screenshot effort-only branch: a 422 with specific,
+      // owner-facing copy rather than a vague generic validation error.
+      assert.equal(response.status, 422, JSON.stringify(body));
+      assert.match(body.message || body.error || '', /couldn't read usable effort from the screenshot/i);
       assert.deepEqual(fakeSheetsState.appendCalls, [], 'nothing must be appended when there is nothing to save');
     });
   } finally {
