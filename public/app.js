@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v67';
+const ATLAS_SHELL_BUILD = 'v69';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3771,8 +3771,77 @@ function clearSessionSnapshot() {
   } catch { /* ignore */ }
 }
 
-// Show a one-line banner when the previous session is restored. Dismissed by the
-// user or hidden automatically when clearSessionSnapshot fires (save / Start Over).
+// Discard a restored in-progress session entirely — buffer, plan (deload-aware via
+// endPlannedSession), closeout state, the session_id, and the snapshot — so a fresh
+// workout starts clean. Triggered by the restore banner's swipe-to-trash action.
+function discardRestoredSession() {
+  sessionLog = [];
+  sessionCompleted = [];
+  endPlannedSession();
+  closeoutScreenshotFile = null;
+  closeoutScreenshotEffort = null;
+  closeoutScreenshotDateSource = null;
+  const sidEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
+  if (sidEl) sidEl.value = '';
+  clearSessionSnapshot();   // removes the persisted snapshot AND hides the notice
+  document.dispatchEvent(new CustomEvent('atlas:session-reset'));
+}
+
+// Tap the restore banner → bring the recovered workout into view: populate the editable
+// rows from the buffer and reveal them, so the restored sets are visible and saveable
+// (the session stays buffered — this only un-hides what was silently restored).
+function restoreSessionToView() {
+  if (!Array.isArray(sessionLog) || !sessionLog.length) return;
+  populateSetRows(buildRowsFromSessionLog());
+  if (parsedRowsEditor) {
+    parsedRowsEditor.hidden = false;
+    if (parsedRowsEditor.scrollIntoView) parsedRowsEditor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
+  if (notice) notice.hidden = true;
+}
+
+// iOS-style swipe-to-reveal-trash + tap-to-restore on the resume banner. Horizontal
+// drags slide the content left to expose the trash; a tap (no real drag) restores.
+function wireResumeNoticeGestures(content) {
+  const REVEAL = 64, OPEN_AT = 36;
+  let startX = 0, startY = 0, dx = 0, revealed = false, dragging = false, horizontal = false;
+  const place = x => { content.style.transform = `translateX(${x}px)`; };
+  content.addEventListener('touchstart', e => {
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+    dx = 0; dragging = true; horizontal = false; content.style.transition = 'none';
+  }, { passive: true });
+  content.addEventListener('touchmove', e => {
+    if (!dragging) return;
+    dx = e.touches[0].clientX - startX;
+    const dy = e.touches[0].clientY - startY;
+    if (!horizontal && Math.abs(dx) < Math.abs(dy)) { dragging = false; place(revealed ? -REVEAL : 0); return; }
+    horizontal = true;
+    place(Math.max(-REVEAL, Math.min(0, (revealed ? -REVEAL : 0) + dx)));
+  }, { passive: true });
+  content.addEventListener('touchend', () => {
+    if (dragging) content.style.transition = '';
+    dragging = false;
+    // Only an actual HORIZONTAL swipe toggles the trash. A vertical-aborted gesture
+    // (horizontal stays false) leaves dx at the aborting frame, so without this gate a
+    // steep diagonal scroll could still reveal the trash — snap back to the current state.
+    if (horizontal && dx < -OPEN_AT) { revealed = true; place(-REVEAL); }
+    else if (horizontal && dx > OPEN_AT) { revealed = false; place(0); }
+    else place(revealed ? -REVEAL : 0);   // a tap falls through to the click handler
+  }, { passive: true });
+  // Tap (no meaningful drag) restores; a closed-state click with the trash hidden also
+  // restores. A swipe leaves |dx| large, so suppress the synthetic click it fires.
+  content.addEventListener('click', () => {
+    if (horizontal && Math.abs(dx) > 8) { dx = 0; return; }
+    if (revealed) { revealed = false; place(0); return; }
+    restoreSessionToView();
+  });
+}
+
+// Show a banner when the previous session is restored. The owner can TAP it to bring the
+// recovered workout into view, or SWIPE it to reveal a trash can and discard the session.
+// (A saved workout never reaches here — see the post-write reset; restore is only for an
+// unsaved, lost in-progress session.) Auto-hidden when clearSessionSnapshot fires.
 function renderResumeNotice(setCount, sets) {
   const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
   if (!notice || !setCount) return;
@@ -3783,10 +3852,17 @@ function renderResumeNotice(setCount, sets) {
     msg += ` (${preview})`;
   }
   notice.innerHTML = '';
-  notice.appendChild(el('span', { class: 'resume-notice-text', text: msg }));
-  const dismiss = el('button', { type: 'button', class: 'resume-dismiss-btn', title: 'Dismiss', text: '×' });
-  dismiss.addEventListener('click', () => { notice.hidden = true; });
-  notice.appendChild(dismiss);
+  // Trash layer sits behind the content; swiping the content left exposes it.
+  const trash = el('button', { type: 'button', class: 'resume-trash', title: 'Discard restored session', 'aria-label': 'Discard restored session', text: '🗑' });
+  trash.addEventListener('click', discardRestoredSession);
+  notice.appendChild(trash);
+  // Content layer (slides). Tap to view the recovered workout.
+  const content = el('div', { class: 'resume-content' }, [
+    el('span', { class: 'resume-notice-text', text: msg }),
+    el('span', { class: 'resume-hint', text: 'tap to view · swipe to discard' })
+  ]);
+  notice.appendChild(content);
+  wireResumeNoticeGestures(content);
   notice.hidden = false;
 }
 

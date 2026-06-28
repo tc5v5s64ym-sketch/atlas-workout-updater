@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v67/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v69/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5360,10 +5360,40 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
   assert.doesNotMatch(snapBlock, /sheet_write|no_write_confirmed|\/api\/log-workout|beginWrite/, 'persistence never touches the write/proof path');
 });
 
+test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
+  // Owner request (2026-06-28): the restore banner should be interactive — tap to bring
+  // the recovered workout into view, swipe to reveal a trash can and discard the session.
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The banner renders a content layer (slides) + a trash layer behind it.
+  const render = app.slice(app.indexOf('function renderResumeNotice('), app.indexOf('function renderResumeNotice(') + 1200);
+  assert.match(render, /class: 'resume-trash'/, 'a trash affordance is rendered');
+  assert.match(render, /trash\.addEventListener\('click', discardRestoredSession\)/, 'tapping the trash discards');
+  assert.match(render, /class: 'resume-content'/, 'a sliding content layer is rendered');
+  assert.match(render, /wireResumeNoticeGestures\(content\)/, 'swipe/tap gestures are wired to the content');
+  assert.doesNotMatch(render, /resume-dismiss-btn/, 'the bare × dismiss is replaced by swipe-to-discard');
+  // Discard fully clears the session (deload-aware) so a saved/abandoned ghost can't linger.
+  const discard = app.slice(app.indexOf('function discardRestoredSession('), app.indexOf('function restoreSessionToView('));
+  assert.match(discard, /sessionLog = \[\];/, 'discard clears the buffer');
+  assert.match(discard, /endPlannedSession\(\);/, 'discard ends the plan (deload-aware), not a bare null');
+  assert.match(discard, /getElementById\('log-session-id'\)/, 'discard clears the restored session_id so a fresh start is clean');
+  assert.match(discard, /clearSessionSnapshot\(\);/, 'discard removes the persisted snapshot');
+  assert.match(discard, /atlas:session-reset/, 'discard signals the session reset');
+  // Tap restores the recovered workout into the editable rows view.
+  const view = app.slice(app.indexOf('function restoreSessionToView('), app.indexOf('function wireResumeNoticeGestures('));
+  assert.match(view, /populateSetRows\(buildRowsFromSessionLog\(\)\)/, 'tap-to-view populates the rows from the restored buffer');
+  // The gesture handler distinguishes a horizontal swipe from vertical scroll.
+  const gestures = app.slice(app.indexOf('function wireResumeNoticeGestures('), app.indexOf('function renderResumeNotice(', app.indexOf('function wireResumeNoticeGestures(')));
+  assert.match(gestures, /Math\.abs\(dx\) < Math\.abs\(dy\)/, 'a dominant vertical move aborts the swipe (scroll is preserved)');
+  // touchend only toggles the trash on an ACTUAL horizontal swipe — a vertical-aborted
+  // diagonal must not reveal it (review #678).
+  assert.match(gestures, /if \(horizontal && dx < -OPEN_AT\)/, 'reveal is gated on the horizontal flag, not dx alone');
+  assert.match(gestures, /restoreSessionToView\(\)/, 'a tap (no real drag) restores');
+});
+
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v67/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v66\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v69/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v68\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

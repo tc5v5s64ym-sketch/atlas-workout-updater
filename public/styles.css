@@ -2146,18 +2146,27 @@ a.lift-link:hover { text-decoration: underline; }
 
 /* Session-restore notice — shown on load when a prior in-progress session is resumed */
 .session-resume-notice {
-  background: var(--card); border: 1px solid var(--border);
-  border-left: 3px solid var(--ok-border); border-radius: var(--r-sm);
-  padding: var(--s2) var(--s3); margin-bottom: var(--s3);
-  display: flex; align-items: center; gap: var(--s2); font-size: 0.85rem;
+  position: relative; overflow: hidden;
+  border: 1px solid var(--border); border-left: 3px solid var(--ok-border);
+  border-radius: var(--r-sm); margin-bottom: var(--s3); font-size: 0.85rem;
 }
 .session-resume-notice[hidden] { display: none; }
-.session-resume-notice .resume-notice-text { flex: 1; color: var(--muted); }
-.resume-dismiss-btn {
-  background: none; border: none; color: var(--faint); cursor: pointer;
-  font-size: 1.1rem; line-height: 1; padding: 0 2px;
+/* Content slides over the trash layer; tap to view, swipe left to discard. */
+.session-resume-notice .resume-content {
+  position: relative; z-index: 1; background: var(--card);
+  padding: var(--s2) var(--s3); display: flex; align-items: center; gap: var(--s2);
+  transition: transform 0.2s ease; touch-action: pan-y; cursor: pointer;
+  -webkit-user-select: none; user-select: none;
 }
-.resume-dismiss-btn:hover { color: var(--muted); filter: none; }
+.session-resume-notice .resume-notice-text { flex: 1; color: var(--muted); }
+.session-resume-notice .resume-hint { color: var(--faint); font-size: 0.68rem; white-space: nowrap; }
+/* Trash layer revealed by swiping the content left. */
+.session-resume-notice .resume-trash {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 64px; z-index: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--danger); color: #fff; border: none; cursor: pointer;
+  font-size: 1.2rem; line-height: 1;
+}
 
 /* Active "Recommended session" banner on the Coach surface */
 .active-session-banner {
