@@ -191,7 +191,7 @@ test('set-reaction prompt: thin-history rule explicitly bans generic filler phra
 });
 
 test('set-reaction prompt: thin-history rule placed after calibration_status rule', () => {
-  const calibrationIdx = prompt.indexOf('THIN-HISTORY RULE');
+  const thinHistoryIdx = prompt.indexOf('THIN-HISTORY RULE');
   const calibStatusIdx = prompt.indexOf('calibration_status');
-  assert.ok(calibStatusIdx < calibrationIdx, 'thin-history rule must follow the calibration_status rule');
+  assert.ok(calibStatusIdx < thinHistoryIdx, 'thin-history rule must follow the calibration_status rule');
 });
