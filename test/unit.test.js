@@ -5451,6 +5451,22 @@ test('coach next-up: repeated identical next-up is suppressed; placeholder uses 
   assert.match(handler, /if \(!placeholder\)/, 'falls back to /api/plan/today only when the plan entry has no numbers');
 });
 
+// G3 follow-up: "Planned work done" closeout fires exactly once per session, not on
+// every additional off-plan set logged after the plan is exhausted.
+test('coach closeout: closeoutAnnounced guard prevents repeated "Planned work done" after plan exhaust', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  // Guard declared alongside lastAnnouncedNextUp.
+  assert.match(cc, /let closeoutAnnounced = false/, 'declares closeoutAnnounced guard');
+  // The closeout render block is wrapped by the guard.
+  const block = cc.slice(cc.indexOf('async function handleSetLogged(detail)'), cc.indexOf('async function handlePreviewReady'));
+  assert.match(block, /if \(!closeoutAnnounced\)/, 'closeout is gated on the once-per-session guard');
+  assert.match(block, /closeoutAnnounced = true/, 'guard is set true after the closeout fires');
+  // Resets on session-reset so a fresh session can show the closeout again.
+  assert.match(cc, /closeoutAnnounced = false/, 'resets on atlas:session-reset');
+  const resetListener = cc.slice(cc.indexOf("addEventListener('atlas:session-reset'"), cc.indexOf("addEventListener('atlas:session-reset'") + 200);
+  assert.match(resetListener, /closeoutAnnounced = false/, 'reset is wired inside the session-reset listener');
+});
+
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
 
 test('set-effort wiring: app.js threads the remaining planned queue into atlas:set-logged', () => {
