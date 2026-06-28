@@ -562,8 +562,11 @@ test('app.js next-up follows the visible plan order (started OR coach-suggested)
   assert.match(src, /detail:\s*\{[\s\S]*nextPlanned/, 'nextPlanned must be included in the set-logged event detail');
 });
 
-test('coach-conversation.js prefers detail.nextPlanned for the next-up handoff', () => {
+test('coach-conversation.js prefers detail.nextPlanned for the next-up handoff; API fallback gated on hasEngagedPlan', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
-  assert.match(src, /detail\.nextPlanned\s*\|\|\s*await getNextExerciseInPlan/,
-    'handoff should use detail.nextPlanned first, falling back to the API-plan lookup only for freeform');
+  // B4: the API fallback is now gated — only fires when a plan is engaged.
+  assert.match(src, /const hasEngagedPlan = \(detail\.plannedOrder \|\| \[\]\)\.length > 0/,
+    'hasEngagedPlan gates the /api/plan/today fallback so freestyle logging produces no next-up');
+  assert.match(src, /detail\.nextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
+    'handoff uses detail.nextPlanned first; the API fallback fires only when hasEngagedPlan is true');
 });
