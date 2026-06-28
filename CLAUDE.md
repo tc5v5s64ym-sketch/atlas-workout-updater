@@ -229,6 +229,8 @@ git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.cl
 
 **Atlas governance always takes precedence.** In cases of conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles. Use gstack to improve thinking and review quality — not to replace Atlas governance.
 
+**Installation location:** gstack is installed locally at `C:\Users\manda\.claude\skills\gstack` (Windows). In cloud/remote sessions the skills may not be available — check with `ls ~/.claude/skills/gstack` before invoking any skill. If unavailable, follow the gstack methodology manually and note "skills unavailable" in the merge card gstack section.
+
 ### Web browsing
 
 **Always use the `/browse` skill from gstack for all web browsing.** Never use `mcp__claude-in-chrome__*` tools directly — they are superseded by `/browse`.
