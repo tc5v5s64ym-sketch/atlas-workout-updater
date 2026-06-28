@@ -92,27 +92,83 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: unit-tests
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Decide whether Playwright is required
+        id: e2e_policy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('should_run', 'true');
+              return;
+            }
+
+            const {owner, repo} = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number,
+              per_page: 100,
+            });
+
+            const changed = files.map((file) => file.filename);
+
+            function normalize(path) {
+              return path.replace(/\\/g, '/');
+            }
+
+            function requiresPlaywright(path) {
+              const p = normalize(path);
+              const lower = p.toLowerCase();
+
+              if (lower.startsWith('public/')) return true;
+              if (lower.startsWith('tests/e2e/')) return true;
+              if (lower === 'playwright.config.js') return true;
+              if (lower === 'package.json' || lower === 'package-lock.json') return true;
+              if (lower === 'index.js' || lower === 'server.js' || lower === 'app.js') return true;
+              if (/^(services|src|api|scripts)\//.test(lower)) return true;
+              if (lower.startsWith('.github/workflows/')) return true;
+
+              return false;
+            }
+
+            const shouldRun = changed.some(requiresPlaywright);
+
+            core.info(`Changed files:\n${changed.map((file) => `- ${file}`).join('\n')}`);
+            core.setOutput('should_run', shouldRun ? 'true' : 'false');
+
+            if (!shouldRun) {
+              core.notice('Playwright skipped by policy.');
+            }
+
       - name: Setup Node
+        if: steps.e2e_policy.outputs.should_run == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
       - name: Install dependencies
+        if: steps.e2e_policy.outputs.should_run == 'true'
         run: npm ci
 
       - name: Install Playwright Chromium
+        if: steps.e2e_policy.outputs.should_run == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: E2E tests
+        if: steps.e2e_policy.outputs.should_run == 'true'
         run: npm run test:e2e
 
       - name: Upload traces on failure
-        if: failure()
+        if: failure() && steps.e2e_policy.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-test-results
