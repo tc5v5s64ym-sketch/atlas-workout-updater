@@ -525,6 +525,27 @@ function resolveWorkoutDate({ manualDate, screenshotDate } = {}) {
     getLocalDateString();
 }
 
+// Partition formatted Log_Cleaned rows into those NOT yet on the sheet ("new") and
+// those already present ("duplicates"), keyed by session_id‖exercise‖set_number —
+// the exact identity the live append dedups on. Shared by BOTH the dry-run preview
+// and the live write so the preview shows EXACTLY the rows the write will append,
+// never more (the closeout "30 previewed / 22 written, Bench dropped" trust failure).
+// `existingLogKeys` are the lowercased composite keys returned by getLogCompositeKeys.
+function partitionLogRowsByExisting(formattedRows, existingLogKeys) {
+  const existing = new Set(Array.isArray(existingLogKeys) ? existingLogKeys : []);
+  const newRows = [];
+  const skippedDuplicates = [];
+  formattedRows.forEach((row, index) => {
+    // formatted row order follows logCleanedColumns: session_id=1, exercise=2, set_number=6
+    const sid = String(row[1] || '').trim().toLowerCase();
+    const ex = String(row[2] || '').trim().toLowerCase();
+    const setn = String(row[6] || '').trim().toLowerCase();
+    if (existing.has(`${sid}||${ex}||${setn}`)) skippedDuplicates.push({ index, row });
+    else newRows.push(row);
+  });
+  return { newRows, skippedDuplicates };
+}
+
 const { generateSessionId, nextAvailableSessionId } = require('./services/sessionId');
 
 function isTestModeEnabled(value) {
@@ -3589,14 +3610,34 @@ app.post('/api/log-workout', async (req, res) => {
       }
     }
 
+    // Mirror the live-write row-level dedup in the dry-run so the preview shows
+    // EXACTLY the rows the live write will append — never more. Without this the
+    // preview promised rows the write then silently skipped (the closeout "30
+    // previewed / 22 written, Bench Press dropped entirely" trust failure). Best
+    // effort: a read failure must never block a dry-run, so fall back to the raw
+    // rows — the live write still applies the authoritative dedup before any append.
+    let previewLogRows = formattedLogRows;
+    let previewSkippedDuplicates = 0;
+    try {
+      const existingLogKeys = await getLogCompositeKeys();
+      const partition = partitionLogRowsByExisting(formattedLogRows, existingLogKeys);
+      previewLogRows = partition.newRows;
+      previewSkippedDuplicates = partition.skippedDuplicates.length;
+    } catch (error) {
+      console.error('⚠️ Preview duplicate check failed; previewing all rows (the live write still dedups):', error);
+      previewLogRows = formattedLogRows;
+      previewSkippedDuplicates = 0;
+    }
+
     const previewBody = {
       test_mode: true,
       sheet_write: 'skipped',
       sheet_written: false,
       no_write_confirmed: true,
       effortWritten: Boolean(formattedEffortRow),
-      log_rows_preview: formattedLogRows
+      log_rows_preview: previewLogRows
     };
+    if (previewSkippedDuplicates > 0) previewBody.skipped_duplicates = previewSkippedDuplicates;
     if (formattedEffortRow) previewBody.effort_row_preview = formattedEffortRow;
     if (warnings.length > 0) previewBody.warnings = [...new Set(warnings)];
     if (pendingExercisesForPreview.length > 0) previewBody.pending_exercises = pendingExercisesForPreview;
@@ -3667,26 +3708,15 @@ app.post('/api/log-workout', async (req, res) => {
   // the "49 sets / 51,390 lb" duplication from the 2026-06-26 playtest. Mirrors the
   // proven row-level dedup already used by /api/complete-workout, so legitimate new
   // rows still append and only exact (session‖exercise‖set) duplicates are skipped.
+  // Uses the SAME partition helper as the dry-run preview above, so what the
+  // preview showed and what the write appends can never diverge.
   let rowsToWrite = formattedLogRows;
   let skippedDuplicates = [];
   try {
     const existingLogKeys = await getLogCompositeKeys();
-    const intendedKeys = formattedLogRows.map(row => {
-      // formatted row order follows logCleanedColumns: session_id=1, exercise=2, set_number=6
-      const sid = String(row[1] || '').trim().toLowerCase();
-      const ex = String(row[2] || '').trim().toLowerCase();
-      const setn = String(row[6] || '').trim().toLowerCase();
-      return `${sid}||${ex}||${setn}`;
-    });
-    const newRows = [];
-    for (let i = 0; i < formattedLogRows.length; i += 1) {
-      if (existingLogKeys.includes(intendedKeys[i])) {
-        skippedDuplicates.push({ index: i, row: formattedLogRows[i] });
-      } else {
-        newRows.push(formattedLogRows[i]);
-      }
-    }
-    rowsToWrite = newRows;
+    const partition = partitionLogRowsByExisting(formattedLogRows, existingLogKeys);
+    rowsToWrite = partition.newRows;
+    skippedDuplicates = partition.skippedDuplicates;
   } catch (error) {
     console.error('❌ Failed to check for duplicate log rows:', error);
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
