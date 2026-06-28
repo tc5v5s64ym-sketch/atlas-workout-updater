@@ -229,6 +229,24 @@ git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git ~/.cl
 
 **Atlas governance always takes precedence.** In cases of conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner decisions, and Atlas trust-first development principles. Use gstack to improve thinking and review quality — not to replace Atlas governance.
 
+### Web browsing
+
+**Always use the `/browse` skill from gstack for all web browsing.** Never use `mcp__claude-in-chrome__*` tools directly — they are superseded by `/browse`.
+
+### Available gstack skills
+
+| Skill | Purpose |
+|---|---|
+| `/browse` | Web browsing — open URLs, navigate pages, extract content |
+| `/investigate` | Systematic root-cause debugging |
+| `/plan-eng-review` | Architecture lock-in: data flow, edge cases, test planning |
+| `/spec` | Turn vague intent into precise executable specs |
+| `/review` | Pre-landing PR review |
+| `/qa` | Systematic browser QA |
+| `/ship` | Complete release workflow |
+| `/careful` | Safety guardrails for irreversible operations |
+| `/cso` | Infrastructure-first security audit |
+
 ### Command reference
 
 The table below covers gstack commands applicable to the Atlas development workflow. Full documentation: https://github.com/garrytan/gstack
