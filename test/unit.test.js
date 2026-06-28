@@ -4161,6 +4161,32 @@ test('buildMuscleGroupReadiness: returns all 5 patterns', () => {
   assert.deepEqual(patterns, ['core', 'hinge', 'lower', 'pull', 'push']);
 });
 
+test('buildMuscleGroupReadiness: bodyweight core set (weight=0) counts toward Core pattern', () => {
+  // B6 fix: HNR01/KR01 style rows with weight=0 (bodyweight) must register as Core training.
+  // Previously isPositiveFinite(weight) filtered them out, making Core appear untrained for 76+ days.
+  const today = '2026-06-26';
+  const bwRow = [
+    '2026-06-24', 'S20260624', 'Hanging Knee Raises', 'Hanging Knee Raises', 'Core', 'HNR01',
+    '1', '0', '12', '2', ''
+  ];
+  const result = buildMuscleGroupReadiness([bwRow], { today });
+  const core = result.find(r => r.pattern === 'core');
+  assert.equal(core.daysSince, 2, 'bodyweight core work 2 days ago should register daysSince=2');
+  assert.equal(core.status, 'recovering', 'Core should be recovering, not fresh/unknown');
+});
+
+test('buildMuscleGroupReadiness: bodyweight core (weight=null) also counts', () => {
+  const today = '2026-06-26';
+  const bwRow = [
+    '2026-06-24', 'S20260624', 'Knee Raises', 'Knee Raises', 'Core', 'KR01',
+    '1', '', '15', '2', ''
+  ];
+  const result = buildMuscleGroupReadiness([bwRow], { today });
+  const core = result.find(r => r.pattern === 'core');
+  assert.equal(core.daysSince, 2, 'null-weight core row should register daysSince=2');
+  assert.notEqual(core.status, 'unknown', 'Core should not be unknown when recently trained bodyweight');
+});
+
 // ── Continuous recovery curve (Phase 2a) ───────────────────────────────────────
 
 test('recovery curve: exposes a continuous recovery fraction that climbs with rest', () => {
