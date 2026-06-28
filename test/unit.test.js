@@ -5484,6 +5484,53 @@ test('set-effort wiring: app.js threads the remaining planned queue into atlas:s
   assert.doesNotMatch(block, /activePlannedSession\.exercises\.(sort|reverse|splice)/);
 });
 
+// ── G2: coach EVERY lift in a multi-exercise log ──────────────────────────────
+// G2 root cause: handleSetLogged only coached exercises[0] — a Deadlift+Bench
+// stacked entry produced a readback for both but coaching prose for Deadlift only.
+// Fix: a for-of loop over exercises.slice(1) calls getInWorkoutNote per additional
+// lift and appends its own [readback → coaching → next-prescription] block.
+test('G2: handleSetLogged iterates exercises.slice(1) to coach every logged lift', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = cc.slice(
+    cc.indexOf('async function handleSetLogged(detail)'),
+    cc.indexOf('async function handlePreviewReady')
+  );
+  // Core loop — exercises beyond the primary get their own coaching pass.
+  assert.match(block, /for \(const ex of exercises\.slice\(1\)\)/, 'G2 loop iterates all lifts past the primary');
+  // Each additional lift gets a readback card in order.
+  assert.match(block, /buildReadback\(ex\.exercise, ex\.sets/, 'each additional lift renders its own readback');
+  // Each additional lift resolves its own liftCode and fetches its own reaction.
+  assert.match(block, /liftCodeForExercise\(ex\.exercise\)/, 'each additional lift looks up its own liftCode');
+  assert.match(block, /fetchReaction\(exCode, exJustLogged\)/, 'each additional lift fetches its own recommendation');
+  // Each additional lift calls getInWorkoutNote with its own exerciseName/sets.
+  assert.match(block, /getInWorkoutNote\(\{[\s\S]*?exerciseName: ex\.exercise/,
+    'getInWorkoutNote is called per additional lift with that lift\'s exerciseName');
+  // The coaching note is prefixed with the exercise name for attribution.
+  assert.match(block, /`\$\{ex\.exercise\}: \$\{exReaction\.note\}`/, 'coaching note is attributed to the specific lift');
+  // The additional lift's note is pushed to chatTurns (coach memory).
+  assert.match(block, /chatTurns\.push\(\{ role: 'atlas', text: exText \}\)/, 'additional-lift notes enter chatTurns');
+  // The additional lift also gets a next-set prescription when the engine has one.
+  assert.match(block, /buildNextPrescription\(exRec\)/, 'each additional lift renders a next-set prescription if available');
+  // The effort-note line is NOT mirrored for additional lifts (owner-gated contract).
+  assert.equal((block.match(/className = 'coach-msg effort-note'/g) || []).length, 1,
+    'effort-note is rendered exactly once (primary lift only) — additional lifts are prose-only');
+});
+
+test('G2: single-exercise log is unchanged — slice(1) loop is empty, primary path is identical', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const block = cc.slice(
+    cc.indexOf('async function handleSetLogged(detail)'),
+    cc.indexOf('async function handlePreviewReady')
+  );
+  // The primary lift still goes through its own dedicated block (exercises[0]),
+  // keeping single-exercise output byte-identical to before the G2 loop.
+  assert.match(block, /const primary = exercises\[0\]/, 'primary lift is still exercises[0]');
+  assert.match(block, /buildReadback\(primary\.exercise, primary\.sets/, 'primary readback uses primary.exercise');
+  assert.match(block, /liftCodeForExercise\(primary\.exercise\)/, 'primary liftCode uses primary.exercise');
+  assert.match(block, /getInWorkoutNote\(\{[\s\S]*?exerciseName: primary\.exercise/,
+    'primary getInWorkoutNote uses primary.exercise');
+});
+
 test('set-effort wiring: handleSetLogged renders one short effort line + folds reroute, no full-session recap', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const block = ccSource.slice(
