@@ -1304,11 +1304,10 @@ test('PR6: logging exercise N names N+1 in the reply and advances the composer p
     'log it'
   ];
   const placeholder = await page.locator('#workout-text').getAttribute('placeholder');
-  // The placeholder comes from formatNextPlaceholder (via /api/plan/today) since
-  // nextUpPlaceholderFromPlan → compactPrescription returns null for already-normalized
-  // activePlannedSession entries (double-normalization drops weight/reps). The expanded
-  // per-set format is "Name weight reps/rir reps/rir ..." — three sets → "8/2 8/2 8/2".
-  expect(placeholder).toBe('Lat Pulldown 170 8/2 8/2 8/2');
+  // The placeholder comes from compactPrescriptionFromNormalized (B8 fix) which reads
+  // the already-normalized activePlannedSession entry directly — no double-normalization.
+  // Three working sets collapse to the compact "xN" form: "8/2 x3".
+  expect(placeholder).toBe('Lat Pulldown 170 8/2 x3');
   for (const hint of GENERIC_HINTS) {
     expect(placeholder).not.toContain(hint);
   }

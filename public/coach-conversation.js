@@ -558,7 +558,7 @@
     const weight = entry && entry.weight;
     const reps = entry && entry.reps;
     const rir = entry && entry.rir;
-    if (!name || weight == null || reps == null) return name || null;
+    if (!name || weight == null || reps == null) return null;
     const alias = composerLiftAlias(name);
     let sets = Number(entry.sets);
     if (!Number.isFinite(sets) || sets < 1) sets = 1;
