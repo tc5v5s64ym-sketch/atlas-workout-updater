@@ -1318,6 +1318,21 @@ test('PR6: logging exercise N names N+1 in the reply and advances the composer p
   await expect(page.locator('.review')).toHaveCount(0);
 });
 
+test('B4: freestyle logging (no engaged plan) produces no next-up handoff', async ({ page }) => {
+  await openApp(page);
+  // No startPlannedSession call and no /api/plan/today recommendations — purely freestyle.
+  // detail.plannedOrder is [] → hasEngagedPlan = false → nextEx = null immediately.
+  await logSet(page, 'bench 225 5/2 x3');
+
+  // B4 fix: the "Moving on — next up" handoff must NOT render when freestyle.
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').last();
+  await expect(bubble.locator('.next-exercise-handoff')).toHaveCount(0);
+
+  // Trust loop untouched.
+  await expect(page.locator('#preview-panel')).toBeHidden();
+  await expect(page.locator('.review')).toHaveCount(0);
+});
+
 test('PR6: logging the last exercise in the plan shows no handoff (not fabricated)', async ({ page }) => {
   await openApp(page);
 
