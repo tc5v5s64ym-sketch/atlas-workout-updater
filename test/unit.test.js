@@ -5326,7 +5326,7 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
 
   // The coach layer renders the canonical remaining lifts in the review bubble.
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 1700);
+  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 2500);
   assert.match(handler, /recap\s*=\s*null/, 'handlePreviewReady destructures the recap (default null)');
   assert.match(handler, /Still on your plan:/, 'still-pending plan lifts are surfaced in the recap');
 });
