@@ -1490,6 +1490,24 @@ function getCanonicalSession() {
   return s;
 }
 
+// Map a canonical ActiveSession to the `plan_exercises` save payload (B2 — the
+// save surface derives from the SAME canonical model the confirmation card, coach
+// context, mid-session sub-payload, and preview read, so it can never drift from
+// the visible session). PURE — no globals, no I/O — so the Node tests run the
+// identical logic. Planned-origin only: an off-plan insert (Hammer Curls / Knee
+// Raises) is logged work but never a PRESCRIBED source, so it must not enter the
+// substitution inference (inferPrescribedPairs) as a planned lift. Completed and
+// pending planned slots are BOTH kept: a fulfilled planned lift must stay so its
+// logged row is exact-matched and claimed (preventing a false broad-region pair),
+// and a still-pending planned lift is the legitimate substitution source.
+function planExercisesFromCanonical(session) {
+  if (!session || !Array.isArray(session.exercises)) return [];
+  return session.exercises
+    .filter(e => e && e.source !== 'inserted')
+    .map(e => ({ name: e.name, ...(e.liftCode ? { lift_code: e.liftCode } : {}) }))
+    .filter(p => p.name);
+}
+
 // Coach-suggestion engagement flag accessors for the coach layer (coach-conversation.js).
 // markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
 function getCoachSuggestionEngaged() { return coachSuggestionEngaged; }
@@ -5030,14 +5048,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
       }
       if (activePlannedSession && activePlannedSession.exercises.length > 0) {
-        // Sends the full plan (contrast: mid-session path above sends only exercises[index]).
-        // On a partial log, inferPrescribedPairs sees all planned lifts competing for
-        // fewer logged exercises; the broad-region fallback can attribute to the wrong lift.
-        // Dry-run only — no data risk. Fix deferred (see BACKLOG.md).
-        payload.plan_exercises = activePlannedSession.exercises.map(ex => ({
-          name: ex.name,
-          ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
-        }));
+        // B2: derive the closeout plan_exercises from the canonical active session
+        // (the same model the card / coach / preview / mid-session sub-payload read),
+        // not the raw activePlannedSession holder — so the save payload can never
+        // disagree with the visible session. Off-plan inserts are excluded so a
+        // logged accessory is never mis-attributed as a prescribed substitution
+        // source. Falls back to the raw plan only when the canonical model is
+        // unavailable, so this never regresses a session that has no canonical view.
+        const canon = getCanonicalSession();
+        const canonicalPlan = canon ? planExercisesFromCanonical(canon) : [];
+        payload.plan_exercises = canonicalPlan.length
+          ? canonicalPlan
+          : activePlannedSession.exercises.map(ex => ({
+              name: ex.name,
+              ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
+            }));
       }
 
       const result = await api('/api/log-workout', {
