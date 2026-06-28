@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v63';
+const ATLAS_SHELL_BUILD = 'v64';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -5151,6 +5151,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         // not a second vision parse of the same image — so what gets saved is
         // exactly what was shown. See the approve handler's screenshot branch.
         parsedEffort: resolvedData.parsed_effort || null,
+        // Already-saved session (re-used dated screenshot): the dry-run flags it; the
+        // live write would refuse it, so gate approve off rather than send the owner
+        // into a "Duplicate session" error on tap.
+        duplicateSession: Boolean(resolvedData.duplicate_check && resolvedData.duplicate_check.duplicate_session),
         previewProof: previewProofFromResult(result, 'screenshot')
       };
       renderCompleteWorkoutPreview(result);
@@ -5205,11 +5209,16 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // clicks — enabled here only once the dry-run proved no-write safety.
     previewPanel.hidden = true;
     parsedRowsEditor.hidden = false;
-    document.getElementById('approve-btn').disabled = !pendingWriteHasPreviewProof(pendingWrite);
+    // An already-saved session has nothing new to write and the live write would 409,
+    // so gate approve off and say so — no dead-end "Duplicate session" on tap.
+    const alreadySaved = Boolean(pendingWrite && pendingWrite.duplicateSession);
+    document.getElementById('approve-btn').disabled = alreadySaved || !pendingWriteHasPreviewProof(pendingWrite);
     const gateNote = document.getElementById('preview-gate-note');
-    if (gateNote) gateNote.textContent = effortOnly
-      ? 'Review the dry-run above, then click to write Effort only.'
-      : 'Review the dry-run above, then click to write.';
+    if (gateNote) gateNote.textContent = alreadySaved
+      ? 'This workout is already saved — nothing new to write.'
+      : effortOnly
+        ? 'Review the dry-run above, then click to write Effort only.'
+        : 'Review the dry-run above, then click to write.';
   } catch (err) {
     // Surface the server's INNER cause when present (api() carries the response body
     // on err.body; standardError puts the detail at body.details.error). The generic
@@ -5440,6 +5449,15 @@ function renderCompleteWorkoutPreview(result) {
   if (completeDateNotice) previewContent.appendChild(completeDateNotice);
 
   const dup = data.duplicate_check || {};
+  if (dup.duplicate_session) {
+    // The effort session is already on the sheet (e.g. re-importing the same dated
+    // screenshot). The dry-run surfaces this gracefully instead of a hard "Duplicate
+    // session" error; the live write still refuses to double-save (approve is disabled
+    // below). Word it as "already saved", never as a failure.
+    const sess = data.session_id ? ` (session ${data.session_id})` : '';
+    previewContent.appendChild(el('div', { class: 'preview-warnings preview-date-warning',
+      text: `✓ This workout is already saved${sess}. Nothing new will be written — you don't need to save it again.` }));
+  }
   if (dup.duplicate_log_rows > 0) {
     previewContent.appendChild(el('div', { class: 'preview-warnings', text: `${dup.duplicate_log_rows} row(s) will be skipped as duplicates.` }));
   }

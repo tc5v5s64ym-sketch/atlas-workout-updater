@@ -4223,6 +4223,36 @@ test('api smoke: complete-workout with a duplicate session_id is rejected (409) 
   }
 });
 
+test('api smoke: complete-workout DRY-RUN does not 409 on a duplicate session — it previews gracefully', async () => {
+  // Re-used dated screenshot: the screenshot-date session_id is already in Effort. The
+  // PREVIEW must NOT hard-fail (the live write still 409s — asserted in the test above);
+  // it returns a normal dry-run flagging duplicate_check.duplicate_session so the client
+  // shows "already saved" instead of a red "Preview failed: Duplicate session".
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.effortSessionIds = ['DUP-EFFORT-SESSION-01'];
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'DUP-EFFORT-SESSION-01'); // already present in Effort
+      form.append('date', '2026-07-27');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('test_mode', 'true');
+      form.append('effort_json', JSON.stringify({
+        duration: '42', activeCalories: 410, totalCalories: 520, averageHR: 148, peakHR: 171
+      }));
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.test_mode, true);
+      assert.equal(data.sheet_written, false, 'a dry-run never writes');
+      assert.equal(data.duplicate_check.duplicate_session, true, 'the preview flags the already-saved session');
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'no append on a dry-run');
+    });
+  } finally {
+    fakeSheetsState.effortSessionIds = [];
+  }
+});
+
 test('api smoke: bodyweight exercise with weight=0 passes log-workout dry-run', async () => {
   // Regression: "Knee raises 20/2 20/2 13/2" produces weight:null from the parser.
   // The frontend maps null → '0'. Backend must accept weight '0' (or 0) without

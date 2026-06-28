@@ -3134,7 +3134,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     const duplicateSession = Boolean(formFields.session_id) &&
       existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
-    if (duplicateSession) {
+    // A duplicate effort session HARD-STOPS the live write (never double-write the
+    // Effort tab). But a DRY-RUN preview must not fail closed — it continues to the
+    // normal preview, which reports `duplicate_check.duplicate_session: true` (below) so
+    // the client shows a graceful "already saved" note instead of a red "Preview failed".
+    // This is the re-used-screenshot case: same screenshot → same screenshot-date
+    // session_id → that session is already in Effort.
+    if (duplicateSession && !testMode) {
       if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
       return standardError(req, res, 'Duplicate session.', null, 409);
     }
