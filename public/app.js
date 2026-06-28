@@ -3737,18 +3737,48 @@ function saveSessionSnapshot() {
       localStorage.removeItem(SESSION_SNAPSHOT_KEY);
       return;
     }
+    // Persist the stable session_id so a re-preview after restore reuses the SAME id,
+    // allowing the server's row-level dedup to catch duplicate rows even if the
+    // write_id is regenerated (which it always is across page loads).
+    const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
+    const sessionId = sessionIdEl ? sessionIdEl.value.trim() : '';
     localStorage.setItem(SESSION_SNAPSHOT_KEY, JSON.stringify({
       v: 1,
       ts: Date.now(),
       sessionLog,
       sessionCompleted,
       activePlannedSession,
+      ...(sessionId ? { sessionId } : {}),
     }));
   } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
 }
 
 function clearSessionSnapshot() {
   try { if (typeof localStorage !== 'undefined') localStorage.removeItem(SESSION_SNAPSHOT_KEY); } catch { /* ignore */ }
+  // Also hide the resume notice so it doesn't linger after a save or Start Over.
+  try {
+    const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
+    if (notice) notice.hidden = true;
+  } catch { /* ignore */ }
+}
+
+// Show a one-line banner when the previous session is restored. Dismissed by the
+// user or hidden automatically when clearSessionSnapshot fires (save / Start Over).
+function renderResumeNotice(setCount, sets) {
+  const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
+  if (!notice || !setCount) return;
+  const exercises = [...new Set((sets || []).map(s => s.exercise).filter(Boolean))];
+  let msg = `Session restored — ${setCount} set${setCount === 1 ? '' : 's'} logged`;
+  if (exercises.length) {
+    const preview = exercises.slice(0, 3).join(', ') + (exercises.length > 3 ? ', …' : '');
+    msg += ` (${preview})`;
+  }
+  notice.innerHTML = '';
+  notice.appendChild(el('span', { class: 'resume-notice-text', text: msg }));
+  const dismiss = el('button', { type: 'button', class: 'resume-dismiss-btn', title: 'Dismiss', text: '×' });
+  dismiss.addEventListener('click', () => { notice.hidden = true; });
+  notice.appendChild(dismiss);
+  notice.hidden = false;
 }
 
 // Restore a recent in-progress session on load. Defensive: a malformed/old snapshot
@@ -3771,6 +3801,12 @@ function restoreSessionSnapshot() {
     sessionCompleted = snap.sessionCompleted;
     activePlannedSession = (snap.activePlannedSession && Array.isArray(snap.activePlannedSession.exercises))
       ? snap.activePlannedSession : null;
+    // Restore the stable session_id so re-preview after resume uses the same id.
+    if (snap.sessionId) {
+      const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
+      if (sessionIdEl) sessionIdEl.value = snap.sessionId;
+    }
+    renderResumeNotice(sessionLog.length, sessionLog);
     if (activePlannedSession) { coachSuggestionEngaged = true; renderActiveSessionBanner(); }
     return true;
   } catch { clearSessionSnapshot(); return false; }

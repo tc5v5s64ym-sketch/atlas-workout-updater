@@ -51,6 +51,10 @@
     <section id="tab-logger" class="tab active" role="tabpanel" tabindex="-1" aria-labelledby="surface-coach">
       <div id="coach-panel" hidden></div>
 
+      <!-- Shown when a previous in-progress session is restored on load.
+           Dismissed by the user or cleared automatically on save / Start Over. -->
+      <div id="session-resume-notice" class="session-resume-notice" hidden></div>
+
       <!-- In-memory active "Recommended session" indicator (Start Session).
            Shows the current planned step; cleared when the session ends. -->
       <div id="active-session-banner" class="active-session-banner" hidden></div>
