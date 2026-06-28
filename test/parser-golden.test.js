@@ -533,6 +533,54 @@ test('substitution wiring: "Bench felt great so I skipped deadlift" must not ext
 });
 
 // ---------------------------------------------------------------------------
+// RDL normalization — singular AND plural forms resolve to canonical 'RDL'
+// (owner live evidence: "RDLs" parsed as an unknown exercise → muscle group
+// Unknown on save, because the parser's RDL alias list had no plural forms).
+// ---------------------------------------------------------------------------
+
+test('golden: RDL singular resolves to canonical RDL with no unknown_exercise warning', () => {
+  const result = parseWorkoutText('RDL 225 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.equal(result.exercise, 'RDL');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'), 'RDL must be a known exercise');
+  assert.ok(!result.needs_catalog_review, 'RDL must not be flagged for catalog review');
+});
+
+test('golden: RDLs plural normalizes to canonical RDL (no unknown_exercise / catalog review)', () => {
+  const result = parseWorkoutText('RDLs 225 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL', 'the plural must normalize to the same canonical as the singular');
+  assert.equal(result.exercise, 'RDL');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'),
+    'the plural must not be treated as an unknown exercise (the muscle-group-Unknown repro)');
+  assert.ok(!result.needs_catalog_review, 'the plural must not be flagged for catalog review');
+  assert.deepEqual(sets(result), [[225, 8, 2]]);
+});
+
+test('golden: "Romanian Deadlifts" (full plural name) normalizes to canonical RDL', () => {
+  const result = parseWorkoutText('Romanian Deadlifts 225 8/2');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+});
+
+test('golden: lowercase "rdls" normalizes to canonical RDL', () => {
+  const result = parseWorkoutText('rdls 225 8/2');
+  assert.equal(result.canonical_name, 'RDL');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+});
+
+test('golden: RDL plural aliases do not swallow plain Deadlift (no cross-contamination)', () => {
+  // The 'romanian deadlift(s)' aliases are longer/more specific than 'deadlift',
+  // so a plain Deadlift must never resolve to RDL.
+  const dead = parseWorkoutText('Deadlift 315 5/2');
+  assert.equal(dead.canonical_name, 'Deadlift', 'plain Deadlift must stay Deadlift, not RDL');
+  const dl = parseWorkoutText('dl 315 5/2');
+  assert.equal(dl.canonical_name, 'Deadlift', 'the "dl" alias must stay Deadlift, not RDL');
+});
+
+// ---------------------------------------------------------------------------
 // Dumbbell / per-hand multi-group notation for Incline DB Press
 // ---------------------------------------------------------------------------
 
