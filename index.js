@@ -3045,8 +3045,23 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         metricWarnings = result.warnings || [];
       }
     } catch (error) {
-      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-      return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
+      // B3 effort-import isolation: a screenshot that PARSED but produced invalid
+      // or incomplete effort metrics (e.g. missing activeCalories) must not poison
+      // the workout save. If there are logged sets, degrade exactly like an
+      // unreadable screenshot — save the sets with a blank effort row and surface
+      // the specific owner-facing copy — instead of 400ing the whole request and
+      // losing the exercise rows. Manual effort entry and effort-only requests
+      // still fail honestly: there's nothing to fall back to (no sets to save) and
+      // a manual value the owner typed should be corrected, not silently dropped.
+      if (req.file && !effortOnly) {
+        console.warn('⚠️ Screenshot effort metrics invalid; degrading to save sets without effort:', error.message);
+        screenshotUnreadable = true;
+        normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
+        metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
+      } else {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
+      }
     }
 
     // 3) Determine session/date
