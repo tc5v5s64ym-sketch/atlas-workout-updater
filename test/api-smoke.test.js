@@ -2631,6 +2631,7 @@ test('api smoke: complete-workout screenshot preview uses parsed screenshot date
 
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(data.date, '2026-06-09');
+  assert.equal(data.date_source, 'screenshot', 'date_source must be "screenshot" when vision extracted the date');
   assert.equal(data.effort_row[0], '2026-06-09');
   assert.match(data.session_id, /^20260609-(AM|PM)-01$/);
   assert.deepEqual(fakeSheetsState.appendCalls, []);
@@ -2658,6 +2659,7 @@ test('api smoke: complete-workout screenshot preview falls back to local today w
 
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(data.date, today);
+  assert.equal(data.date_source, 'today_fallback', 'date_source must be "today_fallback" when screenshot date is null and no manual date given');
   assert.equal(data.effort_row[0], today);
   assert.match(data.session_id, new RegExp(`^${today.replace(/-/g, '')}-(AM|PM)-01$`));
   assert.deepEqual(fakeSheetsState.appendCalls, []);
@@ -2685,6 +2687,7 @@ test('api smoke: complete-workout manual date overrides parsed screenshot date',
 
   assert.equal(response.status, 200, JSON.stringify(body));
   assert.equal(data.date, '2026-06-11');
+  assert.equal(data.date_source, 'manual', 'date_source must be "manual" when a form date field overrides the screenshot date');
   assert.equal(data.effort_row[0], '2026-06-11');
   assert.match(data.session_id, /^20260611-(AM|PM)-01$/);
   assert.deepEqual(fakeSheetsState.appendCalls, []);

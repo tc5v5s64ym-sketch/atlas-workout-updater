@@ -5312,6 +5312,23 @@ function renderCompleteWorkoutPreview(result) {
   const completeSuggestions = renderUnknownExerciseSuggestions(outer.pending_exercises);
   if (completeSuggestions) previewContent.appendChild(completeSuggestions);
 
+  // B5: surface the resolved workout date and its source so the owner can catch
+  // a mismatch (e.g. a June 12 screenshot imported on June 26 defaulting to today).
+  // When the date fell back to today — because the screenshot date wasn't visible
+  // or extractable — show a warning and prompt correction BEFORE the approve step.
+  const dateSource = data.date_source;
+  const resolvedDate = data.date || '';
+  if (dateSource === 'today_fallback' && resolvedDate) {
+    const warn = el('div', { class: 'preview-warnings preview-date-warning' });
+    warn.innerHTML = `⚠️ Date not found in screenshot — saving as <strong>${resolvedDate}</strong> (today). ` +
+      `If this workout is from a different day, change the date field above and preview again.`;
+    previewContent.appendChild(warn);
+  } else if (dateSource === 'screenshot' && resolvedDate) {
+    previewContent.appendChild(el('div', { class: 'preview-ok preview-date-source', text: `Date from screenshot: ${resolvedDate}` }));
+  } else if (dateSource === 'manual' && resolvedDate) {
+    previewContent.appendChild(el('div', { class: 'preview-ok preview-date-source', text: `Date (manual): ${resolvedDate}` }));
+  }
+
   const dup = data.duplicate_check || {};
   if (dup.duplicate_log_rows > 0) {
     previewContent.appendChild(el('div', { class: 'preview-warnings', text: `${dup.duplicate_log_rows} row(s) will be skipped as duplicates.` }));

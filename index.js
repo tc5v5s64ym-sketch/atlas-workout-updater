@@ -3085,11 +3085,15 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
-    // 3) Determine session/date
-    const dateValue = resolveWorkoutDate({
-      manualDate: formFields.date,
-      screenshotDate: visionResult.parsed_metrics?.date
-    });
+    // 3) Determine session/date — track the source so the preview can surface a
+    // warning when the date fell back to today (screenshot date not visible /
+    // not extractable) and the user needs to correct it before approving.
+    const screenshotDateRaw = visionResult.parsed_metrics?.date;
+    const manualDateRaw = formFields.date;
+    const dateValue = resolveWorkoutDate({ manualDate: manualDateRaw, screenshotDate: screenshotDateRaw });
+    const dateSource = (manualDateRaw !== undefined && manualDateRaw !== null && String(manualDateRaw).trim() !== '')
+      ? 'manual'
+      : normalizeDateCandidate(screenshotDateRaw) ? 'screenshot' : 'today_fallback';
 
     // 4) Check duplicate session protection — fetch existing IDs first so we
     // can auto-increment the counter when two sessions share the same day/period.
@@ -3320,6 +3324,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       data: {
         session_id: sessionId,
         date: dateValue,
+        date_source: dateSource,
         test_mode: testMode,
         effort_only: effortOnly,
         sheet_written: !testMode && effortWritten,
