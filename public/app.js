@@ -1791,6 +1791,7 @@ function renderActiveSessionBanner() {
   if (!banner) return;
   banner.innerHTML = '';
   if (!activePlannedSession) { banner.hidden = true; return; }
+  syncPlannedIndexToCanonical();
   const { label, exercises, index } = activePlannedSession;
   const current = exercises[index];
   if (!current) { banner.hidden = true; return; }
@@ -1807,6 +1808,31 @@ function renderActiveSessionBanner() {
   row.appendChild(endBtn);
   banner.appendChild(row);
   banner.hidden = false;
+}
+
+// B2 canonical state — the plan-card banner renders its "current step" from
+// activePlannedSession.index, but a logged set advances only the canonical session
+// (sessionCompleted); the index cursor lags until "Next exercise →" is tapped. So
+// the plan card would show a just-logged lift as still-current while the composer,
+// next-up router, and save payload have already moved on. Reconcile the index
+// forward to the canonical current (first unlogged planned lift) so the plan card
+// derives from the SAME canonical session as every other surface. Forward-only —
+// it never rewinds, so a deliberate swap-advance (Step 379) is never undone — and
+// it never mutates the exercise list. No-op when the activeSession model is
+// unavailable (the banner then falls back to the raw index cursor).
+function syncPlannedIndexToCanonical() {
+  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return;
+  const AS = (typeof window !== 'undefined' && window.activeSession) ||
+             (typeof activeSession !== 'undefined' ? activeSession : null);
+  if (!AS) return;
+  const canon = getCanonicalSession();
+  const cur = canon && AS.currentExercise(canon);
+  if (!cur) return; // nothing pending (all logged/skipped) — leave the cursor as-is
+  const key = String(cur.name || '').toLowerCase();
+  const target = activePlannedSession.exercises.findIndex(
+    e => (e.canonicalName || e.name || '').toLowerCase() === key
+  );
+  if (target > activePlannedSession.index) activePlannedSession.index = target;
 }
 
 function advancePlannedSession() {
@@ -4001,6 +4027,10 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (parsedRowsEditor) parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = '';
   invalidatePreview();
+  // B2 canonical state — a logged set advanced the canonical session, so refresh the
+  // plan card to the new current step (syncPlannedIndexToCanonical) instead of leaving
+  // it stuck on the just-logged lift. Guarded for the emit test harness.
+  if (typeof renderActiveSessionBanner === 'function') renderActiveSessionBanner();
   // persist the just-logged set for resume safety (guarded for the emit test harness)
   if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot();
 }
