@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v68';
+const ATLAS_SHELL_BUILD = 'v69';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3822,8 +3822,11 @@ function wireResumeNoticeGestures(content) {
   content.addEventListener('touchend', () => {
     if (dragging) content.style.transition = '';
     dragging = false;
-    if (dx < -OPEN_AT) { revealed = true; place(-REVEAL); }
-    else if (dx > OPEN_AT) { revealed = false; place(0); }
+    // Only an actual HORIZONTAL swipe toggles the trash. A vertical-aborted gesture
+    // (horizontal stays false) leaves dx at the aborting frame, so without this gate a
+    // steep diagonal scroll could still reveal the trash — snap back to the current state.
+    if (horizontal && dx < -OPEN_AT) { revealed = true; place(-REVEAL); }
+    else if (horizontal && dx > OPEN_AT) { revealed = false; place(0); }
     else place(revealed ? -REVEAL : 0);   // a tap falls through to the click handler
   }, { passive: true });
   // Tap (no meaningful drag) restores; a closed-state click with the trash hidden also

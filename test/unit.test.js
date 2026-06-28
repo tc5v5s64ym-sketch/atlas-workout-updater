@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v68/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v69/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5384,13 +5384,16 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
   // The gesture handler distinguishes a horizontal swipe from vertical scroll.
   const gestures = app.slice(app.indexOf('function wireResumeNoticeGestures('), app.indexOf('function renderResumeNotice(', app.indexOf('function wireResumeNoticeGestures(')));
   assert.match(gestures, /Math\.abs\(dx\) < Math\.abs\(dy\)/, 'a dominant vertical move aborts the swipe (scroll is preserved)');
+  // touchend only toggles the trash on an ACTUAL horizontal swipe — a vertical-aborted
+  // diagonal must not reveal it (review #678).
+  assert.match(gestures, /if \(horizontal && dx < -OPEN_AT\)/, 'reveal is gated on the horizontal flag, not dx alone');
   assert.match(gestures, /restoreSessionToView\(\)/, 'a tap (no real drag) restores');
 });
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v68/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v67\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v69/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v68\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
