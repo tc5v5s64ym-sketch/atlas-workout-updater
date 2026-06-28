@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v62/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v63/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5009,6 +5009,21 @@ test('RC2: the log-workout preview surfaces the chosen date + source from the wr
   assert.match(app, /closeoutScreenshotDateSource = null;\n  setsTableBody\.innerHTML/, 'date source resets on start-over');
 });
 
+test('RC2: an abandoned closeout preview does not leak its date-source label onto a later normal save', () => {
+  // Review catch (#674): closeoutScreenshotDateSource persisted if a closeout preview
+  // was abandoned without Start Over, so a subsequent normal typed-workout preview
+  // rendered a stale "Date from screenshot" banner. A FRESH submit must clear it; the
+  // closeout RE-ENTRY (sessionCompiledAwaitingPreview === true) must preserve it so the
+  // banner still renders for the actual screenshot save.
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const submitStart = app.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  const clearIdx = app.indexOf('if (!sessionCompiledAwaitingPreview) closeoutScreenshotDateSource = null;', submitStart);
+  const invalidateIdx = app.indexOf('invalidatePreview();', submitStart);
+  const closeoutBranchIdx = app.indexOf('closeoutScreenshotDateSource = resolvedCloseout.source', submitStart);
+  assert.ok(clearIdx > invalidateIdx, 'the fresh-submit clear runs after invalidatePreview');
+  assert.ok(clearIdx < closeoutBranchIdx, 'the clear runs BEFORE the closeout branch re-sets the source (so the closeout flow is unaffected)');
+});
+
 test('chips: nav.js chip handlers are read-only and never touch write paths', () => {
   const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
   // nav.js may call read-only API endpoints for chip answer cards, but must never
@@ -5300,8 +5315,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v62/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v61\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v63/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v62\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
