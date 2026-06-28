@@ -4745,7 +4745,7 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
 
   // A suggested workout routes through setWorkoutPlaceholder, so viewing a suggestion
   // fires the ownership event before the next 4.5s rotation tick.
-  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 2800);
+  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 3500);
   assert.match(suggestFn, /setWorkoutPlaceholder\(/, 'typeSuggestedWorkout must set a contextual placeholder (which announces ownership)');
 
   // nav.js suppresses the rotation on the ownership event (same flag as a logged set).
@@ -5446,7 +5446,7 @@ test('coach next-up: repeated identical next-up is suppressed; placeholder uses 
   // Placeholder prefers the active PLAN entry's own prescription before /api/plan/today.
   const fn = cc.slice(cc.indexOf('function nextUpPlaceholderFromPlan('), cc.indexOf('function nextUpPlaceholderFromPlan(') + 700);
   assert.match(fn, /getActivePlannedSession/, 'reads the active plan entry for the next-up prescription');
-  assert.match(fn, /buildWorkoutPlaceholder\(\[entry\]\)/, 'builds the full prescription from the plan entry');
+  assert.match(fn, /compactPrescriptionFromNormalized\(entry\)/, 'builds the full prescription from the already-normalized plan entry without double-normalization');
   const handler = cc.slice(cc.indexOf('let placeholder = nextUpPlaceholderFromPlan('), cc.indexOf('let placeholder = nextUpPlaceholderFromPlan(') + 500);
   assert.match(handler, /if \(!placeholder\)/, 'falls back to /api/plan/today only when the plan entry has no numbers');
 });

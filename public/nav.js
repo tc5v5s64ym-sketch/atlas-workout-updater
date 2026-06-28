@@ -549,6 +549,13 @@
       // set has been performed. coach-conversation.js fires this from
       // setWorkoutPlaceholder.
       document.addEventListener('atlas:placeholder-owned', () => { sessionActive = true; });
+      document.addEventListener('atlas:session-reset', () => {
+        sessionActive = false;
+        if (!hintPaused && !composerTextarea.value) {
+          hintIndex = 0;
+          composerTextarea.placeholder = PLACEHOLDER_HINTS[hintIndex];
+        }
+      });
       setInterval(() => {
         if (hintPaused || composerTextarea.value || sessionActive) return;
         hintIndex = (hintIndex + 1) % PLACEHOLDER_HINTS.length;

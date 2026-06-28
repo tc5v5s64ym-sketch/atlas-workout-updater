@@ -1463,6 +1463,7 @@ let pendingSubstitution = null;
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
 function getActivePlannedSession() { return activePlannedSession; }
+function getSessionCompleted() { return sessionCompleted; }
 
 // P0 Active Workout State Unification — the ONE canonical view of the in-progress
 // workout, derived from the authoritative store (the planned order from
@@ -4397,6 +4398,7 @@ function startOverWorkout() {
   sessionLog = [];
   sessionCompleted = [];
   clearSessionSnapshot();   // a deliberate reset must not resume the old session
+  document.dispatchEvent(new CustomEvent('atlas:session-reset'));
   closeoutScreenshotFile = null;
   closeoutScreenshotEffort = null;
   setsTableBody.innerHTML = '';
@@ -5603,6 +5605,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     if (pendingLastWrite) closeoutScreenshotFile = null;
     if (pendingLastWrite) closeoutScreenshotEffort = null;
     clearSessionSnapshot();   // saved — don't resume this (now-written) session
+    document.dispatchEvent(new CustomEvent('atlas:session-reset'));
 
     if (pendingLastWrite) {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
