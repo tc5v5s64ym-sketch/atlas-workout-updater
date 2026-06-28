@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v66';
+const ATLAS_SHELL_BUILD = 'v67';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -5693,16 +5693,13 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // this clears any stale manual range — otherwise a correction after an
     // effort save would Replace-via-undo the wrong (older) rows.
     lastWrite = pendingLastWrite;
-    // The session is SAVED (or a confirmed duplicate) — start the next session's buffer
-    // fresh. This MUST NOT be gated on pendingLastWrite: that is UNDO state (the appended
-    // log range), which is null for screenshot / effort-only saves even though they DID
-    // save the session. Gating the reset on it left a saved screenshot session in memory,
-    // so the next set-log / background event re-snapshotted it and it came back as a
-    // "Session restored — 30 sets" ghost on reload — every later save then collided on the
-    // already-saved session_id. A saved workout must never restore (owner, 2026-06-28).
+    // RC4: reset the session on ANY confirmed save — NOT gated on pendingLastWrite (undo
+    // state, null for screenshot/effort-only saves). Gating it left a saved session in
+    // memory that re-snapshotted and restored as a ghost. endPlannedSession() (not a bare
+    // null) keeps Step 385's deload teardown firing before the plan is cleared.
     sessionLog = [];
     sessionCompleted = [];
-    activePlannedSession = null;
+    endPlannedSession();
     closeoutScreenshotFile = null;
     closeoutScreenshotEffort = null;
     closeoutScreenshotDateSource = null;

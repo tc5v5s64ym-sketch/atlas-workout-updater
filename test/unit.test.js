@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v66/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v67/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5021,7 +5021,10 @@ test('saved-no-restore: a confirmed save clears the in-memory session regardless
   // The buffers + active plan are cleared UNCONDITIONALLY (not behind `if (pendingLastWrite)`).
   assert.match(block, /\n    sessionLog = \[\];/, 'sessionLog is cleared on any confirmed save');
   assert.match(block, /\n    sessionCompleted = \[\];/, 'sessionCompleted is cleared on any confirmed save');
-  assert.match(block, /\n    activePlannedSession = null;/, 'the active plan is cleared so it cannot re-snapshot');
+  // The plan is ended via endPlannedSession() (deload-aware teardown), NOT a bare null —
+  // so the Step 385 Deload_State machine still advances on a saved deload session.
+  assert.match(block, /\n    endPlannedSession\(\);/, 'the active plan is ended (deload-aware) so it cannot re-snapshot');
+  assert.doesNotMatch(block, /\n    activePlannedSession = null;/, 'must not bypass endPlannedSession with a bare null (would stall the deload machine)');
   assert.doesNotMatch(block, /if \(pendingLastWrite\) sessionLog = \[\]/, 'the reset must NOT be gated on the undo-only pendingLastWrite');
   // The snapshot is still cleared, and undo state (lastWrite) still tracks pendingLastWrite.
   assert.match(block, /clearSessionSnapshot\(\);/, 'the persisted snapshot is still cleared on save');
@@ -5359,8 +5362,8 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v66/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v65\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v67/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v66\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
