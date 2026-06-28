@@ -3045,8 +3045,44 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         metricWarnings = result.warnings || [];
       }
     } catch (error) {
-      if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
-      return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
+      // B3 effort-import isolation: a screenshot that PARSED but produced invalid
+      // or incomplete effort metrics (e.g. missing activeCalories) must not poison
+      // the workout save. If there are logged sets, degrade exactly like an
+      // unreadable screenshot — save the sets with a blank effort row and surface
+      // the specific owner-facing copy — instead of 400ing the whole request and
+      // losing the exercise rows. Manual effort entry and effort-only requests
+      // still fail honestly: there's nothing to fall back to (no sets to save) and
+      // a manual value the owner typed should be corrected, not silently dropped.
+      if (req.file && !effortOnly) {
+        console.warn('⚠️ Screenshot effort metrics invalid; degrading to save sets without effort:', error.message);
+        screenshotUnreadable = true;
+        normalizedMetrics = { ...EMPTY_EFFORT_METRICS };
+        metricWarnings = [SCREENSHOT_UNREADABLE_MESSAGE];
+        // Converge with the throw-based degrade (line ~3026), which sets
+        // parsed_metrics to null: discard the REJECTED screenshot's fields so its
+        // date can't flow into resolveWorkoutDate / buildEffortRowFromParsedMetrics
+        // on a no-manual-date save. Source-date handling for screenshots is B5's
+        // scope, not B3's — both degrade paths must behave identically here.
+        visionResult.parsed_metrics = null;
+      } else if (req.file && effortOnly) {
+        // Effort-only screenshot whose metrics parsed but were invalid/out-of-range:
+        // there are no logged sets to fall back to, so fail closed — but with the
+        // SAME 422 + specific owner copy as the unreadable-screenshot effort-only
+        // branch above, so a "parsed but unusable" screenshot isn't handed a vaguer
+        // error than an unreadable one. Manual effort-only (no file) keeps the 400
+        // below — that's form-field validation, which surfaces its own field errors.
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(
+          req,
+          res,
+          "I couldn't read usable effort from the screenshot, and there are no logged sets to save without it.",
+          process.env.NODE_ENV === 'production' ? null : error.message,
+          422
+        );
+      } else {
+        if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+        return standardError(req, res, 'Parsed metrics validation failed', process.env.NODE_ENV === 'production' ? null : error.message, 400);
+      }
     }
 
     // 3) Determine session/date

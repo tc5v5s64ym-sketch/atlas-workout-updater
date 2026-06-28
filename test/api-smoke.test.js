@@ -2044,6 +2044,51 @@ test('api smoke (B1): a re-save after a failed effort import does not duplicate 
   }
 });
 
+// B3 effort-import isolation: the inverse of the case above. A re-save where every
+// log row is already on the sheet BUT a genuinely-new effort row is attached must
+// still append the effort row (repairing a missing/failed effort) without
+// re-appending any log rows. The all-duplicate short-circuit must NOT swallow the
+// new effort row (the B1×B3 interaction). Effort and exercise are independent.
+test('api smoke (B3): all log rows duplicate + a new effort row → effort appends, log rows do not', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // The first save already wrote the log rows; the effort tab has no row for it yet.
+  fakeSheetsState.logCompositeKeys = ['b3-effort-repair||bench press||1'];
+  try {
+    const { response, body } = await withMutedConsoleLog(() => requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'b3-effort-repair',
+        date: '2026-06-26',
+        write_id: 'b3-effort-repair-write-id',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 }],
+        effort_row: {
+          date: '2026-06-26',
+          session_id: 'b3-effort-repair',
+          duration: '00:45:00',
+          active_calories: 400,
+          total_calories: 500,
+          average_hr: 140,
+          peak_hr: 165,
+          location: 'Gym'
+        }
+      })
+    }));
+
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.sheet_write, 'success');
+    assert.equal(body.data.log_rows_written, 0, 'no duplicate log rows are re-appended');
+    assert.equal(body.data.effort_rows_written, 1, 'the new effort row must still append');
+    const logAppends = fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length;
+    const effortAppends = fakeSheetsState.appendCalls.filter(c => c.tabName === 'Effort').length;
+    assert.equal(logAppends, 0, 'log rows must not be re-appended');
+    assert.equal(effortAppends, 1, 'effort row must be appended even when all log rows are duplicates');
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 // RIR is OPTIONAL (owner 2026-06-25: "log it however"). A set logged with just
 // weight × reps — warm-up or working — must save with a blank RIR cell. weight/reps
 // are still required so a genuinely garbled row is rejected.
@@ -2754,6 +2799,192 @@ test('api smoke: complete-workout returns 422 (not 500) when an effort-only scre
     });
   } finally {
     fakeVisionThrow = null;
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// B3 effort-import isolation: a screenshot that PARSES but yields invalid /
+// incomplete effort metrics (e.g. missing activeCalories) must degrade the SAME
+// way an unreadable screenshot does — never a 400 that loses the logged sets.
+// This is distinct from the throw-based degrade above (vision returned metrics;
+// validation rejected them), and is the exact poisoning path B3 targets.
+test('api smoke: complete-workout degrades (not 400) when a parsed screenshot has invalid effort metrics but sets are present (B3)', async () => {
+  const savedMetrics = { ...fakeVisionParsedMetrics };
+  fakeSheetsState.appendCalls.length = 0;
+  // Screenshot "parsed" but activeCalories is missing — normalizeAndValidateParsedMetrics
+  // throws ("activeCalories is required") on this input.
+  fakeVisionParsedMetrics = {
+    date: null,
+    duration: '00:42:00',
+    activeCalories: null,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-INVALID-01');
+      form.append('date', '2026-06-11');
+      form.append('test_mode', 'true');
+      form.append('log_rows_json', JSON.stringify([
+        ['2026-06-11', 'SHOT-INVALID-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675']
+      ]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(body.status, 'ok');
+      // Exercise rows survive — they are NOT lost to the effort failure.
+      assert.equal(data.screenshot_unreadable, true);
+      assert.equal(data.effort_source, 'screenshot_unreadable');
+      assert.equal((data.rows_to_write || []).length, 1, 'logged set must still be previewable');
+      assert.equal(data.rows_to_write[0][2], 'Bench Press');
+      // The effort preview row is blank for the metric columns.
+      assert.equal(data.effort_row[2], '', 'duration blank when effort metrics invalid');
+      assert.equal(data.effort_row[3], '', 'active calories blank when effort metrics invalid');
+      // Specific owner-facing copy, not a vague validation error.
+      assert.ok((body.data.warnings || []).some(w => /couldn't read effort from the screenshot/i.test(w)),
+        `expected the specific effort-unreadable copy, got ${JSON.stringify(body.data.warnings)}`);
+      // Dry-run: nothing is written.
+      assert.deepEqual(fakeSheetsState.appendCalls, []);
+    });
+  } finally {
+    fakeVisionParsedMetrics = savedMetrics;
+  }
+});
+
+// The live counterpart: invalid parsed effort + logged sets writes the sets with
+// a blank effort row (sets are never lost), and the effort row is appended for
+// session linkage exactly like the unreadable-screenshot path.
+test('api smoke: live complete-workout saves sets with blank effort when parsed screenshot metrics are invalid (B3)', async () => {
+  const savedMetrics = { ...fakeVisionParsedMetrics };
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeVisionParsedMetrics = {
+    date: null,
+    duration: '00:42:00',
+    activeCalories: 99999, // out of the 1–3000 range → validation throws
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-INVALID-LIVE-01');
+      form.append('date', '2026-06-11');
+      form.append('write_id', 'complete-shot-invalid-live-01');
+      form.append('log_rows_json', JSON.stringify([
+        ['2026-06-11', 'SHOT-INVALID-LIVE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675']
+      ]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.screenshot_unreadable, true);
+      assert.equal(data.sheet_written, true);
+      assert.equal(data.log_rows_written, 1, 'the logged set must be written despite the effort failure');
+      const tabs = fakeSheetsState.appendCalls.map(c => c.tabName);
+      assert.ok(tabs.includes('Log_Cleaned'), 'workout set row appended');
+      assert.ok(tabs.includes('Effort'), 'effort row still appended for session linkage');
+      const effortRow = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort').rows[0];
+      assert.equal(effortRow[3], '', 'active calories blank when effort metrics invalid');
+    });
+  } finally {
+    fakeVisionParsedMetrics = savedMetrics;
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// Convergence with the throw-based degrade: the invalid-metrics degrade must NOT
+// honor the REJECTED screenshot's date. With no manual date supplied, the rejected
+// screenshot's `date` must be discarded (parsed_metrics nulled) exactly like the
+// unreadable-screenshot path — source-date handling for screenshots is B5's scope.
+test('api smoke: invalid parsed screenshot metrics degrade discards the rejected screenshot date (no-manual-date convergence, B3)', async () => {
+  const savedMetrics = { ...fakeVisionParsedMetrics };
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: '2026-05-01', // a date is present, but the metrics are invalid (below) → rejected
+    duration: '00:42:00',
+    activeCalories: null, // missing → validation throws
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-INVALID-NODATE-01');
+      // No `date` field → resolveWorkoutDate would otherwise fall back to the
+      // screenshot's date if parsed_metrics were left intact.
+      form.append('test_mode', 'true');
+      form.append('log_rows_json', JSON.stringify([
+        ['', 'SHOT-INVALID-NODATE-01', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', '135', '5', '2', '', '675']
+      ]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.screenshot_unreadable, true);
+      // The rejected screenshot's date must NOT be honored — both degrade paths
+      // discard it and fall back (here, to local today).
+      assert.notEqual(data.date, '2026-05-01', 'rejected screenshot date must not drive the save date');
+      assert.notEqual((data.effort_row || [])[0], '2026-05-01', 'effort row must not carry the rejected screenshot date');
+    });
+  } finally {
+    fakeVisionParsedMetrics = savedMetrics;
+  }
+});
+
+// Guard the boundary: with NO logged sets there is nothing to fall back to, so an
+// effort-only screenshot whose parsed metrics are invalid must still fail closed
+// (honest error, never a silent blank-effort write).
+test('api smoke: complete-workout effort-only with invalid parsed metrics fails closed and never appends (B3 boundary)', async () => {
+  const savedMetrics = { ...fakeVisionParsedMetrics };
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeVisionParsedMetrics = {
+    date: null,
+    duration: '00:42:00',
+    activeCalories: null,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'SHOT-INVALID-EFFORTONLY-01');
+      form.append('date', '2026-06-11');
+      form.append('write_id', 'complete-shot-invalid-effortonly-01');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      assert.notEqual(response.status, 200, 'effort-only invalid metrics must not silently succeed');
+      // Mirror the unreadable-screenshot effort-only branch: a 422 with specific,
+      // owner-facing copy rather than a vague generic validation error.
+      assert.equal(response.status, 422, JSON.stringify(body));
+      assert.match(body.message || body.error || '', /couldn't read usable effort from the screenshot/i);
+      assert.deepEqual(fakeSheetsState.appendCalls, [], 'nothing must be appended when there is nothing to save');
+    });
+  } finally {
+    fakeVisionParsedMetrics = savedMetrics;
     fakeSheetsState.allowAppend = false;
   }
 });
