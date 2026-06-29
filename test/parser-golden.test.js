@@ -792,6 +792,32 @@ test('golden: parseBodyweightReps bare-tokens guard — integers >100 do not rou
   );
 });
 
+test('golden: cable tricep pushdown — live-bug "tricep pulls" resolves correctly', () => {
+  // BUG-20260629-003720: "Tricep pulls" fell through to parseUnknownExercise
+  const result = parseWorkoutText('Tricep pulls 50 15/2');
+  assert.equal(result.canonical_name, 'Cable Tricep Pushdown');
+  assert.deepEqual(sets(result), [[50, 15, 2]]);
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'), 'must not be flagged as unknown');
+});
+
+test('golden: cable tricep pushdown — "tricep pushdowns" alias', () => {
+  const result = parseWorkoutText('Tricep pushdowns 50 15/2 12/3');
+  assert.equal(result.canonical_name, 'Cable Tricep Pushdown');
+  assert.deepEqual(sets(result), [[50, 15, 2], [50, 12, 3]]);
+});
+
+test('golden: cable tricep pushdown — "cable tricep" shorthand', () => {
+  const result = parseWorkoutText('Cable tricep 50 15/2 x3');
+  assert.equal(result.canonical_name, 'Cable Tricep Pushdown');
+  assert.deepEqual(sets(result), [[50, 15, 2], [50, 15, 2], [50, 15, 2]]);
+});
+
+test('golden: cable tricep pushdown — "tricep pulldowns" alias', () => {
+  const result = parseWorkoutText('Tricep pulldowns 50 12/2');
+  assert.equal(result.canonical_name, 'Cable Tricep Pushdown');
+  assert.deepEqual(sets(result), [[50, 12, 2]]);
+});
+
 test('step-374: single leg leg curl (no hyphen) also resolves to Single-Leg Leg Curl', () => {
   const result = parseWorkoutText('single leg leg curl 55 10/2 x3');
   assert.equal(result.canonical_name, 'Single-Leg Leg Curl');
