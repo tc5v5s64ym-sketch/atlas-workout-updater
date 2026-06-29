@@ -1738,8 +1738,13 @@ test('coach system prompt carries the recovery_advisory (deload selection) rule 
   assert.match(prompt, /never a flat "you need a deload"|never as a command/i, 'must forbid commanding a deload');
   assert.match(prompt, /do NOT shame hard effort/i, 'must not shame effort');
   assert.match(prompt, /invent NO|invent no number/i, 'must forbid inventing numbers');
-  // Must not contradict the push/progress voices in the same note.
-  assert.match(prompt, /never also tell them to add load or push/i);
+  // BUG-20260629-034034: recovery_advisory must OVERRIDE the effort_verdict add-weight
+  // steer (same strength as an active deload), not merely co-exist with it — so the LLM
+  // never tells the lifter to add load on a recovery day even when the set read easy.
+  assert.match(prompt, /recovery_advisory OVERRIDES the add-weight steer of effort_verdict/i,
+    'recovery_advisory must explicitly override the add-weight steer, like an active deload');
+  assert.match(prompt, /do NOT tell them to add load[^.]*even if effort_verdict reads "easy" or "far_easy"/i,
+    'must forbid add-load prose even when the set read easy/far_easy on a recovery day');
 });
 
 test('sanitizeRecoveryAdvisory keeps recovery-oriented decisions and bounds fields', () => {

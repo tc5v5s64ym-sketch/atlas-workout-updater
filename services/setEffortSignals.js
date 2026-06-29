@@ -189,6 +189,34 @@ function analyzeSetSequence(sets, opts = {}) {
 }
 
 /**
+ * Recovery/deload override for the under-dose 'bump' verdict (BUG-20260629-034034).
+ *
+ * On a deliberate recovery/deload session, a high-RIR working set is EXPECTED
+ * (the load is intentionally light), so the 'bump' progression invite ("too much
+ * left in the tank → add load") is wrong — it tells the lifter to fight their own
+ * recovery prescription. When a recovery objective is active, neutralize ONLY the
+ * 'bump' verdict (and its under-dose reason code/signal). 'block' / 'caution'
+ * (back-off / don't-grind reads) are left intact — they align with recovery.
+ *
+ * Pure: returns a new analysis (or the original when there's nothing to suppress).
+ *
+ * @param {object|null} analysis - output of analyzeSetSequence.
+ * @param {boolean} recoveryActive - a deload is active OR a recovery/recovery_reload
+ *   selection is signaled for this session.
+ * @returns {object|null}
+ */
+function suppressBumpForRecovery(analysis, recoveryActive) {
+  if (!recoveryActive || !analysis || analysis.progression_verdict !== 'bump') return analysis;
+  return {
+    ...analysis,
+    progression_verdict: 'neutral',
+    recovery_suppressed_bump: true,
+    signals: { ...(analysis.signals || {}), high_rir_workset_underdosed: false },
+    reason_codes: (analysis.reason_codes || []).filter(c => c !== EFFORT_REASON_CODES.HIGH_RIR_WORKSET_UNDERDOSED),
+  };
+}
+
+/**
  * Given the current exercise analysis and the REMAINING planned queue (exercises
  * after the current one), flag a same-prime-mover conflict and suggest a reroute.
  * Suggestion-only — never mutates the plan (owner-approved).
@@ -238,6 +266,7 @@ function assessNextMoveConflict(analysis, plannedQueue) {
 module.exports = {
   analyzeSetSequence,
   assessNextMoveConflict,
+  suppressBumpForRecovery,
   EFFORT_REASON_CODES,
   // exported for fixtures / future wiring
   WARMUP_MIN_RIR,
