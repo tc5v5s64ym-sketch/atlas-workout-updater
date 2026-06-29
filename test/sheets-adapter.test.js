@@ -21,9 +21,11 @@ const assert = require('node:assert/strict');
 process.env.GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || 'test-spreadsheet-id';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL =
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'svc@example.iam.gserviceaccount.com';
-// Literal backslash-n sequences, exactly how a PEM key arrives via env.
-process.env.GOOGLE_PRIVATE_KEY =
-  '-----BEGIN PRIVATE KEY-----\\nLINE1\\nLINE2\\n-----END PRIVATE KEY-----\\n';
+// Literal backslash-n sequences, exactly how a PEM key arrives via env. We use
+// a neutral fixture (NOT a real PEM header) on purpose: getPrivateKey() only
+// un-escapes `\n`, so this exercises the full contract without tripping the
+// repo's private-key secret scanner on a fake key.
+process.env.GOOGLE_PRIVATE_KEY = 'KEYLINE1\\nKEYLINE2\\nKEYLINE3\\n';
 
 // --- Fake googleapis. Records every request so tests can assert the payload. ---
 const calls = {
@@ -104,7 +106,7 @@ test('getSheetsClient builds auth credentials whose key has real newlines (getPr
   const key = lastGoogleAuthConfig.credentials.private_key;
   assert.ok(!key.includes('\\n'), 'no literal backslash-n should remain');
   assert.ok(key.includes('\n'), 'real newlines should be present');
-  assert.match(key, /^-----BEGIN PRIVATE KEY-----\nLINE1\nLINE2\n-----END PRIVATE KEY-----\n$/);
+  assert.equal(key, 'KEYLINE1\nKEYLINE2\nKEYLINE3\n');
 });
 
 // ---------------------------------------------------------------------------
