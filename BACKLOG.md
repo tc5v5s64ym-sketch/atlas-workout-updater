@@ -481,6 +481,25 @@ A category the backlog has not modelled. Atlas's source of truth is Google Sheet
 
 ---
 
+## Test-coverage hardening — make Atlas safer without building new behaviour (owner-approved 2026-06-29)
+
+Initiative scope: **test-infrastructure only.** No runtime behaviour changes, no "fixing while testing." If a test exposes broken current behaviour, **stop and report** — it becomes a separate bug-fix PR with owner/ledger handling, never patched inside a coverage PR. Source of findings: 2026-06-29 coverage analysis (`node --test --experimental-test-coverage`, 3,015 tests, ~96.8% overall line; gaps concentrated in `sheets.js` 31%/15% func, `index.js` 62% branch, `services/vision.js` 57%, untested frontend `chat.js`/`drawer.js`/`nav.js`/`sw.js`). Owner sequencing decision recorded below.
+
+- ✅ **PR1 — `sheets.js` adapter contract tests** `[housekeeping]` (this PR) — fake-`googleapis` injection runs the REAL adapter in-memory (no live sheet). Covers: `deleteRowsByRange` row-index math + sheetId-by-title resolution (the undo backbone), `appendRows` range/`RAW`/`INSERT_ROWS` shape + empty-payload guard, `readRange`/`getSheetRows` range construction + header-strip + maxRows slicing, `getPrivateKey` `\n` un-escaping, `ensureSheetTab` (creates missing tab by correct title, seeds header only when empty, never clobbers an existing header). `test/sheets-adapter.test.js`, 11 tests. Lifted `sheets.js` from 31%→71% line, 15%→58% func. No source change.
+  - **Deferred (PR1 split-off if it grows) `[housekeeping]`:** remaining `sheets.js` read helpers still uncovered — `getColumnValues`, `getRecentRows`, `getHeaderRow`, `getSpreadsheetTabs`, `getExerciseCatalog`, `getEffortSessionIds`, `getLogCompositeKeys` (the composite-key/header-skip logic). Same fake-client harness. File as PR1b when authorized.
+- **PR2 — `index.js` write-path negative/branch tests** `[trust-critical]` — owner decision: **SPLIT** (do not let this become one "index.js coverage" PR). Each is its own tiny PR, test-only, asserting CURRENT proof-field/contract behaviour:
+  - **PR2a** — `/api/log-workout` negative + proof-field cases (dry-run `sheet_written:false`/`no_write_confirmed:true`; live `sheet_write:'success'`/`log_rows_written>0`; validation failures).
+  - **PR2b** — `/api/log-workout/undo-last` read-back + 409-on-empty + Log-tab-restriction cases.
+  - **PR2c** — `/api/complete-workout` partial/failure paths.
+  - **PR2d** — `/api/constraints` 503-until-tab-exists path.
+- **PR3 — `services/vision.js` provider-selection tests** `[housekeeping]` — owner decision: **APPROVED.** `getProviderConfig` env permutations; Gemini-selected + no key = throw (CLAUDE.md contract: never a silent fallback); OpenAI no-key per current contract; provider-error degradation only where current behaviour allows. Protects a real contract, no owner input needed.
+- **PR4 — frontend trust-loop + PWA tests** `[correctness]` — owner decision: **SPLIT HARD; `sw.js` deferred.** The preview→approve→write loop matters far more than the PWA cache right now.
+  - **PR4a** — frontend preview→approve→write trust-loop tests (`public/app.js`).
+  - **PR4b** — chat fallback / correction UI tests (`public/chat.js`).
+  - **PR4c** — drawer/nav smoke tests (`public/drawer.js`, `public/nav.js`).
+  - **PR4d** — service-worker cache/offline tests (`public/sw.js`) — **deferred, lowest priority.**
+- **PR5 — CI coverage step** `[housekeeping]` — owner decision: **NOT YET a hard gate.** Add coverage **reporting** in CI, non-blocking, document current known gaps; a global threshold now would be a false sense of safety (high overall % masks low critical files) and a strict per-file threshold would fail immediately. Revisit a gate AFTER PR1–PR4 land — owner's later target: global lines 95% / branches 80% / functions 85%, no per-file threshold yet, exclude generated/coverage output (and `scripts/` only if separately justified).
+
 ## Housekeeping
 
 - **Close obsolete PR [#288](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/pull/288)** (superseded by [#290](https://github.com/tc5v5s64ym-sketch/atlas-workout-updater/pull/290)). ✅ Already closed 2026-06-16.
