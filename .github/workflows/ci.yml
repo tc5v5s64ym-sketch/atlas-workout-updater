@@ -104,11 +104,13 @@ jobs:
             echo ""
             echo '```'
             # The summary block between the report banners; trim the reporter
-            # prefix. The report lists files by BASENAME (e.g. "vision.js"), so
-            # match on those — and drop *.test.js rows so only source shows.
+            # prefix. Match the key files whether the table lists them by basename
+            # ("vision.js") or by cwd-relative path ("services/vision.js") — the
+            # leading boundary is (^|[ /]) so a preceding slash also matches across
+            # Node versions. Drop *.test.js rows so only source shows.
             awk '/start of coverage report/{f=1} f{print} /end of coverage report/{f=0}' coverage.txt \
               | sed 's/^ℹ //' \
-              | grep -E 'file +\||all files|(^| )index\.js |(^| )sheets\.js |(^| )vision\.js |(^| )coach\.js |(^| )analytics\.js |(^| )workoutTextParser\.js ' \
+              | grep -E 'file +\||all files|(^|[ /])index\.js |(^|[ /])sheets\.js |(^|[ /])vision\.js |(^|[ /])coach\.js |(^|[ /])analytics\.js |(^|[ /])workoutTextParser\.js ' \
               | grep -vE 'test\.js' \
               || echo "(coverage summary not captured — see the step log)"
             echo '```'
