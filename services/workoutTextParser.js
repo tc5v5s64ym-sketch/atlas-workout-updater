@@ -10,6 +10,8 @@ const NUMBER_WORDS = {
 
 const EXERCISE_ALIASES = [
   ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db bench', 'dumbbell incline press']],
+  ['Incline Bench Press', ['incline bench press', 'incline barbell bench', 'incline bench', 'ibp']],
+  ['Decline Bench Press', ['decline bench press', 'decline barbell bench', 'decline bench']],
   ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
   ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
   ['Deadlift', ['deadlift', 'dead', 'dl']],
