@@ -756,9 +756,9 @@ test('biceps curls (with the "s") also resolves to Bicep Curl', () => {
   assert.deepEqual(sets(result), [[35, 10, 1], [35, 10, 1], [35, 10, 1]]);
 });
 
-test('bare "curls" is still preserved as an unknown name (not collapsed to Bicep Curl)', () => {
+test('unknown "X curl" lifts (e.g. zercher curl) keep their typed name — bare curl is not aliased to Bicep Curl', () => {
   // Guard: an unknown "X curl" must keep its typed name. Bare curl/curls is
-  // intentionally unaliased so Zercher/Jefferson Curl below are not hijacked.
+  // intentionally unaliased so Zercher/Jefferson Curl are not hijacked.
   const result = parseWorkoutText('zercher curl 40 10/2', { activeExercise: 'Bench Press' });
   assert.equal(result.canonical_name, 'Zercher Curl');
 });
