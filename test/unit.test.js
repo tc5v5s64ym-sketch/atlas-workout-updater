@@ -186,7 +186,44 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v71/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v72/, 'bug report UI wiring changes must bump the service worker cache');
+});
+
+test('bug report captures rich diagnostic context on a single tap', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // Ring buffers for errors + UI breadcrumbs, both bounded.
+  assert.match(appSource, /const atlasRecentErrors = \[\]/);
+  assert.match(appSource, /const atlasActionLog = \[\]/);
+  assert.match(appSource, /while \(atlasRecentErrors\.length > BUG_REPORT_ERROR_LIMIT\) atlasRecentErrors\.shift\(\)/);
+  assert.match(appSource, /while \(atlasActionLog\.length > BUG_REPORT_ACTION_LIMIT\) atlasActionLog\.shift\(\)/);
+
+  // Unhandled JS errors / rejections and every tap are captured (the silent-lockup class).
+  assert.match(appSource, /window\.addEventListener\('error'/);
+  assert.match(appSource, /window\.addEventListener\('unhandledrejection'/);
+  assert.match(appSource, /document\.addEventListener\('click'[\s\S]*recordAtlasAction\('tap'/);
+
+  // api() records request + response bodies (redacted/truncated) and pushes to error history.
+  assert.match(appSource, /request_body: snapshotBugBody\(options\.body\)/);
+  assert.match(appSource, /response_body: snapshotBugBody\(json\)/);
+  assert.match(appSource, /recordAtlasError\(\{\s*source: 'api'/);
+  // Bodies are bounded and run through the existing secret redactor.
+  assert.match(appSource, /function snapshotBugBody\(body\)[\s\S]*redactBugReportString\(text\)/);
+  assert.match(appSource, /body instanceof FormData/);
+
+  // Payload carries the new context: errors, breadcrumbs, control state, clock, SW/cache.
+  assert.match(appSource, /recent_errors: atlasRecentErrors\.slice/);
+  assert.match(appSource, /action_log: atlasActionLog\.slice/);
+  assert.match(appSource, /ui_state: uiStateForBugReport\(\)/);
+  assert.match(appSource, /composer_disabled: prop\('workout-text', 'disabled'\)/);
+  assert.match(appSource, /timezone_offset_min: now\.getTimezoneOffset\(\)/);
+  assert.match(appSource, /payload\.service_worker = await serviceWorkerStateForBugReport\(\)/);
+  assert.match(appSource, /out\.waiting = !!reg\.waiting/);
+
+  // Stays under the Sheets per-cell budget: bodies are shed oldest-first if over, and the
+  // recent-calls entries are cloned so trimming never mutates the live buffer.
+  assert.match(appSource, /JSON\.stringify\(payload\)\.length > BUG_REPORT_SIZE_BUDGET/);
+  assert.match(appSource, /atlasRecentApiRequests\.slice\(-BUG_REPORT_RECENT_API_LIMIT\)\.map\(r => \(\{ \.\.\.r \}\)\)/);
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -5456,8 +5493,8 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v71/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v70\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v72/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v71\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
