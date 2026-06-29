@@ -2141,6 +2141,32 @@ app.post('/api/bug-report', async (req, res) => {
   }
 });
 
+// GET /api/bug-report — read-only review feed of the Bug_Reports tab. Returns the most
+// recent rows (newest first) mapped to the column names, so a reviewer (or an agent with
+// the API key) can triage bugs without opening the sheet. Read-only: no append, no schema
+// touch. The heavy Payload JSON cell is dropped by default — the summary columns + note +
+// last error cover triage; pass ?full=1 to include the raw payload per row.
+app.get('/api/bug-report', async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+    const includePayload = req.query.full === '1' || req.query.full === 'true';
+    const rows = await getRecentRows(BUG_REPORT_TAB, limit);
+    const reports = rows.map(row => {
+      const obj = {};
+      BUG_REPORT_COLUMNS.forEach((col, i) => { obj[col] = row[i] !== undefined ? row[i] : ''; });
+      if (!includePayload) delete obj['Payload JSON'];
+      return obj;
+    }).reverse(); // newest first
+    return standardSuccess(req, res, 'Bug reports', {
+      count: reports.length,
+      tab: BUG_REPORT_TAB,
+      reports
+    });
+  } catch (error) {
+    return standardError(req, res, 'Failed to read bug reports', error.message, 500);
+  }
+});
+
 // GET /api/schema/log
 app.get('/api/schema/log', (req, res) => {
   return standardSuccess(req, res, 'Log_Cleaned schema', {

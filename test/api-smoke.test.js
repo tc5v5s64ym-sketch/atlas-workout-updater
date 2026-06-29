@@ -55,6 +55,9 @@ const fakeSheetsState = {
   // Rows returned by the stubbed getRecentRows for the Effort tab, in sheet
   // order (oldest first). Tests that need effort history set this and restore [].
   effortRecentRows: [],
+  // Rows returned by the stubbed getRecentRows for the Bug_Reports tab (oldest
+  // first). The GET /api/bug-report review feed reads these.
+  bugReportRows: [],
   // When set to a tab name, appendRows throws for that tab AFTER recording the
   // call — simulates a partial-write failure between the two live appends.
   failAppendForTab: null,
@@ -133,6 +136,7 @@ const fakeSheets = {
     if (tabName === 'Log_Cleaned') return logRows;
     // Mirror the real client: return the LAST maxRows in sheet order.
     if (tabName === 'Effort') return fakeSheetsState.effortRecentRows.slice(-maxRows);
+    if (tabName === 'Bug_Reports') return fakeSheetsState.bugReportRows.slice(-maxRows);
     return [];
   },
   getSheetRows: async tabName => {
@@ -768,6 +772,50 @@ test('api smoke: coach/health is registered read-only and never write-capable', 
   assert.ok(routeByPath.has('/api/coach/health'), 'coach health route must be in the manifest');
   assert.equal(routeByPath.get('/api/coach/health').writeCapable, false, 'health endpoint must never be write-capable');
   assert.equal(routeByPath.get('/api/coach/health').readOnly, true);
+});
+
+test('api smoke: GET /api/bug-report returns recent reports newest-first, drops Payload JSON by default', async () => {
+  // Two rows in sheet order (oldest first); the feed should reverse to newest-first.
+  fakeSheetsState.bugReportRows = [
+    ['2026-06-29T00:00:00.000Z', 'BUG-A', 'first note', '/app | tab-logger', '20260629-AM-01',
+      'err A', 'sha1', 'UA', '{"big":"payload-A"}', '1', 'POST /api/log-workout', 'tap: done', 'no', ''],
+    ['2026-06-29T01:00:00.000Z', 'BUG-B', 'second note', '/app | tab-settings', '',
+      '', 'sha1', 'UA', '{"big":"payload-B"}', '', '', 'tap: restore', 'yes', 'Save disabled']
+  ];
+  try {
+    const { response, body } = await requestJson('/api/bug-report?limit=10');
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.count, 2);
+    assert.equal(body.data.tab, 'Bug_Reports');
+    // Newest first.
+    assert.equal(body.data.reports[0]['Bug ID'], 'BUG-B');
+    assert.equal(body.data.reports[1]['Bug ID'], 'BUG-A');
+    // Mapped to column names, summary columns surfaced.
+    assert.equal(body.data.reports[0]['Last Action'], 'tap: restore');
+    assert.equal(body.data.reports[0]['UI Blocked'], 'Save disabled');
+    assert.equal(body.data.reports[1]['Last Failed Endpoint'], 'POST /api/log-workout');
+    // Payload JSON dropped by default (heavy cell).
+    assert.ok(!('Payload JSON' in body.data.reports[0]), 'Payload JSON must be omitted by default');
+  } finally {
+    fakeSheetsState.bugReportRows = [];
+  }
+});
+
+test('api smoke: GET /api/bug-report?full=1 includes the raw Payload JSON, and the route needs the API key', async () => {
+  fakeSheetsState.bugReportRows = [
+    ['2026-06-29T00:00:00.000Z', 'BUG-A', 'n', '/app', '', '', 's', 'UA', '{"k":"v"}', '', '', '', '', '']
+  ];
+  try {
+    const full = await requestJson('/api/bug-report?full=1');
+    assert.equal(full.response.status, 200);
+    assert.equal(full.body.data.reports[0]['Payload JSON'], '{"k":"v"}');
+
+    // No API key → rejected (global /api guard).
+    const noKey = await fetch(`${baseUrl}/api/bug-report`);
+    assert.equal(noKey.status, 401);
+  } finally {
+    fakeSheetsState.bugReportRows = [];
+  }
 });
 
 test('api smoke: coach/health reports not-configured when GEMINI_API_KEY is unset', async () => {
