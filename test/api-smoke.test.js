@@ -2849,6 +2849,55 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
   }
 });
 
+// Multiple sessions per day: an effort-only upload with NO session_id must auto-increment
+// past an existing session the SAME day (e.g. a later run after the gym session was already
+// saved) instead of colliding on …-01. The server resolves the next free suffix via
+// nextAvailableSessionId; the client sends the field blank for a fresh effort upload.
+test('api smoke: complete-workout effort-only with no session_id auto-increments past an existing same-day session', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  // Seed both AM and PM -01 so the assertion is independent of the test run clock.
+  fakeSheetsState.effortSessionIds = ['20260629-AM-01', '20260629-PM-01'];
+
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      // No session_id field at all — the client omits it for a fresh effort upload so the
+      // server picks the next free session of the day instead of being forced to -01.
+      form.append('date', '2026-06-29');
+      form.append('log_rows_json', JSON.stringify([]));
+      form.append('write_id', 'complete-effort-only-multi-session-01');
+      form.append('effort_json', JSON.stringify({
+        duration: '23',
+        activeCalories: 210,
+        totalCalories: 260,
+        averageHR: 132,
+        peakHR: 158,
+        workoutType: 'Outdoor Run'
+      }));
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.effort_only, true);
+      assert.equal(data.sheet_written, true);
+      assert.equal(data.effort_written, true);
+      // Auto-incremented to -02 (a new session), not forced to a colliding -01.
+      assert.match(data.session_id, /^20260629-(AM|PM)-02$/,
+        `expected an auto-incremented -02 session, got ${data.session_id}`);
+      // A blank session_id can never be flagged a duplicate.
+      assert.notEqual(data.duplicate_check && data.duplicate_check.duplicate_session, true);
+      // The Effort row carries the resolved -02 session id (Effort and the response agree).
+      const effortCall = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort');
+      assert.equal(effortCall.rows[0][1], data.session_id, 'effort row session_id matches the resolved id');
+    });
+  } finally {
+    fakeSheetsState.effortSessionIds = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 // Screenshot graceful-degrade: a screenshot effort parse failure (e.g. Gemini
 // 429 / timeout) must NOT 500 the whole save. With logged sets present, the sets
 // are saved WITHOUT effort (blank effort row) and the owner is told.

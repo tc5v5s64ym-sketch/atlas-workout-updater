@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v69';
+const ATLAS_SHELL_BUILD = 'v70';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -5200,11 +5200,22 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   previewBtn.disabled = true;
   previewBtn.textContent = 'Previewing…';
 
+  // Multiple sessions per day: a fresh effort-only upload (a later run/ride after the
+  // gym session was already saved) must NOT be forced to …-01 and collide with the
+  // earlier session. When the owner hasn't explicitly tagged a session_id, send it BLANK
+  // for effort-only uploads so the server auto-increments (…-02, …-03 via
+  // nextAvailableSessionId). A concluded save clears #log-session-id, so the next upload
+  // starts blank = "a new session". Uploads that carry workout rows keep the resolved id
+  // so Log_Cleaned and Effort never disagree on session_id (BACKLOG: multi-session for
+  // screenshot-with-sets).
+  const explicitSessionId = sessionIdInput.value.trim();
+  const completeWorkoutSessionId = effortOnly ? explicitSessionId : sessionId;
+
   try {
     if (mode === 'screenshot' && file) {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
-      const result = await submitCompleteWorkout({ file, logRows, sessionId, date, location, notes, testMode: true });
+      const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId, date, location, notes, testMode: true });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
@@ -5235,11 +5246,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       };
       renderCompleteWorkoutPreview(result);
     } else if (effortOnly) {
-      const result = await submitCompleteWorkout({ logRows, sessionId, date, location, notes, manualEffort, testMode: true });
+      const result = await submitCompleteWorkout({ logRows, sessionId: completeWorkoutSessionId, date, location, notes, manualEffort, testMode: true });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
-      pendingWrite = { mode: 'effort-only', logRows, sessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(),
+      // Capture the server-resolved session_id (auto-incremented when we sent it blank) so
+      // the live write reuses the SAME id the preview computed, and the field/summary show
+      // the real …-02 instead of a forced …-01. Mirrors the screenshot branch above.
+      const resolvedEffortData = result?.data?.data || {};
+      const resolvedEffortSessionId = resolvedEffortData.session_id || completeWorkoutSessionId || sessionId;
+      sessionIdInput.value = resolvedEffortSessionId;
+      pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(),
         // Mirror the screenshot path: an already-saved session disables approve so the
         // graceful "already saved" preview note doesn't lead to a live 409 on tap.
         duplicateSession: Boolean(result?.data?.data?.duplicate_check?.duplicate_session),
@@ -5778,6 +5795,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     endPlannedSession();
     closeoutScreenshotFile = null;
     closeoutScreenshotEffort = null;
+    // Multiple sessions per day: a saved session is concluded, so clear its session_id from
+    // the field. The next upload then starts blank and the server auto-increments it to a
+    // NEW session (…-02) instead of re-sending the just-written id and colliding.
+    const savedSessionIdField = document.getElementById('log-session-id');
+    if (savedSessionIdField) savedSessionIdField.value = '';
     closeoutScreenshotDateSource = null;
     clearSessionSnapshot();   // saved — don't resume this (now-written) session
     document.dispatchEvent(new CustomEvent('atlas:session-reset'));
