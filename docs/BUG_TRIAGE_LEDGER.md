@@ -54,8 +54,8 @@ Legend: ✅ fixed (shipped) · 🟡 improved / needs live re-test · 🔴 open �
 
 | Sheet Bug ID | Local (PT) | Report | Distinct bug | Status | Resolved by | Owner |
 |---|---|---|---|---|---|---|
-| BUG-20260629-153312 | 06-29 08:33 | "told Atlas it missed [rows] and it came back with the generic 'coach isn't available' message" | Dup of -153258 | 🔴 **OPEN** | — | **new (this lane)** |
-| BUG-20260629-153258 | 06-29 08:32 | "informed Atlas it missed rows; it returned the generic 'coach isn't available'" — *Last error: "Not a recognized modality input (cardio / interval / circuit / timed hold)"* | Conversational "you missed rows" feedback appears misrouted to the modality parser → rejected → generic coach-unavailable fallback (or a transient Gemini outage). **Needs investigation** — note text read via a degraded CSV export, confirm against the sheet | 🔴 **OPEN** | — | **new (this lane)** |
+| BUG-20260629-153312 | 06-29 08:33 | "told Atlas it missed [rows] and it came back with the generic 'coach isn't available' message" | Dup of -153258 | 🟡 fixed, live re-test | trigger #699/#701; LLM-down reveal removed (this PR) | this lane |
+| BUG-20260629-153258 | 06-29 08:32 | "informed Atlas it missed rows; it returned the generic 'coach isn't available'" — *Last error: "Not a recognized modality input (cardio / interval / circuit / timed hold)"* | "You missed rows" feedback dead-ended at the generic "coach isn't available" fallback. **Investigated:** the modality 422 is a *benign, caught* fall-through (`tryPreviewModality`); the real symptom was the LLM-down `chatFallback` revealing the outage. Two parts: the **trigger** (rows actually dropped) and the **reveal** (the generic message). | 🟡 fixed, live re-test | trigger fixed by #699 + #701; **LLM-down reveal removed** — `chatFallback` now answers naturally for high-probability cases (incl. "you missed a set → re-type it") and never says the coach is unavailable (this PR) | this lane |
 | BUG-20260629-153217 | 06-29 08:32 | *(empty note)* | — | ⚪ noise | — | — |
 | BUG-20260629-152824 | 06-29 08:28 | "put a bunch of workouts in at once and it missed rows; also says there's no historical working weight for knee raises (false)" | (a) multi-exercise paste dropped rows; (b) bodyweight lift falsely reported "no recent working sets" | ✅ fixed | #699 (multiline merge) + #700 (bodyweight history) + #701 (single bare BW rep) | this lane |
 | BUG-20260629-054925 | 06-28 22:49 | "tapped to view a restored session's sets, nothing showed" | Restored session's logged rows `<details>` stayed collapsed ("tap to view" showed nothing) | ✅ fixed | PR G #691 (`2a1407f`) | other session |
@@ -77,32 +77,34 @@ Legend: ✅ fixed (shipped) · 🟡 improved / needs live re-test · 🔴 open �
 | BUG-20260627-025603 | 06-26 19:56 | "Test" | — | ⚪ noise | — | — |
 | BUG-20260627-025552 | 06-26 19:55 | *(empty note)* | — | ⚪ noise | — | — |
 
-**Bottom line (22 rows, updated 2026-06-29 PT):** 16 shipped, 2 fixed pending an owner live re-test,
-**2 open** (the coach-fallback pair -153258/-153312, same bug), 4 noise. The previously-"one open"
-recovery-bump bug (-034034) shipped in #696; the live-test re-tests (-003505 restore banner,
--002945 knee-raise prompt) are still pending owner confirmation.
+**Bottom line (22 rows, updated 2026-06-29 PT):** 16 shipped, **4 fixed pending an owner live re-test**
+(incl. the coach-fallback pair -153258/-153312), **0 open**, 4 noise (with one of the four being a
+near-dup). All known-actionable rows now have a shipped fix; the remaining work is owner live
+validation — see the live-test items in `BACKLOG.md` / the QA campaign.
 
 ---
 
-## The open bug
+## No open bugs
 
-🔴 **BUG-20260629-153258 (and its dup -153312) — "you missed rows" feedback dead-ends at "coach isn't
-available."** After the multi-exercise paste dropped rows (since fixed for the bare-bodyweight case in
-#701), the owner told Atlas *"you missed rows."* Instead of a useful reply, Atlas returned the generic
-**"coach isn't available"** fallback. The captured `Last error` — *"Not a recognized modality input
-(cardio / interval / circuit / timed hold)"* — strongly suggests the conversational complaint was
-**routed to the modality parser** (`/api/log-modality` or equivalent), rejected as not-a-modality, and
-then surfaced as the generic coach-unavailable line rather than a grounded answer.
+Every actionable `Bug_Reports` row now has a shipped fix. Four are 🟡 *fixed pending an owner live
+re-test* — they should be confirmed in the real app: -153258/-153312 (coach-fallback), -003505
+(restore banner), -002945 (knee-raise bodyweight prompt).
 
-- **Two candidate roots (investigate before fixing):** (a) a **routing bug** — free-form coach
-  feedback misclassified as a modality-log attempt; or (b) a **transient Gemini outage** at 08:32 PT,
-  in which case the bug is only the *generic* fallback wording (the deterministic engine should still
-  answer "here's what I logged"). The `Last error` points at (a).
-- **Note text caveat:** the sheet rows were read via a degraded CSV export (truncation + note/row
-  misalignment across fetches); **confirm the verbatim notes against the sheet** (or `GET
-  /api/bug-report?full=1`) before implementing.
-- **Lane:** correctness/routing — not started. Queued for a focused investigation PR (run the
-  Current-State Verification Gate first; the modality-routing path may already have changed).
+### Resolved this lane — the coach-fallback pair (-153258 / -153312)
+
+**Investigation verdict:** not a routing defect. The captured `Last error: "Not a recognized modality
+input"` is a *benign, caught* 422 from the modality dry-run probe (`tryPreviewModality` in
+`public/app.js` catches it and falls through to the coach) — never surfaced, never blocking. The real
+symptom was twofold: (1) the **trigger** — rows actually got dropped (the missed-rows bug, fixed by
+**#699** + **#701**); and (2) the **reveal** — with Gemini momentarily down, the client `chatFallback`
+told the lifter *"I couldn't reach the coach just now."*
+
+**Fix (owner directive — "when the LLM is down I don't want to know; give a natural response for
+high-probability cases"):** `public/coach-conversation.js` `chatFallback` now answers naturally for the
+common mid-session messages (greeting, thanks/ack, *"you missed a set" → re-type it*, how-am-I-doing,
+workout-notation, skip) and the catch-all is a productive nudge — with **no "couldn't reach" /
+"unavailable" / "ask again" wording**. The deterministic engine still owns logging and never invents a
+number; the LLM outage is simply invisible.
 
 ### Previously open, now shipped
 

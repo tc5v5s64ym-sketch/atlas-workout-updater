@@ -1697,27 +1697,43 @@
     });
   }
 
-  // Deterministic fallback when the coach voice is unconfigured, slow, or errors
-  // — the chat is never a dead end, and we never claim anything was saved.
+  // Deterministic fallback when the coach voice is unconfigured, slow, or errors.
+  // Owner directive: when the LLM is down the lifter must NEVER be told — there is no
+  // "coach unavailable" / "couldn't reach" / "ask again" reveal. Instead we answer
+  // naturally for the high-probability things said mid-session, always staying
+  // productive and never claiming anything was saved or inventing a number (the
+  // deterministic engine owns logging; this only voices conversational prose).
   function chatFallback(message) {
     const t = String(message || '').toLowerCase();
-    if (/^\s*(hi|hey|hello|yo|sup|good (morning|evening))\b/.test(t)) {
+    // Greeting
+    if (/^\s*(hi|hey|hello|yo|sup|good (morning|afternoon|evening))\b/.test(t)) {
       return "Hey — ready when you are. Log your sets and say \"log it\" when you're done.";
     }
-    // Skip + workout notation: user noted a substitution — acknowledge the skip without
-    // claiming it was classified or logged.
+    // Thanks / acknowledgment ("thanks", "got it", a bare "ok"/"cool")
+    if (/\b(thanks|thank you|thx|ty|appreciate|got it|gotcha|sounds good|will do|cool|nice|perfect|awesome|sweet)\b/.test(t) || /^\s*(ok(ay)?|k|yep|yeah|yup|word)\s*[.!]?\s*$/.test(t)) {
+      return "Anytime. Keep logging and say \"log it\" when you're done.";
+    }
+    // "You missed / that's wrong / didn't log it" — a set didn't make it in. Point the
+    // lifter to re-enter it; a re-typed set lands in the preview deterministically.
+    if (/\b(missed|missing|didn'?t (log|catch|get|add|count)|forgot|wrong|not right|that'?s not|isn'?t right)\b/.test(t)) {
+      return "If a set didn't make it in, re-type it like \"seated row 95 10/2\" and I'll add it to the preview.";
+    }
+    // Skip + workout notation: user noted a substitution.
     if (/\bskipp?ed?\b/.test(t) && /\d/.test(t)) {
       return "Noted the skip. Keep logging and say \"log it\" when you're done — I'll review the full session then.";
     }
-    // Looks like workout notation (has numbers) — don't suggest format correction
+    // Looks like workout notation (has numbers).
     if (/\d/.test(t)) {
       return "Noted — keep logging and say \"log it\" when you're done; I'll compile everything then.";
     }
-    // Genuine free-form chat with the coach voice down: never a bare dead-end during
-    // a session — keep the lifter productive (logging works without the LLM) and
-    // invite a retry. The deterministic engine already owns session questions; this
-    // is only reached for conversational prose the LLM would have voiced.
-    return "I couldn't reach the coach just now — keep logging and say \"log it\" when you're done, or ask again in a moment.";
+    // "How am I doing / was that good" — answer naturally without inventing a number
+    // (if the engine could quantify it, it would have answered before this fallback).
+    if (/\b(how'?s|how am|how are|how did|how is|how'?d|was that|that good|on track|progress)\b/.test(t)) {
+      return "You're putting in the work. Keep logging your sets and say \"log it\" — I'll have the full read then.";
+    }
+    // Natural catch-all: a productive nudge, never a dead-end, never a hint the LLM is
+    // down. Conversational prose the engine can't action still gets a real reply.
+    return "Got it — keep logging your sets and say \"log it\" when you're done.";
   }
 
   async function handleChatMessage(detail) {
