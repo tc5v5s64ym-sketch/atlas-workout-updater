@@ -195,7 +195,7 @@ The spearhead: the engine already emits verdicts (PR 3.3 ✅) and detects swaps 
 
 ---
 
-## Deterministic Coach Voice Renderer — APPROVED, build not started
+## Deterministic Coach Voice Renderer — ◐ slice 1 (pure engine + tests) shipped; wiring deferred
 
 `[correctness]` Atlas currently falls back to generic robotic templates when the LLM is unavailable, rate-limited, or too expensive to call. Known gym events should render deterministically from facts — still human, specific, and coach-like — without requiring a model call. Many set-reaction and next-up responses do not need model reasoning at all. **Principle: the deterministic engine owns facts and decisions; the LLM is optional narration; non-LLM responses should still feel like Atlas, not like system messages.**
 
@@ -246,6 +246,9 @@ The spearhead: the engine already emits verdicts (PR 3.3 ✅) and detects swaps 
 **Priority:** after the current P0 ActiveSession / save / preview-reliability work and coach robustness fixes, but before deep multi-provider LLM routing. This directly improves coach trust and reduces LLM dependency for routine gym events.
 
 **Build order (suggested):** engine + tests first (pure renderer, no route/LLM change) → wire into the coach-unavailable fallback path → wire into set-reaction as a pre-LLM fast path for simple events → voice phrasing pass.
+
+- ✅ **Slice 1 — pure engine + tests (this PR).** `services/deterministicCoachRenderer.js`: `renderCoachEvent(eventType, input)` → `{ message, evidenceCited }` for all 17 event types, each with ≥2 deterministically-chosen phrasing variants (stable djb2 hash, no randomness), conclusion-first, ≤3 sentences. NEVER invents a number — only interpolates values present in the input (or stock phrases); `coach_unavailable` is confident output, not an apology; `save_failed` reassures the sets are kept + is actionable. Pure/stateless, no route/LLM/write change. 15 unit tests in `test/deterministicCoachRenderer.test.js` incl. the hard guarantee (every output digit must appear in the input — full-input subset + empty-input zero-digits), determinism, ≤3-sentence bound, evidenceCited ↔ number-present, variant coverage, and no-throw on malformed input.
+- **Remaining slices (deferred, own PRs):** (2) route the `coach_unavailable` / `coachVoiceTemplates.js` LLM-down fallback through this renderer instead of raw template text; (3) wire as a pre-LLM fast path for simple set-reaction events; (4) voice phrasing pass. None acquire a new LLM dependency.
 
 ## New-user onboarding + working-weight discovery (B8) — DESIGN APPROVED, build not started
 
