@@ -217,6 +217,28 @@ function suppressBumpForRecovery(analysis, recoveryActive) {
 }
 
 /**
+ * Recovery/deload override for the Stimulus Governor grade (BUG-20260629-034034,
+ * review follow-up). On a recovery/deload session the high-RIR working sets make
+ * `gradeStimulus` return a "+load"/"+reps" progression_verdict ("room to add
+ * stimulus") — an independent add-load steer the coach prompt would otherwise word.
+ * When a recovery objective is active, downgrade that to 'hold' (which the prompt
+ * already reads as "do NOT add load/push"), leaving effort_interpretation /
+ * fatigue_signal intact. 'hold' / 'back_off' grades are left as-is.
+ *
+ * Pure: returns a new grade (or the original when there's nothing to suppress).
+ *
+ * @param {object|null} setGrade - the { profile, effort_interpretation, progression_verdict, fatigue_signal } fact.
+ * @param {boolean} recoveryActive
+ * @returns {object|null}
+ */
+function holdStimulusForRecovery(setGrade, recoveryActive) {
+  if (!recoveryActive || !setGrade || (setGrade.progression_verdict !== '+load' && setGrade.progression_verdict !== '+reps')) {
+    return setGrade;
+  }
+  return { ...setGrade, progression_verdict: 'hold', recovery_suppressed_load: true };
+}
+
+/**
  * Given the current exercise analysis and the REMAINING planned queue (exercises
  * after the current one), flag a same-prime-mover conflict and suggest a reroute.
  * Suggestion-only — never mutates the plan (owner-approved).
@@ -267,6 +289,7 @@ module.exports = {
   analyzeSetSequence,
   assessNextMoveConflict,
   suppressBumpForRecovery,
+  holdStimulusForRecovery,
   EFFORT_REASON_CODES,
   // exported for fixtures / future wiring
   WARMUP_MIN_RIR,

@@ -94,7 +94,7 @@ const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextP
 const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
-const { analyzeSetSequence, assessNextMoveConflict, suppressBumpForRecovery } = require('./services/setEffortSignals');
+const { analyzeSetSequence, assessNextMoveConflict, suppressBumpForRecovery, holdStimulusForRecovery } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('./services/coachVoiceRenderer');
 const { gradeStimulus } = require('./services/stimulusGovernor');
@@ -1201,12 +1201,16 @@ function computeSetEffortExtras(rawFacts) {
         is_heavy_compound: !!analysis.is_compound,
       });
       if (grade) {
-        out.set_grade = {
+        // Same recovery guard as the bump (BUG-20260629-034034 review follow-up): on a
+        // recovery/deload day a high-RIR set grades as "+load" ("room to add stimulus"),
+        // which the prompt would word as an add-load steer — downgrade it to 'hold' so
+        // no voice nudges adding load on a deliberately-light day.
+        out.set_grade = holdStimulusForRecovery({
           profile: grade.rule.profile,
           effort_interpretation: grade.effort_interpretation,
           progression_verdict: grade.progression_verdict,
           fatigue_signal: grade.fatigue_signal,
-        };
+        }, recoveryActive);
       }
     } catch (_) { /* grade is best-effort; never block the reaction */ }
     out.effort_note = buildEffortNote(analysis);
