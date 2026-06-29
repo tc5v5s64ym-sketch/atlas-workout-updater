@@ -170,9 +170,10 @@ const fakeSheets = {
     return [];
   },
   getSpreadsheetTabs: async () => {
-    const base = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes', 'Constraints'];
-    // Deload_State / Modality_Log are present unless a test hides them to exercise
-    // their respective 503 paths.
+    const base = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary', 'Bodyweight', 'Coaching_Notes'];
+    // Constraints / Deload_State / Modality_Log are present unless a test hides
+    // them to exercise their respective 503 paths.
+    if (!fakeSheetsState.hideConstraintsTab) base.push('Constraints');
     if (!fakeSheetsState.hideDeloadStateTab) base.push('Deload_State');
     if (!fakeSheetsState.hideModalityLogTab) base.push('Modality_Log');
     return base;
@@ -4794,6 +4795,31 @@ test('api smoke: POST /api/constraints is idempotent for repeated write_id', asy
   assert.equal(r2.status, 200);
   assert.equal(b2.data.duplicate_write, true, 'second call must be marked duplicate');
   assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Constraints').length, 1, 'sheet must only be written once');
+  fakeSheetsState.allowAppend = false;
+  fakeSheetsState.appendCalls = [];
+});
+
+test('api smoke: POST /api/constraints returns 503 until the Constraints tab exists, writes nothing, and releases the write_id', async () => {
+  fakeSheetsState.hideConstraintsTab = true;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.appendCalls = [];
+
+  const payload = JSON.stringify({ kind: 'injury', target: 'overhead pressing', rule: 'avoid', write_id: 'c-503-1' });
+  const { response, body } = await requestJson('/api/constraints', { method: 'POST', body: payload });
+
+  assert.equal(response.status, 503, 'missing Constraints tab → 503');
+  assert.match(body.message, /Constraints tab not found/);
+  assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Constraints').length, 0, 'nothing written');
+
+  // The 503 path must release the write_id (failWrite), so a retry after the tab
+  // exists is NOT treated as a duplicate and can write cleanly.
+  fakeSheetsState.hideConstraintsTab = false;
+  const { response: r2, body: b2 } = await requestJson('/api/constraints', { method: 'POST', body: payload });
+  assert.equal(r2.status, 200, 'retry after tab exists succeeds');
+  assert.equal(b2.data.duplicate_write, false, 'write_id was released, so the retry is not a duplicate');
+  assert.equal(b2.data.sheet_written, true);
+  assert.equal(fakeSheetsState.appendCalls.filter(c => c.tabName === 'Constraints').length, 1, 'written exactly once on the retry');
+
   fakeSheetsState.allowAppend = false;
   fakeSheetsState.appendCalls = [];
 });
