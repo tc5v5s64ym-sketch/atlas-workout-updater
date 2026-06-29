@@ -1254,6 +1254,16 @@ button.approve {
 /* Hide the safety note on the coach surface — it belongs in settings/debug only */
 body[data-surface="coach"] .safety-note.compact { display: none; }
 
+/* Explicit freestyle finish affordance — full-width, shown once a set is logged
+   (toggled via the [hidden] attribute in app.js). Reuses button.secondary styling. */
+.finish-session {
+  display: block;
+  width: 100%;
+  margin-top: var(--s1);
+  font-weight: 500;
+}
+.finish-session[hidden] { display: none; }
+
 /* Effort details: hidden from view — the + menu opens it via JS when needed.
    It is shown/hidden via the [hidden] attribute, which the + menu's manual /
    screenshot handlers (nav.js setEffortMode) and prefillEffortForm toggle; the

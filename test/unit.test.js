@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v74/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v75/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5544,10 +5544,28 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
   assert.match(gestures, /restoreSessionToView\(\)/, 'a tap (no real drag) restores');
 });
 
+test('freestyle finish: explicit "Finish session" affordance triggers the existing closeout', () => {
+  // The lifter should not have to know the "done"/"log it" keyword to close out a
+  // freestyle session. A contextual button surfaces the SAME closeout path.
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // The button exists, is hidden by default (contextual), and lives in the logger form.
+  assert.match(html, /id="finish-session-btn"[^>]*\bhidden\b/, 'finish button exists and starts hidden');
+  // Clicking it runs the existing closeout (handleLogIt → runCloseout) — no new write path.
+  assert.match(app, /getElementById\('finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
+    'finish button click runs handleLogIt (the existing closeout)');
+  // It is contextual: shown once a set is logged, hidden on session reset/save.
+  assert.match(app, /addEventListener\('atlas:set-logged', \(\) => setFinishSessionVisible\(true\)\)/, 'shown on set-logged');
+  assert.match(app, /addEventListener\('atlas:session-reset', \(\) => setFinishSessionVisible\(false\)\)/, 'hidden on session reset');
+  // A restored in-progress session also surfaces it.
+  const view = app.slice(app.indexOf('function restoreSessionToView('), app.indexOf('function wireResumeNoticeGestures('));
+  assert.match(view, /setFinishSessionVisible\(true\)/, 'a restored session shows the finish affordance');
+});
+
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v74/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v73\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v75/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v74\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
