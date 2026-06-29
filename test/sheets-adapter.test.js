@@ -18,9 +18,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // --- Env must be set before sheets.js is required: it captures these at load. ---
-process.env.GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID || 'test-spreadsheet-id';
-process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL =
-  process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 'svc@example.iam.gserviceaccount.com';
+// Set unconditionally (not `|| default`) so the spreadsheetId / client_email
+// equality assertions are hermetic — a real GOOGLE_SHEETS_ID exported in the
+// environment must not leak in and fail the test. node:test isolates each file
+// in its own process, so overriding here cannot affect other suites.
+process.env.GOOGLE_SHEETS_ID = 'test-spreadsheet-id';
+process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'svc@example.iam.gserviceaccount.com';
 // Literal backslash-n sequences, exactly how a PEM key arrives via env. We use
 // a neutral fixture (NOT a real PEM header) on purpose: getPrivateKey() only
 // un-escapes `\n`, so this exercises the full contract without tripping the
