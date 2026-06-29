@@ -35,11 +35,7 @@ const {
   detectStalls,
   suggestDeloads,
   computeFatigueStatus,
-  buildWeeklyReport,
-  buildProgressSummary,
-  buildExerciseDetail,
   buildRecentSessions,
-  buildMuscleGroupReadiness,
   scoreIntents,
   detectSwap
 } = require('./services/analytics');
