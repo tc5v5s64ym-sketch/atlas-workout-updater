@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v77/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v78/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -3117,9 +3117,11 @@ test('reaction layer: fetchReaction exists and fails quietly', () => {
   // anchors on it (Bug 1) — not on the previous session in the sheet.
   assert.match(fetchFn, /async function fetchReaction\(liftCode, justLoggedSet\)/, 'must accept an optional just-logged set');
   assert.match(fetchFn, /URLSearchParams/, 'must append the set as query params');
-  // Deload narration: the active plan intent is threaded through so the engine's
-  // reaction (and the coach note) can flip on a deload day.
-  assert.match(fetchFn, /activePlannedSession && activePlannedSession\.intentId/, 'must read the active plan intent');
+  // Deload/recovery narration: the active plan intent is threaded through so the
+  // engine's reaction (and the coach note) can flip on a recovery/deload day. Sourced
+  // via getActiveIntentId so an engaged-but-unmaterialized Coach's Pick still carries
+  // its intent (BUG-20260629-204817).
+  assert.match(fetchFn, /const intentId = getActiveIntentId\(\)/, 'must read the active plan intent via getActiveIntentId');
   assert.match(fetchFn, /params\.set\('intentId', intentId\)/, 'must forward the active intent as ?intentId');
 });
 
@@ -5567,10 +5569,28 @@ test('freestyle finish: explicit "Finish session" affordance triggers the existi
   assert.match(view, /setFinishSessionVisible\(true\)/, 'a restored session shows the finish affordance');
 });
 
+test('recovery intent is sourced from an engaged Coach\'s Pick, not just a started session (BUG-20260629-204817)', () => {
+  // #704 sourced the intent from activePlannedSession.intentId, which is null when a
+  // Coach's Pick is engaged but not yet materialized — so a Recovery/Pump session
+  // logged straight from the pick lost its intent and got an "add load" nudge. The
+  // intent must fall back to the engaged suggestion's recommended intent.
+  const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const conv = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+
+  assert.match(app, /function getActiveIntentId\(\)/, 'app.js must expose getActiveIntentId');
+  const fn = app.slice(app.indexOf('function getActiveIntentId()'), app.indexOf('function getActiveIntentId()') + 500);
+  assert.match(fn, /activePlannedSession && activePlannedSession\.intentId/, 'prefers a started session intent');
+  assert.match(fn, /coachSuggestionEngaged && lastIntentData/, 'falls back to the engaged suggestion intent');
+
+  // The recommend call and the set-reaction facts both source the intent via the helper.
+  assert.match(app, /const intentId = getActiveIntentId\(\)/, 'the next-set recommend call uses getActiveIntentId');
+  assert.match(conv, /getActiveIntentId === 'function' \? getActiveIntentId\(\)/, 'the set reaction sources intent via getActiveIntentId');
+});
+
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v77/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v76\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v78/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v77\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

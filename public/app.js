@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v77';
+const ATLAS_SHELL_BUILD = 'v78';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1612,6 +1612,22 @@ let pendingSubstitution = null;
 // and endPlannedSession).
 function getActivePlannedSession() { return activePlannedSession; }
 function getSessionCompleted() { return sessionCompleted; }
+
+// The active training intent id (e.g. 'recovery_pump', 'deload_reset'). A started
+// session carries it on activePlannedSession; but an ENGAGED Coach's Pick that the
+// lifter logs against WITHOUT a mutation never materializes one (activePlannedSession
+// stays null — see ensureActivePlannedSession), so fall back to the engaged
+// suggestion's recommended intent. Without this, a Recovery/Pump session logged
+// straight from Coach's Pick lost its intent and got an "add load" nudge
+// (BUG-20260629-204817). Returns null in freestyle / when nothing is engaged.
+function getActiveIntentId() {
+  if (activePlannedSession && activePlannedSession.intentId) return activePlannedSession.intentId;
+  if (coachSuggestionEngaged && lastIntentData) {
+    const rec = ((lastIntentData.intents) || []).find(i => i && i.recommended);
+    if (rec && rec.id) return rec.id;
+  }
+  return null;
+}
 
 // P0 Active Workout State Unification — the ONE canonical view of the in-progress
 // workout, derived from the authoritative store (the planned order from
@@ -4416,9 +4432,12 @@ async function fetchReaction(liftCode, justLoggedSet) {
   if (!liftCode || !getApiKey()) return null;
   try {
     const params = new URLSearchParams();
-    // Thread the active plan intent (e.g. 'deload_reset') so the engine's reaction
-    // flips on a deload day — an easy/high-RIR set reads on-plan, not "add weight".
-    const intentId = activePlannedSession && activePlannedSession.intentId;
+    // Thread the active plan intent (e.g. 'recovery_pump' / 'deload_reset') so the
+    // engine's reaction AND the next-set prescription flip on a recovery day — an
+    // easy/high-RIR set reads on-plan, not "add weight". Sourced via getActiveIntentId
+    // so an engaged-but-unmaterialized Coach's Pick still carries its intent
+    // (BUG-20260629-204817).
+    const intentId = getActiveIntentId();
     if (intentId) params.set('intentId', intentId);
     if (justLoggedSet && justLoggedSet.weight != null && justLoggedSet.reps != null) {
       params.set('w', String(justLoggedSet.weight));

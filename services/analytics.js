@@ -812,6 +812,22 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     ? progressionVerdict(progressionTop, band)
     : null;
 
+  // Recovery/deload intent (Coach's Pick 'recovery_pump' / 'deload_reset'): the
+  // lighter, higher-RIR work is BY DESIGN, so the next-set prescription must never
+  // tell the lifter to add load — an "Increase to / move to X" here contradicts the
+  // recovery objective (BUG-20260629-204817). Hold at today's working weight instead.
+  const recoveryIntent = ['recovery_pump', 'deload_reset'].includes(String(options.intentId || ''));
+  if (recoveryIntent && !isBodyweight) {
+    const todayWeight = justLogged && isPositiveFinite(Number(justLogged.weight)) ? Number(justLogged.weight) : lastSet.weight;
+    if (isPositiveFinite(todayWeight) && isPositiveFinite(nextWeight) && nextWeight > todayWeight) {
+      nextWeight = todayWeight;
+      nextReps = justLogged && isPositiveFinite(Number(justLogged.reps)) ? Number(justLogged.reps) : lastSet.reps;
+      recommendation = `Recovery day — keep ${nextWeight} × ${nextReps} and stay light.`;
+      reasoning = 'This is a recovery/pump session, so hold the working weight rather than adding load — the lighter work is the point today.';
+      confidence = 'medium';
+    }
+  }
+
   // Load sanity guard: prevent impossible prescriptions from reaching the UI.
   // Applied unconditionally — the just-logged weight is trusted as the lifter's
   // actual set, but the *next target* must still be physically plausible.

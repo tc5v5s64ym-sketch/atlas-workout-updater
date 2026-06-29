@@ -1026,6 +1026,34 @@ test('recommendNextSet: trend is unaffected for single-working-set-per-session h
   assert.equal(recommendNextSet(rows, 'SQ01', { today: '2026-05-16' }).e1rm_trend, 'up');
 });
 
+// ── Recovery-intent sessions never get an add-load next-set prescription ───────
+// BUG-20260629-204817: on a Coach's Pick Recovery/Pump session the "Next time:" card
+// still said "move to 175 × 9" (add load), contradicting the recovery objective.
+test('recommendNextSet: a recovery intent holds the weight instead of prescribing a load bump', () => {
+  const row = (d, s, w, r, rir) => [d, s, 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', String(w), String(r), String(rir), '', ''];
+  // Two sessions of stable reps at RIR 2 → normally a +5 lb bump.
+  const rows = [row('2026-06-02', 'S1', 170, 9, 2), row('2026-06-09', 'S2', 170, 9, 2)];
+
+  const normal = recommendNextSet(rows, 'BEN01', { today: '2026-06-10' });
+  assert.ok(normal.next_target.weight > 170, 'control: a normal session bumps the load');
+
+  const recovery = recommendNextSet(rows, 'BEN01', { today: '2026-06-10', intentId: 'recovery_pump' });
+  assert.equal(recovery.next_target.weight, 170, 'recovery intent must not add load');
+  assert.match(recovery.recommendation, /Recovery day|stay light|keep/i);
+  assert.doesNotMatch(recovery.recommendation, /Increase to|move to 175|add (load|weight)/i);
+});
+
+test('recommendNextSet: a recovery intent also caps the in-workout just-logged bump', () => {
+  const row = (d, s, w, r, rir) => [d, s, 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', String(w), String(r), String(rir), '', ''];
+  const rows = [row('2026-06-02', 'S1', 170, 9, 2), row('2026-06-09', 'S2', 170, 9, 2)];
+  const rec = recommendNextSet(rows, 'BEN01', {
+    today: '2026-06-10', intentId: 'recovery_pump',
+    justLoggedSet: { weight: 170, reps: 9, rir: 5 } // far-easy → would normally bump
+  });
+  assert.ok(rec.next_target.weight <= 170, 'recovery intent must not push the in-workout target above today');
+  assert.doesNotMatch(rec.recommendation, /move to 175|Increase to|add (load|weight)/i);
+});
+
 // ── Bodyweight lifts get a rep-based recommendation, not a false dead-end ──────
 // Live-test bug (2026-06-29): logging hanging knee raises returned "No recent
 // working sets found for this lift code" and no next card, because recommendNextSet
