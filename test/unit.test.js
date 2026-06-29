@@ -98,7 +98,12 @@ test('Bug_Reports append shape is stable', () => {
     'Last Error',
     'App Version',
     'User Agent',
-    'Payload JSON'
+    'Payload JSON',
+    'Error Count',
+    'Last Failed Endpoint',
+    'Last Action',
+    'Stale Shell',
+    'UI Blocked'
   ]);
   const row = buildBugReportRow({
     bug_id: 'BUG-20260102-030405',
@@ -124,6 +129,40 @@ test('Bug_Reports append shape is stable', () => {
   ]);
   assert.equal(JSON.parse(row[8]).api_key, '[REDACTED]');
   assert.doesNotMatch(row[8], /sk-row-secret-token|abcdefghijklmnopqrstuvwxyz123456|must-redact/);
+});
+
+test('Bug_Reports summary columns derive from the enriched payload', () => {
+  const row = buildBugReportRow({
+    bug_id: 'BUG-20260102-030405',
+    timestamp: '2026-01-02T03:04:05.000Z',
+    recent_errors: [
+      { source: 'api', endpoint: '/api/log-modality', method: 'POST', status: 422 },
+      { source: 'api', endpoint: '/api/log-workout', method: 'POST', status: 400 }
+    ],
+    action_log: [
+      { action: 'tap', detail: 'done' },
+      { action: 'tap', detail: 'restore' }
+    ],
+    service_worker: { supported: true, controller: true, waiting: true },
+    ui_state: { approve_btn_disabled: true, composer_disabled: true, preview_btn_disabled: false }
+  });
+  // Summary columns ride at the END, after Payload JSON (index 8). Order matches
+  // BUG_REPORT_COLUMNS: Error Count, Last Failed Endpoint, Last Action, Stale Shell, UI Blocked.
+  assert.equal(row.length, BUG_REPORT_COLUMNS.length);
+  assert.deepEqual(row.slice(9), [
+    2,
+    'POST /api/log-workout',
+    'tap: restore',
+    'yes',
+    'Save disabled, composer disabled'
+  ]);
+});
+
+test('Bug_Reports summary columns are blank when the enriched fields are absent', () => {
+  // Older client / the /bug command path sends none of the new fields — blanks, not a crash.
+  const row = buildBugReportRow({ bug_id: 'BUG-1', timestamp: '2026-01-02T03:04:05.000Z', note: 'x' });
+  assert.equal(row.length, BUG_REPORT_COLUMNS.length);
+  assert.deepEqual(row.slice(9), ['', '', '', '', '']);
 });
 
 test('/bug command creates payload before normal composer routing', () => {
