@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v73/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v74/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5530,6 +5530,11 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
   // Tap restores the recovered workout into the editable rows view.
   const view = app.slice(app.indexOf('function restoreSessionToView('), app.indexOf('function wireResumeNoticeGestures('));
   assert.match(view, /populateSetRows\(buildRowsFromSessionLog\(\)\)/, 'tap-to-view populates the rows from the restored buffer');
+  // The rows editor is a <details>; it must be OPENED, not just unhidden — otherwise the
+  // tap surfaces only the collapsed "Edit rows" summary and the session looks unrestored
+  // (BUG-20260629-054925).
+  assert.match(view, /parsedRowsEditor\.hidden = false/, 'the rows editor is revealed');
+  assert.match(view, /parsedRowsEditor\.open = true/, 'the rows editor <details> is expanded so restored sets are actually visible');
   // The gesture handler distinguishes a horizontal swipe from vertical scroll.
   const gestures = app.slice(app.indexOf('function wireResumeNoticeGestures('), app.indexOf('function renderResumeNotice(', app.indexOf('function wireResumeNoticeGestures(')));
   assert.match(gestures, /Math\.abs\(dx\) < Math\.abs\(dy\)/, 'a dominant vertical move aborts the swipe (scroll is preserved)');
@@ -5541,8 +5546,8 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v73/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v72\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v74/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v73\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

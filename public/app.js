@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v73';
+const ATLAS_SHELL_BUILD = 'v74';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3943,6 +3943,10 @@ function restoreSessionToView() {
   populateSetRows(buildRowsFromSessionLog());
   if (parsedRowsEditor) {
     parsedRowsEditor.hidden = false;
+    // The rows editor is a <details> — revealing it (hidden=false) only shows the
+    // collapsed "Edit rows" summary. Open it so "tap to view" actually surfaces the
+    // restored sets instead of an empty-looking disclosure (BUG-20260629-054925).
+    parsedRowsEditor.open = true;
     if (parsedRowsEditor.scrollIntoView) parsedRowsEditor.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
   const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
