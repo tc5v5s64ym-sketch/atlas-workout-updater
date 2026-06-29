@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v71';
+const ATLAS_SHELL_BUILD = 'v72';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -21,9 +21,75 @@ const BUG_REPORT_SECRET_VALUE_PATTERNS = [
 ];
 const BUG_REPORT_REDACTED = '[REDACTED]';
 const BUG_REPORT_RECENT_API_LIMIT = 20;
+// Bug-report diagnostics: so one tap on "Report Bug" captures enough to root-cause
+// without the owner typing anything. All of this rides inside the existing Payload JSON
+// column (no Bug_Reports schema change) and is bounded + redacted before it leaves.
+const BUG_REPORT_ERROR_LIMIT = 12;   // ring buffer of recent errors (api + client JS)
+const BUG_REPORT_ACTION_LIMIT = 30;  // ring buffer of UI breadcrumbs (taps, nav)
+const BUG_REPORT_BODY_MAX = 1000;    // per-call request/response body cap (chars)
+const BUG_REPORT_SIZE_BUDGET = 44000; // keep the whole report under the Sheets per-cell limit
 const atlasRecentApiRequests = [];
+const atlasRecentErrors = [];        // last N errors, so a cascade shows AS a cascade
+const atlasActionLog = [];           // last N UI actions, e.g. "tap restore" → nothing
 let atlasLastError = null;
 let atlasServerVersion = null;
+
+// Truncated + redacted snapshot of a request/response body. Multipart uploads
+// (screenshots) are summarised by field name, never dumped.
+function snapshotBugBody(body) {
+  if (body == null) return null;
+  try {
+    if (typeof FormData !== 'undefined' && body instanceof FormData) {
+      const keys = [];
+      for (const k of body.keys()) keys.push(k);
+      return `[multipart: ${keys.join(', ')}]`;
+    }
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
+    const safe = redactBugReportString(text);
+    return safe.length > BUG_REPORT_BODY_MAX ? `${safe.slice(0, BUG_REPORT_BODY_MAX)}...[truncated]` : safe;
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+// Error/action capture must NEVER throw — diagnostics can't be the thing that breaks logging.
+function recordAtlasError(entry) {
+  try {
+    atlasRecentErrors.push({ at: new Date().toISOString(), ...entry });
+    while (atlasRecentErrors.length > BUG_REPORT_ERROR_LIMIT) atlasRecentErrors.shift();
+  } catch { /* best-effort */ }
+}
+
+function recordAtlasAction(action, detail) {
+  try {
+    atlasActionLog.push({
+      at: new Date().toISOString(),
+      action,
+      ...(detail ? { detail: String(detail).slice(0, 120) } : {})
+    });
+    while (atlasActionLog.length > BUG_REPORT_ACTION_LIMIT) atlasActionLog.shift();
+  } catch { /* best-effort */ }
+}
+
+// Unhandled JS errors / promise rejections never reach api(), so a UI lockup or a silent
+// "tapped X, nothing happened" would otherwise leave no trace. Capture them, and leave a
+// breadcrumb for every tap (capture phase, so a stopPropagation handler still logs).
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => recordAtlasError({
+    source: 'window.onerror',
+    message: (e && e.message) || String(e),
+    where: e ? [e.filename, e.lineno, e.colno].filter(v => v != null).join(':') || null : null
+  }));
+  window.addEventListener('unhandledrejection', (e) => recordAtlasError({
+    source: 'unhandledrejection',
+    message: (e && e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection'
+  }));
+  document.addEventListener('click', (e) => {
+    const t = e.target && e.target.closest && e.target.closest('button, .surface-btn, .tab, [role="button"], a');
+    if (!t) return;
+    recordAtlasAction('tap', (t.id || t.getAttribute('aria-label') || t.textContent || '').trim().slice(0, 60));
+  }, true);
+}
 
 function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
@@ -53,6 +119,16 @@ async function api(path, options = {}) {
       endpoint: path,
       at: new Date().toISOString()
     };
+    // Keep a HISTORY, not just the latest: a poison cascade (e.g. one bad set 400ing
+    // every save attempt) only makes sense when you can see all of them in order.
+    recordAtlasError({
+      source: 'api',
+      endpoint: path,
+      method,
+      status: atlasLastError.status,
+      message: atlasLastError.message,
+      response_body: snapshotBugBody(json)
+    });
     throw err;
   } finally {
     atlasRecentApiRequests.push({
@@ -62,7 +138,12 @@ async function api(path, options = {}) {
       status: res ? res.status : null,
       ok: res ? res.ok : false,
       duration_ms: Date.now() - startedAt,
-      failed: res ? !res.ok : true
+      failed: res ? !res.ok : true,
+      // Bodies (redacted + truncated) so a bad parse/write is diagnosable from the report
+      // itself instead of inferred from downstream state — e.g. exactly what
+      // /api/parse-workout-text returned for "Push ups 40 40 40".
+      request_body: snapshotBugBody(options.body),
+      response_body: snapshotBugBody(json)
     });
     while (atlasRecentApiRequests.length > BUG_REPORT_RECENT_API_LIMIT) atlasRecentApiRequests.shift();
   }
@@ -791,6 +872,48 @@ function currentSheetForBugReport() {
   };
 }
 
+// Disabled/hidden state of the controls behind the trust-loop bugs: "Save greyed out"
+// and "composer won't let me type" are ABOUT a stuck state — capture it directly instead
+// of inferring it from pending_write.
+function uiStateForBugReport() {
+  const prop = (id, name) => {
+    const node = document.getElementById(id);
+    return node ? !!node[name] : null;
+  };
+  return {
+    composer_disabled: prop('workout-text', 'disabled'),
+    preview_btn_disabled: prop('preview-btn', 'disabled'),
+    approve_btn_disabled: prop('approve-btn', 'disabled'),
+    parsed_rows_hidden: prop('parsed-rows-editor', 'hidden'),
+    preview_panel_hidden: prop('preview-panel', 'hidden'),
+    resume_notice_hidden: prop('session-resume-notice', 'hidden')
+  };
+}
+
+// Service-worker / cache state — "a fix didn't take" is usually a stale shell, not a code
+// bug. A waiting SW or an old cache key makes that diagnosable in one glance. Async, so
+// it's merged in by the async save path rather than the sync payload builder.
+async function serviceWorkerStateForBugReport() {
+  const out = { supported: typeof navigator !== 'undefined' && 'serviceWorker' in navigator };
+  try {
+    if (navigator.serviceWorker) {
+      out.controller = !!navigator.serviceWorker.controller;
+      const reg = navigator.serviceWorker.getRegistration ? await navigator.serviceWorker.getRegistration() : null;
+      if (reg) {
+        out.active = !!reg.active;
+        out.waiting = !!reg.waiting;       // update downloaded but not yet applied = stale shell
+        out.installing = !!reg.installing;
+      }
+    }
+    if (typeof caches !== 'undefined' && caches.keys) {
+      out.cache_keys = (await caches.keys()).filter(k => /atlas/i.test(k));
+    }
+  } catch (err) {
+    out.error = err && err.message ? err.message : String(err);
+  }
+  return out;
+}
+
 function buildAtlasBugReportPayload(note, options = {}) {
   const now = options.now || new Date();
   const payload = {
@@ -808,6 +931,9 @@ function buildAtlasBugReportPayload(note, options = {}) {
     pending_write: pendingWrite || null,
     write_id: pendingWrite?.writeId || pendingWrite?.payload?.write_id || '',
     last_error: atlasLastError,
+    recent_errors: atlasRecentErrors.slice(-BUG_REPORT_ERROR_LIMIT),
+    action_log: atlasActionLog.slice(-BUG_REPORT_ACTION_LIMIT),
+    ui_state: uiStateForBugReport(),
     current_sheet: currentSheetForBugReport(),
     storage: {
       localStorage: collectAtlasStorage(window.localStorage),
@@ -826,10 +952,29 @@ function buildAtlasBugReportPayload(note, options = {}) {
       platform: navigator.platform,
       language: navigator.language,
       viewport: { width: window.innerWidth, height: window.innerHeight },
-      online: navigator.onLine
+      online: navigator.onLine,
+      // The server only sees UTC; the session-id / date bugs (AM/PM boundary) are
+      // local-clock-sensitive, so capture the device clock and connection quality.
+      local_time: now.toString(),
+      timezone_offset_min: now.getTimezoneOffset(),
+      timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; } })(),
+      connection: (navigator.connection && {
+        effective_type: navigator.connection.effectiveType || null,
+        downlink: navigator.connection.downlink ?? null,
+        rtt: navigator.connection.rtt ?? null
+      }) || null
     },
-    recent_api_requests: atlasRecentApiRequests.slice(-BUG_REPORT_RECENT_API_LIMIT)
+    recent_api_requests: atlasRecentApiRequests.slice(-BUG_REPORT_RECENT_API_LIMIT).map(r => ({ ...r }))
   };
+  // The report rides in one Google Sheets cell (~50k char limit). Request/response bodies
+  // are the elastic part, so if we're over budget shed them oldest-first until we fit —
+  // the notes, errors, session state, and breadcrumbs (the diagnosis) always survive.
+  let trim = 0;
+  while (JSON.stringify(payload).length > BUG_REPORT_SIZE_BUDGET && trim < payload.recent_api_requests.length) {
+    delete payload.recent_api_requests[trim].request_body;
+    delete payload.recent_api_requests[trim].response_body;
+    trim += 1;
+  }
   return redactBugReportValue(payload);
 }
 
@@ -844,6 +989,9 @@ async function exposeBugReportJson(payload, targetBox) {
 
 async function saveAtlasBugReport(note, options = {}) {
   const payload = buildAtlasBugReportPayload(note, options);
+  // Service-worker / cache state is async, so it's merged after the sync build. Values are
+  // booleans + cache names (no secrets), so they're safe to attach post-redaction.
+  try { payload.service_worker = await serviceWorkerStateForBugReport(); } catch { /* best-effort */ }
   const statusTarget = options.statusTarget || loggerStatus || document.getElementById('debug-result');
   try {
     const res = await api('/api/bug-report', {
