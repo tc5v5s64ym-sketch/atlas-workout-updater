@@ -51,6 +51,50 @@ test('golden: incline DB Press — x2 means two total instances of the last set'
   assert.equal(result.sets.length, 3, 'x2 = 2 total, so one original + one copy = 3 sets total');
 });
 
+test('golden: incline bench — bare "incline bench" resolves to Incline Bench Press, not Bench Press', () => {
+  // Live-bug: "incline bench" matched bare 'bench' alias → logged as Bench Press (wrong muscle group)
+  const result = parseWorkoutText('Incline bench 185 8/2');
+  assert.equal(result.canonical_name, 'Incline Bench Press');
+  assert.deepEqual(sets(result), [[185, 8, 2]]);
+});
+
+test('golden: incline bench press — explicit form resolves to Incline Bench Press', () => {
+  const result = parseWorkoutText('Incline bench press 185 8/2 8/3');
+  assert.equal(result.canonical_name, 'Incline Bench Press');
+  assert.deepEqual(sets(result), [[185, 8, 2], [185, 8, 3]]);
+});
+
+test('golden: decline bench — resolves to Decline Bench Press', () => {
+  const result = parseWorkoutText('Decline bench 175 8/2');
+  assert.equal(result.canonical_name, 'Decline Bench Press');
+  assert.deepEqual(sets(result), [[175, 8, 2]]);
+});
+
+test('golden: decline bench press — explicit form resolves to Decline Bench Press', () => {
+  const result = parseWorkoutText('Decline bench press 175 8/2 8/3');
+  assert.equal(result.canonical_name, 'Decline Bench Press');
+  assert.deepEqual(sets(result), [[175, 8, 2], [175, 8, 3]]);
+});
+
+test('golden: incline/decline guard — flat bench still resolves to Bench Press', () => {
+  const result = parseWorkoutText('Flat bench 225 5/2');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(sets(result), [[225, 5, 2]]);
+});
+
+test('golden: incline/decline guard — bare "bench" still resolves to Bench Press', () => {
+  const result = parseWorkoutText('Bench 225 5/2');
+  assert.equal(result.canonical_name, 'Bench Press');
+  assert.deepEqual(sets(result), [[225, 5, 2]]);
+});
+
+test('golden: incline/decline guard — incline db press still resolves to Incline DB Press', () => {
+  // The dumbbell variant must not be hijacked by the new barbell alias
+  const result = parseWorkoutText('Incline db press 60 10/2');
+  assert.equal(result.canonical_name, 'Incline DB Press');
+  assert.deepEqual(sets(result), [[60, 10, 2]]);
+});
+
 test('golden: lat pulldown x3 repeat shorthand — three total sets', () => {
   const result = parseWorkoutText('Lat pulldown 170 8/2 x3');
   assert.equal(result.canonical_name, 'Lat Pulldown');
