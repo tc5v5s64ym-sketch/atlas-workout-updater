@@ -37,6 +37,7 @@ const EXERCISE_ALIASES = [
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
   ['Push-Up', ['push-up', 'push up', 'pushups', 'push ups', 'push-ups', 'pushup']],
+  ['Cable Tricep Pushdown', ['cable tricep pushdown', 'cable tricep pushdowns', 'tricep pushdown', 'tricep pushdowns', 'tricep pulldown', 'tricep pulldowns', 'tricep pull', 'tricep pulls', 'cable triceps', 'cable tricep']],
 ];
 
 const AMBIGUOUS_ALIASES = {
