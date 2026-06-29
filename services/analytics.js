@@ -586,7 +586,11 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   const normalizedCode = String(liftCode || '').trim().toUpperCase();
   const rows = asArray(logRows)
     .map(normalizeLogRow)
-    .filter(row => row.lift_code === normalizedCode && isPositiveFinite(row.weight) && isPositiveFinite(row.reps))
+    // Bodyweight movements (hanging knee raises, push-ups, etc.) carry no external
+    // load, so weight is 0/blank — gating on a positive weight here dropped every
+    // such set and falsely reported "no recent working sets". Reps are the working
+    // signal for these lifts, so require only a positive rep count.
+    .filter(row => row.lift_code === normalizedCode && isPositiveFinite(row.reps))
     .sort((a, b) => (a.date_clean || '').localeCompare(b.date_clean || '') || (a.session_id || '').localeCompare(b.session_id || '') || (Number(a.set_number) || 0) - (Number(b.set_number) || 0));
 
   if (!rows.length) {
@@ -672,7 +676,30 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   let nextReps = lastSet.reps;
   let confidence = 'low';
 
-  if (lastSet.rir !== null && lastSet.rir !== undefined && Number.isFinite(lastSet.rir)) {
+  // Bodyweight lifts carry no external load, so progression is rep-based — never a
+  // weight bump. Skipping the load math below also stops the "Increase to 5 ×"
+  // nonsense that 0 + increaseAmount would otherwise produce for these lifts.
+  const isBodyweight = !isPositiveFinite(lastSet.weight);
+
+  if (isBodyweight) {
+    recommendation = `Repeat ${lastSet.reps} reps and keep form tight.`;
+    reasoning = 'Bodyweight movement — progress by adding reps, not load.';
+    nextReps = lastSet.reps;
+    confidence = 'low';
+    if (lastSet.rir !== null && lastSet.rir !== undefined && Number.isFinite(lastSet.rir)) {
+      if (lastSet.rir <= 0) {
+        nextReps = lastSet.reps;
+        recommendation = `Hold ${nextReps} reps — the last set was at or near failure.`;
+        reasoning = 'RIR ≤ 0 means the last set was very close to failure. Bank clean reps at this count before chasing more.';
+        confidence = 'high';
+      } else {
+        nextReps = (lastSet.reps || 0) + 1;
+        recommendation = `Add a rep — target ${nextReps} reps next set.`;
+        reasoning = `RIR ${lastSet.rir} leaves room to progress — add a rep before making the movement harder.`;
+        confidence = lastSet.rir >= 2 ? 'high' : 'medium';
+      }
+    }
+  } else if (lastSet.rir !== null && lastSet.rir !== undefined && Number.isFinite(lastSet.rir)) {
     if (lastSet.rir >= 2 && priorSet && lastSet.reps === priorSet.reps) {
       nextWeight = lastSet.weight + increaseAmount;
       nextReps = lastSet.reps;
@@ -699,10 +726,15 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   // repeat the last working weight to reconfirm first. Either way the age is
   // stated so the advice reads honestly instead of pretending the gap isn't there.
   if (daysSinceLastSession != null && daysSinceLastSession > 10) {
-    nextWeight = lastSet.weight;
     nextReps = lastSet.reps;
-    recommendation = `Repeat ${nextWeight} × ${nextReps} to reconfirm this lift.`;
-    reasoning = `Based on your last session, ${daysSinceLastSession} days ago — too long a gap to assume progression. Repeat the last working weight and see where you are before adding load.`;
+    if (isBodyweight) {
+      recommendation = `Repeat ${nextReps} reps to reconfirm this lift.`;
+      reasoning = `Based on your last session, ${daysSinceLastSession} days ago — too long a gap to assume progression. Repeat last session's reps and see where you are before adding any.`;
+    } else {
+      nextWeight = lastSet.weight;
+      recommendation = `Repeat ${nextWeight} × ${nextReps} to reconfirm this lift.`;
+      reasoning = `Based on your last session, ${daysSinceLastSession} days ago — too long a gap to assume progression. Repeat the last working weight and see where you are before adding load.`;
+    }
     confidence = confidence === 'high' ? 'medium' : 'low';
   } else if (daysSinceLastSession != null && daysSinceLastSession >= 7) {
     reasoning = `${reasoning} Based on your last session, ${daysSinceLastSession} days ago.`;
@@ -772,7 +804,7 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   // Load sanity guard: prevent impossible prescriptions from reaching the UI.
   // Applied unconditionally — the just-logged weight is trusted as the lifter's
   // actual set, but the *next target* must still be physically plausible.
-  if (Number.isFinite(nextWeight)) {
+  if (!isBodyweight && Number.isFinite(nextWeight)) {
     const sanity = sanitizeLoad(exercise_name, nextWeight, best_weight);
     if (sanity.sanitized) {
       nextWeight = sanity.weight;
@@ -792,7 +824,12 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     last_working_sets: lastSets,
     recommendation,
     reasoning,
-    next_target: nextWeight != null ? { weight: nextWeight, reps: nextReps, sets: 3 } : null,
+    // Bodyweight lifts have no load to carry, but they still get a next target so
+    // the recommendation card renders (weight 0 = bodyweight; the rep count is the
+    // progression). Weighted lifts emit a target only when a load was determined.
+    next_target: isBodyweight
+      ? { weight: 0, reps: nextReps, sets: 3 }
+      : (nextWeight != null ? { weight: nextWeight, reps: nextReps, sets: 3 } : null),
     e1rm_trend: e1rmTrend,
     sessions_analyzed: sessions.length,
     confidence,
