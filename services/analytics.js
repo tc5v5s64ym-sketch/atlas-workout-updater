@@ -636,7 +636,18 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   // feeler) must not drive the "increase to X" recommendation (owner rule). Fall
   // back to all rows only if every row is a warm-up, so the rec is never blanked.
   const workingRows = rows.filter(row => !isWarmupNote(row.notes));
-  const anchorRows = workingRows.length ? workingRows : rows;
+  let anchorRows = workingRows.length ? workingRows : rows;
+  // Now that the candidate filter retains zero/blank-weight sets (so bodyweight
+  // lifts survive), a lift is only treated as bodyweight when it has NO weighted
+  // history at all. A normally-weighted lift whose LAST set was logged without a
+  // load (a data-entry slip) still has weighted sets, so anchor progression on
+  // those — the stray trailing zero is excluded exactly as the old weight filter
+  // used to drop it, preserving the weighted-path behavior for that lift.
+  const hasWeightedHistory = rows.some(row => isPositiveFinite(row.weight));
+  if (hasWeightedHistory) {
+    const weightedAnchors = anchorRows.filter(row => isPositiveFinite(row.weight));
+    if (weightedAnchors.length) anchorRows = weightedAnchors;
+  }
   const lastSets = anchorRows.slice(-5).map(formatSet);
   const lastSet = lastSets[lastSets.length - 1];
   // Compare against the previous DISTINCT session's last working set — not merely
