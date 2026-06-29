@@ -151,7 +151,7 @@
 
   function buildNextPrescription(rec) {
     const wrap = elc('div', 'nextp');
-    wrap.appendChild(elc('div', 'nextp-h', '→ Next'));
+    wrap.appendChild(elc('div', 'nextp-h', 'Next time:'));
     wrap.appendChild(elc('div', 'nextp-s', rec.recommendation));
     return wrap;
   }

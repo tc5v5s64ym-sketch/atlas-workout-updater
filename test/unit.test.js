@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v72/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v73/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5500,6 +5500,15 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
   assert.doesNotMatch(snapBlock, /sheet_write|no_write_confirmed|\/api\/log-workout|beginWrite/, 'persistence never touches the write/proof path');
 });
 
+test('coach: next-set prescription card uses "Next time:" not "→ Next" (BUG-20260629-003820)', () => {
+  // "→ Next" implied a next exercise was queued, confusing the lifter in freestyle mode.
+  // The card shows a same-exercise future prescription — "Next time:" is always accurate.
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('function buildNextPrescription('), cc.indexOf('function buildNextPrescription(') + 300);
+  assert.match(fn, /Next time:/, 'header must say "Next time:" not "→ Next"');
+  assert.doesNotMatch(fn, /→ Next/, 'directional "→ Next" must be replaced to avoid implying a queued exercise');
+});
+
 test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
   // Owner request (2026-06-28): the restore banner should be interactive — tap to bring
   // the recovered workout into view, swipe to reveal a trash can and discard the session.
@@ -5532,8 +5541,8 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v72/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v71\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v73/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v72\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
