@@ -12,7 +12,7 @@ const FULL_INPUT = {
   actual: { weight: 225, reps: 8, rir: 2 },
   previousHistory: { best_weight: 235 },
   trainingGap: '3 weeks',
-  progressionStatus: 'holding at your working weight',
+  progressionStatus: { verdict: 'hold', next_weight: 230, reason: 'holding at your working weight' },
   sessionContext: { next_exercise: 'Seated Row', sets_written: 12, error: 'network timeout' },
   mutationContext: { prescribed: 'Barbell Row', logged: 'Seated Row', canonical: 'Seated Row' },
   readinessContext: null,

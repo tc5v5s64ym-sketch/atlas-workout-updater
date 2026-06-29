@@ -17,8 +17,11 @@
  *
  * Input shape (all fields optional/nullable):
  *   { exercise, target:{weight,reps,rir,sets}, actual:{weight,reps,rir},
- *     previousHistory, trainingGap, progressionStatus, sessionContext,
- *     mutationContext, readinessContext }
+ *     previousHistory, trainingGap,
+ *     progressionStatus:{verdict, next_weight, reason},  // OBJECT (pinned for wiring):
+ *       //   .next_weight → progress_next_time's exact next load; .reason → hold_weight's why.
+ *     sessionContext:{next_exercise, sets_written, error},
+ *     mutationContext:{prescribed, logged, canonical}, readinessContext }
  *
  * Output: { message: string, evidenceCited: boolean }
  *   evidenceCited === true when the message cites a concrete number from the input
@@ -173,7 +176,7 @@ const RENDERERS = {
   // Engine verdict is hold; explain why.
   hold_weight(input) {
     const w = num((input.target && input.target.weight) ?? (input.actual && input.actual.weight));
-    const reason = str(input.progressionStatus);
+    const reason = str(input.progressionStatus && input.progressionStatus.reason);
     const seed = `${str(input.exercise)}|${w}|${reason}`;
     const why = reason ? ` ${reason}.` : '';
     if (w !== null) {
