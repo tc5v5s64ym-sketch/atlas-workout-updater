@@ -5197,3 +5197,76 @@ test('api smoke: suggest-substitute — next_target is null when substitute has 
     'next_target must be null or a prescription object, never undefined'
   );
 });
+
+// ---------------------------------------------------------------------------
+// Read-endpoint smoke coverage — GET endpoints that previously had no tests
+// (index.js read path). All read-only; they run against the logRows /
+// exerciseCatalogRows fixtures and the fake getSpreadsheetTabs. No write path.
+// ---------------------------------------------------------------------------
+
+test('api smoke: GET /api/exercises/:liftCode returns aggregated detail for a known lift', async () => {
+  const { response, body } = await requestJson('/api/exercises/ben01');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.liftCode, 'BEN01', 'liftCode echoed uppercased');
+  assert.deepEqual(body.data.exerciseNames, ['Bench Press']);
+  assert.equal(body.data.totalSets, 3, 'three BEN01 sets in the fixture');
+  assert.equal(body.data.bestWeightSet.weight, '225', 'heaviest working set is the 225 top set');
+  // estimated1RM = max(w*(1+reps/30)); 225×5 → 262.5 is the highest.
+  assert.ok(Math.abs(body.data.estimated1RM - 262.5) < 0.01, 'e1RM from the 225×5 set');
+  assert.ok(Array.isArray(body.data.recentWorkingSets));
+});
+
+test('api smoke: GET /api/exercises/:liftCode returns empty aggregates for an unknown lift', async () => {
+  const { response, body } = await requestJson('/api/exercises/zzz99');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.totalSets, 0);
+  assert.deepEqual(body.data.exerciseNames, []);
+  assert.equal(body.data.bestWeightSet, null);
+  assert.equal(body.data.bestVolumeSet, null);
+  assert.equal(body.data.estimated1RM, 0);
+});
+
+test('api smoke: GET /api/volume/muscle-groups returns a volume summary and rejects a bad days param', async () => {
+  const { response, body } = await requestJson('/api/volume/muscle-groups?days=3650');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.days, 3650);
+  assert.ok(body.data.groups !== undefined, 'groups summary present');
+
+  const { response: rZero } = await requestJson('/api/volume/muscle-groups?days=0');
+  assert.equal(rZero.status, 400, 'days must be a positive integer');
+  const { response: rNaN } = await requestJson('/api/volume/muscle-groups?days=abc');
+  assert.equal(rNaN.status, 400, 'non-numeric days rejected');
+});
+
+test('api smoke: GET /api/search/sessions returns results for a filter', async () => {
+  const { response, body } = await requestJson('/api/search/sessions?exercise=Bench%20Press');
+  assert.equal(response.status, 200);
+  assert.ok(body.data && typeof body.data === 'object', 'search result object returned');
+});
+
+test('api smoke: GET /api/catalog/exercises returns parsed catalog entries', async () => {
+  const { response, body } = await requestJson('/api/catalog/exercises');
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(body.data.exercises));
+  const codes = body.data.exercises.map(e => e.lift_code);
+  assert.ok(codes.includes('BEN01') && codes.includes('SQ01'), 'both fixture lifts present');
+});
+
+test('api smoke: GET /api/catalog/search filters by query and requires q', async () => {
+  const { response, body } = await requestJson('/api/catalog/search?q=bench');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.query, 'bench');
+  assert.ok(body.data.results.some(e => e.lift_code === 'BEN01'), 'Bench Press matched');
+  assert.ok(body.data.results.every(e => e.lift_code !== 'SQ01'), 'Back Squat excluded by the query');
+
+  const { response: rNoQ } = await requestJson('/api/catalog/search');
+  assert.equal(rNoQ.status, 400, 'missing q → 400');
+});
+
+test('api smoke: GET /api/health/sheets reports required and optional tab presence', async () => {
+  const { response, body } = await requestJson('/api/health/sheets');
+  assert.equal(response.status, 200);
+  assert.equal(body.data.tabs.Log_Cleaned.exists, true, 'required Log_Cleaned present');
+  assert.ok(Array.isArray(body.data.availableTabs) && body.data.availableTabs.includes('Log_Cleaned'));
+  assert.ok(Array.isArray(body.data.missingRequiredTabs), 'missingRequiredTabs is an array');
+});
