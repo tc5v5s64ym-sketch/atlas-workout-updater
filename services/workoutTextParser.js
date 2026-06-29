@@ -21,6 +21,10 @@ const EXERCISE_ALIASES = [
   ['Seated Row', ['seated row', 'cable row', 'machine row']],
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
+  // Explicit bicep forms only — bare "curl"/"curls" is intentionally NOT aliased so
+  // unknown "X curl" lifts (Zercher Curl, Jefferson Curl) are preserved by name. The
+  // length-sort lets "hammer curls"/"leg curls" still win over these where they overlap.
+  ['Bicep Curl', ['bicep curls', 'biceps curls', 'bicep curl', 'biceps curl']],
   ['Face Pull', ['face pulls', 'face pull']],
   // findExerciseInText sorts aliases by key length descending, so "single-leg leg curl" (19 chars)
   // wins over "leg curl" (8 chars) regardless of array order here.
