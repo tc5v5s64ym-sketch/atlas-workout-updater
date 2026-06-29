@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v74';
+const ATLAS_SHELL_BUILD = 'v75';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3771,6 +3771,20 @@ document.getElementById('effort-preview-btn')?.addEventListener('click', () => {
   document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
 });
 
+// Explicit "Finish session" affordance for freestyle logging — so closing out a
+// session no longer depends on knowing the "done"/"log it" chat keyword. It is a
+// contextual control: shown once a set is logged this session, hidden on reset/save.
+// Clicking it runs the SAME closeout as "log it" (handleLogIt → runCloseout →
+// preview → review card), so it opens no new write path and the preview→approve→write
+// trust loop is unchanged — nothing is saved until the lifter approves the review card.
+function setFinishSessionVisible(visible) {
+  const btn = typeof document !== 'undefined' ? document.getElementById('finish-session-btn') : null;
+  if (btn) btn.hidden = !visible;
+}
+document.getElementById('finish-session-btn')?.addEventListener('click', () => { handleLogIt(); });
+document.addEventListener('atlas:set-logged', () => setFinishSessionVisible(true));
+document.addEventListener('atlas:session-reset', () => setFinishSessionVisible(false));
+
 function collectManualEffort(sessionId, date, location, notes) {
   const duration = document.getElementById('effort-duration').value.trim();
   const activeCal = document.getElementById('effort-active-cal').value;
@@ -3951,6 +3965,8 @@ function restoreSessionToView() {
   }
   const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
   if (notice) notice.hidden = true;
+  // A restored session has logged work — surface the explicit finish affordance too.
+  setFinishSessionVisible(true);
 }
 
 // iOS-style swipe-to-reveal-trash + tap-to-restore on the resume banner. Horizontal

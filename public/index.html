@@ -149,6 +149,12 @@
 
         <p class="safety-note compact">Previews send <code>test_mode=true</code> — nothing is saved until you approve.</p>
 
+        <!-- Explicit freestyle finish affordance. Hidden until a set is logged this
+             session (shown on atlas:set-logged, hidden on atlas:session-reset). Triggers
+             the SAME closeout as typing "done"/"log it" — preview → review card → Save.
+             Nothing is written until the lifter approves on the review card. -->
+        <button type="button" id="finish-session-btn" class="secondary finish-session" hidden>Finish session — review &amp; save</button>
+
         <!-- Effort entry: opened via + → Manual effort entry or + → Fitness device screenshot -->
         <details id="effort-details" hidden>
           <summary>Effort <span class="muted">(optional)</span></summary>
