@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v70';
+const ATLAS_SHELL_BUILD = 'v71';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -4571,7 +4571,12 @@ async function runCloseout() {
   // Gemini, no re-parse. This is what the visible logged cards were rendered from,
   // so if cards exist, this finds them.
   if (sessionLog.length) {
-    populateSetRows(buildRowsFromSessionLog());
+    // Only repopulate from the buffer if the table is empty. If the user already
+    // ran closeout and then edited or deleted rows (e.g. to fix a bad-RIR row),
+    // preserve their edits — don't overwrite with the original bad rows again.
+    if (!setsTableBody.children.length) {
+      populateSetRows(buildRowsFromSessionLog());
+    }
     sessionCompiledAwaitingPreview = true;
     document.getElementById('logger-form').dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     return;
@@ -5323,7 +5328,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // 500'd — show the cause so it's diagnosable from the gym (live-gym v49).
     const d = err && err.body && err.body.details;
     const detail = d && (typeof d === 'string' ? d : (d.error || null));
-    setStatus(loggerStatus, `Preview failed: ${err.message}${detail ? ` — ${detail}` : ''}`, 'error');
+    const fullMsg = `Preview failed: ${err.message}${detail ? ` — ${detail}` : ''}`;
+    // Highlight any rows the server named in the error (e.g. "row 2: rir must be 0–10").
+    const badRowNums = [...fullMsg.matchAll(/\brow\s+(\d+)\b/gi)].map(m => Number(m[1]) - 1);
+    if (badRowNums.length && setsTableBody) {
+      Array.from(setsTableBody.children).forEach((tr, idx) => {
+        tr.classList.toggle('row-error', badRowNums.includes(idx));
+      });
+      setStatus(loggerStatus, fullMsg + ' — Fix or delete the highlighted row(s), then Preview again.', 'error');
+    } else {
+      setStatus(loggerStatus, fullMsg, 'error');
+    }
   } finally {
     previewBtn.disabled = false;
     previewBtn.textContent = 'Preview — no data saved';

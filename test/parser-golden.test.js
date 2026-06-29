@@ -682,6 +682,72 @@ test('step-374: Single-Leg Leg Curl resolves to its own canonical name — not t
   assert.deepEqual(sets(result), [[60, 12, 2]]);
 });
 
+// ---------------------------------------------------------------------------
+// Push-Up bodyweight parsing — BUG-20260629-002910/-003028/-003118/-003208
+//
+// "Push ups 40 40 40" was routing through parseUnknownExercise (Push-Up was not
+// in EXERCISE_ALIASES), then parseDaleShorthand matched the rest as weight=40,
+// reps=40, rir=40. rir=40 violated the bounds guard and rejected the ENTIRE
+// session with a 400 — and repeat "Log it" calls kept reloading the bad row.
+// ---------------------------------------------------------------------------
+
+test('golden: Push-Up bare space-separated reps — the live-bug input', () => {
+  // "Push ups 40 40 40" must parse as 3 × 40 bodyweight reps, NOT weight=40/reps=40/rir=40.
+  const result = parseWorkoutText('Push ups 40 40 40');
+  assert.equal(result.intent, 'log_sets', `expected log_sets, got: ${result.intent}`);
+  assert.equal(result.canonical_name, 'Push-Up');
+  assert.equal(result.sets.length, 3, 'three sets');
+  assert.ok(result.sets.every(s => s.weight === null && s.weight_unit === null),
+    'all sets must have null weight for bodyweight exercise');
+  assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[40, null], [40, null], [40, null]]);
+});
+
+test('golden: Push-Up aliases all resolve correctly', () => {
+  const aliases = ['pushups', 'pushup', 'push-up', 'push-ups', 'push up', 'push ups', 'Push-Up'];
+  for (const alias of aliases) {
+    const result = parseWorkoutText(`${alias} 20 20 20`);
+    assert.equal(result.intent, 'log_sets', `${alias}: expected log_sets`);
+    assert.equal(result.canonical_name, 'Push-Up', `${alias}: expected Push-Up canonical`);
+  }
+});
+
+test('golden: Push-Up x3 repeat format — bodyweight sets', () => {
+  const result = parseWorkoutText('Push ups 20 x3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Push-Up');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(s => s.weight === null));
+  assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[20, null], [20, null], [20, null]]);
+});
+
+test('golden: Push-Up slash-pair format — bodyweight sets with RIR', () => {
+  const result = parseWorkoutText('Push ups 15/1 12/2 10/3');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Push-Up');
+  assert.equal(result.sets.length, 3);
+  assert.ok(result.sets.every(s => s.weight === null));
+  assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[15, 1], [12, 2], [10, 3]]);
+});
+
+test('golden: parseBodyweightReps bare-tokens guard — integers >100 do not route to bodyweight path', () => {
+  // Values > 100 exceed the reps plausibility range, so the bare-tokens branch is
+  // skipped and the text falls through to parseDaleShorthand (weight/reps/rir path).
+  // This guards against a 3-digit weight being silently dropped from the row.
+  const result = parseWorkoutText('Push ups 150 150 150');
+  // parseDaleShorthand interprets as weight=150, reps=150, rir=150 (all three match).
+  // The server's bounds guard will reject reps=150, but the parser does not silence it.
+  if (result.intent === 'log_sets') {
+    // weight=150 means the bodyweight bare-tokens path was NOT taken — that is correct.
+    const w = result.sets && result.sets[0] && result.sets[0].weight;
+    assert.ok(w !== null, 'values >100 must not be interpreted as bodyweight reps (weight should not be null)');
+  }
+  // Either needs_clarification or log_sets with weight≠null is acceptable here.
+  assert.ok(
+    result.intent === 'needs_clarification' || (result.intent === 'log_sets' && result.sets[0].weight !== null),
+    `must not produce log_sets with weight=null for values >100`
+  );
+});
+
 test('step-374: single leg leg curl (no hyphen) also resolves to Single-Leg Leg Curl', () => {
   const result = parseWorkoutText('single leg leg curl 55 10/2 x3');
   assert.equal(result.canonical_name, 'Single-Leg Leg Curl');
