@@ -727,6 +727,48 @@ test('step-374: Single-Leg Leg Curl resolves to its own canonical name — not t
 });
 
 // ---------------------------------------------------------------------------
+// Bicep Curl recognition — BUG-20260629 live-test follow-up
+//
+// "bicep curls 30 12/2" parsed its SETS correctly but the exercise was flagged
+// unknown_exercise (Bicep Curl was absent from EXERCISE_ALIASES), so the lifter
+// got the "I don't recognize 'Bicep Curls'" advisory and it saved with muscle
+// group Unknown. Added the explicit bicep forms. Bare "curl"/"curls" stays
+// unaliased so unknown "X curl" lifts (Zercher/Jefferson) are still preserved.
+// ---------------------------------------------------------------------------
+
+test('bicep curls resolves to Bicep Curl (plural) and does not flag unknown_exercise', () => {
+  const result = parseWorkoutText('bicep curls 30 12/2');
+  assert.equal(result.canonical_name, 'Bicep Curl');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'), 'must not fire unknown_exercise');
+  assert.deepEqual(sets(result), [[30, 12, 2]]);
+});
+
+test('bicep curl resolves to Bicep Curl (singular)', () => {
+  const result = parseWorkoutText('bicep curl 30 12/2');
+  assert.equal(result.canonical_name, 'Bicep Curl');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'));
+  assert.deepEqual(sets(result), [[30, 12, 2]]);
+});
+
+test('biceps curls (with the "s") also resolves to Bicep Curl', () => {
+  const result = parseWorkoutText('biceps curls 35 10/1 x3');
+  assert.equal(result.canonical_name, 'Bicep Curl');
+  assert.deepEqual(sets(result), [[35, 10, 1], [35, 10, 1], [35, 10, 1]]);
+});
+
+test('unknown "X curl" lifts (e.g. zercher curl) keep their typed name — bare curl is not aliased to Bicep Curl', () => {
+  // Guard: an unknown "X curl" must keep its typed name. Bare curl/curls is
+  // intentionally unaliased so Zercher/Jefferson Curl are not hijacked.
+  const result = parseWorkoutText('zercher curl 40 10/2', { activeExercise: 'Bench Press' });
+  assert.equal(result.canonical_name, 'Zercher Curl');
+});
+
+test('leg curls / hammer curls still win over the bicep forms (regression guard)', () => {
+  assert.equal(parseWorkoutText('leg curls 60 12/2').canonical_name, 'Leg Curl');
+  assert.equal(parseWorkoutText('hammer curls 35 10/2').canonical_name, 'Hammer Curl');
+});
+
+// ---------------------------------------------------------------------------
 // Push-Up bodyweight parsing — BUG-20260629-002910/-003028/-003118/-003208
 //
 // "Push ups 40 40 40" was routing through parseUnknownExercise (Push-Up was not
