@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v70/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v71/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -973,7 +973,7 @@ test('P0 closeout: handleLogIt is a never-silent wrapper around runCloseout', ()
 
 test('P0 closeout: runCloseout reads the canonical buffer first and never gives a false "no sets" when work exists', () => {
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 3200);
+  const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 3500);
   // Canonical source: sessionLog buffer first (what the visible cards were built from).
   const bufIdx = fn.indexOf('if (sessionLog.length)');
   assert.ok(bufIdx >= 0, 'closeout builds from the sessionLog buffer (canonical set data)');
@@ -1010,6 +1010,35 @@ test('P0 closeout: a failed preview surfaces the server INNER cause, not just th
   assert.match(catchBlock, /err\.body\b/, 'reads the response body from the api() error');
   assert.match(catchBlock, /details/, 'extracts the standardError details');
   assert.match(catchBlock, /\$\{detail \? ` — \$\{detail\}`/, 'appends the inner cause to the visible message');
+});
+
+test('resilience: runCloseout does not overwrite table rows on repeat "Log it" (lockup guard)', () => {
+  // BUG-20260629-002910/-003028/-003118/-003208: after a bad-row preview failure
+  // (rir=40), typing "Log it" again called populateSetRows(buildRowsFromSessionLog())
+  // unconditionally, wiping any user edits or deletions and re-submitting the same bad
+  // rows. The guard prevents this: populateSetRows is skipped when the table already
+  // has rows.
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const start = src.indexOf('async function runCloseout()');
+  const fn = src.slice(start, start + 3500);
+  assert.match(
+    fn,
+    /if \(!setsTableBody\.children\.length\)[\s\S]{0,60}populateSetRows\(buildRowsFromSessionLog\(\)\)/,
+    'populateSetRows must be guarded by !setsTableBody.children.length so edits are preserved'
+  );
+});
+
+test('resilience: preview error highlights bad rows and shows actionable fix guidance', () => {
+  // BUG-20260629-002910: the server error names the row ("row 2: rir must be 0–10"),
+  // but the UI gave no visual indication of which row was wrong. The catch block now
+  // parses row numbers from the error message and applies .row-error to the matching
+  // <tr> elements, plus appends "Fix or delete the highlighted row(s)" guidance.
+  const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const msgIdx = src.indexOf('Preview failed: ${err.message}');
+  const catchBlock = src.slice(msgIdx - 50, msgIdx + 700);
+  assert.match(catchBlock, /matchAll\(/, 'must use matchAll to extract row numbers from the error message');
+  assert.match(catchBlock, /row-error/, 'must apply the row-error CSS class to flagged rows');
+  assert.match(catchBlock, /Fix or delete.*highlighted row/, 'must show actionable repair guidance');
 });
 
 // ---------------------------------------------------------------------------
@@ -5427,8 +5456,8 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v70/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v69\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v71/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v70\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

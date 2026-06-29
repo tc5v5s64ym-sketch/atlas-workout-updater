@@ -1026,6 +1026,7 @@ button.approve {
   min-width: 36px; border-radius: var(--r-sm);
 }
 #sets-table .remove-set:hover { background: var(--danger-soft); filter: none; }
+#sets-table tr.row-error { background: var(--danger-soft); outline: 1px solid var(--danger-border); }
 
 .last-time-hint {
   font-size: 0.72rem; color: var(--muted); margin-top: 2px;

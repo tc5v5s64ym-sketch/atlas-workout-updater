@@ -1879,6 +1879,33 @@ test('api smoke: log-workout test_mode returns dry-run proof without append', as
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// BUG-20260629-002910: a single mis-parsed row (rir=40 from "Push ups 40 40 40") used
+// to reject the ENTIRE session with 400. Regression test: a row with out-of-bounds RIR
+// must be caught by the hard bounds guard and produce a clear 400 with a diagnostic
+// message — confirming the guard fires on BOTH dry-run and live-write paths.
+test('api smoke: row with implausible rir value is rejected with 400 and diagnostic message', async () => {
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'BOUNDS-SMOKE',
+      date: '2026-06-29',
+      test_mode: true,
+      log_rows: [
+        { exercise: 'Push-Up', set_number: 1, weight: 0, reps: 40, rir: 40 }
+      ]
+    })
+  });
+  assert.equal(response.status, 400, 'must reject rir=40 with 400');
+  assert.ok(
+    body.message && /implausible set values rejected/i.test(body.message),
+    `expected "Implausible set values rejected" in message, got: ${body.message}`
+  );
+  assert.ok(
+    body.message && /rir/i.test(body.message),
+    'error message must name the field (rir)'
+  );
+});
+
 // B1 (2026-06-26 playtest): a re-previewed save mints a NEW write_id (public/app.js
 // regenerates it per preview) while reusing the stable session_id, so the write_id
 // replay guard alone could not stop it from appending the same rows again under one

@@ -34,6 +34,7 @@ const EXERCISE_ALIASES = [
   ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
   ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
   ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
+  ['Push-Up', ['push-up', 'push up', 'pushups', 'push ups', 'push-ups', 'pushup']],
 ];
 
 const AMBIGUOUS_ALIASES = {
@@ -696,6 +697,22 @@ function parseLogSets(rawText, context = {}) {
     }
   }
 
+  if (resolvedExercise.canonicalName === 'Push-Up') {
+    // Slash/repeat formats (parseBodyweightReps), then bare space/comma-separated
+    // integer lists ("40 40 40"). Push-Up is an unambiguously bodyweight move —
+    // no external load — so bare integers are always reps, never weight.
+    const bwSets = parseBodyweightReps(resolvedExercise.rest);
+    const bodyweightSets = bwSets.length ? bwSets : (parseBareBodyweightReps(resolvedExercise.rest) || []);
+    if (bodyweightSets.length) {
+      return buildLogResult({
+        rawText,
+        rawName: titleCaseFallback(resolvedExercise.rawName),
+        canonicalName: resolvedExercise.canonicalName,
+        sets: bodyweightSets,
+      });
+    }
+  }
+
   return parseWithExercise(rawText, resolvedExercise);
 }
 
@@ -1067,6 +1084,19 @@ function parseBodyweightReps(text) {
   }
 
   return [];
+}
+
+// "40 40 40" or "40, 40, 40" → bare rep list for unambiguously bodyweight exercises.
+// Only called for exercises where external load is never implied (Push-Up).
+// Guard: every token must be a plain integer within reps range (1–100) and there
+// must be at least two tokens (a single integer is too ambiguous to be a set list).
+function parseBareBodyweightReps(text) {
+  const cleaned = normalizeParserText(text);
+  const tokens = cleaned.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every(t => /^\d+$/.test(t) && Number(t) >= 1 && Number(t) <= 100)) {
+    return tokens.map(t => setRecord({ weight: null, reps: Number(t), rir: null, weight_unit: null }));
+  }
+  return null;
 }
 
 function looksLikeBodyweightRepsOnly(text) {
