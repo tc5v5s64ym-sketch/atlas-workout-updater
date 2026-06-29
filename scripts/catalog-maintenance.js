@@ -111,6 +111,11 @@ function planCatalogAppend(header, dataRows, inputs) {
   if (cols.canonical < 0) {
     throw new Error('Exercise_Catalog header has no recognizable Canonical_Name / Exercise column.');
   }
+  // muscle_group is required on every input, so refuse a catalog whose header has no
+  // muscle column rather than silently dropping the value when positioning the row.
+  if (cols.muscle < 0) {
+    throw new Error('Exercise_Catalog header has no recognizable Muscle_Group column.');
+  }
   const existing = buildExistingIdentitySet(dataRows, cols);
 
   const toWrite = [];

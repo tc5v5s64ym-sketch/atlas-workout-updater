@@ -107,6 +107,11 @@ test('catalog-maintenance: planner throws if no canonical column exists', () => 
     /no recognizable Canonical_Name/);
 });
 
+test('catalog-maintenance: planner throws if no muscle column exists (never silently drop muscle_group)', () => {
+  assert.throws(() => planCatalogAppend(['Canonical_Name', 'Lift_Code'], [], [{ canonical_name: 'X', muscle_group: 'Y' }]),
+    /no recognizable Muscle_Group/);
+});
+
 test('catalog-maintenance: only targets Exercise_Catalog; protected tabs are listed', () => {
   assert.equal(CATALOG_TAB, 'Exercise_Catalog');
   for (const t of ['Log_Cleaned', 'Effort', 'Bug_Reports']) {
