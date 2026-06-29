@@ -1095,7 +1095,9 @@
       rec,
       // The active Coach's Pick intent drives the server's recovery read so a
       // recovery_pump / deload_reset session never gets an add-load nudge (BUG-204817).
-      intentId: (activeSession && activeSession.intentId) || null,
+      // Sourced via getActiveIntentId so an engaged-but-unmaterialized suggestion
+      // (activePlannedSession still null) keeps its intent.
+      intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
       planned_queue: Array.isArray(detail.plannedQueue) ? detail.plannedQueue : [],
       substitution: suggestMatch ? undefined : primarySub
     });
@@ -1152,7 +1154,7 @@
         exerciseName: ex.exercise,
         todaySets: ex.sets,
         rec: exRec,
-        intentId: (activeSession && activeSession.intentId) || null,
+        intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
         substitution: undefined
       });
