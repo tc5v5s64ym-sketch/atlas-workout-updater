@@ -67,6 +67,53 @@ jobs:
       - name: Test
         run: npm test --silent
 
+  coverage-report:
+    name: Coverage report (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: unit-tests
+    # REPORT-ONLY, never a gate. Owner decision (BACKLOG "PR5"): the overall
+    # line % is high but masks low-coverage critical files, so a global threshold
+    # would be a false sense of safety and a strict per-file threshold would fail
+    # immediately. This job surfaces the numbers in the run summary for
+    # visibility; it must never block a merge. Revisit a hard gate once the
+    # coverage-hardening PRs (PR1–PR4) have landed.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage (report only)
+        run: |
+          # Never fail the job on test/coverage output — this is report-only.
+          node --test --experimental-test-coverage --test-reporter=spec test/*.test.js > coverage.txt 2>&1 || true
+          {
+            echo "## Coverage report (non-blocking — no gate)"
+            echo ""
+            echo "Report-only for visibility. See BACKLOG \"Test-coverage hardening\" for known gaps;"
+            echo "a hard threshold is intentionally deferred until PR1–PR4 land."
+            echo ""
+            echo '```'
+            # The summary block between the report banners; trim the reporter
+            # prefix. The report lists files by BASENAME (e.g. "vision.js"), so
+            # match on those — and drop *.test.js rows so only source shows.
+            awk '/start of coverage report/{f=1} f{print} /end of coverage report/{f=0}' coverage.txt \
+              | sed 's/^ℹ //' \
+              | grep -E 'file +\||all files|(^| )index\.js |(^| )sheets\.js |(^| )vision\.js |(^| )coach\.js |(^| )analytics\.js |(^| )workoutTextParser\.js ' \
+              | grep -vE 'test\.js' \
+              || echo "(coverage summary not captured — see the step log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-latest
