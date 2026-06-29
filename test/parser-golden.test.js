@@ -806,6 +806,40 @@ test('golden: Push-Up x3 repeat format — bodyweight sets', () => {
   assert.deepEqual(result.sets.map(s => [s.reps, s.rir]), [[20, null], [20, null], [20, null]]);
 });
 
+test('golden: Push-Up single bare rep — "push ups 20" logs one bodyweight set', () => {
+  // BUG-20260629 "missed rows": a lone bare rep on an unambiguously-bodyweight lift
+  // (Push-Up never carries load → 20 can only be reps) used to dead-end at
+  // "missing sets" instead of logging one set.
+  const result = parseWorkoutText('Push ups 20');
+  assert.equal(result.intent, 'log_sets');
+  assert.equal(result.canonical_name, 'Push-Up');
+  assert.equal(result.sets.length, 1);
+  assert.equal(result.sets[0].weight, null);
+  assert.deepEqual([result.sets[0].reps, result.sets[0].rir], [20, null]);
+});
+
+test('golden: multi-exercise paste with a trailing bare Push-Up rep keeps every row', () => {
+  // The "missed rows" core: in a multi-exercise block the parse is all-clean-or-drop,
+  // so a single unresolved segment used to discard the whole block. A bare Push-Up
+  // rep must resolve so its weighted siblings are not lost.
+  const result = parseWorkoutText('incline bench 95 10/2\ncable rows 80 12/2\noverhead press 65 8/2\npush ups 20');
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.equal(result.exercises.length, 4);
+  const names = result.exercises.map(e => e.canonical_name || e.exercise);
+  assert.deepEqual(names, ['Incline Bench Press', 'Seated Row', 'Overhead Press', 'Push-Up']);
+  const pushUp = result.exercises[3];
+  assert.equal(pushUp.sets.length, 1);
+  assert.deepEqual([pushUp.sets[0].weight, pushUp.sets[0].reps], [null, 20]);
+});
+
+test('golden: knee-raises bare numbers still clarify (ambiguity preserved, not auto-logged)', () => {
+  // Guard the boundary of the fix: Hanging Knee Raises CAN be weighted, so a bare
+  // number stays ambiguous (weight vs reps) and must keep asking — the Push-Up fix
+  // must not leak into ambiguous-bodyweight lifts.
+  const result = parseWorkoutText('Knee raises 15');
+  assert.notEqual(result.intent, 'log_sets');
+});
+
 test('golden: Push-Up slash-pair format — bodyweight sets with RIR', () => {
   const result = parseWorkoutText('Push ups 15/1 12/2 10/3');
   assert.equal(result.intent, 'log_sets');

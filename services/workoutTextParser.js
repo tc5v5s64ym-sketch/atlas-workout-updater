@@ -1099,13 +1099,16 @@ function parseBodyweightReps(text) {
 }
 
 // "40 40 40" or "40, 40, 40" → bare rep list for unambiguously bodyweight exercises.
-// Only called for exercises where external load is never implied (Push-Up).
-// Guard: every token must be a plain integer within reps range (1–100) and there
-// must be at least two tokens (a single integer is too ambiguous to be a set list).
+// Only called for exercises where external load is never implied (Push-Up), so a
+// lone integer is unambiguously a rep count — "push ups 20" is one set of 20 reps,
+// not a weight. A single bare rep used to fall through to a "missing sets" dead-end,
+// which in a multi-exercise paste (e.g. bench / rows / push ups 20) collapsed the
+// whole block to clarification and dropped every row (BUG-20260629 "missed rows").
+// Guard: every token is a plain integer in reps range (1–100); at least one token.
 function parseBareBodyweightReps(text) {
   const cleaned = normalizeParserText(text);
   const tokens = cleaned.replace(/,/g, ' ').split(/\s+/).filter(Boolean);
-  if (tokens.length > 1 && tokens.every(t => /^\d+$/.test(t) && Number(t) >= 1 && Number(t) <= 100)) {
+  if (tokens.length >= 1 && tokens.every(t => /^\d+$/.test(t) && Number(t) >= 1 && Number(t) <= 100)) {
     return tokens.map(t => setRecord({ weight: null, reps: Number(t), rir: null, weight_unit: null }));
   }
   return null;
