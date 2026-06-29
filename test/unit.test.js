@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v75/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v76/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -1297,11 +1297,16 @@ test('two-way chat: coach-conversation handles the chat event read-only via /api
   // In-session history, bounded; falls back when the voice is unavailable.
   assert.match(convSource, /chatTurns/);
   assert.match(convSource, /function chatFallback/);
-  // The free-form fallback (Gemini down) is never a bare dead-end during a session —
-  // it keeps the lifter logging and invites a retry (no "Coach is unavailable").
-  const fbBlock = convSource.slice(convSource.indexOf('function chatFallback'), convSource.indexOf('function chatFallback') + 1400);
-  assert.match(fbBlock, /keep logging and say .* or ask again in a moment/, 'fallback nudges to logging + retry, not a dead-end');
-  assert.doesNotMatch(fbBlock, /Coach is unavailable right now/, 'no bare dead-end line');
+  // The free-form fallback (Gemini down) is never a bare dead-end during a session,
+  // and — per owner directive — must NEVER reveal that the LLM is down: no
+  // "couldn't reach" / "unavailable" / "ask again" wording. It stays productive
+  // (keeps the lifter logging) and never claims a save.
+  const fbBlock = convSource.slice(convSource.indexOf('function chatFallback'), convSource.indexOf('function chatFallback') + 2600);
+  assert.match(fbBlock, /keep logging and say/, 'fallback keeps the lifter logging, not a dead-end');
+  assert.doesNotMatch(fbBlock, /couldn'?t reach|ask again in a moment|unavailable|can'?t reach|coach is down|try again/i, 'fallback must not reveal the LLM is down');
+  // High-probability mid-session cases get a natural reply (not the generic catch-all).
+  assert.match(fbBlock, /re-type it like/, 'a "you missed a set" message points the lifter to re-enter it');
+  assert.match(fbBlock, /\bAnytime\b/, 'thanks / acknowledgment gets a natural reply');
   // History sent must be PRIOR turns only (no double-send), but the current user
   // turn is recorded immediately after capture so an in-flight second message
   // still sees it. Atlas's reply is appended after it arrives.
@@ -5564,8 +5569,8 @@ test('freestyle finish: explicit "Finish session" affordance triggers the existi
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v75/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v74\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v76/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v75\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
