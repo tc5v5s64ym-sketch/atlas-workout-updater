@@ -6,6 +6,8 @@ const assert = require('node:assert/strict');
 const {
   analyzeSetSequence,
   assessNextMoveConflict,
+  suppressBumpForRecovery,
+  holdStimulusForRecovery,
   EFFORT_REASON_CODES,
 } = require('../services/setEffortSignals');
 
@@ -170,4 +172,53 @@ test('setEffortSignals: empty input returns null', () => {
   assert.equal(analyzeSetSequence(null), null);
   const c = assessNextMoveConflict(null, ['Seated Row']);
   assert.equal(c.conflict, false);
+});
+
+// ---------------------------------------------------------------------------
+// Recovery/deload overrides the under-dose 'bump' (BUG-20260629-034034): a
+// recovery prescription must never tell the lifter to add load.
+// ---------------------------------------------------------------------------
+test('suppressBumpForRecovery: neutralizes the bump verdict when recovery is active', () => {
+  // A high-RIR working set → bump verdict on a normal day.
+  const a = analyzeSetSequence([[135, 14, 5], [135, 13, 5]], { exerciseName: 'Bicep Curl', targetRir: 2 });
+  assert.equal(a.progression_verdict, 'bump');
+  assert.ok(a.reason_codes.includes(EFFORT_REASON_CODES.HIGH_RIR_WORKSET_UNDERDOSED));
+
+  const gated = suppressBumpForRecovery(a, true);
+  assert.equal(gated.progression_verdict, 'neutral', 'bump is neutralized on a recovery day');
+  assert.equal(gated.recovery_suppressed_bump, true);
+  assert.ok(!gated.reason_codes.includes(EFFORT_REASON_CODES.HIGH_RIR_WORKSET_UNDERDOSED), 'under-dose reason code dropped');
+  assert.equal(gated.signals.high_rir_workset_underdosed, false);
+});
+
+test('suppressBumpForRecovery: leaves the verdict untouched when recovery is NOT active', () => {
+  const a = analyzeSetSequence([[135, 14, 5]], { exerciseName: 'Bicep Curl', targetRir: 2 });
+  assert.equal(a.progression_verdict, 'bump');
+  assert.equal(suppressBumpForRecovery(a, false), a, 'returns the original analysis unchanged');
+});
+
+test('suppressBumpForRecovery: never touches block/caution reads (those align with recovery)', () => {
+  // Heavy compound to RIR 0 with a rep drop → block; must survive recovery suppression.
+  const a = analyzeSetSequence([[315, 5, 0], [315, 3, 0]], { exerciseName: 'Back Squat', targetRir: 2 });
+  assert.equal(a.progression_verdict, 'block');
+  assert.equal(suppressBumpForRecovery(a, true), a, 'a non-bump verdict is returned unchanged');
+});
+
+test('holdStimulusForRecovery: downgrades a +load/+reps stimulus grade to hold on a recovery day', () => {
+  // The Stimulus Governor's add-load steer must not survive a recovery objective
+  // (BUG-20260629-034034 review follow-up) — else the LLM still says "room to progress".
+  for (const v of ['+load', '+reps']) {
+    const g = { profile: 'hypertrophy', effort_interpretation: 'under_target', progression_verdict: v, fatigue_signal: 'low' };
+    const held = holdStimulusForRecovery(g, true);
+    assert.equal(held.progression_verdict, 'hold', `${v} → hold on recovery`);
+    assert.equal(held.recovery_suppressed_load, true);
+    assert.equal(held.fatigue_signal, 'low', 'other fields preserved');
+  }
+});
+
+test('holdStimulusForRecovery: leaves the grade untouched off-recovery or when not an add-load verdict', () => {
+  const add = { profile: 'strength', effort_interpretation: 'under_target', progression_verdict: '+load', fatigue_signal: 'low' };
+  assert.equal(holdStimulusForRecovery(add, false), add, 'off-recovery: unchanged');
+  const hold = { profile: 'strength', effort_interpretation: 'on_target', progression_verdict: 'hold', fatigue_signal: 'low' };
+  assert.equal(holdStimulusForRecovery(hold, true), hold, 'a hold/back_off grade is returned unchanged');
 });

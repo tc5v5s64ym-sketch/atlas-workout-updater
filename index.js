@@ -94,7 +94,7 @@ const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextP
 const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
-const { analyzeSetSequence, assessNextMoveConflict } = require('./services/setEffortSignals');
+const { analyzeSetSequence, assessNextMoveConflict, suppressBumpForRecovery, holdStimulusForRecovery } = require('./services/setEffortSignals');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('./services/coachVoiceRenderer');
 const { gradeStimulus } = require('./services/stimulusGovernor');
@@ -1152,11 +1152,39 @@ function computeSetEffortExtras(rawFacts) {
     if (!hasSignal) return out;
     const rec = rawFacts.rec && typeof rawFacts.rec === 'object' ? rawFacts.rec : {};
     const exerciseName = rawFacts.exerciseName || rec.exercise_name || '';
-    const analysis = analyzeSetSequence(todaySets, {
+    let analysis = analyzeSetSequence(todaySets, {
       exerciseName,
       targetRir: rec.target_rir,
     });
     if (!analysis) return out;
+
+    // Recovery/deload objective read — computed UP HERE (before any voice renders)
+    // so it can gate the under-dose 'bump'. CONSERVATIVE (PR 484/485): a deload is
+    // active, OR the convergence engine signals a recovery-oriented decision. We
+    // surface ONLY 'deload' / 'recovery_reload'; stay silent for normal /
+    // micro_adjustment (too weak) and taper / complete_rest (no live signal), and
+    // when a deload is ALREADY active (the existing `deload` fact owns that voice).
+    const deloadActive = rec.deload && rec.deload.in_deload === true;
+    if (!deloadActive) {
+      try {
+        const sel = assessRecoveryDeload(deriveRecoverySignals(rec, profileForGoal(getProfileGoal())));
+        if (sel && (sel.decision === 'deload' || sel.decision === 'recovery_reload')) {
+          out.recovery_advisory = {
+            decision: sel.decision,
+            recovery_state: sel.recovery_state,
+            converged_signals: sel.converged_signals,
+            rationale: sel.rationale,
+            deload_style: sel.deload_style,
+          };
+        }
+      } catch (_) { /* best-effort — a recovery read must never block the reaction */ }
+    }
+    // BUG-20260629-034034: a recovery/deload prescription must never tell the lifter
+    // to add load. Neutralize the under-dose 'bump' verdict when a recovery objective
+    // is active — this gates BOTH deterministic voices below (effort_note + voiceBase)
+    // and is mirrored by a precedence rule in the LLM prompt (services/coach.js).
+    const recoveryActive = deloadActive || out.recovery_advisory !== null;
+    analysis = suppressBumpForRecovery(analysis, recoveryActive);
 
     // Profile-aware Stimulus Governor grade (PR 484 wiring slice 2 — read-only fact).
     // Grades the hardest logged set by the user's PROFILE + the exercise MODALITY
@@ -1173,12 +1201,16 @@ function computeSetEffortExtras(rawFacts) {
         is_heavy_compound: !!analysis.is_compound,
       });
       if (grade) {
-        out.set_grade = {
+        // Same recovery guard as the bump (BUG-20260629-034034 review follow-up): on a
+        // recovery/deload day a high-RIR set grades as "+load" ("room to add stimulus"),
+        // which the prompt would word as an add-load steer — downgrade it to 'hold' so
+        // no voice nudges adding load on a deliberately-light day.
+        out.set_grade = holdStimulusForRecovery({
           profile: grade.rule.profile,
           effort_interpretation: grade.effort_interpretation,
           progression_verdict: grade.progression_verdict,
           fatigue_signal: grade.fatigue_signal,
-        };
+        }, recoveryActive);
       }
     } catch (_) { /* grade is best-effort; never block the reaction */ }
     out.effort_note = buildEffortNote(analysis);
@@ -1241,29 +1273,9 @@ function computeSetEffortExtras(rawFacts) {
       }
     }
 
-    // PR 484 recovery/deload SELECTION voicing (engine: assessRecoveryDeload, PR 485).
-    // CONSERVATIVE by construction: the tiny adapter derives signals only from
-    // already-computed live verdicts, the convergence engine under-triggers (no
-    // deload from one bad day), and we surface ONLY the recovery-oriented decisions
-    // (deload / recovery_reload). Stay SILENT for normal / micro_adjustment (too
-    // weak) and for taper / complete_rest (no live test-date / illness signal — never
-    // fabricated), and when a deload is ALREADY active (the existing `deload` fact
-    // owns that voice). Read-only context; the coach words it cautiously, no numbers.
-    try {
-      const deloadActive = rec.deload && rec.deload.in_deload === true;
-      if (!deloadActive) {
-        const sel = assessRecoveryDeload(deriveRecoverySignals(rec, profileForGoal(getProfileGoal())));
-        if (sel && (sel.decision === 'deload' || sel.decision === 'recovery_reload')) {
-          out.recovery_advisory = {
-            decision: sel.decision,
-            recovery_state: sel.recovery_state,
-            converged_signals: sel.converged_signals,
-            rationale: sel.rationale,
-            deload_style: sel.deload_style,
-          };
-        }
-      }
-    } catch (_) { /* best-effort — a recovery read must never block the reaction */ }
+    // (Recovery/deload SELECTION read + the under-dose 'bump' suppression were
+    // computed at the top of this function so they could gate the deterministic
+    // voices; see the BUG-20260629-034034 note above.)
     // Deterministic set-feedback voice (Coach Voice Renderer slice 1). The engine
     // decides the coaching MEANING; the prose contradiction check is applied per
     // response path in finalizeSetVoice (the candidate prose differs LLM-up vs

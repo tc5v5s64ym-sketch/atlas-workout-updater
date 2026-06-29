@@ -189,6 +189,56 @@ function analyzeSetSequence(sets, opts = {}) {
 }
 
 /**
+ * Recovery/deload override for the under-dose 'bump' verdict (BUG-20260629-034034).
+ *
+ * On a deliberate recovery/deload session, a high-RIR working set is EXPECTED
+ * (the load is intentionally light), so the 'bump' progression invite ("too much
+ * left in the tank → add load") is wrong — it tells the lifter to fight their own
+ * recovery prescription. When a recovery objective is active, neutralize ONLY the
+ * 'bump' verdict (and its under-dose reason code/signal). 'block' / 'caution'
+ * (back-off / don't-grind reads) are left intact — they align with recovery.
+ *
+ * Pure: returns a new analysis (or the original when there's nothing to suppress).
+ *
+ * @param {object|null} analysis - output of analyzeSetSequence.
+ * @param {boolean} recoveryActive - a deload is active OR a recovery/recovery_reload
+ *   selection is signaled for this session.
+ * @returns {object|null}
+ */
+function suppressBumpForRecovery(analysis, recoveryActive) {
+  if (!recoveryActive || !analysis || analysis.progression_verdict !== 'bump') return analysis;
+  return {
+    ...analysis,
+    progression_verdict: 'neutral',
+    recovery_suppressed_bump: true,
+    signals: { ...(analysis.signals || {}), high_rir_workset_underdosed: false },
+    reason_codes: (analysis.reason_codes || []).filter(c => c !== EFFORT_REASON_CODES.HIGH_RIR_WORKSET_UNDERDOSED),
+  };
+}
+
+/**
+ * Recovery/deload override for the Stimulus Governor grade (BUG-20260629-034034,
+ * review follow-up). On a recovery/deload session the high-RIR working sets make
+ * `gradeStimulus` return a "+load"/"+reps" progression_verdict ("room to add
+ * stimulus") — an independent add-load steer the coach prompt would otherwise word.
+ * When a recovery objective is active, downgrade that to 'hold' (which the prompt
+ * already reads as "do NOT add load/push"), leaving effort_interpretation /
+ * fatigue_signal intact. 'hold' / 'back_off' grades are left as-is.
+ *
+ * Pure: returns a new grade (or the original when there's nothing to suppress).
+ *
+ * @param {object|null} setGrade - the { profile, effort_interpretation, progression_verdict, fatigue_signal } fact.
+ * @param {boolean} recoveryActive
+ * @returns {object|null}
+ */
+function holdStimulusForRecovery(setGrade, recoveryActive) {
+  if (!recoveryActive || !setGrade || (setGrade.progression_verdict !== '+load' && setGrade.progression_verdict !== '+reps')) {
+    return setGrade;
+  }
+  return { ...setGrade, progression_verdict: 'hold', recovery_suppressed_load: true };
+}
+
+/**
  * Given the current exercise analysis and the REMAINING planned queue (exercises
  * after the current one), flag a same-prime-mover conflict and suggest a reroute.
  * Suggestion-only — never mutates the plan (owner-approved).
@@ -238,6 +288,8 @@ function assessNextMoveConflict(analysis, plannedQueue) {
 module.exports = {
   analyzeSetSequence,
   assessNextMoveConflict,
+  suppressBumpForRecovery,
+  holdStimulusForRecovery,
   EFFORT_REASON_CODES,
   // exported for fixtures / future wiring
   WARMUP_MIN_RIR,
