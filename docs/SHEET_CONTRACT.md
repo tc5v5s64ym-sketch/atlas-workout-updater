@@ -42,18 +42,24 @@ Extra derived columns after `Volume_Calc` are okay. Do not move or rename the fi
 
 ## `Exercise_Catalog` Headers
 
-1. `Exercise`
-2. `Muscle_Group`
-3. `Lift Code`
-4. `Canonical_Exercise`
+The active production sheet (`1XQa…`) uses these four columns, in order (verified 2026-06-29 against the live tab):
 
-The good Hanging Knee Raises row is:
+1. `Canonical_Name`
+2. `Muscle_Group`
+3. `Lift_Code`
+4. `Original_Variants` — comma/semicolon/pipe-separated alias list
+
+`services/exerciseEnrichment.js` (`buildExerciseCatalogMap`) indexes rows by the normalized `Canonical_Name` **and** each `Original_Variants` entry, so a logged lift resolves when its name matches the canonical or any listed variant. The header matcher also accepts the legacy `Exercise` / `Canonical_Exercise` / `Lift Code` spellings, but the live sheet is `Canonical_Name | Muscle_Group | Lift_Code | Original_Variants`.
+
+A good row:
 
 ```text
-Hanging Knee Raises | Core | HNR01 | Hanging Knee Raises
+Romanian Deadlift | Posterior Chain | RDL01 | Romanian Deadlift, RDL, RDLs
 ```
 
-The old malformed row must not return:
+`Muscle_Group` values are granular in the live sheet (e.g. `Chest`, `Biceps`, `Posterior Chain`, `Quads`, `Arms`), not just the coarse fallback set.
+
+The old malformed (column-shifted) row must not return:
 
 ```text
 Core | HNR01 | 3 | Hanging Knee Raises
