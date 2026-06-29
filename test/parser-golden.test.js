@@ -1186,3 +1186,33 @@ test('bodyweight dips: a multi-line session mixes bodyweight and weighted dips c
   assert.equal(wt.sets[0].weight, 25);
   assert.equal(bench.canonical_name, 'Bench Press');
 });
+
+// ---------------------------------------------------------------------------
+// Seated Row plural aliases — BUG-20260629 (multiline freestyle "seated rows").
+// "seated row" already resolved; the plural "seated rows" fell through to an
+// unknown "Seated Rows" and got absorbed into the prior lift in a multi-entry.
+// ---------------------------------------------------------------------------
+
+test('seated rows (plural) resolves to Seated Row', () => {
+  const result = parseWorkoutText('seated rows 95 10/2');
+  assert.equal(result.canonical_name, 'Seated Row');
+  assert.ok(!(result.warnings || []).includes('unknown_exercise'), 'must not flag unknown_exercise');
+  assert.deepEqual(sets(result), [[95, 10, 2]]);
+});
+
+test('seated row (singular) still resolves to Seated Row (regression)', () => {
+  const result = parseWorkoutText('seated row 95 10/2');
+  assert.equal(result.canonical_name, 'Seated Row');
+  assert.deepEqual(sets(result), [[95, 10, 2]]);
+});
+
+test('cable rows / machine rows (plural) resolve to Seated Row', () => {
+  assert.equal(parseWorkoutText('cable rows 80 12/2').canonical_name, 'Seated Row');
+  assert.equal(parseWorkoutText('machine rows 120 10/1').canonical_name, 'Seated Row');
+});
+
+test('bare "rows" stays ambiguous — asks which row, never silently picks one', () => {
+  const result = parseWorkoutText('rows 95 10/2');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.match(result.message, /which row/i);
+});

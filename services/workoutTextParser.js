@@ -18,7 +18,7 @@ const EXERCISE_ALIASES = [
   ['RDL', ['romanian deadlifts', 'romanian deadlift', 'romanian dls', 'romanian dl', 'rdls', 'rdl']],
   ['Overhead Press', ['overhead press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
   ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],
-  ['Seated Row', ['seated row', 'cable row', 'machine row']],
+  ['Seated Row', ['seated row', 'seated rows', 'cable row', 'cable rows', 'machine row', 'machine rows']],
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
   ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
   // Explicit bicep forms only — bare "curl"/"curls" is intentionally NOT aliased so
@@ -229,17 +229,22 @@ const SET_CONTINUATION_WORD_RE = /^(today|i|did|was|were|then|and|another|next|s
 // attributed to the recognized exercise: a trailing set-group separated from the
 // first set-group by a word run that is ENTIRELY "name-like" — every word an ordinary
 // noun token, NONE of which is set notation (reps/rir/lb/for/x…), a continuation
-// filler (then/and/all/around/times…), a number word, or a known contextual/ambiguous
-// alias (incline/lats/press/row). That precise shape is a SECOND exercise's name the
-// catalog didn't recognize ("…Dumbbell Side Bend 70 15/1…"); its sets must never be
-// silently merged into the first lift. Natural-language notation between sets always
-// contains a notation/filler word, so the run is not entirely name-like and this never
-// fires on it. Pure; NO catalog/KB lookup — conservative (errs toward NOT firing, i.e.
-// today's behavior) so it adds a new refuse branch without changing any existing parse.
+// filler (then/and/all/around/times…), a number word, or a CONTEXTUAL alias word
+// (incline/lats — words that legitimately appear mid-phrase). That precise shape is a
+// SECOND exercise's name; its sets must never be silently merged into the first lift
+// ("…Dumbbell Side Bend 70 15/1…", or a bare ambiguous "…rows 95 10/2"). Natural-language
+// notation between sets always contains a notation/filler word, so the run is not
+// entirely name-like and this never fires on it. Pure; NO catalog/KB lookup.
+//
+// NOTE: an AMBIGUOUS_ALIASES word standing alone before its own set-group (bare
+// "row"/"rows"/"press") IS a second exercise (just an ambiguous one — "which row?"),
+// so it is deliberately NOT excluded here — it must refuse-to-merge, not absorb its set
+// into the prior lift (BUG-20260629 multiline freestyle: "bench 135 8/2 / rows 95 10/2"
+// silently logged 95×10 under Bench Press). Only the CONTEXTUAL_ALIASES mid-phrase words
+// are excluded.
 const CONTEXTUAL_ALIAS_WORDS = new Set(
   [].concat(
-    ...Object.values(CONTEXTUAL_ALIASES).map(list => list.join(' ').split(/\s+/)),
-    Object.keys(AMBIGUOUS_ALIASES)
+    ...Object.values(CONTEXTUAL_ALIASES).map(list => list.join(' ').split(/\s+/))
   ).map(w => w.toLowerCase()).filter(Boolean)
 );
 function hasUnattributableTrailingSets(rest) {

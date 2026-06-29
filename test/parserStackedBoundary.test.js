@@ -83,3 +83,41 @@ test('backend parser and display-block normalizer agree: no path silently merges
   assert.deepEqual(normMulti.blocks.map(b => b.name), ['Weighted Dips', 'Dumbbell Side Bend']);
   assert.ok(normMulti.blocks.every(b => b.sets.length === 2), 'each block keeps only its own sets');
 });
+
+// --- BUG-20260629 (multiline freestyle): an ambiguous/second exercise's set-group
+// must NEVER be silently absorbed into the previous lift. Live repro: the composer
+// input "bench 135 8/2 / rows 95 10/2 / dips 10/2 / knee raises 15/2" logged the
+// 95×10 rows set UNDER Bench Press (card showed "135×8 · 95×10"). ---
+
+test('multiline freestyle: ambiguous "rows" set is never merged into Bench Press (BUG-20260629)', () => {
+  const r = parseWorkoutText('bench 135 8/2\nrows 95 10/2\ndips 10/2\nknee raises 15/2');
+  // Hard invariant: Bench Press must never carry the 95×10 rows set, on any resolution path.
+  const benchAbsorbedRow = r.intent === 'log_sets_multi'
+    && (r.exercises || []).some(e => e.canonical_name === 'Bench Press' && e.sets.some(s => s.weight === 95));
+  assert.ok(!benchAbsorbedRow, 'the 95×10 rows set must never be absorbed into Bench Press');
+  // Bare "rows" is ambiguous ("which row?") — so the contract is fail-loudly, never mis-log.
+  assert.equal(r.intent, 'needs_clarification', `ambiguous "rows" must ask clarification, got ${r.intent}`);
+});
+
+test('multiline freestyle: "seated rows" creates its own Seated Row entry, not merged into Bench', () => {
+  const r = parseWorkoutText('bench 135 8/2\nseated rows 95 10/2\ndips 10/2\nknee raises 15/2');
+  assert.equal(r.intent, 'log_sets_multi');
+  assert.deepEqual(r.exercises.map(e => e.canonical_name),
+    ['Bench Press', 'Seated Row', 'Dips', 'Hanging Knee Raises']);
+  const bench = r.exercises.find(e => e.canonical_name === 'Bench Press');
+  assert.deepEqual(bench.sets.map(s => [s.weight, s.reps, s.rir]), [[135, 8, 2]],
+    'Bench Press keeps only its own 135×8 set');
+  const row = r.exercises.find(e => e.canonical_name === 'Seated Row');
+  assert.deepEqual(row.sets.map(s => [s.weight, s.reps, s.rir]), [[95, 10, 2]],
+    'the 95×10 set is its own Seated Row entry');
+});
+
+test('guardrail: a bare ambiguous "rows" set-group refuses to merge (G1 covers ambiguous aliases, not just unknown names)', () => {
+  // Single-entry form of the same hazard — must not log Bench Press with the rows set absorbed.
+  const r = parseWorkoutText('bench 135 8/2 rows 95 10/2');
+  assert.equal(r.intent, 'needs_clarification');
+  assert.ok((r.warnings || []).includes('unattributable_trailing_sets'),
+    `expected the refuse-to-merge warning, got [${(r.warnings || []).join(', ')}]`);
+  assert.ok(!(r.sets || []).some(s => s.weight === 95),
+    'the 95×10 rows set must never be a logged Bench Press set');
+});
