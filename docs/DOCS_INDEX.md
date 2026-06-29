@@ -87,6 +87,7 @@ These describe specific systems or constraints. Use them when your PR touches th
 
 Use these for deployment, rollback, release, secret handling, and troubleshooting.
 
+- `docs/BUG_TRIAGE_LEDGER.md` — active. Shared done-vs-open record for `Bug_Reports` rows (maps each sheet row → fix status → PR/commit → owner) so parallel sessions don't double-dip. Convention: every fix PR cites its `BUG-…` id and updates the ledger in the same PR.
 - `DEPLOYMENT_GUIDE.md`
 - `QUICKSTART.md`
 - `COMPLETION_CHECKLIST.md`
