@@ -54,12 +54,13 @@ Legend: ✅ fixed (shipped) · 🟡 improved / needs live re-test · 🔴 open �
 
 | Sheet Bug ID | Local (PT) | Report | Distinct bug | Status | Resolved by | Owner |
 |---|---|---|---|---|---|---|
+| BUG-20260629-204817 | 06-29 13:48 | "Coaches pick called for a recovery session then called me out on not lifting enough" | **Recurrence of -034034.** #696 suppressed the add-load 'bump' only when the deload-CONVERGENCE read (`assessRecoveryDeload`) fired — but a recovery-INTENT Coach's Pick (`recovery_pump` / `deload_reset`) whose convergence signal hadn't fired still emitted "Too much left in the tank. Bump coming." The per-set reaction re-derived recovery instead of honoring the prescribed intent. | 🟡 fixed, live re-test | this PR — the set-reaction now honors the active recovery intent (`intentId` threaded from the client; `recoveryActive` includes `recovery_pump`/`deload_reset`), suppressing the bump + holding the stimulus grade | this lane |
 | BUG-20260629-153312 | 06-29 08:33 | "told Atlas it missed [rows] and it came back with the generic 'coach isn't available' message" | Dup of -153258 | 🟡 fixed, live re-test | trigger #699/#701; LLM-down reveal removed (this PR) | this lane |
 | BUG-20260629-153258 | 06-29 08:32 | "informed Atlas it missed rows; it returned the generic 'coach isn't available'" — *Last error: "Not a recognized modality input (cardio / interval / circuit / timed hold)"* | "You missed rows" feedback dead-ended at the generic "coach isn't available" fallback. **Investigated:** the modality 422 is a *benign, caught* fall-through (`tryPreviewModality`); the real symptom was the LLM-down `chatFallback` revealing the outage. Two parts: the **trigger** (rows actually dropped) and the **reveal** (the generic message). | 🟡 fixed, live re-test | trigger fixed by #699 + #701; **LLM-down reveal removed** — `chatFallback` now answers naturally for high-probability cases (incl. "you missed a set → re-type it") and never says the coach is unavailable (this PR) | this lane |
 | BUG-20260629-153217 | 06-29 08:32 | *(empty note)* | — | ⚪ noise | — | — |
 | BUG-20260629-152824 | 06-29 08:28 | "put a bunch of workouts in at once and it missed rows; also says there's no historical working weight for knee raises (false)" | (a) multi-exercise paste dropped rows; (b) bodyweight lift falsely reported "no recent working sets" | ✅ fixed | #699 (multiline merge) + #700 (bodyweight history) + #701 (single bare BW rep) | this lane |
 | BUG-20260629-054925 | 06-28 22:49 | "tapped to view a restored session's sets, nothing showed" | Restored session's logged rows `<details>` stayed collapsed ("tap to view" showed nothing) | ✅ fixed | PR G #691 (`2a1407f`) | other session |
-| BUG-20260629-034034 | 06-28 20:40 | "coach said too much in the tank, lift more — but it picked a recovery workout" | Per-set "bump / add-load" reaction contradicts a Recovery/deload prescription | ✅ fixed | #696 (`9bf216c` — suppress bump + stimulus-grade on recovery/deload, incl. the LLM-prose path) | other session |
+| BUG-20260629-034034 | 06-28 20:40 | "coach said too much in the tank, lift more — but it picked a recovery workout" | Per-set "bump / add-load" reaction contradicts a Recovery/deload prescription | ✅ fixed | #696 (`9bf216c` — suppress bump + stimulus-grade on recovery/deload). **Note:** #696 gated on the convergence read only; the intent-driven case recurred as -204817 and is fixed there. | other session |
 | BUG-20260629-003636 | 06-28 17:36 | *(empty note)* | — | ⚪ noise | — | — |
 | BUG-20260629-003505 | 06-28 17:35 | "tapped restore session, nothing happened" | Restore-banner tap was a no-op | 🟡 fixed, live re-test | PR #678 (interactive restore banner) | other session |
 | BUG-20260629-003208 | 06-28 17:32 | "tried to log effort, got an error" | rir=40 poison row rejected the **whole** session write | ✅ fixed | PR A #680 (`94f0379`) | other session |
@@ -77,10 +78,11 @@ Legend: ✅ fixed (shipped) · 🟡 improved / needs live re-test · 🔴 open �
 | BUG-20260627-025603 | 06-26 19:56 | "Test" | — | ⚪ noise | — | — |
 | BUG-20260627-025552 | 06-26 19:55 | *(empty note)* | — | ⚪ noise | — | — |
 
-**Bottom line (22 rows, updated 2026-06-29 PT):** 16 shipped, **4 fixed pending an owner live re-test**
-(incl. the coach-fallback pair -153258/-153312), **0 open**, 4 noise (with one of the four being a
-near-dup). All known-actionable rows now have a shipped fix; the remaining work is owner live
-validation — see the live-test items in `BACKLOG.md` / the QA campaign.
+**Bottom line (23 rows, updated 2026-06-29 PT):** 16 shipped, **5 fixed pending an owner live re-test**
+(the coach-fallback pair -153258/-153312, the recovery-bump recurrence -204817, the restore banner
+-003505, the knee-raise prompt -002945), **0 open**, 4 noise (one a near-dup). All known-actionable
+rows now have a shipped fix; the remaining work is owner live validation — see the live-test items in
+`BACKLOG.md` / the QA campaign.
 
 ---
 

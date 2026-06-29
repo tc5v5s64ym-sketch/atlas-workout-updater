@@ -1179,7 +1179,15 @@ function computeSetEffortExtras(rawFacts) {
     // to add load. Neutralize the under-dose 'bump' verdict when a recovery objective
     // is active — this gates BOTH deterministic voices below (effort_note + voiceBase)
     // and is mirrored by a precedence rule in the LLM prompt (services/coach.js).
-    const recoveryActive = deloadActive || out.recovery_advisory !== null;
+    //
+    // BUG-20260629-204817 (recurrence of -034034): the deload-convergence read
+    // (assessRecoveryDeload) is independent of which session Coach's Pick prescribed,
+    // so a recovery-INTENT session (recovery_pump / deload_reset) whose convergence
+    // signal hasn't fired still emitted "Too much left in the tank. Bump coming." The
+    // session's prescribed intent IS a recovery objective — honor it directly so the
+    // add-load nudge is suppressed regardless of the re-derived signal.
+    const recoveryIntentActive = ['recovery_pump', 'deload_reset'].includes(String(rawFacts.intentId || ''));
+    const recoveryActive = deloadActive || out.recovery_advisory !== null || recoveryIntentActive;
     analysis = suppressBumpForRecovery(analysis, recoveryActive);
 
     // Profile-aware Stimulus Governor grade (PR 484 wiring slice 2 — read-only fact).
