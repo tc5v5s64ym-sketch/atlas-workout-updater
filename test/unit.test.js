@@ -186,7 +186,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v69/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v70/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('required sheet contract excludes Dashboard', () => {
@@ -3205,6 +3205,41 @@ test('screenshot preview date resolution: multipart submit omits blank date and 
   assert.match(submitFunction, /if \(date\) form\.append\('date', date\)/);
 });
 
+test('multi-session/day: effort-only uploads send a blank session_id so the server auto-increments', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('logger-form').addEventListener('submit'";
+  const submitSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf('async function submitCompleteWorkout(')
+  );
+
+  // The session_id sent for a complete-workout upload is gated on effortOnly: an
+  // effort-only upload sends the RAW field (blank for a fresh upload → server
+  // auto-increments), while an upload carrying workout rows keeps the resolved id.
+  assert.match(submitSection, /const explicitSessionId = sessionIdInput\.value\.trim\(\)/);
+  assert.match(submitSection, /const completeWorkoutSessionId = effortOnly \? explicitSessionId : sessionId/);
+  // Both complete-workout branches submit the gated id, not the forced …-01.
+  assert.match(submitSection, /submitCompleteWorkout\(\{ file, logRows, sessionId: completeWorkoutSessionId,/);
+  assert.match(submitSection, /submitCompleteWorkout\(\{ logRows, sessionId: completeWorkoutSessionId,/);
+  // The effort-only branch captures the server-resolved (auto-incremented) id so the
+  // live write reuses the SAME session the preview computed.
+  assert.match(submitSection, /const resolvedEffortSessionId = resolvedEffortData\.session_id \|\| completeWorkoutSessionId \|\| sessionId/);
+  assert.match(submitSection, /pendingWrite = \{ mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId,/);
+});
+
+test('multi-session/day: a saved session clears #log-session-id so the next upload is a new session', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const anchor = "getElementById('approve-btn').addEventListener('click'";
+  const approveSection = appSource.slice(
+    appSource.indexOf(anchor),
+    appSource.indexOf(anchor) + 9600
+  );
+  // After a confirmed write the session is concluded, so its id must be cleared from the
+  // field — otherwise the next effort upload re-sends the just-written id and collides.
+  assert.match(approveSection, /const savedSessionIdField = document\.getElementById\('log-session-id'\)/);
+  assert.match(approveSection, /if \(savedSessionIdField\) savedSessionIdField\.value = ''/);
+});
+
 test('effort-only preview: complete-workout preview shows no-workout copy and effort-only CTA', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const previewFn = appSource.slice(
@@ -5392,8 +5427,8 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v69/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v68\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v70/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v69\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
