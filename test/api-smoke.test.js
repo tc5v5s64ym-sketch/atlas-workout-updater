@@ -447,6 +447,32 @@ test('api smoke: coach/message attaches a read-only set_grade (profile-aware gov
   // Read-only: this route never writes; the manifest already asserts writeCapable:false.
 });
 
+test('api smoke: coach/message — a recovery-intent session suppresses the add-load bump (BUG-20260629-204817)', async () => {
+  fakeCoachState.configured = false; // exercise the deterministic path
+  const facts = { exerciseName: 'Bench Press', todaySets: [{ weight: 225, reps: 5, rir: 5 }] };
+
+  // Control: no recovery intent → the under-dose set grades "+load" (room to progress),
+  // so the grade is NOT recovery-suppressed.
+  const control = await requestJson('/api/coach/message', {
+    method: 'POST', body: JSON.stringify({ facts })
+  });
+  assert.equal(control.response.status, 200);
+  assert.ok(!control.body.data.set_grade || !control.body.data.set_grade.recovery_suppressed_load,
+    'with no recovery intent the +load grade must not be suppressed');
+
+  // Recovery/Pump Coach's Pick: the SAME under-dose set must never be told to add load —
+  // the light, high-RIR work is by design (BUG-20260629-204817, recurrence of -034034).
+  const recovery = await requestJson('/api/coach/message', {
+    method: 'POST', body: JSON.stringify({ facts: { ...facts, intentId: 'recovery_pump' } })
+  });
+  assert.equal(recovery.response.status, 200);
+  const g = recovery.body.data.set_grade;
+  assert.equal(g.progression_verdict, 'hold', 'recovery intent holds the stimulus grade (no +load)');
+  assert.equal(g.recovery_suppressed_load, true, 'recovery intent suppressed the +load steer');
+  const note = recovery.body.data.effort_note || '';
+  assert.doesNotMatch(note, /Bump coming|Too much left in the tank/, 'a recovery session must not nudge add-load');
+});
+
 test('api smoke: coach/message set_grade is null for a non-weighted (cardio-shaped) input', async () => {
   fakeCoachState.configured = false;
   const { response, body } = await requestJson('/api/coach/message', {
