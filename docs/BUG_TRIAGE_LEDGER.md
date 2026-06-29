@@ -54,7 +54,12 @@ Legend: ✅ fixed (shipped) · 🟡 improved / needs live re-test · 🔴 open �
 
 | Sheet Bug ID | Local (PT) | Report | Distinct bug | Status | Resolved by | Owner |
 |---|---|---|---|---|---|---|
-| BUG-20260629-034034 | 06-28 20:40 | "coach said too much in the tank, lift more — but it picked a recovery workout" | Per-set "bump / add-load" reaction contradicts a Recovery/deload prescription | 🔴 **OPEN** | — | **new (this lane)** |
+| BUG-20260629-153312 | 06-29 08:33 | "told Atlas it missed [rows] and it came back with the generic 'coach isn't available' message" | Dup of -153258 | 🔴 **OPEN** | — | **new (this lane)** |
+| BUG-20260629-153258 | 06-29 08:32 | "informed Atlas it missed rows; it returned the generic 'coach isn't available'" — *Last error: "Not a recognized modality input (cardio / interval / circuit / timed hold)"* | Conversational "you missed rows" feedback appears misrouted to the modality parser → rejected → generic coach-unavailable fallback (or a transient Gemini outage). **Needs investigation** — note text read via a degraded CSV export, confirm against the sheet | 🔴 **OPEN** | — | **new (this lane)** |
+| BUG-20260629-153217 | 06-29 08:32 | *(empty note)* | — | ⚪ noise | — | — |
+| BUG-20260629-152824 | 06-29 08:28 | "put a bunch of workouts in at once and it missed rows; also says there's no historical working weight for knee raises (false)" | (a) multi-exercise paste dropped rows; (b) bodyweight lift falsely reported "no recent working sets" | ✅ fixed | #699 (multiline merge) + #700 (bodyweight history) + #701 (single bare BW rep) | this lane |
+| BUG-20260629-054925 | 06-28 22:49 | "tapped to view a restored session's sets, nothing showed" | Restored session's logged rows `<details>` stayed collapsed ("tap to view" showed nothing) | ✅ fixed | PR G #691 (`2a1407f`) | other session |
+| BUG-20260629-034034 | 06-28 20:40 | "coach said too much in the tank, lift more — but it picked a recovery workout" | Per-set "bump / add-load" reaction contradicts a Recovery/deload prescription | ✅ fixed | #696 (`9bf216c` — suppress bump + stimulus-grade on recovery/deload, incl. the LLM-prose path) | other session |
 | BUG-20260629-003636 | 06-28 17:36 | *(empty note)* | — | ⚪ noise | — | — |
 | BUG-20260629-003505 | 06-28 17:35 | "tapped restore session, nothing happened" | Restore-banner tap was a no-op | 🟡 fixed, live re-test | PR #678 (interactive restore banner) | other session |
 | BUG-20260629-003208 | 06-28 17:32 | "tried to log effort, got an error" | rir=40 poison row rejected the **whole** session write | ✅ fixed | PR A #680 (`94f0379`) | other session |
@@ -72,26 +77,38 @@ Legend: ✅ fixed (shipped) · 🟡 improved / needs live re-test · 🔴 open �
 | BUG-20260627-025603 | 06-26 19:56 | "Test" | — | ⚪ noise | — | — |
 | BUG-20260627-025552 | 06-26 19:55 | *(empty note)* | — | ⚪ noise | — | — |
 
-**Bottom line:** 11 of 17 already shipped, 2 fixed pending an owner live re-test, 1 genuinely open, 3 noise.
+**Bottom line (22 rows, updated 2026-06-29 PT):** 16 shipped, 2 fixed pending an owner live re-test,
+**2 open** (the coach-fallback pair -153258/-153312, same bug), 4 noise. The previously-"one open"
+recovery-bump bug (-034034) shipped in #696; the live-test re-tests (-003505 restore banner,
+-002945 knee-raise prompt) are still pending owner confirmation.
 
 ---
 
-## The one open bug
+## The open bug
 
-🔴 **BUG-20260629-034034 — recovery session still nudges "add load."**
-Coach's Pick generated an explicit **Recovery / Pump** session ("weekly fatigue 2.2× baseline,
-light loads 12–15 reps"). The lifter logged the prescribed light sets, and the per-set reaction
-replied **"Too much left in the tank. Bump coming. → move to 175 / 50 / 135"** — telling him to add
-load during a deliberate deload/recovery day.
+🔴 **BUG-20260629-153258 (and its dup -153312) — "you missed rows" feedback dead-ends at "coach isn't
+available."** After the multi-exercise paste dropped rows (since fixed for the bare-bodyweight case in
+#701), the owner told Atlas *"you missed rows."* Instead of a useful reply, Atlas returned the generic
+**"coach isn't available"** fallback. The captured `Last error` — *"Not a recognized modality input
+(cardio / interval / circuit / timed hold)"* — strongly suggests the conversational complaint was
+**routed to the modality parser** (`/api/log-modality` or equivalent), rejected as not-a-modality, and
+then surfaced as the generic coach-unavailable line rather than a grounded answer.
 
-- **Root:** the per-set effort/progression voice evaluates each set in isolation and emits a
-  `bump` (progression invite) without reading the session's recovery/deload **objective**.
-- **Related, already half-built:** BACKLOG slice 6 made the recovery read **override `bump` on the
-  deterministic / LLM-down path**, and slice 7's deferred note flags that the `bump` path is not yet
-  reconciled against the governor grade. This report shows the **LLM-prose path (Gemini up) still
-  emitting the bump** — so the suppression needs to extend to that path too.
-- **Lane:** correctness fix (a recovery prescription must not tell you to add load), not a coaching-
-  philosophy change. Filed in `BACKLOG.md`. **Not started** here — queued behind the active fix lane.
+- **Two candidate roots (investigate before fixing):** (a) a **routing bug** — free-form coach
+  feedback misclassified as a modality-log attempt; or (b) a **transient Gemini outage** at 08:32 PT,
+  in which case the bug is only the *generic* fallback wording (the deterministic engine should still
+  answer "here's what I logged"). The `Last error` points at (a).
+- **Note text caveat:** the sheet rows were read via a degraded CSV export (truncation + note/row
+  misalignment across fetches); **confirm the verbatim notes against the sheet** (or `GET
+  /api/bug-report?full=1`) before implementing.
+- **Lane:** correctness/routing — not started. Queued for a focused investigation PR (run the
+  Current-State Verification Gate first; the modality-routing path may already have changed).
+
+### Previously open, now shipped
+
+✅ **BUG-20260629-034034 — recovery session nudged "add load"** — shipped in **#696** (`9bf216c`):
+the recovery/deload read now suppresses the per-set `bump` + stimulus-grade steer, including on the
+LLM-prose path. Kept here as a worked example of the open→shipped transition this ledger tracks.
 
 ---
 

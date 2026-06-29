@@ -70,6 +70,8 @@ This governs *who decides*. It does **not** relax the absolute data-safety rules
 
 Before implementing any roadmap, backlog, or GitHub issue fix, perform the `Current-State Verification Gate` in `docs/AGENT_WORKFLOW.md`. Do not begin implementation only because an item exists in `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, or GitHub. First verify whether the failure still exists in the current repo and report the required verdict/evidence.
 
+**If the task is a `Bug_Reports` row (a `BUG-…` id), read `docs/BUG_TRIAGE_LEDGER.md` FIRST.** The Google Sheet has no resolved/open column, so a fixed bug looks identical to an open one — the ledger is the shared done-vs-open record that stops two sessions from re-fixing the same bug. Confirm status there (and `git log --all --grep='BUG-…'`) before touching code, then still run the verification gate. When you ship a fix, cite the `BUG-…` id in the commit and update the ledger in the same PR.
+
 1. Check `config/routes.js` — if you are adding a route, add it here too.
 2. Check `docs/INVARIANTS.md` — if your change touches the parser, sheet writes, auth, or undo flow, re-read the relevant invariant group first.
 3. Check existing tests in `test/api-smoke.test.js` — the stubs pattern matters (see Invariants T1–T3).
