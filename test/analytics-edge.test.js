@@ -1026,6 +1026,68 @@ test('recommendNextSet: trend is unaffected for single-working-set-per-session h
   assert.equal(recommendNextSet(rows, 'SQ01', { today: '2026-05-16' }).e1rm_trend, 'up');
 });
 
+// ── Bodyweight lifts get a rep-based recommendation, not a false dead-end ──────
+// Live-test bug (2026-06-29): logging hanging knee raises returned "No recent
+// working sets found for this lift code" and no next card, because recommendNextSet
+// filtered working sets on a positive WEIGHT — which a bodyweight movement never
+// has. The fix gates on reps and progresses by reps, never load.
+test('recommendNextSet: bodyweight lift (no load) gets a rep-based rec, not a false "no working sets"', () => {
+  const bw = (d, s, sn, r, rir) => [d, s, 'Hanging Knee Raise', 'Hanging Knee Raise', 'Core', 'HKR01', String(sn), '', String(r), String(rir), '', ''];
+  const rows = [
+    bw('2026-06-02', 'S1', 1, 12, 2), bw('2026-06-02', 'S1', 2, 12, 2),
+    bw('2026-06-09', 'S2', 1, 12, 2), bw('2026-06-09', 'S2', 2, 12, 2)
+  ];
+  const rec = recommendNextSet(rows, 'HKR01', { today: '2026-06-10' });
+  assert.notEqual(rec.recommendation, 'No recent working sets found for this lift code.');
+  assert.ok(rec.next_target, 'a bodyweight lift must still render a next-target card');
+  assert.equal(rec.next_target.weight, 0, 'bodyweight = no external load');
+  assert.equal(rec.next_target.reps, 13, 'RIR 2 leaves room → add a rep');
+  assert.match(rec.recommendation, /rep/i);
+  assert.doesNotMatch(rec.recommendation, /lb/i, 'must never prescribe a weight bump for a bodyweight lift');
+  assert.equal(rec.sessions_analyzed, 2);
+});
+
+test('recommendNextSet: a bodyweight lift at failure holds reps instead of inventing load', () => {
+  const rows = [['2026-06-09', 'S2', 'Push-Up', 'Push-Up', 'Chest', 'PU01', '1', '', '20', '0', '', '']];
+  const rec = recommendNextSet(rows, 'PU01', { today: '2026-06-10' });
+  assert.equal(rec.next_target.weight, 0);
+  assert.equal(rec.next_target.reps, 20, 'RIR 0 = at failure → hold the rep count');
+  assert.match(rec.recommendation, /Hold 20 reps/);
+});
+
+test('recommendNextSet: added-load bodyweight (weighted dips) still progresses by load', () => {
+  // Guard: a lift logged WITH external load is not treated as bodyweight — the
+  // weighted progression path is unchanged.
+  const wd = (d, s) => [d, s, 'Weighted Dip', 'Weighted Dip', 'Chest', 'WDIP01', '1', '25', '8', '2', '', ''];
+  const rec = recommendNextSet([wd('2026-06-02', 'S1'), wd('2026-06-09', 'S2')], 'WDIP01', { today: '2026-06-10' });
+  assert.equal(rec.next_target.weight, 30, 'stable reps at RIR 2 over two sessions → +5 lb bump');
+  assert.equal(rec.next_target.reps, 8);
+});
+
+test('recommendNextSet: a weighted lift whose LAST set has a stray 0 weight is not flipped to bodyweight', () => {
+  // Guard for the relaxed filter: a normally-weighted lift with a trailing
+  // blank/0-weight set (a data-entry slip) must still anchor on its weighted
+  // history and stay on the load-based path — not collapse to a rep-only rec.
+  const row = (d, s, w, r) => [d, s, 'Bench Press', 'Bench Press', 'Chest', 'BEN01', '1', w, String(r), '2', '', ''];
+  const rows = [
+    row('2026-06-02', 'S1', '185', 8),
+    row('2026-06-09', 'S2', '185', 8),
+    row('2026-06-09', 'S2', '', 8) // stray set logged without a load
+  ];
+  const rec = recommendNextSet(rows, 'BEN01', { today: '2026-06-10' });
+  assert.ok(rec.next_target.weight > 0, 'must keep a real load target, not 0');
+  assert.equal(rec.next_target.weight, 190, 'stable reps over two sessions at RIR 2 → +5 lb');
+});
+
+test('recommendNextSet: a stale bodyweight lift (>10 days) reconfirms by reps, with no phantom weight', () => {
+  const rows = [['2026-05-20', 'S1', 'Hanging Knee Raise', 'Hanging Knee Raise', 'Core', 'HKR01', '1', '', '12', '2', '', '']];
+  const rec = recommendNextSet(rows, 'HKR01', { today: '2026-06-10' }); // 21 days gap
+  assert.equal(rec.next_target.weight, 0, 'bodyweight = no load even after a layoff');
+  assert.equal(rec.next_target.reps, 12, 'reconfirm last session\'s reps');
+  assert.match(rec.recommendation, /Repeat 12 reps to reconfirm/);
+  assert.doesNotMatch(rec.recommendation, /×|lb/i, 'no weight reference for a bodyweight lift');
+});
+
 // ── Personalized warm-up ramps from logged history (end-to-end) ───────────────
 // A lift the lifter logs a consistent warm-up ramp on gets THEIR ramp scaled to
 // today's working weight; a lift with no logged ramp history gets the generic one.
