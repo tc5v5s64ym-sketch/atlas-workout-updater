@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "status": "seed",
-    "note": "PDF binaries must be placed here by Dale. Update checksum_sha256 fields once files are present."
+    "status": "complete",
+    "note": "PDF binaries are present. Checksums verified 2026-06-30."
   },
   "documents": [
     {
@@ -10,7 +10,7 @@
       "title": "Building an AI Strength and Conditioning Coach: Science, Math, and Architecture Blueprint",
       "origin": "Research document produced for Atlas Coach Intelligence Layer",
       "date_ingested": "2026-06-30",
-      "checksum_sha256": null,
+      "checksum_sha256": "c26d6a9e83bf0dcbdd5486fb94fc37887e11bb684f8e9c6d3b4c5a8972ec2072",
       "topics": ["e1RM formulas", "progression math", "periodization models", "fatigue math", "volume landmarks"]
     },
     {
@@ -19,7 +19,7 @@
       "title": "Atlas Coaching Intelligence: Complete Knowledge Architecture and Implementation Roadmap",
       "origin": "Research document produced for Atlas Coach Intelligence Layer",
       "date_ingested": "2026-06-30",
-      "checksum_sha256": null,
+      "checksum_sha256": "f24176c8fc031e094292b934a8d6bf878433b3e3fc9e20dca25d5ded1635f0fc",
       "topics": ["knowledge domains A-K", "evidence tiers", "exercise ontology", "progression rules", "safety guardrails", "coach-memory model"]
     },
     {
@@ -28,7 +28,7 @@
       "title": "Building an AI Fitness Coach",
       "origin": "Research document produced for Atlas Coach Intelligence Layer",
       "date_ingested": "2026-06-30",
-      "checksum_sha256": null,
+      "checksum_sha256": "285017674710ad2feb9580a88985e2f26368945cf745da66e7944bc29a5d171b",
       "topics": ["wearable data integration", "fitness datasets", "privacy", "APIs", "readiness signals", "HRV", "ACWR"]
     },
     {
@@ -37,7 +37,7 @@
       "title": "Atlas Coaching Intelligence Architecture",
       "origin": "Research document produced for Atlas Coach Intelligence Layer",
       "date_ingested": "2026-06-30",
-      "checksum_sha256": null,
+      "checksum_sha256": "e8be3c3dc91a7a80a9ee2d3eff74ce76b016ba49cdd92be430d657ff9221a13b",
       "topics": ["knowledge base tree", "rules tables", "traffic-light safety system", "progression decision table", "deload triggers"]
     }
   ]
