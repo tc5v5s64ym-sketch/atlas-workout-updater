@@ -1,0 +1,63 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "The CoachingDecision contract: the single object the Brain emits for every intent (stable envelope + typed payload). The LLM may word ONLY values present in explanation_inputs. caveat_keys mirror services/confidenceModule.js CAVEAT_KEYS values exactly (the producer) — a contracts-integrity test guards the alignment.",
+    "spec": "docs/COACHING_CONTRACTS_SPEC.md §3",
+    "architecture": "docs/COACHING_ENGINE_ARCHITECTURE.md"
+  },
+  "schema_version": 1,
+  "decision_types": [
+    "workout", "progression", "substitution", "recovery",
+    "onboarding", "nutrition", "progress_readout", "clarification_needed"
+  ],
+  "statuses": ["answered", "needs_clarification"],
+  "tiers": ["high", "moderate", "low"],
+  "actions": ["act", "act_with_caveat", "ask"],
+  "caveat_keys": [
+    "insufficient_history",
+    "stale_data",
+    "low_trend_confidence",
+    "limited_readiness_inputs",
+    "exercise_unresolved",
+    "safety_flag_present"
+  ],
+  "safety_flag_caveat": "safety_flag_present",
+  "safety_levels": ["green", "yellow", "red"],
+  "prescription_keys": ["target_weight", "target_reps", "target_rir", "e1rm", "protein_target", "calorie_target"],
+  "payloads": {
+    "workout": {
+      "required": ["session_label", "blocks"],
+      "block_required": ["exercise", "lift_code", "sets", "reps", "target_weight", "target_rir"],
+      "block_prescribed_numbers": ["target_weight", "target_reps", "target_rir"]
+    },
+    "progression": {
+      "required": ["lift_code", "action"],
+      "prescribed_numbers": ["target_weight", "target_reps", "e1rm"]
+    },
+    "substitution": {
+      "required": ["original_lift_code", "candidates"],
+      "prescribed_numbers": []
+    },
+    "recovery": {
+      "required": [],
+      "prescribed_numbers": []
+    },
+    "onboarding": {
+      "required": [],
+      "prescribed_numbers": []
+    },
+    "nutrition": {
+      "required": [],
+      "prescribed_numbers": ["protein_target", "calorie_target"]
+    },
+    "progress_readout": {
+      "required": [],
+      "prescribed_numbers": [],
+      "no_prescription": true
+    },
+    "clarification_needed": {
+      "required": ["reason"],
+      "prescribed_numbers": []
+    }
+  }
+}

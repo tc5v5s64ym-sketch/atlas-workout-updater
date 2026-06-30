@@ -252,7 +252,7 @@ The single object the Brain emits for every intent. Stable envelope + typed payl
 
 - `decision_type`: `workout`, `progression`, `substitution`, `recovery`, `onboarding`, `nutrition`, `progress_readout`, `clarification_needed`.
 - `confidence.tier`: `high`, `moderate`, `low`. `confidence.action`: `act`, `act_with_caveat`, `ask`.
-- `confidence.caveats[]` ∈ (from `confidenceModule`): `INSUFFICIENT_HISTORY`, `STALE_DATA`, `LOW_TREND_CONFIDENCE`, `LIMITED_READINESS`, `EXERCISE_UNRESOLVED`, `SAFETY_FLAG_PRESENT`.
+- `confidence.caveats[]` ∈ the **exact lowercase values `confidenceModule` emits** (the producer; a contracts-integrity test guards this): `insufficient_history`, `stale_data`, `low_trend_confidence`, `limited_readiness_inputs`, `exercise_unresolved`, `safety_flag_present`.
 - `safety.level`: `green`, `yellow`, `red`.
 - `missing_info[].field` ∈ the §2.3 input-key vocabulary. `missing_info[].information_gain` ∈ `[0,1]`.
 
@@ -287,9 +287,9 @@ The single object the Brain emits for every intent. Stable envelope + typed payl
 2. **Discriminator integrity:** `payload` conforms to the registered shape for `decision_type`.
 3. **Ask/answer integrity:** `status = needs_clarification` ⟺ `decision_type = clarification_needed` ⟺ `missing_info` non-empty ⟺ `confidence.action = ask`. All four move together or the decision is invalid.
 4. **Trust-contract integrity (critical):** every numeric value in `payload` that represents a prescribed quantity (`target_weight`, `target_reps`, `target_rir`, `e1rm`, …) must also appear in `explanation_inputs`. The LLM may speak **only** `explanation_inputs`; this guarantees it can speak every prescribed number and *no number absent from the Brain's output*.
-5. **Safety escalation:** `safety.blocking = true` ⟹ `confidence.action ≠ act` (forced to `act_with_caveat` or `ask`) and `SAFETY_FLAG_PRESENT ∈ caveats`.
+5. **Safety escalation:** `safety.blocking = true` ⟹ `confidence.action ≠ act` (forced to `act_with_caveat` or `ask`) and `safety_flag_present ∈ caveats`.
 6. `read_only` intents ⟹ `decision_type = progress_readout`, `payload` carries no prescription fields, `explanation_inputs` carries only descriptive facts.
-7. `provenance.modules_run` ∪ `provenance.skipped` equals the resolved capability set for the intent (nothing silently dropped).
+7. **Provenance accounting.** `modules_run` and `skipped` are disjoint string arrays, and their union ⊆ the manifest's resolved capability set for the intent (no out-of-plan module ran). The stronger "union *equals* the resolved set" (full accounting, nothing silently dropped) is an Orchestrator-output property enforced by the Orchestrator's own test when it lands (PR-5) — the standalone decision validator checks ⊆, since a decision object alone need not enumerate the entire closure.
 8. `missing_info` is sorted by `information_gain` descending, truncated to the **minimum set whose resolution would flip `action` to `act`** (minimality — "ask only what's needed").
 9. Validator is pure: `{ valid, errors[] }`, no throw, no mutation.
 
@@ -319,7 +319,7 @@ The single object the Brain emits for every intent. Stable envelope + typed payl
   "intent":{ "type":"modify_workout","constraints":{"injury":"shoulder"},"source":"voice" },
   "decision_type":"substitution","status":"answered",
   "confidence":{ "score":71,"tier":"moderate","action":"act_with_caveat",
-                 "caveats":["SAFETY_FLAG_PRESENT"] },
+                 "caveats":["safety_flag_present"] },
   "safety":{ "level":"yellow","flags":["shoulder"],"blocking":false },
   "payload":{ "original_lift_code":"OHP",
     "candidates":[ { "exercise":"Landmine Press","reason":"reduced overhead shoulder load",
@@ -336,7 +336,7 @@ The single object the Brain emits for every intent. Stable envelope + typed payl
   "intent":{ "type":"progression_review","constraints":{"target_lift":"BENCH"},"source":"chat" },
   "decision_type":"clarification_needed","status":"needs_clarification",
   "confidence":{ "score":38,"tier":"low","action":"ask",
-                 "caveats":["INSUFFICIENT_HISTORY","LIMITED_READINESS"] },
+                 "caveats":["insufficient_history","limited_readiness_inputs"] },
   "safety":{ "level":"green","flags":[],"blocking":false },
   "payload":{ "reason":"insufficient_data" },
   "missing_info":[
