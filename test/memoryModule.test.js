@@ -305,14 +305,25 @@ test('queryPatterns: returns { patterns: [] } for empty liftCode', () => {
 
 test('queryPatterns: returns repeated_substitution when threshold met', () => {
   const history = [
-    { original: 'back squat', substitute: 'leg press' },
-    { original: 'back squat', substitute: 'leg press' },
-    { original: 'back squat', substitute: 'leg press' },
+    { original: 'back squat', substitute: 'leg press', liftCode: 'SQUAT' },
+    { original: 'back squat', substitute: 'leg press', liftCode: 'SQUAT' },
+    { original: 'back squat', substitute: 'leg press', liftCode: 'SQUAT' },
   ];
   const result = queryPatterns('SQUAT', [], { substitutionHistory: history });
   const subs   = result.patterns.filter(p => p.type === 'repeated_substitution');
   assert.equal(subs.length, 1, 'should fire repeated_substitution after 3 occurrences');
   assert.equal(subs[0].details.count, 3);
+});
+
+test('queryPatterns: BENCH substitution history does NOT contaminate SQUAT via standalone call', () => {
+  const allSubs = [
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+  ];
+  const result = queryPatterns('SQUAT', [], { substitutionHistory: allSubs });
+  const subs = result.patterns.filter(p => p.type === 'repeated_substitution');
+  assert.equal(subs.length, 0, 'BENCH substitutions must not fire under SQUAT in queryPatterns');
 });
 
 test('queryPatterns: no repeated_substitution when below threshold', () => {

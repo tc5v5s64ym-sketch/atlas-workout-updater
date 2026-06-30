@@ -71,11 +71,21 @@ function queryTrend(liftCode, logRows) {
 
 // Query coach-memory patterns for one lift code across the supplied log rows.
 // Returns { patterns: [] } on invalid or insufficient input.
+// opts.substitutionHistory is filtered to entries matching liftCode before being
+// forwarded to detectPatterns — the caller need not pre-filter.
 function queryPatterns(liftCode, logRows, options) {
   if (typeof liftCode !== 'string' || !liftCode.trim()) return { patterns: [] };
   if (!Array.isArray(logRows)) return { patterns: [] };
   const opts = options != null && typeof options === 'object' ? options : {};
-  return detectPatterns(liftCode, logRows, opts);
+  const code = liftCode.trim().toUpperCase();
+  return detectPatterns(liftCode, logRows, {
+    ...opts,
+    substitutionHistory: Array.isArray(opts.substitutionHistory)
+      ? opts.substitutionHistory.filter(
+          e => e && String(e.liftCode || '').trim().toUpperCase() === code
+        )
+      : undefined,
+  });
 }
 
 // Build a full memory snapshot across all lifts present in logRows.
