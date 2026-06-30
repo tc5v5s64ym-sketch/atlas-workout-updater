@@ -154,7 +154,7 @@ function _buildGZCLP(program, state) {
     const tier     = ex.tier;
 
     if (tier === 'T1') {
-      const tierIndex   = Math.min(Number(t1Tiers[liftCode]) || 0, prog.t1.max_tier);
+      const tierIndex   = Math.min(Math.max(Number(t1Tiers[liftCode]) || 0, 0), prog.t1.max_tier);
       const tierConfig  = prog.t1.tiers[tierIndex];
       const increment   = prog.t1.success_increment_lb[region === 'lower_body' ? 'lower_body' : 'upper_body'];
       const rawWeight   = currentWeights[liftCode] ?? null;
