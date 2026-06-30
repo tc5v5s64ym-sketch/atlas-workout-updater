@@ -660,6 +660,8 @@ Follow-ups filed from the automated code review of PR #721 (static data + docs o
 
 - **IntensityModule: Epley-derived %1RM model diverges from practitioner RPE tables at extremes** `[housekeeping]` — `services/intensityModule.js` derives %1RM from the Epley formula (internally consistent with `analytics.js`) rather than encoding a practitioner lookup table (e.g. Tuchscherer/RTS). The config marks this as `contested: true`. When a future PR consumes the module for session planning, consider whether to add a verified practitioner table as a `config/coaching/intensity/rpe-percent-table.json` alongside the formula-based approach, or accept the Epley approximation as "good enough" for prescription. No action until a consumer exists.
 
+- **ExerciseLookupModule: exercise objects returned by reference (not frozen)** `[housekeeping]` — `getExerciseById` and `getAllExercises` return shared cached exercise object references. Callers that mutate a returned object (e.g. `ex.movement_pattern = 'foo'`) corrupt the in-process cache for all subsequent callers. No consumers today, so not a live risk. When the coaching modules that consume these objects reach code that might mutate them (e.g. enrichment, normalisation), consider `Object.freeze` at index-load time or returning shallow copies. Arrays are already `.slice()`-copied defensively.
+
 ---
 
 ## Someday / future scope

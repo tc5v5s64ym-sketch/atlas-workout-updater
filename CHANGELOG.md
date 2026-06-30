@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — VolumeModule: per-muscle set counting and MEV/MAV/MRV landmark zones (Brian PR 5)
+
+New read-only module `services/volumeModule.js` — pure volume tracking layer; no Sheets access, no side effects:
+
+- `computeExerciseSets(exerciseId, sets)` — primary-muscle set contribution for one exercise
+- `computeSessionSets(exercises)` — aggregates `[{ exerciseId, sets }]` into per-muscle totals for a session
+- `computeWeeklySets(sessions)` — aggregates multiple session set maps into weekly totals
+- `getVolumeLandmarks(muscleGroup)` — MEV/MAV/MRV config for a muscle, or null if untracked
+- `getAllVolumeLandmarks()` — all 16 tracked muscles with their landmark objects
+- `volumeZone(weeklySets, muscleGroup)` — `'below_mev'` | `'mev_to_mav'` | `'mav_to_mrv'` | `'above_mrv'`
+
+Volume is counted from **primary muscles only** (RP practitioner convention). Parenthetical name variants in the exercise ontology (e.g. `"quadriceps (rectus femoris, …)"`) are normalised to the base muscle name via a trailing-parenthetical strip before landmark lookup.
+
+New config `config/coaching/volume/landmarks.json` — MEV/MAV/MRV ranges for 16 primary muscles (quadriceps, hamstrings, gluteus maximus, pectoralis major, latissimus dorsi, triceps brachii, biceps brachii, anterior deltoid, lateral deltoid, posterior deltoid, trapezius, mid-back, spinal erectors, rectus abdominis, gastrocnemius, soleus). All landmarks carry `contested: true` and `confidence: "low"` — they are highly individual heuristic starting points.
+
+New test `test/volumeModule.test.js` — 38 tests covering all exports, parenthetical name normalisation, primary-only counting, cross-exercise accumulation, weekly aggregation, zone boundary conditions (at MEV, between MEV/MAV, at MAV, at MRV, above MRV), untracked muscles, edge cases (null/empty/non-array inputs), and an end-to-end session→weekly→zone roundtrip.
+
+Uses `ExerciseLookupModule` for exercise→muscle mapping. **No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — ExerciseLookupModule: queryable index over the exercise ontology (Brian PR 4)
 
 New read-only module `services/exerciseLookupModule.js` — loads `config/coaching/exercises/` once at require time and exposes pure lookup functions:

@@ -1,0 +1,91 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "MEV/MAV/MRV volume landmarks per primary muscle group. Consumed by services/volumeModule.js.",
+    "definitions": {
+      "mev": "Minimum Effective Volume — fewest sets per week that produce measurable adaptation.",
+      "mav": "Maximum Adaptive Volume — weekly set range producing optimal adaptation for most lifters.",
+      "mrv": "Maximum Recoverable Volume — most sets per week the lifter can recover from before performance degrades."
+    },
+    "units": "direct sets per week (working sets; warm-up sets excluded)",
+    "provenance_note": "All landmarks are highly individual and contested. Treat as heuristic starting points for an untrained estimate; the real user's tolerance emerges from logged history. Sources derive from Israetel (RP Strength), Schoenfeld, and practitioner consensus — none are controlled-trial values at this granularity.",
+    "derived_from": ["02-coaching-knowledge-architecture", "03-building-an-ai-fitness-coach"]
+  },
+  "landmarks": {
+    "quadriceps": {
+      "mev": 8, "mav": 12, "mrv": 20,
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "hamstrings": {
+      "mev": 6, "mav": 10, "mrv": 16,
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "gluteus maximus": {
+      "mev": 0, "mav": 6, "mrv": 16,
+      "note": "Heavily recruited by squats and deadlifts as indirect volume; direct isolation optional.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "pectoralis major": {
+      "mev": 8, "mav": 12, "mrv": 20,
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "latissimus dorsi": {
+      "mev": 8, "mav": 14, "mrv": 20,
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "triceps brachii": {
+      "mev": 4, "mav": 10, "mrv": 18,
+      "note": "Substantial indirect volume from pressing compounds; direct sets supplement.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "biceps brachii": {
+      "mev": 8, "mav": 14, "mrv": 20,
+      "note": "Indirect volume from rows and pull-ups; direct curls supplement.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "anterior deltoid": {
+      "mev": 0, "mav": 6, "mrv": 14,
+      "note": "Heavily recruited by all horizontal and vertical pressing; rarely needs direct work.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "lateral deltoid": {
+      "mev": 6, "mav": 14, "mrv": 22,
+      "note": "Small muscle with high volume tolerance; responds to high-frequency direct work.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "posterior deltoid": {
+      "mev": 6, "mav": 12, "mrv": 20,
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "trapezius": {
+      "mev": 0, "mav": 10, "mrv": 20,
+      "note": "Upper traps recruited heavily by deadlifts, rows, shrugs; mid-traps by rowing patterns.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "low", "contested": true }
+    },
+    "mid-back": {
+      "mev": 8, "mav": 14, "mrv": 20,
+      "note": "Rhomboids and mid-trapezius; tracked as part of horizontal pulling volume.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "spinal erectors": {
+      "mev": 6, "mav": 10, "mrv": 16,
+      "note": "High systemic fatigue contribution; conservative MRV. Axial loading is limiting factor.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture", "01-science-math-architecture"], "evidence_tier": 4, "confidence": "low", "contested": true }
+    },
+    "rectus abdominis": {
+      "mev": 0, "mav": 6, "mrv": 16,
+      "note": "Significant isometric volume from compound lifts; direct work supplementary.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "low", "contested": true }
+    },
+    "gastrocnemius": {
+      "mev": 8, "mav": 14, "mrv": 20,
+      "note": "Calves respond to high volume; trained heavily in standing calf raises.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    },
+    "soleus": {
+      "mev": 8, "mav": 14, "mrv": 20,
+      "note": "Seated calf raises; similar volume tolerance to gastrocnemius.",
+      "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "low", "contested": true }
+    }
+  }
+}
