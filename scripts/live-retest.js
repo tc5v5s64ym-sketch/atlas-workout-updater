@@ -33,7 +33,12 @@ const SCENARIOS = {
     reference: 'docs/BUG_TRIAGE_LEDGER.md — coach-fallback pair; trigger fixed by #699/#701, reveal removed in chatFallback.',
     // Navigation (PR #717): type the chat message into the composer and submit
     // (preview). This routes to the chat/coach path — a read-only call, no write.
-    navigation: { type: 'composer', text: 'you missed a set' }
+    navigation: { type: 'composer', text: 'you missed a set' },
+    // Assertion (PR #718): the LLM-down "coach isn't available" reveal must be gone.
+    assertion: {
+      forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /\bunavailable\b/i],
+      expected: []
+    }
   },
   'bug-20260629-153312': {
     bugId: 'BUG-20260629-153312',
@@ -42,7 +47,11 @@ const SCENARIOS = {
     expected: 'Natural mid-session reply; rows are no longer dropped (the underlying trigger is fixed).',
     forbidden: 'The generic "coach isn\'t available" fallback message.',
     reference: 'docs/BUG_TRIAGE_LEDGER.md — dup of -153258.',
-    navigation: { type: 'composer', text: 'you missed a set' }
+    navigation: { type: 'composer', text: 'you missed a set' },
+    assertion: {
+      forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /\bunavailable\b/i],
+      expected: []
+    }
   },
   'bug-20260629-003505': {
     bugId: 'BUG-20260629-003505',
@@ -54,7 +63,9 @@ const SCENARIOS = {
     // This scenario is a UI-state action (restore banner), not a composer entry.
     // Composer navigation does not apply; the bootstrap load + screenshot stands
     // and full banner automation is deferred to a later slice. No write either way.
-    navigation: { type: 'manual', note: 'restore-banner tap is a UI-state action, not composer-driven — automate in a later slice.' }
+    navigation: { type: 'manual', note: 'restore-banner tap is a UI-state action, not composer-driven — automate in a later slice.' },
+    // No automatable assertion yet (manual scenario) → verdict MANUAL.
+    assertion: null
   },
   'bug-20260629-002945': {
     bugId: 'BUG-20260629-002945',
@@ -65,7 +76,13 @@ const SCENARIOS = {
     reference: 'docs/BUG_TRIAGE_LEDGER.md — knee-raise bodyweight prompt, PR A #680.',
     // Navigation (PR #717): type the workout text and submit (preview only).
     // The preview is a test_mode dry-run — no write.
-    navigation: { type: 'composer', text: 'Knee raises 20 20 20' }
+    navigation: { type: 'composer', text: 'Knee raises 20 20 20' },
+    // Assertion (PR #718): must prompt for bodyweight reps, not silently drop
+    // (the old "Not a recognized modality input" 422 is the forbidden signal).
+    assertion: {
+      forbidden: [/not a recognized modality/i],
+      expected: [/bodyweight|how many reps|reps\?|did you mean/i]
+    }
   }
 };
 
@@ -111,7 +128,7 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   console.log(`Reference         : ${scenario.reference}`);
   console.log(line);
   console.log(`Target base URL   : ${targetBaseUrl || '(none provided — set ATLAS_BASE_URL or --target-base-url)'}`);
-  console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no Sheets writes)' : 'LIVE (read-only: load + locate + populate composer + preview; never Save)'}`);
+  console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no Sheets writes)' : 'LIVE (read-only: load + populate composer + preview + assert; never Save)'}`);
   console.log(line);
 }
 
@@ -126,7 +143,7 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
 
   if (nav.type !== 'composer') {
     console.log(`[navigate] scenario "${scenarioKey}" is ${nav.type} (${nav.note || 'no composer step'}); skipping composer navigation.`);
-    return;
+    return { navigated: false, threadText: '' };
   }
 
   // Hard read-only guard: this slice must never trigger a write. We only ever
@@ -159,6 +176,77 @@ async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
 
   await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true });
   console.log(`[navigate] preview-flow screenshot saved`);
+
+  return { navigated: true, threadText };
+}
+
+// --- PR #718: read-only assertion engine ------------------------------------
+// Compare the observed UI (the post-preview thread text) against the scenario's
+// expected/forbidden patterns and produce a verdict. Purely a string/regex
+// comparison over already-captured text — no extra navigation, no writes.
+//
+// Verdict semantics:
+//   FAIL          — a forbidden pattern appeared (the bug behaviour is back).
+//   PASS          — no forbidden pattern AND every expected pattern matched
+//                   (or, when no expected patterns are defined, the thread
+//                   showed a real response).
+//   INCONCLUSIVE  — no forbidden pattern, but an expected signal is missing
+//                   (e.g. an unauthenticated run where the real reply never
+//                   rendered) — the owner should retest in an authed context.
+//   MANUAL        — the scenario has no automatable assertion (e.g. the
+//                   restore-banner UI action).
+function assertScenario({ scenarioKey, scenario, navResult, outputDir }) {
+  const a = scenario.assertion;
+  const threadText = (navResult && navResult.threadText) || '';
+  const haystack = threadText.replace(/\s+/g, ' ').trim();
+
+  if (!a) {
+    const verdict = 'MANUAL';
+    writeResult(outputDir, scenarioKey, scenario, { verdict, forbidden: [], expected: [], threadExcerpt: haystack.slice(0, 240) });
+    console.log(`[assert] ${scenarioKey}: ${verdict} — no automatable assertion (${scenario.navigation && scenario.navigation.note ? scenario.navigation.note : 'manual scenario'}).`);
+    return verdict;
+  }
+
+  const forbidden = (a.forbidden || []).map(re => ({ pattern: String(re), matched: re.test(haystack) }));
+  const expected = (a.expected || []).map(re => ({ pattern: String(re), matched: re.test(haystack) }));
+  const forbiddenHit = forbidden.some(f => f.matched);
+
+  let verdict;
+  if (forbiddenHit) {
+    verdict = 'FAIL';
+  } else if (expected.length > 0) {
+    verdict = expected.every(e => e.matched) ? 'PASS' : 'INCONCLUSIVE';
+  } else {
+    verdict = haystack ? 'PASS' : 'INCONCLUSIVE';
+  }
+
+  writeResult(outputDir, scenarioKey, scenario, { verdict, forbidden, expected, threadExcerpt: haystack.slice(0, 400) });
+
+  console.log(`[assert] ${scenarioKey}: ${verdict}`);
+  for (const f of forbidden) console.log(`[assert]   forbidden ${f.matched ? 'PRESENT ✗' : 'absent ✓'}: ${f.pattern}`);
+  for (const e of expected) console.log(`[assert]   expected  ${e.matched ? 'present ✓' : 'MISSING …'}: ${e.pattern}`);
+  if (verdict === 'INCONCLUSIVE') {
+    console.log('[assert]   (inconclusive — likely an unauthenticated run; retest in an authed context for a real PASS/FAIL.)');
+  }
+  return verdict;
+}
+
+function writeResult(outputDir, scenarioKey, scenario, fields) {
+  try {
+    fs.mkdirSync(outputDir, { recursive: true });
+    const result = {
+      scenario: scenarioKey,
+      bugId: scenario.bugId,
+      purpose: scenario.purpose,
+      expected: scenario.expected,
+      forbidden: scenario.forbidden,
+      ...fields,
+      screenshots: [`${scenarioKey}-01-loaded.png`, `${scenarioKey}-02-composer.png`, `${scenarioKey}-03-preview.png`]
+    };
+    fs.writeFileSync(path.join(outputDir, `${scenarioKey}-result.json`), JSON.stringify(result, null, 2));
+  } catch (err) {
+    console.error(`[assert] could not write result artifact: ${err.message}`);
+  }
 }
 
 // --- PR #716: read-only browser bootstrap -----------------------------------
@@ -219,9 +307,15 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
     console.log('[bootstrap] OK — app loaded and composer located.');
 
     // PR #717: drive the scenario through the composer/preview flow (no Save).
-    await navigateScenario({ page, scenarioKey, scenario, outputDir });
+    const navResult = await navigateScenario({ page, scenarioKey, scenario, outputDir });
 
-    console.log('[bootstrap] DONE — read-only navigation complete. Never pressed Save, no writes.');
+    // PR #718: assert the observed thread against the scenario's expected /
+    // forbidden patterns. A FAIL (the bug behaviour reappeared) surfaces as a
+    // non-zero exit; PASS / INCONCLUSIVE / MANUAL exit 0.
+    const verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir });
+    if (verdict === 'FAIL') exitCode = 2;
+
+    console.log(`[bootstrap] DONE — read-only retest complete (verdict: ${verdict}). Never pressed Save, no writes.`);
   } catch (err) {
     exitCode = 1;
     console.error(`[bootstrap] FAILED: ${err.message}`);
@@ -286,4 +380,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario };
+module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario };
