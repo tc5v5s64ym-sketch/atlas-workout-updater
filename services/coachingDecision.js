@@ -65,32 +65,35 @@ function buildCoachingDecision(params) {
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-// Deep-collect every finite number that appears as a value anywhere in obj.
-function _collectNumbers(obj, acc) {
-  if (_isNumber(obj)) { acc.add(obj); return acc; }
-  if (Array.isArray(obj)) { for (const v of obj) _collectNumbers(v, acc); return acc; }
-  if (_isPlainObject(obj)) { for (const v of Object.values(obj)) _collectNumbers(v, acc); return acc; }
-  return acc;
-}
+// Key-aware trust-contract check: every prescribed payload number must be echoed
+// under a CORRESPONDING key in explanation_inputs (not merely present as some
+// value somewhere). Pushes a trust-contract error per unmatched number.
+//   - single-value payloads (progression/nutrition): explanation_inputs[f] === payload[f]
+//   - workout: explanation_inputs.blocks[i][f] === payload.blocks[i][f] (order-aligned)
+function _checkTrustContract(decisionType, payload, explanation, spec, errors) {
+  if (!spec || !_isPlainObject(payload)) return;
+  const ei = _isPlainObject(explanation) ? explanation : {};
 
-// Collect the prescribed numbers a payload asserts, per its decision_type spec.
-function _prescribedNumbers(decisionType, payload, contract) {
-  const nums = [];
-  const spec = contract.payloads[decisionType];
-  if (!spec || !_isPlainObject(payload)) return nums;
   if (decisionType === 'workout') {
     const blocks = Array.isArray(payload.blocks) ? payload.blocks : [];
-    for (const b of blocks) {
-      for (const f of spec.block_prescribed_numbers || []) {
-        if (_isNumber(b && b[f])) nums.push(b[f]);
+    const eiBlocks = Array.isArray(ei.blocks) ? ei.blocks : null;
+    blocks.forEach((b, i) => {
+      for (const f of (spec.block_prescribed_numbers || [])) {
+        if (!_isNumber(b && b[f])) continue;
+        const eb = eiBlocks ? eiBlocks[i] : null;
+        if (!_isPlainObject(eb) || eb[f] !== b[f]) {
+          errors.push(`trust-contract: workout block ${i} prescribed ${f}=${b[f]} not echoed at explanation_inputs.blocks[${i}].${f} (the LLM may speak only what the Brain emitted, under its own key)`);
+        }
+      }
+    });
+  } else {
+    for (const f of (spec.prescribed_numbers || [])) {
+      if (!_isNumber(payload[f])) continue;
+      if (ei[f] !== payload[f]) {
+        errors.push(`trust-contract: prescribed ${f}=${payload[f]} not echoed at explanation_inputs.${f} (the LLM may speak only what the Brain emitted, under its own key)`);
       }
     }
-  } else {
-    for (const f of spec.prescribed_numbers || []) {
-      if (_isNumber(payload[f])) nums.push(payload[f]);
-    }
   }
-  return nums;
 }
 
 // ─── validator ────────────────────────────────────────────────────────────────
@@ -189,18 +192,11 @@ function validateCoachingDecision(decision) {
     errors.push('ask/answer integrity: status==needs_clarification ⟺ decision_type==clarification_needed ⟺ missing_info non-empty ⟺ action==ask must all agree');
   }
 
-  // Rule 4 — trust contract: every prescribed number must appear in explanation_inputs.
-  // NOTE: this is a VALUE-based floor (the number appears somewhere in explanation_inputs),
-  // not KEY-aware ("this number was emitted under a prescription key"). A small integer like
-  // target_rir:2 will usually find an incidental match, so do NOT over-trust it. It still
-  // catches the dangerous case — a prescribed number absent everywhere. Key-aware matching is
-  // filed in BACKLOG to land BEFORE the orchestrator wires a real number to the LLM (PR-5).
-  const explained = _collectNumbers(decision.explanation_inputs, new Set());
-  for (const n of _prescribedNumbers(dt, decision.payload, c)) {
-    if (!explained.has(n)) {
-      errors.push(`trust-contract: prescribed number ${n} is absent from explanation_inputs (the LLM may speak only what the Brain emitted)`);
-    }
-  }
+  // Rule 4 — trust contract (KEY-AWARE): every prescribed payload number must be
+  // echoed under its corresponding key in explanation_inputs, so the LLM can only
+  // speak a number the Brain emitted — under that number's own key. (Hardened from
+  // the earlier value-based floor before the orchestrator wires a number to the LLM.)
+  _checkTrustContract(dt, decision.payload, decision.explanation_inputs, payloadSpec, errors);
 
   // Rule 5 — safety escalation
   if (decision.safety.blocking === true) {

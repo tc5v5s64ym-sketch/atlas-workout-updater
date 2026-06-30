@@ -27,7 +27,7 @@ function workoutAnswered() {
       why_today: ['bench_trend:improving'], substitutions_applied: [],
     },
     missing_info: [],
-    explanation_inputs: { target_weight: 185, target_reps: 5, target_rir: 2, trend: 'improving' },
+    explanation_inputs: { blocks: [{ target_weight: 185, reps: 5, target_rir: 2 }], trend: 'improving' },
     provenance: { modules_run: ['goals', 'user_state', 'scenario_classifier', 'progression', 'session_generator', 'confidence'],
                   skipped: [], state_asOf: '2026-06-30T14:00:00Z', engine_version: '1.0.0' },
   };
@@ -149,26 +149,63 @@ describe('validateCoachingDecision — ask/answer four-way lockstep', () => {
 
 // ─── rule 4 / trust contract (highest-value test) ────────────────────────────
 
-describe('validateCoachingDecision — trust contract', () => {
+describe('validateCoachingDecision — trust contract (key-aware)', () => {
   it('rejects a prescribed number absent from explanation_inputs', () => {
     const d = workoutAnswered();
-    d.payload.blocks[0].target_weight = 999; // not in explanation_inputs
+    d.payload.blocks[0].target_weight = 999; // explanation_inputs still says 185
     const r = validateCoachingDecision(d);
     assert.strictEqual(r.valid, false);
     assert.ok(r.errors.some(e => e.includes('trust-contract')), `errors: ${r.errors.join(' | ')}`);
   });
-  it('accepts when every prescribed number is in explanation_inputs', () => {
-    const d = workoutAnswered(); // 185/5/2 all present in explanation_inputs
+  it('accepts when every prescribed number is echoed under its block key', () => {
+    const d = workoutAnswered(); // blocks[0] 185/5/2 echoed at explanation_inputs.blocks[0]
     assert.strictEqual(validateCoachingDecision(d).valid, true);
   });
-  it('rejects progression target_weight not explained', () => {
+  it('KEY-AWARE: rejects the right value echoed under the WRONG key (incidental match)', () => {
+    const d = workoutAnswered();
+    // target_weight 185 present, but only as an unrelated field — not blocks[0].target_weight
+    d.explanation_inputs = { blocks: [{ reps: 5, target_rir: 2 }], some_other_metric: 185 };
+    const r = validateCoachingDecision(d);
+    assert.strictEqual(r.valid, false, 'incidental value match must no longer satisfy the trust contract');
+    assert.ok(r.errors.some(e => e.includes('target_weight')));
+  });
+  it('KEY-AWARE: rejects a small integer (target_rir) that only matches incidentally', () => {
+    const d = workoutAnswered();
+    // drop blocks[0].target_rir from explanation; leave an incidental 2 elsewhere
+    d.explanation_inputs = { blocks: [{ target_weight: 185, reps: 5 }], sessions_analyzed: 2 };
+    assert.strictEqual(validateCoachingDecision(d).valid, false);
+  });
+  it('multi-block workout: each block must be echoed at its own index', () => {
+    const d = workoutAnswered();
+    d.payload.blocks.push({ exercise: 'Row', lift_code: 'ROW', sets: 3, reps: 8, target_weight: 135, target_rir: 2 });
+    // explanation only has block 0
+    let r = validateCoachingDecision(d);
+    assert.strictEqual(r.valid, false, 'second block prescribed numbers must be echoed too');
+    // now echo block 1 correctly
+    d.explanation_inputs.blocks.push({ target_weight: 135, reps: 8, target_rir: 2 });
+    r = validateCoachingDecision(d);
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('progression: accepts when target_weight/target_reps echoed under matching keys', () => {
     const d = {
       schema_version: 1, intent: { type: 'progression_review', constraints: {}, source: 'chat' },
       decision_type: 'progression', status: 'answered',
       confidence: { score: 80, tier: 'high', action: 'act', caveats: [] },
       safety: { level: 'green', flags: [], blocking: false },
       payload: { lift_code: 'BENCH', action: 'increase', target_weight: 190, target_reps: 5 },
-      missing_info: [], explanation_inputs: { target_reps: 5 }, // 190 missing
+      missing_info: [], explanation_inputs: { target_weight: 190, target_reps: 5 },
+      provenance: { modules_run: [], skipped: [], state_asOf: null, engine_version: '1' },
+    };
+    assert.strictEqual(validateCoachingDecision(d).valid, true);
+  });
+  it('progression: rejects target_weight not echoed under its key', () => {
+    const d = {
+      schema_version: 1, intent: { type: 'progression_review', constraints: {}, source: 'chat' },
+      decision_type: 'progression', status: 'answered',
+      confidence: { score: 80, tier: 'high', action: 'act', caveats: [] },
+      safety: { level: 'green', flags: [], blocking: false },
+      payload: { lift_code: 'BENCH', action: 'increase', target_weight: 190, target_reps: 5 },
+      missing_info: [], explanation_inputs: { target_reps: 5, note: 190 }, // 190 only incidental
       provenance: { modules_run: [], skipped: [], state_asOf: null, engine_version: '1' },
     };
     assert.strictEqual(validateCoachingDecision(d).valid, false);

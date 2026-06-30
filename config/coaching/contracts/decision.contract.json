@@ -2,6 +2,7 @@
   "_meta": {
     "status": "active",
     "purpose": "The CoachingDecision contract: the single object the Brain emits for every intent (stable envelope + typed payload). The LLM may word ONLY values present in explanation_inputs. caveat_keys mirror services/confidenceModule.js CAVEAT_KEYS values exactly (the producer) — a contracts-integrity test guards the alignment.",
+    "explanation_inputs_shape": "KEY-AWARE trust contract: each prescribed payload number must be echoed under a CORRESPONDING key in explanation_inputs. For single-value payloads (progression/nutrition) that means explanation_inputs[field] === payload[field]. For workout, explanation_inputs.blocks[i][field] === payload.blocks[i][field] (order-aligned, per-block).",
     "spec": "docs/COACHING_CONTRACTS_SPEC.md §3",
     "architecture": "docs/COACHING_ENGINE_ARCHITECTURE.md"
   },
@@ -28,7 +29,7 @@
     "workout": {
       "required": ["session_label", "blocks"],
       "block_required": ["exercise", "lift_code", "sets", "reps", "target_weight", "target_rir"],
-      "block_prescribed_numbers": ["target_weight", "target_reps", "target_rir"]
+      "block_prescribed_numbers": ["target_weight", "reps", "target_rir"]
     },
     "progression": {
       "required": ["lift_code", "action"],
