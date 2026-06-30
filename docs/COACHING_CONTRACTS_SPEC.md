@@ -134,9 +134,11 @@ Two declarative files that let the Orchestrator turn an intent into an ordered m
 |---|---|---|---|
 | `schema_version` | integer | ✅ | `1` |
 | `intents` | object | ✅ | keyed by intent `type` |
-| `intents[type].capabilities` | string[] | ✅ | capability ids to engage (DAG decides order) |
-| `intents[type].decision_type` | string (enum) | ✅ | the `decision_type` this intent yields (§3.2) |
+| `intents[type].capabilities` | string[] | ✅ | the **requested** (top-level) capability ids; the resolver pulls in their `depends_on` closure and topo-sorts |
+| `intents[type].decision_type` | string (enum) | required when `brain:true` | the `decision_type` this intent yields (§3.2) |
 | `intents[type].read_only` | boolean | ✅ | `true` ⟹ no coaching decision, pure readout |
+| `intents[type].brain` | boolean | ⬜ (default `true`) | `false` marks a non-Brain intent routed elsewhere (e.g. `log_intent` → trust loop); carries `routes_to` and no `decision_type` |
+| `intents[type].routes_to` | string | required when `brain:false` | where a non-Brain intent is routed (e.g. `trust_loop`) |
 
 ### 2.2 `capabilities.json` — capability descriptors
 
@@ -147,25 +149,25 @@ Two declarative files that let the Orchestrator turn an intent into an ordered m
 | `requires` | string[] | ✅ | input keys that MUST be present to run (§2.3). May be `[]` |
 | `optional` | string[] | ✅ | enrichers that improve output if present |
 | `depends_on` | string[] | ✅ | capability ids whose output this consumes (DAG edges) |
-| `produces` | string[] | ✅ | output keys this capability contributes |
+| `produces` | string[] | ✅ | **output keys** this capability contributes to the decision — a separate namespace from input keys; declarative (NOT validated against the §2.3 vocabulary) |
 | `status` | string (enum) | ✅ | `complete \| partial \| missing` — mirrors the architecture audit |
 
 ### 2.3 Input-key vocabulary (the "known + provided" universe)
 
 State-derived (hydrated by State Assembly): `log_history`, `profile_goal`, `training_level`, `population`, `deload_state`, `memory_snapshot`, `equipment_profile`, `bodyweight_history`.
-Intent-derived (from envelope constraints): `constraint.focus`, `constraint.duration_minutes`, `constraint.equipment`, `constraint.injury`, `constraint.target_lift`, `constraint.intent_tag`, `readiness_inputs`, `signal`.
+Intent-derived (from envelope constraints): `constraint.focus`, `constraint.duration_minutes`, `constraint.equipment`, `constraint.injury`, `constraint.target_lift`, `constraint.intent_tag`, `constraint.exclude_exercises`, `readiness_inputs`, `signal`.
 
-A capability's `requires`/`optional` draw only from this vocabulary.
+A capability's `requires`/`optional` draw only from this vocabulary. `depends_on` references capability ids; a capability consumes another's output via `depends_on`, not by naming a `produces` key in `requires`. `produces` is its own output namespace and is declarative.
 
 ### 2.4 Validation rules
 
 1. Every `intents[*].capabilities` id resolves to a descriptor in `capabilities.json`. **Dangling id → reject.**
 2. Every `depends_on` id resolves; the dependency graph is **acyclic** (topological sort succeeds).
-3. Every key in `requires`/`optional`/`produces` ∈ the §2.3 vocabulary.
-4. Every `intents[*].decision_type` ∈ the decision-type enum (§3.2).
+3. Every key in `requires`/`optional` ∈ the §2.3 input-key vocabulary. (`produces` is a declarative output namespace — not checked against the input vocabulary.)
+4. Every `intents[*].decision_type` ∈ the decision-type enum (§3.2) — required when `brain:true`. A `brain:false` intent carries `routes_to` and no `decision_type`.
 5. `read_only = true` ⟹ `decision_type ∈ { progress_readout }`.
-6. A capability's `depends_on` ⊆ the capabilities listed for any intent that engages it (checked per-intent at resolve time).
-7. Resolver output is a **topologically ordered** capability list; `requires`-unmet capabilities are reported (drive clarification); `status:missing` capabilities are skipped-with-flag (never silently dropped).
+6. The resolver computes the **transitive `depends_on` closure** of the intent's requested capabilities, so an intent need not hand-list transitive deps. Every `depends_on` id must resolve to a descriptor (rule 1) and the global graph must be acyclic (rule 2); the closure then topo-sorts so a capability always runs after everything it depends on.
+7. Resolver output is a **topologically ordered** capability list over the closure; ties are broken by stable (sorted) id order for determinism; `status:missing` capabilities are skipped-with-flag (never silently dropped) and reported in `missing[]`. At runtime the Orchestrator additionally reports `requires`-unmet capabilities (drives clarification) once it knows the hydrated input keys.
 
 ### 2.5 Worked manifest fragments
 
@@ -222,7 +224,8 @@ The two `status:"missing"` rows are the architecture keystones (Scenario Classif
 - `read_only` intents map only to `progress_readout`.
 - A `requires`-unmet capability surfaces as a missing-input report, not a crash.
 - A `status:missing` capability is skipped-with-flag and recorded in `provenance.modules_run` as not-run.
-- **Orchestrator-is-rule-free guard:** a test asserts the orchestrator module imports no Brain decision modules directly — it only reads manifests.
+- Resolver computes the transitive closure (an intent listing `scenario_classifier` auto-pulls `user_state`, `expected_performance`, `intensity`) and is deterministic across calls.
+- **Orchestrator-is-rule-free guard:** the routing layer imports no Brain decision module — only `node:` builtins + the JSON manifests. Pinned now against `services/capabilityManifest.js` (the manifest reader); extended to the Orchestrator module itself when it lands (PR-5).
 
 ---
 

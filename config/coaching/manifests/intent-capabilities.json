@@ -1,0 +1,72 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Intent → capability-set manifest for the One-Brain Coach Orchestrator. Maps each IntentEnvelope type to the capabilities it engages, the decision_type it yields, and whether it is a read-only readout. `brain:false` marks intents NOT handled by the Brain (routed elsewhere, e.g. the preview→approve→write trust loop); those carry routes_to and no decision_type. The Orchestrator reads this; it holds NO coaching rule.",
+    "spec": "docs/COACHING_CONTRACTS_SPEC.md §2",
+    "note": "capabilities lists the REQUESTED (top-level) capabilities; the resolver pulls in their transitive depends_on closure and topo-sorts. Every IntentEnvelope intent type has an entry here (the contracts-integrity guard checks this)."
+  },
+  "schema_version": 1,
+  "decision_types": [
+    "workout", "progression", "substitution", "recovery",
+    "onboarding", "nutrition", "progress_readout", "clarification_needed"
+  ],
+  "intents": {
+    "best_workout": {
+      "brain": true, "read_only": false, "decision_type": "workout",
+      "capabilities": ["goals", "memory", "user_state", "scenario_classifier", "progression",
+                       "fatigue", "volume", "safety", "equipment", "program_templates",
+                       "session_generator", "confidence"]
+    },
+    "generate_workout": {
+      "brain": true, "read_only": false, "decision_type": "workout",
+      "capabilities": ["goals", "constraint_resolver", "scenario_classifier", "progression",
+                       "fatigue", "volume", "safety", "equipment", "session_generator", "confidence"]
+    },
+    "modify_workout": {
+      "brain": true, "read_only": false, "decision_type": "substitution",
+      "capabilities": ["ontology", "movement_patterns", "safety", "equipment",
+                       "constraint_resolver", "volume", "confidence"]
+    },
+    "substitute_exercise": {
+      "brain": true, "read_only": false, "decision_type": "substitution",
+      "capabilities": ["ontology", "movement_patterns", "safety", "equipment", "confidence"]
+    },
+    "progression_review": {
+      "brain": true, "read_only": false, "decision_type": "progression",
+      "capabilities": ["intensity", "user_state", "scenario_classifier", "progression",
+                       "expected_performance", "confidence"]
+    },
+    "explain_recommendation": {
+      "brain": true, "read_only": true, "decision_type": "progress_readout",
+      "capabilities": ["user_state", "memory"]
+    },
+    "progress_query": {
+      "brain": true, "read_only": true, "decision_type": "progress_readout",
+      "capabilities": ["user_state", "memory"]
+    },
+    "readiness_checkin": {
+      "brain": true, "read_only": false, "decision_type": "recovery",
+      "capabilities": ["fatigue", "user_state"]
+    },
+    "ingest_signal": {
+      "brain": true, "read_only": false, "decision_type": "recovery",
+      "capabilities": ["fatigue", "user_state"]
+    },
+    "nutrition_query": {
+      "brain": true, "read_only": false, "decision_type": "nutrition",
+      "capabilities": ["nutrition", "goals"]
+    },
+    "onboarding_step": {
+      "brain": true, "read_only": false, "decision_type": "onboarding",
+      "capabilities": ["onboarding", "safety", "goals", "confidence"]
+    },
+    "clarify_intent": {
+      "brain": true, "read_only": false, "decision_type": "clarification_needed",
+      "capabilities": []
+    },
+    "log_intent": {
+      "brain": false, "read_only": false, "routes_to": "trust_loop",
+      "capabilities": []
+    }
+  }
+}

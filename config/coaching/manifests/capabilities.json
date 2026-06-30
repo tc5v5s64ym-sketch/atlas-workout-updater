@@ -1,0 +1,133 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Capability descriptors for the One-Brain Coach Orchestrator. Each capability is a pure Brain module with a declared input contract (requires/optional), dependency edges (depends_on), and output keys (produces). The Orchestrator reads this to run the right modules in dependency order WITHOUT containing any coaching rule. `status` mirrors the capability audit in docs/COACHING_ENGINE_ARCHITECTURE.md (complete | partial | missing).",
+    "spec": "docs/COACHING_CONTRACTS_SPEC.md §2",
+    "note": "requires/optional draw ONLY from input_keys (state- or intent-derived). depends_on references capability ids. produces is declarative output documentation (its own namespace; NOT validated against input_keys). The resolver computes the transitive closure of depends_on, then topo-sorts."
+  },
+  "schema_version": 1,
+  "input_keys": [
+    "log_history",
+    "profile_goal",
+    "training_level",
+    "population",
+    "deload_state",
+    "memory_snapshot",
+    "equipment_profile",
+    "bodyweight_history",
+    "constraint.focus",
+    "constraint.duration_minutes",
+    "constraint.equipment",
+    "constraint.injury",
+    "constraint.target_lift",
+    "constraint.intent_tag",
+    "constraint.exclude_exercises",
+    "readiness_inputs",
+    "signal"
+  ],
+  "capabilities": {
+    "goals": {
+      "module": { "file": "services/goalTemplateModule.js", "export": "getGoalTemplate" },
+      "requires": ["profile_goal"], "optional": ["training_level"], "depends_on": [],
+      "produces": ["goal_template"], "status": "complete"
+    },
+    "memory": {
+      "module": { "file": "services/memoryModule.js", "export": "buildMemorySnapshot" },
+      "requires": ["log_history"], "optional": [], "depends_on": [],
+      "produces": ["lift_trends", "patterns"], "status": "complete"
+    },
+    "user_state": {
+      "module": { "file": "services/userStateModule.js", "export": "buildUserState" },
+      "requires": ["log_history"], "optional": [], "depends_on": [],
+      "produces": ["lift_states", "muscle_volume", "adherence"], "status": "partial"
+    },
+    "intensity": {
+      "module": { "file": "services/intensityModule.js", "export": "estimateE1RM" },
+      "requires": ["log_history"], "optional": [], "depends_on": [],
+      "produces": ["e1rm"], "status": "complete"
+    },
+    "expected_performance": {
+      "module": { "file": "services/expectedPerformanceModule.js", "export": "assessLift" },
+      "requires": ["log_history"], "optional": ["readiness_inputs", "constraint.target_lift"],
+      "depends_on": ["intensity"],
+      "produces": ["expected_reps", "plateau"], "status": "complete"
+    },
+    "scenario_classifier": {
+      "module": { "file": "services/scenarioClassifier.js", "export": "classifyScenario" },
+      "requires": ["log_history"], "optional": ["readiness_inputs", "constraint.target_lift"],
+      "depends_on": ["user_state", "expected_performance"],
+      "produces": ["scenario_id"], "status": "missing"
+    },
+    "progression": {
+      "module": { "file": "services/progressionModule.js", "export": "recommendProgression" },
+      "requires": ["log_history"], "optional": [], "depends_on": ["scenario_classifier"],
+      "produces": ["target_weight", "target_reps", "lever", "action", "rationale"], "status": "partial"
+    },
+    "fatigue": {
+      "module": { "file": "services/fatigueAssessmentModule.js", "export": "assessRecovery" },
+      "requires": ["log_history"], "optional": ["readiness_inputs"], "depends_on": [],
+      "produces": ["recovery_status", "deload_triggers", "readiness_score"], "status": "partial"
+    },
+    "volume": {
+      "module": { "file": "services/volumeAssessmentModule.js", "export": "assessWeeklyVolume" },
+      "requires": ["log_history"], "optional": [], "depends_on": [],
+      "produces": ["muscle_volume_zones"], "status": "complete"
+    },
+    "safety": {
+      "module": { "file": "services/safetyClassifierModule.js", "export": "classify" },
+      "requires": [], "optional": ["constraint.injury"], "depends_on": [],
+      "produces": ["safety_level", "safety_flags"], "status": "partial"
+    },
+    "equipment": {
+      "module": { "file": "services/equipmentModule.js", "export": "resolveEquipment" },
+      "requires": [], "optional": ["constraint.equipment", "equipment_profile"], "depends_on": [],
+      "produces": ["available_equipment"], "status": "missing"
+    },
+    "movement_patterns": {
+      "module": { "file": "services/movementPatternModule.js", "export": "classifyPattern" },
+      "requires": [], "optional": ["constraint.target_lift"], "depends_on": [],
+      "produces": ["movement_pattern"], "status": "missing"
+    },
+    "ontology": {
+      "module": { "file": "services/entityResolutionModule.js", "export": "resolveExercise" },
+      "requires": [], "optional": ["constraint.target_lift", "constraint.exclude_exercises"], "depends_on": [],
+      "produces": ["resolved_exercise"], "status": "complete"
+    },
+    "program_templates": {
+      "module": { "file": "services/periodizationModule.js", "export": "selectPeriodizationModel" },
+      "requires": ["profile_goal"], "optional": ["training_level"], "depends_on": ["goals"],
+      "produces": ["program_id", "model_id"], "status": "partial"
+    },
+    "constraint_resolver": {
+      "module": { "file": "services/constraintResolver.js", "export": "resolveConstraints" },
+      "requires": ["log_history"],
+      "optional": ["constraint.focus", "constraint.duration_minutes", "constraint.equipment", "constraint.injury", "constraint.exclude_exercises"],
+      "depends_on": ["equipment", "safety"],
+      "produces": ["filtered_exercises", "session_shape"], "status": "missing"
+    },
+    "session_generator": {
+      "module": { "file": "services/sessionGenerator.js", "export": "buildSession" },
+      "requires": ["log_history", "profile_goal"],
+      "optional": ["constraint.focus", "constraint.duration_minutes", "constraint.equipment"],
+      "depends_on": ["progression", "fatigue", "volume", "safety", "equipment", "constraint_resolver"],
+      "produces": ["session_blocks", "why_today"], "status": "missing"
+    },
+    "confidence": {
+      "module": { "file": "services/confidenceModule.js", "export": "scoreConfidence" },
+      "requires": ["log_history"], "optional": ["readiness_inputs"],
+      "depends_on": ["user_state", "fatigue", "memory"],
+      "produces": ["confidence_score", "confidence_tier", "action", "caveats"], "status": "complete"
+    },
+    "onboarding": {
+      "module": { "file": "services/onboardingRouter.js", "export": "routeOnboarding" },
+      "requires": ["profile_goal", "training_level"], "optional": ["constraint.equipment", "log_history"],
+      "depends_on": ["safety", "goals"],
+      "produces": ["route", "program_id", "plan"], "status": "complete"
+    },
+    "nutrition": {
+      "module": { "file": "services/nutritionModule.js", "export": "assessNutrition" },
+      "requires": ["profile_goal", "bodyweight_history"], "optional": [], "depends_on": ["goals"],
+      "produces": ["protein_target", "calorie_target"], "status": "missing"
+    }
+  }
+}
