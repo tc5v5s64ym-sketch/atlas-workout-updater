@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added — Periodization & peaking engine (roadmap PR 22)
+
+Three new periodization configs (`config/coaching/periodization/`):
+- **`block-intermediate.json`**: 3-phase block model (accumulation 4 wk / intensification 3 wk / realization 1 wk). Intensity ranges: 65–75% / 75–87% / 90–97% TM. Volume factors: 1.0 / 0.75 / 0.50.
+- **`dup-patterns.json`**: Daily Undulating Periodization patterns for 3-day (strength/hypertrophy/power) and 4-day (strength/hypertrophy/power/hypertrophy) splits. Session types carry rep range, %TM range, and RPE target.
+- **`peaking.json`**: 2-week competition taper. Phase 1 (week −2): keep 60% volume, maintain intensity. Phase 2 (week −1): keep 40% volume, intensity ceiling at 97% TM. Eligible: powerlifting goal only; excluded: youth, older-adult (intensity caps incompatible with competition prep).
+
+New engine module **`services/periodizationModule.js`**:
+- `selectPeriodizationModel(goalId, trainingLevel)` → `{ modelId, goalId, trainingLevel, notes }` — maps goal × level to the appropriate model (`531_wave` delegates to `intermediateProgramModule`; `block-intermediate` or `dup-patterns` handled here). Returns null for beginner (LP handled by `starterProgramModule`).
+- `buildBlockPhases(modelId)` → full phase structure for `block-intermediate`.
+- `getDupSessionTypes(daysPerWeek)` → ordered session-type descriptors for 3- or 4-day DUP pattern.
+- `isPeakingAppropriate(goalId, populationId)` → boolean; false for non-powerlifting goals or youth/older-adult populations.
+- `buildPeakingPhase(params)` → 2-phase taper prescription keyed by lift code; each prescription carries `trainingMax`, `targetIntensityMax` (round5), `volumeFactor`, `repRange`. Returns null for ineligible goal/population.
+
+82 new tests. No Sheets access, no write-path change, no LLM involvement. No runtime consumer yet. Depends on PR 15 (AutoregulationModule) and PR 17 (goal/population templates + 5/3/1). Completes Phase 6 periodization capability.
+
+---
+
 ### Added — Goal/population templates & caps + 5/3/1 intermediate program (roadmap PR 17)
 
 Four goal template configs (`config/coaching/goals/`): `general-fitness`, `powerlifting`, `bodybuilding`, `weight-loss`. Each maps a user goal to recommended program IDs by training level (beginner/intermediate/advanced) and carries a `knowledge_goal_id` linking to the existing `trainingKnowledge.js` goal taxonomy.

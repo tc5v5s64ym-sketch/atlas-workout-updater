@@ -1,0 +1,46 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "3-phase block periodization for intermediate lifters: accumulation → intensification → realization. 8-week cycle."
+  },
+  "id": "block-intermediate",
+  "name": "Block Periodization (Intermediate)",
+  "training_level": "intermediate",
+  "description": "Classic linear-block model: build volume capacity (accumulation), convert to strength (intensification), then express peak strength (realization). 8-week cycle.",
+  "total_weeks": 8,
+  "phases": [
+    {
+      "name": "accumulation",
+      "label": "Accumulation",
+      "weeks": 4,
+      "percent_tm_range": [0.65, 0.75],
+      "rep_range": [8, 12],
+      "set_range": [3, 5],
+      "volume_factor": 1.0,
+      "rpe_target": 7,
+      "notes": "Build work capacity and reinforce technique. High volume, sub-maximal intensity. Leave 2-3 RIR on working sets."
+    },
+    {
+      "name": "intensification",
+      "label": "Intensification",
+      "weeks": 3,
+      "percent_tm_range": [0.75, 0.87],
+      "rep_range": [3, 6],
+      "set_range": [3, 4],
+      "volume_factor": 0.75,
+      "rpe_target": 8,
+      "notes": "Increase load, reduce total volume. Build strength expression. Leave 1-2 RIR on working sets."
+    },
+    {
+      "name": "realization",
+      "label": "Realization",
+      "weeks": 1,
+      "percent_tm_range": [0.90, 0.97],
+      "rep_range": [1, 3],
+      "set_range": [2, 3],
+      "volume_factor": 0.50,
+      "rpe_target": 9,
+      "notes": "Peak strength expression. Low volume, high intensity. Heavy singles and doubles."
+    }
+  ]
+}

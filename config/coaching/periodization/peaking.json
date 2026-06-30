@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Competition peaking and taper protocol. Eligible for powerlifting-goal lifters only, and excluded for intensity-capped populations (youth, older-adult)."
+  },
+  "id": "peaking",
+  "name": "Competition Peaking & Taper",
+  "description": "2-week taper into a competition or maximal-effort test. Cut volume progressively while maintaining or slightly increasing intensity. Not a deload — a strategic peak.",
+  "taper_weeks": 2,
+  "eligible_goals": ["powerlifting"],
+  "excluded_populations": ["youth", "older-adult"],
+  "phases": [
+    {
+      "name": "volume_taper",
+      "label": "Volume Taper",
+      "week_from_competition": 2,
+      "volume_factor": 0.60,
+      "intensity_ceiling_factor": 1.0,
+      "rep_range": [2, 4],
+      "notes": "Keep 60% of normal volume. Maintain intensity. Dial in technique with heavy-ish sets."
+    },
+    {
+      "name": "intensity_taper",
+      "label": "Intensity Taper",
+      "week_from_competition": 1,
+      "volume_factor": 0.40,
+      "intensity_ceiling_factor": 0.97,
+      "rep_range": [1, 2],
+      "notes": "Keep 40% of normal volume. Work up to 97% TM singles/doubles. Leave the body fresh for competition day."
+    }
+  ]
+}
