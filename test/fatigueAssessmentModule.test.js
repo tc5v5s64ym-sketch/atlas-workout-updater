@@ -85,6 +85,10 @@ test('assessRecovery: invalid hours → null', () => {
   assert.strictEqual(assessRecovery('small_muscles', '24'), null);
 });
 
+test('assessRecovery: NaN hours → null (not a bogus result)', () => {
+  assert.strictEqual(assessRecovery('small_muscles', NaN), null);
+});
+
 test('assessRecovery: unknown muscle category → null', () => {
   assert.strictEqual(assessRecovery('unknown_muscle', 24), null);
   assert.strictEqual(assessRecovery(null, 24), null);
@@ -149,6 +153,13 @@ test('scoreReadiness: invalid values are skipped (treated as absent)', () => {
   assert.ok(!r.inputsUsed.includes('sleep'));
   assert.ok(!r.inputsUsed.includes('soreness'));
   assert.ok(!r.inputsUsed.includes('stress'));
+});
+
+test('scoreReadiness: NaN values are skipped and do not poison score', () => {
+  const r = scoreReadiness({ sleep: NaN, motivation: 8 });
+  assert.ok(!r.inputsUsed.includes('sleep'), 'NaN sleep should be skipped');
+  assert.ok(r.inputsUsed.includes('motivation'));
+  assert.ok(typeof r.score === 'number' && !Number.isNaN(r.score), 'score must not be NaN');
 });
 
 test('scoreReadiness: inputsUsed and inputsAbsent are disjoint and complete', () => {
@@ -219,6 +230,10 @@ test('checkDeloadTriggers: invalid weeksSinceDeload → null', () => {
   assert.strictEqual(checkDeloadTriggers(-1, []), null);
   assert.strictEqual(checkDeloadTriggers('4', []), null);
   assert.strictEqual(checkDeloadTriggers(null, []), null);
+});
+
+test('checkDeloadTriggers: NaN weeksSinceDeload → null (not a bogus result)', () => {
+  assert.strictEqual(checkDeloadTriggers(NaN, []), null);
 });
 
 test('checkDeloadTriggers: activeTriggerKeys defaults to [] when omitted', () => {

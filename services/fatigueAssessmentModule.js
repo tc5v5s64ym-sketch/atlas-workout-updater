@@ -46,7 +46,7 @@ function _scoreTier(score) {
 // }
 // or null for invalid inputs.
 function assessRecovery(muscleCategory, hoursSinceLastSession) {
-  if (typeof hoursSinceLastSession !== 'number' || hoursSinceLastSession < 0) return null;
+  if (typeof hoursSinceLastSession !== 'number' || Number.isNaN(hoursSinceLastSession) || hoursSinceLastSession < 0) return null;
 
   const priors = getRecoveryPriors();
   const window = priors[muscleCategory];
@@ -108,7 +108,7 @@ function scoreReadiness(inputValues) {
     const raw = inputValues[key];
     const weight = WEIGHT_MULTIPLIER[weight_hint] ?? 1;
 
-    if (raw == null || typeof raw !== 'number' || raw < 0 || raw > 10) {
+    if (raw == null || typeof raw !== 'number' || Number.isNaN(raw) || raw < 0 || raw > 10) {
       inputsAbsent.push(key);
       continue;
     }
@@ -151,7 +151,7 @@ function scoreReadiness(inputValues) {
 // }
 // or null for invalid weeksSinceDeload.
 function checkDeloadTriggers(weeksSinceDeload, activeTriggerKeys = []) {
-  if (typeof weeksSinceDeload !== 'number' || weeksSinceDeload < 0) return null;
+  if (typeof weeksSinceDeload !== 'number' || Number.isNaN(weeksSinceDeload) || weeksSinceDeload < 0) return null;
 
   const triggers = getDeloadTriggers();
   const [plannedMin] = triggers.planned_every_weeks;
