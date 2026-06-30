@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added — AutoregulationModule: e1RM-driven, readiness-aware load prescription (roadmap PR 15)
+
+New pure-engine module `services/autoregulationModule.js`. No Sheets access, no side effects, no LLM involvement.
+
+**`computeCurrentE1RM(liftCode, logEntries)`** — Computes the best estimated one-rep max from the most recent 3 sessions for a given lift. Filters warm-up sets (explicit warm-up note, weight < 60% of session max, or RIR ≥ 4) before computing. Uses the RIR-adjusted Epley formula (`weight / percentOf1RM(reps, rir)`) when a valid RIR (0–4) is present; falls back to plain Epley otherwise. Returns `null` when there is insufficient or invalid data.
+
+**`detectLPGraduation(liftCode, logEntries, opts?)`** — Detects whether a lifter should graduate from session-to-session linear progression for a lift. Delegates to `detectLiftPlateaus` (PR 14): fires when e1RM has not improved across `minSessions` (default 3) consecutive sessions. Returns `{ shouldGraduate, reason, plateauDetails }`.
+
+**`autoregulateLoad(params)`** — Builds a readiness-adjusted, e1RM-derived load prescription for one lift session. Params: `{ liftCode, logEntries, targetReps=5, targetRIR=1, readinessInputs=null, bodyRegion='upper_body' }`. Flow: (1) score readiness via `scoreReadiness` (PR 11) → tier (`high`/`moderate`/`low`) → add 0/1/2 RIR to effective RIR; (2) compute current e1RM; (3) derive weight via `targetWeightForRIR(e1rm, reps, effectiveRIR)` → plate-round (2.5 lb upper body, 5 lb lower body); (4) run plateau check. Returns `{ recommendedWeight, targetReps, effectiveRIR, e1rm, readinessTier, readinessAdjustment, graduateFromLP, plateauDetails, basis }`. `basis` is `'e1rm_derived'` | `'increment_fallback'` | `'insufficient_data'`.
+
+New test `test/autoregulationModule.test.js` — 41 tests: `computeCurrentE1RM` guards (null inputs, no-match, case-insensitive), RIR-adjusted vs Epley formulas, 3-session window, warm-up exclusion (note / weight / RIR), best-across-session selection; `detectLPGraduation` guards, flat vs improving plateau detection, cross-lift isolation; `autoregulateLoad` guards, default values, round-trip weight derivation, readiness tier adjustments (high/moderate/low ordering verified), plate rounding (2.5 lb and 5 lb), result shape, LP graduation wiring, case-insensitive code matching.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change. Unblocks roadmap PR 17, PR 22, PR 23.**
+
+---
+
 ### Added — MemoryModule: long-term trends store + entity resolution (roadmap PR 18)
 
 Two new pure-engine modules. No Sheets access, no side effects, no LLM involvement.
