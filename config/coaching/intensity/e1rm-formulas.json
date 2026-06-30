@@ -1,0 +1,60 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Catalog of 1RM estimation formulas and the %1RM model used by the IntensityModule. Epley is the Atlas default — consistent with analytics.js inline usage.",
+    "consumed_by": "services/intensityModule.js",
+    "derived_from": ["01-science-math-architecture", "02-coaching-knowledge-architecture"]
+  },
+  "formulas": [
+    {
+      "id": "epley",
+      "formula": "weight × (1 + reps / 30)",
+      "atlas_default": true,
+      "notes": "Most widely cited in training literature. Slightly overestimates at high rep counts (>12). Already used throughout analytics.js for e1RM trend tracking — this config makes that usage explicit.",
+      "provenance": {
+        "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture"],
+        "evidence_tier": 2,
+        "confidence": "high",
+        "contested": false
+      }
+    },
+    {
+      "id": "brzycki",
+      "formula": "weight × (36 / (37 − reps))",
+      "atlas_default": false,
+      "notes": "More accurate at low rep counts (1–5). Breaks down as reps approach 37 (mathematical asymptote); implementation clamps reps to 36. Use when the training log contains predominantly 1–5 rep sets.",
+      "provenance": {
+        "sources": ["01-science-math-architecture"],
+        "evidence_tier": 2,
+        "confidence": "high",
+        "contested": false
+      }
+    },
+    {
+      "id": "lombardi",
+      "formula": "weight × reps^0.10",
+      "atlas_default": false,
+      "notes": "Tends to underestimate at low rep counts. Included for completeness. Not recommended for Atlas prescription targets.",
+      "provenance": {
+        "sources": ["01-science-math-architecture"],
+        "evidence_tier": 3,
+        "confidence": "medium",
+        "contested": false
+      }
+    }
+  ],
+  "percent_1rm_model": {
+    "description": "Atlas derives %1RM from the Epley formula rather than a practitioner lookup table. For a set of R reps performed at RIR rir, the lifter could complete R+rir reps to failure, so: %1RM = 1 / (1 + (R + rir) / 30). This keeps %1RM calculations internally consistent with the e1RM estimate and avoids encoding population-level RPE table variance.",
+    "rpe_rir_relationship": "RPE = 10 − RIR  (Atlas logs RIR; RPE is the derived form)",
+    "valid_rir_range": [0, 4],
+    "valid_rpe_range": [6, 10],
+    "notes": "Practitioner lookup tables (e.g. Tuchscherer/RTS) list slightly different %1RM values at the extremes. Use the formula for prescription targets and relative comparisons, not as an absolute %1RM assertion.",
+    "provenance": {
+      "sources": ["02-coaching-knowledge-architecture"],
+      "evidence_tier": 3,
+      "confidence": "medium",
+      "contested": true,
+      "notes": "Epley-derived %1RM approximation is internally consistent but diverges from empirical practitioner tables at very low rep counts. Flagged contested so the LLM conveys appropriate uncertainty when discussing %1RM."
+    }
+  }
+}

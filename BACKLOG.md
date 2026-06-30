@@ -658,6 +658,8 @@ Follow-ups filed from the automated code review of PR #721 (static data + docs o
 
 - **Schema validation unenforced (no AJV)** `[housekeeping]` — `test/coachingIntelligence.test.js` uses hand-rolled structural checks rather than validating the data files against the `config/coaching/schemas/*.json` files (the repo has no JSON Schema validator). The schemas can drift silently from the actual files until a real validator runs. When the consuming module is built, add `ajv` (or equivalent) as a devDependency and replace the hand-rolled checks with full JSON Schema draft 2020-12 validation. Not urgent while the files are static data with no runtime consumer.
 
+- **IntensityModule: Epley-derived %1RM model diverges from practitioner RPE tables at extremes** `[housekeeping]` — `services/intensityModule.js` derives %1RM from the Epley formula (internally consistent with `analytics.js`) rather than encoding a practitioner lookup table (e.g. Tuchscherer/RTS). The config marks this as `contested: true`. When a future PR consumes the module for session planning, consider whether to add a verified practitioner table as a `config/coaching/intensity/rpe-percent-table.json` alongside the formula-based approach, or accept the Epley approximation as "good enough" for prescription. No action until a consumer exists.
+
 ---
 
 ## Someday / future scope

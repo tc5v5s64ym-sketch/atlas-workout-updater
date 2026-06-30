@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — IntensityModule: e1RM + RIR/%1RM read-only engine (Brian PR 3)
+
+New pure read-only module `services/intensityModule.js` centralizing intensity calculations for the Coach Intelligence Layer:
+
+- `estimateE1RM(weight, reps, formula?)` — Epley (default, consistent with analytics.js), Brzycki, or Lombardi formula
+- `percentOf1RM(reps, rir)` — fraction of 1RM for a given reps × RIR combination (Epley-derived)
+- `percentOf1RMByRPE(reps, rpe)` — RPE variant (RPE = 10 − RIR)
+- `targetWeightForRIR(e1rm, targetReps, targetRIR)` — prescription weight from e1RM
+- `targetWeightForRPE(e1rm, targetReps, targetRPE)` — RPE variant
+- `estimateRIR(weight, reps, e1rm)` — inverse: estimate RIR from a logged set
+
+New config `config/coaching/intensity/e1rm-formulas.json` — formula catalog with provenance; documents the Epley-derived %1RM model and flags the contested note about divergence from practitioner RPE tables.
+
+New test `test/intensityModule.test.js` — 32 unit tests covering all exported functions, boundary conditions, roundtrip correctness, and error cases.
+
+**No runtime consumer yet. No Sheets access, no side effects, no write-path or trust-loop change.**
+
+---
+
 ### Added — Exercise ontology expansion: 4 → 52 exercises (PR 2)
 
 Expanded `config/coaching/exercises/` from the 4 seed exercises to a full 52-exercise ontology covering all 12 movement patterns. Each entry carries `id`, `name`, `movement_pattern`, `implement`, `laterality`, `loading_axis`, `primary_muscles`, `provenance`, plus rich optional fields (`secondary_muscles`, `stabilizers`, `systemic_fatigue`, `local_fatigue`, `joint_stress`, `technical_complexity`, `stimulus_to_fatigue`, `progressions`, `regressions`, `common_faults`, `substitutions`, `contraindications`, `resistance_profile`).
