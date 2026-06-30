@@ -46,7 +46,7 @@ function _round5(value) {
  *   supplemental    { exerciseId, liftCode, bodyRegion, sets[] }
  *
  * mainLift.sets[]:  { weight(lb), reps, repsScheme }
- * supplemental.sets[]: { weight(lb)|null, reps, repsScheme: 'amrap' }
+ * supplemental.sets[]: { weight(lb)|null, reps, repsScheme: 'fixed' }
  */
 function buildNextSession531(state) {
   if (!state || typeof state !== 'object') return null;
