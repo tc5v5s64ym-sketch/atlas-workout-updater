@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Older-adult population caps (50+): conservative intensity, higher RIR floor, extended recovery windows.",
+    "derived_from": ["ACSM older-adult guidelines", "Straight et al. 1999"]
+  },
+  "id": "older-adult",
+  "name": "Older Adult (50+)",
+  "description": "Emphasises joint-friendly movements, higher RIR margins, and adequate recovery. Strength and balance over peak performance.",
+  "constraints": {
+    "max_days_per_week": 4,
+    "max_session_duration_min": 60,
+    "max_weekly_sets_per_muscle": 14,
+    "max_compounds_per_session": 3,
+    "preferred_equipment": ["barbell", "dumbbell", "cable", "machine"],
+    "rir_floor": 2,
+    "intensity_ceiling_percent_1rm": 85
+  },
+  "notes": "RIR floor of 2 reduces joint stress from near-maximal loading. Volume capped at approximately the MEV–MAV midpoint for major muscle groups. Machine/cable variants preferred for accessory work when joint tolerance is a concern.",
+  "provenance": {
+    "sources": [
+      "ACSM position stand on exercise and physical activity for older adults",
+      "Straight et al. 1999 older adult resistance training",
+      "Liu & Latham 2009 progressive resistance strength training for improving physical function"
+    ],
+    "evidence_tier": 3,
+    "confidence": "medium",
+    "contested": false
+  }
+}

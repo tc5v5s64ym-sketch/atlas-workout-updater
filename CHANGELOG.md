@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added — Goal/population templates & caps + 5/3/1 intermediate program (roadmap PR 17)
+
+Four goal template configs (`config/coaching/goals/`): `general-fitness`, `powerlifting`, `bodybuilding`, `weight-loss`. Each maps a user goal to recommended program IDs by training level (beginner/intermediate/advanced) and carries a `knowledge_goal_id` linking to the existing `trainingKnowledge.js` goal taxonomy.
+
+Five population caps configs (`config/coaching/populations/`): `general` (all nulls — uncapped baseline), `older-adult` (≤4 days/week, ≤60 min, RIR floor 2, intensity ceiling 85%), `youth` (≤4 days/week, ≤60 min, RIR floor 2, intensity ceiling 80%), `busy-parent` (≤3 days/week, ≤45 min), `home-gym` (preferred equipment list; no day/intensity caps).
+
+One program config (`config/coaching/programs/531-intermediate.json`): Wendler 5/3/1 four-week wave cycle. 4-day split (Squat / OHP / Deadlift / Bench). Wave percentages: 65/75/85% (5s week), 70/80/90% (3s week), 75/85/95% (5/3/1 week), 40/50/60% (deload week). Top set is always AMRAP; deload sets are fixed. +5 lb upper / +10 lb lower after each cycle.
+
+Three new engine modules:
+- **`services/goalTemplateModule.js`** — `getGoalTemplate(id)`, `listGoalTemplates()`, `selectPrograms(goalId, {trainingLevel})`. `listGoalTemplates()` returns summary-only objects (no `recommended_programs` exposed). `selectPrograms` filters by `training_levels` array.
+- **`services/populationCapsModule.js`** — `getPopulationCaps(id)`, `listPopulations()`, `applyPopulationCaps(params, populationId)`. Caps applied only when the param field is non-null/non-undefined in the input; unknown population IDs return an unmodified copy. `listPopulations()` summary omits `constraints`.
+- **`services/intermediateProgramModule.js`** — `buildNextSession531(state)`, `suggestNextCycleMaxes(trainingMaxes)`, `computeTrainingMax(tested1RM)`. State is minimal: `{ sessionCount, trainingMaxes }`. Cycle position derived as `sessionCount % 16`; week as `floor(cyclePos/4)`; day as `cyclePos % 4`. `isCycleBoundary` signals when the caller should have already incremented maxes. All weights rounded to nearest 5 lb (`_round5`).
+
+125 new tests across three new test files. No Sheets access, no write-path change, no LLM involvement. Unblocks roadmap PR 22 (periodization engine).
+
+---
+
 ### Added — ConfidenceModule: ask-vs-act decision engine (roadmap PR 19)
 
 New pure-engine module `services/confidenceModule.js`. No Sheets access, no side effects, no LLM involvement.

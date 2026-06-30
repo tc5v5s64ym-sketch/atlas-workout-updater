@@ -71,7 +71,7 @@
 | PR | Title | Model | Status | Notes |
 |---|---|---|---|---|
 | 16 | SubstitutionModule | Opus | ⚠️ partial | `services/substitutionRecommender.js`, `substitutionQuality.js`, `substitutionIntent.js` exist and are wired. A formal Brian-layer `SubstitutionModule` with the equipment-aware filtering + referential-integrity check described in the roadmap has not been built as a standalone composite. Depends on PR 2, PR 4. |
-| 17 | Goal / population templates & caps (+ 5/3/1) | Opus | 🔲 not started | Powerlifting / bodybuilding / general / weight-loss templates; older-adult / youth / busy-parent / home-gym caps; 5/3/1 for intermediates. Depends on PR 7, PR 8, PR 15. |
+| 17 | Goal / population templates & caps (+ 5/3/1) | Opus | ✅ shipped | Goal templates (`config/coaching/goals/`): general-fitness, powerlifting, bodybuilding, weight-loss → `goalTemplateModule.js` (`getGoalTemplate`, `listGoalTemplates`, `selectPrograms`). Population caps (`config/coaching/populations/`): general, older-adult, youth, busy-parent, home-gym → `populationCapsModule.js` (`applyPopulationCaps`). 5/3/1 config (`config/coaching/programs/531-intermediate.json`) → `intermediateProgramModule.js` (`buildNextSession531`, `suggestNextCycleMaxes`, `computeTrainingMax`). 125 tests. Depends on PR 7, PR 8, PR 15. |
 | 18 | Memory architecture (trends + coach memory + entity resolution) | Opus | ✅ shipped | `services/entityResolutionModule.js` (name→exerciseId; aliases + progressions; priority: exact>name>alias>progression) + `services/memoryModule.js` (Brian-layer composite: `queryTrend`, `queryPatterns`, `buildMemorySnapshot`, `resolveExercise`, `listExerciseIds`); 51 tests. Depends on PR 6, PR 14. |
 | 19 | ConfidenceModule (ask vs act) | Opus | ✅ shipped | `services/confidenceModule.js` — `scoreConfidence(params)` → `{ confidenceScore, tier, action, caveats, safetyInverted, dimensions }`. Four weighted dimensions: completeness (0.30), recency (0.25), consistency (0.25), selfReportReliability (0.20). Tiers: ≥75=high→act, ≥45=moderate→act_with_caveat, <45=low→ask. Safety inversion escalates action one step toward ask when flags are active. Six machine-readable `CAVEAT_KEYS` (LLM words them). 42 tests. Depends on PR 6, PR 11, PR 15, PR 18. |
 
@@ -102,16 +102,16 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 ## What's next
 
-**Current position: Phase 4 complete through PR 19.**
+**Current position: Phase 4 complete through PR 19; PR 17 shipped.**
 
-Shipped: PR 1–8, PR 11–15, PR 18–19 (fully). Partial: PR 9, PR 10, PR 16.
-Not started: PR 17, PR 20–24.
+Shipped: PR 1–8, PR 11–15, PR 17–19 (fully). Partial: PR 9, PR 10, PR 16.
+Not started: PR 20–24.
 
 **Immediate next candidates** (dependency-safe):
 
 1. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
-2. **PR 17 — Goal / population templates & caps** (depends on PR 7 ✅, PR 8 ✅, PR 15 ✅ — all done). Fully unblocked.
-3. **PR 20 — NutritionModule** (depends on PR 1 ✅, PR 19 ✅ — all done). Fully unblocked.
+2. **PR 20 — NutritionModule** (depends on PR 1 ✅, PR 19 ✅ — all done). Fully unblocked.
+3. **PR 22 — Periodization & peaking engine** (depends on PR 15 ✅, PR 17 ✅ — all done). Fully unblocked.
 
 ---
 

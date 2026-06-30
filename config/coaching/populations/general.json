@@ -1,0 +1,19 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Default population — healthy adult with full gym access. No special caps; serves as the uncapped baseline."
+  },
+  "id": "general",
+  "name": "General",
+  "description": "Default population: healthy adult, no special constraints. The uncapped baseline.",
+  "constraints": {
+    "max_days_per_week": null,
+    "max_session_duration_min": null,
+    "max_weekly_sets_per_muscle": null,
+    "max_compounds_per_session": null,
+    "preferred_equipment": [],
+    "rir_floor": null,
+    "intensity_ceiling_percent_1rm": null
+  },
+  "notes": "No caps applied. Healthy adult with access to a full barbell gym is assumed."
+}

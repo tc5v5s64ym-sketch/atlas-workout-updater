@@ -1,0 +1,26 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Busy-parent population caps: limited time availability, 2–3 sessions per week maximum.",
+    "derived_from": ["practitioner consensus", "Ralston et al. 2017 low-frequency training"]
+  },
+  "id": "busy-parent",
+  "name": "Busy Parent",
+  "description": "Optimised for 2–3 sessions per week, 30–45 minutes each. Full-body compound focus with minimal setup time.",
+  "constraints": {
+    "max_days_per_week": 3,
+    "max_session_duration_min": 45,
+    "max_weekly_sets_per_muscle": 12,
+    "max_compounds_per_session": 3,
+    "preferred_equipment": ["barbell", "dumbbell", "bodyweight"],
+    "rir_floor": null,
+    "intensity_ceiling_percent_1rm": null
+  },
+  "notes": "Prioritise compound movements that hit multiple muscle groups per minute of training. StrongLifts 5x5 or a 3-day abbreviated GZCLP fit naturally within these constraints.",
+  "provenance": {
+    "sources": ["Ralston et al. 2017 effect of load and volume on strength gains", "practitioner consensus"],
+    "evidence_tier": 4,
+    "confidence": "low",
+    "contested": false
+  }
+}

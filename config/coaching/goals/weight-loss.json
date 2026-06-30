@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Weight-loss / conditioning goal template: resistance training that supports fat loss while preserving muscle.",
+    "derived_from": ["trainingKnowledge.js conditioning_fat_loss", "ACSM weight-management guidelines"]
+  },
+  "id": "weight-loss",
+  "name": "Weight Loss / Conditioning",
+  "description": "Higher-density training to support fat loss while maintaining muscle mass. Compound-focused with moderate rep ranges.",
+  "knowledge_goal_id": "conditioning_fat_loss",
+  "nutrition_note": "Atlas does not prescribe calories or macros. Pair with professional dietary guidance. Rate-of-change guardrails apply (see roadmap PR 20 NutritionModule).",
+  "recommended_programs": [
+    {
+      "program_id": "stronglifts-5x5",
+      "training_levels": ["beginner"],
+      "note": "Full-body compounds preserve muscle during a caloric deficit; efficient per session"
+    },
+    {
+      "program_id": "gzclp",
+      "training_levels": ["beginner", "intermediate"],
+      "note": "T3 higher-rep work supports caloric expenditure alongside strength work"
+    }
+  ],
+  "target_days_per_week": { "min": 2, "target": 3, "max": 4 },
+  "target_session_duration_min": { "min": 30, "target": 45, "max": 60 },
+  "provenance": {
+    "sources": ["ACSM position stand on weight management", "Willis et al. 2012 aerobic vs resistance for fat loss"],
+    "evidence_tier": 3,
+    "confidence": "medium",
+    "contested": false
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Home-gym population caps: equipment-limited, substitution-aware programming.",
+    "derived_from": ["Calatayud et al. 2015 dumbbell vs barbell", "practitioner consensus"]
+  },
+  "id": "home-gym",
+  "name": "Home Gym",
+  "description": "Equipment-limited training. Substitution-aware programming with dumbbell and bodyweight alternatives when barbells are unavailable.",
+  "constraints": {
+    "max_days_per_week": null,
+    "max_session_duration_min": null,
+    "max_weekly_sets_per_muscle": null,
+    "max_compounds_per_session": null,
+    "preferred_equipment": ["dumbbell", "bodyweight", "resistance_band"],
+    "equipment_ceiling": ["barbell_optional", "rack_optional"],
+    "rir_floor": null,
+    "intensity_ceiling_percent_1rm": null
+  },
+  "notes": "When a barbell is unavailable, main-lift substitution is required (e.g. goblet squat, dumbbell press, dumbbell RDL). Programme effectiveness is preserved through dumbbell progressions and rep-range adjustment. Equipment constraints should drive exercise selection via SubstitutionModule (roadmap PR 16).",
+  "provenance": {
+    "sources": ["Calatayud et al. 2015 dumbbell vs barbell EMG comparison", "practitioner consensus"],
+    "evidence_tier": 4,
+    "confidence": "low",
+    "contested": false
+  }
+}

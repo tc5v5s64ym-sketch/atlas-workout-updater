@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "General fitness / balanced-health goal template: balanced strength and conditioning, the best entry point for most newcomers.",
+    "derived_from": ["trainingKnowledge.js general_health", "ACSM general activity guidelines"]
+  },
+  "id": "general-fitness",
+  "name": "General Fitness",
+  "description": "Balanced strength and conditioning for overall health. Best starting point for most newcomers.",
+  "knowledge_goal_id": "general_health",
+  "recommended_programs": [
+    {
+      "program_id": "stronglifts-5x5",
+      "training_levels": ["beginner"],
+      "note": "Best structured entry for general full-body strength"
+    },
+    {
+      "program_id": "gzclp",
+      "training_levels": ["beginner", "intermediate"],
+      "note": "More volume variation as skills and work capacity develop"
+    }
+  ],
+  "target_days_per_week": { "min": 2, "target": 3, "max": 4 },
+  "target_session_duration_min": { "min": 30, "target": 45, "max": 60 },
+  "provenance": {
+    "sources": ["ACSM position stand on resistance training", "Garber et al. 2011 ACSM guidelines"],
+    "evidence_tier": 3,
+    "confidence": "medium",
+    "contested": false
+  }
+}
