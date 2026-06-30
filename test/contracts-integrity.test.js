@@ -121,7 +121,7 @@ describe('integrity — canonical decision fixtures validate', () => {
       safety: { level: 'green', flags: [], blocking: false },
       payload: { session_label: 'Upper', blocks: [{ exercise: 'Bench', lift_code: 'BENCH',
         sets: 3, reps: 5, target_weight: 185, target_rir: 2 }] },
-      missing_info: [], explanation_inputs: { target_weight: 185, target_reps: 5, target_rir: 2 },
+      missing_info: [], explanation_inputs: { blocks: [{ target_weight: 185, reps: 5, target_rir: 2 }] },
       provenance: { modules_run: ['confidence'], skipped: [], state_asOf: null, engine_version: '1' },
     },
     clarification: {

@@ -286,7 +286,7 @@ The single object the Brain emits for every intent. Stable envelope + typed payl
 1. All envelope fields present; enums valid.
 2. **Discriminator integrity:** `payload` conforms to the registered shape for `decision_type`.
 3. **Ask/answer integrity:** `status = needs_clarification` ⟺ `decision_type = clarification_needed` ⟺ `missing_info` non-empty ⟺ `confidence.action = ask`. All four move together or the decision is invalid.
-4. **Trust-contract integrity (critical):** every numeric value in `payload` that represents a prescribed quantity (`target_weight`, `target_reps`, `target_rir`, `e1rm`, …) must also appear in `explanation_inputs`. The LLM may speak **only** `explanation_inputs`; this guarantees it can speak every prescribed number and *no number absent from the Brain's output*. **Current implementation is a value-based floor** (the number appears *somewhere* in `explanation_inputs`), not yet key-aware — a small integer can find an incidental match, so it is a floor, not the full guarantee. Key-aware matching is filed in `BACKLOG.md` to land **before the orchestrator wires a real number to the LLM (PR-5)**, when the invariant first goes live.
+4. **Trust-contract integrity (critical) — KEY-AWARE:** every numeric value in `payload` that represents a prescribed quantity (`target_weight`, `reps`, `target_rir`, `e1rm`, …) must be **echoed under its corresponding key** in `explanation_inputs`. The LLM may speak **only** `explanation_inputs`; this guarantees it can speak every prescribed number — under that number's own key — and *no number absent from the Brain's output*. Representation: for single-value payloads (progression/nutrition), `explanation_inputs[field] === payload[field]`; for `workout`, `explanation_inputs.blocks[i][field] === payload.blocks[i][field]` (order-aligned, per block). A right value echoed under the *wrong* key, or an incidental match, no longer satisfies the contract.
 5. **Safety escalation:** `safety.blocking = true` ⟹ `confidence.action ≠ act` (forced to `act_with_caveat` or `ask`) and `safety_flag_present ∈ caveats`.
 6. `read_only` intents ⟹ `decision_type = progress_readout`, `payload` carries no prescription fields, `explanation_inputs` carries only descriptive facts.
 7. **Provenance accounting.** `modules_run` and `skipped` are disjoint string arrays, and their union ⊆ the manifest's resolved capability set for the intent (no out-of-plan module ran). The stronger "union *equals* the resolved set" (full accounting, nothing silently dropped) is an Orchestrator-output property enforced by the Orchestrator's own test when it lands (PR-5) — the standalone decision validator checks ⊆, since a decision object alone need not enumerate the entire closure.
@@ -308,7 +308,7 @@ The single object the Brain emits for every intent. Stable envelope + typed payl
                  "scenario_id":"consistent_progress","source":"brian","warmup":false } ],
     "why_today":["bench_trend:improving","push_recovery:ready"],"substitutions_applied":[] },
   "missing_info":[],
-  "explanation_inputs":{ "target_weight":185,"target_reps":5,"target_rir":2,
+  "explanation_inputs":{ "blocks":[{ "target_weight":185,"reps":5,"target_rir":2 }],
     "trend":"improving","recovery":"ready" },
   "provenance":{ "modules_run":["goals","user_state","scenario_classifier","progression",
                  "fatigue","volume","safety","session_generator","confidence"],
