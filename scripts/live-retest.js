@@ -30,7 +30,10 @@ const SCENARIOS = {
     input: 'After logging a multi-exercise paste, tell Atlas in chat: "you missed a set".',
     expected: 'A natural, productive reply (e.g. "re-type the set and I\'ll log it") even when the LLM is momentarily down; the deterministic engine still owns logging.',
     forbidden: 'Any "couldn\'t reach the coach" / "coach isn\'t available" / "ask again" wording that reveals an LLM outage.',
-    reference: 'docs/BUG_TRIAGE_LEDGER.md — coach-fallback pair; trigger fixed by #699/#701, reveal removed in chatFallback.'
+    reference: 'docs/BUG_TRIAGE_LEDGER.md — coach-fallback pair; trigger fixed by #699/#701, reveal removed in chatFallback.',
+    // Navigation (PR #717): type the chat message into the composer and submit
+    // (preview). This routes to the chat/coach path — a read-only call, no write.
+    navigation: { type: 'composer', text: 'you missed a set' }
   },
   'bug-20260629-153312': {
     bugId: 'BUG-20260629-153312',
@@ -38,7 +41,8 @@ const SCENARIOS = {
     input: 'Tell Atlas it missed rows after a paste that previously dropped a row.',
     expected: 'Natural mid-session reply; rows are no longer dropped (the underlying trigger is fixed).',
     forbidden: 'The generic "coach isn\'t available" fallback message.',
-    reference: 'docs/BUG_TRIAGE_LEDGER.md — dup of -153258.'
+    reference: 'docs/BUG_TRIAGE_LEDGER.md — dup of -153258.',
+    navigation: { type: 'composer', text: 'you missed a set' }
   },
   'bug-20260629-003505': {
     bugId: 'BUG-20260629-003505',
@@ -46,7 +50,11 @@ const SCENARIOS = {
     input: 'Trigger a restorable session, then tap the "restore session" banner.',
     expected: 'The banner is interactive and the prior session is restored on tap.',
     forbidden: 'Tapping the banner does nothing (silent no-op).',
-    reference: 'docs/BUG_TRIAGE_LEDGER.md — interactive restore banner, PR #678.'
+    reference: 'docs/BUG_TRIAGE_LEDGER.md — interactive restore banner, PR #678.',
+    // This scenario is a UI-state action (restore banner), not a composer entry.
+    // Composer navigation does not apply; the bootstrap load + screenshot stands
+    // and full banner automation is deferred to a later slice. No write either way.
+    navigation: { type: 'manual', note: 'restore-banner tap is a UI-state action, not composer-driven — automate in a later slice.' }
   },
   'bug-20260629-002945': {
     bugId: 'BUG-20260629-002945',
@@ -54,7 +62,10 @@ const SCENARIOS = {
     input: 'Type: "Knee raises 20 20 20".',
     expected: 'Atlas prompts for the bodyweight reps / shows a confirmation path instead of a silent failure.',
     forbidden: 'A silent drop (422 from /api/log-modality with no card and no prompt).',
-    reference: 'docs/BUG_TRIAGE_LEDGER.md — knee-raise bodyweight prompt, PR A #680.'
+    reference: 'docs/BUG_TRIAGE_LEDGER.md — knee-raise bodyweight prompt, PR A #680.',
+    // Navigation (PR #717): type the workout text and submit (preview only).
+    // The preview is a test_mode dry-run — no write.
+    navigation: { type: 'composer', text: 'Knee raises 20 20 20' }
   }
 };
 
@@ -100,16 +111,63 @@ function printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly }) {
   console.log(`Reference         : ${scenario.reference}`);
   console.log(line);
   console.log(`Target base URL   : ${targetBaseUrl || '(none provided — set ATLAS_BASE_URL or --target-base-url)'}`);
-  console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no Sheets writes)' : 'BROWSER BOOTSTRAP (read-only: load + screenshot, never Save)'}`);
+  console.log(`Mode              : ${dryRunOnly ? 'DRY-RUN (no browser, no live calls, no Sheets writes)' : 'LIVE (read-only: load + locate + populate composer + preview; never Save)'}`);
   console.log(line);
+}
+
+// --- PR #717: scenario navigation (composer populate + preview) -------------
+// Type the scenario's input into the composer and submit the PREVIEW flow only.
+// The preview is a test_mode dry-run — no Sheets write. This NEVER clicks the
+// approve/"Write to Google Sheets" button (#approve-btn) and never enables it.
+// Assertions (pass/fail) are a later slice (#718); this just navigates and
+// captures what the UI shows.
+async function navigateScenario({ page, scenarioKey, scenario, outputDir }) {
+  const nav = scenario.navigation || { type: 'manual' };
+
+  if (nav.type !== 'composer') {
+    console.log(`[navigate] scenario "${scenarioKey}" is ${nav.type} (${nav.note || 'no composer step'}); skipping composer navigation.`);
+    return;
+  }
+
+  // Hard read-only guard: this slice must never trigger a write. We only ever
+  // touch the composer and the PREVIEW button — never #approve-btn.
+  console.log(`[navigate] populating composer with: ${JSON.stringify(nav.text)}`);
+  const composer = page.locator('#workout-text');
+  await composer.fill(nav.text);
+  const typed = await composer.inputValue();
+  if (typed !== nav.text) {
+    throw new Error(`composer did not accept the input (got ${JSON.stringify(typed)})`);
+  }
+  await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-02-composer.png`), fullPage: true });
+  console.log(`[navigate] composer populated; screenshot saved`);
+
+  // Submit the preview flow (test_mode dry-run). Tolerant: a readback may or may
+  // not render depending on the authenticated context — capturing the result is
+  // enough for this slice.
+  console.log(`[navigate] clicking #preview-btn (preview/dry-run only — never Save)`);
+  await page.locator('#preview-btn').click();
+  // Give the thread a moment to update without coupling to a specific outcome.
+  await page.waitForTimeout(2500);
+
+  // Re-confirm we never enabled/clicked the write button.
+  const approveDisabled = await page.locator('#approve-btn').isDisabled().catch(() => null);
+  console.log(`[navigate] post-preview: #approve-btn disabled=${approveDisabled} (never clicked — no write)`);
+
+  const threadText = await page.locator('#thread-messages').innerText().catch(() => '');
+  const preview = threadText.replace(/\s+/g, ' ').trim().slice(0, 240);
+  console.log(`[navigate] thread after preview: ${preview ? `"${preview}"` : '(no visible change)'}`);
+
+  await page.screenshot({ path: path.join(outputDir, `${scenarioKey}-03-preview.png`), fullPage: true });
+  console.log(`[navigate] preview-flow screenshot saved`);
 }
 
 // --- PR #716: read-only browser bootstrap -----------------------------------
 // Launch Playwright Chromium, open the deployed Atlas app shell, verify it
-// loaded, locate the composer, screenshot, and exit. This NEVER fills the
-// composer, never clicks the preview/approve (write) buttons, and never calls a
-// write endpoint — it only loads and observes.
-async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir }) {
+// loaded, locate the composer, screenshot, then (PR #717) navigate the preview
+// flow. It loads/observes, types into the composer, and submits the PREVIEW
+// (dry-run) only — it NEVER presses Save (#approve-btn) and never calls a write
+// endpoint or writes to Google Sheets.
+async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
   // Lazy require so dry-run mode never needs Playwright installed.
   const { chromium } = require('@playwright/test');
 
@@ -155,11 +213,15 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir }) {
     const approveDisabled = await approve.isDisabled().catch(() => null);
     console.log(`[bootstrap] write button (#approve-btn) present, disabled=${approveDisabled} (never clicked)`);
 
-    const shot = path.join(outputDir, `${scenarioKey}-app.png`);
+    const shot = path.join(outputDir, `${scenarioKey}-01-loaded.png`);
     await page.screenshot({ path: shot, fullPage: true });
     console.log(`[bootstrap] screenshot saved: ${shot}`);
+    console.log('[bootstrap] OK — app loaded and composer located.');
 
-    console.log('[bootstrap] OK — app loaded and composer located. No interaction, no writes.');
+    // PR #717: drive the scenario through the composer/preview flow (no Save).
+    await navigateScenario({ page, scenarioKey, scenario, outputDir });
+
+    console.log('[bootstrap] DONE — read-only navigation complete. Never pressed Save, no writes.');
   } catch (err) {
     exitCode = 1;
     console.error(`[bootstrap] FAILED: ${err.message}`);
@@ -213,8 +275,8 @@ async function run(argv, env = process.env) {
     return 1;
   }
 
-  console.log('BROWSER BOOTSTRAP: read-only load + locate + screenshot. Never presses Save.');
-  return bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey, outputDir });
+  console.log('BROWSER BOOTSTRAP + NAVIGATION: read-only load, locate, populate composer, preview. Never presses Save.');
+  return bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey, outputDir, scenario });
 }
 
 if (require.main === module) {
@@ -224,4 +286,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser };
+module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario };
