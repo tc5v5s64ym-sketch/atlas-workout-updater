@@ -94,6 +94,7 @@ knownKeys(snapshot, envelope) → Set<inputKey>   // state keys present ∪ cons
 ## Failure & degradation
 
 - A reader that throws or returns empty does **not** crash assembly: the corresponding key is `null`/`[]` and recorded in `provenance` (not in `reads`). Downstream this surfaces as a `requires`-unmet capability → clarification or degraded decision, never a 500.
+- Even the **default-reader layer failing to load** (e.g. the Sheets client cannot initialize) degrades to an empty snapshot rather than throwing — `_defaultReaders()` is wrapped so a load failure yields no readers and an all-null snapshot with empty `provenance.reads`.
 - A provider/Sheets outage degrades the coaching read path gracefully; it must never interrupt logging, preview, save, or session mutation (Constitution: the engine and write path do not depend on the coaching read layer).
 
 ---
