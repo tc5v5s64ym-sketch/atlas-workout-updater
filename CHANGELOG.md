@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — ProgressionModule: composite progression recommendation engine (Brian PR 11)
+
+New composite engine `services/progressionModule.js` — combines `ProgressionRulesModule` (scenario → action) with `IntensityModule` (weight math) to produce structured, number-complete progression recommendations. No Sheets access, no side effects, no LLM involvement.
+
+- `computeLoadStep(currentWeight, bodyRegion, direction)` — minimum plate-friendly increment for one progression step: upper_body = 2.5% of current weight rounded to nearest 2.5 lb (floor 2.5 lb); lower_body = flat 5 lb. Returns `null` for invalid weight, non-positive weight, or unknown direction.
+- `recommendProgression(scenarioId, context)` — maps a pre-classified scenario id + set context to a fully computed `{ scenarioId, default_action, lever, targetWeight, targetReps, rationale }`. Validates all context fields; returns null for unknown scenario or invalid context. Six scenarios handled:
+  - `underloaded` → `increase_load`: lever = `load`; targetWeight via e1RM/RIR step when RIR > 0, else plain increment; floors at minimum increment.
+  - `on_target` → `maintain_or_add_reps`: lever = `reps`; targetReps = currentReps + 1; targetWeight unchanged.
+  - `normal_variability` → `hold_progression`: lever = `none`; all params held.
+  - `likely_fatigue` → `hold_or_reduce_load`: lever = `load`; targetWeight = max(0, currentWeight − step).
+  - `injury_signal` → `swap_exercise_or_reduce_rom`: lever = `none`; targetWeight = null.
+  - `candidate_plateau` → `change_variant_reps_or_volume`: lever = `none`.
+
+Context shape: `{ currentWeight (lb), currentReps (integer ≥ 1), currentRIR (≥ 0), bodyRegion? ('upper_body' | 'lower_body', defaults 'upper_body'), e1rm? (optional pre-computed) }`.
+
+New test `test/progressionModule.test.js` — 37 tests covering `computeLoadStep` (upper/lower body increments, percentage rounding, floor at 2.5 lb, invalid weight/direction → null), `recommendProgression` invalid inputs (unknown scenarioId, null context, non-positive weight, non-integer reps, negative RIR), all six scenario paths (lever, targetWeight direction, targetReps arithmetic, rationale content), result shape completeness across all six scenarios, and `bodyRegion` defaulting.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — EvidenceTiersModule: read-only access to the knowledge-trustworthiness ranking (Brian PR 10)
 
 New read-only module `services/evidenceTiersModule.js` — pure lookup functions over `config/coaching/evidence-tiers.json`:
