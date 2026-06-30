@@ -72,7 +72,7 @@
 |---|---|---|---|---|
 | 16 | SubstitutionModule | Opus | ⚠️ partial | `services/substitutionRecommender.js`, `substitutionQuality.js`, `substitutionIntent.js` exist and are wired. A formal Brian-layer `SubstitutionModule` with the equipment-aware filtering + referential-integrity check described in the roadmap has not been built as a standalone composite. Depends on PR 2, PR 4. |
 | 17 | Goal / population templates & caps (+ 5/3/1) | Opus | 🔲 not started | Powerlifting / bodybuilding / general / weight-loss templates; older-adult / youth / busy-parent / home-gym caps; 5/3/1 for intermediates. Depends on PR 7, PR 8, PR 15. |
-| 18 | Memory architecture (trends + coach memory + entity resolution) | Opus | ⚠️ partial | `services/coachMemory.js` exists; trend detection in `services/trendDetector.js`. Full derived long-term-trends store + entity resolution (low-bar = back squat) not yet formalized as a Brian-layer module. Depends on PR 6, PR 14. |
+| 18 | Memory architecture (trends + coach memory + entity resolution) | Opus | ✅ shipped | `services/entityResolutionModule.js` (name→exerciseId; aliases + progressions; priority: exact>name>alias>progression) + `services/memoryModule.js` (Brian-layer composite: `queryTrend`, `queryPatterns`, `buildMemorySnapshot`, `resolveExercise`, `listExerciseIds`); 51 tests. Depends on PR 6, PR 14. |
 | 19 | ConfidenceModule (ask vs act) | Opus | 🔲 not started | Score confidence (completeness / recency / consistency / self-report reliability); act / act-with-caveat / ask thresholds; LLM asks clarifying question when confidence is low. Safety inverts: low confidence about a red flag → MORE caution. Depends on most prior modules. |
 
 ---
@@ -104,15 +104,15 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 **Current position: completing Phase 1 / entering Phase 2.**
 
-Shipped: PR 1–9 (partial), PR 10 (partial), PR 11–14 (fully), PR 16 (partial), PR 18 (partial).
-More precisely — fully shipped: PR 1–8, PR 11–14. Partial: PR 9, PR 10, PR 16, PR 18.
+Shipped: PR 1–9 (partial), PR 10 (partial), PR 11–14 (fully), PR 16 (partial), PR 18 (fully).
+More precisely — fully shipped: PR 1–8, PR 11–14, PR 18. Partial: PR 9, PR 10, PR 16.
 Not started: PR 15, PR 17, PR 19–24.
 
 **Immediate next candidates** (dependency-safe):
 
-1. **PR 18 — Memory architecture** (depends on PR 6 ✅, PR 14 ✅ — both done). Fully unblocked.
-2. **PR 15 — Autoregulation upgrade to ProgressionModule** (depends on PR 7 ✅, PR 8 ✅, PR 11 ✅, PR 14 ✅ — all done). Now unblocked.
-3. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Now fully unblocked.
+1. **PR 15 — Autoregulation upgrade to ProgressionModule** (depends on PR 7 ✅, PR 8 ✅, PR 11 ✅, PR 14 ✅ — all done). Fully unblocked.
+2. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
+3. **PR 19 — ConfidenceModule** (depends on most prior modules — all shipped). Now unblocked by PR 18 ✅.
 
 **Do not start PR 15** (Autoregulation) without PR 7 (templates) in place — the autoregulation upgrade assumes working templates exist. PR 7 is now shipped ✅.
 
