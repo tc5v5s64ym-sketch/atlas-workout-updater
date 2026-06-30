@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — FatigueAssessmentModule: composite fatigue/recovery/deload engine (Brian PR 12)
+
+New composite engine `services/fatigueAssessmentModule.js` — combines `FatigueRulesModule` (recovery priors, readiness inputs, deload triggers) with input signals to produce structured, number-complete fatigue and readiness assessments. No Sheets access, no side effects, no LLM involvement.
+
+- `assessRecovery(muscleCategory, hoursSinceLastSession)` — maps muscle category + hours since last session to a recovery status using config recovery priors. Returns `{ status: 'recovered' | 'possibly_recovering' | 'likely_underrecovered', hoursLeft, recoveryWindow }`, or null for invalid inputs. Categories: `small_muscles` [24, 48h], `large_compound` [48, 72h], `heavy_eccentric_or_to_failure` [72, 96h].
+- `scoreReadiness(inputValues)` — scores composite readiness from raw 0–10 input values (sleep, soreness, stress, motivation, recent_load, hrv). Applies weight_hints from config (`high` = 3×, `medium` = 2×, `low` = 1×) and known directionality (soreness/stress/recent_load are inverted). Returns `{ score (0–100 or null), tier ('low'|'moderate'|'high'), inputsUsed, inputsAbsent, confidence ('low'|'moderate'|'high') }`.
+- `checkDeloadTriggers(weeksSinceDeload, activeTriggerKeys)` — evaluates planned and autoregulated deload criteria. Planned due when `weeksSinceDeload >= planned_every_weeks[0]` (4 weeks); autoregulated when `activeTriggerKeys.length >= 2`. Returns `{ plannedDeloadDue, autoregulatedTriggersFired, deloadWarranted, reason ('planned'|'autoregulated'|'both'|'none'), triggersPresent, weeksSinceDeload }`.
+
+New test `test/fatigueAssessmentModule.test.js` — 40 tests covering all three boundary conditions for each muscle category, hoursLeft arithmetic, invalid input handling (negative hours, unknown category, null, string), readiness scoring (best/worst/mid-range inputs, weight_hint ordering, invalid values skipped, inputsUsed/inputsAbsent completeness, confidence tiers), and deload trigger logic (planned threshold, autoregulated count ≥ 2, reason classification, defaults, echoed fields).
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — ProgressionModule: composite progression recommendation engine (Brian PR 11)
 
 New composite engine `services/progressionModule.js` — combines `ProgressionRulesModule` (scenario → action) with `IntensityModule` (weight math) to produce structured, number-complete progression recommendations. No Sheets access, no side effects, no LLM involvement.
