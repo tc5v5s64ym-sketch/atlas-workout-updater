@@ -54,13 +54,15 @@ test('MANUAL when the scenario has no assertion', () => {
   assert.equal(run(scenario, 'anything'), 'MANUAL');
 });
 
-test('the narrowed coach-unavailable pattern does NOT false-FAIL a generic service-unavailable page', () => {
-  // The real coach-fallback rows: a generic "503 Service Unavailable" must not
-  // be read as the coach-reveal bug returning.
+test('coach-fallback row: generic error → INCONCLUSIVE, real fixed reply → PASS, reveal phrasing → FAIL', () => {
   const real = SCENARIOS['bug-20260629-153258'];
   assert.ok(real && real.assertion, 'scenario + assertion present');
-  assert.equal(run(real, '503 Service Unavailable. Please try later.'), 'PASS');
-  // ...but the actual coach-reveal phrasing still FAILs.
+  // A generic "503 Service Unavailable" page is not the bug returning, but it
+  // also isn't the real fixed reply → INCONCLUSIVE (not a false PASS).
+  assert.equal(run(real, '503 Service Unavailable. Please try later.'), 'INCONCLUSIVE');
+  // The real fixed reply ("re-type the set …") → PASS.
+  assert.equal(run(real, "If a set didn't make it in, re-type it and I'll add it to the preview."), 'PASS');
+  // The actual coach-reveal phrasing → FAIL.
   assert.equal(run(real, "I couldn't reach the coach just now."), 'FAIL');
 });
 

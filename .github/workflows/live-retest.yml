@@ -8,14 +8,16 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: 'Which fixed-pending-live-retest bug to line up'
+        description: 'Which fixed-pending-live-retest bug to line up ("all" runs every scenario)'
         required: true
         type: choice
         options:
+          - all
           - bug-20260629-153258
           - bug-20260629-153312
           - bug-20260629-003505
           - bug-20260629-002945
+          - bug-20260629-204817
       target_base_url:
         description: 'Base URL to retest against. Leave blank to use the ATLAS_BASE_URL secret.'
         required: false
