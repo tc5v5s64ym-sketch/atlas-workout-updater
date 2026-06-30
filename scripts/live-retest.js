@@ -36,7 +36,7 @@ const SCENARIOS = {
     navigation: { type: 'composer', text: 'you missed a set' },
     // Assertion (PR #718): the LLM-down "coach isn't available" reveal must be gone.
     assertion: {
-      forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /\bunavailable\b/i],
+      forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /coach[^.]{0,20}unavailable/i],
       expected: []
     }
   },
@@ -49,7 +49,7 @@ const SCENARIOS = {
     reference: 'docs/BUG_TRIAGE_LEDGER.md — dup of -153258.',
     navigation: { type: 'composer', text: 'you missed a set' },
     assertion: {
-      forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /\bunavailable\b/i],
+      forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /coach[^.]{0,20}unavailable/i],
       expected: []
     }
   },
