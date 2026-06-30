@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — VolumeAssessmentModule: composite volume assessment engine (Brian PR 14)
+
+New composite engine `services/volumeAssessmentModule.js` — combines `VolumeModule` (per-muscle landmarks, zone logic, set accumulation) with session and weekly exercise data to produce structured per-muscle volume assessments. No Sheets access, no side effects, no LLM involvement.
+
+- `classifyMuscleVolume(muscle, weeklySets)` — maps a muscle name and weekly set count to a volume zone (`below_mev` / `mev_to_mav` / `mav_to_mrv` / `above_mrv`) plus landmark distances. Returns `{ muscle, weeklySets, zone, landmarks: { mev, mav, mrv }, distanceToMav, distanceToMrv }`, or null for invalid inputs or unknown muscle. `distanceToMav`/`distanceToMrv` are negative when above the landmark.
+- `assessSessionVolume(exercises[])` — computes per-muscle set counts for a single session's exercise list. Returns `{ muscleSets, trackedMuscles[], untrackedMuscles[] }` where `trackedMuscles` are muscles with known landmarks and `untrackedMuscles` are those without. Returns null for non-array input. Volume counted from primary muscles only.
+- `assessWeeklyVolume(sessionSetMaps[])` — aggregates per-session set maps into weekly totals and classifies each tracked muscle's volume zone. Returns a map of `{ muscle → { weeklySets, zone, landmarks, distanceToMav, distanceToMrv } }`. Only muscles with known landmarks appear. Returns `{}` for non-array input.
+
+New test `test/volumeAssessmentModule.test.js` — 39 tests covering invalid inputs (null, non-array, NaN, negative, unknown muscle), all four zone transitions at exact boundaries (mev, mav, mrv), distance arithmetic (negative when above landmark), gluteus maximus mev=0 edge case, `assessSessionVolume` tracked vs untracked muscle separation, and `assessWeeklyVolume` accumulation and round-trip correctness from `assessSessionVolume.muscleSets`.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — SafetyClassifierModule: composite safety classification engine (Brian PR 13)
 
 New composite engine `services/safetyClassifierModule.js` — combines `SafetyRulesModule` (traffic-light states, safe defaults) with active signal inputs to produce structured safety tier classifications. No Sheets access, no side effects, no LLM involvement. Safety override rule: this module's output can override all others; red > yellow > green.
