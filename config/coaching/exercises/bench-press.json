@@ -1,0 +1,28 @@
+{
+  "id": "bench-press",
+  "name": "Bench Press",
+  "aliases": ["barbell bench press", "flat bench"],
+  "movement_pattern": "horizontal_push",
+  "nsca_class": "core",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["pectoralis major", "anterior deltoid", "triceps brachii"],
+  "secondary_muscles": [],
+  "stabilizers": ["rotator cuff", "latissimus dorsi", "legs (leg drive)"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "moderate", "elbow": "low" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["pause bench press", "close-grip bench press", "incline bench press"],
+  "regressions": ["dumbbell bench press", "machine chest press", "push-up"],
+  "common_faults": ["bouncing off chest", "uneven lockout", "elbow flare", "losing upper-back tightness"],
+  "substitutions": [
+    { "exercise_id": "dumbbell-bench-press", "similarity": 0.8, "note": "shoulder-friendlier ROM" },
+    { "exercise_id": "machine-chest-press", "similarity": 0.65, "note": "low stabilization demand" }
+  ],
+  "contraindications": ["shoulder impingement provoked by flat pressing"],
+  "resistance_profile": "hardest off the chest; easier toward lockout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Shoulder stress rises with extreme elbow flare/arch. Fatigue and SFR heuristic." }
+}

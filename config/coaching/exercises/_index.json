@@ -1,0 +1,9 @@
+{
+  "_meta": { "status": "seed", "purpose": "Registry of all exercises in the ontology. One source of truth for which ids exist." },
+  "exercises": [
+    { "id": "back-squat", "name": "Back Squat", "movement_pattern": "squat", "file": "back-squat.json" },
+    { "id": "conventional-deadlift", "name": "Conventional Deadlift", "movement_pattern": "hinge", "file": "conventional-deadlift.json" },
+    { "id": "bench-press", "name": "Bench Press", "movement_pattern": "horizontal_push", "file": "bench-press.json" },
+    { "id": "pull-up", "name": "Pull-up", "movement_pattern": "vertical_pull", "file": "pull-up.json" }
+  ]
+}

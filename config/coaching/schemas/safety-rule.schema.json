@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "safety-rule.schema.json",
+  "title": "SafetyRuleFile",
+  "description": "Shape of safety.rules.json. DATA ONLY — no module consumes this yet. WHEN BUILT, the safety layer must be the most conservative module and able to override all others.",
+  "type": "object",
+  "required": ["_meta"],
+  "properties": {
+    "_meta": {
+      "type": "object",
+      "required": ["status", "behavior", "purpose", "derived_from"],
+      "properties": {
+        "status": { "type": "string" },
+        "behavior": { "type": "string" },
+        "purpose": { "type": "string" },
+        "derived_from": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "traffic_light": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["state", "meaning", "signals", "action"],
+        "properties": {
+          "state": { "type": "string", "enum": ["green", "yellow", "red"] },
+          "meaning": { "type": "string" },
+          "signals": { "type": "array", "items": { "type": "string" } },
+          "action": { "type": "string" }
+        }
+      }
+    },
+    "safe_defaults": {
+      "type": "object",
+      "properties": {
+        "on_uncertainty": { "type": "string" },
+        "never": { "type": "array", "items": { "type": "string" } },
+        "onboarding_screen": { "type": "string" },
+        "confidence_inversion": { "type": "string" },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    }
+  }
+}

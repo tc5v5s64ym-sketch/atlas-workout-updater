@@ -1,0 +1,29 @@
+{
+  "id": "back-squat",
+  "name": "Back Squat",
+  "aliases": ["barbell back squat", "BB squat"],
+  "movement_pattern": "squat",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["adductors", "hamstrings"],
+  "stabilizers": ["spinal erectors", "trunk", "upper back"],
+  "systemic_fatigue": 4,
+  "local_fatigue": 5,
+  "joint_stress": { "knee": "moderate", "low_back": "moderate" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["goblet squat", "front squat", "high-bar back squat", "low-bar back squat"],
+  "regressions": ["box squat", "leg press", "belt squat"],
+  "common_faults": ["knee valgus", "butt wink", "heels rising", "excessive forward lean"],
+  "substitutions": [
+    { "exercise_id": "front-squat", "similarity": 0.85, "note": "less axial/low-back load, more quad and upper-back demand" },
+    { "exercise_id": "leg-press", "similarity": 0.6, "note": "removes axial load; keeps quad stimulus" },
+    { "exercise_id": "belt-squat", "similarity": 0.65, "note": "removes spinal loading" }
+  ],
+  "contraindications": ["acute low-back injury", "knee pain provoked by deep flexion"],
+  "resistance_profile": "hardest out of the bottom; easier near lockout",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Fatigue and SFR ratings are heuristic (Israetel-style), not measured." }
+}

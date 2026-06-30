@@ -650,6 +650,16 @@ The build sequence that implements the Training Profile Taxonomy + Session Plann
 
 ---
 
+## Coach Intelligence Layer — follow-ups (PR #721, scaffold)
+
+Follow-ups filed from the automated code review of PR #721 (static data + docs only — no action needed in that PR).
+
+- **Exercise ontology: dangling `substitutions`/`progressions`/`regressions` references** `[housekeeping]` — `config/coaching/exercises/` seeds 4 exercises; `substitutions[].exercise_id`, `progressions`, and `regressions` reference ids that don't yet exist in `_index.json` (e.g. `front-squat`, `leg-press`, `belt-squat`, `dumbbell-bench-press`, `trap-bar-deadlift`, `lat-pulldown`). Acceptable during seeding. When the consuming module is built, it must tolerate dangling refs or the missing exercises need to be added first. A future exercise-expansion PR can add the referenced exercises and wire a referential-integrity check at that time. No action until a consuming module exists.
+
+- **Schema validation unenforced (no AJV)** `[housekeeping]` — `test/coachingIntelligence.test.js` uses hand-rolled structural checks rather than validating the data files against the `config/coaching/schemas/*.json` files (the repo has no JSON Schema validator). The schemas can drift silently from the actual files until a real validator runs. When the consuming module is built, add `ajv` (or equivalent) as a devDependency and replace the hand-rolled checks with full JSON Schema draft 2020-12 validation. Not urgent while the files are static data with no runtime consumer.
+
+---
+
 ## Someday / future scope
 
 _Not active queue. Guiding principle: Atlas infers from data and behaviour; it does not interrogate the user._

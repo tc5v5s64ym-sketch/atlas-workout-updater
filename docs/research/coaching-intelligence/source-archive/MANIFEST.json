@@ -1,0 +1,44 @@
+{
+  "_meta": {
+    "status": "seed",
+    "note": "PDF binaries must be placed here by Dale. Update checksum_sha256 fields once files are present."
+  },
+  "documents": [
+    {
+      "id": "01-science-math-architecture",
+      "filename": "01-science-math-architecture.pdf",
+      "title": "Building an AI Strength and Conditioning Coach: Science, Math, and Architecture Blueprint",
+      "origin": "Research document produced for Atlas Coach Intelligence Layer",
+      "date_ingested": "2026-06-30",
+      "checksum_sha256": null,
+      "topics": ["e1RM formulas", "progression math", "periodization models", "fatigue math", "volume landmarks"]
+    },
+    {
+      "id": "02-coaching-knowledge-architecture",
+      "filename": "02-coaching-knowledge-architecture.pdf",
+      "title": "Atlas Coaching Intelligence: Complete Knowledge Architecture and Implementation Roadmap",
+      "origin": "Research document produced for Atlas Coach Intelligence Layer",
+      "date_ingested": "2026-06-30",
+      "checksum_sha256": null,
+      "topics": ["knowledge domains A-K", "evidence tiers", "exercise ontology", "progression rules", "safety guardrails", "coach-memory model"]
+    },
+    {
+      "id": "03-building-an-ai-fitness-coach",
+      "filename": "03-building-an-ai-fitness-coach.pdf",
+      "title": "Building an AI Fitness Coach",
+      "origin": "Research document produced for Atlas Coach Intelligence Layer",
+      "date_ingested": "2026-06-30",
+      "checksum_sha256": null,
+      "topics": ["wearable data integration", "fitness datasets", "privacy", "APIs", "readiness signals", "HRV", "ACWR"]
+    },
+    {
+      "id": "04-coaching-intelligence-architecture",
+      "filename": "04-coaching-intelligence-architecture.pdf",
+      "title": "Atlas Coaching Intelligence Architecture",
+      "origin": "Research document produced for Atlas Coach Intelligence Layer",
+      "date_ingested": "2026-06-30",
+      "checksum_sha256": null,
+      "topics": ["knowledge base tree", "rules tables", "traffic-light safety system", "progression decision table", "deload triggers"]
+    }
+  ]
+}

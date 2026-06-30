@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "progression-rule.schema.json",
+  "title": "ProgressionRuleFile",
+  "description": "Shape of progression.rules.json. DATA ONLY — no module consumes this yet.",
+  "type": "object",
+  "required": ["_meta"],
+  "properties": {
+    "_meta": {
+      "type": "object",
+      "required": ["status", "behavior", "purpose", "derived_from"],
+      "properties": {
+        "status": { "type": "string" },
+        "behavior": { "type": "string" },
+        "purpose": { "type": "string" },
+        "derived_from": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "decision_table": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "when", "interpretation", "default_action"],
+        "properties": {
+          "id": { "type": "string" },
+          "when": { "type": "string" },
+          "interpretation": { "type": "string" },
+          "default_action": { "type": "string" },
+          "provenance": { "$ref": "provenance.schema.json" }
+        }
+      }
+    },
+    "lever_order": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "order": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    },
+    "increment_defaults": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "upper_body_pct": { "type": "array", "items": { "type": "number" } },
+        "lower_body_lb": { "type": "array", "items": { "type": "number" } },
+        "note": { "type": "string" },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    },
+    "one_bad_session_vs_plateau": {
+      "type": "object",
+      "properties": {
+        "ignore_single_session_if": { "type": "string" },
+        "flag_plateau_if": { "type": "string" },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    }
+  }
+}
