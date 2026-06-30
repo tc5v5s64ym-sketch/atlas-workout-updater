@@ -184,6 +184,19 @@ describe('buildNextSession531 — cycle boundary', () => {
     assert.strictEqual(buildNextSession531({ sessionCount: 32, trainingMaxes: TM })?.isCycleBoundary, true));
   it('session 15 is NOT a cycle boundary (last session of cycle 1)', () =>
     assert.strictEqual(buildNextSession531({ sessionCount: 15, trainingMaxes: TM })?.isCycleBoundary, false));
+
+  it('boundary session uses the trainingMaxes supplied — caller must pass incremented maxes', () => {
+    // isCycleBoundary fires on the FIRST session of a new cycle (cyclePos===0).
+    // The returned prescription uses whatever TM was supplied — no auto-increment.
+    // Caller contract: pass already-incremented maxes when sessionCount % 16 === 0 and sessionCount > 0.
+    const incrementedTM = { SQUAT: 235, BENCH: 160, DEADLIFT: 285, OHP: 120 };
+    const r = buildNextSession531({ sessionCount: 16, trainingMaxes: incrementedTM });
+    assert.ok(r);
+    assert.strictEqual(r.isCycleBoundary, true);
+    assert.strictEqual(r.mainLift.trainingMax, 235);
+    // 65% × 235 = 152.75 → round5 = 155
+    assert.strictEqual(r.mainLift.sets[0].weight, 155);
+  });
 });
 
 // --- supplemental null weight when TM missing ---
