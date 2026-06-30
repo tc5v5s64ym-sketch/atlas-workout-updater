@@ -165,7 +165,7 @@ test('getExercisesByMuscle: no duplicate exercises in result (muscle in both pri
 
 // --- getMovementPatterns ---
 
-test('getMovementPatterns: returns the 12 expected movement patterns', () => {
+test('getMovementPatterns: returns the 11 expected movement patterns (locomotion not seeded)', () => {
   const patterns = new Set(getMovementPatterns());
   const expected = [
     'squat','hinge','lunge','horizontal_push','vertical_push',
