@@ -25,8 +25,8 @@ test('estimateE1RM: Epley default — 225lb × 5 reps → 262.5', () => {
   assert.strictEqual(estimateE1RM(225, 5), 262.5);
 });
 
-test('estimateE1RM: 1 rep equals the weight (no adjustment)', () => {
-  // 200 × (1 + 1/30) = 206.67
+test('estimateE1RM: 1 rep — Epley still adds 1/30 (no exact passthrough)', () => {
+  // 200 × (1 + 1/30) = 206.67 — Epley inflates even at 1 rep
   assert.strictEqual(estimateE1RM(200, 1), 206.67);
 });
 
