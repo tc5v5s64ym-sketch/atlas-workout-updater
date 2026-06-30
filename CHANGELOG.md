@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — MemoryModule: long-term trends store + entity resolution (roadmap PR 18)
+
+Two new pure-engine modules. No Sheets access, no side effects, no LLM involvement.
+
+**`services/entityResolutionModule.js`** — Maps raw exercise names and colloquialisms to canonical exercise IDs in the Atlas ontology. Reads `config/coaching/exercises/_index.json` and individual exercise JSON files (both cached after first load). Resolution priority (highest to lowest): `exact` (direct ID match, e.g. `'back-squat'`), `name` (canonical display name, e.g. `'Back Squat'`), `alias` (alias listed in exercise JSON, e.g. `'military press'` → `overhead-press`, `'deadlift'` → `conventional-deadlift`, `'BB squat'` → `back-squat`), `progression` (variant listed in `progressions` array, e.g. `'low-bar back squat'` → `back-squat`). Normalization strips hyphens and collapses whitespace so `'bent-over row'` and `'bent over row'` both resolve. Higher-priority matches win: `'goblet squat'` resolves to `goblet-squat` (name match) not `back-squat` (progression match). Two exports: `resolveExercise(rawName)` → `{ exerciseId, name, confidence, method }` | null; `listExerciseIds()` → sorted canonical ID list.
+
+**`services/memoryModule.js`** — Brian-layer composite that formalizes the long-term-trends store, coach-memory pattern detection, and entity resolution as a single read-only module. Wraps `trendDetector.js` (`detectTrend`) and `coachMemory.js` (`detectPatterns`, `detectMissedLifts`). Five exports: `resolveExercise` (re-exported from entityResolutionModule), `listExerciseIds`, `queryTrend(liftCode, logRows)`, `queryPatterns(liftCode, logRows, opts?)`, `buildMemorySnapshot(logRows, opts?)`. `buildMemorySnapshot` sweeps all lift codes present in the 12-column Log_Cleaned rows and returns `{ liftsEncountered, liftTrends, liftPatterns, missedLifts }` — a full memory snapshot across all active lifts. `opts.substitutionHistory` is forwarded to pattern detection; `opts.missedLiftHistory` is forwarded to missed-lift detection.
+
+New test `test/memoryModule.test.js` — 51 tests: entity resolution (exact, name, alias, progression, normalization, priority, no-match); `listExerciseIds` (non-empty, sorted, no duplicates); `queryTrend` (insufficient data guards, improving/declining/flat detection, confidence tiers); `queryPatterns` (empty guards, substitution threshold); `buildMemorySnapshot` (shape, lift enumeration, sort order, trend/pattern per-lift, missedLifts propagation, snapshot with mixed lifts).
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change. Unblocks roadmap PR 19 (ConfidenceModule).**
+
+---
+
 ### Added — StarterProgramModule: StrongLifts 5×5 + GZCLP templates + deterministic session runner (roadmap PR 7)
 
 New pure-engine module `services/starterProgramModule.js` — deterministic template runner for beginner starter programs. No Sheets access, no side effects, no LLM involvement. Depends only on `config/coaching/programs/` JSON data files.
