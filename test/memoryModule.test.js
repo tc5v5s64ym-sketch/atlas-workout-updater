@@ -337,6 +337,16 @@ test('buildMemorySnapshot: returns correct shape for empty rows', () => {
   assert.ok(Array.isArray(snap.missedLifts.patterns));
 });
 
+test('buildMemorySnapshot: skips Log_Cleaned header row — no phantom LIFT_CODE entry', () => {
+  const header = new Array(12).fill('');
+  header[0] = 'date_clean';
+  header[5] = 'lift_code';
+  const rows = [header, ...buildSessions(4, { lift: 'SQUAT' })];
+  const snap = buildMemorySnapshot(rows);
+  assert.ok(!snap.liftsEncountered.includes('LIFT_CODE'), 'header row must not produce a phantom lift');
+  assert.ok(snap.liftsEncountered.includes('SQUAT'), 'real lift still found');
+});
+
 test('buildMemorySnapshot: returns correct shape for null rows', () => {
   const snap = buildMemorySnapshot(null);
   assert.equal(snap.liftsEncountered.length, 0);

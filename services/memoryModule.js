@@ -47,10 +47,12 @@ const COL_LIFT = 5;
 const NULL_TREND = { trend: 'insufficient_data', confidence: 'none', sessions_analyzed: 0 };
 
 // Extract all unique lift codes present in the raw log rows.
+// Skips the Log_Cleaned header row ('date_clean') for consistency with trendDetector.
 function _liftsIn(rows) {
   const seen = new Set();
   for (const row of rows) {
     if (!Array.isArray(row)) continue;
+    if (String(row[0] || '') === 'date_clean') continue;
     const code = String(row[COL_LIFT] || '').trim().toUpperCase();
     if (code) seen.add(code);
   }
