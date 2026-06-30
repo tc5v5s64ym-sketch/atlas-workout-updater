@@ -1,0 +1,62 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Closed vocabulary for the IntentEnvelope contract (One-Brain coaching engine). The single source of truth for legal intent types, input sources, actors, and constraint keys. Read by services/intentEnvelope.js; extend by ADDITION only (never rename/remove a value without a contract version bump).",
+    "spec": "docs/COACHING_CONTRACTS_SPEC.md §1",
+    "architecture": "docs/COACHING_ENGINE_ARCHITECTURE.md"
+  },
+  "schema_version": 1,
+  "intent_types": [
+    "best_workout",
+    "generate_workout",
+    "modify_workout",
+    "progression_review",
+    "explain_recommendation",
+    "substitute_exercise",
+    "log_intent",
+    "progress_query",
+    "readiness_checkin",
+    "ingest_signal",
+    "nutrition_query",
+    "onboarding_step",
+    "clarify_intent"
+  ],
+  "sources": ["button", "chat", "voice", "api", "wearable", "schedule"],
+  "actors": ["user", "system"],
+  "extraction_sources": ["chat", "voice"],
+  "system_sources": ["wearable", "schedule"],
+  "constraint_keys": {
+    "focus": {
+      "type": "enum",
+      "values": ["upper_body", "lower_body", "push", "pull", "hinge", "squat", "core", "full_body"]
+    },
+    "duration_minutes": { "type": "integer", "min": 10, "max": 180 },
+    "equipment": {
+      "type": "string_array",
+      "values": ["barbell", "dumbbell", "machine", "cable", "bodyweight", "kettlebell", "bands"]
+    },
+    "injury": {
+      "type": "enum",
+      "values": ["shoulder", "knee", "lower_back", "elbow", "wrist", "hip", "ankle", "neck"]
+    },
+    "exclude_exercises": { "type": "string_array" },
+    "target_lift": { "type": "string" },
+    "intent_tag": {
+      "type": "enum",
+      "values": ["strength", "hypertrophy", "recovery", "power"]
+    },
+    "readiness_inputs": {
+      "type": "int_map",
+      "keys": ["sleep", "soreness", "stress", "motivation", "recent_load", "hrv"],
+      "min": 0,
+      "max": 10
+    },
+    "signal": {
+      "type": "object",
+      "required": ["kind"],
+      "kind_values": ["recovery", "sleep", "session", "hrv"]
+    }
+  },
+  "signal_required_intents": ["ingest_signal"],
+  "readiness_required_intents": ["readiness_checkin"]
+}
