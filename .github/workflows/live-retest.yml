@@ -1,0 +1,57 @@
+name: Live retest (manual)
+
+# Manual-only, on-demand targeted live-retest scaffolding. This is NOT a merge
+# gate and is NOT required in branch protection. It lines up a known
+# fixed-pending-live-retest bug and prints exactly what the owner should check;
+# it performs no live calls and never writes to Google Sheets (this slice).
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Which fixed-pending-live-retest bug to line up'
+        required: true
+        type: choice
+        options:
+          - bug-20260629-153258
+          - bug-20260629-153312
+          - bug-20260629-003505
+          - bug-20260629-002945
+      target_base_url:
+        description: 'Base URL to retest against. Leave blank to use the ATLAS_BASE_URL secret.'
+        required: false
+        default: ''
+        type: string
+      dry_run_only:
+        description: 'Dry-run only (no live calls, no Sheets writes). Keep true.'
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  live-retest:
+    name: Live retest (manual, no-write)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run live-retest scenario
+        env:
+          # target_base_url wins when provided; otherwise the script falls back
+          # to ATLAS_BASE_URL. The secret is only a base URL, not a credential.
+          ATLAS_BASE_URL: ${{ secrets.ATLAS_BASE_URL }}
+        run: |
+          node scripts/live-retest.js \
+            --scenario "${{ inputs.scenario }}" \
+            --dry-run-only "${{ inputs.dry_run_only }}" \
+            --target-base-url "${{ inputs.target_base_url }}"

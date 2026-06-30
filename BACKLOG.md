@@ -72,6 +72,13 @@ All of B1–B10 (`docs/QA_CAMPAIGN_2026-06-26_LIVE_GYM.md`) and the BUG-20260629
 
 ---
 
+## Live-retest harness — first slice (manual, scaffolding)
+
+- ✅ **Slice 1 — manual targeted live-retest workflow + script** `[housekeeping]` (shipped) — `.github/workflows/live-retest.yml` (`workflow_dispatch` only) + `scripts/live-retest.js`. Lets the owner line up one known *fixed-pending-live-retest* bug on demand (`bug-20260629-153258`, `-153312`, `-003505`, `-002945`) and prints the bug id, purpose, input to type, expected behavior, and forbidden behavior (scenarios sourced from `docs/BUG_TRIAGE_LEDGER.md`). Conservative by design: validates inputs, fails on unknown scenario, **defaults to dry-run / no-write**, performs no live calls and never writes to Google Sheets. **Not a merge gate, not required in branch protection, not a replacement for owner judgment.** Live execution (browser drive / API probe) is a deliberate FUTURE slice that would need secrets + an explicit non-write contract — intentionally absent here.
+  - **Deferred — live execution slice** `[trust-critical]`: actually driving the scenario in the real app (browser or API) would require the `ATLAS_BASE_URL`/key secrets and, for any save-path scenario, a hard no-production-write guarantee. Owner-gated; do not build without an explicit owner decision and a read-only/dry-run contract.
+
+---
+
 ## Multi-workout composer (owner 2026-06-25: "log two or more workouts at once")
 
 `[correctness]` Owner wants to paste several workouts at once, have Atlas recognize each, and confirm with one card. **Live sample captured (IMG_4895/4896/4897, 2026-06-25):** the real composer paste is `Deadlift\n135lbs 10 · warm-up\n…\n245lbs 6/2\n…\nBench Press\n…` — i.e. bare exercise-name headers, warm-up set lines `{weight}lbs {reps} · warm-up`, and working set lines in Atlas slash notation `{weight}lbs {reps}/{rir}` (NOT the `135 lb × 10` Strong/Hevy format originally assumed). Live bugs in that test: (1) the multi-exercise paste was not recognized as sets — it hit the coach fallback "Noted — keep logging" (`coach-conversation.js:1588`) and closeout then said "no sets logged"; (2) warm-ups were logged as working sets with a **fabricated RIR 4** and counted with no distinction.
