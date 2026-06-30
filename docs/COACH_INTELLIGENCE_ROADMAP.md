@@ -43,7 +43,7 @@
 
 | PR | Title | Model | Status | Notes |
 |---|---|---|---|---|
-| 7 | Starter program templates (state machines) | Opus | 🔲 not started | StrongLifts 5x5 + GZCLP as data + deterministic template runner. Depends on PR 1, PR 3. |
+| 7 | Starter program templates (state machines) | Opus | ✅ shipped | `config/coaching/programs/stronglifts-5x5.json` + `config/coaching/programs/gzclp.json` + `services/starterProgramModule.js`; 56 tests. `buildNextSession(programId, state)` → full session prescription (sets/reps/targetWeight/tier/progressionNote). |
 | 8 | ProgressionModule (double progression + beginner LP) | Opus | ✅ shipped | `services/progressionRulesModule.js` + `services/progressionModule.js`; decision table tested |
 | 9 | Cold-start onboarding flow | Opus | ⚠️ partial | `services/onboardingState.js` (PR-O1) + `services/onboardingSessionPlan.js` (PR-O2) shipped. Full questionnaire → template assignment flow not yet wired end-to-end. Depends on PR 5, PR 7, PR 8. |
 | 10 | Thin LLM explanation layer (v1) | Opus | ⚠️ partial | `services/coach.js` + coach endpoints exist but were built independently of the Brian engine interface. A formal `getNextWorkout / getProgressionDecision / getVolumeStatus / checkSafety` function-calling interface exposing the Brian engine has not been wired. Depends on PR 5, PR 8. |
@@ -104,16 +104,17 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 **Current position: completing Phase 1 / entering Phase 2.**
 
-Shipped: PR 1–6, PR 8, PR 11–14 (fully), PR 9/10/16/18 (partial).
-Not started: PR 7, PR 15, PR 17, PR 19–24.
+Shipped: PR 1–9 (partial), PR 10 (partial), PR 11–14 (fully), PR 16 (partial), PR 18 (partial).
+More precisely — fully shipped: PR 1–8, PR 11–14. Partial: PR 9, PR 10, PR 16, PR 18.
+Not started: PR 15, PR 17, PR 19–24.
 
 **Immediate next candidates** (dependency-safe):
 
-1. **PR 7 — Starter program templates** (depends on PR 1, PR 3 — both done). Unblocks PR 9 (full), PR 17.
-2. **PR 18 — Memory architecture** (depends on PR 6 ✅, PR 14 ✅ — both done). Now fully unblocked.
-3. **PR 15 — Autoregulation upgrade to ProgressionModule** (depends on PR 8 ✅, PR 11 ✅, PR 14 ✅ — all done). Now unblocked.
+1. **PR 18 — Memory architecture** (depends on PR 6 ✅, PR 14 ✅ — both done). Fully unblocked.
+2. **PR 15 — Autoregulation upgrade to ProgressionModule** (depends on PR 7 ✅, PR 8 ✅, PR 11 ✅, PR 14 ✅ — all done). Now unblocked.
+3. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Now fully unblocked.
 
-**Do not start PR 15** (Autoregulation) without PR 7 (templates) in place — the autoregulation upgrade assumes working templates exist.
+**Do not start PR 15** (Autoregulation) without PR 7 (templates) in place — the autoregulation upgrade assumes working templates exist. PR 7 is now shipped ✅.
 
 ---
 
