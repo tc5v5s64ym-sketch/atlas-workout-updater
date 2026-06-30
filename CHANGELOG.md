@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added — SafetyRulesModule: read-only access to the traffic-light classifier and safe defaults (Brian PR 8)
+
+New read-only module `services/safetyRulesModule.js` — pure lookup functions over `config/coaching/rules/safety.rules.json`:
+
+- `getTrafficLight()` — all 3 traffic-light states in config order (defensive `.slice()` copy): `green` → proceed, `yellow` → reduce/modify, `red` → stop + medical evaluation
+- `getTrafficLightState(state)` — single traffic-light record by state (`'green'` | `'yellow'` | `'red'`), or null; each record carries `state`, `meaning`, `signals[]`, `action`
+- `getSafeDefaults()` — `{ on_uncertainty, never: [...], onboarding_screen, confidence_inversion }` — the safety prime directives: err toward caution, never diagnose, never coach through red-flag symptoms
+
+Loads lazily on first call; `_resetForTesting()` clears the cache between test files.
+
+New test `test/safetyRulesModule.test.js` — 24 tests covering all exports, all 3 traffic-light states, required schema fields, action/signal content checks (green→proceed, red→stop+medical, chest-pain signal, "no pain" green signal), safe-defaults field presence and content (caution/diagnose/red-flag), mutation guard on the traffic-light array, cross-function consistency, and non-string edge cases.
+
+**No runtime consumer yet. The safety layer is the most conservative module and can override all others when wired. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — FatigueRulesModule: read-only access to recovery priors, readiness inputs, and deload triggers (Brian PR 7)
 
 New read-only module `services/fatigueRulesModule.js` — pure lookup functions over `config/coaching/rules/fatigue.rules.json`:
