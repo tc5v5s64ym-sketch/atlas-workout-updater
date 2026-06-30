@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added — ConfidenceModule: ask-vs-act decision engine (roadmap PR 19)
+
+New pure-engine module `services/confidenceModule.js`. No Sheets access, no side effects, no LLM involvement.
+
+**`scoreConfidence(params)`** — Synthesizes signals from prior Brian-layer modules into a single confidence score that drives the `act` / `act_with_caveat` / `ask` recommendation. All params are optional; absent fields degrade the score rather than throwing. Returns a `ConfidenceResult` or `null` for invalid input.
+
+Four weighted dimensions (weights sum to 1.0):
+- **completeness** (0.30): sessions tracked toward e1RM trend [0–50 pts] + readiness inputs used [0–30 pts] + entity-resolved exercise [0 or 20 pts].
+- **recency** (0.25): days since last session → score 100/80/60/40/20/0 at ≤3/≤7/≤14/≤21/≤30/>30 days.
+- **consistency** (0.25): trend label (improving=100, stalling/flat=70, declining=60, noisy=30, other=20) × trend-confidence multiplier (high=1.0, medium=0.7, else=0.3).
+- **selfReportReliability** (0.20): readiness confidence base (high=100, medium=60, low=30) × penalty (0.7) when inputs absent outnumber inputs used.
+
+Tiers: ≥75 → `high` → `act`; ≥45 → `moderate` → `act_with_caveat`; <45 → `low` → `ask`.
+
+Safety inversion: an active safety flag always escalates the action one step toward `ask` (high→act_with_caveat with `safetyInverted:true`; moderate→ask with `safetyInverted:true`; low unchanged).
+
+Six machine-readable caveat keys (exported as `CAVEAT_KEYS`): `insufficient_history`, `stale_data`, `low_trend_confidence`, `limited_readiness_inputs`, `exercise_unresolved`, `safety_flag_present`. The LLM reads these and chooses appropriate language; it never derives them itself.
+
+New test `test/confidenceModule.test.js` — 42 tests: null/non-object guards, full-data score=100 (act), empty-data score=0 (ask), moderate-data score=55 (act_with_caveat), sparse+stale tier=low, tier boundary at 75 and 74, all three safety inversion branches, all six caveat keys (present and absent), multiple simultaneous caveats, complete result shape and dimension sub-fields, numeric `inputsUsed` format, trend variant ordering (improving > stalling/flat > declining), recency boundary scores at 7 and 14 days.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change. Unblocks roadmap PR 20 (BrianOrchestrator).**
+
+---
+
 ### Added — AutoregulationModule: e1RM-driven, readiness-aware load prescription (roadmap PR 15)
 
 New pure-engine module `services/autoregulationModule.js`. No Sheets access, no side effects, no LLM involvement.
