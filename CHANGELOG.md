@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — StarterProgramModule: StrongLifts 5×5 + GZCLP templates + deterministic session runner (roadmap PR 7)
+
+New pure-engine module `services/starterProgramModule.js` — deterministic template runner for beginner starter programs. No Sheets access, no side effects, no LLM involvement. Depends only on `config/coaching/programs/` JSON data files.
+
+Two new program data files:
+- **`config/coaching/programs/stronglifts-5x5.json`** — StrongLifts 5×5: 2-session (A/B) alternating cycle, 3 days/week. Session A: Squat 5×5 / Bench 5×5 / Row 5×5. Session B: Squat 5×5 / OHP 5×5 / Deadlift 1×5. Linear progression: +10 lb per session (lower body) / +5 lb (upper body). Deload 10% after 3 consecutive fails.
+- **`config/coaching/programs/gzclp.json`** — GZCLP: 4-session (Day 1–4) cycle, 4 days/week. Tiered structure: T1 (main compound, 5×3+ → 6×2+ → 10×1+), T2 (secondary compound, 4×6+ / 4×10+ on stall), T3 (accessories, 3×10 fixed). Progressive stall handling via tier escalation.
+
+Three exported functions:
+- **`getProgram(programId)`** — load and return the parsed program config or null.
+- **`listPrograms()`** — return `[{ id, name }]` for all programs found in `config/coaching/programs/`.
+- **`buildNextSession(programId, state)`** — deterministic session prescription from program state. For SL5×5: reads `sessionCount` to determine A/B, applies LP (increase/hold/deload) from `consecutiveFails`. For GZCLP: reads `sessionCount` for Day 1–4 rotation; T1 tier from `t1Tiers` (0=5×3+, 1=6×2+, 2=10×1+, clamped to max); T2 hold/deload from `consecutiveFails`; T3 from session template fixed scheme. Each exercise in the returned `exercises` array carries: `exerciseId`, `liftCode`, `sets`, `reps`, `repsScheme` ('fixed'/'amrap'), `targetWeight`, `bodyRegion`, `tier` (null for SL5×5, 'T1'/'T2'/'T3' for GZCLP), `progressionNote`.
+
+New test `test/starterProgramModule.test.js` — 56 tests covering: all invalid-input/null guard paths; cycle alternation (A/B over 6 sessions, Day 1–4 over 8 sessions); start-weight fallback; LP increment correct per body region (upper +5 lb, lower +10 lb); hold on 1–2 fails; deload after 3 fails rounded to nearest 5 lb; T1 tier switching (0→1→2) and out-of-bounds clamping; T2 normal vs stall scheme; T2 deload after 2 consecutive fails; T3 fixed accessory shape; all required prescription fields present; GZCLP tier labels on all 4 days.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change. Unblocks roadmap PR 9 (full onboarding flow) and PR 17 (goal/population templates).**
+
+---
+
 ### Added — ExpectedPerformanceModule: composite expected-performance + plateau assessment (Brian PR 16 / roadmap PR 14)
 
 New read-only composite engine `services/expectedPerformanceModule.js` — wraps the two partial Phase-3 components (`expectedPerformance.js` and plateau/stall detection) into a formal structured assessment API. No Sheets access, no side effects, no LLM involvement. Depends on IntensityModule, FatigueAssessmentModule (PR 11/12), and UserStateModule substrate (PR 6).

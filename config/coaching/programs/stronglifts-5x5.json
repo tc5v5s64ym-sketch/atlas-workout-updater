@@ -1,0 +1,50 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "StrongLifts 5×5 beginner linear progression program — session templates and progression parameters.",
+    "derived_from": ["docs/research/coaching-intelligence/"]
+  },
+  "id": "stronglifts-5x5",
+  "name": "StrongLifts 5×5",
+  "description": "Barbell strength beginner program. 3 days/week, alternating A and B workouts. Linear progression each session.",
+  "days_per_week": 3,
+  "cycle_length": 2,
+  "sessions": [
+    {
+      "label": "A",
+      "exercises": [
+        { "exercise_id": "back-squat",          "lift_code": "SQUAT",   "sets": 5, "reps": 5, "reps_scheme": "fixed", "body_region": "lower_body" },
+        { "exercise_id": "bench-press",         "lift_code": "BENCH",   "sets": 5, "reps": 5, "reps_scheme": "fixed", "body_region": "upper_body" },
+        { "exercise_id": "barbell-row",         "lift_code": "ROW",     "sets": 5, "reps": 5, "reps_scheme": "fixed", "body_region": "upper_body" }
+      ]
+    },
+    {
+      "label": "B",
+      "exercises": [
+        { "exercise_id": "back-squat",           "lift_code": "SQUAT",    "sets": 5, "reps": 5, "reps_scheme": "fixed", "body_region": "lower_body" },
+        { "exercise_id": "overhead-press",       "lift_code": "OHP",      "sets": 5, "reps": 5, "reps_scheme": "fixed", "body_region": "upper_body" },
+        { "exercise_id": "conventional-deadlift","lift_code": "DEADLIFT", "sets": 1, "reps": 5, "reps_scheme": "fixed", "body_region": "lower_body" }
+      ]
+    }
+  ],
+  "progression": {
+    "mode": "linear_per_session",
+    "note": "Increase weight each successful session. Hold on fail. Deload after 3 consecutive fails.",
+    "success_increment_lb": {
+      "upper_body": 5,
+      "lower_body": 10
+    },
+    "fail_handling": {
+      "consecutive_fails_before_deload": 3,
+      "deload_pct": 10
+    }
+  },
+  "start_weights_lb": {
+    "note": "Conservative starting weights for absolute beginners; override from onboarding calibration.",
+    "SQUAT":   45,
+    "BENCH":   45,
+    "ROW":     65,
+    "OHP":     45,
+    "DEADLIFT": 95
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "GZCLP beginner linear progression program — session templates and tier-based progression parameters.",
+    "derived_from": ["docs/research/coaching-intelligence/"]
+  },
+  "id": "gzclp",
+  "name": "GZCLP",
+  "description": "4-day beginner program with tiered lifts (T1/T2/T3). T1 = main compound, T2 = secondary compound, T3 = accessory. Linear progression with tier-based stall handling.",
+  "days_per_week": 4,
+  "cycle_length": 4,
+  "sessions": [
+    {
+      "label": "Day 1",
+      "exercises": [
+        { "exercise_id": "back-squat",          "lift_code": "SQUAT",   "tier": "T1", "body_region": "lower_body" },
+        { "exercise_id": "overhead-press",      "lift_code": "OHP",     "tier": "T2", "body_region": "upper_body" },
+        { "exercise_id": "lat-pulldown",        "lift_code": "LATPULL", "tier": "T3", "sets": 3, "reps": 10, "reps_scheme": "amrap", "body_region": "upper_body" }
+      ]
+    },
+    {
+      "label": "Day 2",
+      "exercises": [
+        { "exercise_id": "bench-press",          "lift_code": "BENCH",    "tier": "T1", "body_region": "upper_body" },
+        { "exercise_id": "conventional-deadlift","lift_code": "DEADLIFT", "tier": "T2", "body_region": "lower_body" },
+        { "exercise_id": "dumbbell-row",         "lift_code": "DUMBROW",  "tier": "T3", "sets": 3, "reps": 10, "reps_scheme": "amrap", "body_region": "upper_body" }
+      ]
+    },
+    {
+      "label": "Day 3",
+      "exercises": [
+        { "exercise_id": "overhead-press",       "lift_code": "OHP",      "tier": "T1", "body_region": "upper_body" },
+        { "exercise_id": "back-squat",           "lift_code": "SQUAT",    "tier": "T2", "body_region": "lower_body" },
+        { "exercise_id": "lat-pulldown",         "lift_code": "LATPULL",  "tier": "T3", "sets": 3, "reps": 10, "reps_scheme": "amrap", "body_region": "upper_body" }
+      ]
+    },
+    {
+      "label": "Day 4",
+      "exercises": [
+        { "exercise_id": "conventional-deadlift","lift_code": "DEADLIFT", "tier": "T1", "body_region": "lower_body" },
+        { "exercise_id": "bench-press",          "lift_code": "BENCH",    "tier": "T2", "body_region": "upper_body" },
+        { "exercise_id": "dumbbell-row",         "lift_code": "DUMBROW",  "tier": "T3", "sets": 3, "reps": 10, "reps_scheme": "amrap", "body_region": "upper_body" }
+      ]
+    }
+  ],
+  "progression": {
+    "t1": {
+      "note": "T1 uses tiered set/rep schemes. Success = increase weight + reset tier to 0. Fail = advance tier. Tier 2 fail = deload (DeloadModule handles).",
+      "tiers": [
+        { "tier": 0, "sets": 5, "reps": 3, "reps_scheme": "amrap" },
+        { "tier": 1, "sets": 6, "reps": 2, "reps_scheme": "amrap" },
+        { "tier": 2, "sets": 10, "reps": 1, "reps_scheme": "amrap" }
+      ],
+      "max_tier": 2,
+      "on_max_tier_fail": "deload",
+      "success_increment_lb": {
+        "upper_body": 5,
+        "lower_body": 10
+      }
+    },
+    "t2": {
+      "note": "T2 uses 4×6+ normally. On consecutive fail: drop to 4×10+ (more reps, same weight) to rebuild. Second fail triggers deload.",
+      "normal_scheme":     { "sets": 4, "reps": 6,  "reps_scheme": "amrap" },
+      "stall_scheme":      { "sets": 4, "reps": 10, "reps_scheme": "amrap" },
+      "consecutive_fails_before_deload": 2,
+      "deload_pct": 10,
+      "success_increment_lb": {
+        "upper_body": 5,
+        "lower_body": 10
+      }
+    },
+    "t3": {
+      "note": "Accessories. Fixed sets/reps as specified in session template. No load progression tracking."
+    }
+  },
+  "start_weights_lb": {
+    "note": "T1 start weights. T2 starts at 60–70% of T1 start. Override from onboarding calibration.",
+    "SQUAT":    45,
+    "BENCH":    45,
+    "OHP":      45,
+    "DEADLIFT": 95,
+    "LATPULL":  0,
+    "DUMBROW":  0
+  },
+  "t2_start_weights_lb": {
+    "note": "T2 start weights — lighter than T1 because T2 is the secondary lift.",
+    "OHP":      35,
+    "SQUAT":    45,
+    "DEADLIFT": 65,
+    "BENCH":    35
+  }
+}
