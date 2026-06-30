@@ -204,6 +204,17 @@ describe('validateIntentEnvelope — asOf', () => {
     const env = { ...EX.best_workout(), asOf: 'yesterday-ish' };
     assert.strictEqual(validateIntentEnvelope(env).valid, false);
   });
+  it('rejects a Date.parse-able but non-strict-ISO asOf (bare date)', () => {
+    const env = { ...EX.best_workout(), asOf: '2026-06-30' };
+    assert.strictEqual(validateIntentEnvelope(env).valid, false);
+  });
+  it('rejects a human-readable date string', () => {
+    const env = { ...EX.best_workout(), asOf: 'June 30 2026' };
+    assert.strictEqual(validateIntentEnvelope(env).valid, false);
+  });
+  it('accepts an ISO-8601 datetime with offset and millis', () => {
+    assert.strictEqual(validateIntentEnvelope({ ...EX.best_workout(), asOf: '2026-06-30T14:00:00.500+02:00' }).valid, true);
+  });
 });
 
 // ─── rule 4: extraction ⟺ chat/voice ─────────────────────────────────────────

@@ -26,6 +26,10 @@ const VOCAB_FILE = path.join(__dirname, '..', 'config', 'coaching', 'contracts',
 
 const SCHEMA_VERSION = 1;
 
+// Strict ISO-8601 date-time: YYYY-MM-DDThh:mm:ss[.sss](Z|±hh:mm).
+// Tighter than Date.parse, which also accepts "June 30 2026" / bare "2026-06-30".
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+
 let _vocab = null;
 
 function _loadVocab() {
@@ -163,9 +167,9 @@ function validateIntentEnvelope(env) {
     errors.push('constraints: must be an object');
   }
 
-  // Rule 3 — asOf parses as ISO-8601
-  if (typeof env.asOf !== 'string' || Number.isNaN(Date.parse(env.asOf))) {
-    errors.push('asOf: must be an ISO-8601 timestamp string');
+  // Rule 3 — asOf is a strict ISO-8601 date-time (not merely Date.parse-able)
+  if (typeof env.asOf !== 'string' || !ISO_8601.test(env.asOf) || Number.isNaN(Date.parse(env.asOf))) {
+    errors.push('asOf: must be a strict ISO-8601 date-time (e.g. 2026-06-30T14:00:00Z)');
   }
 
   // Rule 2 — constraint keys all known; each value valid
