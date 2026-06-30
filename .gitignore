@@ -19,3 +19,6 @@ playwright-report/
 
 # Build identity captured at build time (scripts/write-build-info.js)
 public/build-info.json
+
+# Live-retest harness screenshots (uploaded as CI artifacts, never committed)
+live-retest-artifacts/

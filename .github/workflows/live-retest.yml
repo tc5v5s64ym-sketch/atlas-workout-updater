@@ -45,6 +45,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Browser bootstrap only — the dry-run default needs no browser, so skip
+      # the Chromium download unless a live (non-dry-run) bootstrap is requested.
+      - name: Install Playwright Chromium
+        if: ${{ !inputs.dry_run_only }}
+        run: npx playwright install --with-deps chromium
+
       - name: Run live-retest scenario
         env:
           # target_base_url wins when provided; otherwise the script falls back
@@ -55,3 +61,13 @@ jobs:
             --scenario "${{ inputs.scenario }}" \
             --dry-run-only "${{ inputs.dry_run_only }}" \
             --target-base-url "${{ inputs.target_base_url }}"
+
+      # Surface the read-only screenshots from a browser bootstrap as artifacts.
+      - name: Upload screenshots
+        if: ${{ !inputs.dry_run_only && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-retest-screenshots-${{ inputs.scenario }}
+          path: live-retest-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
