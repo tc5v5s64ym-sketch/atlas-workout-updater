@@ -404,16 +404,37 @@ test('buildMemorySnapshot: missedLifts.patterns populated when history meets thr
   assert.ok(missed.length >= 1, 'should detect missed_lift pattern');
 });
 
-test('buildMemorySnapshot: substitutionHistory forwarded to liftPatterns', () => {
+test('buildMemorySnapshot: substitutionHistory forwarded to liftPatterns (with liftCode)', () => {
+  // Entry shape requires liftCode so buildMemorySnapshot can filter per-lift.
   const subHistory = [
-    { original: 'bench press', substitute: 'push-up' },
-    { original: 'bench press', substitute: 'push-up' },
-    { original: 'bench press', substitute: 'push-up' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
   ];
   const rows = buildSessions(4, { lift: 'BENCH' });
   const snap = buildMemorySnapshot(rows, { substitutionHistory: subHistory });
   const subs = snap.liftPatterns['BENCH'].patterns.filter(p => p.type === 'repeated_substitution');
   assert.equal(subs.length, 1, 'repeated_substitution should be detected via snapshot');
+});
+
+test('buildMemorySnapshot: BENCH substitution history does NOT contaminate SQUAT patterns', () => {
+  // 3× bench→push-up substitutions tagged liftCode='BENCH'
+  const subHistory = [
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+    { original: 'bench press', substitute: 'push-up', liftCode: 'BENCH' },
+  ];
+  const squat = buildSessions(4, { lift: 'SQUAT', dateBase: 1 });
+  const bench = buildSessions(4, { lift: 'BENCH', dateBase: 5 });
+  const snap  = buildMemorySnapshot([...squat, ...bench], { substitutionHistory: subHistory });
+
+  // BENCH should detect repeated_substitution
+  const benchSubs = snap.liftPatterns['BENCH'].patterns.filter(p => p.type === 'repeated_substitution');
+  assert.equal(benchSubs.length, 1, 'BENCH should detect repeated_substitution');
+
+  // SQUAT must NOT have that pattern — the history was BENCH-specific
+  const squatSubs = snap.liftPatterns['SQUAT'].patterns.filter(p => p.type === 'repeated_substitution');
+  assert.equal(squatSubs.length, 0, 'SQUAT must not inherit BENCH substitution patterns');
 });
 
 test('buildMemorySnapshot: handles mixed-lift rows correctly', () => {

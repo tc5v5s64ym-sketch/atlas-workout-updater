@@ -90,7 +90,11 @@ function buildMemorySnapshot(logRows, options) {
   for (const liftCode of liftsEncountered) {
     liftTrends[liftCode]   = detectTrend(liftCode, rows);
     liftPatterns[liftCode] = detectPatterns(liftCode, rows, {
-      substitutionHistory: opts.substitutionHistory,
+      substitutionHistory: Array.isArray(opts.substitutionHistory)
+        ? opts.substitutionHistory.filter(
+            e => e && String(e.liftCode || '').trim().toUpperCase() === liftCode
+          )
+        : undefined,
     });
   }
 
