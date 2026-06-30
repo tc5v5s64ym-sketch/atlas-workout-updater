@@ -1,0 +1,28 @@
+{
+  "id": "conventional-deadlift",
+  "name": "Conventional Deadlift",
+  "aliases": ["deadlift", "conventional pull"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["gluteus maximus", "hamstrings", "spinal erectors"],
+  "secondary_muscles": ["quadriceps", "latissimus dorsi", "trapezius"],
+  "stabilizers": ["posterior chain", "grip", "trunk"],
+  "systemic_fatigue": 5,
+  "local_fatigue": 4,
+  "joint_stress": { "low_back": "high" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["deficit deadlift", "pause deadlift", "tempo deadlift"],
+  "regressions": ["trap-bar deadlift", "romanian deadlift", "rack pull", "hip thrust"],
+  "common_faults": ["lumbar flexion under load", "hips shooting up early", "bar drifting forward"],
+  "substitutions": [
+    { "exercise_id": "trap-bar-deadlift", "similarity": 0.85, "note": "less low-back shear, more quad" },
+    { "exercise_id": "romanian-deadlift", "similarity": 0.7, "note": "more hamstring stretch, less systemic load" }
+  ],
+  "contraindications": ["acute low-back injury", "disc-related symptoms provoked by spinal loading"],
+  "resistance_profile": "hardest off the floor; leverage improves through mid-range",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": true, "notes": "Coaching consensus (RP/Israetel) ranks the deadlift as the most systemically/axially fatiguing lift, but head-to-head research (Barbalho et al., JSCR 2017) found no difference in central fatigue vs. squat and MORE peripheral fatigue from the squat. 'systemic_fatigue: 5' is the heuristic default, flagged contested. Personalize from the user's own recovery data." }
+}

@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "status": "seed",
+    "purpose": "Ranked trustworthiness of knowledge sources. Referenced by every config entry's provenance.evidence_tier.",
+    "derived_from": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"]
+  },
+  "tiers": [
+    { "tier": 1, "name": "Consensus statements & position stands", "examples": ["ACSM", "NSCA", "ISSN", "IOC"], "best_for": "Default safe recommendations and safety rails", "caution": "Can lag the newest research; sometimes conservative" },
+    { "tier": 2, "name": "Systematic reviews & meta-analyses", "examples": ["Schoenfeld/Krieger volume work", "Morton protein", "Robinson/Pelland proximity-to-failure"], "best_for": "Dose-response and effect sizes", "caution": "Heterogeneity; mostly young trained males; some exploratory" },
+    { "tier": 3, "name": "Major textbooks", "examples": ["NSCA Essentials of S&C", "Zatsiorsky Science and Practice", "Supertraining"], "best_for": "Foundational frameworks, classification, biomechanics", "caution": "Can lag newest evidence; some theory ahead of data" },
+    { "tier": 4, "name": "Leading researchers / primary literature", "examples": ["Schoenfeld", "Phillips", "Helms", "Nuckols", "Zourdos", "Grgic"], "best_for": "Frontier questions and practical interpretation", "caution": "Individual studies aren't consensus; follow findings, not personalities" },
+    { "tier": 5, "name": "Evidence-based practitioners / orgs", "examples": ["Renaissance Periodization", "Stronger by Science", "MASS", "3DMJ"], "best_for": "Practical frameworks and heuristics (e.g. volume landmarks, SFR)", "caution": "Heuristics/models, not validated measurements — flag as such" }
+  ],
+  "excluded": { "description": "Down-weight or exclude entirely.", "examples": ["anecdote", "influencer marketing", "single-study sensationalism", "supplement-company claims"] }
+}

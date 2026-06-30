@@ -1,0 +1,28 @@
+{
+  "id": "pull-up",
+  "name": "Pull-up",
+  "aliases": ["strict pull-up", "pullup"],
+  "movement_pattern": "vertical_pull",
+  "nsca_class": "core",
+  "implement": "bodyweight",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi", "biceps brachii"],
+  "secondary_muscles": ["mid-back", "posterior deltoid"],
+  "stabilizers": ["scapular stabilizers", "grip", "trunk"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "moderate", "elbow": "moderate" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["weighted pull-up"],
+  "regressions": ["band-assisted pull-up", "machine-assisted pull-up", "lat pulldown", "inverted row"],
+  "common_faults": ["partial range of motion", "excessive kipping when strict is the goal", "no scapular engagement"],
+  "substitutions": [
+    { "exercise_id": "lat-pulldown", "similarity": 0.75, "note": "scalable load for sub-bodyweight strength" },
+    { "exercise_id": "inverted-row", "similarity": 0.6, "note": "horizontal pull regression" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded flexion"],
+  "resistance_profile": "hardest at the top (chin over bar) from a dead-hang start",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Fatigue and SFR heuristic." }
+}

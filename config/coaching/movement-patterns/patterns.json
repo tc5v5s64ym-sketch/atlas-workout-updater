@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "status": "seed",
+    "purpose": "Defines the movement-pattern axis of the exercise ontology. The second axis is implement (see exercise.schema.json).",
+    "derived_from": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"],
+    "note": "Programming taxonomy (Dan John patterns + extensions), NOT the FMS screening taxonomy."
+  },
+  "patterns": [
+    { "id": "squat", "family": "lower", "description": "Knee-dominant; load lowered/raised via hip and knee flexion", "typical_primary": ["quadriceps", "glutes"] },
+    { "id": "hinge", "family": "lower", "description": "Hip-dominant; posterior-chain hip extension", "typical_primary": ["glutes", "hamstrings", "erectors"] },
+    { "id": "lunge", "family": "lower", "description": "Split-stance / unilateral knee-dominant", "typical_primary": ["quadriceps", "glutes"] },
+    { "id": "horizontal_push", "family": "upper", "description": "Pressing away from the torso in the transverse plane", "typical_primary": ["pectorals", "anterior deltoid", "triceps"] },
+    { "id": "vertical_push", "family": "upper", "description": "Pressing overhead", "typical_primary": ["deltoids", "triceps"] },
+    { "id": "horizontal_pull", "family": "upper", "description": "Rowing toward the torso", "typical_primary": ["mid-back", "lats", "elbow flexors"] },
+    { "id": "vertical_pull", "family": "upper", "description": "Pulling down from overhead", "typical_primary": ["lats", "elbow flexors"] },
+    { "id": "carry", "family": "full", "description": "Loaded locomotion or static hold", "typical_primary": ["trunk", "grip", "traps"] },
+    { "id": "rotation", "family": "trunk", "description": "Trunk rotation under load", "typical_primary": ["obliques"] },
+    { "id": "anti_rotation", "family": "trunk", "description": "Resisting trunk rotation (stability)", "typical_primary": ["obliques", "deep trunk"] },
+    { "id": "isolation", "family": "modifier", "description": "Single-joint; high local, low systemic fatigue", "typical_primary": ["target muscle"] },
+    { "id": "locomotion", "family": "full", "description": "Sled / prowler / loaded movement for conditioning and work capacity", "typical_primary": ["full body"] }
+  ]
+}

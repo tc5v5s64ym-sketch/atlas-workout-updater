@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "exercise.schema.json",
+  "title": "Exercise",
+  "description": "One movement in the Atlas exercise ontology. Data only — no module consumes this yet.",
+  "type": "object",
+  "required": ["id", "name", "movement_pattern", "implement", "primary_muscles", "provenance"],
+  "properties": {
+    "id": { "type": "string", "description": "kebab-case, unique (e.g. 'back-squat')" },
+    "name": { "type": "string" },
+    "aliases": { "type": "array", "items": { "type": "string" } },
+    "movement_pattern": { "type": "string", "enum": ["squat","hinge","horizontal_push","vertical_push","horizontal_pull","vertical_pull","lunge","carry","rotation","anti_rotation","isolation","locomotion"] },
+    "nsca_class": { "type": "string", "enum": ["core_structural_power","core_structural","core","assistance"] },
+    "implement": { "type": "string", "enum": ["barbell","dumbbell","machine","cable","kettlebell","bodyweight","band"] },
+    "laterality": { "type": "string", "enum": ["bilateral","unilateral"] },
+    "loading_axis": { "type": "string", "enum": ["axial","non_axial"] },
+    "primary_muscles": { "type": "array", "items": { "type": "string" } },
+    "secondary_muscles": { "type": "array", "items": { "type": "string" } },
+    "stabilizers": { "type": "array", "items": { "type": "string" } },
+    "systemic_fatigue": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Heuristic, not measured." },
+    "local_fatigue": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "joint_stress": { "type": "object", "additionalProperties": { "type": "string", "enum": ["low","moderate","high"] } },
+    "technical_complexity": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "stimulus_to_fatigue": { "type": "string", "enum": ["low","medium","high"], "description": "Qualitative SFR heuristic (Israetel). No objective units." },
+    "progressions": { "type": "array", "items": { "type": "string" } },
+    "regressions": { "type": "array", "items": { "type": "string" } },
+    "common_faults": { "type": "array", "items": { "type": "string" } },
+    "substitutions": { "type": "array", "items": { "type": "object", "required": ["exercise_id"], "properties": { "exercise_id": { "type": "string" }, "similarity": { "type": "number", "minimum": 0, "maximum": 1 }, "note": { "type": "string" } } } },
+    "contraindications": { "type": "array", "items": { "type": "string" } },
+    "resistance_profile": { "type": "string", "description": "Where the movement is hardest through the ROM." },
+    "provenance": { "$ref": "provenance.schema.json" }
+  }
+}

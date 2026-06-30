@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "provenance.schema.json",
+  "title": "Provenance",
+  "description": "Shared block embedded in every coaching-config entry. Records where the value came from and how much to trust it.",
+  "type": "object",
+  "required": ["sources", "evidence_tier", "confidence", "contested"],
+  "properties": {
+    "sources": { "type": "array", "items": { "type": "string" }, "description": "Canonical IDs from the source archive MANIFEST (docs/research/coaching-intelligence/source-archive/MANIFEST.json), e.g. '01-science-math-architecture'." },
+    "evidence_tier": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Trust tier from config/coaching/evidence-tiers.json. 1 = highest." },
+    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+    "contested": { "type": "boolean", "description": "True if the research flags genuine scientific disagreement." },
+    "notes": { "type": "string" }
+  }
+}

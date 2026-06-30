@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fatigue-rule.schema.json",
+  "title": "FatigueRuleFile",
+  "description": "Shape of fatigue.rules.json. DATA ONLY — no module consumes this yet.",
+  "type": "object",
+  "required": ["_meta"],
+  "properties": {
+    "_meta": {
+      "type": "object",
+      "required": ["status", "behavior", "purpose", "derived_from"],
+      "properties": {
+        "status": { "type": "string" },
+        "behavior": { "type": "string" },
+        "purpose": { "type": "string" },
+        "derived_from": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "recovery_priors_hours": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "small_muscles": { "type": "array", "items": { "type": "number" } },
+        "large_compound": { "type": "array", "items": { "type": "number" } },
+        "heavy_eccentric_or_to_failure": { "type": "array", "items": { "type": "number" } },
+        "note": { "type": "string" },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    },
+    "readiness_inputs": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "type": { "type": "string" },
+              "weight_hint": { "type": "string" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    },
+    "deload_triggers": {
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "planned_every_weeks": { "type": "array", "items": { "type": "number" } },
+        "autoregulated_any_two": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "provenance.schema.json" }
+      }
+    }
+  }
+}

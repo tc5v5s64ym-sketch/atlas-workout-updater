@@ -1,0 +1,20 @@
+{
+  "_meta": { "status": "scaffold", "behavior": "DATA ONLY. No module reads these rules yet. Building the readiness/fatigue engine is OUT OF SCOPE for this PR.", "purpose": "Encodes recovery-rate priors, readiness inputs, and deload triggers for a future FatigueModule/ReadinessModule.", "derived_from": ["01-science-math-architecture", "02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"] },
+  "recovery_priors_hours": { "description": "Approximate muscle recovery windows. HEURISTIC and highly individual — flagged low confidence.", "small_muscles": [24, 48], "large_compound": [48, 72], "heavy_eccentric_or_to_failure": [72, 96], "note": "Lower-body compounds and older age tend to extend windows. Connective tissue lags muscle.", "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 4, "confidence": "low", "contested": true } },
+  "readiness_inputs": { "description": "Inputs to a composite readiness score. Subjective measures weighted heavily per the research; wearables are supporting evidence with wide error bars.", "inputs": [
+      { "key": "sleep", "type": "subjective", "weight_hint": "high" },
+      { "key": "soreness", "type": "subjective", "weight_hint": "high" },
+      { "key": "stress", "type": "subjective", "weight_hint": "medium" },
+      { "key": "motivation", "type": "subjective", "weight_hint": "high" },
+      { "key": "recent_load", "type": "derived", "weight_hint": "medium" },
+      { "key": "hrv", "type": "wearable", "weight_hint": "low", "note": "noisy day-to-day; compare to personal baseline, not universal cutoffs" }
+    ], "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture", "03-building-an-ai-fitness-coach"], "evidence_tier": 2, "confidence": "medium", "contested": false } },
+  "deload_triggers": { "description": "Deload when planned OR when >=2 autoregulated triggers fire.", "planned_every_weeks": [4, 6], "autoregulated_any_two": [
+      "performance drop (e1RM or rep-PR) for 2+ consecutive sessions despite effort",
+      "persistent soreness not resolving",
+      "rising resting HR / poor sleep",
+      "motivation drop",
+      "load spike (acute:chronic) elevated",
+      "bar velocity at fixed load down ~10% vs. recent baseline"
+    ], "provenance": { "sources": ["01-science-math-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": true } }
+}
