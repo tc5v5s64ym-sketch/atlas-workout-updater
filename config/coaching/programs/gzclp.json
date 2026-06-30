@@ -63,6 +63,7 @@
       "normal_scheme":     { "sets": 4, "reps": 6,  "reps_scheme": "amrap" },
       "stall_scheme":      { "sets": 4, "reps": 10, "reps_scheme": "amrap" },
       "consecutive_fails_before_deload": 2,
+      "deload_pct": 10,
       "success_increment_lb": {
         "upper_body": 5,
         "lower_body": 10

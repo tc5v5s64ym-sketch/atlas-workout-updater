@@ -471,6 +471,16 @@ describe('buildNextSession — GZCLP — T2 progression', () => {
     assert.ok(t2.progressionNote.includes('deload'));
   });
 
+  it('T2 deload uses normal scheme (4×6) not stall scheme (4×10)', () => {
+    // Deload resets to base 4×6+ so the lifter rebuilds from a lower weight at normal reps.
+    const state = { sessionCount: 0, currentWeights: {}, t2Weights: { OHP: 100 }, t1Tiers: {}, consecutiveFails: { OHP: 2 } };
+    const r = buildNextSession(GZCLP_ID, state);
+    const t2 = r.exercises.find(e => e.tier === 'T2');
+    assert.ok(t2);
+    assert.strictEqual(t2.sets, 4);
+    assert.strictEqual(t2.reps, 6);
+  });
+
   it('T2 deload never exceeds current weight (no inverted deload near floor)', () => {
     // 35 * 0.90 = 31.5 → _round5 → 45 lb floor, but Math.min(35, 45) caps at 35
     const state = { sessionCount: 0, currentWeights: {}, t2Weights: { OHP: 35 }, t1Tiers: {}, consecutiveFails: { OHP: 2 } };

@@ -191,10 +191,14 @@ function _buildGZCLP(program, state) {
 
     if (tier === 'T2') {
       const stalls      = Number(consecutiveFails[liftCode]) || 0;
-      const scheme      = stalls > 0 ? prog.t2.stall_scheme : prog.t2.normal_scheme;
+      const inDeload    = stalls >= prog.t2.consecutive_fails_before_deload;
+      // Deload resets to the base 4×6+ scheme (not the stall 4×10+ scheme) so
+      // the lifter rebuilds from a lower weight at the normal rep range.
+      const scheme      = (stalls > 0 && !inDeload) ? prog.t2.stall_scheme : prog.t2.normal_scheme;
       const increment   = prog.t2.success_increment_lb[region === 'lower_body' ? 'lower_body' : 'upper_body'];
       const rawWeight   = t2Weights[liftCode] ?? null;
       const startWeight = t2Starts[liftCode] ?? starts[liftCode] ?? 45;
+      const deloadPct   = prog.t2.deload_pct / 100;
 
       let targetWeight;
       let progressionNote;
@@ -202,9 +206,9 @@ function _buildGZCLP(program, state) {
       if (rawWeight === null) {
         targetWeight    = startWeight;
         progressionNote = 'start weight';
-      } else if (stalls >= prog.t2.consecutive_fails_before_deload) {
-        targetWeight    = Math.min(rawWeight, _round5(rawWeight * (1 - 0.10)));
-        progressionNote = `deload 10%`;
+      } else if (inDeload) {
+        targetWeight    = Math.min(rawWeight, _round5(rawWeight * (1 - deloadPct)));
+        progressionNote = `deload ${prog.t2.deload_pct}%`;
       } else if (stalls > 0) {
         targetWeight    = rawWeight;
         progressionNote = `hold — T2 stall (${scheme.sets}×${scheme.reps}+)`;
