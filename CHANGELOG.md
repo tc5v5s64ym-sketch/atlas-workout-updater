@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added — SafetyClassifierModule: composite safety classification engine (Brian PR 13)
+
+New composite engine `services/safetyClassifierModule.js` — combines `SafetyRulesModule` (traffic-light states, safe defaults) with active signal inputs to produce structured safety tier classifications. No Sheets access, no side effects, no LLM involvement. Safety override rule: this module's output can override all others; red > yellow > green.
+
+- `classifyTrafficLight(activeSignals[])` — maps an array of observed signal strings to the most severe matching traffic-light tier. Matching is case-insensitive substring (active signal ⊆ config signal OR config signal ⊆ active signal). Returns `{ state: 'green'|'yellow'|'red', meaning, action, matchedSignals[], unmatchedSignals[], confidence: 'none'|'low'|'moderate'|'high' }`, or null for non-array input. Defaults to `green` when no signals match (normal coaching context). Three tiers from `SafetyRulesModule`: green = proceed, yellow = reduce/modify/substitute, red = stop + medical evaluation.
+- `getSafeDefault(field)` — returns a specific safe-default value by field name (`'on_uncertainty'` | `'never'` | `'onboarding_screen'` | `'confidence_inversion'`). Returns null for unknown or internal fields (e.g. `'provenance'` is not exposed).
+
+Confidence inversion honored: unmatched signals do not change state, but when signals do match, the most severe matching tier always wins — consistent with the config's `confidence_inversion` rule ("Low confidence about a possible red flag triggers MORE caution, never less").
+
+New test `test/safetyClassifierModule.test.js` — 30 tests covering invalid inputs (null, non-array, empty strings, non-string entries), all three traffic-light state paths (green signals, yellow signals, red signals), severity priority (red overrides yellow, yellow overrides green), matched/unmatched signal tracking, confidence tiers (none/low/moderate/high), result shape (meaning + action from config), case-insensitive matching, and all four `getSafeDefault` fields plus rejection of unknown/internal fields.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — FatigueAssessmentModule: composite fatigue/recovery/deload engine (Brian PR 12)
 
 New composite engine `services/fatigueAssessmentModule.js` — combines `FatigueRulesModule` (recovery priors, readiness inputs, deload triggers) with input signals to produce structured, number-complete fatigue and readiness assessments. No Sheets access, no side effects, no LLM involvement.
