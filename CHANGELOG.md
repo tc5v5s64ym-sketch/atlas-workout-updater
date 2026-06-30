@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added — FatigueRulesModule: read-only access to recovery priors, readiness inputs, and deload triggers (Brian PR 7)
+
+New read-only module `services/fatigueRulesModule.js` — pure lookup functions over `config/coaching/rules/fatigue.rules.json`:
+
+- `getRecoveryPriors()` — `{ small_muscles: [24,48], large_compound: [48,72], heavy_eccentric_or_to_failure: [72,96] }` recovery-window heuristics in hours
+- `getReadinessInputs()` — all 6 readiness inputs in config order (defensive `.slice()` copy): `sleep`, `soreness`, `stress`, `motivation`, `recent_load`, `hrv`
+- `getReadinessInputByKey(key)` — single readiness input record by key, or null (`subjective` | `derived` | `wearable` types; `high` | `medium` | `low` weight hints)
+- `getDeloadTriggers()` — `{ planned_every_weeks: [4,6], autoregulated_any_two: [...6 triggers] }` deload decision config
+
+Loads lazily on first call; `_resetForTesting()` clears the cache between test files.
+
+New test `test/fatigueRulesModule.test.js` — 28 tests covering all exports, all 6 readiness input keys, required schema fields, enum validation (type/weight_hint values), mutation guard on the readiness inputs array, cross-function consistency checks, and non-string edge cases.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — ProgressionRulesModule: read-only access to the progression decision table (Brian PR 6)
 
 New read-only module `services/progressionRulesModule.js` — pure lookup functions over `config/coaching/rules/progression.rules.json`:
