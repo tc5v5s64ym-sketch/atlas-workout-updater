@@ -83,7 +83,7 @@ function buildNextSession531(state) {
   const supplementalSets = Array.from({ length: supp.sets }, () => ({
     weight:     suppW,
     reps:       supp.reps,
-    repsScheme: 'amrap',
+    repsScheme: supp.reps_scheme || 'fixed',
   }));
 
   return {

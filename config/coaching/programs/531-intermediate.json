@@ -31,6 +31,7 @@
         "body_region": "lower_body",
         "sets": 3,
         "reps": 8,
+        "reps_scheme": "fixed",
         "percent_tm": 0.50,
         "note": "Supplemental deadlift at 50% TM (FSL/BBB style)"
       }
@@ -49,6 +50,7 @@
         "body_region": "upper_body",
         "sets": 3,
         "reps": 8,
+        "reps_scheme": "fixed",
         "percent_tm": 0.50,
         "note": "Supplemental bench at 50% TM (FSL/BBB style)"
       }
@@ -67,6 +69,7 @@
         "body_region": "lower_body",
         "sets": 3,
         "reps": 5,
+        "reps_scheme": "fixed",
         "percent_tm": 0.50,
         "note": "Supplemental squat at 50% TM"
       }
@@ -85,6 +88,7 @@
         "body_region": "upper_body",
         "sets": 3,
         "reps": 8,
+        "reps_scheme": "fixed",
         "percent_tm": 0.50,
         "note": "Supplemental OHP at 50% TM (FSL/BBB style)"
       }

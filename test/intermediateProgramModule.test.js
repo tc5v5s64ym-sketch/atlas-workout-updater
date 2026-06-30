@@ -73,6 +73,11 @@ describe('buildNextSession531 — week 1, day 1 (Squat, 5s week)', () => {
   it('supplemental liftCode is DEADLIFT', () => assert.strictEqual(r.supplemental.liftCode, 'DEADLIFT'));
   it('supplemental has 3 sets', () => assert.strictEqual(r.supplemental.sets.length, 3));
   it('supplemental set weight is 140 lb', () => assert.strictEqual(r.supplemental.sets[0].weight, 140));
+  it('supplemental sets are fixed reps (not amrap)', () => {
+    for (const s of r.supplemental.sets) {
+      assert.strictEqual(s.repsScheme, 'fixed');
+    }
+  });
 });
 
 // --- week 2 (3s week), day 1 ---
