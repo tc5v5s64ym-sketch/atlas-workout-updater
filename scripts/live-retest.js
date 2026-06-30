@@ -37,7 +37,9 @@ const SCENARIOS = {
     // Assertion (PR #718): the LLM-down "coach isn't available" reveal must be gone.
     assertion: {
       forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /coach[^.]{0,20}unavailable/i],
-      expected: []
+      // A real fixed reply nudges "re-type the set" — require it so an
+      // unauthenticated error toast reads INCONCLUSIVE rather than a false PASS.
+      expected: [/re-?type|add it to the preview|log it/i]
     }
   },
   'bug-20260629-153312': {
@@ -50,7 +52,9 @@ const SCENARIOS = {
     navigation: { type: 'composer', text: 'you missed a set' },
     assertion: {
       forbidden: [/coach.{0,15}(isn'?t|is not|not).{0,15}available/i, /couldn'?t reach/i, /reach the coach/i, /coach[^.]{0,20}unavailable/i],
-      expected: []
+      // A real fixed reply nudges "re-type the set" — require it so an
+      // unauthenticated error toast reads INCONCLUSIVE rather than a false PASS.
+      expected: [/re-?type|add it to the preview|log it/i]
     }
   },
   'bug-20260629-003505': {
@@ -83,6 +87,22 @@ const SCENARIOS = {
       forbidden: [/not a recognized modality/i],
       expected: [/bodyweight|how many reps|reps\?|did you mean/i]
     }
+  },
+  'bug-20260629-204817': {
+    bugId: 'BUG-20260629-204817',
+    purpose: 'A recovery/deload Coach\'s Pick session must not nudge "add load" / "lift more" (recurrence of -034034).',
+    input: 'Engage a recovery Coach\'s Pick, log a working set, and read the per-set reaction + the "Next time" prescription.',
+    expected: 'Recovery framing; the weight is held — no add-load nudge from either the set reaction or the recommend-next prescription.',
+    forbidden: 'Add-load wording: "too much left in the tank" / "bump" / "move to <weight>" / "lift more" / "not lifting enough".',
+    reference: 'docs/BUG_TRIAGE_LEDGER.md — recovery-bump recurrence; #704 + getActiveIntentId fallback + recommendNextSet holds weight on a recovery intent.',
+    // Multi-step Coach\'s-Pick + recovery flow (engage a suggested recovery
+    // session, then log a set) — not a single composer entry, so composer
+    // navigation does not apply yet. The bootstrap load + screenshot stands;
+    // full flow automation is a later slice. No write either way.
+    navigation: { type: 'manual', note: 'recovery Coach\'s-Pick flow is multi-step (engage pick → log a set), not composer-driven — automate in a later slice.' },
+    // Forbidden patterns recorded for when this flow becomes automatable; for now
+    // the scenario is MANUAL (assertion: null) since the thread isn\'t driven here.
+    assertion: null
   }
 };
 
@@ -238,10 +258,13 @@ function writeResult(outputDir, scenarioKey, scenario, fields) {
       scenario: scenarioKey,
       bugId: scenario.bugId,
       purpose: scenario.purpose,
-      expected: scenario.expected,
-      forbidden: scenario.forbidden,
+      expectedBehavior: scenario.expected,
+      forbiddenBehavior: scenario.forbidden,
       ...fields,
+      // Only list screenshots that actually landed on disk — a MANUAL /
+      // non-navigated scenario produces just 01-loaded, not 02/03.
       screenshots: [`${scenarioKey}-01-loaded.png`, `${scenarioKey}-02-composer.png`, `${scenarioKey}-03-preview.png`]
+        .filter(name => fs.existsSync(path.join(outputDir, name)))
     };
     fs.writeFileSync(path.join(outputDir, `${scenarioKey}-result.json`), JSON.stringify(result, null, 2));
   } catch (err) {
@@ -275,6 +298,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
   });
 
   let exitCode = 0;
+  let verdict = 'UNKNOWN';
   let page;
   try {
     // Block service workers so a cached shell can't mask a load failure.
@@ -312,12 +336,13 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
     // PR #718: assert the observed thread against the scenario's expected /
     // forbidden patterns. A FAIL (the bug behaviour reappeared) surfaces as a
     // non-zero exit; PASS / INCONCLUSIVE / MANUAL exit 0.
-    const verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir });
+    verdict = assertScenario({ scenarioKey, scenario, navResult, outputDir });
     if (verdict === 'FAIL') exitCode = 2;
 
     console.log(`[bootstrap] DONE — read-only retest complete (verdict: ${verdict}). Never pressed Save, no writes.`);
   } catch (err) {
     exitCode = 1;
+    verdict = 'ERROR';
     console.error(`[bootstrap] FAILED: ${err.message}`);
     // Best-effort failure screenshot for the artifact, if a page exists.
     if (page) {
@@ -330,7 +355,7 @@ async function bootstrapBrowser({ baseUrl, scenarioKey, outputDir, scenario }) {
   } finally {
     await browser.close().catch(() => {});
   }
-  return exitCode;
+  return { exitCode, verdict };
 }
 
 async function run(argv, env = process.env) {
@@ -343,22 +368,23 @@ async function run(argv, env = process.env) {
   const outputDir = (args['output-dir'] || env.LIVE_RETEST_ARTIFACT_DIR || 'live-retest-artifacts').trim();
 
   if (!scenarioKey) {
-    console.error('ERROR: --scenario is required.');
-    console.error(`Valid scenarios: ${Object.keys(SCENARIOS).join(', ')}`);
+    console.error('ERROR: --scenario is required (or use "all").');
+    console.error(`Valid scenarios: all, ${Object.keys(SCENARIOS).join(', ')}`);
     return 1;
   }
 
-  const scenario = SCENARIOS[scenarioKey];
-  if (!scenario) {
+  // "all" runs every scenario in sequence and prints a summary (PR #719).
+  const keys = scenarioKey === 'all' ? Object.keys(SCENARIOS) : [scenarioKey];
+  if (scenarioKey !== 'all' && !SCENARIOS[scenarioKey]) {
     console.error(`ERROR: unknown scenario "${scenarioKey}".`);
-    console.error(`Valid scenarios: ${Object.keys(SCENARIOS).join(', ')}`);
+    console.error(`Valid scenarios: all, ${Object.keys(SCENARIOS).join(', ')}`);
     return 1;
   }
 
-  printScenario(scenarioKey, scenario, { targetBaseUrl, dryRunOnly });
+  for (const k of keys) printScenario(k, SCENARIOS[k], { targetBaseUrl, dryRunOnly });
 
   if (dryRunOnly) {
-    console.log('DRY-RUN: nothing was executed. This slice only describes the retest;');
+    console.log('DRY-RUN: nothing was executed. This only describes the retest(s);');
     console.log('the owner runs the real app and decides pass/fail. No browser, no Sheets writes.');
     return 0;
   }
@@ -369,8 +395,41 @@ async function run(argv, env = process.env) {
     return 1;
   }
 
-  console.log('BROWSER BOOTSTRAP + NAVIGATION: read-only load, locate, populate composer, preview. Never presses Save.');
-  return bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey, outputDir, scenario });
+  console.log('BROWSER BOOTSTRAP + NAVIGATION + ASSERT: read-only load, populate composer, preview, compare. Never presses Save.');
+  const results = [];
+  for (const k of keys) {
+    const { exitCode, verdict } = await bootstrapBrowser({ baseUrl: targetBaseUrl, scenarioKey: k, outputDir, scenario: SCENARIOS[k] });
+    results.push({ scenario: k, bugId: SCENARIOS[k].bugId, verdict, exitCode });
+  }
+
+  writeSummary(results, outputDir);
+
+  // Exit code: 2 if any retest FAILed (a forbidden/bug pattern reappeared);
+  // 1 if any run hit a harness error; otherwise 0.
+  if (results.some(r => r.verdict === 'FAIL')) return 2;
+  if (results.some(r => r.exitCode === 1)) return 1;
+  return 0;
+}
+
+// Print a verdict summary table and write summary.json (PR #719 reporting).
+function writeSummary(results, outputDir) {
+  const line = '─'.repeat(72);
+  console.log(line);
+  console.log('Live-retest summary');
+  console.log(line);
+  for (const r of results) {
+    console.log(`  ${r.verdict.padEnd(12)} ${r.scenario}  (${r.bugId})`);
+  }
+  const tally = results.reduce((acc, r) => { acc[r.verdict] = (acc[r.verdict] || 0) + 1; return acc; }, {});
+  console.log(line);
+  console.log(`  totals: ${Object.entries(tally).map(([k, v]) => `${k}=${v}`).join('  ') || '(none)'}`);
+  console.log(line);
+  try {
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({ results, tally }, null, 2));
+  } catch (err) {
+    console.error(`could not write summary.json: ${err.message}`);
+  }
 }
 
 if (require.main === module) {
