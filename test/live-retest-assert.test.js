@@ -77,3 +77,42 @@ test('writes a result JSON artifact with the verdict', () => {
 });
 
 test.after(() => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* ignore */ } });
+
+// --- PR #720: owner-experience markdown report -------------------------------
+const { buildMarkdownReport, writeSummary } = require('../scripts/live-retest');
+
+test('buildMarkdownReport renders a verdict table, totals, links, and the read-only disclaimer', () => {
+  const results = [
+    { scenario: 'bug-20260629-153258', bugId: 'BUG-20260629-153258', verdict: 'PASS' },
+    { scenario: 'bug-20260629-002945', bugId: 'BUG-20260629-002945', verdict: 'INCONCLUSIVE' },
+    { scenario: 'bug-20260629-003505', bugId: 'BUG-20260629-003505', verdict: 'MANUAL' }
+  ];
+  const md = buildMarkdownReport(results, { serverUrl: 'https://github.com', repo: 'o/r' });
+  assert.match(md, /Atlas live-retest report/);
+  assert.match(md, /\| Verdict \| Bug \| Purpose \|/);
+  assert.match(md, /✅ PASS/);
+  assert.match(md, /⚠️ INCONCLUSIVE/);
+  assert.match(md, /◻️ MANUAL/);
+  // BUG id linked to a commit search when server/repo are known.
+  assert.match(md, /\[BUG-20260629-153258\]\(https:\/\/github\.com\/o\/r\/search\?q=BUG-20260629-153258&type=commits\)/);
+  assert.match(md, /Totals:.*PASS=1.*INCONCLUSIVE=1.*MANUAL=1/);
+  assert.match(md, /never writes to Google Sheets/);
+  assert.match(md, /Not a merge gate/);
+});
+
+test('buildMarkdownReport shows the bare BUG id when no Actions context is available', () => {
+  const md = buildMarkdownReport([{ scenario: 'x', bugId: 'BUG-1', verdict: 'FAIL' }], {});
+  assert.match(md, /❌ FAIL/);
+  assert.match(md, /\| BUG-1 \|/);          // plain id, not a markdown link
+  assert.doesNotMatch(md, /\[BUG-1\]\(/);
+});
+
+test('writeSummary writes both summary.json and summary.md', () => {
+  const dir = path.join(TMP, 'sum');
+  fs.mkdirSync(dir, { recursive: true });
+  writeSummary([{ scenario: 'bug-20260629-002945', bugId: 'BUG-20260629-002945', verdict: 'PASS' }], dir);
+  const j = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
+  assert.equal(j.tally.PASS, 1);
+  const md = fs.readFileSync(path.join(dir, 'summary.md'), 'utf8');
+  assert.match(md, /✅ PASS/);
+});
