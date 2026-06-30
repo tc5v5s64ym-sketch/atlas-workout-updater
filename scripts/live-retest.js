@@ -427,9 +427,52 @@ function writeSummary(results, outputDir) {
   try {
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, 'summary.json'), JSON.stringify({ results, tally }, null, 2));
+    // PR #720: owner-facing markdown report (rendered into the GitHub Actions
+    // run summary by the workflow).
+    fs.writeFileSync(path.join(outputDir, 'summary.md'),
+      buildMarkdownReport(results, { serverUrl: process.env.GITHUB_SERVER_URL, repo: process.env.GITHUB_REPOSITORY }));
   } catch (err) {
-    console.error(`could not write summary.json: ${err.message}`);
+    console.error(`could not write summary artifacts: ${err.message}`);
   }
+}
+
+// --- PR #720: owner-experience markdown report ------------------------------
+// Pure: turns the verdict results into a friendly markdown report for the
+// GitHub Actions run summary — a verdict table with BUG-id links, a totals
+// line, and a clear read-only / not-a-merge-gate disclaimer.
+const VERDICT_ICON = { PASS: '✅', FAIL: '❌', INCONCLUSIVE: '⚠️', MANUAL: '◻️', ERROR: '💥', UNKNOWN: '❔' };
+
+function bugLink(bugId, { serverUrl, repo } = {}) {
+  // Link the BUG id to a commit search (finds the fix commits) when running in
+  // Actions; otherwise just show the id.
+  if (serverUrl && repo) {
+    return `[${bugId}](${serverUrl}/${repo}/search?q=${encodeURIComponent(bugId)}&type=commits)`;
+  }
+  return bugId;
+}
+
+function buildMarkdownReport(results, ctx = {}) {
+  const lines = [];
+  lines.push('## 🏋️ Atlas live-retest report');
+  lines.push('');
+  lines.push('| Verdict | Bug | Purpose |');
+  lines.push('|---|---|---|');
+  for (const r of results) {
+    const scenario = SCENARIOS[r.scenario] || {};
+    const purpose = (scenario.purpose || '').replace(/\|/g, '\\|');
+    lines.push(`| ${VERDICT_ICON[r.verdict] || ''} ${r.verdict} | ${bugLink(r.bugId, ctx)} | ${purpose} |`);
+  }
+  const tally = results.reduce((acc, r) => { acc[r.verdict] = (acc[r.verdict] || 0) + 1; return acc; }, {});
+  lines.push('');
+  lines.push(`**Totals:** ${Object.entries(tally).map(([k, v]) => `${VERDICT_ICON[k] || ''} ${k}=${v}`).join(' · ') || '(none)'}`);
+  lines.push('');
+  lines.push('Screenshots and result JSON for each step are attached as the `live-retest-artifacts-*` workflow artifact.');
+  lines.push('');
+  lines.push('**Verdicts:** ✅ PASS — expected behaviour seen · ⚠️ INCONCLUSIVE — no bug signal but the expected reply didn\'t render (likely an unauthenticated run; retest in an authed context) · ❌ FAIL — a forbidden/bug pattern reappeared · ◻️ MANUAL — needs a hands-on retest (no automatable assertion yet).');
+  lines.push('');
+  lines.push('> Read-only retest — it never presses Save and never writes to Google Sheets. **Not a merge gate and not a replacement for owner judgment.**');
+  lines.push('');
+  return lines.join('\n');
 }
 
 if (require.main === module) {
@@ -439,4 +482,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario };
+module.exports = { SCENARIOS, parseArgs, toBool, run, bootstrapBrowser, navigateScenario, assertScenario, writeSummary, buildMarkdownReport };

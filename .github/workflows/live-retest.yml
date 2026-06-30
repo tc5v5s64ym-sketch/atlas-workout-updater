@@ -64,12 +64,29 @@ jobs:
             --dry-run-only "${{ inputs.dry_run_only }}" \
             --target-base-url "${{ inputs.target_base_url }}"
 
-      # Surface the read-only screenshots from a browser bootstrap as artifacts.
-      - name: Upload screenshots
+      # Owner experience (PR #720): render the markdown verdict report into the
+      # GitHub Actions run summary. Runs even on a FAIL so the report is visible.
+      - name: Publish report to run summary
+        if: ${{ always() }}
+        run: |
+          if [ -f live-retest-artifacts/summary.md ]; then
+            cat live-retest-artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## 🏋️ Atlas live-retest"
+              echo ""
+              echo "Dry-run (no browser, no live calls, no Sheets writes) — scenario \`${{ inputs.scenario }}\` was described only."
+              echo ""
+              echo "> Re-run with \`dry_run_only: false\` for a read-only live retest report."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Surface the read-only screenshots + result JSON from a browser bootstrap.
+      - name: Upload artifacts
         if: ${{ !inputs.dry_run_only && always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: live-retest-screenshots-${{ inputs.scenario }}
+          name: live-retest-artifacts-${{ inputs.scenario }}
           path: live-retest-artifacts/
           if-no-files-found: ignore
           retention-days: 7
