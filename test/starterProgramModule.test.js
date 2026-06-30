@@ -262,6 +262,14 @@ describe('buildNextSession — StrongLifts 5×5 — progression', () => {
     assert.ok(bench);
     assert.strictEqual(bench.targetWeight % 5, 0, 'deload weight should be divisible by 5');
   });
+
+  it('deload never exceeds current weight (no inverted deload near floor)', () => {
+    // 40 * 0.90 = 36 → _round5 → 45 lb floor, but Math.min(40, 45) caps at 40
+    const r = buildNextSession(SL_ID, slStall(0, { BENCH: 40 }, { BENCH: 3 }));
+    const bench = r.exercises.find(e => e.liftCode === 'BENCH');
+    assert.ok(bench);
+    assert.ok(bench.targetWeight <= 40, 'deloaded weight must not exceed current weight');
+  });
 });
 
 describe('buildNextSession — StrongLifts 5×5 — exercise shape', () => {
@@ -461,6 +469,15 @@ describe('buildNextSession — GZCLP — T2 progression', () => {
     // 100 * 0.90 = 90 → round to nearest 5 → 90
     assert.strictEqual(t2.targetWeight, 90);
     assert.ok(t2.progressionNote.includes('deload'));
+  });
+
+  it('T2 deload never exceeds current weight (no inverted deload near floor)', () => {
+    // 35 * 0.90 = 31.5 → _round5 → 45 lb floor, but Math.min(35, 45) caps at 35
+    const state = { sessionCount: 0, currentWeights: {}, t2Weights: { OHP: 35 }, t1Tiers: {}, consecutiveFails: { OHP: 2 } };
+    const r = buildNextSession(GZCLP_ID, state);
+    const t2 = r.exercises.find(e => e.tier === 'T2');
+    assert.ok(t2);
+    assert.ok(t2.targetWeight <= 35, 'T2 deloaded weight must not exceed current weight');
   });
 
   it('T2 weight increases on success (upper body: +5 lb)', () => {

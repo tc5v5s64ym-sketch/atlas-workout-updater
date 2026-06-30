@@ -112,7 +112,7 @@ function _buildSL5x5(program, state) {
       targetWeight    = startWeight;
       progressionNote = 'start weight';
     } else if (stalls >= prog.fail_handling.consecutive_fails_before_deload) {
-      targetWeight    = _round5(rawWeight * (1 - prog.fail_handling.deload_pct / 100));
+      targetWeight    = Math.min(rawWeight, _round5(rawWeight * (1 - prog.fail_handling.deload_pct / 100)));
       progressionNote = `deload ${prog.fail_handling.deload_pct}%`;
     } else if (stalls > 0) {
       targetWeight    = rawWeight;
@@ -203,7 +203,7 @@ function _buildGZCLP(program, state) {
         targetWeight    = startWeight;
         progressionNote = 'start weight';
       } else if (stalls >= prog.t2.consecutive_fails_before_deload) {
-        targetWeight    = _round5(rawWeight * (1 - 0.10));
+        targetWeight    = Math.min(rawWeight, _round5(rawWeight * (1 - 0.10)));
         progressionNote = `deload 10%`;
       } else if (stalls > 0) {
         targetWeight    = rawWeight;
