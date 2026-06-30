@@ -94,7 +94,7 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 | PR | Title | Model | Status | Notes |
 |---|---|---|---|---|
-| 22 | Periodization & peaking engine | Opus | 🔲 not started | Block / DUP scheduling; strength-sport peaking + taper. Peaking only for the right population. Depends on PR 15, PR 17. |
+| 22 | Periodization & peaking engine | Opus | ✅ shipped | `config/coaching/periodization/` (block-intermediate, dup-patterns, peaking configs) + `services/periodizationModule.js` (`selectPeriodizationModel`, `buildBlockPhases`, `getDupSessionTypes`, `isPeakingAppropriate`, `buildPeakingPhase`). Block: 8-week 3-phase cycle (accumulation/intensification/realization). DUP: 3- and 4-day weekly patterns (strength/hypertrophy/power). Peaking: 2-week taper, powerlifting only, youth/older-adult excluded. 82 tests. Depends on PR 15, PR 17. |
 | 23 | VBT support (optional) | Opus | 🔲 not started | Velocity field + individual load-velocity profile regression; velocity-loss cutoffs. Optional. Depends on PR 15. |
 | 24 | Wearables + outcome learning (frontier) | Opus | 🔲 not started | Optional HRV / sleep ingestion as supporting signals; individual dose-response + recovery learning. Last, not first. Depends on PR 11, PR 12, PR 18. |
 
@@ -102,16 +102,15 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 ## What's next
 
-**Current position: Phase 4 complete through PR 19; PR 17 shipped.**
+**Current position: Phase 4 complete through PR 19; PR 17 and PR 22 shipped.**
 
-Shipped: PR 1–8, PR 11–15, PR 17–19 (fully). Partial: PR 9, PR 10, PR 16.
-Not started: PR 20–24.
+Shipped: PR 1–8, PR 11–15, PR 17–19, PR 22 (fully). Partial: PR 9, PR 10, PR 16.
+Not started: PR 20, PR 21, PR 23, PR 24.
 
 **Immediate next candidates** (dependency-safe):
 
 1. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
 2. **PR 20 — NutritionModule** (depends on PR 1 ✅, PR 19 ✅ — all done). Fully unblocked.
-3. **PR 22 — Periodization & peaking engine** (depends on PR 15 ✅, PR 17 ✅ — all done). Fully unblocked.
 
 ---
 

@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Daily Undulating Periodization session-type patterns for 3- and 4-day-per-week training."
+  },
+  "id": "dup-patterns",
+  "name": "Daily Undulating Periodization",
+  "description": "Within-week variation of rep ranges and intensity. Same rotation repeats every week. Prevents accommodation, supports concurrent strength and hypertrophy goals.",
+  "patterns": [
+    {
+      "id": "dup-3day",
+      "days_per_week": 3,
+      "session_sequence": ["strength", "hypertrophy", "power"]
+    },
+    {
+      "id": "dup-4day",
+      "days_per_week": 4,
+      "session_sequence": ["strength", "hypertrophy", "power", "hypertrophy"]
+    }
+  ],
+  "session_types": {
+    "strength": {
+      "label": "Strength",
+      "rep_range": [3, 5],
+      "percent_tm_range": [0.80, 0.90],
+      "set_range": [3, 5],
+      "rpe_target": 8,
+      "notes": "Heavy compound work. Build maximal force production."
+    },
+    "hypertrophy": {
+      "label": "Hypertrophy",
+      "rep_range": [8, 12],
+      "percent_tm_range": [0.65, 0.75],
+      "set_range": [3, 4],
+      "rpe_target": 7,
+      "notes": "Moderate load, higher reps. Metabolic stress and muscle growth emphasis."
+    },
+    "power": {
+      "label": "Power/Speed",
+      "rep_range": [3, 5],
+      "percent_tm_range": [0.55, 0.70],
+      "set_range": [4, 6],
+      "rpe_target": 6,
+      "notes": "Light-to-moderate load. Bar speed is the priority, not load."
+    }
+  }
+}
