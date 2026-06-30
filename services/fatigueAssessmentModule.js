@@ -158,7 +158,7 @@ function checkDeloadTriggers(weeksSinceDeload, activeTriggerKeys = []) {
   const plannedDeloadDue = weeksSinceDeload >= plannedMin;
 
   const keys = Array.isArray(activeTriggerKeys) ? activeTriggerKeys : [];
-  const autoregulatedTriggersFired = keys.length;
+  const autoregulatedTriggersFired = new Set(keys).size; // deduplicate — config rule is "any two *distinct* triggers"
   const autoregulatedWarranted = autoregulatedTriggersFired >= 2;
 
   const deloadWarranted = plannedDeloadDue || autoregulatedWarranted;

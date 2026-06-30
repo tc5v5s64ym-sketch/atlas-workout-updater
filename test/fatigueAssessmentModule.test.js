@@ -258,3 +258,11 @@ test('checkDeloadTriggers: autoregulatedTriggersFired = count of activeTriggerKe
   assert.strictEqual(r.autoregulatedTriggersFired, 3);
   assert.strictEqual(r.deloadWarranted, true);
 });
+
+test('checkDeloadTriggers: duplicate trigger keys count as one distinct trigger', () => {
+  // Two identical strings = only 1 distinct trigger → deload NOT warranted
+  const r = checkDeloadTriggers(0, ['persistent soreness', 'persistent soreness']);
+  assert.strictEqual(r.autoregulatedTriggersFired, 1);
+  assert.strictEqual(r.deloadWarranted, false);
+  assert.strictEqual(r.reason, 'none');
+});
