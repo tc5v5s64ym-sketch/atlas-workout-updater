@@ -60,7 +60,7 @@
 | 12 | FatigueModule (recovery clocks + acute:chronic load) | Opus | ✅ shipped | `assessRecovery()` in `services/fatigueAssessmentModule.js`; recovery windows per muscle category. ACWR (acute:chronic load ratio) not yet implemented — filed in BACKLOG. |
 | 13 | DeloadModule | Opus | ✅ shipped | `checkDeloadTriggers()` in `services/fatigueAssessmentModule.js` (planned + autoregulated triggers); full deload state machine in `services/deloadStateMachine.js`, `deloadProtocols.js`, `deloadState.js`; frontend lifecycle wired (Roadmap Step 385) |
 | 14 | ExpectedPerformance + PlateauModule | Opus | ✅ shipped | `services/expectedPerformanceModule.js`; 35 tests. `assessExpectedPerformance / detectLiftPlateaus / assessLift` — structured-entry adapter + plateau detection + composite with readiness adjustment. |
-| 15 | Autoregulation upgrade to ProgressionModule | Opus | 🔲 not started | Set loads from current e1RM + readiness rather than fixed template; graduate-from-LP logic. Depends on PR 8, PR 11, PR 14. |
+| 15 | Autoregulation upgrade to ProgressionModule | Opus | ✅ shipped | `services/autoregulationModule.js`; 41 tests. `computeCurrentE1RM`, `detectLPGraduation`, `autoregulateLoad` — e1RM-derived load prescription with readiness-adjusted RIR and plate rounding; graduate-from-LP plateau detection. Depends on PR 8, PR 11, PR 14. |
 
 ---
 
@@ -102,19 +102,16 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 ## What's next
 
-**Current position: completing Phase 1 / entering Phase 2.**
+**Current position: completing Phase 3.**
 
-Shipped: PR 1–9 (partial), PR 10 (partial), PR 11–14 (fully), PR 16 (partial), PR 18 (fully).
-More precisely — fully shipped: PR 1–8, PR 11–14, PR 18. Partial: PR 9, PR 10, PR 16.
-Not started: PR 15, PR 17, PR 19–24.
+Shipped: PR 1–8, PR 11–15, PR 18 (fully). Partial: PR 9, PR 10, PR 16.
+Not started: PR 17, PR 19–24.
 
 **Immediate next candidates** (dependency-safe):
 
-1. **PR 15 — Autoregulation upgrade to ProgressionModule** (depends on PR 7 ✅, PR 8 ✅, PR 11 ✅, PR 14 ✅ — all done). Fully unblocked.
-2. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
-3. **PR 19 — ConfidenceModule** (depends on most prior modules — all shipped). Now unblocked by PR 18 ✅.
-
-**Do not start PR 15** (Autoregulation) without PR 7 (templates) in place — the autoregulation upgrade assumes working templates exist. PR 7 is now shipped ✅.
+1. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
+2. **PR 19 — ConfidenceModule** (depends on most prior modules — all shipped including PR 15 ✅, PR 18 ✅). Unblocked.
+3. **PR 17 — Goal / population templates & caps** (depends on PR 7 ✅, PR 8 ✅, PR 15 ✅ — all done). Now unblocked.
 
 ---
 
