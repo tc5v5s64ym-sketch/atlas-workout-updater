@@ -59,7 +59,7 @@
 | 11 | Readiness check-ins + ReadinessModule | Opus | ✅ shipped | `scoreReadiness()` in `services/fatigueAssessmentModule.js` covers sleep/soreness/stress/motivation/recent_load/hrv with weighted scoring and confidence tiers |
 | 12 | FatigueModule (recovery clocks + acute:chronic load) | Opus | ✅ shipped | `assessRecovery()` in `services/fatigueAssessmentModule.js`; recovery windows per muscle category. ACWR (acute:chronic load ratio) not yet implemented — filed in BACKLOG. |
 | 13 | DeloadModule | Opus | ✅ shipped | `checkDeloadTriggers()` in `services/fatigueAssessmentModule.js` (planned + autoregulated triggers); full deload state machine in `services/deloadStateMachine.js`, `deloadProtocols.js`, `deloadState.js`; frontend lifecycle wired (Roadmap Step 385) |
-| 14 | ExpectedPerformance + PlateauModule | Opus | ⚠️ partial | `services/expectedPerformance.js` exists; plateau/stall detection in `services/coverageStalls.js`. Composite `ExpectedPerformanceModule` wrapping both with a structured assessment API not yet built. Depends on PR 6, PR 11, PR 12. |
+| 14 | ExpectedPerformance + PlateauModule | Opus | ✅ shipped | `services/expectedPerformanceModule.js`; 35 tests. `assessExpectedPerformance / detectLiftPlateaus / assessLift` — structured-entry adapter + plateau detection + composite with readiness adjustment. |
 | 15 | Autoregulation upgrade to ProgressionModule | Opus | 🔲 not started | Set loads from current e1RM + readiness rather than fixed template; graduate-from-LP logic. Depends on PR 8, PR 11, PR 14. |
 
 ---
@@ -104,16 +104,16 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 **Current position: completing Phase 1 / entering Phase 2.**
 
-Shipped: PR 1–6, PR 8, PR 11–13 (fully), PR 9/10/14/16/18 (partial).
+Shipped: PR 1–6, PR 8, PR 11–14 (fully), PR 9/10/16/18 (partial).
 Not started: PR 7, PR 15, PR 17, PR 19–24.
 
 **Immediate next candidates** (dependency-safe):
 
-1. **PR 14 — ExpectedPerformance + PlateauModule** (composite wrapper; partial pieces exist in `services/expectedPerformance.js` + `services/coverageStalls.js`). Depends on PR 6 (✅ now done), PR 11, PR 12 — all done. Unblocks PR 15.
-2. **PR 7 — Starter program templates** (depends on PR 1, PR 3 — both done). Unblocks PR 9 (full), PR 17.
-3. **PR 18 — Memory architecture** (depends on PR 6 ✅, PR 14). PR 6 now done; blocked on PR 14.
+1. **PR 7 — Starter program templates** (depends on PR 1, PR 3 — both done). Unblocks PR 9 (full), PR 17.
+2. **PR 18 — Memory architecture** (depends on PR 6 ✅, PR 14 ✅ — both done). Now fully unblocked.
+3. **PR 15 — Autoregulation upgrade to ProgressionModule** (depends on PR 8 ✅, PR 11 ✅, PR 14 ✅ — all done). Now unblocked.
 
-**Do not start PR 15** (Autoregulation) until PR 6, PR 11, and PR 14 are all fully met.
+**Do not start PR 15** (Autoregulation) without PR 7 (templates) in place — the autoregulation upgrade assumes working templates exist.
 
 ---
 

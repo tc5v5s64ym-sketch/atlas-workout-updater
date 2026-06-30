@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added — ExpectedPerformanceModule: composite expected-performance + plateau assessment (Brian PR 16 / roadmap PR 14)
+
+New read-only composite engine `services/expectedPerformanceModule.js` — wraps the two partial Phase-3 components (`expectedPerformance.js` and plateau/stall detection) into a formal structured assessment API. No Sheets access, no side effects, no LLM involvement. Depends on IntensityModule, FatigueAssessmentModule (PR 11/12), and UserStateModule substrate (PR 6).
+
+Three exported functions:
+
+- **`assessExpectedPerformance(liftCode, logEntries, targetWeight)`** — structured-entry adapter for `computeExpectedPerformance`. Converts named-field objects to the 12-column positional array the inner function expects, then calls it. Returns `{ expectedReps, expectedRirRange, basis }` or null when fewer than 3 sessions match the ±10% weight window. Lift-code matching is case-insensitive.
+
+- **`detectLiftPlateaus(logEntries, opts)`** — stall detection directly on structured objects. Groups entries by lift code; per session tracks best weight and best Epley e1RM (`w × (1 + r/30)`). A lift is stalled when the maximum e1RM across the last `opts.minSessions` sessions (default 3, min 2) does not exceed the first session's e1RM by more than 1e-6. Warm-up sets (matched via `isWarmupNote`) are excluded. Returns an array of stall descriptors: `{ liftCode, exercise, sessions_stalled, last_best_weight, first_session_date, last_session_date }`.
+
+- **`assessLift(liftCode, logEntries, targetWeight, opts)`** — composite: runs both above, looks up the plateau (if any) for the specific lift, and optionally scores readiness via `scoreReadiness(opts.readinessInputs)`. Applies a conservative rep adjustment: high readiness → no change; moderate → −1 rep; low → −2 reps (clamped to minimum 1). Returns `{ liftCode, targetWeight, expectedPerformance, plateau, readiness, adjustedExpectedReps, readinessAdjustment }` or null for invalid inputs.
+
+New test `test/expectedPerformanceModule.test.js` — 35 tests covering: all invalid-input paths for all three functions; weight-window boundary (entry outside ±10% excluded); warm-up exclusion from both expected performance and plateau detection; confidence tiers ('medium' at 3–4 sessions, 'high' at 5+); stall detection with flat vs improving vs rep-gain-at-same-weight patterns; `opts.minSessions` override; multi-lift isolation; stall descriptor shape; readiness-tier adjustments (high/moderate/low) and clamp to 1; null `adjustedExpectedReps` when `expectedPerformance` is null.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — UserStateModule: per-user per-lift state substrate (Brian PR 15)
 
 New read-only composite engine `services/userStateModule.js` — aggregates raw `Log_Cleaned` entries into a compact per-user feature object used as the substrate for coaching decisions and the LLM explanation layer. No Sheets access, no side effects, no LLM involvement. Depends on IntensityModule (PR 3) and VolumeAssessmentModule (PR 4).
