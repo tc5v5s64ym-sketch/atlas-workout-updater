@@ -1,0 +1,28 @@
+{
+  "id": "front-squat",
+  "name": "Front Squat",
+  "aliases": ["barbell front squat", "front rack squat"],
+  "movement_pattern": "squat",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["adductors", "hamstrings"],
+  "stabilizers": ["upper back", "trunk", "spinal erectors"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 5,
+  "joint_stress": { "knee": "high", "wrist": "moderate" },
+  "technical_complexity": 5,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["paused front squat", "overhead squat"],
+  "regressions": ["goblet-squat", "safety bar squat"],
+  "common_faults": ["elbow drop breaking rack position", "excessive forward lean", "knee collapse"],
+  "substitutions": [
+    { "exercise_id": "back-squat", "similarity": 0.85, "note": "less wrist/elbow demand, more low-back load" },
+    { "exercise_id": "goblet-squat", "similarity": 0.7, "note": "no rack position required; lower load ceiling" }
+  ],
+  "contraindications": ["wrist or elbow injury preventing front rack position"],
+  "resistance_profile": "hardest out of the bottom; upright torso keeps load over mid-foot",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Fatigue and SFR ratings are heuristic. Wrist stress is from rack position, not loading axis." }
+}

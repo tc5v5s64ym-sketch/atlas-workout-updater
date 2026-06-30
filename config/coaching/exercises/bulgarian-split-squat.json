@@ -1,0 +1,29 @@
+{
+  "id": "bulgarian-split-squat",
+  "name": "Bulgarian Split Squat",
+  "aliases": ["rear-foot elevated split squat", "RFESS"],
+  "movement_pattern": "lunge",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["adductors", "hamstrings"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 5,
+  "joint_stress": { "knee": "moderate", "hip": "moderate" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["barbell Bulgarian split squat"],
+  "regressions": ["reverse-lunge", "walking-lunge"],
+  "common_faults": ["front knee caving", "excessive torso forward lean", "rear foot too high on bench"],
+  "substitutions": [
+    { "exercise_id": "reverse-lunge", "similarity": 0.75, "note": "no rear-foot elevation; lower stability demand" },
+    { "exercise_id": "walking-lunge", "similarity": 0.7, "note": "dynamic; less time under tension per leg" },
+    { "exercise_id": "back-squat", "similarity": 0.6, "note": "bilateral; removes unilateral stability demand" }
+  ],
+  "contraindications": ["hip flexor injury provoked by rear-foot elevation", "knee pain during deep unilateral knee flexion"],
+  "resistance_profile": "hardest at the bottom of the split stance; high stretch on rear hip flexor",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Unilateral demand exposes asymmetries. High local quad and glute fatigue relative to systemic load. SFR heuristic." }
+}

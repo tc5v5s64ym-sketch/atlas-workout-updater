@@ -1,0 +1,28 @@
+{
+  "id": "overhead-press",
+  "name": "Overhead Press",
+  "aliases": ["barbell overhead press", "military press", "strict press", "OHP"],
+  "movement_pattern": "vertical_push",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["anterior deltoid", "triceps brachii", "upper trapezius"],
+  "secondary_muscles": ["lateral deltoid", "serratus anterior"],
+  "stabilizers": ["trunk", "rotator cuff", "upper back"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "moderate", "low_back": "moderate" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["push-press", "jerk"],
+  "regressions": ["seated-dumbbell-shoulder-press", "landmine press"],
+  "common_faults": ["excessive lumbar hyperextension", "bar path forward of the ear at lockout", "wrist extension under the bar"],
+  "substitutions": [
+    { "exercise_id": "seated-dumbbell-shoulder-press", "similarity": 0.8, "note": "seated removes spinal demand; dumbbells allow more ROM" },
+    { "exercise_id": "push-press", "similarity": 0.75, "note": "leg drive allows heavier load; not strictly pressing" }
+  ],
+  "contraindications": ["shoulder impingement provoked by overhead loading", "lumbar conditions aggravated by axial overhead load"],
+  "resistance_profile": "hardest at the start off the chest; momentum impossible in the strict version",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Standing version requires significant trunk stability. Axial load from bar overhead can compress lumbar if technique breaks. SFR heuristic." }
+}

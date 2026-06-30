@@ -1,0 +1,28 @@
+{
+  "id": "hammer-curl",
+  "name": "Hammer Curl",
+  "aliases": ["neutral-grip curl", "dumbbell hammer curl"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["brachialis", "brachioradialis", "biceps brachii"],
+  "secondary_muscles": [],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "elbow": "low", "wrist": "low" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["cross-body hammer curl", "incline hammer curl"],
+  "regressions": [],
+  "common_faults": ["swinging to initiate", "partial ROM", "supinating at the top (changing the exercise)"],
+  "substitutions": [
+    { "exercise_id": "bicep-curl", "similarity": 0.7, "note": "supinated grip; more bicep brachii emphasis" },
+    { "exercise_id": "preacher-curl", "similarity": 0.55, "note": "supinated grip; removes cheating" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded neutral-grip elbow flexion"],
+  "resistance_profile": "hardest at 90° elbow flexion; neutral grip reduces supination torque on the joint vs standard curl",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Neutral grip emphasizes brachialis and brachioradialis more than standard supinated curl. Often better tolerated by athletes with elbow pain during supinated curls." }
+}

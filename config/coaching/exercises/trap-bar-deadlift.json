@@ -1,0 +1,28 @@
+{
+  "id": "trap-bar-deadlift",
+  "name": "Trap Bar Deadlift",
+  "aliases": ["hex bar deadlift", "trap bar pull"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["gluteus maximus", "hamstrings", "quadriceps", "spinal erectors"],
+  "secondary_muscles": ["trapezius", "latissimus dorsi"],
+  "stabilizers": ["posterior chain", "grip", "trunk"],
+  "systemic_fatigue": 4,
+  "local_fatigue": 5,
+  "joint_stress": { "low_back": "low", "knee": "moderate" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["conventional-deadlift", "sumo-deadlift"],
+  "regressions": ["romanian-deadlift", "leg-press"],
+  "common_faults": ["hips shooting up before bar breaks floor", "upper back rounding", "bar tipping to one side"],
+  "substitutions": [
+    { "exercise_id": "conventional-deadlift", "similarity": 0.85, "note": "higher low-back demand; more posterior-chain dominant" },
+    { "exercise_id": "leg-press", "similarity": 0.5, "note": "removes axial load entirely" }
+  ],
+  "contraindications": ["acute low-back injury (though lower shear than conventional)"],
+  "resistance_profile": "hardest off the floor; more quad-dominant than conventional due to upright torso",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Neutral-grip handles reduce wrist/shoulder demand. Lower lumbar shear angle than conventional; hybrid between squat and hinge. SFR heuristic." }
+}

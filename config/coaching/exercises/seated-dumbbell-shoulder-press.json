@@ -1,0 +1,28 @@
+{
+  "id": "seated-dumbbell-shoulder-press",
+  "name": "Seated Dumbbell Shoulder Press",
+  "aliases": ["DB shoulder press", "dumbbell overhead press"],
+  "movement_pattern": "vertical_push",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["anterior deltoid", "lateral deltoid", "triceps brachii"],
+  "secondary_muscles": ["upper trapezius"],
+  "stabilizers": ["rotator cuff", "trunk"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["overhead-press", "arnold press"],
+  "regressions": ["cable lateral raise", "banded press"],
+  "common_faults": ["excessive incline on the seat taking spinal load (use 80–90° angle)", "elbows flared too wide increasing impingement risk", "pressing forward rather than directly overhead"],
+  "substitutions": [
+    { "exercise_id": "overhead-press", "similarity": 0.8, "note": "barbell standing version; higher axial and trunk demand" },
+    { "exercise_id": "push-press", "similarity": 0.65, "note": "leg drive involved; heavier loads possible" }
+  ],
+  "contraindications": ["shoulder impingement provoked by overhead dumbbell pressing"],
+  "resistance_profile": "hardest mid-range; dumbbells allow arc that can offload the shoulder at full extension",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Seated position reduces lumbar demand vs standing OHP. Independent arms allow accommodating shoulder mechanics. SFR heuristic." }
+}

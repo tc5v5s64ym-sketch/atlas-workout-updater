@@ -1,0 +1,28 @@
+{
+  "id": "preacher-curl",
+  "name": "Preacher Curl",
+  "aliases": ["preacher bench curl", "EZ bar preacher curl"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["biceps brachii", "brachialis"],
+  "secondary_muscles": ["brachioradialis"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 4,
+  "joint_stress": { "elbow": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["heavy preacher curl"],
+  "regressions": ["bicep-curl"],
+  "common_faults": ["not reaching full elbow extension at the bottom (loses stretch stimulus)", "heaving the upper body to initiate", "locking out aggressively causing elbow stress"],
+  "substitutions": [
+    { "exercise_id": "bicep-curl", "similarity": 0.6, "note": "standing; allows more load but also more cheating" },
+    { "exercise_id": "hammer-curl", "similarity": 0.55, "note": "neutral grip; more brachialis" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded elbow flexion in the lengthened position"],
+  "resistance_profile": "hardest at the bottom of the range in the lengthened position; pad removes ability to use body momentum",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Preacher bench removes momentum and isolates the elbow flexors. EZ bar reduces wrist supination demand. Good for developing peak contraction and stretch-position loading." }
+}

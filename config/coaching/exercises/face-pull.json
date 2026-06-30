@@ -1,0 +1,28 @@
+{
+  "id": "face-pull",
+  "name": "Face Pull",
+  "aliases": ["cable face pull", "rope face pull"],
+  "movement_pattern": "horizontal_pull",
+  "nsca_class": "assistance",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["posterior deltoid", "mid-trapezius", "rotator cuff (infraspinatus, teres minor)"],
+  "secondary_muscles": ["rhomboids"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 2,
+  "joint_stress": { "shoulder": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["heavier face pull", "band pull-apart"],
+  "regressions": ["band pull-apart"],
+  "common_faults": ["pulling to neck instead of face/forehead", "no external rotation at end range (turning it into a row)", "elbows dropping below shoulder height"],
+  "substitutions": [
+    { "exercise_id": "rear-delt-fly", "similarity": 0.65, "note": "dumbbell isolation; no external rotation emphasis" },
+    { "exercise_id": "cable-row", "similarity": 0.4, "note": "horizontal pull; less rear-delt and external rotation focus" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "constant cable tension; hardest at full external rotation with elbows level with ears",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Commonly prescribed for shoulder health: trains posterior deltoid and external rotators which are underworked in horizontal pressing. SFR heuristic." }
+}

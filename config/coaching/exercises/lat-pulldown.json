@@ -1,0 +1,28 @@
+{
+  "id": "lat-pulldown",
+  "name": "Lat Pulldown",
+  "aliases": ["cable lat pulldown", "wide-grip pulldown"],
+  "movement_pattern": "vertical_pull",
+  "nsca_class": "core",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi", "biceps brachii"],
+  "secondary_muscles": ["mid-back", "posterior deltoid"],
+  "stabilizers": ["scapular stabilizers", "trunk"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "low", "elbow": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["pull-up"],
+  "regressions": ["cable-row"],
+  "common_faults": ["leaning too far back converting to a row", "not reaching full elbow extension at the top", "using momentum with body rock"],
+  "substitutions": [
+    { "exercise_id": "pull-up", "similarity": 0.75, "note": "bodyweight; no load scalability; higher systemic demand" },
+    { "exercise_id": "chin-up", "similarity": 0.7, "note": "supinated grip; greater bicep contribution" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded elbow flexion overhead"],
+  "resistance_profile": "constant cable tension; hardest when arms are overhead; decreases as bar approaches chest",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Scalable alternative to pull-ups. Grip width, attachment, and angle alter lat vs bicep emphasis. SFR heuristic." }
+}

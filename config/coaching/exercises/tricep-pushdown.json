@@ -1,0 +1,28 @@
+{
+  "id": "tricep-pushdown",
+  "name": "Tricep Pushdown",
+  "aliases": ["cable pushdown", "rope pushdown", "tricep cable pushdown"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["triceps brachii"],
+  "secondary_muscles": [],
+  "stabilizers": ["trunk"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "elbow": "low" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["single-arm cable pushdown", "skull-crusher"],
+  "regressions": [],
+  "common_faults": ["elbows moving forward and away from torso reducing isolation", "not reaching full elbow extension at the bottom", "using too much weight with upper-body momentum"],
+  "substitutions": [
+    { "exercise_id": "skull-crusher", "similarity": 0.7, "note": "free weight; long head emphasis; greater overhead stretch" },
+    { "exercise_id": "dip", "similarity": 0.5, "note": "compound; adds chest and front delt demand" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded extension"],
+  "resistance_profile": "constant cable tension; hardest when elbow is at 90° where cable lever is longest relative to forearm",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Cable provides constant tension unlike free-weight pushdowns. Rope attachment allows neutral grip and wrist-friendly ROM. SFR heuristic for tricep isolation." }
+}

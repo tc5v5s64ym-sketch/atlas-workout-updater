@@ -1,0 +1,28 @@
+{
+  "id": "skull-crusher",
+  "name": "Skull Crusher",
+  "aliases": ["lying tricep extension", "EZ bar skull crusher", "French press lying"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["triceps brachii (long head)"],
+  "secondary_muscles": [],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 4,
+  "joint_stress": { "elbow": "moderate", "shoulder": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["close-grip bench press", "dip"],
+  "regressions": ["tricep-pushdown", "overhead tricep extension"],
+  "common_faults": ["bar path going to forehead instead of behind the head", "elbows flaring out wide", "partial ROM not reaching full stretch"],
+  "substitutions": [
+    { "exercise_id": "tricep-pushdown", "similarity": 0.7, "note": "cable version; constant tension; less elbow stress" },
+    { "exercise_id": "dip", "similarity": 0.6, "note": "compound push; adds chest and shoulder demand" }
+  ],
+  "contraindications": ["acute elbow pain aggravated by loaded tricep stretch"],
+  "resistance_profile": "hardest at the bottom with arms angled behind the head (long-head stretch); decreases at lockout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Trains tricep long head in the lengthened position — high local stimulus. EZ bar reduces wrist stress vs straight bar. SFR heuristic." }
+}

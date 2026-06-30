@@ -1,0 +1,28 @@
+{
+  "id": "push-up",
+  "name": "Push-up",
+  "aliases": ["press-up"],
+  "movement_pattern": "horizontal_push",
+  "nsca_class": "core",
+  "implement": "bodyweight",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["pectoralis major", "anterior deltoid", "triceps brachii"],
+  "secondary_muscles": [],
+  "stabilizers": ["trunk", "serratus anterior", "rotator cuff"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "low", "wrist": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["weighted push-up", "archer push-up", "bench-press"],
+  "regressions": ["incline push-up", "knee push-up"],
+  "common_faults": ["hips sagging (core not engaged)", "excessive elbow flare", "partial ROM (not reaching chest to floor)"],
+  "substitutions": [
+    { "exercise_id": "bench-press", "similarity": 0.65, "note": "loaded barbell version; much higher load ceiling" },
+    { "exercise_id": "dumbbell-bench-press", "similarity": 0.6, "note": "loaded dumbbell version with full ROM" }
+  ],
+  "contraindications": ["wrist injury aggravated by extended wrist position (use fist push-ups as alternative)"],
+  "resistance_profile": "hardest at the bottom; constant tension with serratus and rotator cuff stabilization throughout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Excellent bodyweight option. Load ceiling limited without added weight. Serratus anterior activation higher than barbell bench press (scapular protraction at top)." }
+}

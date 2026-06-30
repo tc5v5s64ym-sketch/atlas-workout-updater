@@ -1,0 +1,28 @@
+{
+  "id": "cable-woodchop",
+  "name": "Cable Woodchop",
+  "aliases": ["cable chop", "high-to-low chop", "low-to-high chop"],
+  "movement_pattern": "rotation",
+  "nsca_class": "assistance",
+  "implement": "cable",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["obliques", "transverse abdominis"],
+  "secondary_muscles": ["gluteus medius", "spinal erectors"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 2,
+  "joint_stress": { "shoulder": "low", "spine": "moderate" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["heavier cable woodchop", "med ball rotational throw"],
+  "regressions": ["pallof-press"],
+  "common_faults": ["pulling with the arms rather than rotating through the trunk", "bending forward at the waist", "not rotating through the hips — just the spine"],
+  "substitutions": [
+    { "exercise_id": "pallof-press", "similarity": 0.5, "note": "anti-rotation; static; different demand" },
+    { "exercise_id": "plank", "similarity": 0.3, "note": "anti-extension; no rotation" }
+  ],
+  "contraindications": ["acute spinal disc injury aggravated by rotation under load"],
+  "resistance_profile": "constant cable tension through the rotational arc; hardest at the start when cable is most perpendicular to the movement",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Trains triplanar trunk rotation in a controlled, loaded manner. High-to-low and low-to-high variants target different oblique angles. SFR heuristic." }
+}

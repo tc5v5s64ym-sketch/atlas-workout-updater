@@ -1,0 +1,28 @@
+{
+  "id": "push-press",
+  "name": "Push Press",
+  "aliases": ["barbell push press"],
+  "movement_pattern": "vertical_push",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["anterior deltoid", "triceps brachii", "quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["lateral deltoid", "upper trapezius"],
+  "stabilizers": ["trunk", "rotator cuff"],
+  "systemic_fatigue": 4,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "moderate", "knee": "low" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["jerk", "strict overhead press with heavier load"],
+  "regressions": ["overhead-press", "seated-dumbbell-shoulder-press"],
+  "common_faults": ["forward lean at the dip phase", "dipping too deep losing bar control", "early elbow bend before leg drive transfers"],
+  "substitutions": [
+    { "exercise_id": "overhead-press", "similarity": 0.75, "note": "strict press; no leg drive; lower load ceiling" },
+    { "exercise_id": "seated-dumbbell-shoulder-press", "similarity": 0.65, "note": "no leg drive; less systemic demand" }
+  ],
+  "contraindications": ["knee injury aggravated by the dip phase", "shoulder impingement under loaded overhead position"],
+  "resistance_profile": "leg drive initiates the press; resistance hardest through the mid-range once leg momentum transfers",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Whole-body explosive press. Allows heavier loads overhead than strict press. Higher systemic fatigue than strict due to full-body involvement. SFR heuristic." }
+}

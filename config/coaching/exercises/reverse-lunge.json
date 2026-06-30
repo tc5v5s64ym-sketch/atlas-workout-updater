@@ -1,0 +1,28 @@
+{
+  "id": "reverse-lunge",
+  "name": "Reverse Lunge",
+  "aliases": ["step-back lunge", "dumbbell reverse lunge"],
+  "movement_pattern": "lunge",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["walking-lunge", "bulgarian-split-squat"],
+  "regressions": ["step-up"],
+  "common_faults": ["front knee caving inward", "short step reducing ROM", "excessive forward trunk lean"],
+  "substitutions": [
+    { "exercise_id": "walking-lunge", "similarity": 0.85, "note": "dynamic forward stepping; more balance demand" },
+    { "exercise_id": "step-up", "similarity": 0.65, "note": "concentric emphasis; no eccentric lunge demand" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest at the bottom; less anterior knee shear than forward lunge",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Stepping back reduces anterior knee shear vs forward lunge; generally better tolerated by knee-sensitive athletes." }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "chin-up",
+  "name": "Chin-up",
+  "aliases": ["supinated grip pull-up", "underhand pull-up"],
+  "movement_pattern": "vertical_pull",
+  "nsca_class": "core",
+  "implement": "bodyweight",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi", "biceps brachii"],
+  "secondary_muscles": ["mid-back", "posterior deltoid"],
+  "stabilizers": ["scapular stabilizers", "grip", "trunk"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "moderate", "elbow": "moderate" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["weighted chin-up"],
+  "regressions": ["band-assisted chin-up", "lat-pulldown"],
+  "common_faults": ["partial ROM not reaching chin over bar", "kipping when strict is the goal", "no scapular engagement at the bottom"],
+  "substitutions": [
+    { "exercise_id": "pull-up", "similarity": 0.85, "note": "pronated grip; less bicep emphasis; more lat dominant" },
+    { "exercise_id": "lat-pulldown", "similarity": 0.7, "note": "cable version; scalable load" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded supinated elbow flexion"],
+  "resistance_profile": "hardest at the bottom (dead hang to chin-over-bar); supinated grip increases bicep leverage",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Greater bicep brachii contribution than pronated pull-up due to supination. Generally easier than pull-up for most people due to bicep assistance. SFR heuristic." }
+}

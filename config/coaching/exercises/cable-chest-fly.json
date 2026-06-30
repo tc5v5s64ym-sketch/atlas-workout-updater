@@ -1,0 +1,28 @@
+{
+  "id": "cable-chest-fly",
+  "name": "Cable Chest Fly",
+  "aliases": ["cable crossover", "cable fly"],
+  "movement_pattern": "horizontal_push",
+  "nsca_class": "assistance",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["pectoralis major"],
+  "secondary_muscles": ["anterior deltoid"],
+  "stabilizers": ["rotator cuff"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["bench-press"],
+  "regressions": [],
+  "common_faults": ["too much weight causing excessive elbow bend", "shoulder internal rotation at end ROM", "losing the arc and turning it into a press"],
+  "substitutions": [
+    { "exercise_id": "bench-press", "similarity": 0.5, "note": "compound version; adds tricep and front delt" },
+    { "exercise_id": "dumbbell-bench-press", "similarity": 0.5, "note": "wider ROM than barbell; adds pressing muscles" }
+  ],
+  "contraindications": ["shoulder impingement provoked by adduction across midline"],
+  "resistance_profile": "constant cable tension provides resistance throughout the arc, unlike dumbbells (which peak at the bottom)",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Cable provides constant tension through ROM unlike dumbbell fly. Isolation exercise with limited systemic demand. Adjust cable height to target different pec regions." }
+}
