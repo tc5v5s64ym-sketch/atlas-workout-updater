@@ -77,6 +77,9 @@ function targetWeightForRIR(e1rm, targetReps, targetRIR) {
 
 // RPE variant of targetWeightForRIR.
 function targetWeightForRPE(e1rm, targetReps, targetRPE) {
+  if (typeof targetRPE !== 'number' || !isFinite(targetRPE) || targetRPE < MIN_RPE || targetRPE > MAX_RPE) {
+    throw new RangeError(`targetRPE must be ${MIN_RPE}–${MAX_RPE}`);
+  }
   return targetWeightForRIR(e1rm, targetReps, 10 - targetRPE);
 }
 

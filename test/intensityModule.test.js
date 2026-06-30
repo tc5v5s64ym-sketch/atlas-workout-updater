@@ -146,6 +146,13 @@ test('targetWeightForRPE: RPE 8 at 5 reps matches RIR 2 at 5 reps', () => {
   assert.strictEqual(byRPE, byRIR);
 });
 
+test('targetWeightForRPE: throws with a clear RPE-specific message on out-of-range RPE', () => {
+  assert.throws(
+    () => targetWeightForRPE(200, 5, 5),
+    (err) => err instanceof RangeError && /targetRPE/.test(err.message)
+  );
+});
+
 // --- estimateRIR ---
 
 test('estimateRIR: 100lb × 10 reps with e1RM 133.33 → RIR 0', () => {
