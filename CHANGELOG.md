@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added — EvidenceTiersModule: read-only access to the knowledge-trustworthiness ranking (Brian PR 10)
+
+New read-only module `services/evidenceTiersModule.js` — pure lookup functions over `config/coaching/evidence-tiers.json`:
+
+- `getAllTiers()` — all 5 tier records in config order (defensive `.slice()` copy); each carries `tier` (1–5), `name`, `examples[]`, `best_for`, `caution`
+- `getTier(tierNumber)` — single tier record by integer tier number (1–5), or null; returns null for non-integer, out-of-range, or non-number inputs
+- `getExcluded()` — `{ description, examples[] }` — sources to down-weight or exclude (anecdote, influencer marketing, single-study sensationalism, supplement-company claims)
+
+Tier ranking: 1 = consensus statements & position stands (ACSM/NSCA/ISSN/IOC) → 5 = evidence-based practitioners/orgs (RP/SBS/MASS/3DMJ). Tier 1 is the safest default; tier 5 heuristics are flagged as models, not validated measurements.
+
+Loads lazily on first call; `_resetForTesting()` clears the cache between test files.
+
+New test `test/evidenceTiersModule.test.js` — 21 tests covering all exports, all 5 tier numbers, required schema fields (tier/name/examples/best_for/caution), tier content spot-checks (tier 1 → ACSM/NSCA, tier 2 → systematic reviews/meta-analyses, tier 5 → practitioners/RP), ascending tier order, mutation guard, non-integer/non-number/out-of-range → null, excluded examples including "anecdote", and cross-function consistency.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — MovementPatternsModule: queryable index over the movement-pattern taxonomy (Brian PR 9)
 
 New read-only module `services/movementPatternsModule.js` — pure lookup functions over `config/coaching/movement-patterns/patterns.json`:
