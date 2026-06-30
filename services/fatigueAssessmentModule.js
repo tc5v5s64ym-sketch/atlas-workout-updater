@@ -67,7 +67,7 @@ function assessRecovery(muscleCategory, hoursSinceLastSession) {
     hoursLeft = minHours - hoursSinceLastSession;
   }
 
-  return { status, hoursLeft, recoveryWindow: window };
+  return { status, hoursLeft, recoveryWindow: [minHours, maxHours] };
 }
 
 // Score composite readiness from raw 0–10 input values.
