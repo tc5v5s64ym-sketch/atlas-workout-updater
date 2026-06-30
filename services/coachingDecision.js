@@ -189,7 +189,12 @@ function validateCoachingDecision(decision) {
     errors.push('ask/answer integrity: status==needs_clarification ⟺ decision_type==clarification_needed ⟺ missing_info non-empty ⟺ action==ask must all agree');
   }
 
-  // Rule 4 — trust contract: every prescribed number must appear in explanation_inputs
+  // Rule 4 — trust contract: every prescribed number must appear in explanation_inputs.
+  // NOTE: this is a VALUE-based floor (the number appears somewhere in explanation_inputs),
+  // not KEY-aware ("this number was emitted under a prescription key"). A small integer like
+  // target_rir:2 will usually find an incidental match, so do NOT over-trust it. It still
+  // catches the dangerous case — a prescribed number absent everywhere. Key-aware matching is
+  // filed in BACKLOG to land BEFORE the orchestrator wires a real number to the LLM (PR-5).
   const explained = _collectNumbers(decision.explanation_inputs, new Set());
   for (const n of _prescribedNumbers(dt, decision.payload, c)) {
     if (!explained.has(n)) {
