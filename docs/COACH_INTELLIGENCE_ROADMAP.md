@@ -45,7 +45,7 @@
 |---|---|---|---|---|
 | 7 | Starter program templates (state machines) | Opus | ✅ shipped | `config/coaching/programs/stronglifts-5x5.json` + `config/coaching/programs/gzclp.json` + `services/starterProgramModule.js`; 56 tests. `buildNextSession(programId, state)` → full session prescription (sets/reps/targetWeight/tier/progressionNote). |
 | 8 | ProgressionModule (double progression + beginner LP) | Opus | ✅ shipped | `services/progressionRulesModule.js` + `services/progressionModule.js`; decision table tested |
-| 9 | Cold-start onboarding flow | Opus | ⚠️ partial | `services/onboardingState.js` (PR-O1) + `services/onboardingSessionPlan.js` (PR-O2) shipped. Full questionnaire → template assignment flow not yet wired end-to-end. Depends on PR 5, PR 7, PR 8. |
+| 9 | Cold-start onboarding flow | Opus | ✅ shipped | `services/onboardingState.js` (PR-O1) + `services/onboardingSessionPlan.js` (PR-O2) + `services/onboardingRouter.js` (PR-O5) shipped. `routeOnboarding(params)` routes questionnaire answers (goalId, trainingLevel, availableEquipment, daysPerWeek, logEntries) to cold-start calibration, beginner LP, 5/3/1, block, or DUP assignment. 59 tests. Voice gate (PR-O3) shipped. UX wiring (PR-O4: frontend banner + live producer wiring) deferred to owner direction. Depends on PR 5, PR 7, PR 8. |
 | 10 | Thin LLM explanation layer (v1) | Opus | ⚠️ partial | `services/coach.js` + coach endpoints exist but were built independently of the Brian engine interface. A formal `getNextWorkout / getProgressionDecision / getVolumeStatus / checkSafety` function-calling interface exposing the Brian engine has not been wired. Depends on PR 5, PR 8. |
 
 ---
@@ -102,15 +102,15 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 ## What's next
 
-**Current position: Phase 4 complete through PR 19; PR 17 and PR 22 shipped.**
+**Current position: Phase 4 complete through PR 19; PR 9, PR 17 and PR 22 shipped.**
 
-Shipped: PR 1–8, PR 11–15, PR 17–19, PR 22 (fully). Partial: PR 9, PR 10, PR 16.
+Shipped: PR 1–9, PR 11–15, PR 17–19, PR 22 (fully). Partial: PR 10, PR 16.
 Not started: PR 20, PR 21, PR 23, PR 24.
 
 **Immediate next candidates** (dependency-safe):
 
-1. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
-2. **PR 20 — NutritionModule** (depends on PR 1 ✅, PR 19 ✅ — all done). Fully unblocked.
+1. **PR 20 — NutritionModule** (depends on PR 1 ✅, PR 19 ✅ — all done). Blocked by CLAUDE.md "What not to build: Nutrition tracking" — needs owner direction to unblock.
+2. **PR 10 — Thin LLM explanation layer (complete)** (depends on PR 5 ✅, PR 8 ✅ — all done). `services/coach.js` + coach endpoints exist; formal `getNextWorkout / getProgressionDecision / getVolumeStatus / checkSafety` function-calling interface not yet wired.
 
 ---
 
