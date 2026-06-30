@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — ExerciseLookupModule: queryable index over the exercise ontology (Brian PR 4)
+
+New read-only module `services/exerciseLookupModule.js` — loads `config/coaching/exercises/` once at require time and exposes pure lookup functions:
+
+- `getExerciseById(id)` — full exercise record or null
+- `hasExercise(id)` — boolean existence check
+- `getAllExercises()` — all 52 exercises
+- `getExercisesByMovementPattern(pattern)` — filtered by movement pattern
+- `getExercisesByMuscle(muscleName)` — case-insensitive, covers primary + secondary muscles, no duplicates
+- `getMovementPatterns()` — distinct patterns present in the catalog
+
+Catalog is indexed once (lazy on first call) and cached in-process. `_resetForTesting()` clears the cache between test files.
+
+New test `test/exerciseLookupModule.test.js` — 26 tests covering all exports, edge cases (null/empty/non-string inputs), completeness checks (52 exercises, 11 patterns), and catalog integrity (pattern sums, every exercise reachable by pattern).
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — IntensityModule: e1RM + RIR/%1RM read-only engine (Brian PR 3)
 
 New pure read-only module `services/intensityModule.js` centralizing intensity calculations for the Coach Intelligence Layer:
