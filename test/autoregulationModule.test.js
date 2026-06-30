@@ -392,3 +392,18 @@ test('autoregulateLoad: lift code matching case-insensitive in e1RM lookup', () 
   assert.equal(r.e1rm, 216);
   assert.equal(r.basis, 'e1rm_derived');
 });
+
+test('autoregulateLoad: effectiveRIR clamped to 4 — e1rm_derived even at targetRIR=3 + low readiness', () => {
+  // targetRIR=3, low readiness (+2) would give effectiveRIR=5 which exceeds MAX_RIR=4.
+  // Clamping to 4 should still yield a valid e1rm_derived result, not a null fallback.
+  const rows = [entry({ weight: 180, reps: 5, rir: 1 })];  // e1RM=216
+  const r = autoregulateLoad({
+    liftCode: 'SQUAT', logEntries: rows,
+    targetReps: 5, targetRIR: 3,
+    readinessInputs: { sleep: 3, soreness: 9, stress: 9, motivation: 2 }, // low → +2
+  });
+  assert.equal(r.effectiveRIR, 4, 'effectiveRIR should be clamped to 4');
+  assert.equal(r.basis, 'e1rm_derived', 'should still derive weight from e1RM');
+  assert.ok(r.recommendedWeight !== null && r.recommendedWeight > 0,
+    'should produce a non-null weight after clamping');
+});

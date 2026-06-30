@@ -208,7 +208,9 @@ function autoregulateLoad(params) {
     readinessAdjustment = READINESS_RIR_DELTA[readinessTier] ?? 0;
   }
 
-  const effectiveRIR = rir + readinessAdjustment;
+  // Clamp to intensityModule's MAX_RIR (4) so targetWeightForRIR never throws
+  // even when targetRIR + readiness adjustment would exceed the formula limit.
+  const effectiveRIR = Math.min(rir + readinessAdjustment, 4);
 
   // ── 2. Current e1RM ──────────────────────────────────────────────────────
   const e1rm = computeCurrentE1RM(liftCode, logEntries);
