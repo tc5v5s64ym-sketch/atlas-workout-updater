@@ -1,0 +1,28 @@
+{
+  "id": "dip",
+  "name": "Dip",
+  "aliases": ["parallel bar dip", "chest dip", "tricep dip"],
+  "movement_pattern": "horizontal_push",
+  "nsca_class": "core",
+  "implement": "bodyweight",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["pectoralis major (lower/sternal head)", "triceps brachii", "anterior deltoid"],
+  "secondary_muscles": [],
+  "stabilizers": ["rotator cuff", "trunk"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "high", "elbow": "moderate" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["weighted dip"],
+  "regressions": ["push-up", "bench-press"],
+  "common_faults": ["excessive forward lean causing shoulder impingement", "elbow flare", "shrugging into traps"],
+  "substitutions": [
+    { "exercise_id": "bench-press", "similarity": 0.65, "note": "horizontal press; less shoulder risk for most" },
+    { "exercise_id": "push-up", "similarity": 0.6, "note": "similar pattern with lower joint stress" }
+  ],
+  "contraindications": ["shoulder impingement or anterior instability aggravated by shoulder hyperextension", "acute elbow injury"],
+  "resistance_profile": "hardest at the bottom in the stretched position; highest shoulder stress at depth",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Higher shoulder stress than horizontal pressing due to hyperextension at depth. Lean angle determines pec vs tricep emphasis. SFR heuristic." }
+}

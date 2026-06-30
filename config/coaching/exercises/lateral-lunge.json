@@ -1,0 +1,28 @@
+{
+  "id": "lateral-lunge",
+  "name": "Lateral Lunge",
+  "aliases": ["side lunge"],
+  "movement_pattern": "lunge",
+  "nsca_class": "core",
+  "implement": "bodyweight",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["adductors", "gluteus maximus", "quadriceps"],
+  "secondary_muscles": ["hamstrings", "gluteus medius"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "knee": "moderate", "hip": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["dumbbell lateral lunge"],
+  "regressions": [],
+  "common_faults": ["bent-over torso", "knee tracking inward", "insufficient lateral step width"],
+  "substitutions": [
+    { "exercise_id": "walking-lunge", "similarity": 0.5, "note": "sagittal plane; different adductor emphasis" },
+    { "exercise_id": "reverse-lunge", "similarity": 0.5, "note": "sagittal plane; less adductor demand" }
+  ],
+  "contraindications": ["acute groin or adductor strain"],
+  "resistance_profile": "hardest at the bottom of the lateral step; adductor stretch at end ROM",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "medium", "contested": false, "notes": "Frontal-plane lunge variant; addresses adductor length and hip mobility. Research on loading optimization limited compared to sagittal lunges." }
+}

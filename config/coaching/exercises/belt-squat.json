@@ -1,0 +1,28 @@
+{
+  "id": "belt-squat",
+  "name": "Belt Squat",
+  "aliases": ["belt squat machine", "chain belt squat"],
+  "movement_pattern": "squat",
+  "nsca_class": "core",
+  "implement": "machine",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["adductors", "hamstrings"],
+  "stabilizers": ["trunk"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "moderate", "low_back": "low" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["back-squat"],
+  "regressions": ["leg-press", "goblet-squat"],
+  "common_faults": ["excessive torso lean", "not reaching target depth", "hips drifting behind center"],
+  "substitutions": [
+    { "exercise_id": "back-squat", "similarity": 0.65, "note": "adds spinal compression; full free-weight demand" },
+    { "exercise_id": "leg-press", "similarity": 0.7, "note": "similarly removes spinal load; less ROM" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest at the bottom; consistent load through ROM with proper platform setup",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Eliminates spinal compression; preferred for athletes with low-back issues who still want squat pattern loading. Requires specific equipment." }
+}

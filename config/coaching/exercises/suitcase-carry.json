@@ -1,0 +1,28 @@
+{
+  "id": "suitcase-carry",
+  "name": "Suitcase Carry",
+  "aliases": ["unilateral farmers carry", "one-arm carry"],
+  "movement_pattern": "carry",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "unilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["obliques", "quadratus lumborum", "trunk stabilizers", "forearm flexors (grip)"],
+  "secondary_muscles": ["trapezius", "spinal erectors"],
+  "stabilizers": ["entire posterior chain", "hip stabilizers"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "low", "hip": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["overhead carry", "heavier suitcase carry"],
+  "regressions": ["farmers-carry"],
+  "common_faults": ["lateral lean toward the load (giving in to the side flexion)", "shoulder shrugging on the loaded side", "looking down at the ground"],
+  "substitutions": [
+    { "exercise_id": "farmers-carry", "similarity": 0.65, "note": "bilateral; less anti-lateral-flexion demand" },
+    { "exercise_id": "pallof-press", "similarity": 0.5, "note": "anti-rotation; trunk stability from a different angle" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "constant anti-lateral-flexion demand on the contralateral oblique and QL throughout the carry",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Unilateral loaded carry. Trains lateral trunk stability and gait under asymmetric load. Spine health benefit via anti-lateral-flexion demand." }
+}

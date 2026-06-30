@@ -1,0 +1,28 @@
+{
+  "id": "incline-bench-press",
+  "name": "Incline Bench Press",
+  "aliases": ["barbell incline press", "incline barbell press"],
+  "movement_pattern": "horizontal_push",
+  "nsca_class": "core",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["pectoralis major (upper/clavicular head)", "anterior deltoid", "triceps brachii"],
+  "secondary_muscles": [],
+  "stabilizers": ["rotator cuff", "latissimus dorsi"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "moderate", "elbow": "low" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["paused incline press", "close-grip incline press"],
+  "regressions": ["dumbbell-bench-press", "push-up"],
+  "common_faults": ["angle too steep (becomes shoulder press at >45°)", "elbows flared too wide increasing shoulder impingement risk", "bar path inconsistent"],
+  "substitutions": [
+    { "exercise_id": "bench-press", "similarity": 0.7, "note": "flat angle; more sternal pec emphasis" },
+    { "exercise_id": "dumbbell-bench-press", "similarity": 0.7, "note": "dumbbell version; greater ROM, less load ceiling" }
+  ],
+  "contraindications": ["shoulder impingement provoked by incline pressing"],
+  "resistance_profile": "hardest off the chest; clavicular pec and anterior delt are the primary movers",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Upper pec emphasis depends on angle (30–45° optimal range). Excessive incline shifts load primarily to anterior deltoid. SFR heuristic." }
+}

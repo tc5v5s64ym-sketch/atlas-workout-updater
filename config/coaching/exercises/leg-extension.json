@@ -1,0 +1,28 @@
+{
+  "id": "leg-extension",
+  "name": "Leg Extension",
+  "aliases": ["knee extension machine"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "machine",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps (rectus femoris, vastus lateralis, vastus medialis, vastus intermedius)"],
+  "secondary_muscles": [],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "high" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["terminal knee extension"],
+  "regressions": [],
+  "common_faults": ["swinging to initiate the rep", "not reaching full knee extension at the top", "excessive ROM at the bottom creating unnecessary joint stress"],
+  "substitutions": [
+    { "exercise_id": "leg-press", "similarity": 0.6, "note": "compound; adds hip drive; lower anterior knee shear" },
+    { "exercise_id": "hack-squat", "similarity": 0.5, "note": "compound squat; full quad stimulus with hip involvement" }
+  ],
+  "contraindications": ["anterior knee pain (patellofemoral syndrome)", "ACL rehabilitation (acute phase — consult physio)"],
+  "resistance_profile": "hardest at full extension where tibia is most perpendicular to resistance; anterior shear force peaks in mid-range",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "medium", "contested": false, "notes": "Anterior shear force on the knee is highest in the mid-range; use with caution in knee-sensitive populations. Some protocols restrict to terminal 30° ROM. Good VMO isolation when feet slightly internally rotated." }
+}

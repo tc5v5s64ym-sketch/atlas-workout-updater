@@ -1,0 +1,28 @@
+{
+  "id": "goblet-squat",
+  "name": "Goblet Squat",
+  "aliases": ["dumbbell goblet squat", "kettlebell goblet squat"],
+  "movement_pattern": "squat",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["adductors"],
+  "stabilizers": ["trunk", "upper back"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 3,
+  "joint_stress": { "knee": "low", "low_back": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["front-squat", "back-squat"],
+  "regressions": ["air squat", "box squat"],
+  "common_faults": ["forward lean", "heel rise", "insufficient depth"],
+  "substitutions": [
+    { "exercise_id": "front-squat", "similarity": 0.7, "note": "barbell version with higher load ceiling" },
+    { "exercise_id": "back-squat", "similarity": 0.6, "note": "higher load, more spinal demand" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest out of the bottom; counterbalance effect aids upright torso",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Excellent teaching tool for squat mechanics. Load ceiling limited by implement." }
+}

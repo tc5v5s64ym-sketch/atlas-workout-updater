@@ -1,0 +1,28 @@
+{
+  "id": "walking-lunge",
+  "name": "Walking Lunge",
+  "aliases": ["dumbbell walking lunge"],
+  "movement_pattern": "lunge",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["bulgarian-split-squat", "barbell walking lunge"],
+  "regressions": ["reverse-lunge", "step-up"],
+  "common_faults": ["knee tracking past toes excessively", "short stride reducing hip ROM", "excessive forward torso lean"],
+  "substitutions": [
+    { "exercise_id": "reverse-lunge", "similarity": 0.85, "note": "stationary; less balance demand" },
+    { "exercise_id": "bulgarian-split-squat", "similarity": 0.7, "note": "rear-foot elevated; greater ROM and stability" }
+  ],
+  "contraindications": ["acute knee injury during dynamic knee flexion"],
+  "resistance_profile": "hardest at the bottom of each step; consistent challenge through the set due to continuous motion",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Dynamic variation adds balance and coordination demand. Good for hypertrophy volume accumulation." }
+}

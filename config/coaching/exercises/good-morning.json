@@ -1,0 +1,28 @@
+{
+  "id": "good-morning",
+  "name": "Good Morning",
+  "aliases": ["barbell good morning"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["hamstrings", "spinal erectors", "gluteus maximus"],
+  "secondary_muscles": ["adductors"],
+  "stabilizers": ["posterior chain", "trunk"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 4,
+  "joint_stress": { "low_back": "high", "knee": "low" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["conventional-deadlift"],
+  "regressions": ["romanian-deadlift"],
+  "common_faults": ["excessive lumbar flexion under load", "bending knees too much (turning it into a squat)", "looking up and overextending cervically"],
+  "substitutions": [
+    { "exercise_id": "romanian-deadlift", "similarity": 0.75, "note": "bar in hands; similar hinge and hamstring demand" },
+    { "exercise_id": "conventional-deadlift", "similarity": 0.6, "note": "bar from floor; less pure hinge emphasis" }
+  ],
+  "contraindications": ["acute low-back injury", "disc-related symptoms provoked by spinal loading"],
+  "resistance_profile": "hardest at the bottom of the hinge; spinal erectors working throughout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Higher low-back stress than RDL due to bar placement on upper back. Useful for posterior-chain and spinal-erector strength but requires conservative loading. SFR heuristic." }
+}

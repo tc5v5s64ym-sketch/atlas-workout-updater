@@ -1,0 +1,27 @@
+{
+  "id": "farmers-carry",
+  "name": "Farmers Carry",
+  "aliases": ["farmer's walk", "farmers walk", "dumbbell carry"],
+  "movement_pattern": "carry",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["forearm flexors (grip)", "trapezius", "trunk stabilizers"],
+  "secondary_muscles": ["quadriceps", "gluteus maximus", "spinal erectors"],
+  "stabilizers": ["entire posterior chain", "hip stabilizers"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "low", "knee": "low" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["heavier farmers carry", "trap bar carry"],
+  "regressions": [],
+  "common_faults": ["letting shoulders drop and round", "excessive lateral sway while walking", "looking at the floor"],
+  "substitutions": [
+    { "exercise_id": "suitcase-carry", "similarity": 0.65, "note": "unilateral; adds anti-lateral-flexion demand" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "constant isometric demand on grip, traps, and trunk throughout the carry distance",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Functional loaded carry. Excellent for grip, trap, and trunk strength under fatigue. Load and distance both scalable variables." }
+}

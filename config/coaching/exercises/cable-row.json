@@ -1,0 +1,28 @@
+{
+  "id": "cable-row",
+  "name": "Cable Row",
+  "aliases": ["seated cable row", "low cable row"],
+  "movement_pattern": "horizontal_pull",
+  "nsca_class": "core",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi", "mid-back", "posterior deltoid"],
+  "secondary_muscles": ["biceps brachii"],
+  "stabilizers": ["trunk"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "low", "elbow": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["barbell-row", "dumbbell-row"],
+  "regressions": ["inverted-row"],
+  "common_faults": ["leaning too far back and using body momentum", "elbows flaring away from torso", "not fully extending at the start (losing lat stretch)"],
+  "substitutions": [
+    { "exercise_id": "barbell-row", "similarity": 0.7, "note": "bilateral free-weight; adds axial and stability demand" },
+    { "exercise_id": "dumbbell-row", "similarity": 0.7, "note": "unilateral dumbbell; greater ROM" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "constant cable tension through full ROM; hardest when elbows are farthest from torso",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Cable provides constant tension unlike barbell row. Seated position removes spinal-erector demand. Handle attachment changes grip width and muscle emphasis." }
+}

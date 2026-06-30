@@ -1,0 +1,28 @@
+{
+  "id": "box-squat",
+  "name": "Box Squat",
+  "aliases": ["squat to box"],
+  "movement_pattern": "squat",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["gluteus maximus", "quadriceps"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": ["spinal erectors", "trunk"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "low", "low_back": "moderate" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["back-squat"],
+  "regressions": ["goblet-squat"],
+  "common_faults": ["rocking forward off box losing tension", "sitting too long on box", "not sitting back enough"],
+  "substitutions": [
+    { "exercise_id": "back-squat", "similarity": 0.75, "note": "no box; requires full depth control" },
+    { "exercise_id": "leg-press", "similarity": 0.5, "note": "removes axial load" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest breaking contact with the box; posterior-chain dominant off the box",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Box height selection changes muscle emphasis. Commonly used as a teaching tool or for depth control. Competition-specific benefits limited to powerlifting. SFR heuristic." }
+}

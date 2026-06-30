@@ -1,0 +1,28 @@
+{
+  "id": "romanian-deadlift",
+  "name": "Romanian Deadlift",
+  "aliases": ["RDL", "barbell RDL"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["hamstrings", "gluteus maximus"],
+  "secondary_muscles": ["spinal erectors", "adductors"],
+  "stabilizers": ["posterior chain", "grip", "trunk"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 5,
+  "joint_stress": { "low_back": "moderate", "knee": "low" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["conventional-deadlift", "deficit deadlift"],
+  "regressions": ["good-morning", "hip-thrust"],
+  "common_faults": ["lumbar flexion (rounding lower back)", "bar drifting forward from body", "bending knees excessively (turning it into a squat)"],
+  "substitutions": [
+    { "exercise_id": "conventional-deadlift", "similarity": 0.7, "note": "starts from floor; greater systemic demand" },
+    { "exercise_id": "hip-thrust", "similarity": 0.6, "note": "removes hinge/hamstring stretch; isolates glute at lockout" }
+  ],
+  "contraindications": ["acute low-back injury", "hamstring strain in loaded lengthened position"],
+  "resistance_profile": "hardest at the bottom of the hinge where hamstring is fully stretched; decreases toward lockout",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Excellent hamstring stimulus in the lengthened position (high SFR for posterior chain). Fatigue ratings heuristic." }
+}

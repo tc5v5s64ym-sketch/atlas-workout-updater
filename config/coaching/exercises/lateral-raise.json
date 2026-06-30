@@ -1,0 +1,28 @@
+{
+  "id": "lateral-raise",
+  "name": "Lateral Raise",
+  "aliases": ["dumbbell lateral raise", "side raise", "lateral deltoid raise"],
+  "movement_pattern": "vertical_push",
+  "nsca_class": "assistance",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["lateral deltoid"],
+  "secondary_muscles": ["anterior deltoid", "rotator cuff"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["cable lateral raise"],
+  "regressions": [],
+  "common_faults": ["using momentum (body swaying)", "shrugging into upper traps at the top", "internal rotation (thumbs down) increasing impingement risk"],
+  "substitutions": [
+    { "exercise_id": "seated-dumbbell-shoulder-press", "similarity": 0.4, "note": "compound shoulder press; less isolated lateral delt" },
+    { "exercise_id": "overhead-press", "similarity": 0.4, "note": "compound; more front delt and tricep" }
+  ],
+  "contraindications": ["shoulder impingement aggravated by abduction arc"],
+  "resistance_profile": "hardest at the top of the arc (90° abduction); minimal resistance at the sides",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Cable variant provides constant tension through arc unlike dumbbell version. Lighter loads than compound presses due to isolation of lateral deltoid. SFR heuristic." }
+}

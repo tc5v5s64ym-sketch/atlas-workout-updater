@@ -1,0 +1,28 @@
+{
+  "id": "sumo-deadlift",
+  "name": "Sumo Deadlift",
+  "aliases": ["wide-stance deadlift"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["gluteus maximus", "adductors", "hamstrings", "spinal erectors"],
+  "secondary_muscles": ["quadriceps", "trapezius"],
+  "stabilizers": ["posterior chain", "grip", "trunk"],
+  "systemic_fatigue": 5,
+  "local_fatigue": 4,
+  "joint_stress": { "low_back": "moderate", "hip": "high" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["paused sumo deadlift", "banded sumo deadlift"],
+  "regressions": ["trap-bar-deadlift", "romanian-deadlift"],
+  "common_faults": ["knees caving inward", "bar drifting forward off legs", "hips shooting up before bar breaks floor"],
+  "substitutions": [
+    { "exercise_id": "conventional-deadlift", "similarity": 0.85, "note": "narrower stance; more low-back and less adductor demand" },
+    { "exercise_id": "trap-bar-deadlift", "similarity": 0.7, "note": "neutral grip; less low-back shear; more quad" }
+  ],
+  "contraindications": ["acute hip injury aggravated by external rotation", "acute groin strain"],
+  "resistance_profile": "hardest off the floor with a shorter bar path than conventional; leverage advantage near lockout",
+  "provenance": { "sources": ["01-science-math-architecture", "02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Greater adductor and hip abductor demand than conventional. Bar path shorter due to upright torso. Systemic fatigue heuristic—similar to conventional at high loads." }
+}

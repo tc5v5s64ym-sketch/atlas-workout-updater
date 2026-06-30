@@ -1,0 +1,28 @@
+{
+  "id": "leg-curl",
+  "name": "Leg Curl",
+  "aliases": ["lying leg curl", "hamstring curl", "seated leg curl"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "machine",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["hamstrings (biceps femoris, semimembranosus, semitendinosus)"],
+  "secondary_muscles": ["gastrocnemius"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "moderate" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["nordic hamstring curl"],
+  "regressions": [],
+  "common_faults": ["hips lifting off the pad during lying leg curl", "not reaching full knee extension at the start", "using momentum to initiate"],
+  "substitutions": [
+    { "exercise_id": "romanian-deadlift", "similarity": 0.6, "note": "compound hinge; more hip involvement; hamstring stretch under load" },
+    { "exercise_id": "good-morning", "similarity": 0.5, "note": "compound; more low-back demand; less knee flexion" }
+  ],
+  "contraindications": ["acute hamstring strain in the shortened position (lying curl)"],
+  "resistance_profile": "hardest mid-range at approximately 90° knee flexion; gastrocnemius assists less as knee flexes",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Isolated hamstring curl. Seated variant may have greater hamstring activation due to hip flexion increasing stretch. Nordic curl is significantly harder and highly effective." }
+}

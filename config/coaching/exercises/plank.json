@@ -1,0 +1,27 @@
+{
+  "id": "plank",
+  "name": "Plank",
+  "aliases": ["front plank", "prone plank", "forearm plank"],
+  "movement_pattern": "anti_rotation",
+  "nsca_class": "assistance",
+  "implement": "bodyweight",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["transverse abdominis", "rectus abdominis", "obliques"],
+  "secondary_muscles": ["spinal erectors", "gluteus maximus"],
+  "stabilizers": ["shoulder girdle"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 2,
+  "joint_stress": { "shoulder": "low", "wrist": "low" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["plank with shoulder taps", "RKC plank", "single-leg plank"],
+  "regressions": ["knee plank"],
+  "common_faults": ["hips sagging (most common)", "hips too high (piking)", "not bracing the core — passive hanging rather than active tension"],
+  "substitutions": [
+    { "exercise_id": "pallof-press", "similarity": 0.5, "note": "anti-rotation; cable-loaded; more specific trunk stimulus" }
+  ],
+  "contraindications": ["wrist injury — use forearm plank variant"],
+  "resistance_profile": "isometric throughout; difficulty increases with duration or added instability",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "medium", "contested": false, "notes": "Foundational anti-extension exercise. Duration is the primary progression variable at bodyweight. RKC plank (max tension) is more demanding than passive hold." }
+}

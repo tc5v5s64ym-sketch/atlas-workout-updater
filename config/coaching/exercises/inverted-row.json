@@ -1,0 +1,28 @@
+{
+  "id": "inverted-row",
+  "name": "Inverted Row",
+  "aliases": ["body row", "Australian pull-up", "TRX row"],
+  "movement_pattern": "horizontal_pull",
+  "nsca_class": "core",
+  "implement": "bodyweight",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi", "mid-back", "posterior deltoid"],
+  "secondary_muscles": ["biceps brachii"],
+  "stabilizers": ["trunk"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "low", "elbow": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["weighted inverted row", "pull-up"],
+  "regressions": ["cable-row"],
+  "common_faults": ["hips sagging (core not engaged)", "partial ROM not reaching chest to bar", "feet too close making it too easy"],
+  "substitutions": [
+    { "exercise_id": "cable-row", "similarity": 0.65, "note": "seated; adjustable load; similar muscle emphasis" },
+    { "exercise_id": "pull-up", "similarity": 0.6, "note": "vertical pull; higher skill and load demand" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "harder with body more horizontal (feet elevated or lower bar); easier with more upright angle",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Excellent regression for pull-ups. Load adjustable via body angle. Can be progressed with feet elevated or weighted vest. SFR heuristic." }
+}

@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added — Exercise ontology expansion: 4 → 52 exercises (PR 2)
+
+Expanded `config/coaching/exercises/` from the 4 seed exercises to a full 52-exercise ontology covering all 12 movement patterns. Each entry carries `id`, `name`, `movement_pattern`, `implement`, `laterality`, `loading_axis`, `primary_muscles`, `provenance`, plus rich optional fields (`secondary_muscles`, `stabilizers`, `systemic_fatigue`, `local_fatigue`, `joint_stress`, `technical_complexity`, `stimulus_to_fatigue`, `progressions`, `regressions`, `common_faults`, `substitutions`, `contraindications`, `resistance_profile`).
+
+**48 new exercise files:**
+
+*Squat (6):* `front-squat`, `goblet-squat`, `leg-press`, `hack-squat`, `box-squat`, `belt-squat`
+*Hinge (6):* `romanian-deadlift`, `sumo-deadlift`, `trap-bar-deadlift`, `hip-thrust`, `good-morning`, `kettlebell-swing`
+*Lunge (5):* `bulgarian-split-squat`, `walking-lunge`, `reverse-lunge`, `step-up`, `lateral-lunge`
+*Horizontal Push (5):* `dumbbell-bench-press`, `incline-bench-press`, `push-up`, `dip`, `cable-chest-fly`
+*Vertical Push (4):* `overhead-press`, `seated-dumbbell-shoulder-press`, `push-press`, `lateral-raise`
+*Horizontal Pull (5):* `barbell-row`, `dumbbell-row`, `cable-row`, `face-pull`, `inverted-row`
+*Vertical Pull (3):* `lat-pulldown`, `chin-up`, `cable-pull-over`
+*Carry (2):* `farmers-carry`, `suitcase-carry`
+*Anti-rotation (2):* `pallof-press`, `plank`
+*Rotation (1):* `cable-woodchop`
+*Isolation (9):* `bicep-curl`, `hammer-curl`, `tricep-pushdown`, `skull-crusher`, `leg-curl`, `leg-extension`, `calf-raise`, `rear-delt-fly`, `preacher-curl`
+
+**`config/coaching/exercises/_index.json`** — updated to 52 entries, `_meta.status` set to `"active"`.
+
+**`test/coachingIntelligence.test.js`** — expanded `EXERCISE_IDS` to all 52 exercises; added 9th test (`exercise _index.json: every indexed id has a corresponding file`) for bidirectional index/file integrity. All 9 tests pass.
+
+**Static data + docs only. No module consumes any config. No behavior, no LLM wiring, no Sheets/user-data access.**
+
+Dangling `substitutions`/`progressions`/`regressions` refs resolved for: `front-squat`, `belt-squat`, `leg-press`, `romanian-deadlift`, `trap-bar-deadlift`, `lat-pulldown`. One remaining dangling ref in `bench-press.json` (`machine-chest-press`) — filed in BACKLOG.
+
+---
+
 ### Added — Coach Intelligence Layer scaffold (PR 1)
 
 Added `docs/research/coaching-intelligence/` and `config/coaching/` trees:

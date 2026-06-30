@@ -1,0 +1,28 @@
+{
+  "id": "kettlebell-swing",
+  "name": "Kettlebell Swing",
+  "aliases": ["KB swing", "two-hand swing"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core",
+  "implement": "kettlebell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["gluteus maximus", "hamstrings"],
+  "secondary_muscles": ["spinal erectors", "shoulder girdle"],
+  "stabilizers": ["trunk", "posterior chain"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 3,
+  "joint_stress": { "low_back": "moderate", "shoulder": "low" },
+  "technical_complexity": 3,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["heavy kettlebell swing", "single-arm kettlebell swing"],
+  "regressions": ["romanian-deadlift", "hip-thrust"],
+  "common_faults": ["squatting the swing instead of hinging", "arm-pulling at the top (should be hip-powered)", "rounding lumbar at the bottom"],
+  "substitutions": [
+    { "exercise_id": "romanian-deadlift", "similarity": 0.6, "note": "slow hinge; no ballistic component" },
+    { "exercise_id": "hip-thrust", "similarity": 0.55, "note": "glute-dominant hinge; non-ballistic" }
+  ],
+  "contraindications": ["acute low-back injury during ballistic loading"],
+  "resistance_profile": "ballistic; highest acceleration demand at the bottom of the hinge into the float phase",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Ballistic hip-extension exercise. Posterior-chain conditioning with cardiovascular demand at higher rep ranges. Technique-sensitive; coaching the hinge vs squat pattern is critical. SFR heuristic." }
+}

@@ -8,7 +8,21 @@ const COACHING_DIR = path.join(__dirname, '..', 'config', 'coaching');
 const EXERCISES_DIR = path.join(COACHING_DIR, 'exercises');
 const RULES_DIR = path.join(COACHING_DIR, 'rules');
 
-const EXERCISE_IDS = ['back-squat', 'conventional-deadlift', 'bench-press', 'pull-up'];
+const EXERCISE_IDS = [
+  'back-squat', 'front-squat', 'goblet-squat', 'leg-press', 'hack-squat', 'box-squat', 'belt-squat',
+  'conventional-deadlift', 'romanian-deadlift', 'sumo-deadlift', 'trap-bar-deadlift', 'hip-thrust',
+  'good-morning', 'kettlebell-swing',
+  'bulgarian-split-squat', 'walking-lunge', 'reverse-lunge', 'step-up', 'lateral-lunge',
+  'bench-press', 'dumbbell-bench-press', 'incline-bench-press', 'push-up', 'dip', 'cable-chest-fly',
+  'overhead-press', 'seated-dumbbell-shoulder-press', 'push-press', 'lateral-raise',
+  'barbell-row', 'dumbbell-row', 'cable-row', 'face-pull', 'inverted-row',
+  'pull-up', 'lat-pulldown', 'chin-up', 'cable-pull-over',
+  'farmers-carry', 'suitcase-carry',
+  'pallof-press', 'plank',
+  'cable-woodchop',
+  'bicep-curl', 'hammer-curl', 'tricep-pushdown', 'skull-crusher',
+  'leg-curl', 'leg-extension', 'calf-raise', 'rear-delt-fly', 'preacher-curl'
+];
 
 const EXERCISE_REQUIRED = ['id', 'name', 'movement_pattern', 'implement', 'primary_muscles', 'provenance'];
 const PROVENANCE_REQUIRED = ['sources', 'evidence_tier', 'confidence', 'contested'];
@@ -83,6 +97,16 @@ test('exercise _index.json lists all seeded exercise IDs', () => {
   const indexedIds = new Set(index.exercises.map(e => e.id));
   for (const id of EXERCISE_IDS) {
     assert.ok(indexedIds.has(id), `_index.json is missing exercise id: ${id}`);
+  }
+});
+
+test('exercise _index.json: every indexed id has a corresponding file', () => {
+  const index = require(path.join(EXERCISES_DIR, '_index.json'));
+  const fs = require('node:fs');
+  for (const entry of index.exercises) {
+    const filePath = path.join(EXERCISES_DIR, entry.file);
+    assert.ok(fs.existsSync(filePath), `_index.json references file that does not exist: ${entry.file}`);
+    assert.strictEqual(entry.id, path.basename(entry.file, '.json'), `_index.json entry id '${entry.id}' does not match filename '${entry.file}'`);
   }
 });
 

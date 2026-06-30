@@ -1,0 +1,28 @@
+{
+  "id": "rear-delt-fly",
+  "name": "Rear Delt Fly",
+  "aliases": ["reverse fly", "bent-over rear delt fly", "dumbbell rear delt raise"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["posterior deltoid"],
+  "secondary_muscles": ["mid-trapezius", "rhomboids"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 2,
+  "joint_stress": { "shoulder": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["face-pull", "cable rear-delt fly"],
+  "regressions": [],
+  "common_faults": ["using momentum and swinging the upper body", "elbows too straight (increases rotator cuff stress)", "not retracting scapulae at the top"],
+  "substitutions": [
+    { "exercise_id": "face-pull", "similarity": 0.65, "note": "cable version; adds external rotation; better constant tension" },
+    { "exercise_id": "cable-row", "similarity": 0.4, "note": "horizontal pull; less rear-delt isolation" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest at the top of the arc (90° abduction); minimal resistance at the starting position",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Rear delt is commonly underdeveloped relative to front delt in pressing-dominant programs. Light load, high control. Cable version provides more consistent tension. SFR heuristic." }
+}

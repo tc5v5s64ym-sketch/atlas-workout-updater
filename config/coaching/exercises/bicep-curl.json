@@ -1,0 +1,28 @@
+{
+  "id": "bicep-curl",
+  "name": "Bicep Curl",
+  "aliases": ["dumbbell bicep curl", "alternating dumbbell curl", "barbell curl"],
+  "movement_pattern": "isolation",
+  "nsca_class": "assistance",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["biceps brachii"],
+  "secondary_muscles": ["brachialis", "brachioradialis"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "elbow": "low" },
+  "technical_complexity": 1,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["barbell curl", "incline dumbbell curl"],
+  "regressions": [],
+  "common_faults": ["swinging the torso to initiate the rep", "partial ROM not reaching full elbow extension at the bottom", "elbows moving forward at the top reducing bicep tension"],
+  "substitutions": [
+    { "exercise_id": "hammer-curl", "similarity": 0.7, "note": "neutral grip; more brachialis emphasis" },
+    { "exercise_id": "preacher-curl", "similarity": 0.6, "note": "eliminates cheating; harder at the bottom of the range" }
+  ],
+  "contraindications": ["elbow tendinopathy aggravated by loaded elbow flexion"],
+  "resistance_profile": "hardest at 90° elbow flexion where dumbbell lever is longest; easier at full flexion and full extension",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Standard elbow flexion isolation. Supinated grip maximizes bicep brachii contribution. SFR high for a direct bicep exercise — local stimulus with minimal systemic cost." }
+}

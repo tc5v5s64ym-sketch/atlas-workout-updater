@@ -1,0 +1,28 @@
+{
+  "id": "step-up",
+  "name": "Step-up",
+  "aliases": ["dumbbell step-up", "box step-up"],
+  "movement_pattern": "lunge",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "knee": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["reverse-lunge", "bulgarian-split-squat"],
+  "regressions": [],
+  "common_faults": ["pushing off rear foot instead of driving through front leg", "hip drop on standing leg", "uncontrolled descent"],
+  "substitutions": [
+    { "exercise_id": "reverse-lunge", "similarity": 0.65, "note": "adds eccentric demand and balance challenge" },
+    { "exercise_id": "walking-lunge", "similarity": 0.6, "note": "dynamic bilateral-to-unilateral pattern" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest initiating from the bottom; box height determines ROM",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Concentric-dominant at typical box heights. Useful as a regression or for unilateral quad/glute work with minimal joint stress." }
+}

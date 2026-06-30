@@ -1,0 +1,28 @@
+{
+  "id": "cable-pull-over",
+  "name": "Cable Pull-over",
+  "aliases": ["straight-arm pulldown", "cable straight-arm pull-over"],
+  "movement_pattern": "vertical_pull",
+  "nsca_class": "assistance",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi"],
+  "secondary_muscles": ["teres major", "long head triceps brachii"],
+  "stabilizers": ["trunk"],
+  "systemic_fatigue": 1,
+  "local_fatigue": 3,
+  "joint_stress": { "shoulder": "moderate", "elbow": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["lat-pulldown", "pull-up"],
+  "regressions": [],
+  "common_faults": ["bending the elbows excessively (turning it into a pulldown)", "not achieving full lat stretch overhead", "using too much weight and losing form"],
+  "substitutions": [
+    { "exercise_id": "lat-pulldown", "similarity": 0.6, "note": "compound version; adds bicep demand" },
+    { "exercise_id": "pull-up", "similarity": 0.55, "note": "compound bodyweight; full vertical pull pattern" }
+  ],
+  "contraindications": ["shoulder instability aggravated by overhead reaching under load"],
+  "resistance_profile": "constant cable tension; hardest with arms overhead at stretch; decreases as arms pull to hips",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Isolation exercise for lats with minimal bicep involvement. Cable provides constant tension unlike dumbbell pull-over. Good lat finisher after compound pulling. SFR heuristic." }
+}

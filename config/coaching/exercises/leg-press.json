@@ -1,0 +1,28 @@
+{
+  "id": "leg-press",
+  "name": "Leg Press",
+  "aliases": ["45-degree leg press", "horizontal leg press"],
+  "movement_pattern": "squat",
+  "nsca_class": "core",
+  "implement": "machine",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": [],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "knee": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["back-squat"],
+  "regressions": [],
+  "common_faults": ["feet too low causing excessive knee shear", "knee valgus", "lifting glutes off seat at depth"],
+  "substitutions": [
+    { "exercise_id": "hack-squat", "similarity": 0.75, "note": "greater ROM and stability demand" },
+    { "exercise_id": "back-squat", "similarity": 0.6, "note": "adds axial load and full-body stability demand" }
+  ],
+  "contraindications": ["acute knee injury during loaded knee flexion"],
+  "resistance_profile": "hardest at the bottom; leverage improves toward lockout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Removes axial/spinal load; useful for quad volume with back issues. Foot placement significantly alters muscle emphasis." }
+}

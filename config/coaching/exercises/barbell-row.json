@@ -1,0 +1,28 @@
+{
+  "id": "barbell-row",
+  "name": "Barbell Row",
+  "aliases": ["bent-over row", "barbell bent-over row", "Pendlay row"],
+  "movement_pattern": "horizontal_pull",
+  "nsca_class": "core_structural",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "axial",
+  "primary_muscles": ["latissimus dorsi", "mid-back (rhomboids, trapezius)", "posterior deltoid"],
+  "secondary_muscles": ["biceps brachii", "rear deltoid"],
+  "stabilizers": ["spinal erectors", "trunk", "grip"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 4,
+  "joint_stress": { "low_back": "moderate", "elbow": "low" },
+  "technical_complexity": 4,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["Pendlay row", "paused row"],
+  "regressions": ["dumbbell-row", "cable-row", "inverted-row"],
+  "common_faults": ["excessive torso movement (turning it into a hip-hinge swing)", "bar path inconsistent", "hips too high reducing horizontal pull angle"],
+  "substitutions": [
+    { "exercise_id": "dumbbell-row", "similarity": 0.8, "note": "unilateral; removes axial demand; better scapular ROM" },
+    { "exercise_id": "cable-row", "similarity": 0.7, "note": "seated; no spinal load; constant cable tension" }
+  ],
+  "contraindications": ["acute low-back injury during bent-over loading"],
+  "resistance_profile": "hardest at the start of the pull (elbows farthest from torso); decreases at full retraction",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Spinal erectors work isometrically to maintain hinge position. Pendlay variant starts from floor each rep (reduces momentum). SFR heuristic." }
+}

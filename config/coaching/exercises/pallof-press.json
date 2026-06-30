@@ -1,0 +1,28 @@
+{
+  "id": "pallof-press",
+  "name": "Pallof Press",
+  "aliases": ["anti-rotation press", "cable anti-rotation press"],
+  "movement_pattern": "anti_rotation",
+  "nsca_class": "assistance",
+  "implement": "cable",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["obliques", "transverse abdominis"],
+  "secondary_muscles": ["spinal erectors", "gluteus medius"],
+  "stabilizers": [],
+  "systemic_fatigue": 1,
+  "local_fatigue": 2,
+  "joint_stress": { "shoulder": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "medium",
+  "progressions": ["overhead Pallof press", "Pallof press with rotation"],
+  "regressions": ["band Pallof press"],
+  "common_faults": ["rotating at the torso when pressing (defeating the purpose)", "not maintaining neutral spine", "standing too far from the cable (too hard) or too close (too easy)"],
+  "substitutions": [
+    { "exercise_id": "plank", "similarity": 0.5, "note": "anti-extension; different trunk stability stimulus" },
+    { "exercise_id": "suitcase-carry", "similarity": 0.5, "note": "anti-lateral-flexion; dynamic carry vs static press" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest at full arm extension; cable torque peaks when arms are straight and cable is perpendicular to torso",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 4, "confidence": "medium", "contested": false, "notes": "Trains trunk anti-rotation under cable load. Created by physical therapist John Pallof. Often used in rehabilitation and injury-prevention contexts." }
+}

@@ -1,0 +1,28 @@
+{
+  "id": "dumbbell-row",
+  "name": "Dumbbell Row",
+  "aliases": ["one-arm dumbbell row", "single-arm DB row", "chest-supported row"],
+  "movement_pattern": "horizontal_pull",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "unilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["latissimus dorsi", "mid-back", "posterior deltoid"],
+  "secondary_muscles": ["biceps brachii"],
+  "stabilizers": ["trunk", "grip"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "low", "elbow": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["barbell-row", "heavy dumbbell row"],
+  "regressions": ["cable-row", "inverted-row"],
+  "common_faults": ["rotating the torso excessively (reduces back isolation)", "shrugging into the traps at the top", "partial ROM losing lat stretch at the bottom"],
+  "substitutions": [
+    { "exercise_id": "barbell-row", "similarity": 0.8, "note": "bilateral; higher load ceiling; adds axial demand" },
+    { "exercise_id": "cable-row", "similarity": 0.7, "note": "constant tension; seated; bilateral or unilateral" }
+  ],
+  "contraindications": [],
+  "resistance_profile": "hardest at the start of the pull; good lat stretch at the bottom with elbow fully extended",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Unilateral allows greater ROM than barbell row. Chest-supported variant removes spinal demand entirely. SFR heuristic." }
+}

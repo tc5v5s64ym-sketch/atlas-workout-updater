@@ -1,0 +1,28 @@
+{
+  "id": "hip-thrust",
+  "name": "Hip Thrust",
+  "aliases": ["barbell hip thrust", "glute bridge barbell"],
+  "movement_pattern": "hinge",
+  "nsca_class": "core",
+  "implement": "barbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["gluteus maximus"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": ["trunk", "hip stabilizers"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "hip": "moderate" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["single-leg hip thrust", "banded hip thrust"],
+  "regressions": ["glute bridge (floor)", "romanian-deadlift"],
+  "common_faults": ["hyperextending lumbar at lockout", "chin to chest instead of neutral neck", "not reaching full hip extension"],
+  "substitutions": [
+    { "exercise_id": "romanian-deadlift", "similarity": 0.6, "note": "hinge pattern; more hamstring and back demand" },
+    { "exercise_id": "conventional-deadlift", "similarity": 0.5, "note": "full posterior-chain demand; adds spinal load" }
+  ],
+  "contraindications": ["acute hip flexor injury at full extension"],
+  "resistance_profile": "hardest at full hip extension; glute is maximally shortened and loaded at lockout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Contreras et al. research supports hip thrust as high-EMG glute exercise at terminal extension. SFR high relative to systemic load. Load placement on hip can be uncomfortable without padding." }
+}

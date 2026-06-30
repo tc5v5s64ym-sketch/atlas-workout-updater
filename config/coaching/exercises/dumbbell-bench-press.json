@@ -1,0 +1,28 @@
+{
+  "id": "dumbbell-bench-press",
+  "name": "Dumbbell Bench Press",
+  "aliases": ["DB bench press", "flat dumbbell press"],
+  "movement_pattern": "horizontal_push",
+  "nsca_class": "core",
+  "implement": "dumbbell",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["pectoralis major", "anterior deltoid", "triceps brachii"],
+  "secondary_muscles": [],
+  "stabilizers": ["rotator cuff", "latissimus dorsi"],
+  "systemic_fatigue": 2,
+  "local_fatigue": 4,
+  "joint_stress": { "shoulder": "low", "elbow": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["bench-press"],
+  "regressions": ["push-up"],
+  "common_faults": ["wrists bending backward under load", "excessive ROM causing shoulder anterior capsule stretch", "uneven lockout"],
+  "substitutions": [
+    { "exercise_id": "bench-press", "similarity": 0.8, "note": "barbell version; greater load ceiling, less shoulder-friendly ROM" },
+    { "exercise_id": "incline-bench-press", "similarity": 0.65, "note": "incline angle shifts load to upper pec and anterior delt" }
+  ],
+  "contraindications": ["shoulder impingement provoked by horizontal pressing with dumbbells"],
+  "resistance_profile": "hardest off the chest; easier toward lockout; wider ROM than barbell version",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture", "04-coaching-intelligence-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Greater ROM than barbell and independent arm movement allows shoulder-friendlier mechanics. SFR heuristic." }
+}

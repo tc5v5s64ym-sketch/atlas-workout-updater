@@ -1,0 +1,28 @@
+{
+  "id": "hack-squat",
+  "name": "Hack Squat",
+  "aliases": ["machine hack squat"],
+  "movement_pattern": "squat",
+  "nsca_class": "core",
+  "implement": "machine",
+  "laterality": "bilateral",
+  "loading_axis": "non_axial",
+  "primary_muscles": ["quadriceps", "gluteus maximus"],
+  "secondary_muscles": ["hamstrings", "adductors"],
+  "stabilizers": ["trunk"],
+  "systemic_fatigue": 3,
+  "local_fatigue": 5,
+  "joint_stress": { "knee": "moderate", "low_back": "low" },
+  "technical_complexity": 2,
+  "stimulus_to_fatigue": "high",
+  "progressions": ["back-squat", "front-squat"],
+  "regressions": ["leg-press"],
+  "common_faults": ["feet too far forward causing knee stress", "insufficient depth", "not locking out between reps"],
+  "substitutions": [
+    { "exercise_id": "leg-press", "similarity": 0.75, "note": "less ROM and stability demand" },
+    { "exercise_id": "back-squat", "similarity": 0.7, "note": "adds axial load and full-body demand" }
+  ],
+  "contraindications": ["acute knee injury during loaded knee flexion"],
+  "resistance_profile": "hardest at the bottom; quad-dominant throughout",
+  "provenance": { "sources": ["02-coaching-knowledge-architecture"], "evidence_tier": 3, "confidence": "high", "contested": false, "notes": "Greater quad ROM than leg press; still removes spinal load. Foot position alters VMO vs glute emphasis." }
+}
