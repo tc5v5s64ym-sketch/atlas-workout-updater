@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — ProgressionRulesModule: read-only access to the progression decision table (Brian PR 6)
+
+New read-only module `services/progressionRulesModule.js` — pure lookup functions over `config/coaching/rules/progression.rules.json`:
+
+- `getScenario(id)` — full scenario record by id, or null (`underloaded` | `on_target` | `normal_variability` | `likely_fatigue` | `injury_signal` | `candidate_plateau`)
+- `getAllScenarios()` — all 6 scenario records in decision-table order (defensive `.slice()` copy)
+- `getAllScenarioIds()` — all 6 scenario ids in decision-table order
+- `getLeverOrder()` — `["load", "reps", "sets"]` (cheapest-to-most-expensive; defensive copy)
+- `getIncrements()` — `{ upper_body_pct: [2.5, 5], lower_body_lb: [5, 10] }` default load jumps
+- `getPlateauRule()` — `{ ignore_single_session_if, flag_plateau_if }` plateau detection config
+
+Loads lazily on first call; `_resetForTesting()` clears the cache between test files.
+
+New test `test/progressionRulesModule.test.js` — 31 tests covering all exports, all 6 scenario ids, required schema fields, mutation guards on copied arrays, cross-function consistency checks, and non-string edge cases.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — VolumeModule: per-muscle set counting and MEV/MAV/MRV landmark zones (Brian PR 5)
 
 New read-only module `services/volumeModule.js` — pure volume tracking layer; no Sheets access, no side effects:
