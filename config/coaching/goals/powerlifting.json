@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Powerlifting / strength sport goal template: maximal strength on squat, bench, and deadlift.",
+    "derived_from": ["trainingKnowledge.js strength", "Wendler 5/3/1", "NSCA Essentials of Strength Training"]
+  },
+  "id": "powerlifting",
+  "name": "Powerlifting / Strength Sport",
+  "description": "Peak strength on squat, bench, and deadlift. Suited for competition-oriented lifters or those pursuing strength tests.",
+  "knowledge_goal_id": "strength",
+  "recommended_programs": [
+    {
+      "program_id": "stronglifts-5x5",
+      "training_levels": ["beginner"],
+      "note": "Linear progression foundation for the three main lifts"
+    },
+    {
+      "program_id": "gzclp",
+      "training_levels": ["beginner", "intermediate"],
+      "note": "T1 heavy triples build strength; T2/T3 add volume and variation"
+    },
+    {
+      "program_id": "531-intermediate",
+      "training_levels": ["intermediate", "advanced"],
+      "note": "Wendler 5/3/1 wave loading with long-term TM progression"
+    }
+  ],
+  "target_days_per_week": { "min": 3, "target": 4, "max": 5 },
+  "target_session_duration_min": { "min": 45, "target": 75, "max": 120 },
+  "provenance": {
+    "sources": ["Wendler 5/3/1 original", "NSCA Essentials of Strength and Conditioning 4th Ed"],
+    "evidence_tier": 2,
+    "confidence": "high",
+    "contested": false
+  }
+}

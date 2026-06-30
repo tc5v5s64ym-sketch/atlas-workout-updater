@@ -1,0 +1,139 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "5/3/1 by Jim Wendler — intermediate-level 4-week wave-loading program for squat, bench, deadlift, and OHP.",
+    "derived_from": ["Wendler-531-original-2009", "Wendler-531-beyond-5th-edition"]
+  },
+  "id": "531-intermediate",
+  "name": "5/3/1 (Intermediate)",
+  "training_level": "intermediate",
+  "description": "4-week wave: sets of 5, 3, and 1+ reps at percentage of training max (TM = 90% of tested 1RM). After each 4-week cycle, increment TM by 5 lb (upper body) or 10 lb (lower body).",
+  "days_per_week": 4,
+  "cycle_length": 16,
+  "cycle_weeks": 4,
+  "training_max_percent": 0.90,
+  "increment_lb": {
+    "upper_body": 5,
+    "lower_body": 10
+  },
+  "sessions": [
+    {
+      "day_index": 0,
+      "label": "Squat",
+      "main_lift": {
+        "exercise_id": "back-squat",
+        "lift_code": "SQUAT",
+        "body_region": "lower_body"
+      },
+      "supplemental": {
+        "exercise_id": "conventional-deadlift",
+        "lift_code": "DEADLIFT",
+        "body_region": "lower_body",
+        "sets": 3,
+        "reps": 8,
+        "reps_scheme": "fixed",
+        "percent_tm": 0.50,
+        "note": "Supplemental deadlift at 50% TM (FSL/BBB style)"
+      }
+    },
+    {
+      "day_index": 1,
+      "label": "OHP",
+      "main_lift": {
+        "exercise_id": "overhead-press",
+        "lift_code": "OHP",
+        "body_region": "upper_body"
+      },
+      "supplemental": {
+        "exercise_id": "bench-press",
+        "lift_code": "BENCH",
+        "body_region": "upper_body",
+        "sets": 3,
+        "reps": 8,
+        "reps_scheme": "fixed",
+        "percent_tm": 0.50,
+        "note": "Supplemental bench at 50% TM (FSL/BBB style)"
+      }
+    },
+    {
+      "day_index": 2,
+      "label": "Deadlift",
+      "main_lift": {
+        "exercise_id": "conventional-deadlift",
+        "lift_code": "DEADLIFT",
+        "body_region": "lower_body"
+      },
+      "supplemental": {
+        "exercise_id": "back-squat",
+        "lift_code": "SQUAT",
+        "body_region": "lower_body",
+        "sets": 3,
+        "reps": 5,
+        "reps_scheme": "fixed",
+        "percent_tm": 0.50,
+        "note": "Supplemental squat at 50% TM"
+      }
+    },
+    {
+      "day_index": 3,
+      "label": "Bench",
+      "main_lift": {
+        "exercise_id": "bench-press",
+        "lift_code": "BENCH",
+        "body_region": "upper_body"
+      },
+      "supplemental": {
+        "exercise_id": "overhead-press",
+        "lift_code": "OHP",
+        "body_region": "upper_body",
+        "sets": 3,
+        "reps": 8,
+        "reps_scheme": "fixed",
+        "percent_tm": 0.50,
+        "note": "Supplemental OHP at 50% TM (FSL/BBB style)"
+      }
+    }
+  ],
+  "wave_weeks": [
+    {
+      "week": 1,
+      "label": "5s week",
+      "is_deload": false,
+      "main_sets": [
+        { "percent_tm": 0.65, "reps": 5, "reps_scheme": "fixed" },
+        { "percent_tm": 0.75, "reps": 5, "reps_scheme": "fixed" },
+        { "percent_tm": 0.85, "reps": 5, "reps_scheme": "amrap" }
+      ]
+    },
+    {
+      "week": 2,
+      "label": "3s week",
+      "is_deload": false,
+      "main_sets": [
+        { "percent_tm": 0.70, "reps": 3, "reps_scheme": "fixed" },
+        { "percent_tm": 0.80, "reps": 3, "reps_scheme": "fixed" },
+        { "percent_tm": 0.90, "reps": 3, "reps_scheme": "amrap" }
+      ]
+    },
+    {
+      "week": 3,
+      "label": "5/3/1 week",
+      "is_deload": false,
+      "main_sets": [
+        { "percent_tm": 0.75, "reps": 5, "reps_scheme": "fixed" },
+        { "percent_tm": 0.85, "reps": 3, "reps_scheme": "fixed" },
+        { "percent_tm": 0.95, "reps": 1, "reps_scheme": "amrap" }
+      ]
+    },
+    {
+      "week": 4,
+      "label": "Deload week",
+      "is_deload": true,
+      "main_sets": [
+        { "percent_tm": 0.40, "reps": 5, "reps_scheme": "fixed" },
+        { "percent_tm": 0.50, "reps": 5, "reps_scheme": "fixed" },
+        { "percent_tm": 0.60, "reps": 5, "reps_scheme": "fixed" }
+      ]
+    }
+  ]
+}

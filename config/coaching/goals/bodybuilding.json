@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Bodybuilding / hypertrophy goal template: muscle development through volume, effort, and progressive overload.",
+    "derived_from": ["trainingKnowledge.js hypertrophy", "Israetel MEV/MAV/MRV", "Schoenfeld 2010"]
+  },
+  "id": "bodybuilding",
+  "name": "Bodybuilding / Hypertrophy",
+  "description": "Muscle development through sufficient volume and progressive overload. Moderate rep ranges; compound + accessory split.",
+  "knowledge_goal_id": "hypertrophy",
+  "recommended_programs": [
+    {
+      "program_id": "gzclp",
+      "training_levels": ["beginner", "intermediate"],
+      "note": "T2/T3 volume work drives hypertrophy; T1 preserves strength base"
+    }
+  ],
+  "target_days_per_week": { "min": 3, "target": 4, "max": 5 },
+  "target_session_duration_min": { "min": 45, "target": 60, "max": 90 },
+  "provenance": {
+    "sources": [
+      "Schoenfeld 2010 mechanisms of hypertrophy",
+      "Israetel MEV/MAV/MRV volume landmarks",
+      "Krieger 2010 single vs multiple sets meta-analysis"
+    ],
+    "evidence_tier": 2,
+    "confidence": "high",
+    "contested": false
+  }
+}

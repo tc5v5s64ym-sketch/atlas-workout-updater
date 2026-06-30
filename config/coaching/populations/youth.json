@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "Youth population caps (under 18): technique-first, conservative intensity, appropriate volume ceiling.",
+    "derived_from": ["NSCA youth resistance training position statement", "Lloyd et al. 2014"]
+  },
+  "id": "youth",
+  "name": "Youth (Under 18)",
+  "description": "Technique development before heavy loading. Conservative intensity ceiling; full range of motion prioritised.",
+  "constraints": {
+    "max_days_per_week": 4,
+    "max_session_duration_min": 60,
+    "max_weekly_sets_per_muscle": 16,
+    "max_compounds_per_session": 4,
+    "preferred_equipment": ["barbell", "dumbbell", "bodyweight"],
+    "rir_floor": 2,
+    "intensity_ceiling_percent_1rm": 80
+  },
+  "notes": "Load progression should be conservative until technical proficiency is demonstrated. Max-effort testing not recommended. Frequency may be higher than adults if per-session volume stays moderate.",
+  "provenance": {
+    "sources": [
+      "NSCA position statement on youth resistance training",
+      "Lloyd et al. 2014 NSCA position statement update",
+      "Faigenbaum et al. 2009 youth resistance training guidelines"
+    ],
+    "evidence_tier": 3,
+    "confidence": "medium",
+    "contested": false
+  }
+}
