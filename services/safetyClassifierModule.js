@@ -7,7 +7,13 @@
 //
 // Prime directive: the engine computes the tier; the LLM only words the response.
 // Safety override rule: red overrides yellow overrides green — most severe wins.
-// Confidence inversion: low confidence about a possible red flag triggers more caution.
+//
+// NOTE: confidence is count-based (number of matched signals), not escalation-based.
+// Unmatched signals default to green/proceed — NOT "err toward caution".
+// The config's confidence_inversion rule is NOT yet implemented here.
+// See BACKLOG [trust-critical]: "SafetyClassifierModule: substring-matcher can
+// silently miss red-flag paraphrases" — must be resolved before any consumer
+// wires this module into the coach surface.
 
 const {
   getTrafficLight,
