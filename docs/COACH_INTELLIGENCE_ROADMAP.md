@@ -73,7 +73,7 @@
 | 16 | SubstitutionModule | Opus | ⚠️ partial | `services/substitutionRecommender.js`, `substitutionQuality.js`, `substitutionIntent.js` exist and are wired. A formal Brian-layer `SubstitutionModule` with the equipment-aware filtering + referential-integrity check described in the roadmap has not been built as a standalone composite. Depends on PR 2, PR 4. |
 | 17 | Goal / population templates & caps (+ 5/3/1) | Opus | 🔲 not started | Powerlifting / bodybuilding / general / weight-loss templates; older-adult / youth / busy-parent / home-gym caps; 5/3/1 for intermediates. Depends on PR 7, PR 8, PR 15. |
 | 18 | Memory architecture (trends + coach memory + entity resolution) | Opus | ✅ shipped | `services/entityResolutionModule.js` (name→exerciseId; aliases + progressions; priority: exact>name>alias>progression) + `services/memoryModule.js` (Brian-layer composite: `queryTrend`, `queryPatterns`, `buildMemorySnapshot`, `resolveExercise`, `listExerciseIds`); 51 tests. Depends on PR 6, PR 14. |
-| 19 | ConfidenceModule (ask vs act) | Opus | 🔲 not started | Score confidence (completeness / recency / consistency / self-report reliability); act / act-with-caveat / ask thresholds; LLM asks clarifying question when confidence is low. Safety inverts: low confidence about a red flag → MORE caution. Depends on most prior modules. |
+| 19 | ConfidenceModule (ask vs act) | Opus | ✅ shipped | `services/confidenceModule.js` — `scoreConfidence(params)` → `{ confidenceScore, tier, action, caveats, safetyInverted, dimensions }`. Four weighted dimensions: completeness (0.30), recency (0.25), consistency (0.25), selfReportReliability (0.20). Tiers: ≥75=high→act, ≥45=moderate→act_with_caveat, <45=low→ask. Safety inversion escalates action one step toward ask when flags are active. Six machine-readable `CAVEAT_KEYS` (LLM words them). 42 tests. Depends on PR 6, PR 11, PR 15, PR 18. |
 
 ---
 
@@ -102,16 +102,16 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 ## What's next
 
-**Current position: completing Phase 3.**
+**Current position: Phase 4 complete through PR 19.**
 
-Shipped: PR 1–8, PR 11–15, PR 18 (fully). Partial: PR 9, PR 10, PR 16.
-Not started: PR 17, PR 19–24.
+Shipped: PR 1–8, PR 11–15, PR 18–19 (fully). Partial: PR 9, PR 10, PR 16.
+Not started: PR 17, PR 20–24.
 
 **Immediate next candidates** (dependency-safe):
 
 1. **PR 9 — Cold-start onboarding flow (complete)** (depends on PR 5 ✅, PR 7 ✅, PR 8 ✅ — all done). Fully unblocked.
-2. **PR 19 — ConfidenceModule** (depends on most prior modules — all shipped including PR 15 ✅, PR 18 ✅). Unblocked.
-3. **PR 17 — Goal / population templates & caps** (depends on PR 7 ✅, PR 8 ✅, PR 15 ✅ — all done). Now unblocked.
+2. **PR 17 — Goal / population templates & caps** (depends on PR 7 ✅, PR 8 ✅, PR 15 ✅ — all done). Fully unblocked.
+3. **PR 20 — NutritionModule** (depends on PR 1 ✅, PR 19 ✅ — all done). Fully unblocked.
 
 ---
 
