@@ -21,6 +21,8 @@ function _round5(value) { return Math.round(value / 5) * 5; }
 // ---- Model selection ----
 
 // [goalId][trainingLevel] → periodization model id, or null for beginner (LP handled elsewhere)
+// powerlifting advanced → block-intermediate is intentional: 531 wave IS the intermediate step;
+// block periodization is the next rung (the config's own training_level label predates this map).
 const MODEL_MAP = Object.freeze({
   'powerlifting':    Object.freeze({ beginner: null, intermediate: '531_wave',         advanced: 'block-intermediate' }),
   'general-fitness': Object.freeze({ beginner: null, intermediate: '531_wave',         advanced: 'dup-patterns'       }),
