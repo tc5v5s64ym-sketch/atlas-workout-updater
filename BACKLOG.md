@@ -651,6 +651,29 @@ The build sequence that implements the Training Profile Taxonomy + Session Plann
 
 ---
 
+## One-Brain Coaching Engine — ARCHITECTURE LOCKED, build sequence (owner-gated promotion to active)
+
+Blueprint: [`docs/COACHING_ENGINE_ARCHITECTURE.md`](./docs/COACHING_ENGINE_ARCHITECTURE.md). Contracts spec: [`docs/COACHING_CONTRACTS_SPEC.md`](./docs/COACHING_CONTRACTS_SPEC.md). Owner direction (2026-06-30): **Atlas has ONE Brain.** Every surface (button, chat, voice, wearable, calendar, push, API, future desktop) expresses *intent*; the Brain owns every coaching decision and number; the LLM only words decisions. The UI never determines intelligence. This section captures the build so it is not re-derived from chat. **Captured + sequenced, not promoted to `docs/ACTIVE_ROADMAP.md`** — promotion (reordering ahead of the Trust-Critical Coach Interaction Layer) is an owner priority call. Two prerequisites are owner-gated (below).
+
+**Why this exists:** the analytics-vs-Brian audit (2026-06-30) found Atlas at risk of two competing recommendation engines. Resolution: the Orchestrator is always the single decider; `analytics.js` is delegated-to only for un-migrated decisions, shrinking each step until it dies. Never two engines racing. The Brain stays pure and read-only — the existing preview→approve→write trust loop is untouched.
+
+**Build sequence (each a tiny PR; deterministic-engine-first; no LLM/write/schema change unless flagged):**
+
+1. **Contracts — `IntentEnvelope`** `[correctness]` — `config/coaching/contracts/intent.vocabulary.json` (intent + source + constraint-key schema) + `services/intentEnvelope.js` (`build`/`validate`, pure). Tests per spec §1.6. No I/O, no LLM.
+2. **Contracts — `CapabilityManifest`** `[correctness]` — `config/coaching/manifests/intent-capabilities.json` + `capabilities.json` + `services/capabilityManifest.js` (loader + DAG resolver/topo-sort). Tests per spec §2.6, incl. the orchestrator-is-rule-free guard.
+3. **Contracts — `CoachingDecision`** `[correctness]` — `config/coaching/contracts/decision.contract.json` + `services/coachingDecision.js` (`build`/`validate`, pure). Tests per spec §3.6, incl. the **trust-contract test** (every prescribed number in `payload` must appear in `explanation_inputs`) and the safety-escalation invariant. Plus `test/contracts-integrity.test.js` (the one-Brain guard: every intent has a manifest entry; every capability resolves; every fixture validates).
+4. **State Assembly spec + module** `[correctness]` — the read-model the manifests' input keys draw from (hydrate logs/profile/constraints/memory/deload-state once; quarantine all Sheets I/O; keep the Brain pure). Spec first (the one seam the contracts reference but do not define), then the module.
+5. **Orchestrator + `hybrid` shadow attach** `[correctness]` — manifest executor wiring the *existing* substrate modules; attaches the structured `CoachingDecision` to `/api/recommend/next/:liftCode` under `ATLAS_COACH_ENGINE=hybrid` (default `legacy`). **Zero behavior change** — observe/compare Brian vs `analytics.js` on live data. (Feature flag: three-state `ATLAS_COACH_ENGINE=legacy|hybrid|brian`, NOT a boolean — only the enum expresses the shadow state.)
+6. **Keystone #1 — Scenario Classifier** `[correctness]` — `services/scenarioClassifier.js`: facts → progression `scenario_id`. The missing link that lets `progressionModule` be driven by real data (it currently requires a scenario handed in). Belongs in the Brain. Unlocks single-lift progression end-to-end; enables flipping the per-lift load number to `brian`.
+7. **Keystone #2 — Session Generator** `[correctness]` — `services/sessionGenerator.js`: assemble a full session from constraints + state. The Brain-native replacement for `analytics.js::scoreIntents` (~950 lines) — the real "Coach's Pick". Its own initiative; largest single build.
+8. **analytics.js migration** `[housekeeping]` — move lifecycle decisions out of `analytics.js` one at a time (staleness/layoff guards, post-deload return, in-workout just-logged anchor, bodyweight rep-progression), each deleting its delegation call, until the fused file is retired.
+
+**Owner-gated prerequisites (reserved — do NOT build without owner approval):**
+- **Input-LLM provider/model** `[owner-gated]` — the language→intent extraction boundary is a *second* LLM touchpoint = new runtime model spend + runtime-model selection (`CLAUDE.md` / `docs/OWNER_CHECKIN_RULES.md` criterion 2/3). Steps 1–6 do NOT require it (button/sensor/API use structured passthrough); chat/voice extraction does.
+- **Proactivity policy** `[owner-gated]` — whether/when Atlas may *initiate* (wearable/notification-driven coaching) is coaching-philosophy + interrupt scope (reserved). The architecture reserves the seam; the policy is deferred.
+
+**Capability status at capture (from the audit, recorded in the blueprint):** complete — intensity, volume, plateau, deload (live), confidence, memory, goal/population, program templates, onboarding. Partial — userState (trend algo differs), progression (needs scenario), fatigue/readiness (needs check-in data), safety (substring matcher, `confidence_inversion` unbuilt). Missing — Scenario Classifier, Session Generator, Constraint Resolver, readiness-from-logs, equipment model, lifecycle decisions, nutrition (owner-gated), decision synthesizer.
+
 ## Coach Intelligence Layer — follow-ups (PR #721, scaffold)
 
 Follow-ups filed from the automated code review of PR #721 (static data + docs only — no action needed in that PR).

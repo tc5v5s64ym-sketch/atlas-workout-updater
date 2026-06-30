@@ -47,6 +47,7 @@ These are reference docs. Use them when relevant, but do not treat them as the a
 - `docs/ATLAS_PRODUCT_VISION.md`
 - `docs/CONSTITUTION.md`
 - `docs/ARCHITECTURE.md`
+- `docs/COACHING_ENGINE_ARCHITECTURE.md` — the One-Brain coaching engine blueprint: six-layer pipeline (Intent Router → Orchestrator → State Assembly → Brain → Coaching Decision → LLM explanation), two non-coaching LLM boundaries, pure read-only Brain, capability audit (complete/partial/missing) with the two keystones (Scenario Classifier, Session Generator), `ATLAS_COACH_ENGINE=legacy|hybrid|brian` migration, and the `analytics.js` relationship. **Not active roadmap** — build sequence in `BACKLOG.md` → "One-Brain Coaching Engine"; two items owner-gated (input-LLM provider, proactivity policy).
 - `docs/INVARIANTS.md`
 - `docs/LLM_ARCHITECTURE.md` — LLM provider architecture: core principles (P1–P6), tier design, June 2026 provider scoring, error boundary spec, provider interface, implementation PR sequence. **Not active roadmap** — build trigger is after P0 workout reliability is stable in live use. See `BACKLOG.md` → Operational resilience → GitHub issue #586.
 - `docs/SHEET_CONTRACT.md`
@@ -59,6 +60,7 @@ These describe specific systems or constraints. Use them when your PR touches th
 
 - `SESSION_DESIGN.md`
 - `CONVERSATION_DESIGN.md`
+- `docs/COACHING_CONTRACTS_SPEC.md` — the three load-bearing coaching contracts (`IntentEnvelope`, `CapabilityManifest`, `CoachingDecision`): schemas, enums, validation rules, worked examples, file layout, tests-to-prove. Implements `docs/COACHING_ENGINE_ARCHITECTURE.md`. Spec only — nothing built yet; build sequence in `BACKLOG.md` → "One-Brain Coaching Engine".
 - `docs/SUBSTITUTION_SPEC.md`
 - `docs/DELOAD_SPEC.md`
 - `docs/COACH_VOICE_VALIDATION.md`
