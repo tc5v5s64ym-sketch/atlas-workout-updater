@@ -668,6 +668,10 @@ Follow-ups filed from the automated code review of PR #721 (static data + docs o
 
 - **Coaching modules: cached objects returned by reference (not frozen)** `[housekeeping]` — `getExerciseById`/`getAllExercises` (ExerciseLookupModule), `getVolumeLandmarks`/`getAllVolumeLandmarks` (VolumeModule), and `getScenario`/`getIncrements`/`getPlateauRule` (ProgressionRulesModule) return shared cached object references. Callers that mutate a returned object corrupt the in-process cache for all subsequent callers. No write-capable consumers exist today, so not a live risk. When a future consumer mutates returned objects, consider `Object.freeze` at index-load time in each module's `_load()`. Top-level arrays are already `.slice()`-copied defensively; the freeze gap is one level deeper (object properties).
 
+- ✅ **UserStateModule: per-user per-lift state substrate (roadmap PR 6, shipped)** — `services/userStateModule.js` aggregates Log_Cleaned rows into `{ liftStates, muscleVolume, adherence }`. 43 tests. Depends on IntensityModule (PR 3) + VolumeAssessmentModule (PR 4). No runtime consumer yet. Unblocks roadmap PR 14 (ExpectedPerformance/Plateau composite) and PR 18 (Memory architecture).
+
+- **CHANGELOG "Brian PR X" numbering vs roadmap PR numbering** `[housekeeping]` — The CHANGELOG uses sequential "Brian PR X" labels (order of implementation) while the PDF roadmap (`docs/COACH_INTELLIGENCE_ROADMAP.md`) uses its own logical PR numbers 1–24. These sequences diverge: `feat(brian-pr-14)` in the CHANGELOG is VolumeAssessmentModule (roadmap PR 4), while roadmap PR 14 is ExpectedPerformance/Plateau. Flagged as non-blocking by the automated reviewer (PR #736 claude[bot]). To prevent confusion: future CHANGELOG entries should cite the roadmap PR number explicitly, e.g. `feat(coach-pr-6-user-state)`. A retroactive rename of prior CHANGELOG entries is cosmetic-only and low priority.
+
 ---
 
 ## Someday / future scope

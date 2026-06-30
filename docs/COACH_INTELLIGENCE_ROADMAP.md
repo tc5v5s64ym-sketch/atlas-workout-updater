@@ -33,7 +33,7 @@
 | 3 | IntensityModule: e1RM + RPE/%1RM (read-only) | Opus | ✅ shipped | `services/intensityModule.js`; 32 tests |
 | 4 | VolumeModule: weekly sets per muscle (read-only) | Opus | ✅ shipped | `services/volumeModule.js` + `services/volumeAssessmentModule.js`; landmarks in `config/coaching/volume/landmarks.json` |
 | 5 | SafetyModule (classifier) + onboarding health screen | Opus | ✅ shipped | `services/safetyRulesModule.js` + `services/safetyClassifierModule.js`; PAR-Q onboarding screen in `config/coaching/safety/safety.rules.json`; [trust-critical] matcher gap filed in BACKLOG |
-| 6 | Per-user State / Feature object (read-only substrate) | Opus | 🔲 not started | e1RM trend, volume vs landmarks, PRs, staleness, adherence — compact per-user per-lift state substrate. Depends on PR 3, PR 4. |
+| 6 | Per-user State / Feature object (read-only substrate) | Opus | ✅ shipped | `services/userStateModule.js`; 43 tests. `buildUserState(logEntries, { asOf, windowDays, trendSessions })` → `{ liftStates, muscleVolume, adherence }`. |
 
 ---
 
@@ -102,16 +102,16 @@ Only after the core (through PR 21) is trustworthy. Each is optional.
 
 ## What's next
 
-**Current position: mid-Phase 2 / entering Phase 3.**
+**Current position: completing Phase 1 / entering Phase 2.**
 
-Shipped: PR 1–5, PR 8, PR 11–13 (fully), PR 9/10/14/16/18 (partial).
-Not started: PR 6, PR 7, PR 15, PR 17, PR 19–24.
+Shipped: PR 1–6, PR 8, PR 11–13 (fully), PR 9/10/14/16/18 (partial).
+Not started: PR 7, PR 15, PR 17, PR 19–24.
 
 **Immediate next candidates** (dependency-safe):
 
-1. **PR 6 — Per-user State object** (depends on PR 3, PR 4 — both done). This unblocks PR 7, PR 8 (full), PR 14, PR 18.
-2. **PR 14 — ExpectedPerformance + PlateauModule** (composite wrapper; partial pieces exist). Unblocks PR 15.
-3. **PR 7 — Starter program templates** (depends on PR 1, PR 3 — both done). Unblocks PR 9 (full), PR 17.
+1. **PR 14 — ExpectedPerformance + PlateauModule** (composite wrapper; partial pieces exist in `services/expectedPerformance.js` + `services/coverageStalls.js`). Depends on PR 6 (✅ now done), PR 11, PR 12 — all done. Unblocks PR 15.
+2. **PR 7 — Starter program templates** (depends on PR 1, PR 3 — both done). Unblocks PR 9 (full), PR 17.
+3. **PR 18 — Memory architecture** (depends on PR 6 ✅, PR 14). PR 6 now done; blocked on PR 14.
 
 **Do not start PR 15** (Autoregulation) until PR 6, PR 11, and PR 14 are all fully met.
 

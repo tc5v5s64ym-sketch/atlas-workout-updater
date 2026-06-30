@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added — UserStateModule: per-user per-lift state substrate (Brian PR 15)
+
+New read-only composite engine `services/userStateModule.js` — aggregates raw `Log_Cleaned` entries into a compact per-user feature object used as the substrate for coaching decisions and the LLM explanation layer. No Sheets access, no side effects, no LLM involvement. Depends on IntensityModule (PR 3) and VolumeAssessmentModule (PR 4).
+
+Single entry point: `buildUserState(logEntries, opts)` — accepts an array of log row objects (one row = one set, matching the 12-col `Log_Cleaned` schema) and options `{ asOf (required ISO date), windowDays (default 7), trendSessions (default 5) }`. Returns `null` for non-array input or missing/invalid `asOf`. Returns a structured state object:
+
+- `liftStates` — keyed by `canonical_exercise`:
+  - `e1rm.current` — best RIR-adjusted Epley e1RM from the most recent session (null if no valid sets).
+  - `e1rm.trend` — `'improving'` / `'stalling'` / `'declining'` / `'insufficient_data'` computed from the last `trendSessions` sessions. Older and newer halves are averaged; a 2 % delta triggers a trend call.
+  - `e1rm.sessionsTracked` — sessions inside the trend window.
+  - `pr.bestE1rm` — all-time best estimated e1RM across all entries.
+  - `pr.bestSetWeight` / `pr.bestSetReps` — heaviest set lifted and the reps recorded at that weight.
+  - `staleness.daysSinceLastSession` / `staleness.lastSessionDate` — days since last session relative to `asOf`.
+- `muscleVolume` — keyed by normalised muscle name (lowercase, parenthetical qualifier stripped). Within the `windowDays` window, each row counts as one set for its `muscle_group`. Known muscles include zone classification (`below_mev` / `mev_to_mav` / `mav_to_mrv` / `above_mrv`) and `{ landmarks: { mev, mav, mrv }, distanceToMav, distanceToMrv }`. Unknown muscles are still tracked with `zone: null, landmarks: null`.
+- `adherence` — `{ sessionsInWindow, windowDays, sessionsPerWeek }`: distinct training dates in the window and derived frequency.
+
+Uses RIR-adjusted e1RM (`weight / percentOf1RM(reps, rir)`) when `rir` is 0–4; falls back to plain Epley when absent or out of range. `reps > 20` entries are skipped for e1RM but still contribute to PR tracking and volume counting. `asOf` is required (not inferred from wall-clock time) so the function is fully deterministic and testable. Also exports `_normalizeMuscle` for downstream consumers.
+
+New test `test/userStateModule.test.js` — 43 tests covering: all invalid-input paths (null, non-array, missing/invalid `asOf`); entry filtering (missing exercise, bad date, null entries); liftState shape validation; e1RM estimation with and without RIR; PR tracking (bestSetWeight selection, all-time bestE1rm); staleness (daysSinceLastSession = 0 on training day, 3-day gap); trend classification (1 session → insufficient_data; 2 sessions each direction; same-session best-set dedup; `trendSessions` cap); multiple independent lifts; muscleVolume (window inclusion/exclusion, capitalised + parenthetical normalization, known vs unknown muscle, zone classification); adherence (distinct dates, window exclusion, sessionsPerWeek math, exercises same date = one session); and default/fallback option handling.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — VolumeAssessmentModule: composite volume assessment engine (Brian PR 14)
 
 New composite engine `services/volumeAssessmentModule.js` — combines `VolumeModule` (per-muscle landmarks, zone logic, set accumulation) with session and weekly exercise data to produce structured per-muscle volume assessments. No Sheets access, no side effects, no LLM involvement.
