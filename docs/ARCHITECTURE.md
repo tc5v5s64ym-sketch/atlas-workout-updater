@@ -32,6 +32,15 @@ Atlas uses LLM providers (OpenAI, Gemini) for two purposes only:
 
 The deterministic engine is authoritative. LLMs are an optional coaching layer, never a source of truth. A provider outage must never interrupt workout logging, preview, save, or session mutation.
 
+## Coaching Engine (One Brain)
+
+The target architecture for Atlas's coaching intelligence: **one Brain**, reached by every surface (button, chat, voice, wearable, calendar, push, API, future desktop). The UI expresses intent; the Brain owns every coaching decision and number; the LLM only words the Brain's decisions. The deterministic engine line never moves.
+
+- [`docs/COACHING_ENGINE_ARCHITECTURE.md`](./COACHING_ENGINE_ARCHITECTURE.md) — the blueprint: the six-layer pipeline (Intent Router → Orchestrator → State Assembly → Brain → Coaching Decision → LLM explanation), the two non-coaching LLM boundaries, the pure read-only Brain, the capability audit (complete/partial/missing) with the two keystone gaps (Scenario Classifier, Session Generator), the `ATLAS_COACH_ENGINE=legacy|hybrid|brian` migration strategy, and the relationship to `analytics.js`.
+- [`docs/COACHING_CONTRACTS_SPEC.md`](./COACHING_CONTRACTS_SPEC.md) — the three load-bearing contracts (`IntentEnvelope`, `CapabilityManifest`, `CoachingDecision`): schemas, enums, validation rules, worked examples, file layout, and tests-to-prove.
+
+**Not active roadmap** — the build sequence is filed in `BACKLOG.md` → "One-Brain Coaching Engine". Two items are owner-gated before build: the input-LLM provider/model (new runtime spend) and any proactive-output policy.
+
 See [`docs/LLM_ARCHITECTURE.md`](./LLM_ARCHITECTURE.md) for:
 - Core principles (P1–P6): determinism-first, optional coaching layer, error boundary, provider interface, cost via determinism
 - Routing tiers: Tier 0 deterministic / Tier 1 cheap+fast coach / Tier 2 capable model
