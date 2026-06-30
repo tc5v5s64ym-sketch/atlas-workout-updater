@@ -1,8 +1,8 @@
 'use strict';
 
 // ExerciseLookupModule — read-only index over the exercise ontology.
-// Loads config/coaching/exercises/ once at require time and exposes
-// pure lookup functions. No Sheets access, no side effects.
+// Loads config/coaching/exercises/ lazily on first call and caches the
+// result in-process. Exposes pure lookup functions. No Sheets access, no side effects.
 //
 // Future modules (VolumeModule, FatigueModule, ProgressionModule) call
 // these functions instead of reading exercise files directly.
@@ -65,14 +65,14 @@ function getExerciseById(id) {
 // Returns an empty array if the pattern is unknown.
 function getExercisesByMovementPattern(pattern) {
   if (typeof pattern !== 'string' || !pattern) return [];
-  return _load().byMovementPattern.get(pattern) ?? [];
+  return (_load().byMovementPattern.get(pattern) ?? []).slice();
 }
 
 // Returns all exercises that involve the given muscle (primary or secondary).
 // Comparison is case-insensitive.
 function getExercisesByMuscle(muscleName) {
   if (typeof muscleName !== 'string' || !muscleName) return [];
-  return _load().byMuscle.get(muscleName.toLowerCase()) ?? [];
+  return (_load().byMuscle.get(muscleName.toLowerCase()) ?? []).slice();
 }
 
 // Returns every exercise in the catalog.
