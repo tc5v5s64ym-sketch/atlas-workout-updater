@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added — MovementPatternsModule: queryable index over the movement-pattern taxonomy (Brian PR 9)
+
+New read-only module `services/movementPatternsModule.js` — pure lookup functions over `config/coaching/movement-patterns/patterns.json`:
+
+- `getAllPatterns()` — all 12 patterns in config order (defensive `.slice()` copy)
+- `getAllPatternIds()` — all 12 pattern ids in config order
+- `getPattern(id)` — full pattern record by id, or null (`squat` | `hinge` | `lunge` | `horizontal_push` | `vertical_push` | `horizontal_pull` | `vertical_pull` | `carry` | `rotation` | `anti_rotation` | `isolation` | `locomotion`)
+- `getPatternsByFamily(family)` — patterns filtered by family (`lower` | `upper` | `full` | `trunk` | `modifier`), defensive copy
+- `getFamilies()` — all 5 distinct families in first-appearance order
+
+Loads lazily on first call; `_resetForTesting()` clears the cache between test files.
+
+New test `test/movementPatternsModule.test.js` — 33 tests covering all exports, all 12 known pattern ids, all 5 families with expected member counts, required schema fields (id/family/description/typical_primary), config order preservation, family-coverage completeness (all 12 patterns reachable via family), mutation guards, cross-function consistency, and non-string edge cases.
+
+**No runtime consumer yet. No Sheets access, no write-path or trust-loop change.**
+
+---
+
 ### Added — SafetyRulesModule: read-only access to the traffic-light classifier and safe defaults (Brian PR 8)
 
 New read-only module `services/safetyRulesModule.js` — pure lookup functions over `config/coaching/rules/safety.rules.json`:
