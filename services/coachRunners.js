@@ -22,7 +22,7 @@ const { classifyScenario }      = require('./scenarioClassifier');
 const { recommendProgression }  = require('./progressionModule');
 const { buildSession }          = require('./sessionGenerator');
 // Shared per-lift prescription pipeline (the canonical home for these helpers).
-const { deriveLiftState, derivePlateau, lastWorkingSet } = require('./liftPrescription');
+const { deriveLiftState, derivePlateau, lastWorkingSet, isOverperforming } = require('./liftPrescription');
 
 // ─── envelope helpers ─────────────────────────────────────────────────────────
 
@@ -94,10 +94,11 @@ function scenarioClassifierRunner(ctx) {
   if (!liftCode) return null;
   const rows = _rows(snapshot), asOf = _asOf(snapshot);
   return classifyScenario({
-    liftState:  deriveLiftState(rows, liftCode, asOf),
-    plateau:    derivePlateau(rows, liftCode, asOf),
-    readiness:  null,
-    injury:     _injury(envelope),
+    liftState:      deriveLiftState(rows, liftCode, asOf),
+    plateau:        derivePlateau(rows, liftCode, asOf),
+    readiness:      null,
+    injury:         _injury(envelope),
+    overperforming: isOverperforming(rows, liftCode, asOf),
   });
 }
 

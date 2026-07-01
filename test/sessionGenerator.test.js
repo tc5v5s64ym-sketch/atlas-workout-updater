@@ -158,3 +158,35 @@ describe('buildSession — deload', () => {
     assert.strictEqual(deloaded.explanation_inputs.blocks[0].target_weight, deloaded.payload.blocks[0].target_weight);
   });
 });
+
+// ─── hinge regression — overperforming → increase_load → 5 lb lower-body step ──
+// Guards the whole reachable chain: a hinge lift whose reps beat expected at a
+// held load classifies `underloaded` → increase_load, and the prescribed weight
+// steps by the lower-body increment (5 lb, not the 2.5 lb upper-body increment).
+// This is the path that was unreachable before overperforming was threaded.
+
+describe('buildSession — hinge overperforming regression', () => {
+  // Held weight, rising reps → improving e1RM (no plateau) and the last set beats
+  // its expected reps at that load → overperforming.
+  function hingeOverRows() {
+    const dates = ['2026-06-01', '2026-06-04', '2026-06-08', '2026-06-11'];
+    const reps  = [5, 6, 7, 9];
+    return dates.map((d, i) =>
+      [d, 'rdl' + i, 'Romanian Deadlift', 'Romanian Deadlift', 'hamstrings', 'RDL', 1, 135, reps[i], 2, '', 135 * reps[i]]);
+  }
+
+  it('a hinge lift with overperforming history → increase_load at a 5 lb step', () => {
+    const r = buildSession(state(hingeOverRows()), { focus: 'hinge', equipment: ['barbell'] });
+    assert.ok(r, 'expected a hinge session');
+    const block = r.payload.blocks.find(b => b.pattern === 'hinge');
+    assert.ok(block, 'expected a hinge block');
+    assert.strictEqual(block.scenario_id, 'underloaded');
+    // 135 → 140: a single 5 lb lower-body increment (a 2.5 lb upper-body step
+    // would land off a 5 lb grid). Guards bodyRegion → computeLoadStep.
+    assert.strictEqual(block.target_weight, 140);
+    assert.strictEqual(block.target_weight % 5, 0);
+    assert.ok(block.target_weight > 135, 'load must increase');
+    // trust contract stays lockstep
+    assert.strictEqual(validateCoachingDecision(asDecision(r)).valid, true);
+  });
+});
