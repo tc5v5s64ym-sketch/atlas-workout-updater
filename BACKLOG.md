@@ -780,6 +780,9 @@ These are not engineering items. They are owner-decision hold points: questions 
 - **After workout session authority / substitution state is stable:**
   Brainstorm what must be separated architecturally for Atlas to become a training-intelligence engine that other surfaces (apps, platforms, APIs) could consume. What is tightly coupled today that would need to be a clean, versioned contract?
 
+- **The "Drift Conversation" — future apex proactivity (owner, 2026-07-01), gated on longitudinal cross-domain history:**
+  Atlas opens a session with an evidence-based observation after ~weeks of subtle decline (training frequency down + sleep slipped + performance flat) — *notices the pattern, invites context, then adapts* — instead of jumping to conclusions. Full worked example in `docs/CONVERSATION_CONTRACT_V1.md` (Part 5). Explicitly **not a v1 behavior**: requires cross-domain state Atlas does not yet assemble (multi-week training + wearable sleep/HR trends) and sits inside the earned-proactivity policy (rule 4). Revisit once the longitudinal state layer + wearable trend signals exist. Also: the three owner-authored validation scenarios (Recovery Day, Genuine Plateau, Missed-Week Return) in that doc double as **future QA fixtures** for the coach voice — wire them into `/qa` regression once the Brain surfaces (deload, layoff-return, recovery hold) are live.
+
 - **After first private beta users:**
   Brainstorm monetization paths: Pro tier, trainer portal, creator programs, paid onboarding, shareable reports, partnerships. No commitment until the owner has real usage data.
 
