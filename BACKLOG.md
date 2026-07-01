@@ -771,6 +771,9 @@ _Not active queue. Guiding principle: Atlas infers from data and behaviour; it d
 
 These are not engineering items. They are owner-decision hold points: questions to revisit at specific milestones before choosing a direction. Do not act on them; do not add them to the active roadmap. Revisit only when the trigger condition is reached.
 
+- **Conversation-first coach direction — owner-gated Vision decision (2026-07-01):**
+  Owner brief: should Atlas intentionally return to being *"an AI coach with capabilities"* (the conversation is the product; surfaces are artifacts the coach shows, not destinations you navigate to) rather than continuing to drift into *"a fitness app with AI"*? Full analysis, six-question review, and aggressive counter-case in [`docs/CONVERSATION_FIRST_DESIGN_REVIEW.md`](docs/CONVERSATION_FIRST_DESIGN_REVIEW.md). Review verdict: **yes, as consolidation toward the already-written Constitution/Vision — not a pivot** — but **engine before surface**: the One-Brain keystones (Intent Router, Scenario Classifier, Session Generator, Constraint Resolver — see "One-Brain Coaching Engine" below) are preconditions, and three things must be kept (buttons-as-intent-shortcuts, a glance affordance, an always-present `✅ logged` acknowledgment). **Owner-reserved (Vision / coaching-philosophy):** do not implement, and do not amend Vision/Constitution, until the owner approves the direction. If approved, the next step is the One-Brain keystone sequence, not UI code.
+
 - **After workout session authority / substitution state is stable:**
   Brainstorm what must be separated architecturally for Atlas to become a training-intelligence engine that other surfaces (apps, platforms, APIs) could consume. What is tightly coupled today that would need to be a clean, versioned contract?
 
