@@ -51,3 +51,26 @@ describe('liftPrescription — guards', () => {
     assert.strictEqual(prescribeLift([row('2026-06-01', 's1', 'Bench Press', 'chest', 'BENCH', 185)], 'BENCH', ASOF, {}), null);
   });
 });
+
+// ─── empty/blank numeric cells → NaN (not 0) ─────────────────────────────────
+
+describe('normRow / lastWorkingSet — empty numeric cells normalize to NaN', () => {
+  // 12-col row with an EMPTY RIR cell (index 9 = '').
+  function rowEmptyRir(date, sid, w) {
+    return [date, sid, 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, w, 5, '', '', w * 5];
+  }
+  it('an empty RIR cell yields currentRIR = NaN, not 0', () => {
+    const set = lastWorkingSet([rowEmptyRir('2026-06-01', 's1', 185), rowEmptyRir('2026-06-04', 's2', 190)], 'BENCH', ASOF);
+    assert.ok(set);
+    assert.ok(Number.isNaN(set.currentRIR), `expected NaN, got ${set.currentRIR}`);
+  });
+  it('prescribeLift rejects an unlogged RIR (→ null, i.e. clarification) rather than reading it as at-failure', () => {
+    // Enough sessions for a trend, but the most-recent set has no RIR.
+    const rows = [
+      [ '2026-06-01', 's1', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 185, 5, 2, '', 925 ],
+      [ '2026-06-04', 's2', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 190, 5, 2, '', 950 ],
+      rowEmptyRir('2026-06-08', 's3', 195),
+    ];
+    assert.strictEqual(prescribeLift(rows, 'BENCH', ASOF, {}), null);
+  });
+});
