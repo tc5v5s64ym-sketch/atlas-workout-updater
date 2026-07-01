@@ -3,7 +3,9 @@
 const { describe, it, before } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildRunners, safetyRunner, confidenceRunner } = require('../services/coachRunners');
+const {
+  buildRunners, safetyRunner, confidenceRunner, scenarioClassifierRunner, progressionRunner,
+} = require('../services/coachRunners');
 const { buildIntentEnvelope } = require('../services/intentEnvelope');
 const { assembleState } = require('../services/stateAssembly');
 const { orchestrate } = require('../services/coachOrchestrator');
@@ -72,11 +74,53 @@ describe('confidenceRunner', () => {
 // ─── registry ────────────────────────────────────────────────────────────────
 
 describe('buildRunners', () => {
-  it('exposes safety + confidence adapters', () => {
+  it('exposes safety + confidence + scenario_classifier + progression adapters', () => {
     const r = buildRunners();
     assert.strictEqual(typeof r.safety, 'function');
     assert.strictEqual(typeof r.confidence, 'function');
+    assert.strictEqual(typeof r.scenario_classifier, 'function');
+    assert.strictEqual(typeof r.progression, 'function');
   });
+});
+
+// Rich history: 6 sessions of steady improvement — enough for confidence to clear
+// 'ask' (act_with_caveat) so the orchestrator can produce an ANSWERED decision.
+const RICH_ROWS = (() => {
+  const dates = ['2026-05-20', '2026-05-24', '2026-05-28', '2026-06-01', '2026-06-05', '2026-06-08'];
+  let w = 180; const rows = [];
+  for (let i = 0; i < 6; i++) { rows.push([dates[i], 's' + i, 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, w, 5, 2, '', w * 5]); w += 5; }
+  return rows;
+})();
+
+describe('scenarioClassifierRunner', () => {
+  it('classifies a scenario from snapshot history', () => {
+    const f = scenarioClassifierRunner({ snapshot: { asOf: ASOF, log_history: RICH_ROWS }, envelope: env('progression_review', { target_lift: 'BENCH' }) });
+    assert.ok(f && typeof f.scenario_id === 'string');
+  });
+  it('returns null without a target lift', () => {
+    assert.strictEqual(scenarioClassifierRunner({ snapshot: { asOf: ASOF, log_history: RICH_ROWS }, envelope: env('progression_review', {}) }), null);
+  });
+  it('never throws on garbage', () => assert.doesNotThrow(() => scenarioClassifierRunner(null)));
+});
+
+describe('progressionRunner', () => {
+  it('emits a decision fragment whose numbers are echoed under matching keys', () => {
+    const results = { scenario_classifier: { scenario_id: 'underloaded' } };
+    const f = progressionRunner({ snapshot: { asOf: ASOF, log_history: RICH_ROWS }, envelope: env('progression_review', { target_lift: 'BENCH' }), results });
+    assert.ok(f && f.decision && f.decision.payload && f.decision.explanation_inputs);
+    assert.strictEqual(f.decision.payload.lift_code, 'BENCH');
+    // key-aware: any prescribed number in payload is echoed under the same key
+    for (const k of ['target_weight', 'target_reps']) {
+      if (typeof f.decision.payload[k] === 'number') {
+        assert.strictEqual(f.decision.explanation_inputs[k], f.decision.payload[k]);
+      }
+    }
+  });
+  it('returns null when no scenario was classified', () => {
+    const f = progressionRunner({ snapshot: { asOf: ASOF, log_history: RICH_ROWS }, envelope: env('progression_review', { target_lift: 'BENCH' }), results: {} });
+    assert.strictEqual(f, null);
+  });
+  it('never throws on garbage', () => assert.doesNotThrow(() => progressionRunner(null)));
 });
 
 // ─── full shadow composition (mirrors the index.js hybrid attach) ────────────
@@ -98,9 +142,10 @@ describe('shadow composition — envelope → assembleState(stub) → orchestrat
     const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
     const v = validateCoachingDecision(brian);
     assert.strictEqual(v.valid, true, `errors: ${v.errors.join(' | ')}`);
-    // confidence adapter ran; the missing keystone (scenario_classifier) is skipped
+    // confidence + scenario_classifier adapters ran; a runner-less capability is skipped
     assert.ok(brian.provenance.modules_run.includes('confidence'));
-    assert.ok(brian.provenance.skipped.includes('scenario_classifier'));
+    assert.ok(brian.provenance.modules_run.includes('scenario_classifier'));
+    assert.ok(brian.provenance.skipped.includes('expected_performance'));
   });
 
   it('modify_workout exercises both safety + confidence adapters and validates', async () => {
@@ -118,5 +163,28 @@ describe('shadow composition — envelope → assembleState(stub) → orchestrat
     const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
     // index.js attaches only if validateCoachingDecision(brian).valid — assert that gate is satisfiable
     assert.strictEqual(validateCoachingDecision(brian).valid, true);
+  });
+
+  it('rich history → an ANSWERED progression decision (first real Brian answer)', async () => {
+    const envelope = env('progression_review', { target_lift: 'BENCH' });
+    const snapshot = await assembleState({ readers: { ...stubReaders(), getLogRows: async () => RICH_ROWS }, asOf: ASOF });
+    const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+    const v = validateCoachingDecision(brian);
+    assert.strictEqual(v.valid, true, `errors: ${v.errors.join(' | ')}`);
+    assert.strictEqual(brian.status, 'answered', `expected answered, got ${brian.status} (${brian.decision_type})`);
+    assert.strictEqual(brian.decision_type, 'progression');
+    assert.strictEqual(brian.payload.lift_code, 'BENCH');
+    // scenario_classifier + progression ran; the trust contract held (valid=true above)
+    assert.ok(brian.provenance.modules_run.includes('scenario_classifier'));
+    assert.ok(brian.provenance.modules_run.includes('progression'));
+  });
+
+  it('thin history → clarification (honest — confidence stays ask)', async () => {
+    const thin = [['2026-06-08', 's1', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 185, 5, 2, '', 925]];
+    const envelope = env('progression_review', { target_lift: 'BENCH' });
+    const snapshot = await assembleState({ readers: { ...stubReaders(), getLogRows: async () => thin }, asOf: ASOF });
+    const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+    assert.strictEqual(validateCoachingDecision(brian).valid, true);
+    assert.strictEqual(brian.decision_type, 'clarification_needed');
   });
 });
