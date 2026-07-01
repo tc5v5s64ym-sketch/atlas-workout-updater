@@ -1,7 +1,7 @@
 {
   "_meta": {
     "status": "complete",
-    "note": "PDF binaries are present. Checksums verified 2026-06-30; source 05 added and checksummed 2026-07-01."
+    "note": "PDF binaries are present. Checksums verified 2026-06-30; source 05 added and checksummed 2026-07-01. Source 06 is a markdown-native research paper (not a PDF), added and checksummed 2026-07-01."
   },
   "documents": [
     {
@@ -55,6 +55,26 @@
         "Praise / sandbagging / setback handling",
         "When Atlas should speak vs stay quiet",
         "Conversation-first coaching behavior"
+      ]
+    },
+    {
+      "id": "06-decade-relationship-coaching",
+      "filename": "06-decade-relationship-coaching.md",
+      "title": "The Ten-Year Athlete — Relationship Intelligence and Decision Architecture for a Coach That Lasts a Decade",
+      "origin": "Atlas strategic red-team review session (2026-07-01); consolidated research paper. Long-horizon research guidance only — no roadmap or implementation items.",
+      "date_ingested": "2026-07-01",
+      "checksum_sha256": "86319cbf8fb53e2481d52137583643107c29ff6dae2b5b8622c07ff9d303e535",
+      "topics": ["decade-scale coaching relationship", "relationship memory (decision vs personality stores)", "coach promises and receipts", "trust creation and destruction", "communication compression with tenure", "return-after-layoff behavior", "decision-outcome learning", "injury/scar-grade memory", "proactivity and earned trust", "Atlas Coaching Principles (18)"],
+      "supports": [
+        "Coach memory and relationship intelligence",
+        "Coach promises / commitment tracking",
+        "Proactivity and trust systems",
+        "Injury memory and constraint enforcement",
+        "Return-after-layoff behavior",
+        "Decision-outcome learning and receipts",
+        "Personalization and individual response profiles",
+        "Long-term programming (tenure/aging arc)",
+        "Coach communication evolution (note-tier destination)"
       ]
     }
   ]

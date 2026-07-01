@@ -23,12 +23,16 @@ Every piece of research resolves to one of:
 | **Safety guardrail** | `config/coaching/rules/safety.rules.json` |
 | **LLM explanation material** | LLM prompt layer (future) |
 
+## Long-horizon relationship research
+
+[`source-archive/06-decade-relationship-coaching.md`](source-archive/06-decade-relationship-coaching.md) — **"The Ten-Year Athlete"** — is the long-horizon research source on what a decade-long coaching relationship requires: relationship memory, coach promises and receipts, trust dynamics, communication compression with tenure, and the distilled Atlas Coaching Principles. **Guidance only — it creates no roadmap or implementation items.** Its Part V checklist names the workstreams that must consult it before design (coach memory, relationship intelligence, proactivity, coach promises, injury memory, return-after-layoff behavior, decision-outcome learning, personalization, long-term programming, coach communication).
+
 ## Structure
 
 ```
 docs/research/coaching-intelligence/
 ├── README.md                    ← this file
-├── source-archive/              ← immutable source PDFs + MANIFEST
+├── source-archive/              ← immutable sources (PDFs 01–05, markdown 06) + MANIFEST
 └── digest/                      ← human-readable map, open debates, glossary
 
 config/coaching/                 ← machine-usable config (separate tree)
