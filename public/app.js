@@ -5953,24 +5953,26 @@ async function handleUndoLastWrite() {
 window.atlasUndoLastWrite = handleUndoLastWrite;
 
 // PR-3: group the just-logged rows into per-exercise blocks for a post-write coach
-// note. Pure — reads the 12-column Log_Cleaned row shape
-// (…[2]=exercise, [4]=muscle_group, [5]=lift_code, [7]=weight, [8]=reps, [9]=rir).
-// Sets are passed raw; the server (batchNoteFacts) coerces/normalizes them.
+// note. Pure. The client write payload (collectLogRows) is an array of OBJECTS —
+// { exercise, weight, reps, rir, … } — with NO lift_code / muscle_group (the
+// 12-column enrichment happens server-side), so group by exercise NAME. muscle_group
+// is left empty: the server (analyzeSetSequence) derives pattern/muscles from the
+// exercise name. Sets are passed raw; the server (batchNoteFacts) coerces them.
 function groupLoggedBlocks(rows) {
   if (!Array.isArray(rows)) return [];
   const order = [];
-  const byCode = new Map();
+  const byName = new Map();
   for (const r of rows) {
-    if (!Array.isArray(r)) continue;
-    const liftCode = r[5];
-    if (liftCode == null || liftCode === '') continue;
-    if (!byCode.has(liftCode)) {
-      byCode.set(liftCode, { exerciseName: r[2] || '', muscleGroup: r[4] || '', liftCode, sets: [] });
-      order.push(liftCode);
+    if (!r || typeof r !== 'object') continue;
+    const exercise = typeof r.exercise === 'string' ? r.exercise.trim() : '';
+    if (!exercise) continue;
+    if (!byName.has(exercise)) {
+      byName.set(exercise, { exerciseName: exercise, muscleGroup: '', sets: [] });
+      order.push(exercise);
     }
-    byCode.get(liftCode).sets.push({ weight: r[7], reps: r[8], rir: r[9] });
+    byName.get(exercise).sets.push({ weight: r.weight, reps: r.reps, rir: r.rir });
   }
-  return order.map(code => byCode.get(code));
+  return order.map(name => byName.get(name));
 }
 
 // PR-3: after a successful batch log, request one tier-gated coach note per logged
