@@ -1,7 +1,8 @@
 # Atlas Coaching Contracts — Implementation Spec
 
 > **Status:** Narrow spec doc. Implements the three load-bearing interfaces from `docs/COACHING_ENGINE_ARCHITECTURE.md`.
-> **Scope:** `IntentEnvelope`, `CapabilityManifest`, `CoachingDecision`. Schemas, enums, validation rules, worked examples, file layout, tests-to-prove. No implementation has been built yet — this is the buildable spec.
+> **Scope:** `IntentEnvelope`, `CapabilityManifest`, `CoachingDecision`. Schemas, enums, validation rules, worked examples, file layout, tests-to-prove.
+> **Status update (2026-07-01): SHIPPED.** All three contracts are built and tested (One-Brain build sequence PR-1/2/3 — `services/intentEnvelope.js`, `services/capabilityManifest.js`, `services/coachingDecision.js`, with `test/contracts-integrity.test.js`). This doc is now the reference for the shipped contracts, not a pending build.
 > **Conventions (from the repo):** declarative vocabularies under `config/coaching/`; pure builders/validators under `services/`; tests are `node:test` files under `test/`. JSON below is illustrative (design artifact), not implementation.
 
 ---
