@@ -3597,6 +3597,123 @@ test('api smoke: recommend-next returns stable read shape', async () => {
   assert.ok('readiness_signal' in body.data, 'readiness_signal field must be present in recommend/next response');
 });
 
+// One-Brain Promotion PR 1 — ATLAS_COACH_ENGINE=legacy|hybrid|brian for this
+// route only. The stubbed BEN01 fixture (2 sessions) is intentionally thin —
+// confirmed via the real orchestrator to resolve to needs_clarification/
+// clarification_needed, so these tests exercise the everyday fallback path at
+// the true HTTP layer. The "brian mode uses Brian when valid" case is proven
+// against a rich fixture through the real Orchestrator in
+// test/coachEnginePromotion.test.js (no live Sheets there either); this file
+// proves the route's env-var wiring and byte-equivalence across modes.
+
+test('api smoke: recommend-next is byte-equivalent to today when ATLAS_COACH_ENGINE is unset (legacy)', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  delete process.env.ATLAS_COACH_ENGINE;
+  try {
+    const { response, body } = await requestJson('/api/recommend/next/BEN01');
+    assert.equal(response.status, 200);
+    assert.equal('brian' in body.data, false, 'legacy mode must never attach recommendation.brian');
+    assert.equal('engine_source' in body.data, false, 'legacy mode must never attach engine_source metadata');
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: hybrid mode stays shadow-only — recommendation.brian attaches, engine_source never appears, numbers unchanged from legacy', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    delete process.env.ATLAS_COACH_ENGINE;
+    const legacy = await requestJson('/api/recommend/next/BEN01');
+
+    process.env.ATLAS_COACH_ENGINE = 'hybrid';
+    const hybrid = await requestJson('/api/recommend/next/BEN01');
+
+    assert.equal(hybrid.response.status, 200);
+    assert.ok(hybrid.body.data.brian, 'hybrid mode must attach a validated brian decision');
+    assert.equal('engine_source' in hybrid.body.data, false, 'hybrid mode must never attach engine_source metadata');
+    // The response is otherwise byte-identical to legacy: same next_target,
+    // recommendation text, and reasoning — shadow attach changes nothing.
+    assert.deepEqual(hybrid.body.data.next_target, legacy.body.data.next_target);
+    assert.equal(hybrid.body.data.recommendation, legacy.body.data.recommendation);
+    assert.equal(hybrid.body.data.reasoning, legacy.body.data.reasoning);
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: brian mode falls back to legacy on clarification_needed, with metadata showing the fallback', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    delete process.env.ATLAS_COACH_ENGINE;
+    const legacy = await requestJson('/api/recommend/next/BEN01');
+
+    process.env.ATLAS_COACH_ENGINE = 'brian';
+    const brian = await requestJson('/api/recommend/next/BEN01');
+
+    assert.equal(brian.response.status, 200);
+    assert.ok(brian.body.data.engine_source, 'brian mode must always include engine_source metadata');
+    assert.equal(brian.body.data.engine_source.mode, 'brian');
+    assert.equal(brian.body.data.engine_source.driven_by, 'legacy');
+    assert.equal(brian.body.data.engine_source.reason, 'needs_clarification');
+    // Fallback means byte-identical to legacy — nothing silently drifted.
+    assert.deepEqual(brian.body.data.next_target, legacy.body.data.next_target);
+    assert.equal(brian.body.data.recommendation, legacy.body.data.recommendation);
+    assert.equal(brian.body.data.reasoning, legacy.body.data.reasoning);
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: brian mode never overrides an active deload, even flagged as such in engine_source', async () => {
+  const DELOAD_HEADER = ['updated_at', 'training_state', 'deload_protocol', 'deload_reason', 'deload_start_date', 'deload_sessions_remaining', 'deload_exit_criteria'];
+  const original = process.env.ATLAS_COACH_ENGINE;
+  fakeSheetsState.deloadStateSheet = [
+    DELOAD_HEADER,
+    ['2026-06-16T00:00:00Z', 'DELOAD_ACTIVE', 'STRENGTH_DELOAD_V1', 'testing', '2026-06-16', '1', '']
+  ];
+  try {
+    process.env.ATLAS_COACH_ENGINE = 'brian';
+    const { response, body } = await requestJson('/api/recommend/next/BEN01');
+    assert.equal(response.status, 200);
+    assert.equal(body.data.deload.in_deload, true);
+    assert.ok(body.data.engine_source);
+    assert.equal(body.data.engine_source.driven_by, 'legacy');
+    assert.equal(body.data.engine_source.reason, 'active_deload');
+  } finally {
+    fakeSheetsState.deloadStateSheet = [];
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: /api/recommend/next/:liftCode stays a read-only, non-write-capable route across all engine modes', async () => {
+  const { body } = await requestJson('/routes');
+  const route = body.data.routes.find(r => r.path === '/api/recommend/next/:liftCode');
+  assert.ok(route, 'route must be registered');
+  assert.equal(route.writeCapable, false);
+  assert.equal(route.readOnly, true);
+
+  // Requesting it in every engine mode must never trigger a write-capable
+  // Sheets call — check the delta across these three calls, not the file's
+  // global appendCalls (other suites intentionally exercise real writes).
+  const before = fakeSheetsState.appendCalls.length;
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    for (const mode of [undefined, 'hybrid', 'brian']) {
+      if (mode === undefined) delete process.env.ATLAS_COACH_ENGINE;
+      else process.env.ATLAS_COACH_ENGINE = mode;
+      await requestJson('/api/recommend/next/BEN01');
+    }
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'no engine mode may trigger a Sheets write from this route');
+});
+
 test('api smoke: plan-today returns stable read shape', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/plan/today');
