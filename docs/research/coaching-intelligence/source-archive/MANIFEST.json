@@ -1,7 +1,7 @@
 {
   "_meta": {
     "status": "complete",
-    "note": "PDF binaries are present. Checksums verified 2026-06-30."
+    "note": "PDF binaries are present. Checksums verified 2026-06-30; source 05 added and checksummed 2026-07-01."
   },
   "documents": [
     {
@@ -39,6 +39,23 @@
       "date_ingested": "2026-06-30",
       "checksum_sha256": "e8be3c3dc91a7a80a9ee2d3eff74ce76b016ba49cdd92be430d657ff9221a13b",
       "topics": ["knowledge base tree", "rules tables", "traffic-light safety system", "progression decision table", "deload triggers"]
+    },
+    {
+      "id": "05-coach-communication-intelligence",
+      "filename": "05-coach-communication-intelligence.pdf",
+      "title": "Atlas Coach Communication Intelligence",
+      "origin": "Research document produced for Atlas Coach Intelligence Layer",
+      "date_ingested": "2026-07-01",
+      "checksum_sha256": "76c5fb87912c8c948e645b454bd50341ae6385b6e5b1bdb034dae5ef4dee4884",
+      "topics": ["coach communication policy", "coach-note tone", "autonomy-supportive language", "praise/sandbagging/setback handling", "when to speak vs stay quiet", "conversation-first coaching behavior"],
+      "supports": [
+        "Coach communication policy",
+        "Coach-note tone",
+        "Autonomy-supportive language",
+        "Praise / sandbagging / setback handling",
+        "When Atlas should speak vs stay quiet",
+        "Conversation-first coaching behavior"
+      ]
     }
   ]
 }
