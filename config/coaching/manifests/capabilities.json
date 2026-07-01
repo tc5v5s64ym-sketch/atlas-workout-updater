@@ -110,7 +110,7 @@
       "requires": ["log_history", "profile_goal"],
       "optional": ["constraint.focus", "constraint.duration_minutes", "constraint.equipment"],
       "depends_on": ["progression", "fatigue", "volume", "safety", "equipment", "constraint_resolver"],
-      "produces": ["session_blocks", "why_today"], "status": "missing"
+      "produces": ["session_blocks", "why_today"], "status": "partial"
     },
     "confidence": {
       "module": { "file": "services/confidenceModule.js", "export": "scoreConfidence" },
