@@ -1,7 +1,8 @@
 # Atlas Coach — "Next-Level" Build Plan
 
-> Future/reference-only. Do not execute ahead of `BACKLOG.md` or `docs/ACTIVE_ROADMAP.md`.
-> Use `docs/AGENT_WORKFLOW.md` for the Dale + ChatGPT + Claude Code + CODEX Review + GitHub process.
+> **HISTORICAL / REFERENCE — not an execution queue.** Subordinate to `docs/ACTIVE_ROADMAP.md` (active queue) and `BACKLOG.md` (source of truth); if it disagrees with them, they win. Do not select or sequence work from this file. Retained for context only.
+> **⚠️ Obsolete model guidance:** this plan's "three model phases / one model switch (Sonnet → Opus)" structure is **superseded** — by owner standing instruction the builder runs on **Opus 4.8 for all work** (`CLAUDE.md`). Ignore the model-phase/HOLD-switch framing; read the *coaching upgrades* as reference only.
+> Use `docs/AGENT_WORKFLOW.md` for the current Dale + ChatGPT + Claude Code + CODEX Review + GitHub process.
 
 A handoff for Claude Code. Six coaching upgrades, organized into **three model phases**
 with **one model switch** (Sonnet → Opus at HOLD 1) and a **rebase/merge checkpoint**

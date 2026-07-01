@@ -1,6 +1,8 @@
 # Atlas Coach Intelligence Layer — PR Roadmap
 
-> **Source of truth:** `docs/research/coaching-intelligence/atlas-coach-intelligence-roadmap.pdf`
+> **This is a progress ledger, NOT an execution queue.** It records what the coach-intelligence build series has shipped; it is **subordinate to `docs/ACTIVE_ROADMAP.md` (the active queue) and `BACKLOG.md` (the source of truth)**. Do not select or sequence work from this file — if it disagrees with `ACTIVE_ROADMAP.md`/`BACKLOG.md`, those win. The current active build is the **One-Brain coaching engine** (`docs/COACHING_ENGINE_ARCHITECTURE.md`; sequence in `BACKLOG.md`).
+>
+> **Source of truth (for this file's scope):** `docs/research/coaching-intelligence/atlas-coach-intelligence-roadmap.pdf`
 > This file is a live-status markdown mirror of that PDF. Update status here when a PR ships. The PDF is authoritative for scope; this file is authoritative for current progress.
 
 **Prime directive:** The LLM is the voice, the code is the brain. The LLM never makes a progression or safety decision and never computes a number — that one line never moves.
@@ -84,7 +86,7 @@
 | PR | Title | Model | Status | Notes |
 |---|---|---|---|---|
 | 20 | NutritionModule (minimum viable + guardrails) | Opus | 🔲 not started | Protein + calorie targets, rate-of-change guardrails, evidence-ranked supplement reference. Hard limits: no clinical diets, no disordered-eating counsel, refer to dietitian/physician. Depends on PR 1 (evidence tiers); profile bodyweight + goal. |
-| 21 | Behavior-change & communication layer | Opus | 🔲 not started | Adherence tracking, anti-repetition constraints, identity/encouragement language, nudge timing. Autonomy-supportive; anti-guilt (missing one session is not failure). Depends on PR 10, PR 18. |
+| 21 | Behavior-change & communication layer | — | 🔬 reclassified → research | The coach **communication** layer is now filed as **research**, not a build-PR here: see `docs/research/coaching-intelligence/` source `05-coach-communication-intelligence` and the captured direction in `docs/CONVERSATION_CONTRACT_V1.md` (communication policy, coach-note tone, autonomy-supportive/anti-guilt language, when to speak vs. stay quiet). Behavior-change *triggers* remain engine work under One-Brain. |
 
 ---
 
