@@ -1,6 +1,6 @@
 # Atlas Substitution / Intent Classification Specification
 
-> **Status: PROPOSED (PR 1 — spec only, awaiting owner approval).** Single source of truth for what a substitution *is* in Atlas and how it is judged. Code follows this spec; if behavior is ever wrong, change this spec first, then the code. No classifier code ships until this spec is approved.
+> **Status (2026-07-01): SHIPPED — this is the live spec.** Single source of truth for what a substitution *is* in Atlas and how it is judged. The substitution classification/handling modules have shipped and follow this spec; if behavior is ever wrong, change this spec first, then the code. **Behavior changes to the shipped substitution logic remain owner-gated** (trust-sensitive coach behavior) — the spec is the contract, not a licence to alter live behavior without approval.
 
 ## GOAL
 

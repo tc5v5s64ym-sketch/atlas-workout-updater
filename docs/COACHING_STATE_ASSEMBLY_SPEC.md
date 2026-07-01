@@ -1,7 +1,8 @@
 # Atlas Coaching Engine — State Assembly Spec (Layer ③)
 
 > **Status:** Narrow spec doc. Implements layer ③ of `docs/COACHING_ENGINE_ARCHITECTURE.md`.
-> **Scope:** the read-model hydration layer the CapabilityManifest input keys draw from. Spec only — the module is the next build step.
+> **Scope:** the read-model hydration layer the CapabilityManifest input keys draw from.
+> **Status update (2026-07-01): SHIPPED.** The module is built and tested — `services/stateAssembly.js` (`assembleState`/`knownKeys`, injected-reader contract, graceful degradation) with `test/stateAssembly.test.js`. This doc is now the reference for the shipped module, not a pending build.
 > **Sequence:** One-Brain build step 4 (`BACKLOG.md` → "One-Brain Coaching Engine").
 
 ---

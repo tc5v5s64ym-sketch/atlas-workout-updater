@@ -1,14 +1,15 @@
 # Atlas Coaching Engine — Session Generator Spec (Keystone #2)
 
 > **Status:** Narrow spec doc. Defines the Brian-native replacement for `analytics.js::scoreIntents` — the engine that builds a full workout.
-> **Scope:** the `session_generator` capability (`status:missing` in the manifest today). Spec only — the module is the next build step. Docs PR (natural checkpoint), like the State Assembly spec.
+> **Scope:** the `session_generator` capability.
+> **Status update (2026-07-01): the pure engine is SHIPPED & wired.** `services/sessionGenerator.js` (`buildSession`) is built, tested (`test/sessionGenerator.test.js`), and wired as a runner (manifest `session_generator` is now `partial`, not `missing`). **Still owner-gated:** replacing the live "Today's Pick" surface (`analytics.js::scoreIntents`) with this engine is a coach-surface/product-scope change and remains owner-reserved — the shipped module runs on the shadow/`brian` path, not as the live default.
 > **Sequence:** One-Brain build — keystone #2 (`BACKLOG.md` → "One-Brain Coaching Engine").
 
 ---
 
 ## Why this exists
 
-The Orchestrator can answer *"what weight on this lift"* (via `scenario_classifier` → `progression`, shipped). It cannot yet answer *"what's my workout today"* — because the capability that assembles a full session (`session_generator`) does not exist. That is the second keystone, and the last piece before the Brain can produce a `workout` `CoachingDecision`.
+The Orchestrator can answer *"what weight on this lift"* (via `scenario_classifier` → `progression`, shipped). It can now also assemble *"what's my workout today"* — the `session_generator` capability that builds a full session **has shipped** (`services/sessionGenerator.js`, wired as a runner), so the Brain can produce a `workout` `CoachingDecision` on the shadow/`brian` path. This was the second keystone; the remaining step — making it the **live** "Today's Pick" surface in place of `analytics.js::scoreIntents` — is owner-gated (see Status above).
 
 Today the equivalent lives in `analytics.js::scoreIntents` (~950 lines), fused with analytics. The Session Generator is its **pure, Brain-native form**: it composes the already-shipped modules and emits a validated `workout` payload — inventing no numbers.
 
