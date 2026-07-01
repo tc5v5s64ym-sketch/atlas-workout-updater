@@ -34,7 +34,7 @@
 //
 // classifyNoteTier(facts) → { tier, trigger, reason_code }
 //   facts (all optional; unknown/missing → ack_only, never fabricate): {
-//     effort_verdict:      { level } — analytics.effortVerdict: 'easy'|'on_target'|'hard'|'failure'
+//     effort_verdict:      { level } — analytics.effortVerdict: 'far_easy'|'easy'|'on_target'|'hard'|'failure'
 //     progression_verdict: { level } — analytics.progressionVerdict: 'new_ground'|'progressing'|'in_pocket'|'maintenance_drift'|'under_shot'
 //     effort_signals:      analyzeSetSequence output ({ signals:{…}, blocks_progression, … }) | null
 //     injury:              truthy pain/injury signal | null
@@ -97,9 +97,12 @@ function _formSafetyReason(facts) {
   return null;
 }
 
-// A "left too much in the tank" read: an explicitly easy work set, or the
-// underdose signal from the effort analysis, or under-range weight lifted easily.
-// Suppressed on a recovery/deload session (a high-RIR set is prescribed there).
+// A "left too much in the tank" read: a far-too-light or explicitly easy work
+// set, the underdose signal from the effort analysis, or under-range weight
+// lifted easily. `far_easy` (RIR >= target+5 — the strongest under-effort read
+// effortVerdict produces) gets its own reason code so the voice can be firmer and
+// the signal is not laundered into the milder `easy`. Suppressed on a recovery/
+// deload session (a high-RIR set is prescribed there).
 function _sandbagReason(facts) {
   if (facts.recovery_active === true) return null;
   const effort = _levelOf(facts.effort_verdict);
@@ -107,6 +110,7 @@ function _sandbagReason(facts) {
   const es = facts.effort_signals;
   const underdosed = !!(es && es.signals && es.signals.high_rir_workset_underdosed === true);
   if (underdosed) return 'high_rir_underdose';
+  if (effort === 'far_easy') return 'far_under_effort';
   if (effort === 'easy') return prog === 'under_shot' ? 'under_range_and_easy' : 'easy_effort';
   return null;
 }
@@ -148,10 +152,12 @@ function classifyNoteTier(facts) {
   }
 
   // 5. Regression — an explicit backward flag, or under-range weight that was NOT
-  //    easy (an easy under-range set is a sandbag, handled next, not a regression).
+  //    light (an easy/far_easy under-range set is a sandbag, handled next, not a
+  //    regression — the lifter had room, they didn't fail to reach their range).
   const prog = _levelOf(facts.progression_verdict);
+  const effortLevel = _levelOf(facts.effort_verdict);
   if (facts.regression === true) return extended(TRIGGERS.REGRESSION, 'regression_flag');
-  if (prog === 'under_shot' && _levelOf(facts.effort_verdict) !== 'easy') {
+  if (prog === 'under_shot' && effortLevel !== 'easy' && effortLevel !== 'far_easy') {
     return extended(TRIGGERS.REGRESSION, 'under_range');
   }
 

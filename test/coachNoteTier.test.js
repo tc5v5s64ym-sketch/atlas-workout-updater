@@ -124,6 +124,19 @@ describe('coachNoteTier — value triggers → extended', () => {
     assert.equal(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
     assert.equal(r.reason_code, 'under_range_and_easy');
   });
+  it('challenge/sandbag — far_easy is the strongest under-effort read (own reason code)', () => {
+    // effortVerdict emits far_easy at RIR >= target+5 (analytics.js:458) — must not
+    // fall through to ack_only; gets a distinct, firmer reason code, not 'easy_effort'.
+    const r = classifyNoteTier({ effort_verdict: effort('far_easy') });
+    assert.equal(r.tier, TIERS.EXTENDED);
+    assert.equal(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
+    assert.equal(r.reason_code, 'far_under_effort');
+  });
+  it('challenge/sandbag — far_easy + under_shot reads as sandbag, not regression', () => {
+    const r = classifyNoteTier({ progression_verdict: prog('under_shot'), effort_verdict: effort('far_easy') });
+    assert.equal(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
+    assert.equal(r.reason_code, 'far_under_effort');
+  });
   it('challenge/sandbag — high-RIR underdose signal', () => {
     const r = classifyNoteTier({ effort_signals: signals({ high_rir_workset_underdosed: true }) });
     assert.equal(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
@@ -160,6 +173,11 @@ describe('coachNoteTier — recovery suppresses the sandbag challenge', () => {
     assert.notEqual(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
     // in_pocket still earns a short line, not an add-load nudge.
     assert.equal(r.tier, TIERS.SHORT);
+  });
+  it('a far_easy set on a recovery day does NOT fire challenge_sandbag', () => {
+    const r = classifyNoteTier({ effort_verdict: effort('far_easy'), recovery_active: true });
+    assert.notEqual(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
+    assert.equal(r.tier, TIERS.ACK_ONLY);
   });
   it('the underdose signal is suppressed on recovery → ack_only when nothing else reads', () => {
     const r = classifyNoteTier({ effort_signals: signals({ high_rir_workset_underdosed: true }), recovery_active: true });
