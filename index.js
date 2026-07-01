@@ -51,6 +51,12 @@ const { getProfileGoal } = require('./services/profileGoal');
 const { normalizeTrainingGoal } = require('./services/trainingKnowledge');
 const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseBenchmark');
 const { detectTrend } = require('./services/trendDetector');
+// One-Brain coaching engine (shadow only; gated by ATLAS_COACH_ENGINE=hybrid).
+const { buildIntentEnvelope } = require('./services/intentEnvelope');
+const { assembleState } = require('./services/stateAssembly');
+const { orchestrate } = require('./services/coachOrchestrator');
+const { validateCoachingDecision } = require('./services/coachingDecision');
+const { buildRunners } = require('./services/coachRunners');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -2420,6 +2426,30 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     recommendation.trend = detectTrend(liftCode, allLog);
     // deviationHistory has no production caller yet — passes empty array (monitoring/none).
     recommendation.readiness_signal = computeReadiness(recommendation.trend, []);
+
+    // One-Brain shadow attach (observation only). Gated by ATLAS_COACH_ENGINE=hybrid;
+    // default (unset/legacy) leaves the response byte-identical. Own try/catch so it
+    // can NEVER alter or fail the response, and the decision is attached only when it
+    // validates. No write path / trust-loop / proof-field touch. docs/COACHING_ENGINE_ARCHITECTURE.md.
+    if (process.env.ATLAS_COACH_ENGINE === 'hybrid') {
+      try {
+        const asOf = new Date().toISOString();
+        const envelope = buildIntentEnvelope({
+          type: 'progression_review',
+          constraints: { target_lift: liftCode },
+          source: 'api',
+          asOf,
+        });
+        const snapshot = await assembleState({ asOf });
+        const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+        if (brian && validateCoachingDecision(brian).valid) {
+          recommendation.brian = brian;
+        }
+      } catch (_) {
+        // Shadow attach must never affect the response — swallow and omit brian.
+      }
+    }
+
     return standardSuccess(req, res, 'Recommendation generated', recommendation);
   } catch (error) {
     return standardError(req, res, 'Failed to compute recommendation', error.message, 500);
