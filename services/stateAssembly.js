@@ -34,7 +34,12 @@ function _defaultReaders() {
       getLogRows,
       readDeloadState: readCurrentDeloadState,
       // Only goal has a durable source today; level/population stay null until one exists.
-      getProfile: () => ({ profile_goal: getProfileGoal(), training_level: null, population: null }),
+      // Return null when there is no goal at all, so provenance.reads does not record a
+      // 'profile' read that produced no data (the orchestrator consumes reads).
+      getProfile: () => {
+        const profile_goal = getProfileGoal();
+        return profile_goal == null ? null : { profile_goal, training_level: null, population: null };
+      },
     };
   } catch {
     // Reader layer unavailable (e.g. Sheets client cannot load) → degrade to an
