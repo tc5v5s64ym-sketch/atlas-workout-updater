@@ -1,5 +1,7 @@
 # Atlas Backend Expansion - Implementation Summary
 
+> **HISTORICAL — completion record, not a plan or execution queue.** A point-in-time summary of a past 12-endpoint backend expansion. Do not use it to select or sequence work; the live queue is `docs/ACTIVE_ROADMAP.md` + `BACKLOG.md`. It near-duplicates [`COMPLETION_CHECKLIST.md`](COMPLETION_CHECKLIST.md) (merge candidate — see `BACKLOG.md` → Housekeeping), and its endpoint-proliferation framing predates the "consolidate behind One-Brain" direction.
+
 ## Overview
 Successfully implemented a major backend expansion with **16 new features** organized as **12 new API endpoints** plus **3 supporting helper modules**. All changes are backward-compatible and non-destructive.
 

@@ -1,5 +1,7 @@
 # ✅ Atlas Backend Expansion - Completion Checklist
 
+> **HISTORICAL — completion record, not a runbook or execution queue.** A point-in-time checklist of a past 12-endpoint backend expansion (not an operations/release runbook). Do not use it to select or sequence work; the live queue is `docs/ACTIVE_ROADMAP.md` + `BACKLOG.md`. It near-duplicates [`EXPANSION_SUMMARY.md`](EXPANSION_SUMMARY.md) (merge candidate — see `BACKLOG.md` → Housekeeping).
+
 ## Requirements Met
 
 ### 1. Session Summary API ✅
