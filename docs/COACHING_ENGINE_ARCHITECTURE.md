@@ -150,6 +150,8 @@ ATLAS_COACH_ENGINE = legacy | hybrid | brian      (default: legacy)
 
 A boolean (`ATLAS_BRIAN_ENABLED`) cannot express the `hybrid` shadow state — the single most important de-risking step. The enum is one switch, a clear ladder, and extensible.
 
+**Status (One-Brain Promotion PR 1, shipped):** `brian` is implemented for **`GET /api/recommend/next/:liftCode` only** — `services/coachEnginePromotion.js` (`planBrianOverride`/`applyBrianOverride`). When a valid, `answered` `progression` decision exists, its `target_weight`/`target_reps` drive `next_target`/`recommendation`/`reasoning`; every other legacy field (`next_target.sets`, `target_rir`, `deload`, `rule_decision`, etc.) is untouched. Any error, invalid decision, `clarification_needed`, or an **active deload** (the predefined protocol always wins — a progression decision has no deload awareness) falls back to the legacy response unmodified. `recommendation.engine_source = { mode, driven_by, reason? }` records which path produced the response; this field only ever appears in `brian` mode. No other surface (today's pick, coach chat/message, in-session set reaction) is promoted — see `BACKLOG.md`.
+
 ---
 
 ## Build order (the architecture's required sequence)

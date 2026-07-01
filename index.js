@@ -57,6 +57,7 @@ const { assembleState, defaultReaders } = require('./services/stateAssembly');
 const { orchestrate } = require('./services/coachOrchestrator');
 const { validateCoachingDecision } = require('./services/coachingDecision');
 const { buildRunners } = require('./services/coachRunners');
+const { planBrianOverride, applyBrianOverride } = require('./services/coachEnginePromotion');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -2428,11 +2429,17 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
     // deviationHistory has no production caller yet — passes empty array (monitoring/none).
     recommendation.readiness_signal = computeReadiness(recommendation.trend, []);
 
-    // One-Brain shadow attach (observation only). Gated by ATLAS_COACH_ENGINE=hybrid;
-    // default (unset/legacy) leaves the response byte-identical. Own try/catch so it
-    // can NEVER alter or fail the response, and the decision is attached only when it
-    // validates. No write path / trust-loop / proof-field touch. docs/COACHING_ENGINE_ARCHITECTURE.md.
-    if (process.env.ATLAS_COACH_ENGINE === 'hybrid') {
+    // One-Brain engine gate. `hybrid` = shadow attach only (observation, never
+    // changes the response). `brian` = One-Brain Promotion PR 1: if Brian
+    // returns a valid, answered `progression` decision, its numbers DRIVE
+    // next_target/reasoning/recommendation; any error/invalid/clarification
+    // (or an active deload — the predefined protocol always wins) falls back
+    // to the legacy response untouched. Default (unset/legacy) leaves the
+    // response byte-identical to today. Own try/catch so a coach-engine
+    // failure can NEVER fail the request — it only ever falls back to legacy.
+    // No write path / trust-loop / proof-field touch. docs/COACHING_ENGINE_ARCHITECTURE.md.
+    const coachEngineMode = process.env.ATLAS_COACH_ENGINE;
+    if (coachEngineMode === 'hybrid' || coachEngineMode === 'brian') {
       try {
         const asOf = new Date().toISOString();
         const envelope = buildIntentEnvelope({
@@ -2448,11 +2455,25 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           readers: { ...defaultReaders(), getLogRows: async () => allLog },
         });
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
-        if (brian && validateCoachingDecision(brian).valid) {
+        const validation = validateCoachingDecision(brian);
+        if (brian && validation.valid) {
           recommendation.brian = brian;
         }
+        if (coachEngineMode === 'brian') {
+          const plan = planBrianOverride(recommendation, brian, validation, activeDeload);
+          if (plan.eligible) {
+            applyBrianOverride(recommendation, plan);
+            recommendation.engine_source = { mode: 'brian', driven_by: 'brian' };
+          } else {
+            recommendation.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
+          }
+        }
       } catch (_) {
-        // Shadow attach must never affect the response — swallow and omit brian.
+        // Must never affect the response beyond the brian-mode metadata —
+        // hybrid's shadow attach is simply omitted; brian mode falls back.
+        if (coachEngineMode === 'brian') {
+          recommendation.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
+        }
       }
     }
 
