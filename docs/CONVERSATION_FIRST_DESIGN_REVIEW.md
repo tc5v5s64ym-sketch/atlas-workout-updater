@@ -25,6 +25,37 @@ The conversation-first instinct is therefore **already the codified stance.** Wh
 
 ---
 
+## Owner refinements (2026-07-01) — the non-negotiable filter, and "orchestrate, don't replace"
+
+Two owner directions sharpen this review and must not be lost:
+
+**1. The non-negotiable filter (now Invariant I1, a forward filter on new work):**
+
+> **The conversation is the product. Every screen exists to support the conversation, not compete with it.**
+
+This is the single most important output of this review. It converts the direction into a per-PR test. Instead of *"should we add another dashboard / settings page?"* the question becomes *"does this make the coach better?"* / *"would a coach ask this naturally?"*. That one filter prevents years of UI drift. It is recorded as **Invariant I1** in `docs/INVARIANTS.md` — binding on *new* work immediately; demoting *existing* surfaces stays owner-gated.
+
+**2. Conversation-first is NOT chatbot-only — it orchestrates capabilities, it does not replace them.**
+
+The trap is swinging too far: "conversation-first" is misheard as "delete every screen and become a chat box." That is not Atlas. A one-tap "log this set" is often *better* UX than typing "log bench 225 for 5" — and pressing the button **is** the conversation expressing intent. The button is a sentence. So everywhere this review says a concept becomes "unnecessary," it means **unnecessary as a forced navigation choice or a rival destination — never that the capability is deleted.** Capabilities stay first-class; the conversation is the front door to them.
+
+```
+        Conversation  (the front door)
+              │
+              ▼
+        Intent Router
+              │
+      ┌───────┼───────┐
+      │       │       │
+     Log     Plan   Review  …   (capabilities — still fully there)
+```
+
+**3. A milestone precedes the Intent Router: the Conversation Contract.**
+
+Before building the Intent Router, define *how Atlas behaves* — when it asks, stays silent, interrupts, challenges, refuses to guess, summarizes, recommends. Those behaviors are Atlas's personality. Build the router first and every capability "talks" differently; build the **contract** first and the router has a consistent personality to serve. Captured as **`docs/CONVERSATION_CONTRACT_V1.md`** (philosophy only) and sequenced ahead of the Intent Router in the One-Brain backlog.
+
+---
+
 ## Grounding — what the codebase is today
 
 *(Established by reading the governance docs and the `public/` + `services/` surfaces before writing this review.)*
