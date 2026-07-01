@@ -1,5 +1,7 @@
 # SESSION_DESIGN.md — How Atlas builds a workout
 
+> **Related session-building docs — which is canonical:** this is the older design of Atlas's current/legacy session-building logic. The **canonical Brain-native session engine is now** [`docs/COACHING_SESSION_GENERATOR_SPEC.md`](docs/COACHING_SESSION_GENERATOR_SPEC.md) (shipped — One-Brain keystone #2); the *future, owner-gated* profile-aware objective-selection layer is [`docs/SESSION_PLANNING_ENGINE.md`](docs/SESSION_PLANNING_ENGINE.md). Read this doc as background/legacy design; for the One-Brain build, defer to the Session Generator spec.
+
 > Feeds the existing plan. It makes one previously-optional PR required, adds one small engine signal in Phase 3, and rewrites PR 4.2. Same discipline as everything else: tiny PRs, verify before changing, golden fixtures, engine owns the numbers / the coach only words them.
 
 ## What it is (plain terms)

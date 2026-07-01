@@ -9,6 +9,7 @@
 > **Source material:** the "Atlas Training Intelligence System" research report (objective-scoring model
 > below) + the *Deloading in Resistance Training* report (§10) + the taxonomy spec + Atlas's existing
 > deterministic engine.
+> **Related session-building docs — which is canonical:** this is a *future, owner-gated* **objective-selection** layer (*what* to train today). The **canonical Brain-native engine that assembles the actual session** is [`COACHING_SESSION_GENERATOR_SPEC.md`](COACHING_SESSION_GENERATOR_SPEC.md) (shipped) — this planning layer would feed it constraints, not replace it. [`SESSION_DESIGN.md`](../SESSION_DESIGN.md) is the older/legacy session-building design.
 
 ---
 

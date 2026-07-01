@@ -4,6 +4,7 @@
 > **Scope:** the `session_generator` capability.
 > **Status update (2026-07-01): the pure engine is SHIPPED & wired.** `services/sessionGenerator.js` (`buildSession`) is built, tested (`test/sessionGenerator.test.js`), and wired as a runner (manifest `session_generator` is now `partial`, not `missing`). **Still owner-gated:** replacing the live "Today's Pick" surface (`analytics.js::scoreIntents`) with this engine is a coach-surface/product-scope change and remains owner-reserved — the shipped module runs on the shadow/`brian` path, not as the live default.
 > **Sequence:** One-Brain build — keystone #2 (`BACKLOG.md` → "One-Brain Coaching Engine").
+> **Related session-building docs — which is canonical:** this spec is the **canonical Brain-native session engine** (shipped). [`SESSION_PLANNING_ENGINE.md`](./SESSION_PLANNING_ENGINE.md) is a *future, owner-gated* profile-aware **objective-selection** layer (*which* objective to train today) that would feed constraints into this generator — not a competing generator. [`SESSION_DESIGN.md`](../SESSION_DESIGN.md) is the older design of the current/legacy session-building logic, predating this engine. When they differ on how a session is assembled, this spec wins for the One-Brain path.
 
 ---
 
