@@ -435,6 +435,36 @@
         <div id="debug-result"></div>
       </div>
 
+      <div class="card">
+        <h2>Hybrid Coach Compare (dev)</h2>
+        <p class="muted">Developer-only. Fetches one lift's recommendation and, only when <code>ATLAS_COACH_ENGINE=hybrid</code> returns a validated Brian decision, shows both coaches side by side so you can flag which one was better. Read-only — no write, no effect on the actual recommendation.</p>
+        <form id="hybrid-compare-form" class="inline-form">
+          <input type="text" id="hybrid-compare-liftcode" placeholder="Lift code" value="BEN01">
+          <button type="submit" class="secondary">Compare</button>
+        </form>
+        <div id="hybrid-compare-status" class="muted"></div>
+        <div id="hybrid-compare-card" hidden>
+          <div class="form-row">
+            <div>
+              <h3>Legacy</h3>
+              <div id="hybrid-compare-legacy"></div>
+            </div>
+            <div>
+              <h3>Brian</h3>
+              <div id="hybrid-compare-brian"></div>
+            </div>
+          </div>
+          <label for="hybrid-compare-note">Note (optional)</label>
+          <textarea id="hybrid-compare-note" rows="2" placeholder="Why was this one better?"></textarea>
+          <div class="action-row">
+            <button type="button" id="hybrid-compare-prefer-legacy" class="secondary">Prefer Legacy</button>
+            <button type="button" id="hybrid-compare-prefer-brian" class="secondary">Prefer Brian</button>
+            <button type="button" id="hybrid-compare-prefer-neither" class="secondary">Neither / Bad</button>
+          </div>
+          <div id="hybrid-compare-saved" class="muted"></div>
+        </div>
+      </div>
+
       <h3 class="settings-section-heading">Data</h3>
 
       <div class="card">
@@ -542,6 +572,7 @@
   <script src="drawer.js"></script>
   <script src="chat.js"></script>
   <script src="coachVoiceTemplates.js"></script>
+  <script src="hybridCompare.js"></script>
   <script src="activeSession.js"></script>
   <script src="planMutationIntent.js"></script>
   <script src="identityCorrection.js"></script>

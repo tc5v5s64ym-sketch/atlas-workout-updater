@@ -803,6 +803,84 @@ document.getElementById('test-brian-btn')?.addEventListener('click', async () =>
   }
 });
 
+/* ===== Hybrid Coach Compare v1 (dev-only) =====
+ * Developer-only evaluation UI: fetches one lift's /api/recommend/next response and,
+ * only when hybridCompare.shouldShowCompareCard() confirms hybrid mode + a validated
+ * Brian decision, renders Legacy vs Brian side by side with a preference button row.
+ * Read-only — the fetch is the same production endpoint; a preference selection only
+ * appends a feedback entry to localStorage (services/pure helpers in hybridCompare.js).
+ * No write path, no trust-loop, no effect on the recommendation itself. */
+
+let hybridCompareState = null;
+
+function renderHybridCompareSummary(container, summary) {
+  const lines = Object.entries(summary || {})
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => el('p', { text: `${k}: ${v}` }));
+  container.replaceChildren(...(lines.length ? lines : [el('p', { class: 'muted', text: 'No data' })]));
+}
+
+document.getElementById('hybrid-compare-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const liftCode = (document.getElementById('hybrid-compare-liftcode').value || '').trim();
+  const statusEl = document.getElementById('hybrid-compare-status');
+  const cardEl = document.getElementById('hybrid-compare-card');
+  const savedEl = document.getElementById('hybrid-compare-saved');
+  cardEl.hidden = true;
+  savedEl.textContent = '';
+  hybridCompareState = null;
+  if (!liftCode) {
+    setBoxSpan(statusEl, 'muted', 'Enter a lift code.');
+    return;
+  }
+  setBoxSpan(statusEl, 'muted', `Comparing ${liftCode}…`);
+  try {
+    const [configRes, recRes] = await Promise.all([
+      api('/api/debug/config'),
+      api(`/api/recommend/next/${encodeURIComponent(liftCode)}`)
+    ]);
+    const coachEngineMode = (configRes.data || configRes || {}).coachEngineMode;
+    const recommendation = recRes.data || recRes;
+    if (!window.hybridCompare.shouldShowCompareCard(coachEngineMode, recommendation)) {
+      setBoxSpan(statusEl, 'muted', `Not available — coachEngineMode is "${coachEngineMode || 'legacy'}" or no validated Brian decision was attached for ${liftCode}.`);
+      return;
+    }
+    hybridCompareState = { liftCode, recommendation };
+    renderHybridCompareSummary(document.getElementById('hybrid-compare-legacy'), window.hybridCompare.summarizeLegacy(recommendation));
+    renderHybridCompareSummary(document.getElementById('hybrid-compare-brian'), window.hybridCompare.summarizeBrian(recommendation));
+    setBoxSpan(statusEl, 'status-ok', `Comparing ${liftCode} — hybrid mode confirmed.`);
+    cardEl.hidden = false;
+  } catch (err) {
+    setBoxSpan(statusEl, 'status-error', `Could not compare: ${err.message}`);
+  }
+});
+
+function saveHybridComparePreference(preference) {
+  const savedEl = document.getElementById('hybrid-compare-saved');
+  if (!hybridCompareState) {
+    setBoxSpan(savedEl, 'muted', 'Run Compare first.');
+    return;
+  }
+  try {
+    const noteEl = document.getElementById('hybrid-compare-note');
+    const entry = window.hybridCompare.buildComparisonEntry({
+      timestamp: new Date().toISOString(),
+      liftCode: hybridCompareState.liftCode,
+      preference,
+      note: noteEl ? noteEl.value : '',
+      recommendation: hybridCompareState.recommendation
+    });
+    const list = window.hybridCompare.saveComparisonEntry(localStorage, entry);
+    setBoxSpan(savedEl, 'status-ok', `Saved: ${preference} (${hybridCompareState.liftCode}) — ${list.length} saved locally.`);
+  } catch (err) {
+    setBoxSpan(savedEl, 'status-error', `Could not save: ${err.message}`);
+  }
+}
+
+document.getElementById('hybrid-compare-prefer-legacy')?.addEventListener('click', () => saveHybridComparePreference('legacy'));
+document.getElementById('hybrid-compare-prefer-brian')?.addEventListener('click', () => saveHybridComparePreference('brian'));
+document.getElementById('hybrid-compare-prefer-neither')?.addEventListener('click', () => saveHybridComparePreference('neither'));
+
 function bugReportId(now = new Date()) {
   const stamp = now.toISOString()
     .replace(/[-:]/g, '')
