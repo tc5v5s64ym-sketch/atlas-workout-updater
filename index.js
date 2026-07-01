@@ -98,6 +98,7 @@ const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
 const { analyzeSetSequence, assessNextMoveConflict, suppressBumpForRecovery, holdStimulusForRecovery } = require('./services/setEffortSignals');
+const { assembleBatchNoteFacts } = require('./services/batchNoteFacts');
 const { effortNote: buildEffortNote, rerouteNote: buildRerouteNote } = require('./services/setEffortCopy');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('./services/coachVoiceRenderer');
 const { gradeStimulus } = require('./services/stimulusGovernor');
@@ -1344,12 +1345,33 @@ app.post('/api/coach/message', async (req, res) => {
   if (!rawFacts || typeof rawFacts !== 'object') {
     return standardError(req, res, 'facts object is required', null, 400);
   }
-  const kind = req.body.kind === 'plan' ? 'plan' : 'set';
+  // 'block' (PR-3) is a per-exercise batch note. It words like a set reaction, but
+  // the deterministic coachNoteTier decides WHETHER / HOW MUCH to say first; a
+  // routine block short-circuits to acknowledgment-only below and never calls Gemini.
+  const kind = req.body.kind === 'plan' ? 'plan' : (req.body.kind === 'block' ? 'block' : 'set');
+  const isSetLike = kind === 'set' || kind === 'block';
+
+  // PR-3 block-note tier: engine-owned classification of the just-logged block via
+  // the pure batchNoteFacts → coachNoteTier fold (over the block's own sets plus any
+  // caller-supplied rec/flags). Returned to the client to gate rendering; it is
+  // NEVER forwarded to the model (not in sanitizeFacts' whitelist).
+  const noteMeta = { note_tier: null, note_trigger: null, note_reason_code: null };
+  if (kind === 'block') {
+    const assembled = assembleBatchNoteFacts(
+      { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, targetRir: rawFacts.targetRir, sets: rawFacts.todaySets },
+      { rec: rawFacts.rec, substitution: rawFacts.substitution, injury: rawFacts.injury, unexpected_excellence: rawFacts.unexpected_excellence, regression: rawFacts.regression, recovery_active: rawFacts.recovery_active, confidence: rawFacts.confidence, asked_why: rawFacts.asked_why }
+    );
+    const t = assembled && assembled.tier ? assembled.tier : null;
+    noteMeta.note_tier = t ? t.tier : 'ack_only';
+    noteMeta.note_trigger = t ? t.trigger : null;
+    noteMeta.note_reason_code = t ? t.reason_code : null;
+  }
+
   // Engine-backed extras are deterministic and Gemini-independent — compute them
   // up front so they ride along on every response path below (incl. LLM-down).
   // voiceBase is the deterministic Coach Voice Renderer read; finalizeSetVoice
   // applies the prose contradiction check per path and rides `voice` along too.
-  const computed = kind === 'set'
+  const computed = isSetLike
     ? computeSetEffortExtras(rawFacts)
     : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null };
   const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade, next_move_advisory: computed.next_move_advisory, recovery_advisory: computed.recovery_advisory };
@@ -1360,10 +1382,20 @@ app.post('/api/coach/message', async (req, res) => {
   const subVoiceBase = (rawFacts.substitution && typeof rawFacts.substitution === 'object')
     ? renderSubstitutionVoice({ substitution: rawFacts.substitution, candidateProse: '' })
     : null;
+
+  // PR-3: a routine block (tier ack_only) is acknowledged by the client-side ✅
+  // receipt alone — return NO coaching prose and DO NOT call Gemini. Keeps routine
+  // blocks silent and the LLM off the path entirely for the common case.
+  if (kind === 'block' && noteMeta.note_tier === 'ack_only') {
+    return standardSuccess(req, res, 'Routine block — acknowledgment only', {
+      message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind, ...noteMeta,
+      effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null
+    });
+  }
   if (!coach.isConfigured()) {
     const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
     return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...effortExtras
+      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras
     });
   }
 
@@ -1418,21 +1450,21 @@ app.post('/api/coach/message', async (req, res) => {
   // engine verdict — sanitizeFacts bounds it to controlled enums and the prompt
   // forbids inventing numbers. ALWAYS overwrite (engine value or null) so a
   // client-supplied `stimulus_grade` can never reach the coach — engine-only.
-  facts = { ...facts, stimulus_grade: kind === 'set' ? (computed.set_grade || null) : null };
+  facts = { ...facts, stimulus_grade: isSetLike ? (computed.set_grade || null) : null };
 
   // PR 484 fatigue-router voicing: let the set-reaction coach WORD the cross-pattern
   // next-move SUGGESTION (computed read-only above, gated to not collide with the
   // pressing reroute). sanitizeFacts bounds the action to the router's vocabulary and
   // the prompt forbids inventing numbers / auto-applying. ALWAYS overwrite (engine
   // value or null) so a client-supplied advisory can never reach the coach.
-  facts = { ...facts, next_move_advisory: kind === 'set' ? (computed.next_move_advisory || null) : null };
+  facts = { ...facts, next_move_advisory: isSetLike ? (computed.next_move_advisory || null) : null };
 
   // PR 484 recovery/deload voicing: let the set-reaction coach WORD the conservative
   // recovery SELECTION (computed read-only above; under-triggered + recovery-oriented
   // only). sanitizeFacts bounds the decision to the engine's recovery vocabulary and
   // the prompt forbids commanding a deload / inventing numbers. ALWAYS overwrite
   // (engine value or null) so a client-supplied advisory can never reach the coach.
-  facts = { ...facts, recovery_advisory: kind === 'set' ? (computed.recovery_advisory || null) : null };
+  facts = { ...facts, recovery_advisory: isSetLike ? (computed.recovery_advisory || null) : null };
 
   try {
     const message = kind === 'plan'
@@ -1441,13 +1473,13 @@ app.post('/api/coach/message', async (req, res) => {
     // Deterministic engine controls the coaching meaning: suppress the LLM prose
     // when it contradicts (or would speak over) a non-neutral set-effort signal.
     const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase);
-    return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...effortExtras });
+    return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras });
   } catch (error) {
     // Degrade gracefully: tell the client to use its templated fallback rather
     // than surfacing an error in the chat.
     const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
     return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...effortExtras
+      message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras
     });
   }
 });
