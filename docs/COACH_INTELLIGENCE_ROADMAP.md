@@ -86,7 +86,7 @@
 | PR | Title | Model | Status | Notes |
 |---|---|---|---|---|
 | 20 | NutritionModule (minimum viable + guardrails) | Opus | 🔲 not started | Protein + calorie targets, rate-of-change guardrails, evidence-ranked supplement reference. Hard limits: no clinical diets, no disordered-eating counsel, refer to dietitian/physician. Depends on PR 1 (evidence tiers); profile bodyweight + goal. |
-| 21 | Behavior-change & communication layer | — | 🔬 reclassified → research | The coach **communication** layer is now filed as **research**, not a build-PR here: see `docs/research/coaching-intelligence/` source `05-coach-communication-intelligence` and the captured direction in `docs/CONVERSATION_CONTRACT_V1.md` (communication policy, coach-note tone, autonomy-supportive/anti-guilt language, when to speak vs. stay quiet). Behavior-change *triggers* remain engine work under One-Brain. |
+| 21 | Behavior-change & communication layer | — | 🔬 reclassified → research | The coach **communication** layer is now filed as **research**, not a build-PR here: see `docs/research/coaching-intelligence/source-archive/05-coach-communication-intelligence.pdf` and the captured direction in `docs/CONVERSATION_CONTRACT_V1.md` (communication policy, coach-note tone, autonomy-supportive/anti-guilt language, when to speak vs. stay quiet). Behavior-change *triggers* remain engine work under One-Brain. |
 
 ---
 
