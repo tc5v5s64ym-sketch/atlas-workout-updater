@@ -2,7 +2,7 @@
 
 A disposition map: where each coaching domain lives now and where it routes in the future. **One entry per domain — this is a map, not a textbook.**
 
-Sources: `02-coaching-knowledge-architecture`, `04-coaching-intelligence-architecture`.
+Sources: `02-coaching-knowledge-architecture`, `04-coaching-intelligence-architecture`, `05-coach-communication-intelligence` (Communication domain H).
 
 ## Disposition legend
 
@@ -49,7 +49,7 @@ Sources: `02-coaching-knowledge-architecture`, `04-coaching-intelligence-archite
 
 **G — Behavior Change.** The motivational and behavioral layer: check-in cadence, anti-repetition rules for coach language, habit-loop scaffolding, and recognizing when a user is drifting from the plan vs. intentionally deviating. The *triggers* for behavior-change nudges (e.g. missed session detected) are RULE/MEMORY; the *language* of the nudge is LLM. This domain is exclusively consumed by the LLM voice layer — no deterministic output.
 
-**H — Communication.** How Atlas talks: tone calibration, precision vocabulary (say "3 sets at RIR 2" not "train hard"), the rule that Atlas never invents numbers and only words facts the engine already holds, and the anti-hallucination contract. Communication style is LLM material; the *triggers* that determine when to speak are RULE (e.g. when a red-flag symptom is flagged, always stop and route to medical; when readiness is low, offer a modification). The LLM explanation of a deterministic number is SAFE; the LLM generating a new number is NOT.
+**H — Communication.** How Atlas talks: tone calibration, precision vocabulary (say "3 sets at RIR 2" not "train hard"), the rule that Atlas never invents numbers and only words facts the engine already holds, and the anti-hallucination contract. Communication style is LLM material; the *triggers* that determine when to speak are RULE (e.g. when a red-flag symptom is flagged, always stop and route to medical; when readiness is low, offer a modification). The LLM explanation of a deterministic number is SAFE; the LLM generating a new number is NOT. **Deep source:** `05-coach-communication-intelligence` — coach communication policy, coach-note tone, autonomy-supportive language, praise/sandbagging/setback handling, and when Atlas should speak vs stay quiet. It is the research backing for the conversation-first behavior codified in `docs/CONVERSATION_CONTRACT_V1.md`.
 
 **I — Nutrition.** Basic energy balance concepts for context only (deficit = recovery pressure, adequate protein = prerequisite for adaptation) and the refer-out rule: Atlas does not prescribe clinical nutrition, sets no calorie/macro targets without explicit owner authorization, and defers all therapeutic nutrition questions to a qualified professional. Resolved to CONFIG (if a target is ever added) and SAFETY (the refer-out guardrail). Out of scope for this phase.
 
