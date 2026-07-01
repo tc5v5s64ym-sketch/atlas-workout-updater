@@ -128,10 +128,11 @@ describe('resolve — closure & topological order', () => {
 
   it('flags missing-status capabilities (skip-with-flag, never dropped)', () => {
     const r = resolve('best_workout');
-    // scenario_classifier, session_generator, equipment are status:missing keystones/gaps
-    assert.ok(r.missing.includes('scenario_classifier'));
+    // session_generator is still a status:missing keystone (scenario_classifier
+    // shipped as 'partial' — keystone #1 — so it is no longer in `missing`).
     assert.ok(r.missing.includes('session_generator'));
-    // but they are still present in the order (not silently dropped)
+    assert.ok(!r.missing.includes('scenario_classifier'));
+    // both are still present in the order (not silently dropped)
     const ids = r.order.map(d => d.id);
     assert.ok(ids.includes('scenario_classifier'));
     assert.ok(ids.includes('session_generator'));
