@@ -5952,6 +5952,63 @@ async function handleUndoLastWrite() {
 // no reimplementation of the undo/delete logic.
 window.atlasUndoLastWrite = handleUndoLastWrite;
 
+// PR-3: group the just-logged rows into per-exercise blocks for a post-write coach
+// note. Pure. The client write payload (collectLogRows) is an array of OBJECTS —
+// { exercise, weight, reps, rir, … } — with NO lift_code / muscle_group (the
+// 12-column enrichment happens server-side), so group by exercise NAME. muscle_group
+// is left empty: the server (analyzeSetSequence) derives pattern/muscles from the
+// exercise name. Sets are passed raw; the server (batchNoteFacts) coerces them.
+function groupLoggedBlocks(rows) {
+  if (!Array.isArray(rows)) return [];
+  const order = [];
+  const byName = new Map();
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue;
+    const exercise = typeof r.exercise === 'string' ? r.exercise.trim() : '';
+    if (!exercise) continue;
+    if (!byName.has(exercise)) {
+      byName.set(exercise, { exerciseName: exercise, muscleGroup: '', sets: [] });
+      order.push(exercise);
+    }
+    byName.get(exercise).sets.push({ weight: r.weight, reps: r.reps, rir: r.rir });
+  }
+  return order.map(name => byName.get(name));
+}
+
+// PR-3: after a successful batch log, request one tier-gated coach note per logged
+// exercise and render any prose the engine deemed worth saying. DETACHED and
+// error-swallowing by design — it runs only after the write + ✅ receipt have
+// completed (see the approve handler), so it can never gate, delay, or alter
+// preview/approve/write. A routine block returns no message (tier ack_only) and a
+// coach/LLM outage returns a null message; either way nothing is rendered and the
+// deterministic receipt stands alone.
+function renderBatchCoachNotes(blocks) {
+  if (!Array.isArray(blocks)) return;
+  for (const block of blocks) {
+    if (!block || !Array.isArray(block.sets) || !block.sets.length) continue;
+    const facts = { exerciseName: block.exerciseName, muscleGroup: block.muscleGroup, todaySets: block.sets };
+    api('/api/coach/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'block', facts }),
+    }).then(res => {
+      const data = res && res.data ? res.data : null;
+      // Prefer the LLM prose; fall back to the deterministic engine line
+      // (effort_note) when the engine suppressed the prose OR the coach is down —
+      // so a signal-bearing block still speaks. Routine (ack_only) sends both null.
+      const str = v => (typeof v === 'string' && v.trim() ? v.trim() : '');
+      const note = data ? (str(data.message) || str(data.effort_note)) : '';
+      if (!note) return; // ack_only / suppressed + coach-down → render nothing
+      loggerStatus.appendChild(el('div', { class: 'atlas-suggestion' }, [
+        el('div', { class: 'suggestion-row' }, [
+          el('span', { class: 'suggestion-label', text: block.exerciseName || 'Note' }),
+          el('span', { text: note }),
+        ]),
+      ]));
+    }).catch(() => {});
+  }
+}
+
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (writeInFlight) return;
   if (!pendingWriteHasPreviewProof(pendingWrite)) {
@@ -5972,6 +6029,10 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   const wasModality = pendingWrite.mode === 'modality';
   let pendingLastWrite = null;
   let duplicateBlocked = false;
+  // PR-3: the just-logged per-exercise blocks for the post-receipt coach note.
+  // Populated only by the manual/slash write branch below (screenshot / effort /
+  // modality carry no per-exercise log rows). Read only after the receipt fires.
+  let noteBlocks = [];
   try {
     if (pendingWrite.mode === 'screenshot' || pendingWrite.mode === 'effort-only') {
       const writeArgs = { ...pendingWrite, testMode: false };
@@ -6027,6 +6088,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     } else {
       const realPayload = { ...pendingWrite.payload };
       delete realPayload.test_mode;
+      // PR-3: snapshot the blocks about to be written for the post-receipt coach
+      // note. From the local realPayload — not pendingWrite (nulled below).
+      noteBlocks = groupLoggedBlocks(realPayload.log_rows);
       const writeResult = await api('/api/log-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6144,6 +6208,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         loggerStatus.appendChild(el('div', { class: 'atlas-suggestion' }, lines));
       }).catch(() => {});
     }
+    // PR-3: per-exercise coach note, tier-gated and best-effort. Fired here —
+    // strictly after the write succeeded, invalidatePreview(), and the ✅ receipt —
+    // and never awaited, so it cannot gate, delay, or alter the trust loop. Routine
+    // blocks and coach outages render nothing (see renderBatchCoachNotes).
+    renderBatchCoachNotes(noteBlocks);
     loadDashboard();
     approveBtn.textContent = 'Written ✓';
   } catch (err) {
