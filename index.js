@@ -53,7 +53,7 @@ const { computeBenchmark, resolveWorkingWeight } = require('./services/exerciseB
 const { detectTrend } = require('./services/trendDetector');
 // One-Brain coaching engine (shadow only; gated by ATLAS_COACH_ENGINE=hybrid).
 const { buildIntentEnvelope } = require('./services/intentEnvelope');
-const { assembleState } = require('./services/stateAssembly');
+const { assembleState, defaultReaders } = require('./services/stateAssembly');
 const { orchestrate } = require('./services/coachOrchestrator');
 const { validateCoachingDecision } = require('./services/coachingDecision');
 const { buildRunners } = require('./services/coachRunners');
@@ -2440,7 +2440,12 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           source: 'api',
           asOf,
         });
-        const snapshot = await assembleState({ asOf });
+        // Reuse the already-fetched log rows (allLog) instead of re-reading them;
+        // keep the real deload/profile readers so the snapshot stays complete.
+        const snapshot = await assembleState({
+          asOf,
+          readers: { ...defaultReaders(), getLogRows: async () => allLog },
+        });
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
         if (brian && validateCoachingDecision(brian).valid) {
           recommendation.brian = brian;
