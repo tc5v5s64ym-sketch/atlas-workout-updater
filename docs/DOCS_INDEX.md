@@ -61,7 +61,8 @@ These describe specific systems or constraints. Use them when your PR touches th
 - `SESSION_DESIGN.md`
 - `CONVERSATION_DESIGN.md`
 - `docs/COACHING_CONTRACTS_SPEC.md` — the three load-bearing coaching contracts (`IntentEnvelope`, `CapabilityManifest`, `CoachingDecision`): schemas, enums, validation rules, worked examples, file layout, tests-to-prove. Implements `docs/COACHING_ENGINE_ARCHITECTURE.md`. All three contracts shipped (PR-1/2/3); build sequence in `BACKLOG.md` → "One-Brain Coaching Engine".
-- `docs/COACHING_STATE_ASSEMBLY_SPEC.md` — layer ③ spec: the read-only read-model hydration layer the manifest input keys draw from (injected-reader contract over `trainingStore`/`deloadState`, the snapshot shape, derived-vs-read keys, the `knownKeys` missing-info handshake, graceful degradation). Spec only — module is the next build step. Read-only, not owner-gated.
+- `docs/COACHING_STATE_ASSEMBLY_SPEC.md` — layer ③ spec: the read-only read-model hydration layer the manifest input keys draw from (injected-reader contract over `trainingStore`/`deloadState`, the snapshot shape, derived-vs-read keys, the `knownKeys` missing-info handshake, graceful degradation). Read-only, not owner-gated. Module shipped.
+- `docs/COACHING_SESSION_GENERATOR_SPEC.md` — keystone #2 spec: the Brian-native replacement for `analytics.js::scoreIntents` — `buildSession(state, constraints)` composes the shipped modules (scenarioClassifier+progression per lift, volumeAssessment, safety, equipment/focus/duration filtering, deload) into a validated `workout` payload with per-block key-aware `explanation_inputs`. Pure. Spec only — module is the next build step. Building the pure engine is derivable; replacing the live "Today's Pick" surface (`scoreIntents`) is owner-gated.
 - `docs/SUBSTITUTION_SPEC.md`
 - `docs/DELOAD_SPEC.md`
 - `docs/COACH_VOICE_VALIDATION.md`
