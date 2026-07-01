@@ -32,29 +32,29 @@ const HYBRID_RECOMMENDATION = {
   }
 };
 
-test('shouldShowCompareCard: true in hybrid mode with a valid brian decision', () => {
-  assert.equal(shouldShowCompareCard('hybrid', HYBRID_RECOMMENDATION), true);
+test('shouldShowCompareCard: true when recommendation.brian is a valid object', () => {
+  assert.equal(shouldShowCompareCard(HYBRID_RECOMMENDATION), true);
 });
 
-test('shouldShowCompareCard: false in legacy mode even if brian somehow present', () => {
-  assert.equal(shouldShowCompareCard('legacy', HYBRID_RECOMMENDATION), false);
-});
-
-test('shouldShowCompareCard: false when coachEngineMode is unset/undefined', () => {
-  assert.equal(shouldShowCompareCard(undefined, HYBRID_RECOMMENDATION), false);
-});
-
-test('shouldShowCompareCard: false in hybrid mode with no brian field (shadow attach did not validate)', () => {
-  assert.equal(shouldShowCompareCard('hybrid', LEGACY_ONLY_RECOMMENDATION), false);
+test('shouldShowCompareCard: false with no brian field (shadow attach did not validate / legacy mode)', () => {
+  assert.equal(shouldShowCompareCard(LEGACY_ONLY_RECOMMENDATION), false);
 });
 
 test('shouldShowCompareCard: false when brian is not an object', () => {
-  assert.equal(shouldShowCompareCard('hybrid', { ...LEGACY_ONLY_RECOMMENDATION, brian: 'not-an-object' }), false);
+  assert.equal(shouldShowCompareCard({ ...LEGACY_ONLY_RECOMMENDATION, brian: 'not-an-object' }), false);
 });
 
 test('shouldShowCompareCard: false when recommendation is null/undefined', () => {
-  assert.equal(shouldShowCompareCard('hybrid', null), false);
-  assert.equal(shouldShowCompareCard('hybrid', undefined), false);
+  assert.equal(shouldShowCompareCard(null), false);
+  assert.equal(shouldShowCompareCard(undefined), false);
+});
+
+// Gate is deliberately single-signal: index.js only ever attaches a validated
+// recommendation.brian while ATLAS_COACH_ENGINE==='hybrid', so its presence
+// alone is sufficient proof — no separately-fetched coachEngineMode is
+// needed (see the function's own comment for the TOCTOU this avoids).
+test('shouldShowCompareCard: takes only recommendation, not an engine-mode flag', () => {
+  assert.equal(shouldShowCompareCard.length, 1);
 });
 
 /* ===== summarizeLegacy ===== */
@@ -178,6 +178,19 @@ test('saveComparisonEntry appends and round-trips through loadComparisons', () =
   const loaded = loadComparisons(storage);
   assert.equal(loaded.length, 1);
   assert.equal(loaded[0].preference, 'legacy');
+});
+
+test('saveComparisonEntry throws (does not swallow) when the underlying storage write fails', () => {
+  // A save that didn't actually persist must never be reported as "Saved" —
+  // so unlike loadComparisons, this is NOT caught internally; the caller
+  // (public/app.js saveHybridComparePreference) is expected to catch it and
+  // show an error instead of a false "Saved" confirmation.
+  const throwingStorage = {
+    getItem: () => null,
+    setItem: () => { throw new Error('QuotaExceededError'); }
+  };
+  const entry = buildComparisonEntry({ preference: 'legacy', recommendation: HYBRID_RECOMMENDATION });
+  assert.throws(() => saveComparisonEntry(throwingStorage, entry), /QuotaExceededError/);
 });
 
 test('saveComparisonEntry caps stored history at MAX_STORED_ENTRIES, dropping the oldest', () => {

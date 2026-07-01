@@ -826,6 +826,7 @@ document.getElementById('hybrid-compare-form')?.addEventListener('submit', async
   const statusEl = document.getElementById('hybrid-compare-status');
   const cardEl = document.getElementById('hybrid-compare-card');
   const savedEl = document.getElementById('hybrid-compare-saved');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   cardEl.hidden = true;
   savedEl.textContent = '';
   hybridCompareState = null;
@@ -834,15 +835,15 @@ document.getElementById('hybrid-compare-form')?.addEventListener('submit', async
     return;
   }
   setBoxSpan(statusEl, 'muted', `Comparing ${liftCode}…`);
+  // Disabled for the duration of the fetch so a second Compare click can't
+  // race this one — without this, a slower response for an earlier lift code
+  // could resolve after a later one and silently overwrite its result.
+  if (submitBtn) submitBtn.disabled = true;
   try {
-    const [configRes, recRes] = await Promise.all([
-      api('/api/debug/config'),
-      api(`/api/recommend/next/${encodeURIComponent(liftCode)}`)
-    ]);
-    const coachEngineMode = (configRes.data || configRes || {}).coachEngineMode;
+    const recRes = await api(`/api/recommend/next/${encodeURIComponent(liftCode)}`);
     const recommendation = recRes.data || recRes;
-    if (!window.hybridCompare.shouldShowCompareCard(coachEngineMode, recommendation)) {
-      setBoxSpan(statusEl, 'muted', `Not available — coachEngineMode is "${coachEngineMode || 'legacy'}" or no validated Brian decision was attached for ${liftCode}.`);
+    if (!window.hybridCompare.shouldShowCompareCard(recommendation)) {
+      setBoxSpan(statusEl, 'muted', `Not available — no validated Brian decision was attached for ${liftCode} (requires ATLAS_COACH_ENGINE=hybrid; see "Show config" above).`);
       return;
     }
     hybridCompareState = { liftCode, recommendation };
@@ -852,6 +853,8 @@ document.getElementById('hybrid-compare-form')?.addEventListener('submit', async
     cardEl.hidden = false;
   } catch (err) {
     setBoxSpan(statusEl, 'status-error', `Could not compare: ${err.message}`);
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
 });
 

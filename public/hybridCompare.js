@@ -5,7 +5,10 @@
  * Developer-only evaluation tooling. No DOM, no Sheets, no fetch — these
  * functions only read an already-fetched /api/recommend/next response and
  * (optionally) write to an injected storage object. They never mutate the
- * recommendation and never touch the write/proof/trust-loop path.
+ * recommendation and never touch the write/proof/trust-loop path. Reads
+ * (loadComparisons) degrade gracefully on a storage failure; writes
+ * (saveComparisonEntry) intentionally do not, so a failed save is never
+ * misreported as successful — see that function's own comment.
  */
 (function (root) {
   'use strict';
@@ -17,14 +20,17 @@
 
   function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 
-  // The compare card is dev/hybrid-only: it must never appear unless the
-  // engine is explicitly in hybrid mode AND the response actually carries a
-  // validated Brian decision (index.js only attaches recommendation.brian
-  // when ATLAS_COACH_ENGINE==='hybrid' and validateCoachingDecision passed).
-  // Gating on both is deliberate belt-and-suspenders, not redundant: it keeps
-  // the card off even if one of the two signals is ever wrong in isolation.
-  function shouldShowCompareCard(coachEngineMode, recommendation) {
-    return coachEngineMode === 'hybrid' && _isObj(recommendation) && _isObj(recommendation.brian);
+  // The compare card is hybrid-only: index.js attaches recommendation.brian
+  // ONLY when ATLAS_COACH_ENGINE==='hybrid' AND validateCoachingDecision
+  // passed, so its presence on a given response already IS proof of hybrid
+  // mode for that response. Gating on a separately-fetched coachEngineMode
+  // as well (e.g. from /api/debug/config) would add a second, unsynchronized
+  // sample of the same underlying env var — able to disagree with this
+  // response's own truth (a toggle/restart between two requests) and only
+  // ever hide a genuinely valid decision, never catch an invalid one. So the
+  // gate reads recommendation.brian alone.
+  function shouldShowCompareCard(recommendation) {
+    return _isObj(recommendation) && _isObj(recommendation.brian);
   }
 
   // Legacy (analytics.js) summary — the same fields the production coach
@@ -99,7 +105,11 @@
   }
 
   // Appends one entry, capped to the most recent MAX_STORED_ENTRIES so the
-  // dev-only log can't grow unbounded. Returns the updated list.
+  // dev-only log can't grow unbounded. Returns the updated list. Unlike
+  // loadComparisons, this does NOT swallow a storage failure (private-mode
+  // Safari, quota exceeded): a save that didn't actually persist must not be
+  // reported as "Saved" to the caller, so setItem is left to throw and the
+  // caller (public/app.js saveHybridComparePreference) surfaces it.
   function saveComparisonEntry(storage, entry) {
     const list = loadComparisons(storage);
     list.push(entry);
@@ -113,7 +123,6 @@
   const exported = {
     STORAGE_KEY,
     MAX_STORED_ENTRIES,
-    MAX_NOTE_LENGTH,
     PREFERENCES,
     shouldShowCompareCard,
     summarizeLegacy,
