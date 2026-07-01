@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildRunners, safetyRunner, confidenceRunner, scenarioClassifierRunner, progressionRunner,
+  sessionGeneratorRunner,
 } = require('../services/coachRunners');
 const { buildIntentEnvelope } = require('../services/intentEnvelope');
 const { assembleState } = require('../services/stateAssembly');
@@ -202,6 +203,56 @@ describe('shadow composition — envelope → assembleState(stub) → orchestrat
     const thin = [['2026-06-08', 's1', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 185, 5, 2, '', 925]];
     const envelope = env('progression_review', { target_lift: 'BENCH' });
     const snapshot = await assembleState({ readers: { ...stubReaders(), getLogRows: async () => thin }, asOf: ASOF });
+    const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+    assert.strictEqual(validateCoachingDecision(brian).valid, true);
+    assert.strictEqual(brian.decision_type, 'clarification_needed');
+  });
+});
+
+// Full-body history covering the four core patterns (barbell variants) with enough
+// sessions for whole-workout confidence to clear 'ask'.
+function fullBodyRows() {
+  const dates = ['2026-05-16', '2026-05-20', '2026-05-24', '2026-05-28', '2026-06-01', '2026-06-05'];
+  const out = [];
+  for (const [ex, code, m, w0] of [['Back Squat', 'SQUAT', 'quads', 225], ['Bench Press', 'BENCH', 'chest', 185],
+    ['Barbell Row', 'ROW', 'back', 135], ['Romanian Deadlift', 'RDL', 'hamstrings', 205]]) {
+    let w = w0;
+    for (let i = 0; i < 6; i++) { out.push([dates[i], 's' + code + i, ex, ex, m, code, 1, w, 5, 2, '', w * 5]); w += 5; }
+  }
+  return out;
+}
+
+describe('sessionGeneratorRunner', () => {
+  it('returns a workout decision fragment from snapshot + constraints', () => {
+    const f = sessionGeneratorRunner({ snapshot: { asOf: ASOF, log_history: fullBodyRows() }, envelope: env('best_workout', {}) });
+    assert.ok(f && f.decision && Array.isArray(f.decision.payload.blocks));
+    assert.ok(f.decision.explanation_inputs.blocks.length === f.decision.payload.blocks.length);
+  });
+  it('returns null when buildSession can build nothing (no history)', () => {
+    assert.strictEqual(sessionGeneratorRunner({ snapshot: { asOf: ASOF, log_history: [] }, envelope: env('best_workout', {}) }), null);
+  });
+  it('never throws on garbage', () => assert.doesNotThrow(() => sessionGeneratorRunner(null)));
+});
+
+describe('shadow composition — best_workout → answered workout (first full Brian workout)', () => {
+  function readers(rows) {
+    return { getLogRows: async () => rows, readDeloadState: async () => null,
+      getProfile: async () => ({ profile_goal: 'general-fitness', training_level: 'intermediate', population: 'general' }) };
+  }
+  it('rich full-body history → an ANSWERED workout decision', async () => {
+    const envelope = env('best_workout', {});
+    const snapshot = await assembleState({ readers: readers(fullBodyRows()), asOf: ASOF });
+    const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+    const v = validateCoachingDecision(brian);
+    assert.strictEqual(v.valid, true, `errors: ${v.errors.join(' | ')}`);
+    assert.strictEqual(brian.status, 'answered', `got ${brian.status}/${brian.decision_type}`);
+    assert.strictEqual(brian.decision_type, 'workout');
+    assert.ok(brian.payload.blocks.length >= 1);
+    assert.ok(brian.provenance.modules_run.includes('session_generator'));
+  });
+  it('no history → clarification', async () => {
+    const envelope = env('best_workout', {});
+    const snapshot = await assembleState({ readers: readers([]), asOf: ASOF });
     const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
     assert.strictEqual(validateCoachingDecision(brian).valid, true);
     assert.strictEqual(brian.decision_type, 'clarification_needed');

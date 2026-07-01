@@ -22,6 +22,7 @@ const { buildUserState }        = require('./userStateModule');
 const { detectLiftPlateaus }    = require('./expectedPerformanceModule');
 const { classifyScenario }      = require('./scenarioClassifier');
 const { recommendProgression }  = require('./progressionModule');
+const { buildSession }          = require('./sessionGenerator');
 
 // ─── shared helpers ───────────────────────────────────────────────────────────
 
@@ -34,6 +35,21 @@ function _liftCode(envelope) {
 function _injury(envelope) {
   const c = envelope && envelope.constraints;
   return c && typeof c.injury === 'string' && c.injury.trim() ? c.injury.trim() : null;
+}
+
+// The most-frequently-logged lift in the snapshot — used as the representative
+// lift for whole-workout confidence when the intent names no single target_lift.
+function _representativeLiftCode(snapshot) {
+  const rows = snapshot && Array.isArray(snapshot.log_history) ? snapshot.log_history : [];
+  const counts = new Map();
+  for (const r of rows) {
+    if (!Array.isArray(r) || r[5] == null) continue;
+    const lc = String(r[5]).trim().toUpperCase();
+    if (lc) counts.set(lc, (counts.get(lc) || 0) + 1);
+  }
+  let best = null, bestN = 0;
+  for (const [lc, n] of counts) if (n > bestN) { best = lc; bestN = n; }
+  return best;
 }
 
 // Normalize a 12-col positional Log_Cleaned row into the object shape the
@@ -125,7 +141,9 @@ function safetyRunner(ctx) {
 function confidenceRunner(ctx) {
   const snapshot = ctx && ctx.snapshot;
   const envelope = ctx && ctx.envelope;
-  const liftCode = _liftCode(envelope);
+  // For a per-lift intent use its target_lift; for a whole-workout intent (no
+  // target_lift) fall back to the most-trained lift as the representative signal.
+  const liftCode = _liftCode(envelope) || _representativeLiftCode(snapshot);
   const rows = snapshot && Array.isArray(snapshot.log_history) ? snapshot.log_history : [];
   const injury = _injury(envelope);
   const c = scoreConfidence({
@@ -183,6 +201,19 @@ function progressionRunner(ctx) {
   return { decision: { payload, explanation_inputs } };
 }
 
+// session_generator → { decision: { payload, explanation_inputs } } | null
+// Builds a full workout from the snapshot + envelope constraints.
+function sessionGeneratorRunner(ctx) {
+  const snapshot = ctx && ctx.snapshot;
+  const envelope = ctx && ctx.envelope;
+  const constraints = envelope && _isObj(envelope.constraints) ? envelope.constraints : {};
+  const r = buildSession(snapshot, constraints);
+  if (!r || !_isObj(r.payload)) return null;
+  return { decision: { payload: r.payload, explanation_inputs: r.explanation_inputs } };
+}
+
+function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
+
 // The adapter registry the Orchestrator consumes. Only capabilities with a wired
 // adapter run; the Orchestrator skips the rest (recorded in provenance.skipped).
 function buildRunners() {
@@ -191,6 +222,7 @@ function buildRunners() {
     confidence:          confidenceRunner,
     scenario_classifier: scenarioClassifierRunner,
     progression:         progressionRunner,
+    session_generator:   sessionGeneratorRunner,
   };
 }
 
@@ -200,4 +232,5 @@ module.exports = {
   confidenceRunner,
   scenarioClassifierRunner,
   progressionRunner,
+  sessionGeneratorRunner,
 };

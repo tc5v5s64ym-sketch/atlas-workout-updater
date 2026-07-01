@@ -75,7 +75,10 @@ function buildSession(state, constraints) {
   const asOf = typeof state.asOf === 'string' ? state.asOf : null;
   const c = constraints && typeof constraints === 'object' ? constraints : {};
 
-  const equipment = Array.isArray(c.equipment) && c.equipment.length ? c.equipment : DEFAULT_EQUIPMENT;
+  // Normalize case to match PATTERN_VARIANTS (lowercase) and onboardingSessionPlan's
+  // normalizeEquipment, so mixed-case constraint input (e.g. ['Barbell']) still matches.
+  const equipment = (Array.isArray(c.equipment) && c.equipment.length ? c.equipment : DEFAULT_EQUIPMENT)
+    .map(e => String(e).trim().toLowerCase());
   const equipmentSet = new Set(equipment);
   const focus = typeof c.focus === 'string' && FOCUS_PATTERNS[c.focus] ? c.focus : 'full_body';
   const durationMin = Number.isFinite(c.duration_minutes) ? c.duration_minutes : DEFAULT_DURATION_MIN;
