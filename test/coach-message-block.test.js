@@ -18,7 +18,10 @@ const assert = require('node:assert/strict');
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// Plain stub — sheets.js is fully require-cache stubbed below, so the value is
+// never used for real auth. Deliberately NOT a PEM block (the changed-file secret
+// scanner flags a literal private-key header even in a test stub).
+process.env.GOOGLE_PRIVATE_KEY = 'stub-private-key-sheets-is-stubbed';
 
 const sheetState = { appendCalls: [], deleteCalls: [] };
 const fakeSheets = {
