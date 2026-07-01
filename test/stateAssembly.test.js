@@ -7,7 +7,7 @@ const path = require('node:path');
 
 // Requiring stateAssembly must NOT pull sheets.js / googleapis (the whole point
 // of the injected-reader design). If it did, this require would throw here.
-const { assembleState, knownKeys } = require('../services/stateAssembly');
+const { assembleState, knownKeys, defaultReaders } = require('../services/stateAssembly');
 
 const ASOF = '2026-06-30T14:00:00Z';
 
@@ -27,6 +27,29 @@ function stubReaders(overrides = {}) {
     getProfile:      overrides.getProfile      || (async () => ({ profile_goal: 'powerlifting', training_level: 'intermediate', population: 'general' })),
   };
 }
+
+// ─── single-read / reader reuse (double-read hardening) ──────────────────────
+
+describe('assembleState — reads the log exactly once', () => {
+  it('calls getLogRows a single time (no duplicate read within assembly)', async () => {
+    let calls = 0;
+    const readers = stubReaders({ getLogRows: async () => { calls++; return LOG_ROWS; } });
+    await assembleState({ readers, asOf: ASOF });
+    assert.strictEqual(calls, 1);
+  });
+  it('a caller can override getLogRows with pre-loaded rows (the index.js reuse pattern)', async () => {
+    const preloaded = LOG_ROWS;
+    let fetched = false;
+    const readers = stubReaders({ getLogRows: async () => { fetched = true; return preloaded; } });
+    const s = await assembleState({ readers, asOf: ASOF });
+    assert.ok(fetched);
+    assert.strictEqual(s.log_history, preloaded);
+  });
+  it('exposes defaultReaders as a function (index.js spreads it, overriding getLogRows)', () => {
+    // Do not invoke — the real defaults lazy-require the Sheets client.
+    assert.strictEqual(typeof defaultReaders, 'function');
+  });
+});
 
 // ─── snapshot shape ──────────────────────────────────────────────────────────
 

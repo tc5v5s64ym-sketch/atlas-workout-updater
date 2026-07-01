@@ -144,4 +144,7 @@ function knownKeys(snapshot, envelope) {
 module.exports = {
   assembleState,
   knownKeys,
+  // Exposed so a caller that already holds the log rows (e.g. the index.js hybrid
+  // attach) can reuse them: assembleState({ readers: { ...defaultReaders(), getLogRows } }).
+  defaultReaders: _defaultReaders,
 };
