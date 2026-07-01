@@ -56,7 +56,7 @@
       "module": { "file": "services/scenarioClassifier.js", "export": "classifyScenario" },
       "requires": ["log_history"], "optional": ["readiness_inputs", "constraint.target_lift"],
       "depends_on": ["user_state", "expected_performance"],
-      "produces": ["scenario_id"], "status": "missing"
+      "produces": ["scenario_id"], "status": "partial"
     },
     "progression": {
       "module": { "file": "services/progressionModule.js", "export": "recommendProgression" },
