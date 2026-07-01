@@ -3,7 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { lastWorkingSet, deriveLiftState, prescribeLift } = require('../services/liftPrescription');
+const { lastWorkingSet, deriveLiftState, prescribeLift, isOverperforming } = require('../services/liftPrescription');
 
 const ASOF = '2026-06-30T14:00:00Z';
 
@@ -72,5 +72,46 @@ describe('normRow / lastWorkingSet — empty numeric cells normalize to NaN', ()
       rowEmptyRir('2026-06-08', 's3', 195),
     ];
     assert.strictEqual(prescribeLift(rows, 'BENCH', ASOF, {}), null);
+  });
+});
+
+// ─── overperforming → underloaded → increase_load (the newly-reachable branch) ─
+
+describe('isOverperforming / prescribeLift — overperforming beats expected reps', () => {
+  // Held weight, rising reps: e1RM improves (no plateau) and the last working set
+  // (9 reps) beats the median expected reps at 135 lb → overperforming.
+  function hingeOver(w = 135) {
+    const dates = ['2026-06-01', '2026-06-04', '2026-06-08', '2026-06-11'];
+    const reps  = [5, 6, 7, 9];
+    return dates.map((d, i) =>
+      [d, 'rdl' + i, 'Romanian Deadlift', 'Romanian Deadlift', 'hamstrings', 'RDL', 1, w, reps[i], 2, '', w * reps[i]]);
+  }
+
+  it('isOverperforming is true when the last set beats expected reps at that load', () => {
+    assert.strictEqual(isOverperforming(hingeOver(), 'RDL', ASOF), true);
+  });
+
+  it('isOverperforming is false for flat reps (no expected-vs-actual gap)', () => {
+    const flat = ['2026-06-01', '2026-06-04', '2026-06-08', '2026-06-11'].map((d, i) =>
+      [d, 'rdl' + i, 'Romanian Deadlift', 'Romanian Deadlift', 'hamstrings', 'RDL', 1, 135, 5, 2, '', 675]);
+    assert.strictEqual(isOverperforming(flat, 'RDL', ASOF), false);
+  });
+
+  it('isOverperforming is false without enough expected-performance data (< 3 sessions)', () => {
+    const thin = [
+      ['2026-06-01', 's1', 'Romanian Deadlift', 'Romanian Deadlift', 'hamstrings', 'RDL', 1, 135, 5, 2, '', 675],
+      ['2026-06-04', 's2', 'Romanian Deadlift', 'Romanian Deadlift', 'hamstrings', 'RDL', 1, 135, 9, 2, '', 1215],
+    ];
+    assert.strictEqual(isOverperforming(thin, 'RDL', ASOF), false);
+  });
+
+  it('prescribeLift routes overperforming → underloaded / increase_load at a 5 lb lower-body step', () => {
+    const p = prescribeLift(hingeOver(), 'RDL', ASOF, {});
+    assert.ok(p, 'expected a prescription');
+    assert.strictEqual(p.scenario_id, 'underloaded');
+    assert.strictEqual(p.action, 'increase_load');
+    assert.strictEqual(p.bodyRegion, 'lower_body');
+    assert.strictEqual(p.targetWeight, 140);           // 135 + one 5 lb lower-body increment
+    assert.strictEqual(p.targetWeight % 5, 0);
   });
 });

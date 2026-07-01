@@ -13,12 +13,13 @@
 //   deriveLiftState(rows, liftCode, asOf)     → userState liftState | null
 //   derivePlateau(rows, liftCode, asOf)       → plateau object | null
 //   lastWorkingSet(rows, liftCode, asOf)      → { currentWeight, currentReps, currentRIR, bodyRegion } | null
+//   isOverperforming(rows, liftCode, asOf, set?) → boolean
 //   prescribeLift(rows, liftCode, asOf, opts) → { scenario_id, action, lever, targetWeight, targetReps, rationale, ...set } | null
 
-const { buildUserState }       = require('./userStateModule');
-const { detectLiftPlateaus }   = require('./expectedPerformanceModule');
-const { classifyScenario }     = require('./scenarioClassifier');
-const { recommendProgression } = require('./progressionModule');
+const { buildUserState }                          = require('./userStateModule');
+const { detectLiftPlateaus, assessExpectedPerformance } = require('./expectedPerformanceModule');
+const { classifyScenario }                        = require('./scenarioClassifier');
+const { recommendProgression }                    = require('./progressionModule');
 
 // 12-col: date_clean|session_id|exercise|canonical_exercise|muscle_group|lift_code|set_number|weight|reps|rir|notes|volume_calc
 // Coerce a numeric cell, treating an empty/blank/missing cell as NaN rather than
@@ -96,23 +97,42 @@ function lastWorkingSet(rows, liftCode, asOf) {
   };
 }
 
+// Overperforming = the last working set beat its expected reps at that load.
+// Expected reps come from the lift's own history at ±10% of the set weight
+// (expectedPerformanceModule needs ≥3 qualifying sessions, else there is no
+// expected signal → false, the conservative default). Feeds classifyScenario's
+// underloaded/increase_load branch, which is otherwise unreachable from data.
+// Pure — read-only math, no I/O.
+function isOverperforming(rows, liftCode, asOf, set) {
+  const working = set || lastWorkingSet(rows, liftCode, asOf);
+  if (!working || !(working.currentWeight > 0) || !Number.isInteger(working.currentReps)) return false;
+  const ctx = _liftRows(rows, liftCode, asOf);
+  if (!ctx) return false;
+  let expected = null;
+  try { expected = assessExpectedPerformance(liftCode, ctx.normalized, working.currentWeight); }
+  catch { return false; }
+  const expectedReps = expected ? Number(expected.expectedReps) : NaN;
+  if (!Number.isFinite(expectedReps)) return false;
+  return working.currentReps > expectedReps;
+}
+
 // Full per-lift prescription: history → scenario → recommendProgression.
 // Returns null when there is not enough signal or a valid last working set.
 function prescribeLift(rows, liftCode, asOf, opts) {
-  const liftState = deriveLiftState(rows, liftCode, asOf);
-  const scenario = classifyScenario({
-    liftState,
-    plateau:   derivePlateau(rows, liftCode, asOf),
-    readiness: (opts && opts.readiness) || null,
-    injury:    (opts && opts.injury) || null,
-  });
-  if (!scenario) return null;
-
   const set = lastWorkingSet(rows, liftCode, asOf);
   if (!set || !(set.currentWeight > 0) || !Number.isInteger(set.currentReps) || set.currentReps < 1
       || !Number.isFinite(set.currentRIR) || set.currentRIR < 0) {
     return null;
   }
+
+  const scenario = classifyScenario({
+    liftState:      deriveLiftState(rows, liftCode, asOf),
+    plateau:        derivePlateau(rows, liftCode, asOf),
+    readiness:      (opts && opts.readiness) || null,
+    injury:         (opts && opts.injury) || null,
+    overperforming: isOverperforming(rows, liftCode, asOf, set),
+  });
+  if (!scenario) return null;
 
   const rec = recommendProgression(scenario.scenario_id, set);
   if (!rec) return null;
@@ -131,4 +151,4 @@ function prescribeLift(rows, liftCode, asOf, opts) {
   };
 }
 
-module.exports = { normRow, deriveLiftState, derivePlateau, lastWorkingSet, prescribeLift };
+module.exports = { normRow, deriveLiftState, derivePlateau, lastWorkingSet, isOverperforming, prescribeLift };
