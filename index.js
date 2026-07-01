@@ -2141,7 +2141,8 @@ app.get('/api/debug/config', (req, res) => {
       effortSheetName
     },
     apiKeyAuthEnabled: Boolean(process.env.ATLAS_API_KEY),
-    openAiKeyConfigured: Boolean(process.env.OPENAI_API_KEY)
+    openAiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+    coachEngineMode: process.env.ATLAS_COACH_ENGINE || 'legacy'
   });
 });
 

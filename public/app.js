@@ -784,6 +784,25 @@ document.getElementById('load-debug-config-btn')?.addEventListener('click', asyn
   }
 });
 
+// Diagnostic: verify the hybrid coaching engine end-to-end from the app. Calls the
+// read-only recommendation endpoint for a fixed lift (BEN01) and dumps the raw JSON,
+// so you can confirm at a glance that `recommendation.brian` is attached (proving
+// ATLAS_COACH_ENGINE=hybrid is live) while the existing `next_target` still appears.
+// Read-only: same endpoint the app already uses; no writes, no trust-loop touch.
+document.getElementById('test-brian-btn')?.addEventListener('click', async () => {
+  const box = document.getElementById('debug-result');
+  setBoxSpan(box, 'muted', 'Testing Brian (BEN01)…');
+  try {
+    const res = await api('/api/recommend/next/BEN01');
+    const pre = document.createElement('pre');
+    pre.className = 'debug-pre';
+    pre.textContent = JSON.stringify(res.data || res, null, 2);
+    box.replaceChildren(pre);
+  } catch (err) {
+    setBoxSpan(box, 'muted', `Could not run Brian test: ${err.message}`);
+  }
+});
+
 function bugReportId(now = new Date()) {
   const stamp = now.toISOString()
     .replace(/[-:]/g, '')
