@@ -128,14 +128,16 @@ describe('resolve — closure & topological order', () => {
 
   it('flags missing-status capabilities (skip-with-flag, never dropped)', () => {
     const r = resolve('best_workout');
-    // session_generator is still a status:missing keystone (scenario_classifier
-    // shipped as 'partial' — keystone #1 — so it is no longer in `missing`).
-    assert.ok(r.missing.includes('session_generator'));
+    // Both keystones shipped as 'partial' (scenario_classifier, session_generator),
+    // so the remaining missing capability in this plan is `equipment`.
+    assert.ok(r.missing.includes('equipment'));
     assert.ok(!r.missing.includes('scenario_classifier'));
-    // both are still present in the order (not silently dropped)
+    assert.ok(!r.missing.includes('session_generator'));
+    // all are still present in the order (not silently dropped)
     const ids = r.order.map(d => d.id);
     assert.ok(ids.includes('scenario_classifier'));
     assert.ok(ids.includes('session_generator'));
+    assert.ok(ids.includes('equipment'));
   });
 
   it('read_only intent resolves with read_only=true and progress_readout', () => {
