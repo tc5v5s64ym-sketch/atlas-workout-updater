@@ -21,6 +21,16 @@ const { classifyScenario }     = require('./scenarioClassifier');
 const { recommendProgression } = require('./progressionModule');
 
 // 12-col: date_clean|session_id|exercise|canonical_exercise|muscle_group|lift_code|set_number|weight|reps|rir|notes|volume_calc
+// Coerce a numeric cell, treating an empty/blank/missing cell as NaN rather than
+// Number('') === 0. Critical for RIR: an unlogged RIR must NOT read as 0 ("went to
+// failure"), which would suppress load increases; NaN is correctly rejected by the
+// prescription guards (→ clarification, not a false at-failure read).
+function _num(v) {
+  if (v == null) return NaN;
+  if (typeof v === 'string' && v.trim() === '') return NaN;
+  return Number(v);
+}
+
 function normRow(r) {
   if (!Array.isArray(r)) return null;
   return {
@@ -29,9 +39,9 @@ function normRow(r) {
     canonical_exercise: typeof r[3] === 'string' ? r[3] : '',
     muscle_group:       typeof r[4] === 'string' ? r[4] : '',
     lift_code:          r[5] == null ? '' : String(r[5]),
-    weight:             Number(r[7]),
-    reps:               Number(r[8]),
-    rir:                Number(r[9]),
+    weight:             _num(r[7]),
+    reps:               _num(r[8]),
+    rir:                _num(r[9]),
     notes:              typeof r[10] === 'string' ? r[10] : '',
   };
 }
