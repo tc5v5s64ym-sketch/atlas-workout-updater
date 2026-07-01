@@ -121,6 +121,25 @@ describe('progressionRunner', () => {
     assert.strictEqual(f, null);
   });
   it('never throws on garbage', () => assert.doesNotThrow(() => progressionRunner(null)));
+
+  it('selects the chronologically-most-recent set even when rows are out of order', () => {
+    // Most recent session (215 lb) placed FIRST in the array to defeat positional order.
+    const outOfOrder = [
+      ['2026-06-08', 's3', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 215, 5, 1, '', 1075],
+      ['2026-06-01', 's1', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 205, 5, 3, '', 1025],
+      ['2026-06-04', 's2', 'Bench Press', 'Bench Press', 'chest', 'BENCH', 1, 210, 5, 2, '', 1050],
+    ];
+    // increase_load scenario so a targetWeight is produced from the selected set.
+    const f = progressionRunner({
+      snapshot: { asOf: ASOF, log_history: outOfOrder },
+      envelope: env('progression_review', { target_lift: 'BENCH' }),
+      results: { scenario_classifier: { scenario_id: 'underloaded' } },
+    });
+    assert.ok(f && f.decision, 'expected a decision fragment');
+    // The prescription must build on 215 (the 2026-06-08 set), not 210 (positional last).
+    assert.ok(f.decision.payload.target_weight > 215,
+      `expected target_weight built on the 215 set, got ${f.decision.payload.target_weight}`);
+  });
 });
 
 // ─── full shadow composition (mirrors the index.js hybrid attach) ────────────

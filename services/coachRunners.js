@@ -42,6 +42,7 @@ function _normRow(r) {
   if (!Array.isArray(r)) return null;
   return {
     date_clean:         r[0],
+    session_id:         r[1] == null ? '' : String(r[1]),
     canonical_exercise: typeof r[3] === 'string' ? r[3] : '',
     lift_code:          r[5] == null ? '' : String(r[5]),
     muscle_group:       typeof r[4] === 'string' ? r[4] : '',
@@ -91,8 +92,14 @@ function _lastWorkingSet(snapshot, liftCode) {
   if (!ctx) return null;
   const working = ctx.forLift.filter(o => !_isWarmup(o.notes));
   const pool = working.length ? working : ctx.forLift;
-  // rows arrive chronological (oldest first); the last is the most recent.
-  const last = pool[pool.length - 1];
+  // Do NOT trust sheet order (getLogRows returns raw order; a backfilled/edited row
+  // could be out of place). Sort chronologically (date, session_id tie-break) and
+  // take the most recent — matching userStateModule / expectedPerformanceModule.
+  const sorted = pool.slice().sort((a, b) => {
+    if (a.date_clean !== b.date_clean) return a.date_clean < b.date_clean ? -1 : 1;
+    return a.session_id < b.session_id ? -1 : a.session_id > b.session_id ? 1 : 0;
+  });
+  const last = sorted[sorted.length - 1];
   if (!last) return null;
   const lower = /leg|quad|hamstring|glute|calf|lower|hip|squat|deadlift/i.test(last.muscle_group || '')
     || /squat|deadlift|lunge|hinge/i.test(ctx.exerciseName);
