@@ -76,8 +76,8 @@ function lastWorkingSet(rows, liftCode, asOf) {
   });
   const last = sorted[sorted.length - 1];
   if (!last) return null;
-  const lower = /leg|quad|hamstring|glute|calf|lower|hip/i.test(last.muscle_group || '')
-    || /squat|deadlift|lunge/i.test(ctx.exerciseName);
+  const lower = /leg|quad|hamstring|glute|calf|lower|hip|squat|deadlift/i.test(last.muscle_group || '')
+    || /squat|deadlift|lunge|hinge/i.test(ctx.exerciseName);
   return {
     currentWeight: last.weight,
     currentReps:   last.reps,

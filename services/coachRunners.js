@@ -18,13 +18,15 @@
 const { classifyTrafficLight } = require('./safetyClassifierModule');
 const { scoreConfidence }       = require('./confidenceModule');
 const { queryTrend }            = require('./memoryModule');
-const { buildUserState }        = require('./userStateModule');
-const { detectLiftPlateaus }    = require('./expectedPerformanceModule');
 const { classifyScenario }      = require('./scenarioClassifier');
 const { recommendProgression }  = require('./progressionModule');
 const { buildSession }          = require('./sessionGenerator');
+// Shared per-lift prescription pipeline (the canonical home for these helpers).
+const { deriveLiftState, derivePlateau, lastWorkingSet } = require('./liftPrescription');
 
-// ─── shared helpers ───────────────────────────────────────────────────────────
+// ─── envelope helpers ─────────────────────────────────────────────────────────
+
+function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 
 function _liftCode(envelope) {
   const c = envelope && envelope.constraints;
@@ -37,12 +39,14 @@ function _injury(envelope) {
   return c && typeof c.injury === 'string' && c.injury.trim() ? c.injury.trim() : null;
 }
 
+function _rows(snapshot) { return snapshot && Array.isArray(snapshot.log_history) ? snapshot.log_history : []; }
+function _asOf(snapshot) { return snapshot && typeof snapshot.asOf === 'string' ? snapshot.asOf : null; }
+
 // The most-frequently-logged lift in the snapshot — used as the representative
 // lift for whole-workout confidence when the intent names no single target_lift.
 function _representativeLiftCode(snapshot) {
-  const rows = snapshot && Array.isArray(snapshot.log_history) ? snapshot.log_history : [];
   const counts = new Map();
-  for (const r of rows) {
+  for (const r of _rows(snapshot)) {
     if (!Array.isArray(r) || r[5] == null) continue;
     const lc = String(r[5]).trim().toUpperCase();
     if (lc) counts.set(lc, (counts.get(lc) || 0) + 1);
@@ -50,81 +54,6 @@ function _representativeLiftCode(snapshot) {
   let best = null, bestN = 0;
   for (const [lc, n] of counts) if (n > bestN) { best = lc; bestN = n; }
   return best;
-}
-
-// Normalize a 12-col positional Log_Cleaned row into the object shape the
-// userState/plateau modules consume. Returns null for a non-array row.
-function _normRow(r) {
-  if (!Array.isArray(r)) return null;
-  return {
-    date_clean:         r[0],
-    session_id:         r[1] == null ? '' : String(r[1]),
-    canonical_exercise: typeof r[3] === 'string' ? r[3] : '',
-    lift_code:          r[5] == null ? '' : String(r[5]),
-    muscle_group:       typeof r[4] === 'string' ? r[4] : '',
-    weight:             Number(r[7]),
-    reps:               Number(r[8]),
-    rir:                Number(r[9]),
-    notes:              typeof r[10] === 'string' ? r[10] : '',
-  };
-}
-
-function _isWarmup(note) { return typeof note === 'string' && /warm[\s-]?up/i.test(note); }
-
-// Normalize + filter the snapshot's rows to the target lift; returns
-// { normalized[], forLift[], exerciseName, asOf } or null when unusable.
-function _liftRows(snapshot, liftCode) {
-  const rows = snapshot && Array.isArray(snapshot.log_history) ? snapshot.log_history : [];
-  const asOf = snapshot && typeof snapshot.asOf === 'string' ? snapshot.asOf : null;
-  if (!rows.length || !liftCode || !asOf) return null;
-  const normalized = rows.map(_normRow).filter(o => o && o.date_clean && o.canonical_exercise);
-  const forLift = normalized.filter(o => o.lift_code.trim().toUpperCase() === liftCode);
-  if (!forLift.length) return null;
-  return { normalized, forLift, exerciseName: forLift[0].canonical_exercise.trim(), asOf };
-}
-
-// Derive the userState liftState (e1RM trend, PR, staleness) for the target lift.
-function _deriveLiftState(snapshot, liftCode) {
-  const ctx = _liftRows(snapshot, liftCode);
-  if (!ctx) return null;
-  const us = buildUserState(ctx.normalized, { asOf: ctx.asOf });
-  return us && us.liftStates ? (us.liftStates[ctx.exerciseName] || null) : null;
-}
-
-// Plateau signal for the target lift (or null), defensive.
-function _derivePlateau(snapshot, liftCode) {
-  const ctx = _liftRows(snapshot, liftCode);
-  if (!ctx) return null;
-  try {
-    const stalls = detectLiftPlateaus(ctx.normalized, { minSessions: 3 });
-    if (!Array.isArray(stalls)) return null;
-    return stalls.find(s => s && String(s.liftCode || '').toUpperCase() === liftCode) || null;
-  } catch { return null; }
-}
-
-// Most recent non-warmup working set for the target lift → progression context.
-function _lastWorkingSet(snapshot, liftCode) {
-  const ctx = _liftRows(snapshot, liftCode);
-  if (!ctx) return null;
-  const working = ctx.forLift.filter(o => !_isWarmup(o.notes));
-  const pool = working.length ? working : ctx.forLift;
-  // Do NOT trust sheet order (getLogRows returns raw order; a backfilled/edited row
-  // could be out of place). Sort chronologically (date, session_id tie-break) and
-  // take the most recent — matching userStateModule / expectedPerformanceModule.
-  const sorted = pool.slice().sort((a, b) => {
-    if (a.date_clean !== b.date_clean) return a.date_clean < b.date_clean ? -1 : 1;
-    return a.session_id < b.session_id ? -1 : a.session_id > b.session_id ? 1 : 0;
-  });
-  const last = sorted[sorted.length - 1];
-  if (!last) return null;
-  const lower = /leg|quad|hamstring|glute|calf|lower|hip|squat|deadlift/i.test(last.muscle_group || '')
-    || /squat|deadlift|lunge|hinge/i.test(ctx.exerciseName);
-  return {
-    currentWeight: last.weight,
-    currentReps:   last.reps,
-    currentRIR:    last.rir,
-    bodyRegion:    lower ? 'lower_body' : 'upper_body',
-  };
 }
 
 // ─── adapters ─────────────────────────────────────────────────────────────────
@@ -144,10 +73,10 @@ function confidenceRunner(ctx) {
   // For a per-lift intent use its target_lift; for a whole-workout intent (no
   // target_lift) fall back to the most-trained lift as the representative signal.
   const liftCode = _liftCode(envelope) || _representativeLiftCode(snapshot);
-  const rows = snapshot && Array.isArray(snapshot.log_history) ? snapshot.log_history : [];
+  const rows = _rows(snapshot);
   const injury = _injury(envelope);
   const c = scoreConfidence({
-    liftState:       liftCode ? _deriveLiftState(snapshot, liftCode) : null,
+    liftState:       liftCode ? deriveLiftState(rows, liftCode, _asOf(snapshot)) : null,
     readinessResult: null,             // no check-in data on this path yet
     trendResult:     liftCode ? queryTrend(liftCode, rows) : null,
     safetyFlags:     { active: injury ? [injury] : [] },
@@ -163,9 +92,10 @@ function scenarioClassifierRunner(ctx) {
   const envelope = ctx && ctx.envelope;
   const liftCode = _liftCode(envelope);
   if (!liftCode) return null;
+  const rows = _rows(snapshot), asOf = _asOf(snapshot);
   return classifyScenario({
-    liftState:  _deriveLiftState(snapshot, liftCode),
-    plateau:    _derivePlateau(snapshot, liftCode),
+    liftState:  deriveLiftState(rows, liftCode, asOf),
+    plateau:    derivePlateau(rows, liftCode, asOf),
     readiness:  null,
     injury:     _injury(envelope),
   });
@@ -183,7 +113,7 @@ function progressionRunner(ctx) {
   const scenarioId = scenario && scenario.scenario_id;
   if (!liftCode || !scenarioId) return null;
 
-  const set = _lastWorkingSet(snapshot, liftCode);
+  const set = lastWorkingSet(_rows(snapshot), liftCode, _asOf(snapshot));
   if (!set || !(set.currentWeight > 0) || !Number.isInteger(set.currentReps) || set.currentReps < 1
       || !Number.isFinite(set.currentRIR) || set.currentRIR < 0) {
     return null;
@@ -211,8 +141,6 @@ function sessionGeneratorRunner(ctx) {
   if (!r || !_isObj(r.payload)) return null;
   return { decision: { payload: r.payload, explanation_inputs: r.explanation_inputs } };
 }
-
-function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 
 // The adapter registry the Orchestrator consumes. Only capabilities with a wired
 // adapter run; the Orchestrator skips the rest (recorded in provenance.skipped).
