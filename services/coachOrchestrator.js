@@ -91,7 +91,9 @@ function _missingInfo(provided, resolved, snapshot, envelope, skipped) {
 /**
  * Orchestrate one intent into one CoachingDecision.
  * Returns null for unknown/invalid intent; { brain:false, routed } for non-Brain
- * intents (e.g. log_intent → trust loop); otherwise a validated-shape decision.
+ * intents (e.g. log_intent → trust loop); otherwise an ASSEMBLED (not validated)
+ * CoachingDecision — a faulty runner can yield an invalid decision, so an
+ * integrator MUST call validateCoachingDecision before surfacing/logging it.
  */
 function orchestrate(params) {
   const { envelope, snapshot, runners } = _isObj(params) ? params : {};
