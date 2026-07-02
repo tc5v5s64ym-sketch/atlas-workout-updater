@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v83/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v84/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v83/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v82\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v84/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v83\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6646,4 +6646,42 @@ test('date guard: an ACCEPTED screenshot date is still correctable on the card',
   const fixFn = ccSource.slice(ccSource.indexOf('function buildDateFixRow'), ccSource.indexOf('function buildDateNotice'));
   assert.match(fixFn, /staleSid\.value = ''/, 'the shared fix row keeps the session-id clear (PR #795 review)');
   assert.match(fixFn, /form\.dispatchEvent\(new Event\('submit'/, 'the shared fix row re-runs the preview, never writes');
+});
+
+// --- Cold-start resilience (composer-first Phase 0b, diagnosed live 2026-07-02) ---
+
+test('cold-start: api() retries ONCE on transport failure, only for GETs or marked dry-runs', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(appSource.indexOf('async function api('), appSource.indexOf('function el('));
+  assert.match(fn, /const transportFailure = err && !err\.status && err\.name !== 'AbortError';/,
+    'only transport-level failures retry — never HTTP errors, never caller aborts');
+  assert.match(fn, /!options\._retriedTransport/, 'exactly one retry');
+  assert.match(fn, /\(method === 'GET' \|\| options\.retryTransport === true\)/,
+    'retry is limited to GETs and explicitly-marked idempotent dry-runs');
+  assert.match(fn, /!\(options\.signal && options\.signal\.aborted\)/, 'an aborted signal never retries');
+  assert.match(fn, /_retriedTransport: true/, 'the retry marks itself so it cannot loop');
+});
+
+test('cold-start: only DRY-RUN call sites are marked retryable; the live write is not', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  // submitCompleteWorkout marks retryTransport ONLY under testMode.
+  const scw = appSource.slice(appSource.indexOf('async function submitCompleteWorkout'), appSource.indexOf('async function parseWorkoutImage'));
+  assert.match(scw, /\.\.\.\(testMode \? \{ retryTransport: true \} : \{\}\)/,
+    'complete-workout preview retries only in test_mode');
+  // The live write block (realPayload with test_mode deleted) must NOT set retryTransport.
+  const liveIdx = appSource.indexOf('delete realPayload.test_mode;');
+  assert.ok(liveIdx > 0);
+  const liveBlock = appSource.slice(liveIdx, liveIdx + 400);
+  assert.doesNotMatch(liveBlock, /retryTransport/, 'the LIVE write is never auto-retried');
+});
+
+test('cold-start: transport failures surface the honest waking-up copy, never for HTTP errors', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(appSource.indexOf('function friendlyTransportMessage'), appSource.indexOf('async function api('));
+  assert.match(fn, /if \(!err \|\| err\.status\) return null;/,
+    'a real HTTP error keeps the server message — the friendly copy never masks it');
+  assert.match(fn, /load failed\|failed to fetch\|networkerror/i, 'covers the cryptic browser strings');
+  assert.match(fn, /nothing was saved/, 'the copy states the trust-relevant fact plainly');
+  const uses = appSource.match(/friendlyTransportMessage\(err\)/g) || [];
+  assert.ok(uses.length >= 2, 'wired at both Preview-failed surfaces');
 });
