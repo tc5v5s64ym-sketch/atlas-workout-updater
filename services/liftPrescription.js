@@ -58,16 +58,18 @@ function _liftRows(rows, liftCode, asOf) {
   return { normalized, forLift, exerciseName: forLift[0].canonical_exercise.trim() };
 }
 
-function deriveLiftState(rows, liftCode, asOf) {
-  const ctx = _liftRows(rows, liftCode, asOf);
-  if (!ctx) return null;
+// ── ctx-sharing internals ─────────────────────────────────────────────────────
+// Each public helper normalizes/filters the rows via _liftRows. Within one
+// prescribeLift call that work is identical four times over, so the _*Ctx
+// variants take a prebuilt ctx and the public functions stay thin wrappers
+// (signatures unchanged — coachRunners et al. call them directly).
+
+function _deriveLiftStateCtx(ctx, asOf) {
   const us = buildUserState(ctx.normalized, { asOf });
   return us && us.liftStates ? (us.liftStates[ctx.exerciseName] || null) : null;
 }
 
-function derivePlateau(rows, liftCode, asOf) {
-  const ctx = _liftRows(rows, liftCode, asOf);
-  if (!ctx) return null;
+function _derivePlateauCtx(ctx, liftCode) {
   try {
     const stalls = detectLiftPlateaus(ctx.normalized, { minSessions: 3 });
     if (!Array.isArray(stalls)) return null;
@@ -75,9 +77,19 @@ function derivePlateau(rows, liftCode, asOf) {
   } catch { return null; }
 }
 
-function lastWorkingSet(rows, liftCode, asOf) {
+function deriveLiftState(rows, liftCode, asOf) {
   const ctx = _liftRows(rows, liftCode, asOf);
   if (!ctx) return null;
+  return _deriveLiftStateCtx(ctx, asOf);
+}
+
+function derivePlateau(rows, liftCode, asOf) {
+  const ctx = _liftRows(rows, liftCode, asOf);
+  if (!ctx) return null;
+  return _derivePlateauCtx(ctx, liftCode);
+}
+
+function _lastWorkingSetCtx(ctx) {
   const working = ctx.forLift.filter(o => !_isWarmup(o.notes));
   const pool = working.length ? working : ctx.forLift;
   // Do NOT trust sheet order — sort chronologically (date, session_id tie-break).
@@ -97,17 +109,21 @@ function lastWorkingSet(rows, liftCode, asOf) {
   };
 }
 
+function lastWorkingSet(rows, liftCode, asOf) {
+  const ctx = _liftRows(rows, liftCode, asOf);
+  if (!ctx) return null;
+  return _lastWorkingSetCtx(ctx);
+}
+
 // Overperforming = the last working set beat its expected reps at that load.
 // Expected reps come from the lift's own history at ±10% of the set weight
 // (expectedPerformanceModule needs ≥3 qualifying sessions, else there is no
 // expected signal → false, the conservative default). Feeds classifyScenario's
 // underloaded/increase_load branch, which is otherwise unreachable from data.
 // Pure — read-only math, no I/O.
-function isOverperforming(rows, liftCode, asOf, set) {
-  const working = set || lastWorkingSet(rows, liftCode, asOf);
+function _isOverperformingCtx(ctx, liftCode, set) {
+  const working = set || _lastWorkingSetCtx(ctx);
   if (!working || !(working.currentWeight > 0) || !Number.isInteger(working.currentReps)) return false;
-  const ctx = _liftRows(rows, liftCode, asOf);
-  if (!ctx) return false;
   let expected = null;
   try { expected = assessExpectedPerformance(liftCode, ctx.normalized, working.currentWeight); }
   catch { return false; }
@@ -116,21 +132,32 @@ function isOverperforming(rows, liftCode, asOf, set) {
   return working.currentReps > expectedReps;
 }
 
+function isOverperforming(rows, liftCode, asOf, set) {
+  const ctx = _liftRows(rows, liftCode, asOf);
+  if (!ctx) return false;
+  return _isOverperformingCtx(ctx, liftCode, set);
+}
+
 // Full per-lift prescription: history → scenario → recommendProgression.
 // Returns null when there is not enough signal or a valid last working set.
+// Normalizes/filters the rows ONCE (one _liftRows) and shares the ctx across
+// the whole pipeline — the four helpers used to rebuild it independently.
 function prescribeLift(rows, liftCode, asOf, opts) {
-  const set = lastWorkingSet(rows, liftCode, asOf);
+  const ctx = _liftRows(rows, liftCode, asOf);
+  if (!ctx) return null;
+
+  const set = _lastWorkingSetCtx(ctx);
   if (!set || !(set.currentWeight > 0) || !Number.isInteger(set.currentReps) || set.currentReps < 1
       || !Number.isFinite(set.currentRIR) || set.currentRIR < 0) {
     return null;
   }
 
   const scenario = classifyScenario({
-    liftState:      deriveLiftState(rows, liftCode, asOf),
-    plateau:        derivePlateau(rows, liftCode, asOf),
+    liftState:      _deriveLiftStateCtx(ctx, asOf),
+    plateau:        _derivePlateauCtx(ctx, liftCode),
     readiness:      (opts && opts.readiness) || null,
     injury:         (opts && opts.injury) || null,
-    overperforming: isOverperforming(rows, liftCode, asOf, set),
+    overperforming: _isOverperformingCtx(ctx, liftCode, set),
   });
   if (!scenario) return null;
 
