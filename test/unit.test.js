@@ -2340,6 +2340,19 @@ test('contextual_alias_incline_with_set_data_no_context_needs_clarification', ()
   assert.equal(result.sets, undefined);
 });
 
+test('contextual_alias_mismatch_carries_partial_exercise_so_it_is_not_silently_dropped', () => {
+  // BUG: "Lat pull 175 10/2 x3" typed after Bench Press (mismatched activeExercise)
+  // must surface a `partial.exercise` hint — app.js's malformed-but-recognized
+  // guard (err.recognizedExercise) relies on this field to show an actionable
+  // "Did you mean Lat Pulldown?" message instead of silently routing the typed
+  // set to the coach chat fallback, which drops it with no trace.
+  const result = parseWorkoutText('Lat pull 175 10/2 x3', { activeExercise: 'Bench Press' });
+  assert.equal(result.intent, 'needs_clarification');
+  assert.ok(result.warnings.includes('ambiguous_exercise_alias'));
+  assert.deepEqual(result.partial, { exercise: 'Lat Pulldown', raw_name: 'Lat Pulldown' });
+  assert.match(result.message, /Did you mean Lat Pulldown/i);
+});
+
 test('contextual_alias_lats_inherits_active_lat_pulldown', () => {
   // Cross-turn continuation: "lats 130 8/2" with activeExercise=Lat Pulldown
   // must inherit the active lift, not create a bogus "Lats" row.
