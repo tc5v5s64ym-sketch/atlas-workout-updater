@@ -209,13 +209,70 @@
     return grid;
   }
 
-  function buildReviewCard(rows, liftCodes, effortOnly, effort) {
+  // B5: the review card's date notice. The card is the single review surface on the
+  // conversation UI (the legacy #preview-content panel is hidden), so the resolved
+  // workout date and its source must be visible HERE before the owner approves.
+  // 'screenshot' / 'manual' render a quiet confirmation line; 'today_fallback' warns
+  // and offers an inline date correction that re-runs the SAME preview flow — setting
+  // #log-date via a real input event (latching logDateManuallyEntered in app.js) and
+  // re-dispatching the logger-form submit, so payload, session id, and this card all
+  // re-resolve on the corrected date. Read-only: nothing here writes; the corrected
+  // preview still goes through the unchanged approve gate.
+  function buildDateNotice(dateInfo) {
+    if (!dateInfo || !dateInfo.date || !dateInfo.source) return null;
+    const wrap = elc('div', 'rv-date');
+    if (dateInfo.source === 'screenshot') {
+      wrap.appendChild(elc('div', 'rv-date-ok', `Date from screenshot: ${dateInfo.date}`));
+      return wrap;
+    }
+    if (dateInfo.source === 'manual') {
+      wrap.appendChild(elc('div', 'rv-date-ok', `Date: ${dateInfo.date}`));
+      return wrap;
+    }
+    if (dateInfo.source !== 'today_fallback') return null;
+    wrap.appendChild(elc('div', 'rv-date-warn',
+      `⚠️ No date found on the screenshot — saving as ${dateInfo.date} (today). Wrong? Set the real date:`));
+    const row = elc('div', 'rv-date-fix');
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.value = dateInfo.date;
+    input.setAttribute('aria-label', 'Workout date');
+    const applyBtn = elc('button', 'btn rv-date-apply', 'Use this date');
+    applyBtn.type = 'button';
+    applyBtn.addEventListener('click', () => {
+      if (!input.value) return;
+      const logDate = document.getElementById('log-date');
+      const form = document.getElementById('logger-form');
+      if (!logDate || !form) return;
+      logDate.value = input.value;
+      // A REAL input event — app.js listens for it to latch logDateManuallyEntered,
+      // which makes the corrected date win the server-side resolution on re-preview.
+      logDate.dispatchEvent(new Event('input', { bubbles: true }));
+      applyBtn.textContent = 'Re-previewing…';
+      applyBtn.disabled = true;
+      form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+    });
+    row.appendChild(input);
+    row.appendChild(applyBtn);
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  function buildReviewCard(rows, liftCodes, effortOnly, effort, dateInfo) {
     const card = elc('div', 'review');
 
     const head = elc('div', 'rv-h');
     head.appendChild(elc('span', 'rv-t', "Today’s workout"));
-    head.appendChild(elc('span', 'rv-d', (rows[0] && rows[0][0]) ? String(rows[0][0]) : ''));
+    // B5: an effort-only save has no rows to derive the date from — fall back to the
+    // resolved dateInfo so the card is never dateless.
+    head.appendChild(elc('span', 'rv-d', (rows[0] && rows[0][0])
+      ? String(rows[0][0])
+      : (dateInfo && dateInfo.date ? String(dateInfo.date) : '')));
     card.appendChild(head);
+
+    // B5: date source (and today-fallback correction) directly under the header.
+    const dateNotice = buildDateNotice(dateInfo);
+    if (dateNotice) card.appendChild(dateNotice);
 
     // Watch metrics first, then the workout summary, then one Save.
     if (effort) card.appendChild(buildEffortGrid(effort));
@@ -1302,7 +1359,7 @@
   // / Undo delegate to the existing #approve-btn / #parsed-rows-editor /
   // window.atlasUndoLastWrite — the write path itself is unchanged.
   async function handlePreviewReady(detail) {
-    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [], recap = null } = detail || {};
+    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [], recap = null, dateInfo = null } = detail || {};
     if (!effortOnly && !liftCodes.length) return;       // nothing to review
 
     // If a review card already exists in the thread (e.g. the user added manual
@@ -1340,7 +1397,7 @@
     const remaining = (recap && Array.isArray(recap.remaining)) ? recap.remaining.filter(Boolean) : [];
     if (remaining.length) intro += `\n\nStill on your plan: ${remaining.join(', ')}.`;
     await typeOut(body, intro);
-    bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort));
+    bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort, dateInfo));
   }
 
   // Tracks the last substitute suggestion so handleSetLogged can acknowledge it
