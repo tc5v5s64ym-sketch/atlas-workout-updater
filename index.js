@@ -57,7 +57,7 @@ const { assembleState, defaultReaders } = require('./services/stateAssembly');
 const { orchestrate } = require('./services/coachOrchestrator');
 const { validateCoachingDecision } = require('./services/coachingDecision');
 const { buildRunners } = require('./services/coachRunners');
-const { planBrianOverride, applyBrianOverride } = require('./services/coachEnginePromotion');
+const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrianPickOverride } = require('./services/coachEnginePromotion');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -2417,10 +2417,62 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
       goal: req.query.goal ? normalizeTrainingGoal(req.query.goal) : getProfileGoal(),
       ...(upperOnly && { upperOnly }),
     });
+
+    // One-Brain engine gate — the Coach's Pick promotion (owner-approved
+    // 2026-07-02), same staged pattern as /api/recommend/next and
+    // /api/plan/today. `hybrid` = shadow attach only (`result.brian`, a
+    // validated best_workout decision; response otherwise byte-identical).
+    // `brian` = if Brian returns a valid, answered `workout` decision with
+    // prescribed numbers, its blocks REPLACE the recommended intent's exercise
+    // list (numbers verbatim; labels/why_today/other intents/todays_read stay
+    // legacy); anything else falls back to the untouched legacy result. No
+    // separate deload guard: buildSession is itself deload-aware (it applies
+    // the predefined protocol to its blocks). Runs BEFORE the barbell
+    // loadability pass so that display rule applies uniformly to whichever
+    // engine produced the numbers. Default (unset/legacy) = byte-identical.
+    // Everything inside its own try/catch — an engine failure can never alter
+    // or fail the legacy response. No write path / trust-loop touch.
+    const coachEngineMode = process.env.ATLAS_COACH_ENGINE;
+    if ((coachEngineMode === 'hybrid' || coachEngineMode === 'brian') && result) {
+      try {
+        const asOf = new Date().toISOString();
+        const snapshot = await assembleState({
+          asOf,
+          readers: { ...defaultReaders(), getLogRows: async () => allLog },
+        });
+        const envelope = buildIntentEnvelope({
+          type: 'best_workout',
+          constraints: upperOnly ? { focus: 'upper_body' } : {},
+          source: 'api',
+          asOf,
+        });
+        const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+        const validation = validateCoachingDecision(brian);
+        if (brian && validation.valid) {
+          result.brian = brian;
+        }
+        if (coachEngineMode === 'brian') {
+          const plan = planBrianPickOverride(result, brian, validation);
+          if (plan.eligible) {
+            applyBrianPickOverride(result, plan);
+            result.engine_source = { mode: 'brian', driven_by: 'brian' };
+          } else {
+            result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
+          }
+        }
+      } catch (_) {
+        if (coachEngineMode === 'brian') {
+          result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
+        }
+      }
+    }
+
     // P0 AC12: snap each intent's BARBELL target weights to loadable plate totals
     // (45 lb bar, 5 lb jumps) + attach a short note, gated on barbell equipment
     // classification. Read-only — this is the recommendation/composer surface, not
-    // the write path; the lifter still logs what they actually do.
+    // the write path; the lifter still logs what they actually do. Applies after
+    // the engine gate so Brian-driven numbers get the same loadability snap the
+    // legacy numbers do (a uniform display rule, recorded via engine_source).
     if (result && Array.isArray(result.intents)) {
       for (const intent of result.intents) {
         if (intent && Array.isArray(intent.exercises)) {

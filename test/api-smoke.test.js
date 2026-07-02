@@ -3861,6 +3861,84 @@ test('api smoke: /api/plan/today stays read-only across all engine modes', async
   assert.equal(fakeSheetsState.appendCalls.length, before, 'no engine mode may trigger a Sheets write from this route');
 });
 
+// One-Brain Promotion — /api/plan/intent-recommendation (the Coach's Pick,
+// owner-approved 2026-07-02). Same gated pattern; the thin BEN01 fixture makes
+// best_workout resolve to clarification here, so these tests prove env-var
+// wiring, byte-equivalence, and fallback at the HTTP layer — "brian answers"
+// is proven against the real Orchestrator in test/coachEnginePromotion.test.js.
+
+test('api smoke: intent-recommendation is byte-equivalent to legacy when ATLAS_COACH_ENGINE is unset', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  delete process.env.ATLAS_COACH_ENGINE;
+  try {
+    const { response, body } = await requestJson('/api/plan/intent-recommendation');
+    assert.equal(response.status, 200);
+    assert.equal('brian' in body.data, false, 'legacy mode must never attach result.brian');
+    assert.equal('engine_source' in body.data, false, 'legacy mode must never attach engine_source metadata');
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: intent-recommendation hybrid mode stays shadow-only — intents unchanged from legacy', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    delete process.env.ATLAS_COACH_ENGINE;
+    const legacy = await requestJson('/api/plan/intent-recommendation');
+
+    process.env.ATLAS_COACH_ENGINE = 'hybrid';
+    const hybrid = await requestJson('/api/plan/intent-recommendation');
+
+    assert.equal(hybrid.response.status, 200);
+    assert.equal('engine_source' in hybrid.body.data, false, 'hybrid mode must never attach engine_source metadata');
+    // Shadow attach changes nothing the pick surface renders.
+    assert.deepEqual(hybrid.body.data.intents, legacy.body.data.intents);
+    assert.deepEqual(hybrid.body.data.todays_read, legacy.body.data.todays_read);
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: intent-recommendation brian mode falls back to legacy with metadata when Brian cannot answer', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    delete process.env.ATLAS_COACH_ENGINE;
+    const legacy = await requestJson('/api/plan/intent-recommendation');
+
+    process.env.ATLAS_COACH_ENGINE = 'brian';
+    const brian = await requestJson('/api/plan/intent-recommendation');
+
+    assert.equal(brian.response.status, 200);
+    assert.ok(brian.body.data.engine_source, 'brian mode must always include engine_source metadata');
+    assert.equal(brian.body.data.engine_source.mode, 'brian');
+    assert.equal(brian.body.data.engine_source.driven_by, 'legacy');
+    // Fallback means the surface is identical to legacy — nothing silently drifted.
+    assert.deepEqual(brian.body.data.intents, legacy.body.data.intents);
+    assert.deepEqual(brian.body.data.todays_read, legacy.body.data.todays_read);
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+test('api smoke: /api/plan/intent-recommendation stays read-only across all engine modes', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    for (const mode of [undefined, 'hybrid', 'brian']) {
+      if (mode === undefined) delete process.env.ATLAS_COACH_ENGINE;
+      else process.env.ATLAS_COACH_ENGINE = mode;
+      await requestJson('/api/plan/intent-recommendation');
+    }
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+  assert.equal(fakeSheetsState.appendCalls.length, before, 'no engine mode may trigger a Sheets write from this route');
+});
+
 test('api smoke: plan-today returns stable read shape', async () => {
   fakeSheetsState.appendCalls.length = 0;
   const { response, body } = await requestJson('/api/plan/today');

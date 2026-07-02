@@ -260,3 +260,128 @@ describe('brian-mode composition (real Orchestrator + coachEnginePromotion)', ()
     assert.equal(plan.reason, 'active_deload');
   });
 });
+
+// ─── Coach's Pick promotion (owner-approved 2026-07-02) ─────────────────────
+
+const { planBrianPickOverride, applyBrianPickOverride } = require('../services/coachEnginePromotion');
+
+function legacyPickResult() {
+  return {
+    intents: [
+      { id: 'push_day', label: 'Push Day', recommended: true,
+        why_today: ['Pressing patterns are fresh'],
+        exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 185, target_reps: 5, target_sets: 3, reason: 'steady' }] },
+      { id: 'pull_day', label: 'Pull Day', recommended: false,
+        exercises: [{ exercise: 'Barbell Row', lift_code: 'ROW01', target_weight: 135, target_reps: 8, target_sets: 3, reason: 'fresh' }] },
+    ],
+    todays_read: { recommended_label: 'Push Day', recommended_reason: 'Pressing patterns are fresh' },
+  };
+}
+
+const ANSWERED_WORKOUT = {
+  decision_type: 'workout',
+  status: 'answered',
+  payload: {
+    session_label: 'Full Body', focus: 'full_body', target_duration_min: 60,
+    blocks: [
+      { exercise: 'Back Squat', lift_code: 'SQUAT', pattern: 'squat', sets: 3, reps: 5, target_weight: 250, target_rir: 2, scenario_id: 'on_target', source: 'brian', warmup: false },
+      { exercise: 'Bench Press', lift_code: 'BENCH', pattern: 'push', sets: 3, reps: 5, target_weight: 210, target_rir: 2, scenario_id: 'underloaded', source: 'brian', warmup: false },
+    ],
+    why_today: ['SQUAT:on_target', 'BENCH:underloaded'],
+    substitutions_applied: [],
+  },
+  confidence: { score: 82, tier: 'high', action: 'act', caveats: [] },
+  safety: { level: 'green', flags: [], blocking: false },
+};
+
+describe('planBrianPickOverride', () => {
+  it('eligible: maps every prescribed block verbatim (reps → target_reps)', () => {
+    const plan = planBrianPickOverride(legacyPickResult(), ANSWERED_WORKOUT, VALID);
+    assert.equal(plan.eligible, true, `got reason=${plan.reason}`);
+    assert.equal(plan.exercises.length, 2);
+    const [squat, bench] = plan.exercises;
+    assert.deepEqual(squat, {
+      exercise: 'Back Squat', lift_code: 'SQUAT', target_weight: 250,
+      target_reps: 5, target_sets: 3, target_rir: 2, reason: 'Brian: on target',
+    });
+    assert.equal(bench.target_weight, 210);
+    assert.equal(bench.reason, 'Brian: underloaded');
+  });
+
+  it('ineligible: invalid decision / clarification / wrong type / no numbers / no recommended intent', () => {
+    assert.equal(planBrianPickOverride(legacyPickResult(), ANSWERED_WORKOUT, INVALID).reason, 'invalid_decision');
+    assert.equal(planBrianPickOverride(legacyPickResult(), CLARIFICATION, VALID).reason, 'needs_clarification');
+    assert.equal(planBrianPickOverride(legacyPickResult(), ANSWERED_PROGRESSION, VALID).reason, 'wrong_decision_type');
+    const noNumbers = { ...ANSWERED_WORKOUT, payload: { ...ANSWERED_WORKOUT.payload, blocks: [{ exercise: 'Back Squat' }] } };
+    assert.equal(planBrianPickOverride(legacyPickResult(), noNumbers, VALID).reason, 'no_prescribed_numbers');
+    const noRec = legacyPickResult();
+    noRec.intents.forEach(i => { i.recommended = false; });
+    assert.equal(planBrianPickOverride(noRec, ANSWERED_WORKOUT, VALID).reason, 'no_recommended_intent');
+  });
+
+  it('never throws on garbage', () => {
+    assert.doesNotThrow(() => planBrianPickOverride(null, null, null));
+    assert.doesNotThrow(() => planBrianPickOverride({}, {}, VALID));
+  });
+});
+
+describe('applyBrianPickOverride', () => {
+  it('replaces ONLY the recommended intent\'s exercises; everything else stays legacy', () => {
+    const result = legacyPickResult();
+    const before = JSON.parse(JSON.stringify(result));
+    const plan = planBrianPickOverride(result, ANSWERED_WORKOUT, VALID);
+    applyBrianPickOverride(result, plan);
+
+    const rec = result.intents.find(i => i.recommended);
+    assert.equal(rec.exercises.length, 2);
+    assert.equal(rec.exercises[0].target_weight, 250);
+    // Untouched surfaces:
+    assert.equal(rec.label, before.intents[0].label);
+    assert.deepEqual(rec.why_today, before.intents[0].why_today);
+    assert.deepEqual(result.intents[1], before.intents[1], 'non-recommended intents stay legacy');
+    assert.deepEqual(result.todays_read, before.todays_read, 'todays_read stays legacy');
+  });
+});
+
+describe('pick composition (real Orchestrator → planBrianPickOverride)', () => {
+  const ASOF = '2026-06-30T14:00:00Z';
+  const FULL_BODY = (() => {
+    const dates = ['2026-05-16', '2026-05-20', '2026-05-24', '2026-05-28', '2026-06-01', '2026-06-05'];
+    const out = [];
+    for (const [ex, code, m, w0] of [['Back Squat', 'SQUAT', 'quads', 225], ['Bench Press', 'BENCH', 'chest', 185],
+      ['Barbell Row', 'ROW', 'back', 135], ['Romanian Deadlift', 'RDL', 'hamstrings', 205]]) {
+      let w = w0;
+      for (let i = 0; i < 6; i++) { out.push([dates[i], 's' + code + i, ex, ex, m, code, 1, w, 5, 2, '', w * 5]); w += 5; }
+    }
+    return out;
+  })();
+
+  it('rich history → answered workout → the pick\'s exercises are Brian\'s blocks verbatim', async () => {
+    const envelope = buildIntentEnvelope({ type: 'best_workout', constraints: {}, source: 'api', asOf: ASOF });
+    const snapshot = await assembleState({
+      readers: {
+        getLogRows: async () => FULL_BODY,
+        readDeloadState: async () => null,
+        getProfile: async () => ({ profile_goal: 'general-fitness', training_level: 'intermediate', population: 'general' }),
+      },
+      asOf: ASOF,
+    });
+    const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+    const validation = validateCoachingDecision(brian);
+    assert.equal(validation.valid, true, `errors: ${validation.errors.join(' | ')}`);
+    assert.equal(brian.decision_type, 'workout');
+
+    const result = legacyPickResult();
+    const plan = planBrianPickOverride(result, brian, validation);
+    assert.equal(plan.eligible, true, `got reason=${plan.reason}`);
+    applyBrianPickOverride(result, plan);
+
+    const rec = result.intents.find(i => i.recommended);
+    assert.equal(rec.exercises.length, brian.payload.blocks.length);
+    brian.payload.blocks.forEach((b, i) => {
+      assert.equal(rec.exercises[i].exercise, b.exercise);
+      assert.equal(rec.exercises[i].target_weight, b.target_weight, 'weights trace verbatim from brian.payload');
+      assert.equal(rec.exercises[i].target_reps, b.reps);
+    });
+  });
+});

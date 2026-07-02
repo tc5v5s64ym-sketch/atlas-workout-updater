@@ -5782,7 +5782,7 @@ test('P0 wiring 2c: barbell loadability snap is applied on the intent-recommenda
   const idx = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   assert.match(idx, /require\('\.\/services\/barbellLoadabilitySurface'\)/, 'the surfacing helper is imported');
   // The snap runs on the intent-recommendation result (the composer/plan source).
-  const handler = idx.slice(idx.indexOf("app.get('/api/plan/intent-recommendation'"), idx.indexOf("app.get('/api/plan/intent-recommendation'") + 1100);
+  const handler = idx.slice(idx.indexOf("app.get('/api/plan/intent-recommendation'"), idx.indexOf("app.get('/api/plan/intent-recommendation'") + 4200);
   assert.match(handler, /applyBarbellLoadabilityToExercises\(intent\.exercises\)/, 'each intent\'s exercises are snapped');
 
   // The drawer surfaces the per-exercise loadability note.
