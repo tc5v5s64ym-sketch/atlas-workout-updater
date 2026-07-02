@@ -1711,6 +1711,14 @@ a.lift-link:hover { text-decoration: underline; }
 .rv-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .rv-t { font-family: var(--disp); font-weight: 600; font-size: 1rem; }
 .rv-d { font-family: var(--mono); font-size: 0.68rem; color: var(--faint); }
+/* B5: review-card date notice — quiet confirmation line or today-fallback warning
+   with an inline correction (date input + "Use this date" re-preview). */
+.rv-date { margin: -4px 0 10px; }
+.rv-date-ok { font-family: var(--mono); font-size: 0.7rem; color: var(--faint); }
+.rv-date-warn { font-family: var(--mono); font-size: 0.72rem; color: var(--warn, #c9803a); line-height: 1.5; }
+.rv-date-fix { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.rv-date-fix input[type="date"] { background: var(--card); color: var(--ink); border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 9px; font-family: var(--mono); font-size: 0.78rem; }
+.rv-date-apply { font-size: 0.74rem; padding: 7px 12px; }
 .rv-ex { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 /* The name must never be crushed by a long set list. flex:0 0 auto keeps it at its
    natural width (one line); the set column takes the remaining space and wraps within

@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v79/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v80/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5279,7 +5279,7 @@ test('screenshot/effort: parsed effort flows into the single review card (no sep
   assert.match(app, /emitCoachPreview\(data\.rows_to_write, completeLiftCodes, effortOnly, data\.parsed_effort/, 'effort preview must forward parsed_effort to the review card');
   // The single review card renders the Apple Watch metrics grid and receives the effort.
   assert.match(coach, /function buildEffortGrid\(/, 'review card must render the Apple Watch metrics grid');
-  assert.match(coach, /buildReviewCard\(rows, liftCodes, effortOnly, effort\)/, 'review card must receive the effort');
+  assert.match(coach, /buildReviewCard\(rows, liftCodes, effortOnly, effort, dateInfo\)/, 'review card must receive the effort (and the B5 dateInfo)');
 });
 
 test('screenshot: missing peak HR renders plainly in the preview table, not blank', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v79/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v78\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v80/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v79\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5737,7 +5737,7 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
   // emitCoachPreview threads the canonical recap into the preview event.
-  const emit = appSrc.slice(appSrc.indexOf('function emitCoachPreview('), appSrc.indexOf('function emitCoachPreview(') + 900);
+  const emit = appSrc.slice(appSrc.indexOf('function emitCoachPreview('), appSrc.indexOf('function emitCoachPreview(') + 1500);
   assert.match(emit, /recap:\s*canonicalSessionRecap\(\)/, 'preview event carries the canonical recap');
 
   // canonicalSessionRecap builds from getCanonicalSession + the model selectors,
@@ -6512,4 +6512,65 @@ test('partial-log: a none-resolved multi-line paste surfaces its ask instead of 
   const coachRouteIdx = appSource.indexOf('routeMessageToCoach(pendingChatText)', submitStart);
   assert.ok(guardIdx > submitStart, 'the unresolved-lines guard must be inside composer submit');
   assert.ok(guardIdx < coachRouteIdx, 'the guard must run BEFORE the coach route');
+});
+
+// --- B5: screenshot date honored and visible on the conversation review card (2026-07-02) ---
+// Two coupled defects fixed together: (1) the screenshot preview stamped the default
+// #log-date (today) as an owner-typed manual date, so the server's screenshot-date /
+// today-fallback resolution never ran; (2) the in-thread review card never showed the
+// resolved date or its source, and effort-only cards were dateless with no correction path.
+
+test('B5: screenshot preview sends the date ONLY when the owner actually entered one', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /const screenshotDateField = logDateManuallyEntered \? date : '';/,
+    'the default-today date must not be sent as a manual date on the screenshot path');
+  const branchIdx = appSource.indexOf("if (mode === 'screenshot' && file) {");
+  const callIdx = appSource.indexOf('date: screenshotDateField', branchIdx);
+  assert.ok(branchIdx > 0 && callIdx > branchIdx,
+    'the gated date must be what the screenshot preview submits');
+  // The manual-effort branch is unchanged: it still sends the field date.
+  const effortOnlyIdx = appSource.indexOf('} else if (effortOnly) {', branchIdx);
+  const effortCall = appSource.slice(effortOnlyIdx, effortOnlyIdx + 400);
+  assert.match(effortCall, /sessionId: completeWorkoutSessionId, date,/,
+    'manual effort-only preview keeps sending the field date');
+});
+
+test('B5: both preview renderers hand date + date_source to the review card event', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function emitCoachPreview\(rows, liftCodes, effortOnly, effort, substitutions, dateInfo\)/);
+  assert.match(appSource, /dateInfo: \(dateInfo && dateInfo\.date\) \? dateInfo : null/,
+    'the preview-ready event must carry dateInfo');
+  assert.match(appSource, /\{ date: data\.date, source: data\.date_source \|\| null \}/,
+    'complete-workout preview must pass the server-resolved date + source');
+  assert.match(appSource, /closeoutScreenshotDateSource \|\| \(logDateManuallyEntered \? 'manual' : null\)/,
+    'log-workout preview must pass the closeout/manual source and null for plain logs');
+});
+
+test('B5: review card renders the date notice with a working today-fallback correction', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(ccSource, /function buildDateNotice\(dateInfo\)/);
+  assert.match(ccSource, /Date from screenshot: \$\{dateInfo\.date\}/, 'screenshot source renders a confirmation line');
+  assert.match(ccSource, /No date found on the screenshot — saving as \$\{dateInfo\.date\} \(today\)/,
+    'today_fallback renders a warning');
+  const noticeFn = ccSource.slice(ccSource.indexOf('function buildDateNotice'), ccSource.indexOf('function buildReviewCard'));
+  assert.match(noticeFn, /input\.type = 'date'/, 'fallback offers an inline date input');
+  assert.match(noticeFn, /logDate\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\)/,
+    'correction must latch logDateManuallyEntered via a REAL input event');
+  assert.match(noticeFn, /form\.dispatchEvent\(new Event\('submit'/,
+    'correction must re-run the SAME preview flow, never write directly');
+  // Review PR #795: the first preview latches the OLD date's server-resolved
+  // session_id into #log-session-id; the correction must clear it so the re-preview
+  // re-derives the id from the corrected date (date and session_id never diverge).
+  assert.match(noticeFn, /getElementById\('log-session-id'\)/,
+    'correction must reference the session-id field');
+  assert.match(noticeFn, /staleSid\.value = ''/,
+    'correction must clear the stale session_id before re-previewing');
+  const clearIdx = noticeFn.indexOf("staleSid.value = ''");
+  const submitIdx = noticeFn.indexOf("form.dispatchEvent(new Event('submit'");
+  assert.ok(clearIdx > -1 && clearIdx < submitIdx, 'the clear must happen BEFORE the re-submit');
+  assert.match(ccSource, /function buildReviewCard\(rows, liftCodes, effortOnly, effort, dateInfo\)/);
+  assert.match(ccSource, /dateInfo && dateInfo\.date \? String\(dateInfo\.date\) : ''/,
+    'an effort-only card falls back to the resolved date in its header');
+  assert.match(ccSource, /buildReviewCard\(rows, liftCodes, effortOnly, effort, dateInfo\)/,
+    'handlePreviewReady must thread dateInfo into the card');
 });

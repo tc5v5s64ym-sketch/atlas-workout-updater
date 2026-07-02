@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v79';
+const ATLAS_SHELL_BUILD = 'v80';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3970,7 +3970,7 @@ function extractLiftCodes(logRowsPreview) {
 // so it can type a coaching note with an inline Save. Read-only narration: it
 // never writes — Save just clicks #approve-btn, which stays gated by the dry-run
 // proof. Best-effort; a missing listener is a no-op.
-function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions) {
+function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions, dateInfo) {
   try {
     document.dispatchEvent(new CustomEvent('atlas:preview-ready', {
       detail: {
@@ -3979,6 +3979,10 @@ function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions) {
         effortOnly: Boolean(effortOnly),
         effort: effort || null,
         substitutions: Array.isArray(substitutions) ? substitutions : [],
+        // B5: the resolved workout date + its source (manual | screenshot |
+        // today_fallback) so the in-thread review card can show — and let the owner
+        // correct — the date before approving. null source = nothing to show.
+        dateInfo: (dateInfo && dateInfo.date) ? dateInfo : null,
         // P0 wiring 2b: the recap's completed/remaining view derives from the ONE
         // canonical session (identity reconciled against the mutated plan), so it
         // can't disagree with what was logged. null when nothing was logged.
@@ -5545,7 +5549,18 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     if (mode === 'screenshot' && file) {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
-      const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId, date, location, notes, testMode: true });
+      // B5 (owner live bug 07-02): #log-date is auto-filled with today, so sending it
+      // unconditionally stamped every screenshot save with an owner-"typed" date — and
+      // a manual date beats the screenshot date server-side, so the screenshot's own
+      // date could NEVER win and date_source read 'manual', suppressing even the
+      // today-fallback warning. Send the date ONLY when the owner actually entered one
+      // (logDateManuallyEntered — a real input event, same flag RC2 uses); blank lets
+      // the server resolve screenshot-date → today-fallback and report an honest
+      // date_source. Mirrors the RC5 blank-session_id pattern. Preview ↔ write parity
+      // holds: pendingWrite.date below captures the server-RESOLVED date, which the
+      // approve step re-sends, so what was previewed is exactly what is written.
+      const screenshotDateField = logDateManuallyEntered ? date : '';
+      const result = await submitCompleteWorkout({ file, logRows, sessionId: completeWorkoutSessionId, date: screenshotDateField, location, notes, testMode: true });
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
@@ -5861,7 +5876,17 @@ function renderLogWorkoutPreview(result, effortRow) {
     averageHR: effortRow.average_hr,
     peakHR: effortRow.peak_hr
   } : null;
-  emitCoachPreview(data.log_rows_preview, liftCodes, false, reviewEffort, data.substitutions);
+  // B5: the log-workout preview's date is the write-payload date; the source is the
+  // closeout-screenshot resolution when one ran (RC2), else 'manual' only when the
+  // owner actually typed a date. A plain default-today set log passes source null,
+  // so ordinary set logging renders no date notice — unchanged look.
+  const logDateInfo = {
+    date: (pendingWrite && pendingWrite.payload && pendingWrite.payload.date)
+      || document.getElementById('log-date').value || '',
+    source: closeoutScreenshotDateSource || (logDateManuallyEntered ? 'manual' : null)
+  };
+  emitCoachPreview(data.log_rows_preview, liftCodes, false, reviewEffort, data.substitutions,
+    logDateInfo.source ? logDateInfo : null);
 }
 
 function renderCompleteWorkoutPreview(result) {
@@ -5906,7 +5931,12 @@ function renderCompleteWorkoutPreview(result) {
   }
   const completeLiftCodes = extractLiftCodes(data.rows_to_write);
   if (pendingWrite) pendingWrite.liftCodes = completeLiftCodes;
-  emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly, data.parsed_effort || null);
+  // B5: the server resolved this preview's date (manual > screenshot > today) and
+  // reports the source — hand both to the review card so the owner SEES the date
+  // (and the today-fallback warning) on the conversation surface, not just in the
+  // hidden legacy panel above.
+  emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly, data.parsed_effort || null, null,
+    data.date ? { date: data.date, source: data.date_source || null } : null);
   if (completeLiftCodes.length && getApiKey()) {
     const suggestionSlot = el('div', {});
     previewContent.appendChild(suggestionSlot);
