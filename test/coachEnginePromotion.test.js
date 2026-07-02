@@ -268,8 +268,11 @@ const { planBrianPickOverride, applyBrianPickOverride } = require('../services/c
 function legacyPickResult() {
   return {
     intents: [
-      { id: 'push_day', label: 'Push Day', recommended: true,
+      { id: 'push_day', label: 'Push Day', focus: 'press + pull', recommended: true,
         why_today: ['Pressing patterns are fresh'],
+        reason_codes: ['stall_detected'],
+        pivot_logic: ['If pressing feels heavy, swap to rows'],
+        what_it_protects: ['Strength trajectory'],
         exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 185, target_reps: 5, target_sets: 3, reason: 'steady' }] },
       { id: 'pull_day', label: 'Pull Day', recommended: false,
         exercises: [{ exercise: 'Barbell Row', lift_code: 'ROW01', target_weight: 135, target_reps: 8, target_sets: 3, reason: 'fresh' }] },
@@ -326,7 +329,7 @@ describe('planBrianPickOverride', () => {
 });
 
 describe('applyBrianPickOverride', () => {
-  it('replaces ONLY the recommended intent\'s exercises; everything else stays legacy', () => {
+  it('swaps exercises + labels verbatim, strips exercise-derived siblings, keeps readiness facts (review #813)', () => {
     const result = legacyPickResult();
     const before = JSON.parse(JSON.stringify(result));
     const plan = planBrianPickOverride(result, ANSWERED_WORKOUT, VALID);
@@ -335,11 +338,18 @@ describe('applyBrianPickOverride', () => {
     const rec = result.intents.find(i => i.recommended);
     assert.equal(rec.exercises.length, 2);
     assert.equal(rec.exercises[0].target_weight, 250);
-    // Untouched surfaces:
-    assert.equal(rec.label, before.intents[0].label);
+    // The card's headline now describes the list it shows — Brian's own labels, verbatim.
+    assert.equal(rec.label, 'Full Body');
+    assert.equal(rec.focus, 'full_body');
+    assert.equal(result.todays_read.recommended_label, 'Full Body');
+    // Exercise-derived siblings would describe movements no longer shown — stripped, not stale.
+    assert.equal('pivot_logic' in rec, false, 'stale pivot_logic must be stripped');
+    assert.equal('reason_codes' in rec, false, 'stale reason_codes must be stripped');
+    // Readiness/theme facts that are not exercise-derived stay legacy:
     assert.deepEqual(rec.why_today, before.intents[0].why_today);
+    assert.deepEqual(rec.what_it_protects, before.intents[0].what_it_protects);
+    assert.equal(result.todays_read.recommended_reason, before.todays_read.recommended_reason);
     assert.deepEqual(result.intents[1], before.intents[1], 'non-recommended intents stay legacy');
-    assert.deepEqual(result.todays_read, before.todays_read, 'todays_read stays legacy');
   });
 });
 

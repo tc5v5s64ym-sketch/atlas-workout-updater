@@ -122,6 +122,11 @@ function planBrianPickOverride(result, brian, validation) {
   return {
     eligible: true,
     reason: null,
+    // Brian's own surface labels, verbatim from the payload (never invented) —
+    // the swapped exercise list must not sit under a legacy theme label that
+    // no longer describes it (review #813).
+    label: typeof payload.session_label === 'string' && payload.session_label ? payload.session_label : null,
+    focus: typeof payload.focus === 'string' && payload.focus ? payload.focus : null,
     exercises: prescribed.map(b => ({
       exercise: b.exercise,
       lift_code: typeof b.lift_code === 'string' ? b.lift_code : null,
@@ -138,13 +143,26 @@ function planBrianPickOverride(result, brian, validation) {
   };
 }
 
-// Applies an eligible pick plan onto `result` IN PLACE: only the recommended
-// intent's exercise list is replaced. Labels, why_today, data_points, the
-// other intents, and todays_read stay legacy — Brian drives the numbers, the
-// surrounding surface is unchanged.
+// Applies an eligible pick plan onto `result` IN PLACE (review #813 shape):
+// - exercises: replaced with Brian's blocks (verbatim).
+// - label/focus (+ todays_read.recommended_label): Brian's own session_label/
+//   focus, verbatim, so the card's headline describes the list it shows.
+// - pivot_logic / reason_codes: DELETED — they are derived from the legacy
+//   exercise list and would describe movements no longer shown; the drawer
+//   renders those sections only when present, so absence degrades cleanly.
+// why_today, data_points, what_it_protects, watch_for, the other intents, and
+// todays_read.recommended_reason stay legacy — readiness/theme facts that
+// remain true and are not exercise-derived.
 function applyBrianPickOverride(result, plan) {
   const recommended = result.intents.find(i => _isObj(i) && i.recommended === true);
   recommended.exercises = plan.exercises;
+  if (plan.label) recommended.label = plan.label;
+  if (plan.focus) recommended.focus = plan.focus;
+  delete recommended.pivot_logic;
+  delete recommended.reason_codes;
+  if (plan.label && _isObj(result.todays_read) && result.todays_read.recommended_label) {
+    result.todays_read.recommended_label = plan.label;
+  }
 }
 
 module.exports = {
