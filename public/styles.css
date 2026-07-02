@@ -760,6 +760,10 @@ body[data-surface="coach"] main {
   margin: 0 0 var(--s5);
 }
 .coach-read-strip:empty { display: none; }
+/* Phase B3: the glance line is tappable — it expands into an in-thread artifact */
+.coach-read-strip { cursor: pointer; }
+.coach-read-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.glance-artifact .chip-reply-more { margin-top: var(--s1); display: inline-block; }
 .strip-streak { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); white-space: nowrap; }
 .strip-dots { display: flex; gap: 7px; align-items: center; }
 .strip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); display: inline-block; }
