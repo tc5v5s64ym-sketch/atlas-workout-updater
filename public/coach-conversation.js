@@ -777,6 +777,13 @@
   // their own short line so the engine's read is never lost to an LLM outage.
   async function getInWorkoutNote(facts) {
     const data = await getLlmCoachingMessage(facts).catch(() => null);
+    // Routine/on-plan blocks are receipt-only: when the engine tiers the block
+    // ack_only, render NOTHING — no prose, no effort line, no Next box (the caller
+    // honors `ack_only`). Gated on an actual server classification; a coach/network
+    // outage (data null) falls through to the deterministic opener below unchanged.
+    if (data && data.note_tier === 'ack_only') {
+      return { note: null, effort_note: null, reroute: null, voice: null, ack_only: true };
+    }
     const llm = data && typeof data.message === 'string' ? data.message : null;
     const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
       ? data.effort_note.trim() : null;
@@ -839,7 +846,11 @@
     const request = api('/api/coach/message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ facts })
+      // kind:'block' routes the in-session per-exercise reaction through the
+      // deterministic coachNoteTier gate so a routine block returns note_tier
+      // ack_only (and the caller stays silent). Same wording pipeline as before
+      // for non-routine blocks; the tier is never forwarded to the model.
+      body: JSON.stringify({ facts, kind: 'block' })
     }).then(res => (res && res.data) || null);
     return Promise.race([request, timeout]);
   }
@@ -1102,8 +1113,12 @@
       substitution: suggestMatch ? undefined : primarySub
     });
     const note = reaction.note;
-    await typeOut(body, note);
-    chatTurns.push({ role: 'atlas', text: note });
+    // Routine (ack_only) blocks are receipt-only — `note` is null and nothing is
+    // typed; only the deterministic readback card above remains.
+    if (note) {
+      await typeOut(body, note);
+      chatTurns.push({ role: 'atlas', text: note });
+    }
 
     if (suggestMatch && loggedName) {
       const ack = document.createElement('div');
@@ -1127,7 +1142,8 @@
       bubble.appendChild(eff);
     }
 
-    if (rec && rec.recommendation) {
+    // Routine (ack_only) blocks are receipt-only — suppress the "Next time:" box too.
+    if (!reaction.ack_only && rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
     }
 
@@ -1180,7 +1196,7 @@
         await typeOut(exEff, exReaction.effort_note);
         bubble.appendChild(exEff);
       }
-      if (exRec && exRec.recommendation) {
+      if (!exReaction.ack_only && exRec && exRec.recommendation) {
         bubble.appendChild(buildNextPrescription(exRec));
       }
     }

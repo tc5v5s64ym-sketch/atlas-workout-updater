@@ -1390,6 +1390,23 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
+test('routine silence: the in-session reaction is tier-gated (kind:block) and silent on ack_only', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
+  // (routes through the deterministic coachNoteTier gate).
+  assert.match(ccSource, /body: JSON\.stringify\(\{ facts, kind: 'block' \}\)/,
+    'the in-session reaction must route through the block tier gate');
+  // getInWorkoutNote short-circuits to a silent, flagged result on ack_only.
+  assert.match(ccSource, /data\.note_tier === 'ack_only'/);
+  assert.match(ccSource, /return \{ note: null, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
+    'ack_only yields a null note flagged for the caller');
+  // handleSetLogged suppresses the prose AND both "Next time:" boxes on ack_only.
+  assert.match(ccSource, /!reaction\.ack_only && rec && rec\.recommendation/,
+    'the primary Next box must be gated on ack_only');
+  assert.match(ccSource, /!exReaction\.ack_only && exRec && exRec\.recommendation/,
+    'each additional-lift Next box must be gated on ack_only');
+});
+
 // ── PR 484: deterministic LLM-down voicing of the training-intelligence advisories ──
 
 test('PR 484: getInWorkoutNote voices next-move + recovery advisories on the deterministic paths only', () => {

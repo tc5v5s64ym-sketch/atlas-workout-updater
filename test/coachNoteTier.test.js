@@ -171,8 +171,8 @@ describe('coachNoteTier — recovery suppresses the sandbag challenge', () => {
       recovery_active: true,
     });
     assert.notEqual(r.trigger, TRIGGERS.CHALLENGE_SANDBAG);
-    // in_pocket still earns a short line, not an add-load nudge.
-    assert.equal(r.tier, TIERS.SHORT);
+    // in_pocket is receipt-only now (ack_only), never an add-load nudge.
+    assert.equal(r.tier, TIERS.ACK_ONLY);
   });
   it('a far_easy set on a recovery day does NOT fire challenge_sandbag', () => {
     const r = classifyNoteTier({ effort_verdict: effort('far_easy'), recovery_active: true });
@@ -213,26 +213,49 @@ describe('coachNoteTier — safety-first precedence', () => {
   });
 });
 
-// ─── short tier: mild signals, no trigger ────────────────────────────────────
+// ─── mild "on-plan" signals are receipt-only (ack_only, not a note) ──────────
+// Owner: routine logs produce only the deterministic receipt. A merely on-plan
+// read (in-range / holding / climbing progress, or on-target / grinder effort)
+// keeps a reason_code for tracing but stays silent (tier ack_only). Only the nine
+// value triggers speak. RIR-0/failure, redline, and blocks_progression still fire
+// FORM_SAFETY (covered above) — routine silence must not touch those.
 
-describe('coachNoteTier — mild signals → short', () => {
+describe('coachNoteTier — mild on-plan signals → ack_only (receipt-only)', () => {
   for (const level of ['in_pocket', 'maintenance_drift', 'progressing']) {
-    it(`progression '${level}' → short`, () => {
+    it(`progression '${level}' → ack_only, reason_code preserved`, () => {
       const r = classifyNoteTier({ progression_verdict: prog(level), effort_verdict: effort('on_target') });
-      assert.equal(r.tier, TIERS.SHORT);
+      assert.equal(r.tier, TIERS.ACK_ONLY);
       assert.equal(r.trigger, null);
       assert.equal(r.reason_code, level);
     });
   }
-  it('on-target effort with no progression read → short', () => {
+  it('on-target effort with no progression read → ack_only', () => {
     const r = classifyNoteTier({ effort_verdict: effort('on_target') });
-    assert.equal(r.tier, TIERS.SHORT);
+    assert.equal(r.tier, TIERS.ACK_ONLY);
     assert.equal(r.reason_code, 'effort_on_target');
   });
-  it('a hard (grinder) set with no other read → short', () => {
+  it('a hard (grinder) set with no other read → ack_only', () => {
     const r = classifyNoteTier({ effort_verdict: effort('hard') });
-    assert.equal(r.tier, TIERS.SHORT);
+    assert.equal(r.tier, TIERS.ACK_ONLY);
     assert.equal(r.reason_code, 'effort_hard');
+  });
+  it('the routine Cable-Curl case (on-target, in-pocket) → ack_only', () => {
+    // The exact live-test regression: 3× on-target sets in the working band must
+    // be receipt-only, not "Dialled in — that landed right on target."
+    const r = classifyNoteTier({ effort_verdict: effort('on_target'), progression_verdict: prog('in_pocket') });
+    assert.equal(r.tier, TIERS.ACK_ONLY);
+    assert.equal(r.trigger, null);
+  });
+  it('SHORT is retired — classifyNoteTier never returns it', () => {
+    const inputs = [
+      { effort_verdict: effort('on_target') },
+      { effort_verdict: effort('hard') },
+      { progression_verdict: prog('in_pocket'), effort_verdict: effort('on_target') },
+      { progression_verdict: prog('maintenance_drift') },
+      { progression_verdict: prog('progressing') },
+      {},
+    ];
+    for (const f of inputs) assert.notEqual(classifyNoteTier(f).tier, TIERS.SHORT);
   });
 });
 
