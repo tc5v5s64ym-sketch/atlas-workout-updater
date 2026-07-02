@@ -1685,6 +1685,8 @@ a.lift-link:hover { text-decoration: underline; }
   margin-bottom: 7px;
 }
 .rb-ck { color: var(--ok); }
+/* Card/advisory consistency: unverified lift-name chip on the confirmation card. */
+.rb-unverified { color: var(--warn, #c9803a); border: 1px solid var(--warn, #c9803a); border-radius: 6px; font-size: 0.6rem; font-weight: 500; padding: 1px 6px; margin-left: 8px; vertical-align: 1px; }
 .rb-step { color: var(--muted); font-weight: 400; font-size: 0.72rem; margin-left: auto; }
 .rb-s { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); line-height: 1.8; }
 

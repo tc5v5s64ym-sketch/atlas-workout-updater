@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v80/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v81/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -3184,7 +3184,7 @@ test('reaction layer: the recommend route reads ?w&reps&rir and stays read-only'
 test('in-workout note: handleSetLogged anchors the recommendation on the just-logged set', () => {
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const start = cc.indexOf('async function handleSetLogged(');
-  const fn = cc.slice(start, start + 1400);
+  const fn = cc.slice(start, start + 1900);
   // Passes the last just-logged set of the primary exercise into fetchReaction.
   assert.match(fn, /primary\.sets\[primary\.sets\.length - 1\]/, 'must take the just-logged set');
   assert.match(fn, /fetchReaction\(code, justLogged\)/, 'must forward it to fetchReaction');
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v80/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v79\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v81/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v80\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5751,7 +5751,7 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
 
   // The coach layer renders the canonical remaining lifts in the review bubble.
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 2500);
+  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 3100);
   assert.match(handler, /recap\s*=\s*null/, 'handlePreviewReady destructures the recap (default null)');
   assert.match(handler, /Still on your plan:/, 'still-pending plan lifts are surfaced in the recap');
 });
@@ -6573,4 +6573,45 @@ test('B5: review card renders the date notice with a working today-fallback corr
     'an effort-only card falls back to the resolved date in its header');
   assert.match(ccSource, /buildReviewCard\(rows, liftCodes, effortOnly, effort, dateInfo\)/,
     'handlePreviewReady must thread dateInfo into the card');
+});
+
+// --- Review-card display truthfulness (owner findings 2026-07-02, IMG_5438/5439) ---
+
+test('card/advisory consistency: an unverified lift name is marked on the confirmation card', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  // app.js remembers the advisory's name and threads it into the set-logged event.
+  assert.match(appSource, /let lastUnverifiedExercise = null;/);
+  const advisoryIdx = appSource.indexOf('lastUnverifiedExercise = parsed.rows[0]?.exercise || null;');
+  const warnIdx = appSource.indexOf('shouldWarnUnknownLift(parsed.warnings');
+  assert.ok(advisoryIdx > 0 && warnIdx > 0 && Math.abs(advisoryIdx - warnIdx) < 600,
+    'the unverified name must be captured where the advisory fires');
+  assert.match(appSource, /\.\.\.\(lastUnverifiedExercise \? \{ unverified: lastUnverifiedExercise \} : \{\}\)/,
+    'the set-logged detail must carry the unverified name');
+  // The confirmation card renders the marker for the matching exercise (primary + additional).
+  assert.match(ccSource, /function buildReadback\(name, sets, planStep, unverified\)/);
+  assert.match(ccSource, /elc\('span', 'rb-unverified', 'check name'\)/);
+  assert.match(ccSource, /unverified != null && unverified === primary\.exercise/);
+  assert.match(ccSource, /unverified != null && unverified === ex\.exercise/);
+});
+
+test('effort-only review intro never promises "the full session"', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(ccSource, /no logged sets are in this save/,
+    'effort-only intro must say plainly that no sets are included');
+  const introIdx = ccSource.indexOf('let intro = effort');
+  const block = ccSource.slice(introIdx, introIdx + 600);
+  assert.match(block, /effortOnly\s*\?/, 'intro must branch on effortOnly');
+  assert.match(block, /Here's your effort and the full session/,
+    'the with-sets wording is kept for saves that DO carry the session');
+});
+
+test('effort grid never renders a bare "bpm" for an empty HR value', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const gridFn = ccSource.slice(ccSource.indexOf('function buildEffortGrid'), ccSource.indexOf('function buildDateNotice'));
+  assert.match(gridFn, /const hr = v => \(v != null && v !== '' \? `\$\{v\} bpm` : null\);/,
+    'HR values must be formatted only when non-empty');
+  assert.match(gridFn, /hr\(effort\.averageHR\)/);
+  assert.match(gridFn, /hr\(effort\.peakHR\) \|\| 'not in screenshot'/,
+    'an absent peak HR keeps its explanatory text');
 });

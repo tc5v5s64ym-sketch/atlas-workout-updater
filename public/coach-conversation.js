@@ -120,11 +120,16 @@
     });
   }
 
-  function buildReadback(name, sets, planStep) {
+  function buildReadback(name, sets, planStep, unverified) {
     const rb = elc('div', 'readback');
     const h = elc('div', 'rb-h');
     h.appendChild(elc('span', 'rb-ck', '✓'));
     h.appendChild(document.createTextNode(' ' + name));
+    // Card/advisory consistency (owner 07-02): when the parser couldn't verify the
+    // lift name (the "I don't recognize …" advisory fired), the card says so too —
+    // the sets ARE captured, but the name is marked instead of shown with a bare ✓
+    // that contradicts the advisory. Editable before save via Edit rows.
+    if (unverified) h.appendChild(elc('span', 'rb-unverified', 'check name'));
     if (planStep) h.appendChild(elc('span', 'rb-step', planStep));
     rb.appendChild(h);
     const s = elc('div', 'rb-s');
@@ -195,12 +200,16 @@
   // Apple Watch metrics grid for the effort/screenshot review.
   function buildEffortGrid(effort) {
     const grid = elc('div', 'rv-effort');
+    // An HR that arrives as an empty string must not render as a bare "bpm" (owner
+    // 07-02 screenshot) — treat empty exactly like null: Avg HR row drops, Peak HR
+    // row says "not in screenshot".
+    const hr = v => (v != null && v !== '' ? `${v} bpm` : null);
     const items = [
       ['Duration', effort.duration],
       ['Active cal', effort.activeCalories],
       ['Total cal', effort.totalCalories],
-      ['Avg HR', effort.averageHR != null ? `${effort.averageHR} bpm` : null],
-      ['Peak HR', effort.peakHR != null ? `${effort.peakHR} bpm` : 'not in screenshot']
+      ['Avg HR', hr(effort.averageHR)],
+      ['Peak HR', hr(effort.peakHR) || 'not in screenshot']
     ].filter(([, v]) => v != null && v !== '');
     for (const [label, value] of items) {
       grid.appendChild(elc('span', 'rv-effort-label', label));
@@ -1118,7 +1127,7 @@
   // client-parsed sets; the set text is recorded so the end-of-session compile
   // can reconstruct the full workout.
   async function handleSetLogged(detail) {
-    const { exercises = [], text = '', substitutions = [] } = detail || {};
+    const { exercises = [], text = '', substitutions = [], unverified = null } = detail || {};
     if (!exercises.length) return;
     if (text) chatTurns.push({ role: 'user', text });
 
@@ -1131,7 +1140,8 @@
     // `body` so a single-lift entry is byte-identical; additional lifts append their own
     // blocks (slice(1) loop). Session handoff runs once at the end. (docs/INVESTIGATION_2026-06-25b.md)
     const primary = exercises[0];
-    bubble.insertBefore(buildReadback(primary.exercise, primary.sets, planStepFor(primary.exercise, activeSession)), body);
+    bubble.insertBefore(buildReadback(primary.exercise, primary.sets, planStepFor(primary.exercise, activeSession),
+      unverified != null && unverified === primary.exercise), body);
     const code = liftCodeForExercise(primary.exercise);
     let rec = null;
     if (code) {
@@ -1221,7 +1231,8 @@
     for (const ex of exercises.slice(1)) {
       // FA: each additional lift is its OWN block — its card first (appended in order,
       // after the primary block), then its coaching, then its Next.
-      bubble.appendChild(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession)));
+      bubble.appendChild(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession),
+        unverified != null && unverified === ex.exercise));
       const exCode = liftCodeForExercise(ex.exercise);
       let exRec = null;
       if (exCode) {
@@ -1387,8 +1398,13 @@
     }
     if (!handle) return;
     const { bubble, body } = handle;
+    // Honest intro (owner 07-02): an effort-only save must not promise "the full
+    // session" — say plainly that no sets are in this save, so missing exercises
+    // are noticed BEFORE approving, not after.
     let intro = effort
-      ? "Here's your effort and the full session — give it a look before it goes to your sheet:"
+      ? (effortOnly
+        ? "Here's your effort — heads up, no logged sets are in this save. Give it a look before it goes to your sheet:"
+        : "Here's your effort and the full session — give it a look before it goes to your sheet:")
       : "Solid session. Here's everything from our conversation — give it a look before it goes to your sheet:";
     // Fold substitution verdicts into the intro paragraph so the coach reads as
     // one voice — no stacked diagnostic boxes below the review card.

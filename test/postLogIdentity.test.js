@@ -210,6 +210,7 @@ function loadEmitHarness(catalogOptions) {
      let sessionLog = [];
      let pendingSubstitution = null;
      let lastParsedWorkoutText = '';
+     let lastUnverifiedExercise = null;
      function applySessionSubstitution() {}
      ${slice}
      return {
