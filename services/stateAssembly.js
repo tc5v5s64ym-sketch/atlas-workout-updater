@@ -30,6 +30,7 @@ function _defaultReaders() {
     const { getLogRows }              = require('./trainingStore');
     const { readCurrentDeloadState }  = require('./deloadState');
     const { getProfileGoal }          = require('./profileGoal');
+    const { getSheetRows }            = require('./sheets');
     return {
       getLogRows,
       readDeloadState: readCurrentDeloadState,
@@ -40,6 +41,9 @@ function _defaultReaders() {
         const profile_goal = getProfileGoal();
         return profile_goal == null ? null : { profile_goal, training_level: null, population: null };
       },
+      // Stored typed constraints (the optional Constraints tab). A missing tab or
+      // read failure degrades to [] via _safeRead — never blocks the snapshot.
+      getConstraints: () => getSheetRows('Constraints'),
     };
   } catch {
     // Reader layer unavailable (e.g. Sheets client cannot load) → degrade to an
@@ -79,6 +83,7 @@ async function assembleState(params) {
 
   const log_history = await _safeRead(R.getLogRows, [], 'log', reads);
   const deload_state = await _safeRead(R.readDeloadState, null, 'deload_state', reads);
+  const constraintsRaw = await _safeRead(R.getConstraints, [], 'constraints', reads);
   const profileRaw = await _safeRead(R.getProfile, null, 'profile', reads);
   const profile = profileRaw && typeof profileRaw === 'object'
     ? {
@@ -106,6 +111,10 @@ async function assembleState(params) {
     memory_snapshot,
     bodyweight_history,
     equipment_profile: null, // no durable source yet; per-request equipment arrives via the envelope
+    // Stored typed rules from the Constraints tab, raw. The constraint_resolver
+    // runner (coachRunners) maps + merges them with envelope constraints — this
+    // layer only hydrates, it never interprets (Brain purity).
+    constraints_active: Array.isArray(constraintsRaw) ? constraintsRaw : [],
     provenance: {
       reads,
       derived,
@@ -124,6 +133,7 @@ function knownKeys(snapshot, envelope) {
     if (snapshot.memory_snapshot != null) keys.add('memory_snapshot');
     if (snapshot.bodyweight_history != null) keys.add('bodyweight_history');
     if (snapshot.equipment_profile != null) keys.add('equipment_profile');
+    if (Array.isArray(snapshot.constraints_active) && snapshot.constraints_active.length) keys.add('constraints_active');
     const p = snapshot.profile;
     if (p && typeof p === 'object') {
       if (p.profile_goal != null) keys.add('profile_goal');

@@ -22,9 +22,11 @@ const LOG_ROWS = [
 
 function stubReaders(overrides = {}) {
   return {
-    getLogRows:      overrides.getLogRows      || (async () => LOG_ROWS),
-    readDeloadState: overrides.readDeloadState || (async () => ({ training_state: 'NORMAL' })),
-    getProfile:      overrides.getProfile      || (async () => ({ profile_goal: 'powerlifting', training_level: 'intermediate', population: 'general' })),
+    getLogRows:      async () => LOG_ROWS,
+    readDeloadState: async () => ({ training_state: 'NORMAL' }),
+    getProfile:      async () => ({ profile_goal: 'powerlifting', training_level: 'intermediate', population: 'general' }),
+    // pass through any extra readers (e.g. getConstraints) verbatim
+    ...overrides,
   };
 }
 
@@ -76,6 +78,37 @@ describe('assembleState — snapshot shape (stub readers, no live Sheets)', () =
     const s = await assembleState({ readers: stubReaders() });
     assert.strictEqual(s.asOf, null);
     assert.strictEqual(s.provenance.state_asOf, null);
+  });
+});
+
+// ─── constraints_active (the Constraints tab reaches the Brain) ──────────────
+
+describe('assembleState — constraints_active', () => {
+  const ROWS = [['2026-07-01', 'preference', 'Leg Press', 'avoid', null]];
+
+  it('hydrates stored Constraints rows via the injected reader and records the read', async () => {
+    const s = await assembleState({ readers: stubReaders({ getConstraints: async () => ROWS }), asOf: ASOF });
+    assert.deepEqual(s.constraints_active, ROWS);
+    assert.ok(s.provenance.reads.includes('constraints'));
+  });
+
+  it('degrades to [] when the reader is absent or throws — never blocks the snapshot', async () => {
+    const absent = await assembleState({ readers: stubReaders(), asOf: ASOF });
+    assert.deepEqual(absent.constraints_active, []);
+    const thrown = await assembleState({
+      readers: stubReaders({ getConstraints: async () => { throw new Error('tab missing'); } }),
+      asOf: ASOF,
+    });
+    assert.deepEqual(thrown.constraints_active, []);
+    assert.ok(!thrown.provenance.reads.includes('constraints'));
+    assert.ok(thrown.log_history.length === 2, 'the rest still hydrated');
+  });
+
+  it('knownKeys includes constraints_active only when rows exist', async () => {
+    const withRows = await assembleState({ readers: stubReaders({ getConstraints: async () => ROWS }), asOf: ASOF });
+    assert.ok(knownKeys(withRows).has('constraints_active'));
+    const without = await assembleState({ readers: stubReaders(), asOf: ASOF });
+    assert.ok(!knownKeys(without).has('constraints_active'));
   });
 });
 
