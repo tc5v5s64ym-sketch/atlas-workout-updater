@@ -133,6 +133,30 @@ describe('constraintResolver — merge precedence', () => {
       ['bands']
     );
   });
+
+  // --- PR #809 review-note hardening (a–d) ---
+
+  test('(a) pass-through equipment is enum-cased like every other branch', () => {
+    const out = resolveConstraints({ stored: [], request: { equipment: ['Barbell', ' DUMBBELL '] } });
+    assert.deepEqual(out.constraints.equipment, ['barbell', 'dumbbell']);
+  });
+
+  test('(b) items dropped by the intersect branch get ignored provenance, never silent', () => {
+    const out = resolveConstraints({
+      stored: [row('equipment', 'barbell', 'avoid')],
+      request: { equipment: ['barbell', 'dumbbell'] },
+    });
+    assert.deepEqual(out.constraints.equipment, ['dumbbell']);
+    assert.ok(out.ignored.some(i => i.reason === 'equipment_stored_avoid_narrowed' && i.row.target === 'barbell'));
+  });
+
+  test('(d) all equipment avoided with no request → the key stays ABSENT (never []), recorded', () => {
+    const stored = ['barbell', 'dumbbell', 'machines', 'cables', 'bodyweight', 'kettlebell', 'bands']
+      .map(t => row('equipment', t, 'avoid'));
+    const out = resolveConstraints({ stored });
+    assert.ok(!('equipment' in out.constraints), 'an empty equipment list must never be emitted — downstream treats [] as falsy and defaults to the FULL set');
+    assert.ok(out.ignored.some(i => i.reason === 'equipment_all_avoided_default_used'));
+  });
 });
 
 describe('constraintResolver — contract alignment', () => {

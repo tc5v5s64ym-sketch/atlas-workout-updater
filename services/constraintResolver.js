@@ -164,24 +164,42 @@ function resolveConstraints(params) {
     if (inj.value !== winner) ignored.push({ row: { kind: 'injury', target: inj.value }, reason: 'single_injury_slot_v1' });
   }
 
-  // equipment: stored avoids narrow the available set; a request list is
-  // present-tense truth and intersects it; a hard conflict → request wins, recorded.
+  // equipment — ONE rule (settled per PR #809 review): stored avoids narrow
+  // the list per-item, UNLESS narrowing would leave nothing usable — an
+  // explicit request is present-tense consent, so on a total conflict the
+  // request stands. Every drop and every override is recorded; an empty list
+  // is never emitted (downstream treats [] as falsy and would fall back to
+  // the FULL default set, inverting the stored intent — the (d) edge).
   if (equipmentAvoided.size) {
-    const allowed = EQUIPMENT_VALUES.filter(e => !equipmentAvoided.has(e));
     const requestEquipment = Array.isArray(request.equipment) && request.equipment.length
       ? request.equipment.map(e => String(e).trim().toLowerCase())
       : null;
     if (!requestEquipment) {
-      constraints.equipment = allowed;
+      const allowed = EQUIPMENT_VALUES.filter(e => !equipmentAvoided.has(e));
+      if (allowed.length) {
+        constraints.equipment = allowed;
+      } else {
+        // Every equipment type avoided and nothing requested: leave the key
+        // ABSENT (consumer default applies) and say so — never emit [].
+        delete constraints.equipment;
+        ignored.push({ row: { kind: 'equipment', target: [...equipmentAvoided].join(', ') }, reason: 'equipment_all_avoided_default_used' });
+      }
     } else {
       const intersection = requestEquipment.filter(e => !equipmentAvoided.has(e));
       if (intersection.length) {
         constraints.equipment = intersection;
+        for (const dropped of requestEquipment.filter(e => equipmentAvoided.has(e))) {
+          ignored.push({ row: { kind: 'equipment', target: dropped }, reason: 'equipment_stored_avoid_narrowed' });
+        }
       } else {
         constraints.equipment = requestEquipment;
         ignored.push({ row: { kind: 'equipment', target: [...equipmentAvoided].join(', ') }, reason: 'equipment_conflict_request_wins' });
       }
     }
+  } else if (Array.isArray(request.equipment) && request.equipment.length) {
+    // Pass-through branch normalized too, so the resolver's own output is
+    // uniformly enum-cased regardless of which branch produced it.
+    constraints.equipment = request.equipment.map(e => String(e).trim().toLowerCase());
   }
 
   return { constraints, applied, ignored };
