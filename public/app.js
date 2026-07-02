@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v80';
+const ATLAS_SHELL_BUILD = 'v81';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3236,6 +3236,11 @@ let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
 let lastPrescribed = null;
+// Card/advisory consistency (owner 07-02): the exercise name the unknown-lift
+// advisory flagged on the LAST parse (null when the lift resolved). Threaded into
+// the atlas:set-logged detail so the ✓ confirmation card marks the name instead of
+// contradicting the advisory with full confidence.
+let lastUnverifiedExercise = null;
 // Cached when the Today dashboard loads so routeMessageToCoach can include
 // the current plan order in coach context (for "why in this order?" questions).
 let lastIntentData = null;
@@ -3856,7 +3861,12 @@ async function rowsFromWorkoutInput() {
   // the catalog. Only warn when it's truly unresolved — unknown to the catalog
   // too — so a successfully-parsed, catalog-known lift never gets "didn't catch
   // that" on top of its confirmation card.
+  lastUnverifiedExercise = null;
   if (shouldWarnUnknownLift(parsed.warnings, parsed.rows[0]?.exercise, liftCodeFromCatalog, parsed.kbIdentity)) {
+    // Card/advisory consistency (owner 07-02): the ✓ confirmation card must not
+    // present an unrecognized name with full confidence while the advisory below
+    // flags it — remember the name so the card can mark it "check name".
+    lastUnverifiedExercise = parsed.rows[0]?.exercise || null;
     // B2 — the composer status and the chat confirmation card must agree about the
     // same input. The set IS captured: these rows flow to the very same confirmation
     // card / preview as any other log (emitSetLogged buffers them, then closeout
@@ -4537,7 +4547,10 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
           // overrode the closeout once the engaged plan was already complete).
           plannedOrder: plannedExerciseOrder(),
           ...(plannedQueue.length ? { plannedQueue } : {}),
-          ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {})
+          ...(Array.isArray(substitutions) && substitutions.length ? { substitutions } : {}),
+          // Card/advisory consistency (owner 07-02): the parser-unrecognized name (if
+          // any) so the confirmation card marks it "check name" instead of a bare ✓.
+          ...(lastUnverifiedExercise ? { unverified: lastUnverifiedExercise } : {})
         }
       }));
     } catch { /* narration is optional */ }
