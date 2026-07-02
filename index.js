@@ -2320,6 +2320,65 @@ app.get('/api/plan/today', async (req, res) => {
       })
       .slice(0, 12); // cap at 12 lifts for dashboard
 
+    // One-Brain engine gate — same shadow/promotion pattern already shipped for
+    // GET /api/recommend/next/:liftCode (docs/COACHING_ENGINE_ARCHITECTURE.md),
+    // looped per lift already selected for the card (post-slice, so orchestration
+    // never runs on a lift the dashboard won't show). `hybrid` = shadow attach
+    // only (observation, never changes the response). `brian` = if Brian returns
+    // a valid, answered `progression` decision for that lift, its numbers DRIVE
+    // next_target/reasoning/recommendation for that entry; any error/invalid/
+    // clarification (or an active deload — the predefined protocol always wins)
+    // falls back to that entry's legacy value untouched. Default (unset/legacy)
+    // leaves the response byte-identical to today. Snapshot + deload state are
+    // computed once and shared across lifts (not re-read per lift). Each lift's
+    // own try/catch so one lift's orchestrator failure can never affect another's
+    // or fail the request — it only ever falls back to legacy for that entry.
+    // No write path / trust-loop / proof-field touch.
+    const coachEngineMode = process.env.ATLAS_COACH_ENGINE;
+    if ((coachEngineMode === 'hybrid' || coachEngineMode === 'brian') && recommendations.length) {
+      try {
+        const asOf = new Date().toISOString();
+        const [activeDeload, snapshot] = await Promise.all([
+          evaluateCurrentDeload({ logRows: allLog }),
+          assembleState({
+            asOf,
+            readers: { ...defaultReaders(), getLogRows: async () => allLog },
+          }),
+        ]);
+        for (const rec of recommendations) {
+          try {
+            const envelope = buildIntentEnvelope({
+              type: 'progression_review',
+              constraints: { target_lift: rec.liftCode },
+              source: 'api',
+              asOf,
+            });
+            const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+            const validation = validateCoachingDecision(brian);
+            if (brian && validation.valid) {
+              rec.brian = brian;
+            }
+            if (coachEngineMode === 'brian') {
+              const plan = planBrianOverride(rec, brian, validation, activeDeload);
+              if (plan.eligible) {
+                applyBrianOverride(rec, plan);
+                rec.engine_source = { mode: 'brian', driven_by: 'brian' };
+              } else {
+                rec.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
+              }
+            }
+          } catch (_) {
+            if (coachEngineMode === 'brian') {
+              rec.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
+            }
+          }
+        }
+      } catch (_) {
+        // Snapshot/deload assembly itself failed — leave every entry at its
+        // legacy value, exactly as if the flag were unset.
+      }
+    }
+
     return standardSuccess(req, res, 'Today\'s training plan', { recommendations });
   } catch (error) {
     return standardError(req, res, 'Failed to build today\'s plan', error.message, 500);
