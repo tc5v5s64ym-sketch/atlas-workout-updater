@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v87';
+const ATLAS_SHELL_BUILD = 'v88';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -2135,6 +2135,10 @@ function renderActiveSessionBanner() {
   row.appendChild(endBtn);
   banner.appendChild(row);
   banner.hidden = false;
+  // Plan engagement/mutation/restore all route through this render — the
+  // session pin re-derives from the same canonical state at each of those
+  // moments (composer-first Phase A).
+  renderSessionPin();
 }
 
 // B2 canonical state — the plan-card banner renders its "current step" from
@@ -3983,6 +3987,9 @@ function setFinishSessionVisible(visible) {
 document.getElementById('finish-session-btn')?.addEventListener('click', () => { handleLogIt(); });
 document.addEventListener('atlas:set-logged', () => setFinishSessionVisible(true));
 document.addEventListener('atlas:session-reset', () => setFinishSessionVisible(false));
+// The pin re-derives (and hides) on every session reset — same signal that
+// clears the finish button, so the two can never disagree about "in progress".
+document.addEventListener('atlas:session-reset', renderSessionPin);
 
 function collectManualEffort(sessionId, date, location, notes) {
   const duration = document.getElementById('effort-duration').value.trim();
@@ -4431,6 +4438,34 @@ function firstUnloggedPlannedLift() {
   return remainingPlannedExercises()[0] || null;
 }
 
+// Composer-first Phase A — the session header pin: the ONE persistent piece of
+// in-workout UI (current lift · sets done · next up). Derived from the SAME
+// canonical selectors the plan card and handoff read (firstUnloggedPlannedLift /
+// remainingPlannedExercises / the sessionLog buffer), so it can never disagree
+// with them. Display-only. Guided sessions show the next planned lift; freestyle
+// deliberately omits "next" (B9 — the Next UI stays quiet during freestyle):
+// the pin then shows only the last logged lift and the running set count.
+// Hidden whenever nothing is in progress; the atlas:session-reset listener and
+// the emitSetLogged/banner hooks keep it in lockstep with the session state.
+function renderSessionPin() {
+  const pin = document.getElementById('session-pin');
+  if (!pin) return;
+  const setsDone = sessionLog.length;
+  const planned = plannedExerciseOrder();
+  const guided = planned.length > 0;
+  if (!setsDone && !guided) { pin.hidden = true; pin.textContent = ''; return; }
+  const remaining = guided ? remainingPlannedExercises() : [];
+  const current = guided
+    ? (remaining[0] || planned[planned.length - 1])
+    : (setsDone ? sessionLog[sessionLog.length - 1].exercise : null);
+  const next = guided && remaining.length > 1 ? remaining[1] : null;
+  pin.textContent = '';
+  if (current) pin.appendChild(el('span', { class: 'pin-lift', text: String(current) }));
+  pin.appendChild(el('span', { class: 'pin-sets', text: `${setsDone} set${setsDone === 1 ? '' : 's'} in` }));
+  if (next) pin.appendChild(el('span', { class: 'pin-next', text: `next: ${next}` }));
+  pin.hidden = false;
+}
+
 // Returns the currently-active planned exercise (first unlogged) with prescription
 // details. Uses the canonical session to determine which exercise is current so
 // the stale `activePlannedSession.index` cursor (which lags after a logged set
@@ -4611,6 +4646,8 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   // FULL session from the buffer.
   if (setsTableBody) setsTableBody.innerHTML = '';
   if (parsedRowsEditor) parsedRowsEditor.hidden = true;
+  // Every logged set refreshes the session pin (current lift · sets in · next).
+  renderSessionPin();
   lastParsedWorkoutText = '';
   invalidatePreview();
   // B2 canonical state — a logged set advanced the canonical session, so refresh the
