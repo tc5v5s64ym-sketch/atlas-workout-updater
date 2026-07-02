@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v89/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v90/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5255,10 +5255,11 @@ test('chips: nav.js chip handlers are read-only and never touch write paths', ()
   assert.doesNotMatch(nav, /appendRows|sheet_write|confirm_delete|\/api\/log-workout|\/api\/complete-workout|\/api\/bodyweight(?!\/history)/, 'nav.js must not touch write paths');
   // chip handlers must use api() (delegated to app.js) not a raw fetch
   assert.doesNotMatch(nav, /\bfetch\(/, 'nav.js must not call fetch() directly — use api()');
-  // train/last/report chips must render in-thread
-  assert.match(nav, /chipAnswerTrain/, 'must have chipAnswerTrain handler');
-  assert.match(nav, /chipAnswerLast/, 'must have chipAnswerLast handler');
-  assert.match(nav, /chipAnswerReport/, 'must have chipAnswerReport handler');
+  // last/report artifact renderers must render in-thread; chipAnswerTrain was
+  // deleted in Phase B2 (the canonical in-thread Coach's Pick owns that render)
+  assert.doesNotMatch(nav, /function chipAnswerTrain|chipAnswerTrain\(\)/, 'chipAnswerTrain must stay deleted (B1 canonical pick owns it)');
+  assert.match(nav, /chipAnswerLast/, 'must have chipAnswerLast renderer');
+  assert.match(nav, /chipAnswerReport/, 'must have chipAnswerReport renderer');
   assert.match(nav, /chat-bubble-atlas/, 'must render atlas reply bubbles');
 });
 
@@ -5619,8 +5620,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v89/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v88\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v90/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v89\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6792,4 +6793,54 @@ test('canonical pick: the intent drawer survives for the Other-training-options 
   assert.match(gridFn, /openIntentDrawer/, 'grid tiles still open the drawer — tiles become conversation in a later phase');
   const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
   assert.match(css, /\.today-pick-link/, 'the link affordance is styled');
+});
+
+// --- Composer-first Phase B2: progress artifacts render in-thread on request ---
+
+test('artifact route: classifier matches artifact asks and never digit-bearing input', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const src = appSource.slice(appSource.indexOf('function looksLikeArtifactRequest('), appSource.indexOf('function looksLikeCorrection('));
+  const fn = new Function(`${src}; return looksLikeArtifactRequest;`)();
+
+  // Last-session asks — including the Phase A chip sentence verbatim.
+  assert.equal(fn('Show my last session'), 'last_session');
+  assert.equal(fn('show last workout'), 'last_session');
+  assert.equal(fn('what did I do last time?'), 'last_session');
+  assert.equal(fn('my last session'), 'last_session');
+  // Weekly-report asks.
+  assert.equal(fn('weekly report'), 'weekly_report');
+  assert.equal(fn('show me this week'), 'weekly_report');
+  assert.equal(fn("how was my week?"), 'weekly_report');
+  // NEVER intercept loggable or unrelated input.
+  assert.equal(fn('Bench 225 5/2 x3'), false, 'digits always rule an artifact out');
+  assert.equal(fn('last session I benched 225 5/2'), false, 'digits rule out even with artifact words');
+  assert.equal(fn('what are we doing today?'), false, 'session requests stay on the coach route');
+  assert.equal(fn('done, log it'), false);
+  assert.equal(fn(''), false);
+});
+
+test('artifact route: submit path renders the deterministic artifact and falls through when unavailable', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const submitIdx = appSource.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  const submitBlock = appSource.slice(submitIdx, submitIdx + 4200);
+  assert.match(submitBlock, /looksLikeArtifactRequest\(workoutTextInput\.value\)/, 'the submit path consults the artifact classifier');
+  assert.match(submitBlock, /window\.atlasChipAnswerLast/, 'last-session asks use the nav.js artifact renderer');
+  assert.match(submitBlock, /window\.atlasChipAnswerReport/, 'weekly asks use the nav.js report renderer');
+  assert.match(submitBlock, /typeof renderer === 'function'/, 'a missing renderer falls through to the coach chat (never silence)');
+  // Precedence: session requests route to the coach BEFORE the artifact check,
+  // and the artifact check runs BEFORE the "log it" closeout.
+  const sessionIdx = submitBlock.indexOf('looksLikeSessionRequest');
+  const artifactIdx = submitBlock.indexOf('looksLikeArtifactRequest');
+  const logItIdx = submitBlock.indexOf('looksLikeLogIt');
+  assert.ok(sessionIdx < artifactIdx && artifactIdx < logItIdx, 'route order is session → artifact → closeout');
+});
+
+test('artifact route: nav.js exports both renderers and they stay read-only', () => {
+  const nav = fs.readFileSync(path.join(repoRoot, 'public', 'nav.js'), 'utf8');
+  assert.match(nav, /window\.atlasChipAnswerLast = chipAnswerLast/, 'last-session renderer exported');
+  assert.match(nav, /window\.atlasChipAnswerReport = chipAnswerReport/, 'weekly-report renderer exported');
+  const lastFn = nav.slice(nav.indexOf('function chipAnswerLast('), nav.indexOf('function chipAnswerReport('));
+  assert.match(lastFn, /\/api\/history\/recent/, 'last-session artifact reads the existing history endpoint');
+  const reportFn = nav.slice(nav.indexOf('function chipAnswerReport('), nav.indexOf('function chipAnswerReport(') + 1600);
+  assert.match(reportFn, /\/api\/summary\/weekly/, 'weekly artifact reads the existing summary endpoint');
 });
