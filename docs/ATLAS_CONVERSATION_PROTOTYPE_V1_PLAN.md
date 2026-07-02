@@ -3,6 +3,7 @@
 > **Status:** Planning / sequencing doc. **No code. No runtime change. No UI change.** Captures the smallest safe path toward the conversation-first experience so the direction does not live only in chat.
 > **Governance layer:** Roadmap/backlog sequencing input — subordinate to `docs/ACTIVE_ROADMAP.md` and `BACKLOG.md`. Does **not** amend Vision, Constitution, or Invariants, and does **not** open PR-8.
 > **Decision class:** The recommended lane (PR-1…PR-4) is **pre-authorized, deterministic-engine-first, read-only, PM-authority** work that never touches the trust loop. Everything that would make Atlas *visibly* conversation-first — the NL Intent Router, collapsing the duplicate recommendation, demoting the Progress dashboard, promoting live surfaces onto the One-Brain engine — is **owner-reserved** (`docs/CONVERSATION_FIRST_DESIGN_REVIEW.md`, Invariant I1).
+> **UPDATE 2026-07-02:** PR-1/PR-2/PR-3 shipped (#779/#780/#783). **PR-4 is authorized** and the visible surface migration is **owner-adopted** as a phased lane — see [`COMPOSER_FIRST_MIGRATION.md`](./COMPOSER_FIRST_MIGRATION.md). The input-LLM provider/model decision (Phase C) remains owner-gated.
 > **Companions:** `docs/CONVERSATION_FIRST_DESIGN_REVIEW.md` (why the conversation is the product), `docs/CONVERSATION_CONTRACT_V1.md` (how Atlas behaves — the 11 value triggers, always-acknowledge), `docs/COACHING_NOTE_VOICE.md` (note = verdict; engine owns numbers), `docs/COACHING_ENGINE_ARCHITECTURE.md` (One-Brain blueprint).
 
 ---

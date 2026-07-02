@@ -1,5 +1,6 @@
 # Atlas Design Review — Conversation-First Coach (Governance Only)
 
+> **ADOPTION ADDENDUM (2026-07-02):** the owner approved the composer-first surface migration ("I like it, build it") after a full planning session. The adopted design and phase sequence live in [`COMPOSER_FIRST_MIGRATION.md`](./COMPOSER_FIRST_MIGRATION.md): Phase 0 (engine) + Phase A (coach-speaks-first additions) are active; Phases B/C/D are adopted in principle with the owner triggering each phase start; the **input-LLM provider/model decision remains owner-gated** (Phase C blocker). This review's verdict, three keeps (buttons-as-shortcuts, glance affordance, always-present `✅ logged`), and trust-loop guardrails carry into that plan unchanged.
 > **Status:** Product-philosophy & architecture review. **No code. No UI changes. No runtime changes. No architecture rewrites.**
 > **Governance layer:** Input to **Vision** (`docs/ATLAS_PRODUCT_VISION.md`) and **Constitution** (`docs/CONSTITUTION.md`). This review **does not modify** either — it is filed per the GOVERNANCE curator rule so the direction does not live only in chat.
 > **Decision class:** Owner-reserved — a change to product vision / coaching philosophy (CLAUDE.md decision routing category 2; `docs/OWNER_CHECKIN_RULES.md` Escalation Policy v3). The direction is captured here for a future owner decision; nothing is implemented.
