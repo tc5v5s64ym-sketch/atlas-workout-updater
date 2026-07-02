@@ -61,6 +61,14 @@ const rules = [
     name: "google-ai-api-key",
     test: (text) => /AIza[0-9A-Za-z_-]{35}/.test(text),
   },
+  {
+    // Anthropic OAuth token (used as CLAUDE_CODE_OAUTH_TOKEN in the Claude Code
+    // Review, Codex Decision Desk, and Atlas Decision Desk workflows). Prefixed
+    // "sk-ant-oat" + a version segment + a long token body; catch it raw, under
+    // any var name, the same way the Gemini key rule does.
+    name: "anthropic-oauth-token",
+    test: (text) => /sk-ant-oat[0-9]*-[A-Za-z0-9_-]{20,}/.test(text),
+  },
 ];
 
 function scan(files) {

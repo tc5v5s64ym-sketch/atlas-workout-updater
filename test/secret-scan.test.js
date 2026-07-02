@@ -13,6 +13,21 @@ test('scanner exposes the Gemini rules', () => {
   assert.ok(ruleByName['google-ai-api-key'], 'raw Google/Gemini key-format rule must exist');
 });
 
+test('scanner exposes the Anthropic OAuth token rule', () => {
+  assert.ok(ruleByName['anthropic-oauth-token'], 'Anthropic OAuth token rule must exist');
+});
+
+test('anthropic-oauth-token flags the raw sk-ant-oat token under any var name', () => {
+  const rule = ruleByName['anthropic-oauth-token'];
+  // Built at runtime so this test file never contains a literal token that
+  // would trip the scanner when it scans its own changed files in CI.
+  const sampleOauthToken = ['sk', 'ant', 'oat01'].join('-') + '-' + 'B'.repeat(24);
+  assert.equal(rule.test(`CLAUDE_CODE_OAUTH_TOKEN=${sampleOauthToken}`, 'render.yaml'), true, 'a committed token must be flagged');
+  assert.equal(rule.test(`SOME_VAR="${sampleOauthToken}"`, 'notes.md'), true, 'a leaked token under a different name is still caught');
+  assert.equal(rule.test('starts with `sk-ant-oat...`', '.github/workflows/claude-code-review.yml'), false, 'the setup-instructions ellipsis is not a real token');
+  assert.equal(rule.test('sk-ant-oat-tooshort', 'notes.md'), false, 'a short lookalike is not a token');
+});
+
 test('gemini-api-key-assignment flags a real key, allows the example placeholder', () => {
   const rule = ruleByName['gemini-api-key-assignment'];
   assert.equal(rule.test(`GEMINI_API_KEY=${sampleGeminiKey}`, 'render.yaml'), true, 'a committed key must be flagged');
