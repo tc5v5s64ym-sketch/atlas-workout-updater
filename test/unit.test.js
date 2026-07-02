@@ -6558,6 +6558,16 @@ test('B5: review card renders the date notice with a working today-fallback corr
     'correction must latch logDateManuallyEntered via a REAL input event');
   assert.match(noticeFn, /form\.dispatchEvent\(new Event\('submit'/,
     'correction must re-run the SAME preview flow, never write directly');
+  // Review PR #795: the first preview latches the OLD date's server-resolved
+  // session_id into #log-session-id; the correction must clear it so the re-preview
+  // re-derives the id from the corrected date (date and session_id never diverge).
+  assert.match(noticeFn, /getElementById\('log-session-id'\)/,
+    'correction must reference the session-id field');
+  assert.match(noticeFn, /staleSid\.value = ''/,
+    'correction must clear the stale session_id before re-previewing');
+  const clearIdx = noticeFn.indexOf("staleSid.value = ''");
+  const submitIdx = noticeFn.indexOf("form.dispatchEvent(new Event('submit'");
+  assert.ok(clearIdx > -1 && clearIdx < submitIdx, 'the clear must happen BEFORE the re-submit');
   assert.match(ccSource, /function buildReviewCard\(rows, liftCodes, effortOnly, effort, dateInfo\)/);
   assert.match(ccSource, /dateInfo && dateInfo\.date \? String\(dateInfo\.date\) : ''/,
     'an effort-only card falls back to the resolved date in its header');

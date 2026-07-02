@@ -248,6 +248,12 @@
       // A REAL input event — app.js listens for it to latch logDateManuallyEntered,
       // which makes the corrected date win the server-side resolution on re-preview.
       logDate.dispatchEvent(new Event('input', { bubbles: true }));
+      // Drop the stale server-resolved session_id (app.js latched the OLD date's id
+      // into the field on the first preview) so the re-preview re-derives the id from
+      // the corrected date — otherwise the Effort/Log row's session_id encodes the
+      // wrong date while the date column shows the corrected one. (Review PR #795.)
+      const staleSid = document.getElementById('log-session-id');
+      if (staleSid) staleSid.value = '';
       applyBtn.textContent = 'Re-previewing…';
       applyBtn.disabled = true;
       form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
