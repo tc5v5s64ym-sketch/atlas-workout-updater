@@ -227,24 +227,17 @@
   // re-dispatching the logger-form submit, so payload, session id, and this card all
   // re-resolve on the corrected date. Read-only: nothing here writes; the corrected
   // preview still goes through the unchanged approve gate.
-  function buildDateNotice(dateInfo) {
-    if (!dateInfo || !dateInfo.date || !dateInfo.source) return null;
-    const wrap = elc('div', 'rv-date');
-    if (dateInfo.source === 'screenshot') {
-      wrap.appendChild(elc('div', 'rv-date-ok', `Date from screenshot: ${dateInfo.date}`));
-      return wrap;
-    }
-    if (dateInfo.source === 'manual') {
-      wrap.appendChild(elc('div', 'rv-date-ok', `Date: ${dateInfo.date}`));
-      return wrap;
-    }
-    if (dateInfo.source !== 'today_fallback') return null;
-    wrap.appendChild(elc('div', 'rv-date-warn',
-      `⚠️ No date found on the screenshot — saving as ${dateInfo.date} (today). Wrong? Set the real date:`));
+  // The shared date-correction row: a date input + "Use this date" that re-runs the
+  // SAME preview flow — setting #log-date via a real input event (latching
+  // logDateManuallyEntered in app.js), clearing the stale session_id, and
+  // re-dispatching the logger-form submit so payload, session id, and this card all
+  // re-resolve together. Read-only: nothing here writes; the corrected preview still
+  // goes through the unchanged approve gate.
+  function buildDateFixRow(currentDate) {
     const row = elc('div', 'rv-date-fix');
     const input = document.createElement('input');
     input.type = 'date';
-    input.value = dateInfo.date;
+    input.value = currentDate;
     input.setAttribute('aria-label', 'Workout date');
     const applyBtn = elc('button', 'btn rv-date-apply', 'Use this date');
     applyBtn.type = 'button';
@@ -269,7 +262,39 @@
     });
     row.appendChild(input);
     row.appendChild(applyBtn);
-    wrap.appendChild(row);
+    return row;
+  }
+
+  function buildDateNotice(dateInfo) {
+    if (!dateInfo || !dateInfo.date || !dateInfo.source) return null;
+    const wrap = elc('div', 'rv-date');
+    if (dateInfo.source === 'screenshot') {
+      // The screenshot date passed the plausibility guard, but the model can still
+      // read a wrong (plausible) year off a cropped or odd header — so the accepted
+      // date is correctable here too, not just on the fallback path (07-02 incident:
+      // an invented year was shown truthfully but couldn't be fixed on the card).
+      wrap.appendChild(elc('div', 'rv-date-ok', `Date from screenshot: ${dateInfo.date}`));
+      const fixLink = elc('a', 'rv-date-edit', 'Wrong date? Fix it');
+      fixLink.href = '#';
+      fixLink.addEventListener('click', e => {
+        e.preventDefault();
+        if (wrap.querySelector('.rv-date-fix')) return;
+        wrap.appendChild(buildDateFixRow(dateInfo.date));
+      });
+      wrap.appendChild(fixLink);
+      return wrap;
+    }
+    if (dateInfo.source === 'manual') {
+      wrap.appendChild(elc('div', 'rv-date-ok', `Date: ${dateInfo.date}`));
+      return wrap;
+    }
+    if (dateInfo.source !== 'today_fallback') return null;
+    // Honest fallback copy: distinguish "no date seen" from "a date was seen but
+    // rejected as implausible" (e.g. a weekday-matched wrong year like 2020-06-28).
+    wrap.appendChild(elc('div', 'rv-date-warn', dateInfo.rejected
+      ? `⚠️ The screenshot's date reads ${dateInfo.rejected}, which doesn't look right — saving as ${dateInfo.date} (today) unless you set the real date:`
+      : `⚠️ No date found on the screenshot — saving as ${dateInfo.date} (today). Wrong? Set the real date:`));
+    wrap.appendChild(buildDateFixRow(dateInfo.date));
     return wrap;
   }
 

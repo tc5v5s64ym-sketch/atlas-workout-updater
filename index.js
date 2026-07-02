@@ -529,6 +529,26 @@ function resolveWorkoutDate({ manualDate, screenshotDate } = {}) {
     getLocalDateString();
 }
 
+// Plausibility window for a screenshot-sourced workout date (live incident
+// 2026-07-02: the vision model returned 2020-06-28 for a yearless "June 28"
+// watch header — June 28 is a Sunday in both 2020 and 2026, so it weekday-matched
+// a wrong year that passed every format check and was saved to the sheet). A
+// syntactically valid date is NOT evidence the year was actually printed on the
+// screenshot. Deterministic guard: accept only dates within a generous real-usage
+// window — up to 2 days ahead (timezones) and up to 400 days back (importing
+// anything from the last ~13 months). Anything outside is treated as ambiguous:
+// today-fallback + the review card's warning and date picker, never silently used.
+const SCREENSHOT_DATE_MAX_FUTURE_DAYS = 2;
+const SCREENSHOT_DATE_MAX_PAST_DAYS = 400;
+function isPlausibleScreenshotDate(isoDate, todayIso = getLocalDateString()) {
+  if (!isoDate) return false;
+  const d = new Date(`${isoDate}T00:00:00`);
+  const t = new Date(`${todayIso}T00:00:00`);
+  if (Number.isNaN(d.getTime()) || Number.isNaN(t.getTime())) return false;
+  const diffDays = (d.getTime() - t.getTime()) / 86400000;
+  return diffDays <= SCREENSHOT_DATE_MAX_FUTURE_DAYS && diffDays >= -SCREENSHOT_DATE_MAX_PAST_DAYS;
+}
+
 // Partition formatted Log_Cleaned rows into those NOT yet on the sheet ("new") and
 // those already present ("duplicates"), keyed by session_id‖exercise‖set_number —
 // the exact identity the live append dedups on. Shared by BOTH the dry-run preview
@@ -3308,13 +3328,23 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     // 3) Determine session/date — track the source so the preview can surface a
     // warning when the date fell back to today (screenshot date not visible /
-    // not extractable) and the user needs to correct it before approving.
+    // not extractable) and the user needs to correct it before approving. A
+    // screenshot date OUTSIDE the plausibility window (see isPlausibleScreenshotDate;
+    // the vision model can weekday-match a wrong year onto a yearless header) is
+    // REJECTED: never used for the save, reported via screenshot_date_rejected so
+    // the review card can say what was seen and why it wasn't trusted.
     const screenshotDateRaw = visionResult.parsed_metrics?.date;
+    const screenshotDateNormalized = normalizeDateCandidate(screenshotDateRaw);
+    const screenshotDateUsable = screenshotDateNormalized && isPlausibleScreenshotDate(screenshotDateNormalized);
+    const screenshotDateRejected = (screenshotDateNormalized && !screenshotDateUsable) ? screenshotDateNormalized : null;
     const manualDateRaw = formFields.date;
-    const dateValue = resolveWorkoutDate({ manualDate: manualDateRaw, screenshotDate: screenshotDateRaw });
+    const dateValue = resolveWorkoutDate({
+      manualDate: manualDateRaw,
+      screenshotDate: screenshotDateUsable ? screenshotDateNormalized : null
+    });
     const dateSource = (manualDateRaw !== undefined && manualDateRaw !== null && String(manualDateRaw).trim() !== '')
       ? 'manual'
-      : normalizeDateCandidate(screenshotDateRaw) ? 'screenshot' : 'today_fallback';
+      : screenshotDateUsable ? 'screenshot' : 'today_fallback';
 
     // 4) Check duplicate session protection — fetch existing IDs first so we
     // can auto-increment the counter when two sessions share the same day/period.
@@ -3375,10 +3405,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
-    // 6) Build effort_row from normalized metrics
+    // 6) Build effort_row from normalized metrics. `date` (the guarded dateValue)
+    // always wins inside the builder; pass only a plausibility-checked screenshot
+    // date as the fallback so a rejected (weekday-matched wrong-year) date can
+    // never reach an Effort row through any path.
     const { effortRow } = buildEffortRowFromParsedMetrics(normalizedMetrics, {
       date: dateValue,
-      screenshot_date: visionResult.parsed_metrics?.date,
+      screenshot_date: screenshotDateUsable ? screenshotDateNormalized : null,
       session_id: sessionId,
       location: formFields.location,
       notes: formFields.notes
@@ -3552,6 +3585,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         session_id: sessionId,
         date: dateValue,
         date_source: dateSource,
+        // The implausible screenshot date the guard refused to use (e.g. a
+        // weekday-matched wrong year) — lets the review card say what was seen
+        // and why it wasn't trusted. Absent when no date was rejected.
+        ...(screenshotDateRejected ? { screenshot_date_rejected: screenshotDateRejected } : {}),
         test_mode: testMode,
         effort_only: effortOnly,
         sheet_written: !testMode && effortWritten,

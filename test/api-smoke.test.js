@@ -2831,8 +2831,11 @@ test('api smoke: complete-workout returns a clean 413 (not 500) when log_rows_js
 
 test('api smoke: complete-workout screenshot preview uses parsed screenshot date when form date is omitted', async () => {
   fakeSheetsState.appendCalls.length = 0;
+  // A recent date (23 days back) computed relative to today so this test never ages
+  // out of the screenshot-date plausibility window (2 days ahead / 400 days back).
+  const recentDate = getLocalDateString(new Date(Date.now() - 23 * 86400000));
   fakeVisionParsedMetrics = {
-    date: '2026-06-09',
+    date: recentDate,
     duration: '00:42:00',
     activeCalories: 410,
     totalCalories: 520,
@@ -2849,10 +2852,11 @@ test('api smoke: complete-workout screenshot preview uses parsed screenshot date
   const data = body.data.data;
 
   assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(data.date, '2026-06-09');
+  assert.equal(data.date, recentDate);
   assert.equal(data.date_source, 'screenshot', 'date_source must be "screenshot" when vision extracted the date');
-  assert.equal(data.effort_row[0], '2026-06-09');
-  assert.match(data.session_id, /^20260609-(AM|PM)-01$/);
+  assert.equal(data.screenshot_date_rejected, undefined, 'a plausible date is never reported as rejected');
+  assert.equal(data.effort_row[0], recentDate);
+  assert.match(data.session_id, new RegExp(`^${recentDate.replace(/-/g, '')}-(AM|PM)-01$`));
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
@@ -5529,4 +5533,95 @@ test('api smoke: GET /api/health/sheets reports required and optional tab presen
   assert.equal(body.data.tabs.Log_Cleaned.exists, true, 'required Log_Cleaned present');
   assert.ok(Array.isArray(body.data.availableTabs) && body.data.availableTabs.includes('Log_Cleaned'));
   assert.ok(Array.isArray(body.data.missingRequiredTabs), 'missingRequiredTabs is an array');
+});
+
+// --- Screenshot-date plausibility guard (live incident 2026-07-02) ---
+// The vision model weekday-matched a yearless "June 28" watch header to 2020 —
+// a syntactically valid date with an invented year — and 12 rows were saved six
+// years in the past. The guard rejects screenshot dates outside a real-usage
+// window (≤2 days ahead, ≤400 days back): the save falls back to today, the
+// rejected date is reported so the review card can word it honestly, and the
+// rejected date can never reach the effort row or session id through any path.
+
+test('guard: an ancient screenshot date (hallucinated year) is rejected — today-fallback + reported', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: '2020-06-28',
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  const today = getLocalDateString();
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, today, 'the ancient date must never drive the save');
+  assert.equal(data.date_source, 'today_fallback');
+  assert.equal(data.screenshot_date_rejected, '2020-06-28', 'the rejected date is reported for honest card copy');
+  assert.equal(data.effort_row[0], today, 'the effort row carries the fallback date, never the rejected one');
+  assert.ok(String(data.session_id).startsWith(today.replace(/-/g, '')), 'session id derives from the fallback date');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('guard: a future screenshot date is rejected the same way', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const futureDate = getLocalDateString(new Date(Date.now() + 30 * 86400000));
+  fakeVisionParsedMetrics = {
+    date: futureDate,
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, getLocalDateString());
+  assert.equal(data.date_source, 'today_fallback');
+  assert.equal(data.screenshot_date_rejected, futureDate);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('guard: an explicit manual date still wins over a rejected screenshot date (no rejection reported)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeVisionParsedMetrics = {
+    date: '2020-06-28',
+    duration: '00:42:00',
+    activeCalories: 410,
+    totalCalories: 520,
+    averageHR: 148,
+    peakHR: 171,
+    workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify([]));
+  form.append('test_mode', 'true');
+  form.append('date', '2026-06-28');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date, '2026-06-28', 'the owner-typed date is authoritative');
+  assert.equal(data.date_source, 'manual');
+  assert.equal(data.screenshot_date_rejected, '2020-06-28', 'still reported so the card can mention what the screenshot showed');
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
