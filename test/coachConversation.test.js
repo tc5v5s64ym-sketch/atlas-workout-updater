@@ -388,3 +388,26 @@ test('templatedGovernorHoldLine: null when the governor does not override (progr
   assert.equal(templatedGovernorHoldLine({ profile: 'strength', progression_verdict: '+load', fatigue_signal: 'none' }), null);
   assert.equal(templatedGovernorHoldLine(null), null);
 });
+
+// --- PR-4 (composer-first Phase 0a): tier-aware brevity in the deterministic voice ---
+
+test('isBriefTier: short and ack_only are brief; extended/null/per-set are not', () => {
+  const t = require('../public/coachVoiceTemplates.js');
+  assert.equal(t.isBriefTier('short'), true);
+  assert.equal(t.isBriefTier('ack_only'), true);
+  assert.equal(t.isBriefTier('extended'), false);
+  assert.equal(t.isBriefTier(null), false, 'per-set notes carry no tier and must never be brief');
+  assert.equal(t.isBriefTier(undefined), false);
+});
+
+test('tier-aware brevity: short trims supplements, never the recovery read', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('async function getInWorkoutNote'), cc.indexOf('async function getLlmCoachingMessage'));
+  assert.match(fn, /const brief = coachVoiceTemplates\.isBriefTier\(data && data\.note_tier\)/,
+    'the deterministic paths must consult the engine tier');
+  assert.match(fn, /const subLine = brief \? null :/, 'the substitution ack is a supplement — trimmed when brief');
+  assert.match(fn, /\(data && !brief\) \? coachVoiceTemplates\.templatedNextMoveAdvisoryLine/,
+    'the next-move heads-up is a supplement — trimmed when brief');
+  assert.match(fn, /const recoveryLine = data \? coachVoiceTemplates\.templatedRecoveryAdvisoryLine/,
+    'the recovery read is safety-class and must NOT be gated on brief');
+});
