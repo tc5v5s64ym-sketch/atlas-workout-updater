@@ -411,3 +411,31 @@ test('tier-aware brevity: short trims supplements, never the recovery read', () 
   assert.match(fn, /const recoveryLine = data \? coachVoiceTemplates\.templatedRecoveryAdvisoryLine/,
     'the recovery read is safety-class and must NOT be gated on brief');
 });
+
+// --- Composer-first Phase A: the coach speaks first (deterministic opening line) ---
+
+test('opening: greeting renders synchronously; the opener upgrade is best-effort', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const iife = cc.slice(cc.indexOf('(function setGreeting()'), cc.indexOf('async function renderCoachOpening'));
+  assert.match(iife, /el\.textContent = `Good \$\{part\}, Dale\.`;/, 'the greeting never waits on a fetch');
+  assert.match(iife, /renderCoachOpening\(\)\.catch\(/, 'the opener upgrade can never break the greeting');
+});
+
+test('opening: engine-grounded, LLM-free, and honest about what it claims', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
+  assert.match(fn, /api\('\/api\/plan\/today'\)/, 'reads the engine, read-only');
+  assert.doesNotMatch(fn, /\/api\/coach/, 'no LLM anywhere in the opener path');
+  assert.match(fn, /hero\.hasAttribute\('hidden'\)/, 'skips when the conversation already started');
+  const guardCount = (fn.match(/hero\.hasAttribute\('hidden'\)/g) || []).length;
+  assert.ok(guardCount >= 2, 'the hidden guard runs BOTH before and after the fetch (race-safe)');
+  assert.match(fn, /last\.reps == null\) return/, 'never renders a partial number');
+  assert.match(fn, /Last time:/, 'leads with continuity, not a prescription the engine did not make');
+  assert.match(fn, /\$\{last\.reps\} reps/, 'bodyweight lifts read as reps, never a dangling ×');
+});
+
+test('opening: the default tagline survives every failure path (element + copy intact)', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="coach-opening" class="coach-empty-tagline">Let's get stronger\.</,
+    'the cold-start/offline default is unchanged');
+});

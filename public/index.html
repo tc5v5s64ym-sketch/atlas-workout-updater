@@ -85,7 +85,11 @@
       <!-- Empty-state hero: shown until the conversation starts. -->
       <div id="coach-empty" class="coach-empty">
         <p id="coach-greeting" class="coach-greeting-line"></p>
-        <p class="coach-empty-tagline">Let's get stronger.</p>
+        <!-- Composer-first Phase A: upgraded in place by renderCoachOpening() with a
+             deterministic, engine-grounded opening line when history exists; this
+             default stands whenever the engine has nothing to say (cold start,
+             offline, no API key). -->
+        <p id="coach-opening" class="coach-empty-tagline">Let's get stronger.</p>
 
         <!-- Quick-start tiles live inside the hero so they move with the
              greeting block and hide together when the conversation starts. -->

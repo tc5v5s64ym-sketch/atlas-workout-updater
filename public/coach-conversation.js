@@ -1518,13 +1518,47 @@
     }
   });
 
+  // Composer-first Phase A — the coach speaks first. The greeting renders
+  // instantly and synchronously (deterministic — the hero is never blank), then
+  // the opening line upgrades from ENGINE state via one read-only GET
+  // /api/plan/today (transport-retryable after Phase 0b). Every number shown is
+  // the engine's — the last logged top set of the most-recently-trained lift.
+  // The copy leads with CONTINUITY ("last time: …"), never a prescription: the
+  // recommendations here are sorted by recency, and the opener must not claim a
+  // pick the engine didn't make (that lands in-thread with the canonical
+  // recommendation in Phase B). Any failure, empty history, missing key, or an
+  // already-started conversation leaves the default tagline byte-identical.
+  // No LLM anywhere in this path — the opener survives an outage (Contract
+  // voice invariant 7).
   (function setGreeting() {
     const el = document.getElementById('coach-greeting');
     if (!el) return;
     const h = new Date().getHours();
     const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
     el.textContent = `Good ${part}, Dale.`;
+    renderCoachOpening().catch(() => { /* best-effort — the default tagline stands */ });
   })();
+
+  async function renderCoachOpening() {
+    const line = document.getElementById('coach-opening');
+    const hero = document.getElementById('coach-empty');
+    if (!line || !hero || hero.hasAttribute('hidden')) return;
+    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return;
+    const res = await api('/api/plan/today').catch(() => null);
+    const recs = res && res.data && Array.isArray(res.data.recommendations) ? res.data.recommendations : [];
+    const top = recs.find(r => r && r.exercise_name &&
+      Array.isArray(r.last_working_sets) && r.last_working_sets.length);
+    if (!top) return;                          // cold start / no history — default stands
+    if (hero.hasAttribute('hidden')) return;   // conversation started while fetching
+    const last = top.last_working_sets[top.last_working_sets.length - 1];
+    if (!last || last.reps == null) return;    // never render a partial number
+    const weekday = new Date().toLocaleDateString(undefined, { weekday: 'long' });
+    // Bodyweight lifts have no load — "×12" alone reads wrong, so say reps plainly.
+    const setBit = (last.weight != null && last.weight !== '')
+      ? `${last.weight}×${last.reps}`
+      : `${last.reps} reps`;
+    line.textContent = `${weekday}. Last time: ${top.exercise_name} ${setBit}. Ready when you are.`;
+  }
 
   document.addEventListener('atlas:preview-ready', e => {
     handlePreviewReady(e.detail).catch(() => {
