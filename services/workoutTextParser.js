@@ -605,10 +605,17 @@ function parseLogSets(rawText, context = {}) {
           rest: strippedRest,
         });
       }
+      // Carry the recognized exercise as `partial` (same shape as the other
+      // needs_clarification branches below) so the frontend's malformed-but-
+      // recognized guard (app.js) surfaces this as an actionable format hint
+      // instead of silently falling through to a generic coach chat reply —
+      // otherwise a real, typed set (e.g. "Lat pull 175 10/2 x3") is dropped
+      // with no trace (BUG: "didn't log lat pulls").
       return {
         intent: 'needs_clarification',
         raw_text: rawText,
         message: `Did you mean ${contextualLead.canonicalName}? Use the full exercise name to be sure.`,
+        partial: { exercise: contextualLead.canonicalName, raw_name: contextualLead.canonicalName },
         warnings: ['ambiguous_exercise_alias'],
       };
     }
