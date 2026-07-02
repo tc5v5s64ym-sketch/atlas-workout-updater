@@ -103,7 +103,7 @@
       "requires": ["log_history"],
       "optional": ["constraint.focus", "constraint.duration_minutes", "constraint.equipment", "constraint.injury", "constraint.exclude_exercises"],
       "depends_on": ["equipment", "safety"],
-      "produces": ["filtered_exercises", "session_shape"], "status": "missing"
+      "produces": ["filtered_exercises", "session_shape"], "status": "partial"
     },
     "session_generator": {
       "module": { "file": "services/sessionGenerator.js", "export": "buildSession" },
