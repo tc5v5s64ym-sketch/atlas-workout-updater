@@ -2423,10 +2423,20 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
 
   const justLoggedSet = parseJustLoggedSet(req.query);
 
+  // Recovery-intent passthrough (?intentId=recovery_pump|deload_reset). The client
+  // has sent this since BUG-20260629-204817 (public/app.js fetchReaction) and the
+  // engine honors options.intentId (services/analytics.js), but this route never
+  // read the param — so a Recovery/Pump session still got a normal-day target RIR
+  // and an add-load "move to X" card (the -204817 recurrence). Whitelisted to the
+  // two recovery objectives only: other intents keep today's behavior unchanged.
+  const rawIntentId = String(req.query.intentId || '');
+  const intentId = ['recovery_pump', 'deload_reset'].includes(rawIntentId) ? rawIntentId : null;
+
   try {
     const allLog = await getSheetRows(logSheetName);
     const recommendation = recommendNextSet(allLog, liftCode, {
-      ...(justLoggedSet ? { justLoggedSet } : {})
+      ...(justLoggedSet ? { justLoggedSet } : {}),
+      ...(intentId ? { intentId } : {})
     });
     // Deload is no longer a query-flag override — it is driven by the engine's
     // persisted training state (Deload_State). Attach the engine's decision so a

@@ -544,6 +544,34 @@ test('buildCoachSystemPrompt gates load presentation for a calibrating lift (PR-
   assert.match(prompt, /graduated/, 'must allow normal phrasing once graduated');
 });
 
+// ── Recovery-intent session voice gate (recurrence of BUG-20260629-204817) ────
+// A Recovery/Pump Coach's Pick prescribes light, high-RIR work — the coach note
+// must never scold those exact loads as "below your working range / add weight".
+// The prescribed intent rides into the LLM facts as session_intent so the prompt
+// can flip the voice to "light by design".
+test('sanitizeFacts whitelists session_intent to the two recovery objectives', () => {
+  assert.equal(sanitizeFacts({ intentId: 'recovery_pump' }).session_intent, 'recovery_pump');
+  assert.equal(sanitizeFacts({ intentId: 'deload_reset' }).session_intent, 'deload_reset');
+  // Any non-recovery intent, junk, or absence → null (no gate, normal voice).
+  assert.equal(sanitizeFacts({ intentId: 'build_strength' }).session_intent, null);
+  assert.equal(sanitizeFacts({ intentId: 42 }).session_intent, null);
+  assert.equal(sanitizeFacts({}).session_intent, null);
+});
+
+test('buildCoachSystemPrompt frames a recovery session_intent as on-plan, never under-effort', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /session_intent/, 'must document the session_intent fact');
+  assert.match(prompt, /recovery_pump/, 'must name the recovery_pump intent');
+  assert.match(prompt, /deload_reset/, 'must name the deload_reset intent');
+  assert.match(prompt, /BY DESIGN/, 'light loads must read as by design');
+  assert.match(prompt, /OVERRIDES the add-weight steer of effort_verdict/,
+    'the intent must override the easy/far_easy add-weight steer');
+  assert.match(prompt, /under_shot" as intentional/,
+    'a below-range read on a recovery day is intentional, not a shortfall');
+  assert.match(prompt, /back in the groove/,
+    'must forbid the exact "get back in the groove" scold seen live');
+});
+
 // ME-9: defense-in-depth numeric validation. A proposal carrying a present but
 // non-finite/negative/absurd weight/reps/rir must never become an approvable edit.
 test('isValidEditSchema validates present weight/reps/rir numbers (ME-9)', () => {

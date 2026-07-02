@@ -3597,6 +3597,32 @@ test('api smoke: recommend-next returns stable read shape', async () => {
   assert.ok('readiness_signal' in body.data, 'readiness_signal field must be present in recommend/next response');
 });
 
+// ── ?intentId recovery passthrough (recurrence of BUG-20260629-204817) ─────────
+// The client sends ?intentId on every in-workout reaction (public/app.js
+// fetchReaction) and the engine honors options.intentId — but the route dropped
+// the param, so a Recovery/Pump session's prescribed light, high-RIR set was
+// judged against a normal-day target RIR and got an add-load "move to X" card.
+test('api smoke: recommend-next honors ?intentId=recovery_pump (no add-load on a recovery session)', async () => {
+  // Control — same just-logged easy set with NO intent: a normal day bumps the load.
+  const control = await requestJson('/api/recommend/next/BEN01?w=225&reps=5&rir=5');
+  assert.equal(control.response.status, 200);
+  assert.ok(control.body.data.next_target.weight > 225, 'control: a normal day bumps the load');
+  assert.match(control.body.data.recommendation, /move to/i);
+
+  // Recovery/Pump: the SAME set is on-plan — hold the load, recovery-appropriate target RIR.
+  const recovery = await requestJson('/api/recommend/next/BEN01?w=225&reps=5&rir=5&intentId=recovery_pump');
+  assert.equal(recovery.response.status, 200);
+  assert.ok(recovery.body.data.next_target.weight <= 225, 'a recovery session must never prescribe added load');
+  assert.doesNotMatch(recovery.body.data.recommendation, /move to|Increase to|add (load|weight)/i);
+  assert.ok(recovery.body.data.target_rir >= 4,
+    `recovery target RIR must be the recovery band (got ${recovery.body.data.target_rir})`);
+
+  // An unknown/non-recovery intent is ignored — byte-equivalent to the control.
+  const junk = await requestJson('/api/recommend/next/BEN01?w=225&reps=5&rir=5&intentId=drop_tables');
+  assert.equal(junk.response.status, 200);
+  assert.deepEqual(junk.body.data, control.body.data, 'a non-recovery intentId must not change the response');
+});
+
 // One-Brain Promotion PR 1 — ATLAS_COACH_ENGINE=legacy|hybrid|brian for this
 // route only. The stubbed BEN01 fixture (2 sessions) is intentionally thin —
 // confirmed via the real orchestrator to resolve to needs_clarification/
