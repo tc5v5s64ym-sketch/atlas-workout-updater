@@ -81,15 +81,15 @@ Triaged from owner-logged bugs in the `Bug_Reports` Google Sheet tab (2026-06-26
 
 All of B1–B10 (`docs/QA_CAMPAIGN_2026-06-26_LIVE_GYM.md`) and the BUG-20260629 PRs A–F are **code-complete and merged**. What remains is **owner live testing in the real app** — the campaign marks live validation as a post-merge owner step for every B-item. Condensed scripts below; check off as validated. Full per-PR scripts: the "Owner live-test script" blocks in `docs/QA_CAMPAIGN_2026-06-26_LIVE_GYM.md`.
 
-**Data prerequisites — do first (production sheet is `1XQa…DuDcA0`):** confirm the catalog rows live in the workbook production actually uses (`1XQa…`), per the two `[data]` items above — `Incline Bench Press | Chest | IBP01`, `Decline Bench Press | Chest | DBP01`, `Cable Tricep Pushdown | Arms | CTP01`, `Bicep Curl | Arms | BC01`, `Romanian Deadlift | Legs | RDL01`. Without these, the affected lifts log as `muscle_group: Unknown` even though the parser now recognizes them.
+**Data prerequisites — ✅ verified by owner 2026-07-02** (production sheet "Atlas MASTER USE THIS ONE", `1XQa…DuDcA0`): all five campaign rows confirmed present in the production `Exercise_Catalog` — `Incline Bench Press | Chest | IBP01`, `Decline Bench Press | Chest | DBP01`, `Cable Tricep Pushdown | Arms | CTP01`, `Bicep Curl | Biceps | BC01`, `Romanian Deadlift | Posterior Chain | RDL01`. Note: this block previously listed `Arms`/`Legs` for the last two — stale wording; the live catalog (and the `[data]` verification item above) uses `Biceps`/`Posterior Chain`, and the sheet was correctly left unchanged. Catalog duplicate/variant safety is code-covered: the catalog-maintenance planner test detects all five as already present, with `RDLs` an existing Romanian Deadlift variant.
 
 **BUG-20260629 parser retests (PRs A–F):**
 - [ ] **A** — "Push ups 40 40 40" logs as bodyweight reps; a single bad row no longer 400-rejects the whole session save.
 - [ ] **B** — "incline bench" / "decline bench" log as their own canonical (not plain Bench Press); muscle group `Chest`.
 - [ ] **D** — "tricep pulls" / "tricep pushdown" → Cable Tricep Pushdown; muscle group `Arms`.
 - [ ] **E** — the prescription card reads **"Next time:"** (not "→ Next") after a freestyle set.
-- [ ] **F** — "bicep curls 30 12" recognized (no "I don't recognize" advisory); muscle group `Arms`.
-- [ ] **RDL side-log** — "RDLs" → Romanian Deadlift; muscle group `Legs` (needs the RDL catalog row).
+- [ ] **F** — "bicep curls 30 12" recognized (no "I don't recognize" advisory); muscle group `Biceps`.
+- [ ] **RDL side-log** — "RDLs" → Romanian Deadlift; muscle group `Posterior Chain` (catalog row confirmed present 2026-07-02).
 
 **B1–B10 trust/UX retests (`QA_CAMPAIGN`):**
 - [ ] **B1** — log a workout, save once, repeat-tap / reconnect: ONE session ID, one copy of each row, plausible totals (no duplicate append).
