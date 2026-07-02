@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v89';
+const ATLAS_SHELL_BUILD = 'v90';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -2364,6 +2364,26 @@ function looksLikeSessionRequest(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t || /\d/.test(t)) return false;
   return /\b(recommended (workout|session)|what should i train|what are we doing|today'?s plan|what'?s the plan|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
+}
+
+// Composer-first Phase B2: phrases that ask to SEE a stored artifact — the
+// last session or the weekly report. These render the existing read-only
+// in-thread artifact (nav.js renderers) deterministically instead of falling
+// through to the LLM chat. Any digit rules a phrase out, so workout shorthand
+// ("Bench 225 5/2") can never be swallowed by an artifact render. Returns the
+// artifact kind ('last_session' | 'weekly_report') or false.
+function looksLikeArtifactRequest(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t || /\d/.test(t)) return false;
+  if (/\b(show|see|pull up|open|view)\b[^?.!]*\blast (session|workout)\b/.test(t) ||
+      /\bwhat did i do\b[^?.!]*\blast (time|session|workout)\b/.test(t) ||
+      /^\s*(my )?last (session|workout)\??\s*$/.test(t)) {
+    return 'last_session';
+  }
+  if (/\b(weekly (report|summary)|(show|see|view)\b[^?.!]*\b(my|this) week|this week'?s (report|summary|training)|how (was|did) (my|the) week)\b/.test(t)) {
+    return 'weekly_report';
+  }
+  return false;
 }
 
 function looksLikeCorrection(text) {
@@ -5341,6 +5361,23 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     setTimeout(() => { workoutTextInput.value = ''; }, 0);
     routeMessageToCoach(planText);
     return;
+  }
+
+  // Composer-first Phase B2: deterministic artifact asks ("show my last
+  // session", "weekly report") render the existing read-only artifact INLINE
+  // in the thread — a deterministic read stays deterministic, no LLM between
+  // the lifter and their own numbers. If a renderer is unavailable the ask
+  // falls through to the coach chat below (never silence).
+  const artifactKind = looksLikeArtifactRequest(workoutTextInput.value);
+  if (artifactKind) {
+    const renderer = artifactKind === 'last_session'
+      ? window.atlasChipAnswerLast
+      : window.atlasChipAnswerReport;
+    if (typeof renderer === 'function') {
+      setTimeout(() => { workoutTextInput.value = ''; }, 0);
+      renderer();
+      return;
+    }
   }
 
   // "Log it" / "done" — compile the full conversational session from chat

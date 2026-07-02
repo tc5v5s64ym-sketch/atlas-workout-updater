@@ -129,10 +129,12 @@
 
   // The static #suggestion-chips strip was retired (composer-first Phase A,
   // 2026-07-02) — replaced by the hero's state-driven #coach-chips, which emit
-  // sentences through the composer (one lane) instead of the card handlers
-  // below. chipAnswerLast stays exported (window.atlasChipAnswerLast) for the
-  // conversation layer; chipAnswerTrain/Report are retained for that same
-  // in-thread reuse. Dead-listener removal only — no handler behavior changed.
+  // sentences through the composer (one lane). Phase B2 settled the surviving
+  // handlers' disposition: chipAnswerLast + chipAnswerReport are the in-thread
+  // ARTIFACT renderers (exported below; app.js's deterministic artifact route
+  // calls them for "show my last session" / "weekly report" asks), and
+  // chipAnswerTrain was deleted — the canonical in-thread Coach's Pick (B1)
+  // owns the recommendation render.
 
   // "Learn" chips (in the visible empty-state hero) → deterministic SME answers.
   document.getElementById('learn-chips')?.addEventListener('click', e => {
@@ -152,64 +154,6 @@
     thread.appendChild(bubble);
     requestAnimationFrame(() => bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
     return bubble;
-  }
-
-  function chipAnswerTrain() {
-    const wrap = document.createElement('div');
-    wrap.innerHTML = '<span class="chip-loading">Loading today’s pick…</span>';
-    const bubble = atlasReply(wrap);
-    if (!bubble) { go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); return; }
-
-    api('/api/plan/intent-recommendation').then(res => {
-      const data = res.data || {};
-      const todaysRead = data.todays_read || {};
-      const patterns = todaysRead.patterns || [];
-      wrap.innerHTML = '';
-
-      const titleEl = document.createElement('div');
-      titleEl.className = 'chip-reply-title';
-      titleEl.textContent = todaysRead.recommended_label
-        ? `Today: ${todaysRead.recommended_label}`
-        : 'No pick yet — log a few sessions.';
-      wrap.appendChild(titleEl);
-
-      if (todaysRead.recommended_reason) {
-        const reason = document.createElement('div');
-        reason.className = 'chip-reply-sub';
-        reason.textContent = todaysRead.recommended_reason;
-        wrap.appendChild(reason);
-      }
-
-      if (patterns.length) {
-        const dots = document.createElement('div');
-        dots.className = 'chip-dots';
-        for (const p of patterns) {
-          const dot = document.createElement('span');
-          dot.className = `chip-dot pattern-dot-${p.status || 'unknown'}`;
-          const label = FRIENDLY_PATTERN_LABELS[p.label || p.pattern] || p.label || p.pattern;
-          dot.title = `${label}: ${FRIENDLY_STATUS_WORDS[p.status || 'unknown'] || p.status || '—'}`;
-          dots.appendChild(dot);
-          const lbl = document.createElement('span');
-          lbl.className = 'chip-dot-label';
-          lbl.textContent = label;
-          dots.appendChild(lbl);
-        }
-        wrap.appendChild(dots);
-      }
-
-      const more = document.createElement('a');
-      more.href = '#';
-      more.className = 'chip-reply-more';
-      more.textContent = 'Open today’s session →';
-      more.addEventListener('click', ev => {
-        ev.preventDefault();
-        if (typeof openTodaySessionPlan === 'function') openTodaySessionPlan();
-        else go('dashboard', () => document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-      });
-      wrap.appendChild(more);
-    }).catch(err => {
-      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
-    });
   }
 
   function chipAnswerLast() {
@@ -360,8 +304,11 @@
     });
   }
 
-  // Reused by the "Last Session" home tile (coach-conversation.js).
+  // The in-thread artifact renderers (composer-first Phase B2). app.js's
+  // deterministic artifact route calls these for digit-free "show me…" asks;
+  // both are READ-ONLY renders of existing endpoints.
   window.atlasChipAnswerLast = chipAnswerLast;
+  window.atlasChipAnswerReport = chipAnswerReport;
 
   /* ===== Composer "+" attachment menu ===== */
 
