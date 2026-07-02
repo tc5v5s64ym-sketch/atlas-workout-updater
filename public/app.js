@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v78';
+const ATLAS_SHELL_BUILD = 'v79';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3567,6 +3567,11 @@ function rowsFromBackendParsedWorkout(parsed) {
     // a coach message (the live-audit "looks logged but wasn't" trust gap).
     err.parsedIntent = parsed?.intent || null;
     err.recognizedExercise = (parsed?.partial && parsed.partial.exercise) || null;
+    // Multi-line partial-log (owner 2026-07-02): when NO line resolved, the parser
+    // still returns per-line specifics — carry them so the caller can surface the
+    // first specific ask ("Which row — seated, bent-over…?") instead of routing a
+    // paste full of sets to the coach.
+    err.unresolvedLines = Array.isArray(parsed?.unresolved) ? parsed.unresolved : null;
     // True when the backend BLOCKED a multi-exercise blob. Lets the caller route a
     // newline-separated, one-exercise-per-line message to the line-based local parser
     // (each line is unambiguous) instead of dropping it to the coach. Same-line mixing
@@ -3646,7 +3651,17 @@ async function parseWorkoutTextWithBackend(workoutText) {
     // clearly-typed set on flaky signal instead of dropping it into chat.
     throw new Error('Backend parser did not produce any set rows.');
   }
-  return { intent: 'log_sets', rows, warnings: data.warnings || [], prescribed: Array.isArray(parsed.prescribed) ? parsed.prescribed : null, kbIdentity: data.kb_identity || null };
+  return {
+    intent: 'log_sets',
+    rows,
+    warnings: data.warnings || [],
+    prescribed: Array.isArray(parsed.prescribed) ? parsed.prescribed : null,
+    kbIdentity: data.kb_identity || null,
+    // Multi-line partial-log (owner 2026-07-02): lines the parser could not resolve,
+    // each with its own specific ask — surfaced by rowsFromWorkoutInput so a clean
+    // paste never silently drops its one ambiguous line.
+    unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved : null
+  };
 }
 
 function populateSetRows(rows) {
@@ -3818,6 +3833,20 @@ async function rowsFromWorkoutInput() {
   parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = workoutText;
   lastPrescribed = parsed.prescribed || null;
+
+  // Multi-line partial-log (owner 2026-07-02): the clean lines are captured above;
+  // each unresolved line gets its OWN specific ask so it can be re-typed — never
+  // silently dropped, never the generic "keep logging" fallback. Takes precedence
+  // over the unknown-lift advisory below (a re-typed line re-runs both checks).
+  if (Array.isArray(parsed.unresolved) && parsed.unresolved.length) {
+    parsedRowsEditor.hidden = false;
+    const first = parsed.unresolved[0];
+    const extra = parsed.unresolved.length > 1 ? ` (+${parsed.unresolved.length - 1} more like it)` : '';
+    setStatus(loggerStatus,
+      `Captured the rest — one line needs a check: "${first.line}"${extra} — ${first.message} Re-type that line and I'll add it.`,
+      'warn');
+    return;
+  }
 
   // The parser couldn't confidently resolve the lift name and echoed the typed
   // text instead of guessing a real lift. Surface it so the wrong history isn't
@@ -5316,6 +5345,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // "Bench 225" (no slash → coach still asks conversationally) are unaffected.
       if (err.parsedIntent === 'needs_clarification' && err.recognizedExercise && /\d+\s*\/\s*\d+/.test(pendingChatText)) {
         setStatus(loggerStatus, `${err.displayMessage} Check the format, e.g. "Bench 225 5/2".`, 'warn');
+        activeExercise = null;
+        return;
+      }
+      // Multi-line partial-log (owner 2026-07-02): a paste where NO line resolved
+      // still carries per-line specifics — surface the first ask instead of letting
+      // set notation sink into the coach (the fluent-readback-over-empty-buffer gap).
+      if (err.parsedIntent === 'needs_clarification' && Array.isArray(err.unresolvedLines) &&
+          err.unresolvedLines.length && /\d+\s*\/\s*\d+/.test(pendingChatText)) {
+        setStatus(loggerStatus, `${err.displayMessage} Re-type that line and I'll add it.`, 'warn');
         activeExercise = null;
         return;
       }

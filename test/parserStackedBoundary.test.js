@@ -95,8 +95,17 @@ test('multiline freestyle: ambiguous "rows" set is never merged into Bench Press
   const benchAbsorbedRow = r.intent === 'log_sets_multi'
     && (r.exercises || []).some(e => e.canonical_name === 'Bench Press' && e.sets.some(s => s.weight === 95));
   assert.ok(!benchAbsorbedRow, 'the 95×10 rows set must never be absorbed into Bench Press');
-  // Bare "rows" is ambiguous ("which row?") — so the contract is fail-loudly, never mis-log.
-  assert.equal(r.intent, 'needs_clarification', `ambiguous "rows" must ask clarification, got ${r.intent}`);
+  // Partial-log contract (owner decision 2026-07-02): the clean lines log, and the
+  // ambiguous "rows" line fails LOUDLY as its own unresolved entry with the specific
+  // "which row?" ask — never silently dropped, never mis-logged, and never sinking
+  // the clean siblings (the pre-2026-07-02 all-or-nothing contract this pinned before).
+  assert.equal(r.intent, 'log_sets_multi', `clean lines must partial-log, got ${r.intent}`);
+  assert.deepEqual(r.exercises.map(e => e.canonical_name),
+    ['Bench Press', 'Dips', 'Hanging Knee Raises']);
+  assert.ok(Array.isArray(r.unresolved) && r.unresolved.length === 1, 'the rows line must surface as unresolved');
+  assert.match(r.unresolved[0].line, /rows 95/i);
+  assert.match(r.unresolved[0].message, /which row/i, 'the unresolved entry must carry the specific ask');
+  assert.ok((r.warnings || []).includes('unresolved_lines'));
 });
 
 test('multiline freestyle: "seated rows" creates its own Seated Row entry, not merged into Bench', () => {
