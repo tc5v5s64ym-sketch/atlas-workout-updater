@@ -50,6 +50,7 @@ The newest, most direction-setting docs — where the coach is going and how it 
 - `docs/CONVERSATION_FIRST_DESIGN_REVIEW.md` — the conversation-first product/architecture review: why the conversation is the product, what becomes a conversation artifact vs. a destination, and the aggressive counter-case. Owner-reserved direction.
 - `docs/CONVERSATION_CONTRACT_V1.md` — the coach behavior/personality contract: **when Atlas speaks vs. stays quiet**, how firmly it challenges, always-acknowledge-a-log, close-the-loop, and the validation scenarios. Precedes the Intent Router in the One-Brain build. Owner-reserved direction.
 - `CONVERSATION_DESIGN.md` — the de-facto on-message anchor for conversation-first: composer as the whole interface, batch brain-dumps, no tiles.
+- `docs/product/conversation-suite/README.md` — Conversation acceptance-test suite (P-001–P-025 pressure, N-001–N-040 everyday) — the feel-spec for coach voice, logging, plan flow, session finish, substitutions, safety, and conversation UX.
 - `COACH_PERSONALITY.md` — how the coach *feels* (earned reactions, tone). Active voice spec.
 - The research grounding for **coach-note tone** and **"when Atlas should speak vs. stay quiet"** lives under **Research** (below): `docs/research/coaching-intelligence/` source `05-coach-communication-intelligence`.
 

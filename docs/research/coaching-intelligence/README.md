@@ -4,7 +4,7 @@ This folder holds the human-facing material for Atlas's **Coach Intelligence Lay
 
 ## Prime directive
 
-The LLM is the voice; the code is the brain. This layer stores coaching *knowledge* as structured data with provenance. Decisions that need consistency will later be made by deterministic modules that read `config/coaching/`; the LLM only explains, asks, motivates, and personalizes language. It never invents numbers, verdicts, or rules.
+The LLM is the voice; the code is the brain. This layer stores coaching *knowledge* as structured data with provenance. Decisions that need consistency will later be made by deterministic modules that read `config/coaching/`; the LLM only explains, asks, motivates, and personalizes language. It never invents numbers, verdicts, or rules. For the conversational feel these principles must produce, see the conversation acceptance-test suite: `docs/product/conversation-suite/`.
 
 ## This PR (PR 1)
 
