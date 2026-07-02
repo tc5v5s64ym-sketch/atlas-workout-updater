@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v86';
+const ATLAS_SHELL_BUILD = 'v87';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1243,7 +1243,7 @@ async function loadDashboard() {
 
   if (intentData) {
     renderTodaysRead(intentData);
-    renderCoachReadStrip(intentData);
+    renderCoachReadStrip(intentData, summaryData);
     renderTodaysPick(intentData);
     renderIntentGrid(intentData);
     renderPatternBoard(intentData);
@@ -1507,13 +1507,24 @@ function renderTodaysRead(data) {
   else box.hidden = false;
 }
 
-function renderCoachReadStrip(data) {
+// Composer-first Phase A — the glance line. One row of passive awareness above
+// the hero (the design review's deliberate "know without asking" affordance):
+// streak · per-pattern readiness dots · today's context. Upgraded IN PLACE from
+// the shipped read-strip rather than adding a rival element (Invariant I1).
+// Read-only; every value verbatim from the two dashboard fetches that already
+// run at startup — the streak from /api/progress/summary, dots and today-label
+// from /api/plan/intent-recommendation. Renders whatever subset exists.
+function renderCoachReadStrip(data, summary) {
   const strip = document.getElementById('coach-read-strip');
   if (!strip) return;
   const todaysRead = data.todays_read || {};
   const patterns = todaysRead.patterns || [];
-  if (!patterns.length) return;
+  const streak = summary ? Number(summary.weekly_streak || 0) : 0;
+  if (!patterns.length && !(streak > 0)) return;
   strip.innerHTML = '';
+  if (streak > 0) {
+    strip.appendChild(el('span', { class: 'strip-streak', text: `\u{1F525} ${streak}-wk streak` }));
+  }
   const dots = el('div', { class: 'strip-dots' });
   for (const p of patterns) {
     const status = p.status || 'unknown';
