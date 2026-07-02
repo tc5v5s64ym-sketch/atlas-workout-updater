@@ -1718,6 +1718,7 @@ a.lift-link:hover { text-decoration: underline; }
 .rv-date { margin: -4px 0 10px; }
 .rv-date-ok { font-family: var(--mono); font-size: 0.7rem; color: var(--faint); }
 .rv-date-warn { font-family: var(--mono); font-size: 0.72rem; color: var(--warn, #c9803a); line-height: 1.5; }
+.rv-date-edit { display: inline-block; margin-top: 4px; font-family: var(--mono); font-size: 0.66rem; color: var(--accent); text-decoration: none; }
 .rv-date-fix { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .rv-date-fix input[type="date"] { background: var(--card); color: var(--ink); border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 9px; font-family: var(--mono); font-size: 0.78rem; }
 .rv-date-apply { font-size: 0.74rem; padding: 7px 12px; }

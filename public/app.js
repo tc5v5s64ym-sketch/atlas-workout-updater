@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v81';
+const ATLAS_SHELL_BUILD = 'v82';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -4304,7 +4304,14 @@ function isPlanCloseoutAwaitingSave() {
 function isConfidentScreenshotDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return false;
   const d = new Date(`${value.trim()}T00:00:00`);
-  return !Number.isNaN(d.getTime()) && getLocalDateString(d) === value.trim();
+  if (Number.isNaN(d.getTime()) || getLocalDateString(d) !== value.trim()) return false;
+  // Plausibility window (live incident 07-02: the vision model weekday-matched a
+  // yearless "June 28" header to 2020 — a valid-looking date with an invented year).
+  // Mirrors the server guard: ≤2 days ahead, ≤400 days back; outside → not confident
+  // → today-fallback + the visible warning, never silently used.
+  const today = new Date(`${getLocalDateString()}T00:00:00`);
+  const diffDays = (d.getTime() - today.getTime()) / 86400000;
+  return diffDays <= 2 && diffDays >= -400;
 }
 
 // Resolve the workout date for a closeout SAVE carrying an Apple Watch screenshot.
@@ -5949,7 +5956,13 @@ function renderCompleteWorkoutPreview(result) {
   // (and the today-fallback warning) on the conversation surface, not just in the
   // hidden legacy panel above.
   emitCoachPreview(data.rows_to_write, completeLiftCodes, effortOnly, data.parsed_effort || null, null,
-    data.date ? { date: data.date, source: data.date_source || null } : null);
+    data.date ? {
+      date: data.date,
+      source: data.date_source || null,
+      // The implausible screenshot date the server refused (e.g. a weekday-matched
+      // wrong year) — the card words the fallback honestly and offers the picker.
+      ...(data.screenshot_date_rejected ? { rejected: data.screenshot_date_rejected } : {})
+    } : null);
   if (completeLiftCodes.length && getApiKey()) {
     const suggestionSlot = el('div', {});
     previewContent.appendChild(suggestionSlot);

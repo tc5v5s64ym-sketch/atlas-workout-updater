@@ -29,6 +29,7 @@ function buildWorkoutScreenshotPrompt() {
     '- averageHR and peakHR are different metrics. Do not confuse them and do not copy one into the other.',
     '- If averageHR is visible but no peak/max heart-rate label or highest HR value is visible, return peakHR: null.',
     'If a workout date is visible and unambiguous, return it as YYYY-MM-DD.',
+    'The date is unambiguous ONLY if the year is actually printed on the screenshot. If the year is not visible, return date: null. Never infer or guess the year from the weekday, the device style, or anything else.',
     'Use null when a value is not visible.',
     'Do not include markdown, code fences, or extra keys.'
   ].join('\n');

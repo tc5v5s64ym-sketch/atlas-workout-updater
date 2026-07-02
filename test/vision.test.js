@@ -286,3 +286,12 @@ test('withVisionTimeout: propagates a non-timeout error unchanged', async () => 
 test('VISION_TIMEOUT_MS: has a sane positive default', () => {
   assert.ok(Number.isFinite(VISION_TIMEOUT_MS) && VISION_TIMEOUT_MS > 0);
 });
+
+// Screenshot-date year rule (live incident 2026-07-02: the model weekday-matched a
+// yearless "June 28" header to 2020). The prompt must forbid year inference; the
+// deterministic server-side plausibility guard is the enforcement backstop.
+test('prompt: forbids inferring the year — yearless dates must return null', () => {
+  const prompt = buildWorkoutScreenshotPrompt();
+  assert.match(prompt, /If the year is not visible, return date: null/);
+  assert.match(prompt, /Never infer or guess the year from the weekday/);
+});

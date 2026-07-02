@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v81/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v82/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v81/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v80\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v82/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v81\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6540,7 +6540,7 @@ test('B5: both preview renderers hand date + date_source to the review card even
   assert.match(appSource, /function emitCoachPreview\(rows, liftCodes, effortOnly, effort, substitutions, dateInfo\)/);
   assert.match(appSource, /dateInfo: \(dateInfo && dateInfo\.date\) \? dateInfo : null/,
     'the preview-ready event must carry dateInfo');
-  assert.match(appSource, /\{ date: data\.date, source: data\.date_source \|\| null \}/,
+  assert.match(appSource, /date: data\.date,\s*\n\s*source: data\.date_source \|\| null,/,
     'complete-workout preview must pass the server-resolved date + source');
   assert.match(appSource, /closeoutScreenshotDateSource \|\| \(logDateManuallyEntered \? 'manual' : null\)/,
     'log-workout preview must pass the closeout/manual source and null for plain logs');
@@ -6552,7 +6552,8 @@ test('B5: review card renders the date notice with a working today-fallback corr
   assert.match(ccSource, /Date from screenshot: \$\{dateInfo\.date\}/, 'screenshot source renders a confirmation line');
   assert.match(ccSource, /No date found on the screenshot — saving as \$\{dateInfo\.date\} \(today\)/,
     'today_fallback renders a warning');
-  const noticeFn = ccSource.slice(ccSource.indexOf('function buildDateNotice'), ccSource.indexOf('function buildReviewCard'));
+  // The shared fix row (buildDateFixRow) sits just before buildDateNotice — slice both.
+  const noticeFn = ccSource.slice(ccSource.indexOf('function buildDateFixRow'), ccSource.indexOf('function buildReviewCard'));
   assert.match(noticeFn, /input\.type = 'date'/, 'fallback offers an inline date input');
   assert.match(noticeFn, /logDate\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\)/,
     'correction must latch logDateManuallyEntered via a REAL input event');
@@ -6614,4 +6615,35 @@ test('effort grid never renders a bare "bpm" for an empty HR value', () => {
   assert.match(gridFn, /hr\(effort\.averageHR\)/);
   assert.match(gridFn, /hr\(effort\.peakHR\) \|\| 'not in screenshot'/,
     'an absent peak HR keeps its explanatory text');
+});
+
+// --- Screenshot-date plausibility guard, client half (live incident 2026-07-02) ---
+
+test('date guard: isConfidentScreenshotDate rejects implausible (wrong-year) dates', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(appSource.indexOf('function isConfidentScreenshotDate'),
+    appSource.indexOf('function resolveCloseoutWorkoutDate'));
+  assert.match(fn, /diffDays <= 2 && diffDays >= -400/,
+    'the closeout confidence check must apply the same plausibility window as the server');
+});
+
+test('date guard: the card words a rejected screenshot date honestly and offers the picker', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(appSource, /data\.screenshot_date_rejected \? \{ rejected: data\.screenshot_date_rejected \}/,
+    'the rejected date must flow into the preview-ready dateInfo');
+  assert.match(ccSource, /The screenshot's date reads \$\{dateInfo\.rejected\}, which doesn't look right/,
+    'the fallback warning must name the rejected date when one was seen');
+  const notice = ccSource.slice(ccSource.indexOf('function buildDateNotice'), ccSource.indexOf('function buildReviewCard'));
+  assert.match(notice, /dateInfo\.rejected\s*\?/, 'fallback copy must branch on rejected');
+});
+
+test('date guard: an ACCEPTED screenshot date is still correctable on the card', () => {
+  const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const notice = ccSource.slice(ccSource.indexOf('function buildDateNotice'), ccSource.indexOf('function buildReviewCard'));
+  assert.match(notice, /Wrong date\? Fix it/, 'the screenshot-source line must offer a correction link');
+  assert.match(notice, /buildDateFixRow\(dateInfo\.date\)/, 'the link must reveal the shared date-fix row');
+  const fixFn = ccSource.slice(ccSource.indexOf('function buildDateFixRow'), ccSource.indexOf('function buildDateNotice'));
+  assert.match(fixFn, /staleSid\.value = ''/, 'the shared fix row keeps the session-id clear (PR #795 review)');
+  assert.match(fixFn, /form\.dispatchEvent\(new Event\('submit'/, 'the shared fix row re-runs the preview, never writes');
 });
