@@ -371,7 +371,22 @@ function parseWorkoutText(input, context = {}) {
   }
 
   const skipped = extractSkipNotes(rawText);
-  const result = parseLogSets(rawText, context);
+  let result = parseLogSets(rawText, context);
+
+  // Multi-line rescue (partial-log, owner decision 2026-07-02): normalizeParserText
+  // collapses newlines, so a paste with one exercise per line reaches parseLogSets as
+  // a single blob and can dead-end on the multi-exercise ask — losing every line even
+  // though each line parses cleanly on its own. When the collapsed parse dead-ends,
+  // re-parse using the lifter's own line structure: each line is an explicit chunk
+  // boundary (safer than name-boundary splitting), resolved lines log, and an
+  // ambiguous line surfaces its own specific ask instead of sinking the paste.
+  // Runs ONLY on today's failure results — every currently-succeeding input is
+  // byte-identical; the single-line G1 refuse-to-merge guardrail is untouched.
+  if (result?.intent === 'needs_clarification' &&
+      (result.warnings || []).some(w => w === 'multiple_exercises_in_input' || w === 'unattributable_trailing_sets')) {
+    const multiline = parseMultilineLogSets(extractSetParagraphs(input), rawText, context, result);
+    if (multiline) result = multiline;
+  }
 
   // A multi-exercise log is unambiguous (every chunk resolved to real sets, or
   // parseLogSets would have asked for clarification) — return it directly, past the
@@ -540,6 +555,112 @@ function extractSkipNotes(text) {
     });
   }
   return skipped;
+}
+
+// Line-wise multi-exercise parsing with PARTIAL results (owner decision 2026-07-02:
+// partial-log). Called ONLY as a rescue after the collapsed whole-text parse
+// dead-ended on a multi-exercise blob — see parseWorkoutText. Each newline-separated
+// line is parsed independently through the proven single-entry parser (so slash
+// notation, xN repeats, bodyweight lines, and multi-set lines all work), with the
+// last resolved exercise carried as context so bare set lines under a name header
+// attach correctly. Lines that resolve are returned as log_sets_multi exercises;
+// lines that don't are returned in `unresolved` with their own SPECIFIC message so
+// one ambiguous lift never silently discards its clean siblings — and never routes
+// the paste to the coach. Same-line stacking inside a single line still goes through
+// parseLogSets, so the G1 refuse-to-merge guardrail applies per line, unchanged.
+// Returns null when the input has fewer than two lines or nothing actionable —
+// the caller keeps the original whole-text result.
+function parseMultilineLogSets(preNormalizedInput, rawText, context = {}, originalResult = null) {
+  const lines = String(preNormalizedInput || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return null;
+
+  const resolved = [];            // merged per canonical exercise, first-seen order
+  const resolvedByKey = new Map();
+  const unresolved = [];
+  const headers = [];             // bare-name lines awaiting set lines
+  let carryExercise = context.activeExercise || null;
+
+  const addResolved = (entry) => {
+    const name = entry.canonical_name || entry.exercise;
+    const key = normalizeKey(name);
+    if (resolvedByKey.has(key)) {
+      const existing = resolvedByKey.get(key);
+      existing.sets = existing.sets.concat(entry.sets);
+      existing.warnings = [...new Set([...(existing.warnings || []), ...(entry.warnings || [])])];
+    } else {
+      resolvedByKey.set(key, entry);
+      resolved.push(entry);
+    }
+    carryExercise = name;
+  };
+
+  for (const line of lines) {
+    const parsed = parseLogSets(normalizeParserText(line), { ...context, activeExercise: carryExercise });
+    if (parsed?.intent === 'log_sets' && Array.isArray(parsed.sets) && parsed.sets.length) {
+      addResolved(parsed);
+      continue;
+    }
+    if (parsed?.intent === 'log_sets_multi' && Array.isArray(parsed.exercises)) {
+      for (const ex of parsed.exercises) addResolved(ex);
+      continue;
+    }
+    // A bare exercise-name header ("Bench Press") carries no set data — it sets
+    // context for the following set lines instead of counting as unresolved. If no
+    // later line attaches to it, it is reported unresolved after the loop.
+    if (parsed?.intent === 'needs_clarification' &&
+        parsed.partial?.exercise &&
+        (parsed.warnings || []).includes('missing_sets') &&
+        !/\d/.test(line)) {
+      headers.push({ line, exercise: parsed.partial.exercise, message: parsed.message });
+      carryExercise = parsed.partial.exercise;
+      continue;
+    }
+    unresolved.push({
+      line,
+      message: parsed?.message || 'Could not read this line as sets.',
+      warnings: parsed?.warnings || [],
+    });
+  }
+
+  // A name header whose sets never arrived is real user intent — surface it.
+  for (const h of headers) {
+    if (!resolvedByKey.has(normalizeKey(h.exercise))) {
+      unresolved.push({ line: h.line, message: h.message, warnings: ['missing_sets'] });
+    }
+  }
+
+  if (!resolved.length && !unresolved.length) return null;
+
+  if (!resolved.length) {
+    // Nothing logged, but the per-line asks are specific ("Which row — seated,
+    // bent-over…?") — surface the first instead of the generic mixed-input copy.
+    // Keep the original dead-end warnings so client fallbacks still recognize it.
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: unresolved[0].message,
+      warnings: [...new Set([...(originalResult?.warnings || []), ...unresolved.flatMap(u => u.warnings)])],
+      unresolved,
+    };
+  }
+
+  if (resolved.length === 1 && !unresolved.length) {
+    return { ...resolved[0], raw_text: rawText };
+  }
+
+  return {
+    intent: 'log_sets_multi',
+    raw_text: rawText,
+    exercises: resolved,
+    ...(unresolved.length ? { unresolved } : {}),
+    warnings: [...new Set([
+      ...resolved.flatMap(r => r.warnings || []),
+      ...(unresolved.length ? ['unresolved_lines'] : []),
+    ])],
+  };
 }
 
 function parseLogSets(rawText, context = {}) {

@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v78/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v79/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v78/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v77\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v79/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v78\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6476,4 +6476,40 @@ test('suggestion acknowledgment: handleSetLogged suppresses substitution from LL
   assert.match(fn, /suggestMatch\s*\?\s*undefined\s*:\s*primarySub/, 'must suppress substitution from LLM facts when suggestMatch is true');
   assert.match(fn, /Good call.*you went with|you went with.*Intent preserved/, 'must append deterministic ack text on match');
   assert.match(fn, /if\s*\(\s*suggestMatch/, 'ack must be gated on suggestMatch');
+});
+
+// --- Multi-line partial-log wiring (owner decision 2026-07-02) ---
+// Server contract is golden-tested in test/multilinePartialLog.test.js; these pin
+// the client wiring so a partial response's clean rows buffer AND the unresolved
+// line's specific ask is surfaced — never the generic chat fallback.
+
+test('partial-log: parseWorkoutTextWithBackend carries unresolved lines through to the caller', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const ret = appSource.slice(appSource.indexOf("intent: 'log_sets',\n    rows,"));
+  assert.match(ret.slice(0, 600), /unresolved:\s*Array\.isArray\(parsed\.unresolved\)\s*\?\s*parsed\.unresolved\s*:\s*null/,
+    'the log_sets return must include the unresolved lines');
+});
+
+test('partial-log: rowsFromWorkoutInput surfaces the specific per-line ask after buffering clean rows', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const populateIdx = appSource.indexOf('populateSetRows(parsed.rows);');
+  assert.ok(populateIdx > 0);
+  const after = appSource.slice(populateIdx, populateIdx + 2200);
+  assert.match(after, /parsed\.unresolved.*\.length/s, 'unresolved lines must be checked after buffering');
+  assert.match(after, /one line needs a check/, 'the partial ask must be surfaced to the lifter');
+  assert.match(after, /first\.message/, 'the ask must carry the parser\'s SPECIFIC message, not generic copy');
+  const unresolvedIdx = appSource.indexOf('one line needs a check');
+  const advisoryIdx = appSource.indexOf('shouldWarnUnknownLift(parsed.warnings', populateIdx);
+  assert.ok(unresolvedIdx < advisoryIdx, 'the partial ask must take precedence over the unknown-lift advisory');
+});
+
+test('partial-log: a none-resolved multi-line paste surfaces its ask instead of routing to the coach', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /err\.unresolvedLines\s*=\s*Array\.isArray\(parsed\?\.unresolved\)/,
+    'the clarification throw must carry the per-line specifics');
+  const submitStart = appSource.indexOf("document.getElementById('logger-form').addEventListener('submit'");
+  const guardIdx = appSource.indexOf('Array.isArray(err.unresolvedLines)', submitStart);
+  const coachRouteIdx = appSource.indexOf('routeMessageToCoach(pendingChatText)', submitStart);
+  assert.ok(guardIdx > submitStart, 'the unresolved-lines guard must be inside composer submit');
+  assert.ok(guardIdx < coachRouteIdx, 'the guard must run BEFORE the coach route');
 });
