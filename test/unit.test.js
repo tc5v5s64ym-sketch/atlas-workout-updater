@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v86/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v87/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -4745,7 +4745,7 @@ test('read surfacing: Today\'s Read shows a recovery bar and a recovery/effort t
 
 test('read surfacing: coach strip tooltip includes recovery percentage', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const stripFn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 800);
+  const stripFn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 1700);
   assert.match(stripFn, /recovered/, 'strip tooltip must mention recovery when present');
   assert.match(stripFn, /p\.recovery/, 'strip must read the recovery field');
 });
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v86/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v85\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v87/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v86\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6085,7 +6085,7 @@ test('polish: coach-read-strip container exists in Coach surface', () => {
 test('polish: renderCoachReadStrip renders compact dots and pick text', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /function renderCoachReadStrip\(/, 'function must exist');
-  const fn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 1100);
+  const fn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 2000);
   assert.match(fn, /coach-read-strip/, 'must target the strip container');
   assert.match(fn, /strip-dot/, 'must render compact dots');
   assert.match(fn, /strip-rec/, 'must render pick text');
@@ -6686,4 +6686,37 @@ test('cold-start: transport failures surface the honest waking-up copy, never fo
   assert.match(fn, /nothing was saved/, 'the copy states the trust-relevant fact plainly');
   const uses = appSource.match(/friendlyTransportMessage\(err\)/g) || [];
   assert.ok(uses.length >= 2, 'wired at both Preview-failed surfaces');
+});
+
+// --- Composer-first Phase A: the glance line (read-strip upgrade, Invariant I1) ---
+
+test('glance line: streak joins the strip verbatim from the summary; renders whatever subset exists', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 2000);
+  assert.match(fn, /function renderCoachReadStrip\(data, summary\)/, 'the strip now consumes both dashboard fetches');
+  assert.match(fn, /Number\(summary\.weekly_streak \|\| 0\)/, 'streak is the engine number verbatim');
+  assert.match(fn, /!patterns\.length && !\(streak > 0\)\) return/, 'empty state stays empty — no invented content');
+  assert.match(fn, /strip-streak/, 'streak renders as its own strip chunk');
+  assert.match(appSource, /renderCoachReadStrip\(intentData, summaryData\)/, 'call site passes the summary');
+});
+
+test('glance line: retired #suggestion-chips selectors swept from CSS (review #803 follow-up)', () => {
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.doesNotMatch(css, /\.suggestion-chips\s*\{/, 'orphaned block removed');
+  assert.doesNotMatch(css, /#suggestion-chips\s*[,{]/, 'orphaned selector removed');
+  assert.match(css, /\.strip-streak/, 'the streak chunk is styled');
+});
+
+test('glance line: the strip is actually VISIBLE — never in a display:none rule (review #804 blocker)', () => {
+  // Strip comments first so a selector mentioned in prose can't false-positive.
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  // The id selector in the legacy hide group silently out-specified the class
+  // rules and shipped the feature invisible. Guard the whole class of bug: the
+  // strip id must never appear in any rule that sets display:none; the ONLY
+  // allowed hide is the class :empty collapse.
+  for (const m of css.matchAll(/(^|\})([^{}]*#coach-read-strip[^{}]*)\{([^}]*)\}/g)) {
+    assert.doesNotMatch(m[3], /display\s*:\s*none/,
+      `#coach-read-strip must not be display:none (rule: ${m[2].trim()})`);
+  }
+  assert.match(css, /\.coach-read-strip:empty \{ display: none; \}/, 'the empty state still collapses');
 });

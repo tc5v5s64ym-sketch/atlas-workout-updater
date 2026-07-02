@@ -760,6 +760,7 @@ body[data-surface="coach"] main {
   margin: 0 0 var(--s5);
 }
 .coach-read-strip:empty { display: none; }
+.strip-streak { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); white-space: nowrap; }
 .strip-dots { display: flex; gap: 7px; align-items: center; }
 .strip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); display: inline-block; }
 .strip-rec { font-size: 0.78rem; color: var(--muted); }
@@ -788,12 +789,6 @@ body[data-surface="coach"] main {
 /* Composer-first Phase A: state-driven chips in the hero — sentences, not menus. */
 .coach-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
 .coach-chips:empty { display: none; }
-.suggestion-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
-  margin-bottom: var(--s4);
-}
 .chip {
   appearance: none;
   -webkit-appearance: none;
@@ -2414,11 +2409,13 @@ a.lift-link:hover { text-decoration: underline; }
 /* ===== Conversation-first Coach home ===== */
 
 /* Legacy coach chrome is superseded by the Suggested Workout tile + chat.
-   Kept in the DOM (renderers/handlers still target them) but not surfaced. */
+   Kept in the DOM (renderers/handlers still target them) but not surfaced.
+   #coach-read-strip left this group on 2026-07-02: the composer-first Phase A
+   glance line surfaces it deliberately (adopted design; the .coach-read-strip
+   :empty rule governs the empty state). Review #804 caught that the id
+   selector here was silently overriding the class rules. */
 #coach-plan-card,
-#weekly-coach-card,
-#coach-read-strip,
-#suggestion-chips { display: none; }
+#weekly-coach-card { display: none; }
 
 /* Empty-state hero — greeting + tagline + tiles near the top; composer stays pinned at bottom */
 .coach-empty {

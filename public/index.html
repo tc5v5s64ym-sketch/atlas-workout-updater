@@ -70,10 +70,11 @@
            failed fetch leaves it hidden so logging is never blocked. -->
       <div id="weekly-coach-card" class="card coach-plan-card" hidden></div>
 
-      <!-- Compatibility containers for the read-only coach chrome. The minimal
-           home doesn't surface them (CSS-hidden), but renderCoachReadStrip()
-           still targets the strip and the old chip actions remain wired for the
-           tiles, so nothing that references them breaks. -->
+      <!-- The glance line (composer-first Phase A): one row of passive state —
+           streak · readiness dots · today's label — populated by
+           renderCoachReadStrip() from the startup dashboard fetches. Surfaced
+           deliberately since 2026-07-02 (it was CSS-hidden legacy chrome
+           before); the :empty rule collapses it when there is nothing to show. -->
       <div id="coach-read-strip" class="coach-read-strip"></div>
       <!-- The deprecated static #suggestion-chips strip was retired here
            (composer-first Phase A, 2026-07-02): its chips routed through a
