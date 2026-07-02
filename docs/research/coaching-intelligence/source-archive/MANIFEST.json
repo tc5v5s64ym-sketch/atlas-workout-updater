@@ -1,7 +1,7 @@
 {
   "_meta": {
     "status": "complete",
-    "note": "PDF binaries are present. Checksums verified 2026-06-30; source 05 added and checksummed 2026-07-01. Source 06 is a markdown-native research paper (not a PDF), added and checksummed 2026-07-01."
+    "note": "PDF binaries are present. Checksums verified 2026-06-30; source 05 added and checksummed 2026-07-01. Sources 06 and 07 are markdown-native research papers (not PDFs), added and checksummed 2026-07-01 and 2026-07-02 respectively."
   },
   "documents": [
     {
@@ -75,6 +75,24 @@
         "Personalization and individual response profiles",
         "Long-term programming (tenure/aging arc)",
         "Coach communication evolution (note-tier destination)"
+      ]
+    },
+    {
+      "id": "07-the-feel-of-atlas",
+      "filename": "07-the-feel-of-atlas.md",
+      "title": "The Feel of Atlas — Why Conversation Feels Effortless, How Coaching Actually Works, and What Atlas Must Feel Like for Ten Years",
+      "origin": "Owner deep-research commission (2026-07-02); fan-out research harness (5 search angles, 22 primary-source extractions, 103 sourced claims) plus synthesis. Interaction-philosophy research guidance only — no roadmap or implementation items.",
+      "date_ingested": "2026-07-02",
+      "checksum_sha256": "89d6c5a6d27c599f7c7fc8176edd18620b4b1b172316f4e77a5769a8e2889318",
+      "topics": ["conversational effortlessness (grounding, interactive alignment, turn-taking)", "guided-vs-freestyle coaching spectrum (inferred posture)", "conversational intent model (visible/hidden intent)", "the rhythm of coaching (Wooden observation data, feedback research)", "athlete conversation-state model (16 human states)", "complete workout conversation models", "failure modes and trust destruction (sycophancy, nagging, abandonment)", "relationship evolution day 1 to year 10", "the 100 interaction principles"],
+      "supports": [
+        "Coach voice, verbosity, and silence rules",
+        "Conversation Contract behavior dials (ask vs assume, challenge, proactivity)",
+        "Intent Router conversational-intent design",
+        "Athlete-state-aware coach responses",
+        "Celebration / praise / motivation policy",
+        "Failure-mode review of any coach-surface change",
+        "Long-horizon voice compression (with source 06)"
       ]
     }
   ]
