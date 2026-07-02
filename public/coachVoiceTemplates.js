@@ -148,6 +148,17 @@
     return 'Hold this load next time — that effort earned a repeat, not a jump.';
   }
 
+  // PR-4 (composer-first Phase 0a) — tier-aware brevity for the DETERMINISTIC note
+  // paths. The engine's coachNoteTier decides how much the fallback voice says: a
+  // brief tier renders the headline only, trimming SUPPLEMENTARY lines (the
+  // next-move heads-up, the substitution ack). The recovery read is safety-class
+  // and is never gated on this — a brevity tier must not silence a back-off
+  // signal. Per-set notes carry no tier (null) and are never brief, so existing
+  // set-by-set output is byte-identical. Pure predicate; no wording, no numbers.
+  function isBriefTier(tier) {
+    return tier === 'short' || tier === 'ack_only';
+  }
+
   const exported = {
     liftLabel,
     templatedSubstitutionLine,
@@ -156,6 +167,7 @@
     templatedRecoveryAdvisoryLine,
     governorOverridesProgressionInvite,
     templatedGovernorHoldLine,
+    isBriefTier,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

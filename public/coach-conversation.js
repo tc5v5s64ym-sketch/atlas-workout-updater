@@ -891,8 +891,15 @@
     // renderer wins over the templated classification copy; for a non-pivot swap the
     // template still words it. Computed once so every return path below can append it.
     const sub = facts.substitution;
-    const subLine = (subVoice && subVoice.primary_line)
-      || (sub && sub.classification ? coachVoiceTemplates.templatedSubstitutionLine(sub) : null);
+    // PR-4 (composer-first Phase 0a) — tier-aware brevity on the deterministic
+    // paths: a 'short'-tier block renders the headline ONLY, trimming the
+    // supplementary lines (next-move heads-up, substitution ack). Per-set notes
+    // carry no tier (null) → never brief → output byte-identical to before.
+    // The recovery read below is deliberately NOT gated on `brief` — it is a
+    // safety-class back-off signal and a brevity tier must never silence it.
+    const brief = coachVoiceTemplates.isBriefTier(data && data.note_tier);
+    const subLine = brief ? null : ((subVoice && subVoice.primary_line)
+      || (sub && sub.classification ? coachVoiceTemplates.templatedSubstitutionLine(sub) : null));
     const withSub = base => (subLine ? base + '\n\n' + subLine : base);
     // PR 484 — deterministic LLM-down voicing of the training-intelligence advisories.
     // When Gemini is down the engine's next-move heads-up (Fatigue Router) and recovery
@@ -900,7 +907,7 @@
     // them so the engine's intelligence is never lost to an outage. When the LLM
     // answered, it already worded them (coach prompt rules), so these are appended on
     // the DETERMINISTIC paths ONLY — never on the LLM-prose path (which would duplicate).
-    const nextMoveLine = data ? coachVoiceTemplates.templatedNextMoveAdvisoryLine(data.next_move_advisory) : null;
+    const nextMoveLine = (data && !brief) ? coachVoiceTemplates.templatedNextMoveAdvisoryLine(data.next_move_advisory) : null;
     const recoveryLine = data ? coachVoiceTemplates.templatedRecoveryAdvisoryLine(data.recovery_advisory) : null;
     const joinLines = (...lines) => lines.filter(Boolean).join('\n\n');
     // Deterministic Coach Voice Renderer wins. When a non-neutral set-effort signal
