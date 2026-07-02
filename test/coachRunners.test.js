@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildRunners, safetyRunner, confidenceRunner, scenarioClassifierRunner, progressionRunner,
-  sessionGeneratorRunner,
+  constraintResolverRunner, sessionGeneratorRunner,
 } = require('../services/coachRunners');
 const { buildIntentEnvelope } = require('../services/intentEnvelope');
 const { assembleState } = require('../services/stateAssembly');
@@ -256,5 +256,73 @@ describe('shadow composition — best_workout → answered workout (first full B
     const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
     assert.strictEqual(validateCoachingDecision(brian).valid, true);
     assert.strictEqual(brian.decision_type, 'clarification_needed');
+  });
+});
+
+// ─── constraint_resolver adapter (stored Constraints tab → the Brain) ─────────
+
+describe('constraintResolverRunner', () => {
+  it('merges stored rows with request constraints', () => {
+    const f = constraintResolverRunner({
+      snapshot: { constraints_active: [['2026-07-01', 'preference', 'Leg Press', 'avoid', null]] },
+      envelope: env('best_workout', { focus: 'lower_body' }),
+    });
+    assert.deepEqual(f.constraints.exclude_exercises, ['Leg Press']);
+    assert.strictEqual(f.constraints.focus, 'lower_body');
+    assert.equal(f.applied.length, 1);
+  });
+  it('null when nothing is stored and nothing is requested', () => {
+    assert.strictEqual(
+      constraintResolverRunner({ snapshot: { constraints_active: [] }, envelope: env('best_workout', {}) }),
+      null
+    );
+  });
+  it('never throws on garbage', () => assert.doesNotThrow(() => constraintResolverRunner(null)));
+});
+
+describe('sessionGeneratorRunner — consumes the RESOLVED constraints', () => {
+  it('a stored "avoid Bench Press" (via ctx.results) drops the bench block', () => {
+    const snapshot = { asOf: ASOF, log_history: fullBodyRows() };
+    const withBench = sessionGeneratorRunner({ snapshot, envelope: env('best_workout', {}) });
+    assert.ok(withBench.decision.payload.blocks.some(b => b.exercise === 'Bench Press'), 'baseline must include bench');
+
+    const resolved = constraintResolverRunner({
+      snapshot: { ...snapshot, constraints_active: [['2026-07-01', 'preference', 'Bench Press', 'avoid', null]] },
+      envelope: env('best_workout', {}),
+    });
+    const f = sessionGeneratorRunner({
+      snapshot, envelope: env('best_workout', {}),
+      results: { constraint_resolver: resolved },
+    });
+    assert.ok(f && f.decision, 'still builds a session');
+    assert.ok(!f.decision.payload.blocks.some(b => b.exercise === 'Bench Press'), 'stored avoid must shape the session');
+  });
+  it('falls back to the raw envelope constraints when the resolver produced nothing', () => {
+    const f = sessionGeneratorRunner({
+      snapshot: { asOf: ASOF, log_history: fullBodyRows() },
+      envelope: env('best_workout', { focus: 'lower_body' }),
+      results: { constraint_resolver: null },
+    });
+    assert.ok(f.decision.payload.blocks.every(b => ['squat', 'hinge'].includes(b.pattern)), 'envelope focus still applies');
+  });
+});
+
+describe('shadow composition — stored Constraints rows shape the generated workout end-to-end', () => {
+  it('Constraints-tab "avoid Bench Press" flows reader → snapshot → resolver → generator', async () => {
+    const readers = {
+      getLogRows: async () => fullBodyRows(),
+      readDeloadState: async () => null,
+      getProfile: async () => ({ profile_goal: 'general-fitness', training_level: 'intermediate', population: 'general' }),
+      getConstraints: async () => [['2026-07-01', 'preference', 'Bench Press', 'avoid', null]],
+    };
+    const envelope = env('best_workout', {});
+    const snapshot = await assembleState({ readers, asOf: ASOF });
+    assert.equal(snapshot.constraints_active.length, 1, 'snapshot hydrates the stored rows');
+    const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
+    assert.strictEqual(validateCoachingDecision(brian).valid, true);
+    assert.strictEqual(brian.decision_type, 'workout');
+    assert.ok(brian.provenance.modules_run.includes('constraint_resolver'), 'the resolver ran on the shadow path');
+    assert.ok(!brian.payload.blocks.some(b => b.exercise === 'Bench Press'),
+      'a saved avoid now shapes what the coach GENERATES, not just what it says');
   });
 });

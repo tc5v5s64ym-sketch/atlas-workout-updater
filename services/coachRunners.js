@@ -21,6 +21,7 @@ const { queryTrend }            = require('./memoryModule');
 const { classifyScenario }      = require('./scenarioClassifier');
 const { recommendProgression }  = require('./progressionModule');
 const { buildSession }          = require('./sessionGenerator');
+const { resolveConstraints }    = require('./constraintResolver');
 // Shared per-lift prescription pipeline (the canonical home for these helpers).
 const { deriveLiftState, derivePlateau, lastWorkingSet, isOverperforming } = require('./liftPrescription');
 
@@ -132,12 +133,32 @@ function progressionRunner(ctx) {
   return { decision: { payload, explanation_inputs } };
 }
 
+// constraint_resolver → { constraints, applied, ignored } | null (in ctx.results)
+// Merges the stored Constraints-tab rows (snapshot.constraints_active) with the
+// per-request envelope constraints into ONE engine-shape constraints object —
+// so a saved "avoid overhead press" shapes the generated session, not just
+// chat prose. Null when there is nothing stored AND nothing requested.
+function constraintResolverRunner(ctx) {
+  const snapshot = ctx && ctx.snapshot;
+  const envelope = ctx && ctx.envelope;
+  const stored = snapshot && Array.isArray(snapshot.constraints_active) ? snapshot.constraints_active : [];
+  const request = envelope && _isObj(envelope.constraints) ? envelope.constraints : {};
+  if (!stored.length && !Object.keys(request).length) return null;
+  return resolveConstraints({ stored, request });
+}
+
 // session_generator → { decision: { payload, explanation_inputs } } | null
-// Builds a full workout from the snapshot + envelope constraints.
+// Builds a full workout from the snapshot + the RESOLVED constraints (stored
+// rules merged with the request by the constraint_resolver runner, which the
+// manifest orders first); falls back to the raw envelope constraints when the
+// resolver produced nothing.
 function sessionGeneratorRunner(ctx) {
   const snapshot = ctx && ctx.snapshot;
   const envelope = ctx && ctx.envelope;
-  const constraints = envelope && _isObj(envelope.constraints) ? envelope.constraints : {};
+  const resolved = ctx && ctx.results && ctx.results.constraint_resolver;
+  const constraints = resolved && _isObj(resolved.constraints)
+    ? resolved.constraints
+    : (envelope && _isObj(envelope.constraints) ? envelope.constraints : {});
   const r = buildSession(snapshot, constraints);
   if (!r || !_isObj(r.payload)) return null;
   return { decision: { payload: r.payload, explanation_inputs: r.explanation_inputs } };
@@ -151,6 +172,7 @@ function buildRunners() {
     confidence:          confidenceRunner,
     scenario_classifier: scenarioClassifierRunner,
     progression:         progressionRunner,
+    constraint_resolver: constraintResolverRunner,
     session_generator:   sessionGeneratorRunner,
   };
 }
@@ -161,5 +183,6 @@ module.exports = {
   confidenceRunner,
   scenarioClassifierRunner,
   progressionRunner,
+  constraintResolverRunner,
   sessionGeneratorRunner,
 };
