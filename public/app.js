@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v88';
+const ATLAS_SHELL_BUILD = 'v89';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1660,6 +1660,23 @@ function renderTodaysPick(data) {
   if (whyLines.length > 1) {
     box.appendChild(el('p', { class: 'today-pick-reason muted', text: whyLines[1] }));
   }
+
+  // Composer-first Phase B: the card is a LINK into the canonical in-thread
+  // Coach's Pick, not a second recommendation home of its own.
+  const link = el('button', { type: 'button', class: 'today-pick-link', text: 'Open with your coach →' });
+  link.addEventListener('click', openCoachPickInThread);
+  box.appendChild(link);
+}
+
+// Composer-first Phase B — the ONE canonical recommendation. Every "today's
+// recommendation" entry point (pick card, START SESSION, nav's session link)
+// lands here: switch to the coach surface and render the same in-thread
+// Coach's Pick the hero tile uses (window.atlasOpenCoachPick, which engages
+// the suggestion). The intent DRAWER remains only for the non-recommended
+// "Other training options" grid.
+function openCoachPickInThread() {
+  document.getElementById('surface-coach')?.click();
+  if (typeof window.atlasOpenCoachPick === 'function') window.atlasOpenCoachPick();
 }
 
 function buildConsistencyText(s) {
@@ -1690,16 +1707,14 @@ function wireStartSessionBtn(data) {
   if (!btn) return;
   if (!data) { btn.hidden = true; return; }
   const recommended = (data.intents || []).find(i => i.recommended);
-  const firstEx = recommended ? normalizePlanExercise(recommended.exercises?.[0]) : null;
 
-  if (firstEx && firstEx.name) {
+  // Composer-first Phase B: the recommendation's action routes to the ONE
+  // canonical in-thread Coach's Pick (typeSuggestedWorkout handles both the
+  // structured-plan and no-exercises cases), never a second drawer home.
+  if (recommended) {
     btn.textContent = 'START SESSION';
     btn.hidden = false;
-    btn.onclick = () => openIntentDrawer(recommended);
-  } else if (recommended) {
-    btn.textContent = 'See options';
-    btn.hidden = false;
-    btn.onclick = () => openIntentDrawer(recommended);
+    btn.onclick = openCoachPickInThread;
   } else {
     btn.hidden = true;
   }
@@ -2335,18 +2350,11 @@ document.addEventListener('atlas:plan-edit-proposed', e => {
   } catch { /* diagnostic event is optional */ }
 });
 
-// Open the recommended workout as a Today Session Plan (reuses the intent
-// drawer). Read-only fetch; failure is silent so logging is never blocked.
-async function openTodaySessionPlan() {
-  if (!getApiKey()) return;
-  try {
-    const res = await api('/api/plan/intent-recommendation');
-    const intents = res.data?.intents || [];
-    const recommended = intents.find(i => i.recommended) || intents.find(i => i.id !== 'custom') || intents[0];
-    if (recommended) openIntentDrawer(recommended);
-  } catch {
-    // best-effort — never block the logger
-  }
+// Open the recommended workout — Composer-first Phase B: routes to the ONE
+// canonical in-thread Coach's Pick (which does its own read-only fetch and
+// degrades gracefully), no longer a second drawer rendering of the same pick.
+function openTodaySessionPlan() {
+  openCoachPickInThread();
 }
 
 // Phrases that ask for the recommended workout rather than logging a set.

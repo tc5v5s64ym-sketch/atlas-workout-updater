@@ -1518,6 +1518,13 @@
     }
   });
 
+  // Composer-first Phase B — ONE canonical recommendation. Every "today's
+  // recommendation" entry point outside this file (the Today tab's pick card,
+  // its START SESSION button, nav.js's "Open today's session" link) routes to
+  // this same in-thread Coach's Pick instead of a second drawer/card home, so
+  // the pick renders once, in one place, with one engagement semantic.
+  window.atlasOpenCoachPick = typeSuggestedWorkout;
+
   // Composer-first Phase A — the coach speaks first. The greeting renders
   // instantly and synchronously (deterministic — the hero is never blank), then
   // the opening line upgrades from ENGINE state via one read-only GET
