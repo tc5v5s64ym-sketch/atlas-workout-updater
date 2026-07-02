@@ -61,6 +61,7 @@ function buildCoachSystemPrompt() {
     '- IRON RULE — derive effort from effort_verdict ONLY, never from raw RIR values in the facts: RIR 2 is solid working effort, NOT failure and NOT a grind. The words "failure", "barely made it", "grinding", "pushed to failure", "edge of failure", "near-failure", or any synonym for rep failure MUST NOT appear unless effort_verdict.level is "failure". RIR 0 in the facts does NOT by itself mean failure — only the engine\'s verdict does. Never supplement or contradict effort_verdict with your own RIR math.',
     '- The facts may include "progression_verdict" {level, range_low, range_high, ceiling, headline} — the engine\'s read of where today\'s top working set sits against the lifter\'s OWN recent working range. WORD it, never contradict it (same discipline as effort_verdict): "under_shot" = today is below their range_low–range_high band, so call out the under-shot with a spine (no reason to be light here); "in_pocket" = solidly inside the band, box checked — say so and hold the line, do not tell them to go heavier; "maintenance_drift" = inside the band but drifting toward the low end; "progressing" = pushing the top of the band upward; "new_ground" = today clears the ceiling they had beaten before. Read today AGAINST the range and reference the band when it is present.',
     '- The facts may include "deload" {active, protocol_id, load_pct, target_rir, sessions_remaining} — when present with active true, today is a DELOAD the engine is running. Frame the whole note as a deload: name it plainly, and make clear the reduced load (~{load_pct}% of the normal working weight), the fewer sets, and the high RIR (target {target_rir}, well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. When sessions_remaining is present, note how many easy sessions are left and that normal training resumes after. This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
+    '- The facts may include "session_intent" — the PRESCRIBED objective of today\'s session (the plan the lifter is following). When it is "recovery_pump" or "deload_reset", today is a planned recovery/pump day: the light loads and high RIR are BY DESIGN — they are what the plan asked for. A below-range or easy read here is ON-PLAN compliance, NOT under-effort: do NOT call the session light as a criticism, and do NOT tell them to add weight, push harder, or get "back in the groove" / back to their working range — not in the opening line and not anywhere. Word progression_verdict "under_shot" as intentional ("light by design today"), never as a shortfall. Like an active deload, session_intent OVERRIDES the add-weight steer of effort_verdict ("easy"/"far_easy" is the goal today). The forward-looking line is about banking recovery and returning to normal loads next session — never a load target. Still never invent numbers, and never contradict the other verdicts.',
     '- The facts may include "substitution" {classification, decision, quality, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
     '- `substitution.quality` (when present) is the engine\'s read of how well the swap preserves the stimulus: "poor" → VOLUNTEER it — say plainly what muscle or training intent today\'s swap missed (e.g. the prescribed lift\'s target did not get trained); "acceptable" → at most one line on the tradeoff (lighter / still covers the area), no warning; "excellent" → a clean equivalent, a brief acknowledgement is fine. NEVER call a swap good, equivalent, or say it "counts" unless quality is "excellent" or "acceptable". If quality is absent or "unknown", do NOT judge the swap\'s quality at all — only restate the decision. No praise for ordinary compliance.',
     '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite `trend.sessions_analyzed` as the session count ("Based on your last N sessions…") when present, the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number. NEVER derive a session count by counting the `reference_sets` array — those are individual sets, not sessions, and counting them would give the wrong number.',
@@ -166,7 +167,15 @@ function sanitizeFacts(facts) {
     // onboardingState ('calibrating' = 0–2 logged sessions, no recommendation yet;
     // 'graduated' = ≥3). When 'calibrating' the note frames a load as a conservative
     // START HINT only, never a verdict/recommendation, and never "dialed in".
-    calibration_status: sanitizeCalibrationStatus(f.calibration_status ?? rec.calibration_status)
+    calibration_status: sanitizeCalibrationStatus(f.calibration_status ?? rec.calibration_status),
+    // The PRESCRIBED session objective when it is a recovery one ('recovery_pump' /
+    // 'deload_reset') — the Coach's Pick plan the lifter is following. Whitelisted to
+    // the two recovery intents only; anything else → null (no gate, normal voice).
+    // When present the prompt frames light/high-RIR work as on-plan by design and
+    // forbids the add-weight / "get back in the groove" steer (BUG recurrence of
+    // -204817: the prescribed intent never reached the LLM facts, so the note
+    // scolded the exact loads the plan prescribed).
+    session_intent: sanitizeSessionIntent(f.intentId)
   };
 }
 
@@ -177,6 +186,18 @@ const CALIBRATION_STATUSES = ['calibrating', 'graduated'];
 function sanitizeCalibrationStatus(value) {
   const s = strOrNull(value);
   return s && CALIBRATION_STATUSES.includes(s) ? s : null;
+}
+
+// Whitelist the prescribed session intent — ONLY the two recovery objectives ever
+// reach the model (they flip the voice to "light by design"); every other intent
+// (build_strength, custom, garbage, absent) → null, which the prompt reads as
+// "no gate" (normal verdict voice). Keep in lockstep with the recovery-intent
+// lists in index.js (computeSetEffortExtras / the recommend-next route) and
+// services/analytics.js (recommendNextSet).
+const RECOVERY_SESSION_INTENTS = ['recovery_pump', 'deload_reset'];
+function sanitizeSessionIntent(value) {
+  const s = strOrNull(value);
+  return s && RECOVERY_SESSION_INTENTS.includes(s) ? s : null;
 }
 
 // Whitelist the Stimulus Governor grade — only the controlled-enum fields survive.
@@ -1281,6 +1302,7 @@ module.exports = {
   sanitizeStimulusGrade,
   sanitizeNextMoveAdvisory,
   sanitizeRecoveryAdvisory,
+  sanitizeSessionIntent,
   sanitizeSubstitution,
   sanitizeDeviation,
   sanitizeEvidenceContext,
