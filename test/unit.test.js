@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v88/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v89/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v88/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v87\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v89/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v88\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6752,4 +6752,44 @@ test('session pin: hidden by default and never trapped in a display:none rule', 
     assert.doesNotMatch(m[3], /display\s*:\s*none/, `#session-pin must not be display:none (rule: ${m[2].trim()})`);
   }
   assert.match(css, /\.session-pin\[hidden\] \{ display: none; \}/, 'the attribute hide is the only allowed hide');
+});
+
+// --- Composer-first Phase B: one canonical recommendation ---
+
+test('canonical pick: the conversation layer exports the ONE in-thread Coach\'s Pick lane', () => {
+  const conv = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(conv, /window\.atlasOpenCoachPick = typeSuggestedWorkout/,
+    'the hero tile\'s typeSuggestedWorkout IS the canonical lane, exported once');
+});
+
+test('canonical pick: every Today-tab recommendation entry point routes into the in-thread pick', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // The shared router: switch surface, then the exported conversation lane.
+  const routeFn = appSource.slice(appSource.indexOf('function openCoachPickInThread('), appSource.indexOf('function openCoachPickInThread(') + 400);
+  assert.match(routeFn, /surface-coach/, 'must land the lifter on the coach surface first');
+  assert.match(routeFn, /window\.atlasOpenCoachPick/, 'must call the exported canonical lane');
+
+  // The pick card is a LINK into it, not a second home.
+  const pickFn = appSource.slice(appSource.indexOf('function renderTodaysPick('), appSource.indexOf('function renderTodaysPick(') + 1800);
+  assert.match(pickFn, /today-pick-link/, 'the card renders the link affordance');
+  assert.match(pickFn, /openCoachPickInThread/, 'the link routes to the canonical pick');
+
+  // START SESSION and the nav "Open today's session" link use the same router —
+  // the drawer is no longer a recommendation home.
+  const startFn = appSource.slice(appSource.indexOf('function wireStartSessionBtn('), appSource.indexOf('function wireStartSessionBtn(') + 900);
+  assert.match(startFn, /openCoachPickInThread/, 'START SESSION routes to the canonical pick');
+  assert.doesNotMatch(startFn, /openIntentDrawer/, 'START SESSION must not open the drawer');
+  const planFn = appSource.slice(appSource.indexOf('function openTodaySessionPlan('), appSource.indexOf('function openTodaySessionPlan(') + 300);
+  assert.match(planFn, /openCoachPickInThread/, 'openTodaySessionPlan routes to the canonical pick');
+  assert.doesNotMatch(planFn, /openIntentDrawer/, 'openTodaySessionPlan must not open the drawer');
+});
+
+test('canonical pick: the intent drawer survives for the Other-training-options grid (no overreach)', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /function openIntentDrawer\(/, 'the drawer itself is NOT removed in Phase B1');
+  const gridFn = appSource.slice(appSource.indexOf('function renderIntentGrid('), appSource.indexOf('function renderIntentGrid(') + 900);
+  assert.match(gridFn, /openIntentDrawer/, 'grid tiles still open the drawer — tiles become conversation in a later phase');
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.today-pick-link/, 'the link affordance is styled');
 });
