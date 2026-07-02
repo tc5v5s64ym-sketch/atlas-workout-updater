@@ -1595,7 +1595,15 @@ function renderGlanceArtifact() {
 
   const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas' });
   bubble.appendChild(wrap);
-  thread.appendChild(bubble);
+  // Re-tap refreshes rather than clutters (review #808): if the newest thread
+  // message is already a glance artifact, replace it in place; only append
+  // when the conversation has moved on since the last expansion.
+  const last = thread.lastElementChild;
+  if (last && last.querySelector && last.querySelector('.glance-artifact')) {
+    last.replaceWith(bubble);
+  } else {
+    thread.appendChild(bubble);
+  }
   requestAnimationFrame(() => bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
 }
 

@@ -6846,13 +6846,17 @@ test('glance expansion: the strip becomes tappable and expands into a read-only 
   assert.match(stripFn, /setAttribute\('role', 'button'\)/, 'the strip is announced as a button');
 
   // The artifact words ONLY cached facts — no fetch, no LLM, no write.
-  const artFn = appSource.slice(appSource.indexOf('function renderGlanceArtifact('), appSource.indexOf('function renderGlanceArtifact(') + 2200);
+  const artFn = appSource.slice(appSource.indexOf('function renderGlanceArtifact('), appSource.indexOf('function renderGlanceArtifact(') + 2800);
   assert.match(artFn, /if \(!lastGlanceData\) return/, 'an early tap (no data yet) is a no-op');
   assert.doesNotMatch(artFn, /\bapi\(/, 'the expansion performs NO network call — cached facts only');
   assert.match(artFn, /buildConsistencyText\(summary\)/, 'streak/week facts reuse the deterministic consistency line');
   assert.match(artFn, /FRIENDLY_PATTERN_LABELS/, 'per-pattern rows use the same friendly labels as the strip');
   assert.match(artFn, /chat-bubble chat-bubble-atlas/, 'the artifact renders as an in-thread Atlas bubble');
   assert.match(artFn, /surface-progress/, 'the Full-progress link keeps the Progress surface reachable (evidence-first demotion)');
+  // Re-tap refreshes in place (review #808): a trailing glance artifact is
+  // replaced, never stacked.
+  assert.match(artFn, /last\.replaceWith\(bubble\)/, 're-tap replaces the trailing artifact instead of stacking');
+  assert.match(artFn, /querySelector\('\.glance-artifact'\)/, 'dedup keys on the artifact marker class');
 
   // Wired for tap and keyboard.
   assert.match(appSource, /coach-read-strip'\)\?\.addEventListener\('click', renderGlanceArtifact\)/, 'tap expands the glance line');
