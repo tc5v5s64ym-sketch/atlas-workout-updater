@@ -20,8 +20,11 @@
 //               deterministic "✅ logged" receipt with no commentary. This is the
 //               safe default — missing/garbage facts land here, never a fabricated
 //               note. Acknowledgment is NEVER throttled (voice invariants 4/5).
-//   short     → a mild signal worth one verdict line (in-pocket / holding / a
-//               climbing set / an on-target or grinder effort).
+//   short     → RESERVED / currently unused. Mild "on-plan" reads (in-pocket /
+//               holding / climbing progress, or an on-target / grinder effort) are
+//               receipt-only: they resolve to ack_only, NOT a note. Only the value
+//               triggers below earn prose (owner: routine logs are receipt-only).
+//               The value is kept in the vocabulary for a possible future one-line band.
 //   extended  → a value trigger fired; the coach spends words. Still conclusion-
 //               first, still ≤120 words (that ceiling lives in the voice layer).
 //
@@ -176,13 +179,18 @@ function classifyNoteTier(facts) {
   // 9. The user explicitly asked why.
   if (facts.asked_why === true) return extended(TRIGGERS.USER_ASKED_WHY, 'explicit_why');
 
-  // ── No value trigger: a mild signal earns one line, else just the receipt. ──
+  // ── No value trigger fired → acknowledgment only (the receipt/readback speaks,
+  //    the coach stays quiet). A merely on-plan set — in-range / holding / climbing
+  //    progress, or an on-target / grinder effort — is NOT worth a coaching note;
+  //    only the nine value triggers above earn prose (owner: routine logs are
+  //    receipt-only). The reason_code is preserved so the ack stays traceable (WHY
+  //    it went silent); the tier (ack_only) is what gates rendering.
   if (prog === 'in_pocket' || prog === 'maintenance_drift' || prog === 'progressing') {
-    return { tier: TIERS.SHORT, trigger: null, reason_code: prog };
+    return { tier: TIERS.ACK_ONLY, trigger: null, reason_code: prog };
   }
   const effort = _levelOf(facts.effort_verdict);
   if (effort === 'on_target' || effort === 'hard') {
-    return { tier: TIERS.SHORT, trigger: null, reason_code: `effort_${effort}` };
+    return { tier: TIERS.ACK_ONLY, trigger: null, reason_code: `effort_${effort}` };
   }
 
   // Routine, neutral, or nothing to read → acknowledgment only (never fabricate).

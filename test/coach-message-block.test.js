@@ -144,6 +144,41 @@ test('PR (new working ground) via rec → extended / pr_milestone, LLM prose sur
   assert.equal(body.data.message, 'New working best — clean bar speed.');
 });
 
+test('routine silence: an on-target / in-pocket block WITH a rec → ack_only, LLM not called', async () => {
+  // The live-test regression, through the route: a merely on-plan block (the
+  // conversation reaction passes rec.effort_verdict) must be receipt-only now.
+  resetCoach();
+  const facts = {
+    exerciseName: 'Cable Curl', muscleGroup: 'Arms',
+    todaySets: [{ weight: 40, reps: 12, rir: 3 }, { weight: 40, reps: 12, rir: 3 }, { weight: 40, reps: 12, rir: 3 }],
+    rec: { effort_verdict: { level: 'on_target' }, progression_verdict: { level: 'in_pocket' } },
+  };
+  const { res, body } = await postBlock(facts);
+  assert.equal(res.status, 200);
+  assert.equal(body.data.note_tier, 'ack_only', 'on-target/in-pocket block is receipt-only');
+  assert.equal(body.data.message, null, 'no coaching prose');
+  assert.equal(body.data.effort_note, null, 'no deterministic effort line either');
+  assert.equal(coachState.calls, 0, 'routine block must not call the LLM');
+});
+
+test('RIR 0 still speaks: a failure/redline block WITH an on-plan rec → extended (form_safety)', async () => {
+  // Routine silence must NOT swallow a genuine safety read: a top set at RIR 0
+  // fires FORM_SAFETY even though the rec verdict looks on-plan.
+  resetCoach();
+  const facts = {
+    exerciseName: 'Bench Press', muscleGroup: 'Chest',
+    todaySets: [{ weight: 225, reps: 5, rir: 2 }, { weight: 225, reps: 3, rir: 0 }],
+    rec: { effort_verdict: { level: 'on_target' }, progression_verdict: { level: 'in_pocket' } },
+  };
+  const { res, body } = await postBlock(facts);
+  assert.equal(res.status, 200);
+  assert.equal(body.data.note_tier, 'extended');
+  assert.equal(body.data.note_trigger, 'form_safety');
+  const note = (typeof body.data.message === 'string' && body.data.message.trim())
+    || (typeof body.data.effort_note === 'string' && body.data.effort_note.trim());
+  assert.ok(note, 'an RIR-0 block must still produce a note');
+});
+
 test('LLM failure on an interesting block → still 200, logging unaffected, note degrades to the engine line', async () => {
   resetCoach({ throwError: 'gemini exploded' });
   const { res, body } = await postBlock(REDLINE_BLOCK);

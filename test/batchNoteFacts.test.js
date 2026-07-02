@@ -49,11 +49,12 @@ describe('batchNoteFacts — canonical batch block', () => {
     assert.equal(r.facts.effort_verdict, null);
     assert.equal(r.facts.progression_verdict, null);
   });
-  it('takes engine verdicts from the supplied rec (in_pocket → short)', () => {
+  it('takes engine verdicts from the supplied rec (on-target/in_pocket → ack_only, receipt-only)', () => {
     const r = assembleBatchNoteFacts(block, {
       rec: { effort_verdict: verdict('on_target'), progression_verdict: verdict('in_pocket') },
     });
-    assert.equal(r.tier.tier, TIERS.SHORT);
+    // Routine on-plan reads are receipt-only now (coachNoteTier: mild → ack_only).
+    assert.equal(r.tier.tier, TIERS.ACK_ONLY);
     assert.equal(r.facts.progression_verdict.level, 'in_pocket');
   });
   it('a PR block (rec new_ground) → extended / pr_milestone', () => {
