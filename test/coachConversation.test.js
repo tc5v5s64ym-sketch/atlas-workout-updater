@@ -439,3 +439,35 @@ test('opening: the default tagline survives every failure path (element + copy i
   assert.match(html, /id="coach-opening" class="coach-empty-tagline">Let's get stronger\.</,
     'the cold-start/offline default is unchanged');
 });
+
+// --- Composer-first Phase A: state-driven chips (one code lane) ---
+
+test('chips: a chip click is byte-identical to typing — fills the composer and submits the form', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('function emitChipSentence'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
+  assert.match(fn, /input\.value = sentence;/);
+  assert.match(fn, /input\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\)/);
+  assert.match(fn, /form\.dispatchEvent\(new Event\('submit', \{ cancelable: true, bubbles: true \}\)\)/);
+  assert.doesNotMatch(fn, /api\(|atlasReply|chipAnswer/, 'chips never route through a second lane');
+});
+
+test('chips: state-chosen sets — history vs cold start — rendered inside the hero only', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('function renderCoachChips'), cc.indexOf('function emitChipSentence'));
+  assert.match(fn, /hero\.hasAttribute\('hidden'\)/, 'no chips once the conversation has started');
+  assert.match(fn, /'What are we doing today\?', 'Show my last session'/, 'returning-lifter sentences');
+  assert.match(fn, /'Build me a session'/, 'cold-start sentence');
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const chipsIdx = html.indexOf('id="coach-chips"');
+  const heroIdx = html.indexOf('id="coach-empty"');
+  const heroEnd = html.indexOf('id="learn-chips"');
+  assert.ok(chipsIdx > heroIdx && chipsIdx < heroEnd, '#coach-chips lives inside the hero');
+});
+
+test('chips: the deprecated static strip is gone; its in-thread handlers remain for reuse', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.equal(html.includes('id="suggestion-chips"'), false, 'the second-lane strip is retired');
+  const nav = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'nav.js'), 'utf8');
+  assert.doesNotMatch(nav, /getElementById\('suggestion-chips'\)/, 'its dead listener is removed');
+  assert.match(nav, /window\.atlasChipAnswerLast = chipAnswerLast/, 'the conversation layer still reuses chipAnswerLast');
+});

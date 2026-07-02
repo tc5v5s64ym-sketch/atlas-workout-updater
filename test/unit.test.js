@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v85/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v86/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v85/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v84\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v86/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v85\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6074,10 +6074,12 @@ test('polish: effort section is a direct form child accessible via + menu', () =
 test('polish: coach-read-strip container exists in Coach surface', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   assert.match(html, /id="coach-read-strip"/, 'strip container must exist in tab-logger');
-  // Must appear before suggestion chips (between greeting and chips)
+  // Must appear above the hero (the static #suggestion-chips strip was retired
+  // in composer-first Phase A; the hero's #coach-chips replaced it).
   const stripIdx = html.indexOf('id="coach-read-strip"');
-  const chipsIdx = html.indexOf('id="suggestion-chips"');
-  assert.ok(stripIdx < chipsIdx, 'strip must appear above suggestion chips');
+  const heroIdx = html.indexOf('id="coach-empty"');
+  assert.ok(stripIdx > -1 && heroIdx > -1 && stripIdx < heroIdx, 'strip must appear above the hero');
+  assert.equal(html.includes('id="suggestion-chips"'), false, 'the deprecated static chip strip is retired');
 });
 
 test('polish: renderCoachReadStrip renders compact dots and pick text', () => {
