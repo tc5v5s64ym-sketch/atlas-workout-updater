@@ -6706,3 +6706,17 @@ test('glance line: retired #suggestion-chips selectors swept from CSS (review #8
   assert.doesNotMatch(css, /#suggestion-chips\s*[,{]/, 'orphaned selector removed');
   assert.match(css, /\.strip-streak/, 'the streak chunk is styled');
 });
+
+test('glance line: the strip is actually VISIBLE — never in a display:none rule (review #804 blocker)', () => {
+  // Strip comments first so a selector mentioned in prose can't false-positive.
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  // The id selector in the legacy hide group silently out-specified the class
+  // rules and shipped the feature invisible. Guard the whole class of bug: the
+  // strip id must never appear in any rule that sets display:none; the ONLY
+  // allowed hide is the class :empty collapse.
+  for (const m of css.matchAll(/(^|\})([^{}]*#coach-read-strip[^{}]*)\{([^}]*)\}/g)) {
+    assert.doesNotMatch(m[3], /display\s*:\s*none/,
+      `#coach-read-strip must not be display:none (rule: ${m[2].trim()})`);
+  }
+  assert.match(css, /\.coach-read-strip:empty \{ display: none; \}/, 'the empty state still collapses');
+});
