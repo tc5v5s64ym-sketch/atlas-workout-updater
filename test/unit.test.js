@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v87/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v88/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5619,8 +5619,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v87/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v86\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v88/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v87\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6719,4 +6719,37 @@ test('glance line: the strip is actually VISIBLE — never in a display:none rul
       `#coach-read-strip must not be display:none (rule: ${m[2].trim()})`);
   }
   assert.match(css, /\.coach-read-strip:empty \{ display: none; \}/, 'the empty state still collapses');
+});
+
+// --- Composer-first Phase A: the session header pin ---
+
+test('session pin: derives from the canonical selectors and honors freestyle quiet (B9)', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const fn = appSource.slice(appSource.indexOf('function renderSessionPin('), appSource.indexOf('function renderSessionPin(') + 1600);
+  assert.match(fn, /remainingPlannedExercises\(\)/, 'reads the same canonical remaining list as the handoff');
+  assert.match(fn, /plannedExerciseOrder\(\)/, 'guided-ness derives from the engaged plan order');
+  assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'freestyle current = last logged lift');
+  assert.match(fn, /guided && remaining\.length > 1 \? remaining\[1\] : null/,
+    'next-up renders ONLY when guided — freestyle stays quiet (B9)');
+  assert.match(fn, /pin\.hidden = true/, 'hides when nothing is in progress');
+});
+
+test('session pin: wired to every session-state moment (log, plan render, reset)', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  assert.match(appSource, /document\.addEventListener\('atlas:session-reset', renderSessionPin\)/,
+    'the reset signal re-derives (and hides) the pin');
+  const emitFn = appSource.slice(appSource.indexOf('function emitSetLogged('), appSource.indexOf('function emitSetLogged(') + 6500);
+  assert.match(emitFn, /renderSessionPin\(\)/, 'every logged set refreshes the pin');
+  const bannerFn = appSource.slice(appSource.indexOf('function renderActiveSessionBanner('), appSource.indexOf('function renderActiveSessionBanner(') + 4000);
+  assert.match(bannerFn, /renderSessionPin\(\)/, 'plan engage/mutate/restore refresh the pin');
+});
+
+test('session pin: hidden by default and never trapped in a display:none rule', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="session-pin" class="session-pin" hidden/, 'starts hidden via the attribute');
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of css.matchAll(/(^|\})([^{}]*#session-pin[^{}]*)\{([^}]*)\}/g)) {
+    assert.doesNotMatch(m[3], /display\s*:\s*none/, `#session-pin must not be display:none (rule: ${m[2].trim()})`);
+  }
+  assert.match(css, /\.session-pin\[hidden\] \{ display: none; \}/, 'the attribute hide is the only allowed hide');
 });

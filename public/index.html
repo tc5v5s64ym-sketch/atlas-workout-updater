@@ -122,6 +122,14 @@
         </div>
       </div>
 
+      <!-- Composer-first Phase A: the session header pin — the ONE persistent
+           piece of in-workout UI (current lift · sets done · next up), sticky
+           above the thread. Derived from the same canonical session selectors
+           the plan card and handoff use; display-only; hidden whenever nothing
+           is in progress. Freestyle sessions omit "next" (B9: the Next UI stays
+           quiet during freestyle). -->
+      <div id="session-pin" class="session-pin" hidden></div>
+
       <!-- Conversation thread: user bubbles, Atlas coaching bubbles, the dry-run
            review panel, and write/status replies. -->
       <div id="coach-thread" class="coach-thread">
