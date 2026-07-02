@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v90';
+const ATLAS_SHELL_BUILD = 'v91';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1521,6 +1521,13 @@ function renderCoachReadStrip(data, summary) {
   const patterns = todaysRead.patterns || [];
   const streak = summary ? Number(summary.weekly_streak || 0) : 0;
   if (!patterns.length && !(streak > 0)) return;
+  // Composer-first Phase B3: the glance line is the tap-to-expand affordance —
+  // cache what it shows so the expansion artifact words the same facts.
+  lastGlanceData = { patterns, streak, summary: summary || null, todaysRead };
+  strip.setAttribute('role', 'button');
+  strip.tabIndex = 0;
+  strip.setAttribute('aria-label', 'Where you stand — tap for details');
+  strip.title = 'Tap for details';
   strip.innerHTML = '';
   if (streak > 0) {
     strip.appendChild(el('span', { class: 'strip-streak', text: `\u{1F525} ${streak}-wk streak` }));
@@ -1541,6 +1548,72 @@ function renderCoachReadStrip(data, summary) {
     strip.appendChild(el('span', { class: 'strip-rec', text: `Today: ${todaysRead.recommended_label}` }));
   }
 }
+
+/* ===== Glance expansion (composer-first Phase B3) =====
+ * Tapping the glance line expands it into an in-thread status artifact — the
+ * "1 row, tap→artifact" affordance of the adopted design. READ-ONLY and
+ * deterministic: it words only the facts the strip already holds (cached at
+ * render time — no fetch, no LLM, no write). The Progress tab keeps the full
+ * detail; this is its glance-expansion demotion, evidence-first. */
+let lastGlanceData = null;
+
+function renderGlanceArtifact() {
+  if (!lastGlanceData) return;
+  const thread = document.getElementById('thread-messages');
+  if (!thread) return;
+  const { patterns, streak, summary, todaysRead } = lastGlanceData;
+
+  const wrap = el('div', { class: 'glance-artifact' });
+  wrap.appendChild(el('div', { class: 'chip-reply-title', text: 'Where you stand' }));
+
+  if (summary) {
+    wrap.appendChild(el('div', { class: 'chip-reply-row', text: buildConsistencyText(summary) }));
+  } else if (streak > 0) {
+    wrap.appendChild(el('div', { class: 'chip-reply-row', text: `\u{1F525} ${streak}-week streak` }));
+  }
+
+  for (const p of patterns) {
+    const status = p.status || 'unknown';
+    const rawLabel = p.label || p.pattern;
+    const label = FRIENDLY_PATTERN_LABELS[rawLabel] || rawLabel;
+    const word = FRIENDLY_STATUS_WORDS[status] || status;
+    const recovery = p.recovery == null ? '' : ` · ${Math.round(p.recovery * 100)}% recovered`;
+    const days = p.daysSince == null ? '' : ` · last trained ${p.daysSince}d ago`;
+    wrap.appendChild(el('div', { class: `chip-reply-row glance-row-${status}`, text: `${label}: ${word}${recovery}${days}` }));
+  }
+
+  if (todaysRead.recommended_label) {
+    wrap.appendChild(el('div', { class: 'chip-reply-row', text: `Today: ${todaysRead.recommended_label}` }));
+  }
+
+  const more = el('a', { href: '#', class: 'chip-reply-more', text: 'Full progress →' });
+  more.addEventListener('click', ev => {
+    ev.preventDefault();
+    document.getElementById('surface-progress')?.click();
+  });
+  wrap.appendChild(more);
+
+  const bubble = el('div', { class: 'chat-bubble chat-bubble-atlas' });
+  bubble.appendChild(wrap);
+  // Re-tap refreshes rather than clutters (review #808): if the newest thread
+  // message is already a glance artifact, replace it in place; only append
+  // when the conversation has moved on since the last expansion.
+  const last = thread.lastElementChild;
+  if (last && last.querySelector && last.querySelector('.glance-artifact')) {
+    last.replaceWith(bubble);
+  } else {
+    thread.appendChild(bubble);
+  }
+  requestAnimationFrame(() => bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+}
+
+// One listener at startup; the strip only becomes tappable (role/tabindex set
+// in renderCoachReadStrip) once it has content, and the guard above makes an
+// early tap a no-op.
+document.getElementById('coach-read-strip')?.addEventListener('click', renderGlanceArtifact);
+document.getElementById('coach-read-strip')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); renderGlanceArtifact(); }
+});
 
 function renderIntentGrid(data) {
   const box = document.getElementById('intent-grid');

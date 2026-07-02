@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v90/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v91/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5620,8 +5620,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v90/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v89\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v91/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v90\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6833,6 +6833,43 @@ test('artifact route: submit path renders the deterministic artifact and falls t
   const artifactIdx = submitBlock.indexOf('looksLikeArtifactRequest');
   const logItIdx = submitBlock.indexOf('looksLikeLogIt');
   assert.ok(sessionIdx < artifactIdx && artifactIdx < logItIdx, 'route order is session → artifact → closeout');
+});
+
+// --- Composer-first Phase B3: glance expansion (tap → in-thread status artifact) ---
+
+test('glance expansion: the strip becomes tappable and expands into a read-only in-thread artifact', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+
+  // The strip caches its facts and advertises tappability when it has content.
+  const stripFn = appSource.slice(appSource.indexOf('function renderCoachReadStrip('), appSource.indexOf('function renderCoachReadStrip(') + 2400);
+  assert.match(stripFn, /lastGlanceData = \{ patterns, streak, summary/, 'the strip caches the facts it renders');
+  assert.match(stripFn, /setAttribute\('role', 'button'\)/, 'the strip is announced as a button');
+
+  // The artifact words ONLY cached facts — no fetch, no LLM, no write.
+  const artFn = appSource.slice(appSource.indexOf('function renderGlanceArtifact('), appSource.indexOf('function renderGlanceArtifact(') + 2800);
+  assert.match(artFn, /if \(!lastGlanceData\) return/, 'an early tap (no data yet) is a no-op');
+  assert.doesNotMatch(artFn, /\bapi\(/, 'the expansion performs NO network call — cached facts only');
+  assert.match(artFn, /buildConsistencyText\(summary\)/, 'streak/week facts reuse the deterministic consistency line');
+  assert.match(artFn, /FRIENDLY_PATTERN_LABELS/, 'per-pattern rows use the same friendly labels as the strip');
+  assert.match(artFn, /chat-bubble chat-bubble-atlas/, 'the artifact renders as an in-thread Atlas bubble');
+  assert.match(artFn, /surface-progress/, 'the Full-progress link keeps the Progress surface reachable (evidence-first demotion)');
+  // Re-tap refreshes in place (review #808): a trailing glance artifact is
+  // replaced, never stacked.
+  assert.match(artFn, /last\.replaceWith\(bubble\)/, 're-tap replaces the trailing artifact instead of stacking');
+  assert.match(artFn, /querySelector\('\.glance-artifact'\)/, 'dedup keys on the artifact marker class');
+
+  // Wired for tap and keyboard.
+  assert.match(appSource, /coach-read-strip'\)\?\.addEventListener\('click', renderGlanceArtifact\)/, 'tap expands the glance line');
+  assert.match(appSource, /e\.key === 'Enter' \|\| e\.key === ' '/, 'keyboard activation matches the button role');
+});
+
+test('glance expansion: Progress surface chrome survives — the tab control disappears in Phase D, not B3', () => {
+  const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
+  assert.match(html, /id="surface-progress"/, 'the Progress surface button must still exist');
+  assert.match(html, /id="subnav"/, 'the Progress subnav must still exist');
+  assert.match(html, /id="tab-dashboard"/, 'the Today tab must still exist');
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /\.coach-read-strip \{ cursor: pointer; \}/, 'the strip signals tappability');
 });
 
 test('artifact route: nav.js exports both renderers and they stay read-only', () => {
