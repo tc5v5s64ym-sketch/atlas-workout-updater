@@ -115,3 +115,22 @@ describe('isOverperforming / prescribeLift — overperforming beats expected rep
     assert.strictEqual(p.targetWeight % 5, 0);
   });
 });
+
+// ── ctx sharing (BACKLOG housekeeping: _liftRows was recomputed 4× per call) ──
+
+const { describe: describe2, it: it2 } = require('node:test');
+
+describe2('prescribeLift — normalizes the rows exactly once', () => {
+  it2('the prescribeLift body calls _liftRows once and delegates to the ctx variants', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'liftPrescription.js'), 'utf8');
+    const body = src.slice(src.indexOf('function prescribeLift('), src.indexOf('module.exports'));
+    const liftRowsCalls = (body.match(/_liftRows\(/g) || []).length;
+    assert.strictEqual(liftRowsCalls, 1, 'prescribeLift must normalize/filter the rows exactly once');
+    assert.ok(/_lastWorkingSetCtx\(ctx\)/.test(body), 'set derives from the shared ctx');
+    assert.ok(/_deriveLiftStateCtx\(ctx/.test(body), 'lift state derives from the shared ctx');
+    assert.ok(/_derivePlateauCtx\(ctx/.test(body), 'plateau derives from the shared ctx');
+    assert.ok(/_isOverperformingCtx\(ctx/.test(body), 'overperforming derives from the shared ctx');
+  });
+});
