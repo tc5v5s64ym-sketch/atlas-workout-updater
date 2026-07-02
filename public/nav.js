@@ -127,28 +127,12 @@
     if (typeof then === 'function') requestAnimationFrame(then);
   }
 
-  document.getElementById('suggestion-chips')?.addEventListener('click', e => {
-    const chip = e.target.closest('.chip');
-    if (!chip) return;
-    switch (chip.dataset.chip) {
-      case 'example':
-        if (workoutText) {
-          workoutText.value = chip.textContent.trim();
-          workoutText.focus();
-          workoutText.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        break;
-      case 'train':
-        chipAnswerTrain();
-        break;
-      case 'last':
-        chipAnswerLast();
-        break;
-      case 'report':
-        chipAnswerReport();
-        break;
-    }
-  });
+  // The static #suggestion-chips strip was retired (composer-first Phase A,
+  // 2026-07-02) — replaced by the hero's state-driven #coach-chips, which emit
+  // sentences through the composer (one lane) instead of the card handlers
+  // below. chipAnswerLast stays exported (window.atlasChipAnswerLast) for the
+  // conversation layer; chipAnswerTrain/Report are retained for that same
+  // in-thread reuse. Dead-listener removal only — no handler behavior changed.
 
   // "Learn" chips (in the visible empty-state hero) → deterministic SME answers.
   document.getElementById('learn-chips')?.addEventListener('click', e => {

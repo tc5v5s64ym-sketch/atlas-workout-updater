@@ -75,12 +75,12 @@
            still targets the strip and the old chip actions remain wired for the
            tiles, so nothing that references them breaks. -->
       <div id="coach-read-strip" class="coach-read-strip"></div>
-      <div class="suggestion-chips" id="suggestion-chips">
-        <button type="button" class="chip" data-chip="example">Bench 135 10/4, 225 5/2 x3</button>
-        <button type="button" class="chip" data-chip="train">What should I train?</button>
-        <button type="button" class="chip" data-chip="last">Show my last session</button>
-        <button type="button" class="chip" data-chip="report">Weekly report</button>
-      </div>
+      <!-- The deprecated static #suggestion-chips strip was retired here
+           (composer-first Phase A, 2026-07-02): its chips routed through a
+           SECOND code lane (structured card handlers in nav.js) instead of the
+           composer. Replaced by the state-driven #coach-chips inside the hero,
+           whose chips are sentences emitted through the normal composer path. -->
+
 
       <!-- Empty-state hero: shown until the conversation starts. -->
       <div id="coach-empty" class="coach-empty">
@@ -90,6 +90,13 @@
              default stands whenever the engine has nothing to say (cold start,
              offline, no API key). -->
         <p id="coach-opening" class="coach-empty-tagline">Let's get stronger.</p>
+
+        <!-- Composer-first Phase A: state-driven chips. Each chip is a SENTENCE
+             the coach expects next; tapping it is identical to typing it — the
+             chip fills #workout-text and submits the logger form (one code
+             lane, no structured passthrough). Populated by renderCoachChips()
+             from the same engine state as the opening line; empty until then. -->
+        <div id="coach-chips" class="coach-chips"></div>
 
         <!-- Quick-start tiles live inside the hero so they move with the
              greeting block and hide together when the conversation starts. -->

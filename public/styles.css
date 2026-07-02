@@ -785,6 +785,9 @@ body[data-surface="coach"] main {
 .weekly-coach-summary { font-size: 0.95rem; }
 .weekly-coach-nudge { font-size: 0.9rem; margin: var(--s2) 0 0; }
 
+/* Composer-first Phase A: state-driven chips in the hero — sentences, not menus. */
+.coach-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
+.coach-chips:empty { display: none; }
 .suggestion-chips {
   display: flex;
   flex-wrap: wrap;

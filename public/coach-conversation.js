@@ -1548,8 +1548,11 @@
     const recs = res && res.data && Array.isArray(res.data.recommendations) ? res.data.recommendations : [];
     const top = recs.find(r => r && r.exercise_name &&
       Array.isArray(r.last_working_sets) && r.last_working_sets.length);
-    if (!top) return;                          // cold start / no history — default stands
     if (hero.hasAttribute('hidden')) return;   // conversation started while fetching
+    // State-driven chips render either way — history gets the returning-lifter
+    // sentences, a cold start gets the first-session one.
+    renderCoachChips(Boolean(top));
+    if (!top) return;                          // cold start / no history — default tagline stands
     const last = top.last_working_sets[top.last_working_sets.length - 1];
     if (!last || last.reps == null) return;    // never render a partial number
     const weekday = new Date().toLocaleDateString(undefined, { weekday: 'long' });
@@ -1558,6 +1561,45 @@
       ? `${last.weight}×${last.reps}`
       : `${last.reps} reps`;
     line.textContent = `${weekday}. Last time: ${top.exercise_name} ${setBit}. Ready when you are.`;
+  }
+
+  // Composer-first Phase A — state-driven chips. A chip IS a sentence: tapping
+  // it fills the composer and submits the logger form, exactly as if the lifter
+  // typed it — ONE code lane, no structured passthrough (the retired
+  // #suggestion-chips strip routed through separate card handlers; these do
+  // not). The chip set is chosen from the same engine state as the opening
+  // line: history → returning-lifter sentences; cold start → the first-session
+  // one. The container lives inside the hero, so chips hide with it the moment
+  // the conversation starts.
+  function renderCoachChips(hasHistory) {
+    const wrap = document.getElementById('coach-chips');
+    const hero = document.getElementById('coach-empty');
+    if (!wrap || !hero || hero.hasAttribute('hidden')) return;
+    const sentences = hasHistory
+      ? ['What are we doing today?', 'Show my last session']
+      : ['Build me a session'];
+    wrap.textContent = '';
+    for (const sentence of sentences) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip';
+      chip.textContent = sentence;
+      chip.addEventListener('click', () => emitChipSentence(sentence));
+      wrap.appendChild(chip);
+    }
+  }
+
+  // The one lane: a chip click is byte-identical to typing the sentence and
+  // hitting send. Nothing here routes, classifies, or renders — the composer
+  // pipeline (parser → intent guards → coach) owns all of that, same as typed
+  // input, so chips can never drift from what typing does.
+  function emitChipSentence(sentence) {
+    const input = document.getElementById('workout-text');
+    const form = document.getElementById('logger-form');
+    if (!input || !form) return;
+    input.value = sentence;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
   }
 
   document.addEventListener('atlas:preview-ready', e => {
