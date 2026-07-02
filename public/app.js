@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v83';
+const ATLAS_SHELL_BUILD = 'v84';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -95,6 +95,21 @@ function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
 }
 
+// Transport-level fetch failures surface as cryptic browser strings ("Load failed",
+// "Failed to fetch", "The network connection was lost"). When one survives the
+// retry above, translate it into an honest, actionable line — the usual cause is
+// the server cold-starting after idle (diagnosed live 2026-07-02: first request
+// ~36s wall-clock while the instance wakes). Returns null for real HTTP errors so
+// the server's own message always wins.
+function friendlyTransportMessage(err) {
+  if (!err || err.status) return null;
+  const m = err.message ? String(err.message) : '';
+  if (/load failed|failed to fetch|networkerror|network error|network connection was lost|connection appears to be offline/i.test(m)) {
+    return 'the connection dropped — the server was likely waking up. Give it a few seconds and tap Preview again; nothing was saved.';
+  }
+  return null;
+}
+
 async function api(path, options = {}) {
   const headers = { 'x-atlas-api-key': getApiKey(), ...(options.headers || {}) };
   const method = options.method || 'GET';
@@ -129,6 +144,24 @@ async function api(path, options = {}) {
       message: atlasLastError.message,
       response_body: snapshotBugBody(json)
     });
+    // Cold-start resilience (composer-first Phase 0b). Diagnosed live 2026-07-02:
+    // the first request after idle can take ~36s while the Render instance wakes,
+    // and mobile Safari kills the hanging fetch with a TRANSPORT-level failure
+    // ("Load failed" — no HTTP status). Retry exactly once, and ONLY when it is
+    // safe to repeat the request: a transport failure (never an HTTP error, never
+    // a caller abort) on a GET (read-only by the route contract) or a call the
+    // caller explicitly marked retryTransport (the test_mode DRY-RUN previews —
+    // idempotent, proof-field-guarded, no write). The live write path is NEVER
+    // retried here — write_id idempotency notwithstanding, retries of real writes
+    // stay a deliberate human action. Both attempts land in the request history.
+    const transportFailure = err && !err.status && err.name !== 'AbortError';
+    const retryable = transportFailure && !options._retriedTransport &&
+      (method === 'GET' || options.retryTransport === true) &&
+      !(options.signal && options.signal.aborted);
+    if (retryable) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      return api(path, { ...options, _retriedTransport: true });
+    }
     throw err;
   } finally {
     atlasRecentApiRequests.push({
@@ -5657,7 +5690,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       const result = await api('/api/log-workout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        // Cold-start resilience: this is the test_mode DRY-RUN preview (idempotent,
+        // proof-field-guarded, no write) — safe to retry once on a transport failure.
+        // The live write at the approve handler never sets this.
+        retryTransport: true
       });
       if (!hasLogWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
@@ -5688,7 +5725,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // 500'd — show the cause so it's diagnosable from the gym (live-gym v49).
     const d = err && err.body && err.body.details;
     const detail = d && (typeof d === 'string' ? d : (d.error || null));
-    const fullMsg = `Preview failed: ${err.message}${detail ? ` — ${detail}` : ''}`;
+    // A transport-level failure (post-retry) gets the honest cold-start line
+    // instead of Safari's cryptic "Load failed"; HTTP errors keep the server copy.
+    const friendly = friendlyTransportMessage(err);
+    const fullMsg = friendly
+      ? `Preview failed: ${friendly}`
+      : `Preview failed: ${err.message}${detail ? ` — ${detail}` : ''}`;
     // Highlight any rows the server named in the error (e.g. "row 2: rir must be 0–10").
     const badRowNums = [...fullMsg.matchAll(/\brow\s+(\d+)\b/gi)].map(m => Number(m[1]) - 1);
     if (badRowNums.length && setsTableBody) {
@@ -5759,7 +5801,9 @@ async function submitCompleteWorkout({ file, logRows, sessionId, date, location,
   // Only the live write carries the write_id; the server uses it to refuse a
   // retried append. Dry-run previews never consume idempotency state.
   if (writeId && !testMode) form.append('write_id', writeId);
-  return api('/api/complete-workout', { method: 'POST', body: form });
+  // Cold-start resilience: DRY-RUN previews may retry once on a transport-level
+  // failure (idempotent, no write). The live write never sets this.
+  return api('/api/complete-workout', { method: 'POST', body: form, ...(testMode ? { retryTransport: true } : {}) });
 }
 
 async function parseWorkoutImage(file) {
@@ -6376,7 +6420,8 @@ document.getElementById('bw-form').addEventListener('submit', async e => {
     // catch — PR-581 review note 2), so a bodyweight 500 is diagnosable too.
     const bd = err && err.body && err.body.details;
     const bdetail = bd && (typeof bd === 'string' ? bd : (bd.error || null));
-    setStatus(bwStatus, `Preview failed: ${err.message}${bdetail ? ` — ${bdetail}` : ''}`, 'error');
+    const bwFriendly = friendlyTransportMessage(err);
+    setStatus(bwStatus, bwFriendly ? `Preview failed: ${bwFriendly}` : `Preview failed: ${err.message}${bdetail ? ` — ${bdetail}` : ''}`, 'error');
   } finally {
     previewBtn.disabled = false;
     previewBtn.textContent = 'Preview — no data saved';
