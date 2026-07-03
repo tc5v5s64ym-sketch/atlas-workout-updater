@@ -99,6 +99,24 @@
     m = t.match(/^(?:that\s+should\s+be|should\s+be)\s+(.+)$/);
     if (m) return correction(m[1]);
 
+    // "sorry slslp is single leg seated leg prep" — the lifter names the mis-typed
+    // lift EXPLICITLY on both sides (owner live find 2026-07-03: the typo'd
+    // shorthand missed every that-was pattern above, fell to the chat LLM, and a
+    // re-log then duplicated the sets in the review). Returns BOTH sides
+    // ({ from, to }); the CALLER must verify `from` against its buffered lift
+    // names before relabeling — an ordinary "X is Y" remark ("bench is hard
+    // work") only acts when X really is a logged lift AND Y resolves to a known
+    // exercise, so the lane stays conservative. Demonstratives stay with the
+    // that-was patterns above (bare "that was X" still needs a cue).
+    m = t.match(/^(?:(?:sorry|oops|whoops|my bad|actually|correction)[,:]?\s+)?(.+?)\s+(?:is|was|means|should\s+be)\s+(?:actually\s+|really\s+)?(.+)$/);
+    if (m) {
+      const from = cleanName(m[1]);
+      if (looksLikeExercise(from) && !/^(?:that|this|it|those|these|the\s+last\s+one)$/.test(from)) {
+        const c = correction(m[2]);
+        if (c && c.to !== from) return { from, to: c.to };
+      }
+    }
+
     return null;
   }
 
