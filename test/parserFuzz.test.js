@@ -125,39 +125,45 @@ test('fuzz: slash contract — "Name W R/I" parses to exactly {W, R, I} for cata
   }
 });
 
-// ── KNOWN FAILURES — the silent-misattribution family (2026-07-03 sweep) ─────
-// Executable reproducers, marked todo so CI records them without blocking.
-// Flip each `t.todo` to a hard test when the parser fix lands (BACKLOG,
-// trust-critical: an unknown name's sets must NEVER attach to another lift).
+// ── the misattribution family (found by this suite 2026-07-03; FIXED same day) ──
+// An unknown exercise name's sets must NEVER attach to a different lift. Fixed
+// by (1) the some(isNameWord) run rule in hasUnattributableTrailingSets and
+// (2) the G1 leading analogue (slash sets before the matched name → ask).
 
-test('fuzz KNOWN FAILURE: an unknown name sharing a paste with one known lift must not donate its sets to it', t => {
+test('fuzz: an unknown name sharing a paste with one known lift keeps its own sets', () => {
   const input = 'Zzqx Press 185 5/2 - solid\nBench 200 5/2';
   const result = parseWorkoutText(input);
-  const sets = collectSets(result);
+  const byName = name => (result.exercises || []).filter(e => (e.canonical_name || e.exercise) === name).flatMap(e => e.sets || []);
   const benchSets = Array.isArray(result.sets) && (result.canonical_name === 'Bench Press' || result.exercise === 'Bench Press')
-    ? result.sets
-    : (result.exercises || []).filter(e => (e.canonical_name || e.exercise) === 'Bench Press').flatMap(e => e.sets || []);
-  const misattributed = benchSets.some(s => Number(s.weight) === 185);
-  if (misattributed) {
-    t.todo('185×5 (Zzqx Press) is absorbed into Bench Press with no warning — silent misattribution');
-    return;
-  }
-  assert.ok(!misattributed, 'fixed! flip this todo into a hard assertion');
-  assert.ok(sets.length >= 1, 'the known lift still parses');
+    ? result.sets : byName('Bench Press');
+  assert.ok(!benchSets.some(s => Number(s.weight) === 185),
+    'the Zzqx Press set must never be absorbed into Bench Press');
+  assert.ok(byName('Zzqx Press').some(s => Number(s.weight) === 185),
+    'the unknown lift keeps its own set as a freeform entry');
+  assert.ok((result.warnings || []).includes('unknown_exercise'),
+    'the freeform name stays flagged so the check-name chip renders (#820)');
 });
 
-test('fuzz KNOWN FAILURE: the multi-line rescue must not attach an unknown-name line to the carried exercise', t => {
+test('fuzz: the multi-line rescue never attaches an unknown-name line to the carried exercise', () => {
   const input = 'Leg Press 95 5/2, 95 3/1\nRDL 225 5/2 x3\nZzqx Press 185 5/2 - solid';
   const result = parseWorkoutText(input);
   const rdl = (result.exercises || []).find(e => /RDL|Romanian/i.test(e.canonical_name || e.exercise || ''));
-  const phantom = rdl && (rdl.sets || []).some(s => Number(s.weight) === 185);
-  if (phantom) {
-    t.todo('the Zzqx Press line\'s 185×5 set is merged into RDL by the rescue carry-forward — silent misattribution');
-    return;
-  }
-  assert.ok(!phantom, 'fixed! flip this todo into a hard assertion');
-  const unresolved = Array.isArray(result.unresolved) ? result.unresolved : [];
-  const traced = unresolved.some(u => /zzqx/i.test(u.line || '')) ||
-    (result.exercises || []).some(e => /zzqx/i.test(e.canonical_name || e.exercise || ''));
+  assert.ok(rdl && !(rdl.sets || []).some(s => Number(s.weight) === 185),
+    'RDL must not grow a phantom 185 set from the Zzqx Press line');
+  const traced = (result.exercises || []).some(e => /zzqx/i.test(e.canonical_name || e.exercise || '')) ||
+    (Array.isArray(result.unresolved) ? result.unresolved : []).some(u => /zzqx/i.test(u.line || ''));
   assert.ok(traced, 'the unknown-name line must leave a trace (own entry or unresolved)');
+});
+
+test('fuzz: same-line stacking behind an unknown name asks instead of merging (G1)', () => {
+  const r = parseWorkoutText('RDL 225 5/2 x3 Zzqx Press 185 5/2');
+  assert.equal(r.intent, 'needs_clarification');
+  assert.ok((r.warnings || []).includes('unattributable_trailing_sets'));
+});
+
+test('fuzz: the G1 leading analogue — slash sets before the matched name never absorb (single line)', () => {
+  const r = parseWorkoutText('Zzqx Press 185 5/2 Bench 200 5/2');
+  const sets = collectSets(r);
+  assert.ok(!(r.exercise === 'Bench Press' && sets.some(s => Number(s.weight) === 185)),
+    'pre-name sets must not be vacuumed into the found exercise');
 });
