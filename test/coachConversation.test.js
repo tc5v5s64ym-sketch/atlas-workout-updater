@@ -446,6 +446,14 @@ test('bodyweight display: no-load sets read as reps everywhere — never "0×rep
   assert.match(review, /hasLoad\(g\.set\.weight\)/, 'the review-card set line uses the same rule');
   const opener = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
   assert.match(opener, /hasLoad\(last\.weight\)/, 'the opener closes its 0-weight edge with the same rule');
+  // The two recap renderers outside the IIFE apply the same rule (review #828).
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const recap = app.slice(app.indexOf("class: 'session-ex-set'") - 600, app.indexOf("class: 'session-ex-set'") + 100);
+  assert.match(recap, /Number\(r\.weight\) !== 0\)\s*\? `\$\{r\.weight\} × \$\{r\.reps\}` : `\$\{r\.reps\} reps`/,
+    'the completed-session recap reads bodyweight sets as reps');
+  const nav = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'nav.js'), 'utf8');
+  assert.match(nav, /Number\(s\.weight\) !== 0\) \? `\$\{s\.weight\}×\$\{s\.reps\}` : `\$\{s\.reps\} reps`/,
+    'the last-session chip row reads bodyweight sets as reps');
 });
 
 test('opening: the default tagline survives every failure path (element + copy intact)', () => {

@@ -588,7 +588,11 @@ async function loadSessionDetail(sessionId, slot) {
         for (const r of exSets) {
           const rir = (r.rir === '' || r.rir == null) ? '' : ` @${r.rir}`;
           const note = r.notes ? ` · ${r.notes}` : '';
-          block.appendChild(el('div', { class: 'session-ex-set', text: `${r.weight} × ${r.reps}${rir}${note}` }));
+          // Bodyweight sets (weight null/''/0) read as reps, never "0 × 20" —
+          // same rule as coach-conversation.js hasLoad (owner live find 2026-07-03).
+          const setText = (r.weight != null && r.weight !== '' && Number(r.weight) !== 0)
+            ? `${r.weight} × ${r.reps}` : `${r.reps} reps`;
+          block.appendChild(el('div', { class: 'session-ex-set', text: `${setText}${rir}${note}` }));
         }
         slot.appendChild(block);
       }
