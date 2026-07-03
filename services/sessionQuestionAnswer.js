@@ -197,6 +197,17 @@ function currentLiftFromContext(clientContext) {
   const planLifts = [...new Set((Array.isArray(cc.current_plan) ? cc.current_plan : [])
     .map(p => p && p.name).filter(Boolean))];
   if (planLifts.length === 1) return { current: planLifts[0], candidates: planLifts };
+  // Owner live find (2026-07-03): a multi-lift plan's CURRENT STEP is not
+  // ambiguous — "How much weight?" mid-session got "for which lift?" while the
+  // session pin showed the current one. plan_completed is the client's
+  // canonical done-list (sent whenever a plan is visible); the first
+  // not-completed plan lift IS the current lift. Without plan_completed the
+  // old clarify behavior stands.
+  if (planLifts.length > 1 && Array.isArray(cc.plan_completed)) {
+    const done = new Set(cc.plan_completed.map(n => String(n == null ? '' : n).toLowerCase()));
+    const pending = planLifts.filter(n => !done.has(String(n).toLowerCase()));
+    if (pending.length) return { current: pending[0], candidates: pending };
+  }
   return { current: null, candidates: planLifts };
 }
 
