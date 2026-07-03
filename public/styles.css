@@ -123,7 +123,7 @@ body {
 th, td, code { font-variant-numeric: tabular-nums; }
 
 /* ============================================================================
-   Header — wordmark · segmented control · settings
+   Header — the minimal ATLAS nav (hamburger · wordmark · avatar), Phase D
    ============================================================================ */
 
 header {
@@ -150,14 +150,15 @@ header {
 header h1 { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; }
 .tagline { display: none; }
 
-/* Coach surface: swap standard header chrome for the minimal ATLAS nav bar */
-#coach-nav { display: none; }
-body[data-surface="coach"] #coach-nav  { display: flex; }
-body[data-surface="coach"] .brand,
-body[data-surface="coach"] .tagline,
-body[data-surface="coach"] .segmented,
-body[data-surface="coach"] #open-settings,
-body[data-surface="coach"] #conn-status { display: none; }
+/* Phase D (2026-07-03): the minimal ATLAS nav (hamburger | wordmark | avatar)
+   is the ONE header on every surface — with the segmented control retired,
+   the drawer is the navigation and must be openable from Progress too. The
+   legacy brand/gear/status chrome stays in the DOM for programmatic use (the
+   avatar clicks #open-settings) but never renders. */
+#coach-nav { display: flex; }
+.brand,
+#open-settings,
+#conn-status { display: none; }
 
 /* Coach nav bar: hamburger | A T L A S | avatar */
 .coach-nav {
@@ -520,38 +521,9 @@ body[data-surface="coach"] .loadline::before {
   .coach-drawer, .coach-drawer-backdrop { transition: none; }
 }
 
-/* Segmented control (Coach | Progress) */
-.segmented {
-  display: inline-flex;
-  margin: 0 auto;
-  background: var(--card-sunken);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 3px;
-  gap: 2px;
-}
-
-.surface-btn {
-  appearance: none;
-  -webkit-appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: 0.9rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  padding: 7px 20px;
-  border-radius: var(--r-pill);
-  cursor: pointer;
-  transition: color 0.15s, background 0.2s, box-shadow 0.2s;
-}
-
-.surface-btn[aria-selected="true"] {
-  background: var(--bg-elevated);
-  color: var(--ink);
-  box-shadow: var(--shadow-sm);
-}
+/* The Coach|Progress segmented control (.segmented/.surface-btn) was retired
+   in Phase D (2026-07-03, owner-approved) — the drawer + subnav navigate;
+   body[data-surface] still drives the chrome. */
 
 .icon-btn {
   appearance: none;
@@ -2382,8 +2354,6 @@ a.lift-link:hover { text-decoration: underline; }
 
 @media (max-width: 640px) {
   header { gap: var(--s2); padding-left: var(--s3); padding-right: var(--s3); }
-  .brand { display: none; }                 /* segmented control becomes the hero */
-  .segmented { margin: 0 auto 0 0; }
   main { padding: var(--s3); }
   .subnav { padding: var(--s2) var(--s3) 0; }
   .form-row { flex-direction: column; align-items: stretch; }
@@ -2569,7 +2539,6 @@ a.lift-link:hover { text-decoration: underline; }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.surface-btn:focus-visible,
 .tab-btn:focus-visible,
 .chip:focus-visible,
 .composer-attach:focus-visible,

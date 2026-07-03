@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v93';
+const ATLAS_SHELL_BUILD = 'v94';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -85,7 +85,7 @@ if (typeof window !== 'undefined') {
     message: (e && e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection'
   }));
   document.addEventListener('click', (e) => {
-    const t = e.target && e.target.closest && e.target.closest('button, .surface-btn, .tab, [role="button"], a');
+    const t = e.target && e.target.closest && e.target.closest('button, .tab, [role="button"], a');
     if (!t) return;
     recordAtlasAction('tap', (t.id || t.getAttribute('aria-label') || t.textContent || '').trim().slice(0, 60));
   }, true);
@@ -969,7 +969,7 @@ function collectAtlasStorage(storage) {
 }
 
 function currentRouteForBugReport() {
-  const activeSurface = document.querySelector('.surface-btn.active')?.id || null;
+  const activeSurface = document.body.getAttribute('data-surface') || null;
   const activeTab = document.querySelector('.tab.active')?.id || null;
   return [location.pathname + location.search + location.hash, activeSurface, activeTab].filter(Boolean).join(' | ');
 }
@@ -1589,7 +1589,9 @@ function renderGlanceArtifact() {
   const more = el('a', { href: '#', class: 'chip-reply-more', text: 'Full progress →' });
   more.addEventListener('click', ev => {
     ev.preventDefault();
-    document.getElementById('surface-progress')?.click();
+    // Phase D: the surface toggle is gone — land on Today via the tab engine
+    // (same route the drawer's Progress row uses).
+    document.querySelector('.tab-btn[data-tab="dashboard"]')?.click();
   });
   wrap.appendChild(more);
 
@@ -1690,7 +1692,7 @@ function renderPatternBoard(data) {
     tile.addEventListener('click', () => {
       // The board lives on the Today surface but the coach reply lands in the
       // Coach thread — switch there first so the answer is visible, not orphaned.
-      document.getElementById('surface-coach')?.click();
+      document.querySelector('.tab-btn[data-tab="logger"]')?.click();
       routeMessageToCoach(`What should I train for ${p.label.toLowerCase()} today?`);
     });
     grid.appendChild(tile);
@@ -1748,7 +1750,9 @@ function renderTodaysPick(data) {
 // engages the suggestion). The intent DRAWER remains only for the
 // non-recommended "Other training options" grid.
 function openCoachPickInThread() {
-  document.getElementById('surface-coach')?.click();
+  // Land on the coach surface via the tab engine (the Phase D header has no
+  // surface toggle; the hidden logger tab-btn is the programmatic route).
+  document.querySelector('.tab-btn[data-tab="logger"]')?.click();
   if (typeof window.atlasOpenCoachPick === 'function') window.atlasOpenCoachPick();
 }
 

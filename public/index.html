@@ -22,13 +22,12 @@
       <span class="coach-wordmark">A &nbsp; T &nbsp; L &nbsp; A &nbsp; S</span>
       <div class="coach-avatar" aria-label="Dale — online">D</div>
     </div>
-    <!-- Progress surface: standard segmented control (hidden on coach surface via CSS) -->
+    <!-- The Coach|Progress segmented control was retired in Phase D (2026-07-03,
+         owner-approved): the coach is the one surface, and the hamburger drawer
+         is the navigation to the Progress views. body[data-surface] survives —
+         nav.js derives it from the active tab and the chrome CSS keys off it. -->
     <span class="brand">Atlas</span>
     <h1 class="tagline">Atlas</h1>
-    <div class="segmented" role="tablist" aria-label="Atlas mode">
-      <button type="button" class="surface-btn" id="surface-coach" role="tab" data-surface="coach" aria-selected="true" tabindex="0">Coach</button>
-      <button type="button" class="surface-btn" id="surface-progress" role="tab" data-surface="progress" aria-selected="false" tabindex="-1">Progress</button>
-    </div>
     <button type="button" class="icon-btn" id="open-settings" aria-label="Settings">&#9881;</button>
     <span id="conn-status" class="conn-status" title="Backend connection">&#9679;</span>
     <!-- Signature "load line": one ember hairline under the Coach nav (design system). -->
@@ -48,7 +47,7 @@
 
   <main>
     <!-- ============ COACH — chat-first logger (approve-before-save) ============ -->
-    <section id="tab-logger" class="tab active" role="tabpanel" tabindex="-1" aria-labelledby="surface-coach">
+    <section id="tab-logger" class="tab active" role="tabpanel" tabindex="-1" aria-label="Coach">
       <div id="coach-panel" hidden></div>
 
       <!-- Shown when a previous in-progress session is restored on load.
