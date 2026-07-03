@@ -59,6 +59,7 @@ const { validateCoachingDecision } = require('./services/coachingDecision');
 const { buildRunners } = require('./services/coachRunners');
 const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrianPickOverride } = require('./services/coachEnginePromotion');
 const { foldJustLoggedSet } = require('./services/ephemeralSetFold');
+const { observeChatMessage, getShadowLog } = require('./services/intentShadow');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -1660,6 +1661,11 @@ app.post('/api/coach/chat', async (req, res) => {
   const clientCtx = req.body && req.body.context;
   const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
+  // Phase C2 — intent-router SHADOW lane (default OFF; ATLAS_INTENT_ROUTER=shadow).
+  // Fire-and-forget, NEVER awaited: the reply below is computed exactly as before,
+  // whatever the classification does. Observability only — see services/intentShadow.js.
+  observeChatMessage(message);
+
   // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
   // "How much?", "How many sets?") is answered deterministically from the CURRENT
   // lift — whether or not Gemini is up — so the lifter gets the current-lift fact,
@@ -2183,6 +2189,14 @@ app.post('/api/log-modality', async (req, res) => {
     if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
     return standardError(req, res, 'Failed to append modality data', process.env.NODE_ENV === 'production' ? null : err.message, 500);
   }
+});
+
+// GET /api/debug/intent-shadow — Phase C2 read-only observability for the
+// intent-router shadow lane: the capped in-memory ring of classifications
+// (enabled flag + entries, newest first). Auth-gated like every /api route;
+// no Sheets, no writes, resets on restart by design.
+app.get('/api/debug/intent-shadow', (req, res) => {
+  return standardSuccess(req, res, 'Intent-router shadow log', getShadowLog());
 });
 
 // GET /api/debug/config
