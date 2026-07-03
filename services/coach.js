@@ -669,6 +669,7 @@ function buildChatSystemPrompt(context) {
     '- For replace_plan, include the full visible plan in order. For add_exercises, include only the exercises being added. For remove_exercises, include only the exercises being removed.',
     '- Omit unknown weight/reps/sets/rir fields rather than inventing numbers.',
     '- The PROPOSE_PLAN_EDIT line is stripped by the app and never shown to the lifter.',
+    '- Do NOT enumerate the plan exercise-by-exercise in your prose — the app renders the plan as a structured block below your message. Keep the prose to one or two sentences about the focus and why.',
     '',
     'PROPOSING A COACHING NOTE (persistent background memory):',
     '- When the lifter reveals something durable and actionable — an injury, a mobility limit, a goal, a program change, an equipment constraint — you MAY propose saving it as a coaching note.',

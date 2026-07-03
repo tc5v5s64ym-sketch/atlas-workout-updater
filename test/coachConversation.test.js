@@ -469,6 +469,37 @@ test('bodyweight display: no-load sets read as reps everywhere — never "0×rep
     'the last-session chip row reads bodyweight sets as reps');
 });
 
+// --- Owner directive (2026-07-03, live screenshots): plans read STACKED ---
+// The chat's plan reply rendered "RDL — 230 × 8 reps × 3 sets @ RIR 2" prose;
+// the owner wants the Coach's-Pick stacked block everywhere a plan renders.
+
+test('stacked plans: an applied chat plan edit renders the structured block, not prose', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const branch = cc.slice(cc.indexOf('if (chatResult.propose_plan_edit)'), cc.indexOf("// Show \"Save this note?\""));
+  assert.match(branch, /appendWorkoutPlan\(bubble,/, 'the applied edit renders through the SAME structured block the pick uses');
+  assert.match(branch, /replace_plan|add_exercises/, 'block renders for replace/add');
+  assert.match(branch, /target_weight: x\.weight/, 'the edit exercises map to the normalizer shape (deterministic data, no LLM prose)');
+  assert.match(branch, /Plan updated\./, 'the confirmation note survives');
+});
+
+test('stacked plans: the chat prompt tells the model NOT to enumerate the plan in prose', () => {
+  const coach = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'services', 'coach.js'), 'utf8');
+  assert.match(coach, /Do NOT enumerate the plan exercise-by-exercise in your prose/,
+    'the app owns the plan render; the model words the focus only');
+});
+
+test('stacked plans: suggest/recommend phrasings route to the canonical pick (deterministic, stacked)', () => {
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const src = app.slice(app.indexOf('function looksLikeSessionRequest'), app.indexOf('function looksLikeArtifactRequest'));
+  const fn = new Function(`${src}; return looksLikeSessionRequest;`)();
+  for (const t of ['What workout would you suggest for today', 'can you suggest a workout', 'recommend me a session']) {
+    assert.equal(fn(t), true, `must route to the pick: "${t}"`);
+  }
+  for (const t of ['I suggest you rest', 'that workout was hard', 'Bench 225 5/2']) {
+    assert.equal(fn(t), false, `must NOT route to the pick: "${t}"`);
+  }
+});
+
 test('opening: the default tagline survives every failure path (element + copy intact)', () => {
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(html, /id="coach-opening" class="coach-empty-tagline">Let's get stronger\.</,
