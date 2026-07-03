@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v92/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v93/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -1464,14 +1464,15 @@ test('coach-pick gate: plannedExerciseEntries treats lastIntentData as a plan ON
   assert.ok(gateIdx < intentIdx, 'the gate must guard the lastIntentData branch');
 });
 
-test('coach-pick gate: engaged on Coach\'s Pick, cleared on Freestyle', () => {
+test('coach-pick gate: engaged on Coach\'s Pick only', () => {
+  // The Freestyle tile (and its explicit engagement-clear) was retired with the
+  // home-screen tiles (owner directive 2026-07-03): freestyle is now simply
+  // logging a set without opening the pick, which never sets the gate at all.
   const ccSrc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   const pick = ccSrc.slice(ccSrc.indexOf('async function typeSuggestedWorkout('), ccSrc.indexOf('async function typeSuggestedWorkout(') + 900);
   assert.match(pick, /setCoachSuggestionEngaged === 'function'\) setCoachSuggestionEngaged\(true\)/,
-    'tapping Coach\'s Pick must engage the suggestion');
-  const free = ccSrc.slice(ccSrc.indexOf('async function startFreestyle('), ccSrc.indexOf('async function startFreestyle(') + 400);
-  assert.match(free, /setCoachSuggestionEngaged === 'function'\) setCoachSuggestionEngaged\(false\)/,
-    'Freestyle must clear any prior engagement');
+    'opening Coach\'s Pick must engage the suggestion');
+  assert.equal(ccSrc.includes('startFreestyle'), false, 'the Freestyle tile lane is gone');
 });
 
 // ── Suggested-workout display formatting (RIR must never be silently dropped) ──
@@ -5620,8 +5621,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v92/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v91\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v93/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v92\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6076,7 +6077,7 @@ test('polish: coach-read-strip container exists in Coach surface', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   assert.match(html, /id="coach-read-strip"/, 'strip container must exist in tab-logger');
   // Must appear above the hero (the static #suggestion-chips strip was retired
-  // in composer-first Phase A; the hero's #coach-chips replaced it).
+  // in composer-first Phase A; the hero is now one Atlas guide box).
   const stripIdx = html.indexOf('id="coach-read-strip"');
   const heroIdx = html.indexOf('id="coach-empty"');
   assert.ok(stripIdx > -1 && heroIdx > -1 && stripIdx < heroIdx, 'strip must appear above the hero');

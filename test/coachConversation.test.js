@@ -440,28 +440,30 @@ test('opening: the default tagline survives every failure path (element + copy i
     'the cold-start/offline default is unchanged');
 });
 
-// --- Composer-first Phase A: state-driven chips (one code lane) ---
+// --- Home screen (owner directive 2026-07-03): one Atlas text box, no tiles ---
 
-test('chips: a chip click is byte-identical to typing — fills the composer and submits the form', () => {
-  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
-  const fn = cc.slice(cc.indexOf('function emitChipSentence'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
-  assert.match(fn, /input\.value = sentence;/);
-  assert.match(fn, /input\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\)/);
-  assert.match(fn, /form\.dispatchEvent\(new Event\('submit', \{ cancelable: true, bubbles: true \}\)\)/);
-  assert.doesNotMatch(fn, /api\(|atlasReply|chipAnswer/, 'chips never route through a second lane');
+test('home guide box: the hero is ONE Atlas text box — no tiles, no chips', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  assert.equal(html.includes('id="coach-chips"'), false, 'the state-driven hero chips are retired');
+  assert.equal(html.includes('id="suggested-tiles"'), false, 'the quick-start tiles are retired');
+  assert.equal(html.includes('id="learn-chips"'), false, 'the learn chips are retired');
+  const heroIdx = html.indexOf('id="coach-empty"');
+  const boxIdx = html.indexOf('class="coach-guide-box"');
+  const guideIdx = html.indexOf('id="coach-guide"');
+  const heroEnd = html.indexOf('id="session-pin"');
+  assert.ok(heroIdx > -1 && boxIdx > heroIdx && boxIdx < heroEnd, 'the guide box lives inside the hero');
+  assert.ok(guideIdx > boxIdx && guideIdx < heroEnd, 'the guidance line lives inside the guide box');
 });
 
-test('chips: state-chosen sets — history vs cold start — rendered inside the hero only', () => {
-  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
-  const fn = cc.slice(cc.indexOf('function renderCoachChips'), cc.indexOf('function emitChipSentence'));
-  assert.match(fn, /hero\.hasAttribute\('hidden'\)/, 'no chips once the conversation has started');
-  assert.match(fn, /'What are we doing today\?', 'Show my last session'/, 'returning-lifter sentences');
-  assert.match(fn, /'Build me a session'/, 'cold-start sentence');
+test('home guide box: every suggested phrasing routes deterministically through the composer', () => {
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  const chipsIdx = html.indexOf('id="coach-chips"');
-  const heroIdx = html.indexOf('id="coach-empty"');
-  const heroEnd = html.indexOf('id="learn-chips"');
-  assert.ok(chipsIdx > heroIdx && chipsIdx < heroEnd, '#coach-chips lives inside the hero');
+  assert.match(html, /what are we doing today\?/, 'the guide names the pick sentence');
+  assert.match(html, /Bench 225 5\/2/, 'the guide shows the slash-notation example (freestyle = just log)');
+  // The pick sentence Atlas suggests MUST be a phrase looksLikeSessionRequest
+  // recognizes — what Atlas tells the user to type has to actually work.
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const routeFn = app.slice(app.indexOf('function looksLikeSessionRequest('), app.indexOf('function looksLikeArtifactRequest('));
+  assert.match(routeFn, /what are we doing/, 'the suggested sentence is on the deterministic pick route');
 });
 
 test('chips: the deprecated static strip is gone; its in-thread handlers remain for reuse', () => {

@@ -256,15 +256,26 @@ async function openDrawerNav(page, tab) {
   await expect(page.locator('#coach-drawer')).toBeHidden();
 }
 
+// Owner directive (2026-07-03): the home screen is ONE Atlas text box — the
+// tiles are gone, and the Coach's Pick's home entry is the typed sentence the
+// guide box suggests, routed deterministically by looksLikeSessionRequest.
+async function askCoachPick(page) {
+  await page.locator('#workout-text').fill('What are we doing today?');
+  await page.locator('#preview-btn').click();
+}
+
 test('Coach shell loads with guarded preview state', async ({ page }) => {
   await openApp(page);
 
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
-  // Minimal Grok/Gemini-style home: empty-state hero + Suggested Workout tiles.
+  // Home = one Atlas guide box (no tiles, no chips) + the composer.
   await expect(page.locator('#coach-empty')).toBeVisible();
+  await expect(page.locator('.coach-guide-box')).toBeVisible();
   await expect(page.locator('.coach-empty-tagline')).toContainText("Let's get stronger");
+  await expect(page.locator('#coach-guide')).toContainText('what are we doing today?');
   await expect(page.locator('#workout-text')).toBeVisible();
-  await expect(page.locator('#suggested-tiles .suggest-tile')).toHaveCount(2);
+  await expect(page.locator('#suggested-tiles')).toHaveCount(0);
+  await expect(page.locator('#learn-chips')).toHaveCount(0);
   await expect(page.locator('#preview-panel')).toBeHidden();
   await expect(page.locator('#approve-btn')).toBeDisabled();
 });
@@ -272,7 +283,7 @@ test('Coach shell loads with guarded preview state', async ({ page }) => {
 test('Suggested Workout types out the why-today rationale', async ({ page }) => {
   await openApp(page);
 
-  await page.locator('.suggest-tile[data-suggest="workout"]').click();
+  await askCoachPick(page);
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
   await expect(bubble).toContainText("Today's read: Push");
   // The richer note surfaces the engine's reasoning, readiness, and numbers.
@@ -296,7 +307,7 @@ test('Suggested Workout uses the Gemini plan voice when available', async ({ pag
     data: { message: "Heads up — you're at 1.5× your usual load, so today is blood flow, not max effort.", configured: true, kind: 'plan' }
   })));
 
-  await page.locator('.suggest-tile[data-suggest="workout"]').click();
+  await askCoachPick(page);
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
   await expect(bubble).toContainText("Today's read: Push");
   await expect(bubble).toContainText('today is blood flow, not max effort'); // Gemini prose
@@ -319,7 +330,7 @@ test('Suggested Workout shows /? when the engine gives no RIR — never a bare s
     }
   })));
 
-  await page.locator('.suggest-tile[data-suggest="workout"]').click();
+  await askCoachPick(page);
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
   const setLines = bubble.locator('.workout-plan-set');
   // Exact text match proves RIR is never dropped: "/?" when missing, never a bare "50lbs 15".
@@ -972,54 +983,9 @@ test('Recovery board: per-pattern tiles sorted most-recovered first, tap asks th
   expect(capture.writeRequests).toHaveLength(0);
 });
 
-test('Learn chip: an SME answer renders in-thread, read-only, no write', async ({ page }) => {
-  const capture = {};
-  await openApp(page, capture);
-
-  // Deterministic SME endpoint (registered after openApp, so it wins for this path).
-  let askBody = null;
-  await page.route('**/api/coach/ask', route => {
-    askBody = route.request().postDataJSON();
-    return route.fulfill(json({
-      status: 'success',
-      data: {
-        depth: 'compare_options',
-        answer: 'Strength: heavier, lower reps, load-first.\nHypertrophy: moderate reps, add reps before load, closer to failure.',
-        cards: ['strength_training', 'hypertrophy_training'],
-        confidenceLevel: 'high',
-        source: 'training_sme'
-      }
-    }));
-  });
-
-  await page.locator('.chip[data-ask="Explain strength vs hypertrophy"]').click();
-
-  // The card-grounded answer lands in the thread, and the request carried the question.
-  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText('add reps before load');
-  await expect(page.locator('#thread-messages')).toContainText('Based on: strength training, hypertrophy training');
-  expect(askBody).toMatchObject({ message: 'Explain strength vs hypertrophy' });
-
-  // Pure read: nothing previewed, nothing written.
-  await expect(page.locator('#preview-panel')).toBeHidden();
-  expect(capture.writeRequests).toHaveLength(0);
-  expect(capture.parseRequests).toHaveLength(0);
-});
-
-test('Learn chip: a topic with no card stays quiet (no lecture), still no write', async ({ page }) => {
-  const capture = {};
-  await openApp(page, capture);
-
-  await page.route('**/api/coach/ask', route => route.fulfill(json({
-    status: 'success',
-    data: { depth: 'log_only', answer: null, cards: [], confidenceLevel: null, source: 'training_sme' }
-  })));
-
-  await page.locator('.chip[data-ask="What is a deload?"]').click();
-
-  await expect(page.locator('#thread-messages .chat-bubble-atlas').last()).toContainText("don't have a card on that yet");
-  await expect(page.locator('#preview-panel')).toBeHidden();
-  expect(capture.writeRequests).toHaveLength(0);
-});
+// The hero "Learn" chips were retired with the home-screen tiles (owner
+// directive 2026-07-03). Typed questions reach the same SME layer through the
+// composer's SME-first chat route — covered by the two "Composer:" tests below.
 
 test('Composer: a training question is answered deterministically by the SME (no Gemini)', async ({ page }) => {
   const capture = {};

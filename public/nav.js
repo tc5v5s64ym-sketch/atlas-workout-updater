@@ -128,20 +128,13 @@
   }
 
   // The static #suggestion-chips strip was retired (composer-first Phase A,
-  // 2026-07-02) — replaced by the hero's state-driven #coach-chips, which emit
-  // sentences through the composer (one lane). Phase B2 settled the surviving
-  // handlers' disposition: chipAnswerLast + chipAnswerReport are the in-thread
-  // ARTIFACT renderers (exported below; app.js's deterministic artifact route
-  // calls them for "show my last session" / "weekly report" asks), and
-  // chipAnswerTrain was deleted — the canonical in-thread Coach's Pick (B1)
-  // owns the recommendation render.
-
-  // "Learn" chips (in the visible empty-state hero) → deterministic SME answers.
-  document.getElementById('learn-chips')?.addEventListener('click', e => {
-    const chip = e.target.closest('.chip');
-    if (!chip || chip.dataset.chip !== 'ask') return;
-    chipAnswerAsk(chip.dataset.ask || chip.textContent.trim());
-  });
+  // 2026-07-02); the hero's learn chips and their chipAnswerAsk handler were
+  // retired with the home-screen tiles (owner directive, 2026-07-03) — typed
+  // questions reach the same SME layer through the composer's SME-first chat
+  // route (coach-conversation.js getChatReply → /api/coach/ask). The surviving
+  // handlers: chipAnswerLast + chipAnswerReport are the in-thread ARTIFACT
+  // renderers (exported below; app.js's deterministic artifact route calls
+  // them for "show my last session" / "weekly report" asks).
 
   /* ===== Chip answer cards — render Atlas replies inline in #thread-messages ===== */
 
@@ -250,55 +243,6 @@
         go('progress', () => document.getElementById('weekly-report-btn')?.click());
       });
       wrap.appendChild(more);
-    }).catch(err => {
-      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
-    });
-  }
-
-  // "Learn" chips → the deterministic training SME layer. READ-ONLY: POSTs the
-  // question to /api/coach/ask (no Sheets, no writes) and renders the card-grounded
-  // answer inline. Logging-shaped input returns depth log_only with no answer, so the
-  // thread stays quiet — the trust loop is never touched.
-  function chipAnswerAsk(question) {
-    const q = String(question || '').trim();
-    if (!q) return;
-    const wrap = document.createElement('div');
-    wrap.innerHTML = '<span class="chip-loading">Thinking…</span>';
-    const bubble = atlasReply(wrap);
-    if (!bubble) return;
-
-    api('/api/coach/ask', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: q })
-    }).then(res => {
-      const data = res.data || {};
-      wrap.innerHTML = '';
-
-      const titleEl = document.createElement('div');
-      titleEl.className = 'chip-reply-title';
-      titleEl.textContent = q;
-      wrap.appendChild(titleEl);
-
-      if (!data.answer) {
-        const none = document.createElement('div');
-        none.className = 'chip-reply-sub';
-        none.textContent = "I don't have a card on that yet — try logging a set, or ask a training question.";
-        wrap.appendChild(none);
-        return;
-      }
-
-      const body = document.createElement('div');
-      body.className = 'sme-answer';
-      body.textContent = data.answer;            // pre-wrap CSS preserves the line breaks
-      wrap.appendChild(body);
-
-      if (Array.isArray(data.cards) && data.cards.length) {
-        const src = document.createElement('div');
-        src.className = 'sme-cards';
-        src.textContent = 'Based on: ' + data.cards.map(c => String(c).replace(/_/g, ' ')).join(', ');
-        wrap.appendChild(src);
-      }
     }).catch(err => {
       wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
     });

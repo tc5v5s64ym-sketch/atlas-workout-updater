@@ -73,7 +73,6 @@
 
   function hideHomeEmpty() {
     document.getElementById('coach-empty')?.setAttribute('hidden', '');
-    document.getElementById('suggested-tiles')?.setAttribute('hidden', '');
   }
 
   // Append an empty Atlas bubble and return { bubble, body } so the caller can
@@ -1491,39 +1490,14 @@
     document.getElementById('open-settings')?.click();
   });
 
-  /* ===== Tiles + listeners ===== */
+  /* ===== The canonical pick lane + the coach-speaks-first opening ===== */
 
-  // Freestyle: the user wants to log their own way. Hiding the home hero would
-  // leave a blank screen (no greeting, no tiles, empty thread), so drop a short
-  // Atlas bubble to ground the conversation and seed an example placeholder.
-  //
-  // We deliberately do NOT focus the composer here. Focusing pops the mobile
-  // soft keyboard, which on the position:fixed coach surface shoves the pinned
-  // composer up and compresses it — the box appears to shrink and move. The
-  // composer's shape, size, and position must stay put when Freestyle is
-  // tapped, so the lifter taps the box themselves when ready to type.
-  async function startFreestyle() {
-    hideHomeEmpty();
-    // Freestyle is an explicit "no plan" choice — clear any prior Coach's Pick
-    // engagement so logging here is never narrated as following today's suggestion.
-    if (typeof setCoachSuggestionEngaged === 'function') setCoachSuggestionEngaged(false);
-    setWorkoutPlaceholder('Bench 135 10/4, 225 5/2 x3');
-    const handle = appendAtlasBubble();
-    if (handle) {
-      await typeOut(handle.body, "Freestyle it — log a set or ask anything, and I'll react as you go.");
-    }
-  }
-
-  document.getElementById('suggested-tiles')?.addEventListener('click', e => {
-    const tile = e.target.closest('.suggest-tile');
-    if (!tile) return;
-    if (tile.dataset.suggest === 'freestyle') {
-      startFreestyle();
-    } else {
-      hideHomeEmpty();
-      typeSuggestedWorkout();
-    }
-  });
+  // The home-screen quick-start tiles (Coach's Pick / Freestyle) were retired
+  // by owner directive (2026-07-03) — the home screen is Atlas's guidance text
+  // only. The pick stays reachable through the one composer lane (a typed
+  // "what are we doing today?" routes here via looksLikeSessionRequest) and
+  // through every Today-tab entry point; freestyle is simply logging a set
+  // directly, which never engages the suggestion.
 
   // Composer-first Phase B — ONE canonical recommendation. Every "today's
   // recommendation" entry point outside this file (the Today tab's pick card,
@@ -1563,9 +1537,6 @@
     const top = recs.find(r => r && r.exercise_name &&
       Array.isArray(r.last_working_sets) && r.last_working_sets.length);
     if (hero.hasAttribute('hidden')) return;   // conversation started while fetching
-    // State-driven chips render either way — history gets the returning-lifter
-    // sentences, a cold start gets the first-session one.
-    renderCoachChips(Boolean(top));
     if (!top) return;                          // cold start / no history — default tagline stands
     const last = top.last_working_sets[top.last_working_sets.length - 1];
     if (!last || last.reps == null) return;    // never render a partial number
@@ -1577,44 +1548,10 @@
     line.textContent = `${weekday}. Last time: ${top.exercise_name} ${setBit}. Ready when you are.`;
   }
 
-  // Composer-first Phase A — state-driven chips. A chip IS a sentence: tapping
-  // it fills the composer and submits the logger form, exactly as if the lifter
-  // typed it — ONE code lane, no structured passthrough (the retired
-  // #suggestion-chips strip routed through separate card handlers; these do
-  // not). The chip set is chosen from the same engine state as the opening
-  // line: history → returning-lifter sentences; cold start → the first-session
-  // one. The container lives inside the hero, so chips hide with it the moment
-  // the conversation starts.
-  function renderCoachChips(hasHistory) {
-    const wrap = document.getElementById('coach-chips');
-    const hero = document.getElementById('coach-empty');
-    if (!wrap || !hero || hero.hasAttribute('hidden')) return;
-    const sentences = hasHistory
-      ? ['What are we doing today?', 'Show my last session']
-      : ['Build me a session'];
-    wrap.textContent = '';
-    for (const sentence of sentences) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip';
-      chip.textContent = sentence;
-      chip.addEventListener('click', () => emitChipSentence(sentence));
-      wrap.appendChild(chip);
-    }
-  }
-
-  // The one lane: a chip click is byte-identical to typing the sentence and
-  // hitting send. Nothing here routes, classifies, or renders — the composer
-  // pipeline (parser → intent guards → coach) owns all of that, same as typed
-  // input, so chips can never drift from what typing does.
-  function emitChipSentence(sentence) {
-    const input = document.getElementById('workout-text');
-    const form = document.getElementById('logger-form');
-    if (!input || !form) return;
-    input.value = sentence;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-  }
+  // The state-driven hero chips (renderCoachChips/emitChipSentence) were
+  // retired with the tiles (owner directive, 2026-07-03) — the chip SENTENCES
+  // live on in #coach-guide's copy, typed through the same one composer lane
+  // the chips used.
 
   document.addEventListener('atlas:preview-ready', e => {
     handlePreviewReady(e.detail).catch(() => {

@@ -77,48 +77,29 @@
            before); the :empty rule collapses it when there is nothing to show. -->
       <div id="coach-read-strip" class="coach-read-strip"></div>
       <!-- The deprecated static #suggestion-chips strip was retired here
-           (composer-first Phase A, 2026-07-02): its chips routed through a
-           SECOND code lane (structured card handlers in nav.js) instead of the
-           composer. Replaced by the state-driven #coach-chips inside the hero,
-           whose chips are sentences emitted through the normal composer path. -->
+           (composer-first Phase A, 2026-07-02). The state-driven #coach-chips,
+           quick-start tiles, and learn chips that replaced it were themselves
+           retired by owner directive (2026-07-03): the home screen shows NO
+           tiles — only Atlas's guidance text. Every tile affordance survives
+           as a typed sentence through the one composer lane ("what are we
+           doing today?" → the canonical Coach's Pick; questions → SME-first
+           chat; logging a set directly = freestyle). -->
 
-
-      <!-- Empty-state hero: shown until the conversation starts. -->
+      <!-- Empty-state hero: shown until the conversation starts. Owner
+           directive (2026-07-03): the only home-screen content is this one
+           Atlas text box guiding the user. -->
       <div id="coach-empty" class="coach-empty">
-        <p id="coach-greeting" class="coach-greeting-line"></p>
-        <!-- Composer-first Phase A: upgraded in place by renderCoachOpening() with a
-             deterministic, engine-grounded opening line when history exists; this
-             default stands whenever the engine has nothing to say (cold start,
-             offline, no API key). -->
-        <p id="coach-opening" class="coach-empty-tagline">Let's get stronger.</p>
-
-        <!-- Composer-first Phase A: state-driven chips. Each chip is a SENTENCE
-             the coach expects next; tapping it is identical to typing it — the
-             chip fills #workout-text and submits the logger form (one code
-             lane, no structured passthrough). Populated by renderCoachChips()
-             from the same engine state as the opening line; empty until then. -->
-        <div id="coach-chips" class="coach-chips"></div>
-
-        <!-- Quick-start tiles live inside the hero so they move with the
-             greeting block and hide together when the conversation starts. -->
-        <div id="suggested-tiles" class="suggested-tiles">
-          <button type="button" class="suggest-tile" data-suggest="workout">
-            <span class="suggest-tile-icon" aria-hidden="true">&#x1F9E0;</span>
-            <span class="suggest-tile-label">Coaches pick</span>
-          </button>
-          <button type="button" class="suggest-tile" data-suggest="freestyle">
-            <span class="suggest-tile-icon" aria-hidden="true">&#x26A1;</span>
-            <span class="suggest-tile-label">Freestyle</span>
-          </button>
-        </div>
-
-        <!-- "Learn" chips: deterministic training answers from the SME layer
-             (POST /api/coach/ask). Read-only — renders a card-grounded answer in
-             the thread, never the write/preview/approve path. -->
-        <div id="learn-chips" class="learn-chips">
-          <button type="button" class="chip" data-chip="ask" data-ask="Explain strength vs hypertrophy">Strength vs size?</button>
-          <button type="button" class="chip" data-chip="ask" data-ask="What is a deload?">What's a deload?</button>
-          <button type="button" class="chip" data-chip="ask" data-ask="Explain reps in reserve">Reps in reserve?</button>
+        <div class="coach-guide-box">
+          <p id="coach-greeting" class="coach-greeting-line"></p>
+          <!-- Composer-first Phase A: upgraded in place by renderCoachOpening() with a
+               deterministic, engine-grounded opening line when history exists; this
+               default stands whenever the engine has nothing to say (cold start,
+               offline, no API key). -->
+          <p id="coach-opening" class="coach-empty-tagline">Let's get stronger.</p>
+          <!-- Static guidance: works offline / with no API key; the phrasings
+               match the composer's deterministic routes (looksLikeSessionRequest,
+               looksLikeArtifactRequest) so what Atlas suggests is what works. -->
+          <p id="coach-guide" class="coach-guide-line">Ask "what are we doing today?" for my pick, log a set like "Bench 225 5/2", or ask me anything about training.</p>
         </div>
       </div>
 

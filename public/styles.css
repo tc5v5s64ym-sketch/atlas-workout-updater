@@ -760,6 +760,10 @@ body[data-surface="coach"] main {
   margin: 0 0 var(--s5);
 }
 .coach-read-strip:empty { display: none; }
+/* Owner directive (2026-07-03): while the home hero is showing, Atlas's guide
+   box is the ONLY content — the glance line joins the surface once the
+   conversation starts (the hero gets [hidden] and this rule stops matching). */
+body:has(#coach-empty:not([hidden])) .coach-read-strip { display: none; }
 /* Phase B3: the glance line is tappable — it expands into an in-thread artifact */
 .coach-read-strip { cursor: pointer; }
 .coach-read-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
@@ -790,9 +794,6 @@ body[data-surface="coach"] main {
 .weekly-coach-summary { font-size: 0.95rem; }
 .weekly-coach-nudge { font-size: 0.9rem; margin: var(--s2) 0 0; }
 
-/* Composer-first Phase A: state-driven chips in the hero — sentences, not menus. */
-.coach-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 14px; }
-.coach-chips:empty { display: none; }
 .chip {
   appearance: none;
   -webkit-appearance: none;
@@ -1101,28 +1102,10 @@ button.approve {
   color: var(--muted);
 }
 
-/* "Learn" chips inside the empty-state hero — visible (unlike the legacy
-   #suggestion-chips row). Tap → deterministic SME answer in the thread. */
-.learn-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s2);
-  justify-content: center;
-  margin-top: var(--s3);
-}
-
-/* Deterministic training-SME answer card (the "Learn" chips → /api/coach/ask). */
-.sme-answer {
-  white-space: pre-wrap;
-  font-size: 0.9rem;
-  line-height: 1.45;
-  margin-top: 2px;
-}
-.sme-cards {
-  margin-top: var(--s2);
-  font-size: 0.78rem;
-  color: var(--muted);
-}
+/* The hero "Learn" chips and their SME answer card (.learn-chips, .sme-answer,
+   .sme-cards) were retired with the home-screen tiles (owner directive,
+   2026-07-03) — typed questions reach the SME through the composer's chat
+   route, which renders plain text in the Atlas bubble. */
 
 /* Structured suggested-workout block: bold exercise names, compact RIR-safe
    set lines, one gap between exercises. No bullets — set lines are plain. */
@@ -2454,6 +2437,20 @@ a.lift-link:hover { text-decoration: underline; }
 }
 .coach-empty[hidden] { display: none; }
 
+/* Owner directive (2026-07-03): the home screen is ONE Atlas text box guiding
+   the user — greeting, engine-grounded opening, and what to type next. */
+.coach-guide-box {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s5);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
 .coach-greeting-line {
   font-size: 1.0625rem;
   color: var(--muted);
@@ -2468,40 +2465,21 @@ a.lift-link:hover { text-decoration: underline; }
   color: var(--ink);
   margin: 0;
 }
+/* Inside the guide box the opening reads as a message, not a billboard. */
+.coach-guide-box .coach-empty-tagline {
+  font-size: clamp(1.5rem, 5.5vw, 2rem);
+  line-height: 1.2;
+}
+.coach-guide-line {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--muted);
+  margin: 0;
+}
 
-/* Quick-start tiles — inside the hero, spaced below the tagline.
-   Not full-width: shrink to content so they feel like cards, not bars. */
-.suggested-tiles {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--s2);
-  margin-top: var(--s4);
-}
-.suggested-tiles[hidden] { display: none; }
-.suggest-tile {
-  display: flex;
-  align-items: center;
-  gap: var(--s3);
-  padding: 12px 20px;
-  background: color-mix(in srgb, var(--card) 80%, transparent);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-pill);
-  color: var(--ink);
-  font-family: inherit;
-  font-size: 0.92rem;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-  min-width: 160px;
-  transition: box-shadow 0.1s, transform 0.1s, border-color 0.1s;
-}
-.suggest-tile:hover { border-color: var(--accent-border); box-shadow: var(--shadow-sm); }
-.suggest-tile:active { transform: scale(0.97); }
-.suggest-tile-icon { font-size: 1.1rem; line-height: 1; }
-.suggest-tile-label { line-height: 1.2; }
+/* The quick-start tiles (.suggested-tiles/.suggest-tile) were retired by
+   owner directive (2026-07-03): the home screen is Atlas's guidance text
+   only — see .coach-guide-box. */
 
 /* Typed coaching message + blinking cursor */
 .coach-msg { white-space: pre-wrap; }
@@ -2552,7 +2530,6 @@ a.lift-link:hover { text-decoration: underline; }
 
 @media (prefers-reduced-motion: reduce) {
   .typing-cursor { animation: none; display: none; }
-  .suggest-tile { transition: none; }
 }
 
 /* ===== Decluttered post-write state ===== */
@@ -2595,7 +2572,6 @@ a.lift-link:hover { text-decoration: underline; }
 .surface-btn:focus-visible,
 .tab-btn:focus-visible,
 .chip:focus-visible,
-.suggest-tile:focus-visible,
 .composer-attach:focus-visible,
 button:focus-visible,
 summary:focus-visible,
