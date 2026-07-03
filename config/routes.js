@@ -27,6 +27,7 @@ const routeDefinitions = [
   { path: '/api/suggest-substitute', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/session/compile', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/config', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/debug/intent-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/bug-report', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/bug-report', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/exercise-match', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
