@@ -39,7 +39,13 @@ const { buildIntentEnvelope, validateIntentEnvelope } = require('./intentEnvelop
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_ROUTER_MODEL = 'gemini-2.5-flash-lite';
-const DEFAULT_TIMEOUT_MS = 4000;
+// Shadow-evidence tune (owner review 2026-07-03): a valid plan correction
+// ("it's face pulls next not back squats") logged ok:false at ms:4004 — right at
+// the old 4000ms cap — while the near-identical sibling classified fine. The
+// failure was a TIMEOUT, not a misclassification. The shadow classifier runs
+// fire-and-forget OFF the reply path, so a longer budget is invisible to the
+// lifter; raise it to stop dropping slow-but-valid classifications.
+const DEFAULT_TIMEOUT_MS = 6000;
 const MAX_INPUT_CHARS = 1000;
 
 const VOCAB_FILE = path.join(__dirname, '..', 'config', 'coaching', 'contracts', 'intent.vocabulary.json');
@@ -68,7 +74,11 @@ const INTENT_GLOSSES = {
   progression_review:     'asks how a lift or their training is progressing/trending',
   explain_recommendation: 'asks WHY a recommendation or coaching call was made',
   substitute_exercise:    'asks to replace a specific exercise with something else',
-  log_intent:             'states sets/work performed (normally the deterministic parser claims this — classify only)',
+  // The router NAMES a log; it does not extract set details. sets/reps/weight/rir
+  // are NOT constraint-vocabulary keys — the deterministic slash-parser owns them
+  // — so a model that emits them has those keys dropped+recorded (blocker 3: the
+  // drop is expected, not a lost field).
+  log_intent:             'states sets/work performed (normally the deterministic parser claims this — classify only; do NOT emit sets/reps/weight/rir)',
   progress_query:         'asks to see history: last session, weekly numbers, records',
   readiness_checkin:      'reports sleep/soreness/stress/energy as a readiness check-in (requires readiness_inputs)',
   ingest_signal:          'structured device/wearable signal — almost never typed chat (requires signal)',
@@ -126,6 +136,11 @@ function buildRouterSystemPrompt() {
     '{"type":"explain_recommendation","constraints":{},"confidence":0.85}',
     'Message: "hows my squat coming along"',
     '{"type":"progression_review","constraints":{"target_lift":"Squat"},"confidence":0.9}',
+    // A plan correction ("not Y, X instead" / "it's X next not Y") is the CLOSEST
+    // fit to substitute_exercise — swap the named-out lift for the named-in one.
+    // Shadow evidence: this exact phrase failed to classify (blocker 2).
+    'Message: "it\'s face pulls next not back squats"',
+    '{"type":"substitute_exercise","constraints":{"target_lift":"Face Pull","exclude_exercises":["Back Squat"]},"confidence":0.9}',
     'Message: "asdf lol"',
     '{"type":"clarify_intent","constraints":{},"confidence":0.3}'
   ].join('\n');
@@ -250,6 +265,7 @@ async function classifyIntent(text, { source = 'chat', asOf, timeoutMs = DEFAULT
 
 module.exports = {
   DEFAULT_ROUTER_MODEL,
+  DEFAULT_TIMEOUT_MS,
   routerModel,
   buildRouterSystemPrompt,
   parseRouterJson,

@@ -190,6 +190,69 @@ test('router: timeout aborts to null', async () => {
   assert.equal(result, null);
 });
 
+// ─── Shadow-evidence regression: three promotion blockers (owner review 2026-07-03) ───
+
+// Blocker 2: "It's face pulls next not back squats" logged ok:false in shadow.
+// The near-identical "No that was face pulls not back squats" classified fine
+// (substitute_exercise 0.9), and the failing entry took ms:4004 — right at the
+// old 4000ms cap. Root cause = TIMEOUT, not classification. The shadow classifier
+// runs OFF the reply path (fire-and-forget), so a longer budget costs nothing
+// user-facing and stops a slow-but-valid classification from being dropped.
+test('router (blocker 2): the shadow classifier budget is raised past the 4s that timed out a valid classification', () => {
+  assert.ok(router.DEFAULT_TIMEOUT_MS >= 6000,
+    `budget must be >= 6000ms (shadow evidence: a valid correction timed out at ms:4004); got ${router.DEFAULT_TIMEOUT_MS}`);
+});
+
+// Blocker 2: a "not Y, X instead / it's X next not Y" plan correction must have an
+// in-prompt exemplar so the model reliably routes it to the closest existing enum
+// (substitute_exercise) with the swap constraints, rather than ambiguating.
+test('router (blocker 2): the prompt teaches the plan-correction exemplar (closest enum = substitute_exercise)', () => {
+  const prompt = router.buildRouterSystemPrompt();
+  assert.match(prompt, /Message: "it's face pulls next not back squats"/,
+    'the exact shadow-failing phrase is an in-prompt example');
+  assert.match(prompt, /"type":"substitute_exercise"/, 'the exemplar routes to the closest enum');
+  assert.match(prompt, /"exclude_exercises":\["Back Squat"\]/, 'the exemplar carries the swapped-out lift');
+});
+
+// Blocker 2: full-path regression — when the model returns the closest-enum
+// classification for the shadow-failing phrase, it must build a VALID envelope
+// (not ok:false). Pins the envelope path; the timeout fix covers the transport.
+test('router (blocker 2): a "next X not Y" plan correction classifies to substitute_exercise', async () => {
+  const result = await withStub({
+    fetchImpl: async () => geminiReply({
+      type: 'substitute_exercise',
+      constraints: { target_lift: 'Face Pull', exclude_exercises: ['Back Squat'] },
+      confidence: 0.9
+    })
+  }, () => router.classifyIntent("it's face pulls next not back squats", { asOf: ASOF }));
+  assert.ok(result, 'the correction must produce an envelope, not ok:false');
+  assert.equal(result.type, 'substitute_exercise');
+  assert.deepEqual(result.constraints, { target_lift: 'Face Pull', exclude_exercises: ['Back Squat'] });
+  assert.equal(validateIntentEnvelope(result).valid, true);
+});
+
+// Blocker 3: "Bench Press — 225 × 5 reps × 3 sets @ RIR 2" classified as
+// log_intent 0.9 but dropped sets/reps/weight_kg/rir. This is EXPECTED: the
+// IntentEnvelope has no set-detail constraint keys by design — the router only
+// NAMES the intent; the deterministic slash-parser (services/workoutTextParser)
+// owns the numbers. The hallucinated set-detail keys are correctly dropped and
+// recorded, and the log_intent envelope stays valid.
+test('router (blocker 3): log_intent drops set-detail keys (sets/reps/weight_kg/rir) — the parser owns numbers', async () => {
+  const result = await withStub({
+    fetchImpl: async () => geminiReply({
+      type: 'log_intent',
+      constraints: { target_lift: 'Bench Press', sets: 3, reps: 5, weight_kg: 102, rir: 2 },
+      confidence: 0.9
+    })
+  }, () => router.classifyIntent('Bench Press — 225 × 5 reps × 3 sets @ RIR 2', { asOf: ASOF }));
+  assert.ok(result);
+  assert.equal(result.type, 'log_intent');
+  assert.deepEqual(result.constraints, { target_lift: 'Bench Press' }, 'only vocabulary constraints survive');
+  assert.deepEqual([...result.extraction.dropped_keys].sort(), ['reps', 'rir', 'sets', 'weight_kg'],
+    'the set-detail keys are dropped and recorded (not silently lost)');
+  assert.equal(validateIntentEnvelope(result).valid, true);
+});
+
 test('router: the system prompt is built FROM the vocabulary (all 13 intents + constraint keys enumerated)', () => {
   const vocab = require('../config/coaching/contracts/intent.vocabulary.json');
   const prompt = router.buildRouterSystemPrompt();
