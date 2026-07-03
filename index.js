@@ -58,6 +58,7 @@ const { orchestrate } = require('./services/coachOrchestrator');
 const { validateCoachingDecision } = require('./services/coachingDecision');
 const { buildRunners } = require('./services/coachRunners');
 const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrianPickOverride } = require('./services/coachEnginePromotion');
+const { foldJustLoggedSet } = require('./services/ephemeralSetFold');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -2623,9 +2624,19 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
         });
         // Reuse the already-fetched log rows (allLog) instead of re-reading them;
         // keep the real deload/profile readers so the snapshot stays complete.
+        // In-workout, FOLD the just-logged set into the rows first (it is not
+        // in the sheet yet under session-level save) so the snapshot the
+        // Orchestrator sees is truthful — the decision then consumes the
+        // fresh set, and the fold flag below lifts the just_logged_anchor
+        // guard. A set the fold rejects (no date/numbers) leaves the rows
+        // unchanged and the guard in force.
+        const foldedRows = justLoggedSet
+          ? foldJustLoggedSet(allLog, liftCode, justLoggedSet, asOf)
+          : allLog;
+        const ephemeralSetFolded = foldedRows !== allLog && foldedRows.length === allLog.length + 1;
         const snapshot = await assembleState({
           asOf,
-          readers: { ...defaultReaders(), getLogRows: async () => allLog },
+          readers: { ...defaultReaders(), getLogRows: async () => foldedRows },
         });
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
         const validation = validateCoachingDecision(brian);
@@ -2633,11 +2644,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           recommendation.brian = brian;
         }
         if (coachEngineMode === 'brian') {
-          // In-workout, the just-logged set is NOT in the sheet yet — Brian's
-          // snapshot-derived decision is stale by exactly that set, so the
-          // legacy response anchored on the fresh set must win (the planner
-          // returns reason 'just_logged_anchor').
-          const plan = planBrianOverride(recommendation, brian, validation, activeDeload, { justLoggedSet });
+          const plan = planBrianOverride(recommendation, brian, validation, activeDeload, { justLoggedSet, ephemeralSetFolded });
           if (plan.eligible) {
             applyBrianOverride(recommendation, plan);
             recommendation.engine_source = { mode: 'brian', driven_by: 'brian' };
