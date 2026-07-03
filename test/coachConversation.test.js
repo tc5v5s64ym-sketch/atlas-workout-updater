@@ -434,6 +434,41 @@ test('opening: engine-grounded, LLM-free, and honest about what it claims', () =
   assert.match(fn, /\$\{last\.reps\} reps/, 'bodyweight lifts read as reps, never a dangling ×');
 });
 
+test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const guard = cc.slice(cc.indexOf('function hasLoad('), cc.indexOf('function appendSetReadout('));
+  assert.match(guard, /Number\(weight\) !== 0/, 'a literal 0 counts as bodyweight (sheet rows store bodyweight sets with weight 0)');
+  // All three renderers consult the shared guard.
+  const readout = cc.slice(cc.indexOf('function appendSetReadout('), cc.indexOf('function buildReadback('));
+  assert.match(readout, /hasLoad\(s\.weight\) \? `\$\{s\.weight\}×\$\{s\.reps\} ` : `\$\{s\.reps\} reps `/,
+    'the readback tile reads bodyweight sets as reps');
+  const review = cc.slice(cc.indexOf('function buildReviewSetLine('), cc.indexOf('function buildEffortGrid('));
+  assert.match(review, /hasLoad\(g\.set\.weight\)/, 'the review-card set line uses the same rule');
+  const opener = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
+  assert.match(opener, /hasLoad\(last\.weight\)/, 'the opener closes its 0-weight edge with the same rule');
+  // app.js carries ONE shared helper for every logged-set renderer (review #828
+  // swept the full file: recap, plan card, PR table, best-recent, last-session
+  // hint, plan-sheet labels, in-lift panel).
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const helper = app.slice(app.indexOf('function formatSetLoad('), app.indexOf('function formatSetLoad(') + 300);
+  assert.match(helper, /Number\(weight\) !== 0/, 'the app.js helper carries the same literal-0 rule');
+  for (const site of ["class: 'session-ex-set'", 'coach-plan-last', 'bestWeightSet ?', 'bestRepSet ?', "rows.push(['Last'"]) {
+    const idx = app.indexOf(site);
+    assert.ok(idx > -1, `site marker missing: ${site}`);
+    assert.ok(app.slice(Math.max(0, idx - 300), idx + 300).includes('formatSetLoad('),
+      `logged-set renderer near "${site}" must use formatSetLoad`);
+  }
+  // No LOGGED-set weight×reps template remains outside the helper (engine
+  // TARGET renders — t./target./ex. plan rows — keep their own rendering).
+  for (const bad of ['${s.weight} × ${s.reps}', '${r.weight} × ${r.reps}', '${last.weight} × ${last.reps}',
+    '${lastSet.weight} × ${lastSet.reps}', '${s.weight}×${s.reps}']) {
+    assert.equal(app.includes(bad), false, `unguarded logged-set render remains: ${bad}`);
+  }
+  const nav = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'nav.js'), 'utf8');
+  assert.match(nav, /Number\(s\.weight\) !== 0\) \? `\$\{s\.weight\}×\$\{s\.reps\}` : `\$\{s\.reps\} reps`/,
+    'the last-session chip row reads bodyweight sets as reps');
+});
+
 test('opening: the default tagline survives every failure path (element + copy intact)', () => {
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(html, /id="coach-opening" class="coach-empty-tagline">Let's get stronger\.</,

@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v94';
+const ATLAS_SHELL_BUILD = 'v95';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -588,7 +588,7 @@ async function loadSessionDetail(sessionId, slot) {
         for (const r of exSets) {
           const rir = (r.rir === '' || r.rir == null) ? '' : ` @${r.rir}`;
           const note = r.notes ? ` · ${r.notes}` : '';
-          block.appendChild(el('div', { class: 'session-ex-set', text: `${r.weight} × ${r.reps}${rir}${note}` }));
+          block.appendChild(el('div', { class: 'session-ex-set', text: `${formatSetLoad(r.weight, r.reps)}${rir}${note}` }));
         }
         slot.appendChild(block);
       }
@@ -968,6 +968,15 @@ function collectAtlasStorage(storage) {
   return out;
 }
 
+// Bodyweight sets (weight null/''/0) read as reps, never "0×N" — one rule for
+// every renderer of LOGGED set data in this file (owner live find 2026-07-03;
+// coach-conversation.js and nav.js carry their own copies inside their IIFEs).
+// Engine TARGETS keep their own rendering — this is for history only.
+function formatSetLoad(weight, reps, sep = ' × ') {
+  const loaded = weight != null && weight !== '' && Number(weight) !== 0;
+  return loaded ? `${weight}${sep}${reps}` : `${reps} reps`;
+}
+
 function currentRouteForBugReport() {
   const activeSurface = document.body.getAttribute('data-surface') || null;
   const activeTab = document.querySelector('.tab.active')?.id || null;
@@ -1203,7 +1212,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
         if (!rec || !panel || panel.hidden) return;
         const last = rec.last_working_sets?.[rec.last_working_sets.length - 1];
         const lastText = last
-          ? (last.rir != null ? `${last.weight} × ${last.reps} @${last.rir}` : `${last.weight} × ${last.reps}`)
+          ? (last.rir != null ? `${formatSetLoad(last.weight, last.reps)} @${last.rir}` : formatSetLoad(last.weight, last.reps))
           : null;
         panel.innerHTML = '';
         panel.appendChild(el('div', {}, buildPanelContent(lastText, rec.reasoning || null)));
@@ -1326,7 +1335,7 @@ function renderCoachPlan(card, { focusReason, topRec }) {
     if (last && (last.weight != null || last.reps != null)) {
       const rir = last.rir == null ? '' : ` @ RIR ${last.rir}`;
       const when = last.date_clean ? `Last (${last.date_clean})` : 'Last';
-      card.appendChild(el('div', { class: 'coach-plan-last', text: `${when}: ${last.weight} × ${last.reps}${rir}` }));
+      card.appendChild(el('div', { class: 'coach-plan-last', text: `${when}: ${formatSetLoad(last.weight, last.reps)}${rir}` }));
     }
 
     // 3) Recommended next lift / weight / reps.
@@ -2753,8 +2762,8 @@ async function loadRecentPrs() {
       ['Lift', 'Best weight', 'Best reps', 'Best est. 1RM'],
       prs.map(pr => [
         pr.exercise || pr.liftCode,
-        pr.bestWeightSet ? `${pr.bestWeightSet.weight} × ${pr.bestWeightSet.reps} (${pr.bestWeightSet.date_clean})` : '—',
-        pr.bestRepSet ? `${pr.bestRepSet.weight} × ${pr.bestRepSet.reps} (${pr.bestRepSet.date_clean})` : '—',
+        pr.bestWeightSet ? `${formatSetLoad(pr.bestWeightSet.weight, pr.bestWeightSet.reps)} (${pr.bestWeightSet.date_clean})` : '—',
+        pr.bestRepSet ? `${formatSetLoad(pr.bestRepSet.weight, pr.bestRepSet.reps)} (${pr.bestRepSet.date_clean})` : '—',
         pr.bestEstimated1RMSet ? `${pr.bestEstimated1RMSet.estimated_1rm} (${pr.bestEstimated1RMSet.date_clean})` : '—'
       ])
     ));
@@ -3150,7 +3159,7 @@ async function openLiftDrillDown(exerciseName, liftCode) {
     if (d.sessions_count) {
       if (d.best_recent_set) {
         const s = d.best_recent_set;
-        const setText = s.rir != null ? `${s.weight} × ${s.reps} @${s.rir}` : `${s.weight} × ${s.reps}`;
+        const setText = s.rir != null ? `${formatSetLoad(s.weight, s.reps)} @${s.rir}` : formatSetLoad(s.weight, s.reps);
         contentEl.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
       }
       if (d.last_sessions && d.last_sessions.length) {
@@ -3293,7 +3302,7 @@ document.getElementById('detail-form').addEventListener('submit', async e => {
     // Best recent set
     if (data.best_recent_set) {
       const s = data.best_recent_set;
-      const setText = s.rir != null ? `${s.weight} × ${s.reps} @${s.rir}` : `${s.weight} × ${s.reps}`;
+      const setText = s.rir != null ? `${formatSetLoad(s.weight, s.reps)} @${s.rir}` : formatSetLoad(s.weight, s.reps);
       box.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
     }
 
@@ -3474,7 +3483,7 @@ async function showLastTimeHint(exerciseInput, hintEl) {
   if (!stillCurrent()) return;
   hintEl.textContent = '';
   if (data.sets && data.sets.length) {
-    const summary = data.sets.map(s => `${s.weight}×${s.reps}`).join('  ');
+    const summary = data.sets.map(s => formatSetLoad(s.weight, s.reps, '×')).join('  ');
     hintEl.appendChild(el('div', { text: `Last (${data.date}): ${summary}` }));
   }
 
@@ -4927,7 +4936,7 @@ function renderAtlasSuggestion(rec) {
   if (!rec || !rec.next_target || !rec.last_working_sets || !rec.last_working_sets.length) return null;
   const lastSet = rec.last_working_sets[rec.last_working_sets.length - 1];
   const target = rec.next_target;
-  const lastLabel = lastSet.rir != null ? `${lastSet.weight} × ${lastSet.reps} @${lastSet.rir}` : `${lastSet.weight} × ${lastSet.reps}`;
+  const lastLabel = lastSet.rir != null ? `${formatSetLoad(lastSet.weight, lastSet.reps)} @${lastSet.rir}` : formatSetLoad(lastSet.weight, lastSet.reps);
   const targetLabel = `${target.weight} × ${target.reps} × ${target.sets}`;
   const rows = [
     ['Last', lastLabel],
@@ -4987,7 +4996,7 @@ function renderPreviewCoachCard(rec, liftCode, todaySets) {
   const rows = [];
   if (lastSet && Number.isFinite(lastSet.weight)) {
     const rir = lastSet.rir != null ? ` @ RIR${lastSet.rir}` : '';
-    rows.push(['Last', `${lastSet.weight} × ${lastSet.reps}${rir}`]);
+    rows.push(['Last', `${formatSetLoad(lastSet.weight, lastSet.reps)}${rir}`]);
   }
   // Hint prefers the plain-English recommendation; falls back to the progress
   // comparison so a card always carries a usable cue.

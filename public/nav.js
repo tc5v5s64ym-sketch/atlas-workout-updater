@@ -167,7 +167,12 @@
         const exSets = seen.get(ex);
         const row = document.createElement('div');
         row.className = 'chip-reply-row';
-        const setBits = exSets.map(s => `${s.weight}×${s.reps}${s.rir != null ? '/' + s.rir : ''}`).join(', ');
+        // Bodyweight sets (weight null/''/0) read as reps, never "0×20" — same
+        // rule as coach-conversation.js hasLoad (owner live find 2026-07-03).
+        const setBits = exSets.map(s => {
+          const load = (s.weight != null && s.weight !== '' && Number(s.weight) !== 0) ? `${s.weight}×${s.reps}` : `${s.reps} reps`;
+          return `${load}${s.rir != null ? '/' + s.rir : ''}`;
+        }).join(', ');
         row.textContent = `${ex}: ${setBits}`;
         wrap.appendChild(row);
       }

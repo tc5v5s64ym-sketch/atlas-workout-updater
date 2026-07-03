@@ -105,12 +105,19 @@
     return r ? (r[3] || r[2] || null) : null;
   }
 
+  // Bodyweight sets carry no load (weight null/''/0) and must read as reps —
+  // never "0×20" (owner live find, 2026-07-03: Hanging Knee Raises readback).
+  // Shared by the readback tile, the review-card set line, and the opener.
+  function hasLoad(weight) {
+    return weight != null && weight !== '' && Number(weight) !== 0;
+  }
+
   // "135×12 RIR 4 · 185×10 RIR 2 · 225×5 RIR 0" — RIR always in ember; RIR 0 /
   // failure gets the brighter "max" treatment. Appends into `target`.
   function appendSetReadout(target, sets) {
     sets.forEach((s, i) => {
       if (i) target.appendChild(document.createTextNode(' · '));
-      target.appendChild(document.createTextNode(`${s.weight}×${s.reps} `));
+      target.appendChild(document.createTextNode(hasLoad(s.weight) ? `${s.weight}×${s.reps} ` : `${s.reps} reps `));
       if (s.rir != null && Number.isFinite(Number(s.rir))) {
         const failure = Number(s.rir) <= 0;
         const rir = elc('span', failure ? 'rir rir-max' : 'rir', `RIR ${s.rir}`);
@@ -187,7 +194,7 @@
     }
     groups.forEach((g, i) => {
       if (i) span.appendChild(document.createTextNode('  '));
-      span.appendChild(document.createTextNode(`${g.set.weight} × ${g.set.reps} `));
+      span.appendChild(document.createTextNode(hasLoad(g.set.weight) ? `${g.set.weight} × ${g.set.reps} ` : `${g.set.reps} reps `));
       if (g.set.rir != null && Number.isFinite(Number(g.set.rir))) {
         span.appendChild(elc('span', Number(g.set.rir) <= 0 ? 'rir rir-max' : 'rir', `RIR ${g.set.rir}`));
       }
@@ -1541,8 +1548,10 @@
     const last = top.last_working_sets[top.last_working_sets.length - 1];
     if (!last || last.reps == null) return;    // never render a partial number
     const weekday = new Date().toLocaleDateString(undefined, { weekday: 'long' });
-    // Bodyweight lifts have no load — "×12" alone reads wrong, so say reps plainly.
-    const setBit = (last.weight != null && last.weight !== '')
+    // Bodyweight lifts have no load — "×12" alone reads wrong, so say reps
+    // plainly. hasLoad also treats a literal 0 as bodyweight (sheet rows store
+    // bodyweight sets with weight 0, which rendered "0×12" here).
+    const setBit = hasLoad(last.weight)
       ? `${last.weight}×${last.reps}`
       : `${last.reps} reps`;
     line.textContent = `${weekday}. Last time: ${top.exercise_name} ${setBit}. Ready when you are.`;
