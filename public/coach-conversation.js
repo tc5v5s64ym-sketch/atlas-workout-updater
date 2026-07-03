@@ -1158,6 +1158,13 @@
   // Save is the end-of-session review card below. Rendered purely from the
   // client-parsed sets; the set text is recorded so the end-of-session compile
   // can reconstruct the full workout.
+  // The set-logged detail's `unverified` carries one name (string) or several
+  // (array — a multi-line paste can have unknown names on multiple lines).
+  function isUnverifiedName(unverified, name) {
+    if (unverified == null || !name) return false;
+    return Array.isArray(unverified) ? unverified.includes(name) : unverified === name;
+  }
+
   async function handleSetLogged(detail) {
     const { exercises = [], text = '', substitutions = [], unverified = null } = detail || {};
     if (!exercises.length) return;
@@ -1173,7 +1180,7 @@
     // blocks (slice(1) loop). Session handoff runs once at the end. (docs/INVESTIGATION_2026-06-25b.md)
     const primary = exercises[0];
     bubble.insertBefore(buildReadback(primary.exercise, primary.sets, planStepFor(primary.exercise, activeSession),
-      unverified != null && unverified === primary.exercise), body);
+      isUnverifiedName(unverified, primary.exercise)), body);
     const code = liftCodeForExercise(primary.exercise);
     let rec = null;
     if (code) {
@@ -1264,7 +1271,7 @@
       // FA: each additional lift is its OWN block — its card first (appended in order,
       // after the primary block), then its coaching, then its Next.
       bubble.appendChild(buildReadback(ex.exercise, ex.sets, planStepFor(ex.exercise, activeSession),
-        unverified != null && unverified === ex.exercise));
+        isUnverifiedName(unverified, ex.exercise)));
       const exCode = liftCodeForExercise(ex.exercise);
       let exRec = null;
       if (exCode) {

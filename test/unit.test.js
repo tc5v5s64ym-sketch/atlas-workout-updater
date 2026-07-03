@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v91/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v92/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5620,8 +5620,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v91/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v90\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v92/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v91\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6497,13 +6497,18 @@ test('partial-log: rowsFromWorkoutInput surfaces the specific per-line ask after
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const populateIdx = appSource.indexOf('populateSetRows(parsed.rows);');
   assert.ok(populateIdx > 0);
-  const after = appSource.slice(populateIdx, populateIdx + 2200);
+  const after = appSource.slice(populateIdx, populateIdx + 4600);
   assert.match(after, /parsed\.unresolved.*\.length/s, 'unresolved lines must be checked after buffering');
   assert.match(after, /one line needs a check/, 'the partial ask must be surfaced to the lifter');
   assert.match(after, /first\.message/, 'the ask must carry the parser\'s SPECIFIC message, not generic copy');
+  // STATUS precedence: the ask's composer status must outrank the advisory's
+  // (the detection loop itself now runs BEFORE the ask so check-name chips
+  // render either way — QA sweep 2026-07-03).
   const unresolvedIdx = appSource.indexOf('one line needs a check');
-  const advisoryIdx = appSource.indexOf('shouldWarnUnknownLift(parsed.warnings', populateIdx);
-  assert.ok(unresolvedIdx < advisoryIdx, 'the partial ask must take precedence over the unknown-lift advisory');
+  const advisoryStatusIdx = appSource.indexOf("I don't recognize", populateIdx);
+  assert.ok(unresolvedIdx < advisoryStatusIdx, 'the partial ask status must take precedence over the unknown-lift advisory status');
+  const detectionIdx = appSource.indexOf('shouldWarnUnknownLift(parsed.warnings', populateIdx);
+  assert.ok(detectionIdx < unresolvedIdx, 'the per-row detection must run before the ask returns, so chips render on partial-log pastes');
 });
 
 test('partial-log: a none-resolved multi-line paste surfaces its ask instead of routing to the coach', () => {
@@ -6586,17 +6591,27 @@ test('card/advisory consistency: an unverified lift name is marked on the confir
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // app.js remembers the advisory's name and threads it into the set-logged event.
   assert.match(appSource, /let lastUnverifiedExercise = null;/);
-  const advisoryIdx = appSource.indexOf('lastUnverifiedExercise = parsed.rows[0]?.exercise || null;');
+  const advisoryIdx = appSource.indexOf('lastUnverifiedExercise = unverifiedNames.length === 1 ? unverifiedNames[0] : unverifiedNames;');
   const warnIdx = appSource.indexOf('shouldWarnUnknownLift(parsed.warnings');
-  assert.ok(advisoryIdx > 0 && warnIdx > 0 && Math.abs(advisoryIdx - warnIdx) < 600,
+  assert.ok(advisoryIdx > 0 && warnIdx > 0 && Math.abs(advisoryIdx - warnIdx) < 900,
     'the unverified name must be captured where the advisory fires');
+  // Per-ROW detection (QA sweep 2026-07-03): every parsed row is checked, so a
+  // multi-line paste's later unknown names are flagged too — and the server's
+  // kbIdentity (the PRIMARY lift's identity) only vouches for row 0.
+  assert.match(appSource, /\(parsed\.rows \|\| \[\]\)\.forEach\(\(row, i\) =>/,
+    'every parsed row is checked for an unresolved name, not just rows[0]');
+  assert.match(appSource, /i === 0 \? parsed\.kbIdentity : null/,
+    'kbIdentity vouches only for the primary row');
   assert.match(appSource, /\.\.\.\(lastUnverifiedExercise \? \{ unverified: lastUnverifiedExercise \} : \{\}\)/,
-    'the set-logged detail must carry the unverified name');
-  // The confirmation card renders the marker for the matching exercise (primary + additional).
+    'the set-logged detail must carry the unverified name(s)');
+  // The confirmation card renders the marker for the matching exercise (primary + additional),
+  // accepting one name (string) or several (array) via the shared helper.
   assert.match(ccSource, /function buildReadback\(name, sets, planStep, unverified\)/);
   assert.match(ccSource, /elc\('span', 'rb-unverified', 'check name'\)/);
-  assert.match(ccSource, /unverified != null && unverified === primary\.exercise/);
-  assert.match(ccSource, /unverified != null && unverified === ex\.exercise/);
+  assert.match(ccSource, /isUnverifiedName\(unverified, primary\.exercise\)/);
+  assert.match(ccSource, /isUnverifiedName\(unverified, ex\.exercise\)/);
+  assert.match(ccSource, /Array\.isArray\(unverified\) \? unverified\.includes\(name\) : unverified === name/,
+    'the helper accepts a single name or a list');
 });
 
 test('effort-only review intro never promises "the full session"', () => {

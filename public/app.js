@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v91';
+const ATLAS_SHELL_BUILD = 'v92';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -3988,10 +3988,46 @@ async function rowsFromWorkoutInput() {
   lastParsedWorkoutText = workoutText;
   lastPrescribed = parsed.prescribed || null;
 
+  // The parser couldn't confidently resolve a lift name and echoed the typed
+  // text instead of guessing a real lift. Surface it so the wrong history isn't
+  // saved — the exercise field is editable, so a tap fixes it before approval.
+  // But the parser's internal alias map is NARROWER than the exercise catalog: a
+  // real lift like "Cable Fly" is `unknown_exercise` to the parser yet known to
+  // the catalog. Only warn when it's truly unresolved — unknown to the catalog
+  // too — so a successfully-parsed, catalog-known lift never gets "didn't catch
+  // that" on top of its confirmation card.
+  lastUnverifiedExercise = null;
+  // Card/advisory consistency (owner 07-02) — per ROW, not just rows[0], and
+  // computed BEFORE the unresolved-lines early return (QA sweep 2026-07-03):
+  // a multi-line paste can carry an unknown name on ANY line, and a paste with
+  // BOTH an unresolved line and an unknown name used to return early on the
+  // ask and let the unknown sail to the sheet with a full-confidence ✓ card —
+  // the exact Curls bug class. Every truly-unresolved name now feeds the
+  // card's "check name" chip regardless of which status line wins below.
+  // kbIdentity is the server's identity for the PRIMARY lift, so it only
+  // vouches for row 0.
+  const unverifiedNames = [];
+  {
+    const seenNames = new Set();
+    (parsed.rows || []).forEach((row, i) => {
+      const name = row && row.exercise;
+      if (!name || seenNames.has(name)) return;
+      seenNames.add(name);
+      if (shouldWarnUnknownLift(parsed.warnings, name, liftCodeFromCatalog, i === 0 ? parsed.kbIdentity : null)) {
+        unverifiedNames.push(name);
+      }
+    });
+  }
+  if (unverifiedNames.length) {
+    lastUnverifiedExercise = unverifiedNames.length === 1 ? unverifiedNames[0] : unverifiedNames;
+  }
+
   // Multi-line partial-log (owner 2026-07-02): the clean lines are captured above;
   // each unresolved line gets its OWN specific ask so it can be re-typed — never
-  // silently dropped, never the generic "keep logging" fallback. Takes precedence
-  // over the unknown-lift advisory below (a re-typed line re-runs both checks).
+  // silently dropped, never the generic "keep logging" fallback. Its composer
+  // status takes precedence over the unknown-lift advisory below (a re-typed line
+  // re-runs both checks); the check-name chips still render either way, because
+  // lastUnverifiedExercise was set above this return.
   if (Array.isArray(parsed.unresolved) && parsed.unresolved.length) {
     parsedRowsEditor.hidden = false;
     const first = parsed.unresolved[0];
@@ -4002,32 +4038,21 @@ async function rowsFromWorkoutInput() {
     return;
   }
 
-  // The parser couldn't confidently resolve the lift name and echoed the typed
-  // text instead of guessing a real lift. Surface it so the wrong history isn't
-  // saved — the exercise field is editable, so a tap fixes it before approval.
-  // But the parser's internal alias map is NARROWER than the exercise catalog: a
-  // real lift like "Cable Fly" is `unknown_exercise` to the parser yet known to
-  // the catalog. Only warn when it's truly unresolved — unknown to the catalog
-  // too — so a successfully-parsed, catalog-known lift never gets "didn't catch
-  // that" on top of its confirmation card.
-  lastUnverifiedExercise = null;
-  if (shouldWarnUnknownLift(parsed.warnings, parsed.rows[0]?.exercise, liftCodeFromCatalog, parsed.kbIdentity)) {
-    // Card/advisory consistency (owner 07-02): the ✓ confirmation card must not
-    // present an unrecognized name with full confidence while the advisory below
-    // flags it — remember the name so the card can mark it "check name".
-    lastUnverifiedExercise = parsed.rows[0]?.exercise || null;
+  if (unverifiedNames.length) {
     // B2 — the composer status and the chat confirmation card must agree about the
     // same input. The set IS captured: these rows flow to the very same confirmation
     // card / preview as any other log (emitSetLogged buffers them, then closeout
     // saves them), so the composer must NOT contradict that with a failure message
     // implying the lift was dropped. Surface one consistent name-review advisory
-    // instead — true whether the set was just logged (card) or staged for preview —
-    // gated by the identical shouldWarnUnknownLift check as before (KB/catalog-known
-    // lifts still get no advisory). No write-path/trust-loop change; the unresolved
-    // name is still flagged for the lifter to correct.
+    // instead — gated by the identical shouldWarnUnknownLift check as before
+    // (KB/catalog-known lifts still get no advisory). No write-path/trust-loop
+    // change; the unresolved names are still flagged for the lifter to correct.
     parsedRowsEditor.hidden = false;
-    const unrecognized = parsed.rows[0]?.exercise || 'that lift';
-    setStatus(loggerStatus, `I don't recognize "${unrecognized}" — check the exercise name before it's saved.`, 'warn');
+    if (unverifiedNames.length === 1) {
+      setStatus(loggerStatus, `I don't recognize "${unverifiedNames[0]}" — check the exercise name before it's saved.`, 'warn');
+    } else {
+      setStatus(loggerStatus, `I don't recognize ${unverifiedNames.map(n => `"${n}"`).join(', ')} — check those exercise names before they're saved.`, 'warn');
+    }
   }
 }
 
