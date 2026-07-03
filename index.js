@@ -1661,10 +1661,14 @@ app.post('/api/coach/chat', async (req, res) => {
   const clientCtx = req.body && req.body.context;
   const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
-  // Phase C2 — intent-router SHADOW lane (default OFF; ATLAS_INTENT_ROUTER=shadow).
-  // Fire-and-forget, NEVER awaited: the reply below is computed exactly as before,
-  // whatever the classification does. Observability only — see services/intentShadow.js.
-  observeChatMessage(message);
+  // Phase C2 — intent-router SHADOW observation is NOT here anymore. This route
+  // only ever saw the RESIDUE that fell through every deterministic composer lane
+  // (and only when the SME didn't answer first), so the shadow log missed most
+  // typed messages (owner evidence 2026-07-03: 2 entries across many sessions).
+  // Observation moved to the single composer chokepoint — the frontend posts EVERY
+  // free-text submission to POST /api/debug/intent-observe (below), so the shadow
+  // lane sees all typed messages exactly once. Still fire-and-forget, still no-op
+  // when the flag is off; the reply below is unchanged.
 
   // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
   // "How much?", "How many sets?") is answered deterministically from the CURRENT
@@ -2197,6 +2201,19 @@ app.post('/api/log-modality', async (req, res) => {
 // no Sheets, no writes, resets on restart by design.
 app.get('/api/debug/intent-shadow', (req, res) => {
   return standardSuccess(req, res, 'Intent-router shadow log', getShadowLog());
+});
+
+// POST /api/debug/intent-observe — Phase C2 (widened 2026-07-03). The single
+// composer chokepoint posts EVERY free-text submission here so the shadow lane
+// observes all typed messages, not just the residue that reached /api/coach/chat.
+// OBSERVE-ONLY: forwards to observeChatMessage (which itself no-ops unless
+// ATLAS_INTENT_ROUTER=shadow) and returns immediately. No Sheets, no reply, no
+// write; auth-gated like every /api route. The classification runs fire-and-forget
+// inside observeChatMessage — this handler never awaits it and never reflects it.
+app.post('/api/debug/intent-observe', (req, res) => {
+  const message = req.body && typeof req.body.message === 'string' ? req.body.message : '';
+  observeChatMessage(message);   // no-op when the flag is off / message is blank
+  return standardSuccess(req, res, 'observed', { observed: Boolean(message.trim()) });
 });
 
 // GET /api/debug/config

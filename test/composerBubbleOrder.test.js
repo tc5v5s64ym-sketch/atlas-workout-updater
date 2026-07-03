@@ -24,7 +24,7 @@ test('app.js paints the user bubble at the very top of the logger-form submit ha
   assert.ok(start >= 0, 'logger-form submit handler exists');
   // Look at the first stretch of the handler body (enough to cover the comment
   // block + paint + the first routing branch).
-  const head = appSrc.slice(start, start + 1400);
+  const head = appSrc.slice(start, start + 1900);
   assert.match(head, /window\.atlasAddUserBubble/, 'must paint via the shared bubble painter');
   // The paint must come BEFORE the first routing branch (the session-request check),
   // so the user bubble precedes any coach/preview/reaction append.
