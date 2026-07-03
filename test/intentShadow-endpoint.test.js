@@ -84,23 +84,37 @@ test.after(async () => {
 
 const authHeaders = { 'content-type': 'application/json', 'x-atlas-api-key': process.env.ATLAS_API_KEY };
 
-test('shadow e2e: chat replies normally; the ring records the classification; debug endpoint serves it', async () => {
+test('shadow e2e: chat replies normally and NO LONGER classifies; the observe endpoint drives the ring; debug serves it', async () => {
+  // 1) The chat reply lane is untouched AND observation moved off it — chat must
+  // reply normally without classifying anything (the old wiring only ever saw the
+  // fall-through residue).
   const chatRes = await fetch(`${baseUrl}/api/coach/chat`, {
     method: 'POST', headers: authHeaders,
     body: JSON.stringify({ message: 'what should I focus on this week?' }),
   });
   assert.equal(chatRes.status, 200);
   const chatBody = await chatRes.json();
-  // The reply lane is untouched: unconfigured coach → the normal deterministic
-  // path, with the standard proof that nothing was written.
   assert.equal(chatBody.status, 'ok');
   assert.equal(chatBody.data.configured, false);
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(routerCalls.length, 0, 'the chat route must NOT classify — observation moved to the composer chokepoint');
+
+  // 2) The composer chokepoint posts every typed message here; THIS drives the ring.
+  const obsRes = await fetch(`${baseUrl}/api/debug/intent-observe`, {
+    method: 'POST', headers: authHeaders,
+    body: JSON.stringify({ message: 'skip back squats do face pulls' }),
+  });
+  assert.equal(obsRes.status, 200);
+  const obsBody = await obsRes.json();
+  assert.equal(obsBody.status, 'ok');
+  assert.equal(obsBody.data.observed, true);
 
   await new Promise(r => setTimeout(r, 50));   // fire-and-forget lands off-path
 
-  assert.equal(routerCalls.length, 1, 'the router classified exactly the one message');
-  assert.equal(routerCalls[0].text, 'what should I focus on this week?');
-  assert.equal(routerCalls[0].opts.source, 'chat', 'source passed explicitly (per #824 review note)');
+  assert.equal(routerCalls.length, 1, 'the observe endpoint classified exactly the one message');
+  assert.equal(routerCalls[0].text, 'skip back squats do face pulls',
+    'a plan-mutation message — one that NEVER reaches /api/coach/chat — is now observed');
+  assert.equal(routerCalls[0].opts.source, 'chat', 'source passed explicitly');
 
   const dbgRes = await fetch(`${baseUrl}/api/debug/intent-shadow`, { headers: authHeaders });
   assert.equal(dbgRes.status, 200);

@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v103';
+const ATLAS_SHELL_BUILD = 'v104';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -5702,6 +5702,27 @@ function routeMessageToCoach(text) {
   invalidatePreview();
 }
 
+// Intent-router SHADOW observation (Phase C2, widened 2026-07-03). The composer
+// submit handler below fans a typed message into ~8 deterministic lanes that each
+// return before any /api/coach/chat call (set logs, session/artifact asks, log-it,
+// plan mutations + identity corrections that never touch the network at all), so
+// the old server-side observation at /api/coach/chat only ever saw the residue —
+// the shadow log missed most typed messages. Observing here, at the ONE chokepoint
+// every composer submission passes through, captures them all exactly once.
+// OBSERVE-ONLY: fire-and-forget, never awaited, never blocks or alters the submit /
+// reply / write path; the server no-ops when ATLAS_INTENT_ROUTER != shadow.
+function observeComposerText(text) {
+  const message = (text || '').trim();
+  if (!message) return;
+  try {
+    api('/api/debug/intent-observe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message })
+    }).catch(() => { /* observation must never surface to the lifter */ });
+  } catch { /* nor throw into the submit path */ }
+}
+
 document.getElementById('logger-form').addEventListener('submit', async e => {
   e.preventDefault();
 
@@ -5715,6 +5736,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   if (submittedText && typeof window.atlasAddUserBubble === 'function') {
     window.atlasAddUserBubble(submittedText);
   }
+
+  // Shadow observation, BEFORE any deterministic lane can claim + return: this is
+  // the one chokepoint every free-text composer submission passes through, so the
+  // intent-router shadow lane sees them all (owner find 2026-07-03). Fire-and-forget.
+  observeComposerText(submittedText);
 
   const bugNote = parseBugCommand(submittedText);
   if (bugNote !== null) {
