@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v102';
+const ATLAS_SHELL_BUILD = 'v103';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -4600,8 +4600,16 @@ function restoreSessionSnapshot() {
       return false;
     }
     if (!Array.isArray(snap.sessionLog) || !Array.isArray(snap.sessionCompleted)) { clearSessionSnapshot(); return false; }
-    // Only resume when there is genuinely something in progress.
-    if (!snap.sessionLog.length && !snap.activePlannedSession) { clearSessionSnapshot(); return false; }
+    // Only resume when there is genuinely LOGGED work to protect. A snapshot that
+    // carries ONLY an engaged plan (no logged sets) must NOT silently reactivate
+    // guided mode on the next app open — that hijacks a fresh freestyle log with a
+    // phantom "1 of N / next up" from a plan the lifter never re-engaged, and with
+    // zero logged sets renderResumeNotice stays hidden, so the resume is invisible
+    // (owner live find 2026-07-03). The snapshot exists to protect unsaved SETS; an
+    // empty plan has no work to lose and is one tap from re-opening. This also keeps
+    // freestyle logging clean after any app reopen (the "freestyle must not
+    // auto-guide" principle). Sessions WITH logged sets resume exactly as before.
+    if (!snap.sessionLog.length) { clearSessionSnapshot(); return false; }
     sessionLog = snap.sessionLog;
     sessionCompleted = snap.sessionCompleted;
     activePlannedSession = (snap.activePlannedSession && Array.isArray(snap.activePlannedSession.exercises))
