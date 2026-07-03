@@ -1308,8 +1308,13 @@ function buildPatternBriefing(todaysRead) {
   const patterns = ((todaysRead && todaysRead.patterns) || []).filter(p => p && (p.label || p.pattern));
   if (!patterns.length) return '';
   const rank = s => (PATTERN_STATUS_META[s]?.rank ?? 9);
+  // "Freshest:" must be honest — only genuinely recovered/ready patterns, plus an
+  // unknown-but-overdue one (mirrors the pattern board's own overdue rule:
+  // fresh/unknown + stale). A still-recovering/fatigued pattern is NOT surfaced
+  // here even when it's 5+ days old — it isn't ready to train (review #835 nit).
   const notable = patterns
-    .filter(p => p.status === 'fresh' || p.status === 'ready' || (p.daysSince != null && p.daysSince >= 5))
+    .filter(p => p.status === 'fresh' || p.status === 'ready' ||
+                 (p.status === 'unknown' && p.daysSince != null && p.daysSince >= 5))
     .sort((a, b) => {
       const ra = rank(a.status), rb = rank(b.status);
       if (ra !== rb) return ra - rb;

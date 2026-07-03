@@ -476,6 +476,12 @@ test('opening briefing: buildPatternBriefing names freshest/overdue patterns and
   assert.equal(buildPatternBriefing({ patterns: [{ label: 'Pressing', status: 'fatigued', daysSince: 1 }] }), '');
   assert.equal(buildPatternBriefing({ patterns: [] }), '');
   assert.equal(buildPatternBriefing({}), '');
+  // A still-fatigued/recovering pattern is NOT surfaced under "Freshest" even
+  // when it's 5+ days old — it isn't ready to train (review #835 nit).
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Hinge', status: 'fatigued', daysSince: 6 }] }), '');
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Pulling', status: 'recovering', daysSince: 8 }] }), '');
+  // An unknown-but-overdue pattern still surfaces (coverage gap).
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Lower body', status: 'unknown', daysSince: 9 }] }), 'Freshest: Legs (9d)');
 });
 
 test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {
