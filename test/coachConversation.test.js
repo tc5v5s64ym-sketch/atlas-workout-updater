@@ -434,6 +434,20 @@ test('opening: engine-grounded, LLM-free, and honest about what it claims', () =
   assert.match(fn, /\$\{last\.reps\} reps/, 'bodyweight lifts read as reps, never a dangling ×');
 });
 
+test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const guard = cc.slice(cc.indexOf('function hasLoad('), cc.indexOf('function appendSetReadout('));
+  assert.match(guard, /Number\(weight\) !== 0/, 'a literal 0 counts as bodyweight (sheet rows store bodyweight sets with weight 0)');
+  // All three renderers consult the shared guard.
+  const readout = cc.slice(cc.indexOf('function appendSetReadout('), cc.indexOf('function buildReadback('));
+  assert.match(readout, /hasLoad\(s\.weight\) \? `\$\{s\.weight\}×\$\{s\.reps\} ` : `\$\{s\.reps\} reps `/,
+    'the readback tile reads bodyweight sets as reps');
+  const review = cc.slice(cc.indexOf('function buildReviewSetLine('), cc.indexOf('function buildEffortGrid('));
+  assert.match(review, /hasLoad\(g\.set\.weight\)/, 'the review-card set line uses the same rule');
+  const opener = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
+  assert.match(opener, /hasLoad\(last\.weight\)/, 'the opener closes its 0-weight edge with the same rule');
+});
+
 test('opening: the default tagline survives every failure path (element + copy intact)', () => {
   const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'index.html'), 'utf8');
   assert.match(html, /id="coach-opening" class="coach-empty-tagline">Let's get stronger\.</,
