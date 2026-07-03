@@ -18,7 +18,9 @@
 // surface is a later, separately-gated slice.
 
 const { governorRuleFor } = require('./stimulusGovernorRules');
-const { effortVerdict } = require('./analytics');
+// effortVerdict moved to its own pure module (One-Brain migration item 8) —
+// import it directly instead of through the fused analytics.js.
+const { effortVerdict } = require('./justLoggedAnchor');
 
 /**
  * Grade one logged effort against the profile×modality rule.
