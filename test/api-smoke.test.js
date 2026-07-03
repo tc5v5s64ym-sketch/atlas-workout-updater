@@ -3697,7 +3697,14 @@ test('api smoke: brian mode falls back to legacy on clarification_needed, with m
   }
 });
 
-test('api smoke: brian mode never overrides the in-workout just-logged anchor (stale-by-one-set guard)', async () => {
+test('api smoke: brian mode folds the just-logged set into the snapshot; thin history still falls back byte-identically', async () => {
+  // The ephemeral fold (services/ephemeralSetFold.js) makes the Orchestrator's
+  // snapshot include the unsaved set, so the just_logged_anchor guard no longer
+  // fires here — but the thin BEN01 fixture (2 sheet sessions + the fold = 3)
+  // still cannot clear confidence, so the HONEST outcome is a clarification
+  // fallback with the in-workout anchored legacy response untouched. The
+  // "decision consumed the fresh set and may drive the reaction" case is proven
+  // against the real Orchestrator in test/ephemeralSetFold.test.js.
   const original = process.env.ATLAS_COACH_ENGINE;
   try {
     delete process.env.ATLAS_COACH_ENGINE;
@@ -3709,8 +3716,8 @@ test('api smoke: brian mode never overrides the in-workout just-logged anchor (s
     assert.equal(brian.response.status, 200);
     assert.ok(brian.body.data.engine_source, 'brian mode must always include engine_source metadata');
     assert.equal(brian.body.data.engine_source.driven_by, 'legacy');
-    assert.equal(brian.body.data.engine_source.reason, 'just_logged_anchor',
-      'the fresh unsaved set must anchor the reply — Brian\'s sheet-only snapshot cannot see it');
+    assert.equal(brian.body.data.engine_source.reason, 'needs_clarification',
+      'the fold ran (no just_logged_anchor rejection) but thin history honestly clarifies');
     // The anchored numbers are byte-identical to legacy — nothing drifted.
     assert.deepEqual(brian.body.data.next_target, legacy.body.data.next_target);
     assert.equal(brian.body.data.recommendation, legacy.body.data.recommendation);

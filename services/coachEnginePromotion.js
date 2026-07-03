@@ -28,16 +28,18 @@ function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray
  * deload awareness — an active deload always wins, unconditionally.
  *
  * context.justLoggedSet: the in-workout anchor. Under session-level save a
- * just-logged set is NOT in the sheet yet, so Brian's snapshot-derived
- * decision is stale by exactly that set — the legacy response anchored on
- * the fresh set must always win. Lifting this guard requires the envelope
- * to carry the ephemeral set (filed in BACKLOG), not a bigger override.
+ * just-logged set is NOT in the sheet yet, so a decision derived from a
+ * sheet-only snapshot is stale by exactly that set — the legacy response
+ * anchored on the fresh set wins. context.ephemeralSetFolded lifts the
+ * guard ONLY when the caller folded the fresh set into the snapshot's rows
+ * (services/ephemeralSetFold.js) in the same code path — the decision then
+ * provably consumed the set, so it may drive the reaction.
  */
 function planBrianOverride(recommendation, brian, validation, activeDeload, context) {
   if (activeDeload && activeDeload.in_deload === true) {
     return { eligible: false, reason: 'active_deload' };
   }
-  if (context && context.justLoggedSet) {
+  if (context && context.justLoggedSet && context.ephemeralSetFolded !== true) {
     return { eligible: false, reason: 'just_logged_anchor' };
   }
   if (!validation || validation.valid !== true || !_isObj(brian)) {
