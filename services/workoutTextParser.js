@@ -270,9 +270,14 @@ function hasUnattributableTrailingSets(rest) {
     while (i < tokens.length && !isSet(tokens[i])) i += 1;
     const run = tokens.slice(runStart, i);
     const setAfter = i < tokens.length; // a set token follows this run
-    // A pure name run (≥1 token, all name-like) sandwiched between set groups means
-    // the trailing sets belong to an unrecognized second exercise → unattributable.
-    if (sawSetBefore && setAfter && run.length && run.every(isNameWord)) {
+    // A name run sandwiched between set groups means the trailing sets belong to
+    // an unrecognized second exercise → unattributable. ANY name-like word in the
+    // run counts (fuzz suite 2026-07-03): requiring EVERY word to be name-like let
+    // one notation/alias word poison the run — "… x3 Zzqx Press 185 5/2" slipped
+    // through because "press" is a contextual-alias word, and the 185 set was
+    // silently absorbed by the wrong lift. some() is strictly more conservative
+    // (more asks, never more silent merges).
+    if (sawSetBefore && setAfter && run.length && run.some(isNameWord)) {
       return true;
     }
   }
@@ -774,6 +779,24 @@ function parseLogSets(rawText, context = {}) {
         return text.replace(new RegExp(`\\b${escapeRegExp(key)}\\b`, 'gi'), ' ').replace(/\s+/g, ' ').trim();
       }, exercise.rest) }
     : exercise;
+
+  // G1 leading analogue (fuzz suite 2026-07-03): in every accepted grammar a
+  // lift's sets FOLLOW its name — so a slash-set token appearing BEFORE the
+  // matched name belongs to an earlier, unrecognized exercise ("Zzqx Press
+  // 185 5/2 Bench 200 5/2" must never log 185 under Bench). Ask instead of
+  // absorbing; on a newline paste the multi-line rescue then re-parses each
+  // line and resolves the unknown name as its own freeform entry.
+  {
+    const nameIdx = textForParsing.toLowerCase().indexOf(String(resolvedExercise.rawName || '').toLowerCase());
+    if (nameIdx > 0 && /\d+\s*\/\s*\d+/.test(textForParsing.slice(0, nameIdx))) {
+      return {
+        intent: 'needs_clarification',
+        raw_text: rawText,
+        message: `I see sets before the ${resolvedExercise.canonicalName} name and can't tell which exercise they belong to. Put each exercise on its own line so nothing is mis-logged.`,
+        warnings: ['unattributable_trailing_sets'],
+      };
+    }
+  }
 
   // G1 refuse-to-merge: if the rest carries a trailing set-group that can't be
   // confidently attributed to this exercise (separated by a pure exercise-name word
