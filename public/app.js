@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v98';
+const ATLAS_SHELL_BUILD = 'v99';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1845,6 +1845,9 @@ function normalizePlanExercise(raw) {
  * banner with the current step, and open each item in the logger via startLift.
  * No persistence; logging/preview/save stays exactly as it was. */
 let activePlannedSession = null;
+// Owner directive (2026-07-03): in-workout chrome collapses to the pin row —
+// the plan card (Next exercise / End session) is a tap-to-expand dropdown.
+let sessionChromeExpanded = false;
 
 // Whether the lifter has ENGAGED today's coach suggestion (tapped Coach's Pick),
 // as opposed to merely having the dashboard open. `loadDashboard()` always loads
@@ -2229,11 +2232,21 @@ function renderActiveSessionBanner() {
   const banner = document.getElementById('active-session-banner');
   if (!banner) return;
   banner.innerHTML = '';
-  if (!activePlannedSession) { banner.hidden = true; return; }
+  if (!activePlannedSession) {
+    banner.hidden = true;
+    sessionChromeExpanded = false;
+    document.body.classList.remove('session-active');
+    return;
+  }
   syncPlannedIndexToCanonical();
   const { label, exercises, index } = activePlannedSession;
   const current = exercises[index];
-  if (!current) { banner.hidden = true; return; }
+  if (!current) {
+    banner.hidden = true;
+    sessionChromeExpanded = false;
+    document.body.classList.remove('session-active');
+    return;
+  }
   banner.appendChild(el('div', { class: 'active-session-title', text: `▶ ${label}` }));
   banner.appendChild(el('div', { class: 'active-session-step', text: `Step ${index + 1} of ${exercises.length}: ${current.name}` }));
   const row = el('div', { class: 'active-session-actions' });
@@ -2246,7 +2259,11 @@ function renderActiveSessionBanner() {
   endBtn.addEventListener('click', endPlannedSession);
   row.appendChild(endBtn);
   banner.appendChild(row);
-  banner.hidden = false;
+  // Collapsed by default (owner directive 2026-07-03): the card takes space
+  // from the thread — the session pin is the always-visible row, and tapping
+  // it expands this card. The glance strip steps aside for the session.
+  document.body.classList.add('session-active');
+  banner.hidden = !sessionChromeExpanded;
   // Plan engagement/mutation/restore all route through this render — the
   // session pin re-derives from the same canonical state at each of those
   // moments (composer-first Phase A).
@@ -4613,6 +4630,30 @@ function renderSessionPin() {
   if (current) pin.appendChild(el('span', { class: 'pin-lift', text: String(current) }));
   pin.appendChild(el('span', { class: 'pin-sets', text: `${setsDone} set${setsDone === 1 ? '' : 's'} in` }));
   if (next) pin.appendChild(el('span', { class: 'pin-next', text: `next: ${next}` }));
+  // The pin is the tap target for the collapsed plan card (dropdown) whenever a
+  // live session exists. Wired once — the element persists across re-renders.
+  const expandable = Boolean(activePlannedSession);
+  if (expandable) {
+    pin.appendChild(el('span', { class: 'pin-chevron', text: sessionChromeExpanded ? '\u25B4' : '\u25BE' }));
+    pin.setAttribute('role', 'button');
+    pin.tabIndex = 0;
+    pin.setAttribute('aria-expanded', String(sessionChromeExpanded));
+    pin.title = 'Session controls';
+    if (!pin.dataset.chromeWired) {
+      pin.dataset.chromeWired = '1';
+      const toggle = () => {
+        if (!activePlannedSession) return;
+        sessionChromeExpanded = !sessionChromeExpanded;
+        renderActiveSessionBanner();
+      };
+      pin.addEventListener('click', toggle);
+      pin.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    }
+  } else {
+    pin.removeAttribute('role');
+    pin.removeAttribute('aria-expanded');
+    pin.tabIndex = -1;
+  }
   pin.hidden = false;
 }
 

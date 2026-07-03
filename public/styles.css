@@ -2388,6 +2388,13 @@ a.lift-link:hover { text-decoration: underline; }
 #coach-plan-card,
 #weekly-coach-card { display: none; }
 
+/* Owner directive (2026-07-03): in-workout chrome collapses to the pin row —
+   the plan card is a tap-to-expand dropdown behind the pin's chevron, and the
+   glance line steps aside while a session is live. */
+body.session-active .coach-read-strip { display: none; }
+body.session-active #session-pin { cursor: pointer; }
+.pin-chevron { margin-left: auto; color: var(--muted); font-size: 0.8rem; }
+
 /* Composer-first Phase A: the session header pin — one sticky row during an
    active workout. Hidden (attribute) when nothing is in progress. */
 .session-pin { position: sticky; top: 0; z-index: 5; display: flex; align-items: baseline; gap: 10px; padding: 8px 14px; background: var(--bg, #0A0B0E); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 0.72rem; }
