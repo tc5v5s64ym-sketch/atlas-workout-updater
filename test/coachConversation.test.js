@@ -414,24 +414,74 @@ test('tier-aware brevity: short trims supplements, never the recovery read', () 
 
 // --- Composer-first Phase A: the coach speaks first (deterministic opening line) ---
 
-test('opening: greeting renders synchronously; the opener upgrade is best-effort', () => {
+test('opening: greeting renders synchronously and issues no fetch', () => {
   const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
-  const iife = cc.slice(cc.indexOf('(function setGreeting()'), cc.indexOf('async function renderCoachOpening'));
+  const iife = cc.slice(cc.indexOf('(function setGreeting()'), cc.indexOf('function renderCoachOpening'));
   assert.match(iife, /el\.textContent = `Good \$\{part\}, Dale\.`;/, 'the greeting never waits on a fetch');
-  assert.match(iife, /renderCoachOpening\(\)\.catch\(/, 'the opener upgrade can never break the greeting');
+  assert.doesNotMatch(iife, /await |api\(/, 'the greeting path issues no fetch of its own');
 });
 
-test('opening: engine-grounded, LLM-free, and honest about what it claims', () => {
+// Opening-message engine briefing (owner 2026-07-03): the "Last time: …" opener
+// is replaced by a deterministic engine briefing (headline + facts line) that
+// app.js builds from the startup fetches and hands over via atlas:glance-ready.
+test('opening: the engine briefing renders app.js-provided strings — LLM-free, no fetch, race-safe', () => {
   const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
-  const fn = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
-  assert.match(fn, /api\('\/api\/plan\/today'\)/, 'reads the engine, read-only');
+  const fn = cc.slice(cc.indexOf('function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
+  assert.match(fn, /addEventListener\('atlas:glance-ready'/, 'renders the briefing app.js dispatched from the startup fetches');
+  assert.doesNotMatch(fn, /\bapi\(/, 'the opener issues no fetch of its own — app.js already fetched the data');
   assert.doesNotMatch(fn, /\/api\/coach/, 'no LLM anywhere in the opener path');
   assert.match(fn, /hero\.hasAttribute\('hidden'\)/, 'skips when the conversation already started');
-  const guardCount = (fn.match(/hero\.hasAttribute\('hidden'\)/g) || []).length;
-  assert.ok(guardCount >= 2, 'the hidden guard runs BOTH before and after the fetch (race-safe)');
-  assert.match(fn, /last\.reps == null\) return/, 'never renders a partial number');
-  assert.match(fn, /Last time:/, 'leads with continuity, not a prescription the engine did not make');
-  assert.match(fn, /\$\{last\.reps\} reps/, 'bodyweight lifts read as reps, never a dangling ×');
+  assert.match(fn, /d\.headline/, 'upgrades the tagline to the engine headline');
+  assert.match(fn, /getElementById\('coach-facts'\)/, 'renders the facts line below the headline');
+  assert.match(fn, /facts\.hidden = false/, 'reveals the facts line only when the engine supplied it');
+});
+
+// The briefing STRINGS are built in app.js from the same startup dashboard data,
+// so the hero and the Today surface read the same numbers with no extra fetch.
+test('opening briefing: app.js builds the weekday + today\'s-read headline and a facts line, degrading silently', () => {
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('function emitGlanceReady('), app.indexOf('function emitGlanceReady(') + 900);
+  assert.ok(fn.length > 0, 'emitGlanceReady must exist');
+  assert.match(fn, /Today's read: \$\{label\}/, 'headline states the engine read for the day');
+  assert.match(fn, /weekday/, 'headline leads with the weekday');
+  assert.match(fn, /buildConsistencyText\(summaryData\)/, 'facts line reuses the consistency streak text');
+  assert.match(fn, /buildPatternBriefing\(todaysRead\)/, 'facts line adds the freshest/overdue patterns');
+  assert.match(fn, /atlas:glance-ready/, 'dispatches the prebuilt strings');
+  assert.match(fn, /if \(!headline && !facts\) return/, 'stays silent when there is nothing to say (default hero stands)');
+  assert.doesNotMatch(fn, /\/api\/coach/, 'no LLM in the briefing builder');
+  // loadDashboard hands its already-fetched data to the briefing (no second call).
+  assert.match(app, /emitGlanceReady\(intentData, summaryData\)/, 'loadDashboard emits the briefing from its own fetches');
+});
+
+// buildPatternBriefing is honest — it names only genuinely fresh/ready/overdue
+// patterns and returns '' otherwise, so the facts line never invents a read.
+test('opening briefing: buildPatternBriefing names freshest/overdue patterns and returns empty when none', () => {
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  // Inject the two module-scope constants the function reads (the real app.js
+  // declarations are pinned by other tests); slice only the function under test.
+  const meta = 'const PATTERN_STATUS_META = { fresh:{rank:0}, ready:{rank:1}, recovering:{rank:2}, fatigued:{rank:3}, unknown:{rank:4} };';
+  const friendly = "const FRIENDLY_PATTERN_LABELS = { Hinge:'Hips & back', Pressing:'Push', Pulling:'Pull', 'Lower body':'Legs' };";
+  const fnSrc = app.slice(app.indexOf('function buildPatternBriefing('), app.indexOf('function emitGlanceReady('));
+  const buildPatternBriefing = new Function(`${meta}\n${friendly}\n${fnSrc}\nreturn buildPatternBriefing;`)();
+  // Fresh + overdue lead; friendly labels; up to two named.
+  assert.equal(
+    buildPatternBriefing({ patterns: [
+      { label: 'Pressing', status: 'fresh', daysSince: 7 },
+      { label: 'Pulling', status: 'ready', daysSince: 3 },
+      { label: 'Hinge', status: 'fatigued', daysSince: 1 },
+    ] }),
+    'Freshest: Push (7d), Pull (3d)'
+  );
+  // Nothing fresh/ready/recently-overdue → empty (no invented read).
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Pressing', status: 'fatigued', daysSince: 1 }] }), '');
+  assert.equal(buildPatternBriefing({ patterns: [] }), '');
+  assert.equal(buildPatternBriefing({}), '');
+  // A still-fatigued/recovering pattern is NOT surfaced under "Freshest" even
+  // when it's 5+ days old — it isn't ready to train (review #835 nit).
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Hinge', status: 'fatigued', daysSince: 6 }] }), '');
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Pulling', status: 'recovering', daysSince: 8 }] }), '');
+  // An unknown-but-overdue pattern still surfaces (coverage gap).
+  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Lower body', status: 'unknown', daysSince: 9 }] }), 'Freshest: Legs (9d)');
 });
 
 test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {
@@ -444,8 +494,9 @@ test('bodyweight display: no-load sets read as reps everywhere — never "0×rep
     'the readback tile reads bodyweight sets as reps');
   const review = cc.slice(cc.indexOf('function buildReviewSetLine('), cc.indexOf('function buildEffortGrid('));
   assert.match(review, /hasLoad\(g\.set\.weight\)/, 'the review-card set line uses the same rule');
-  const opener = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
-  assert.match(opener, /hasLoad\(last\.weight\)/, 'the opener closes its 0-weight edge with the same rule');
+  // (The old "Last time: …" opener rendered a set and carried its own 0-weight
+  // guard; it was replaced by the deterministic engine briefing — owner 2026-07-03
+  // — which renders no set line, so there is no opener load edge to guard here.)
   // app.js carries ONE shared helper for every logged-set renderer (review #828
   // swept the full file: recap, plan card, PR table, best-recent, last-session
   // hint, plan-sheet labels, in-lift panel).

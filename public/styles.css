@@ -2447,6 +2447,14 @@ body.session-active #session-pin { cursor: pointer; }
   font-size: clamp(1.5rem, 5.5vw, 2rem);
   line-height: 1.2;
 }
+/* Opening-message engine briefing facts line (consistency + freshest patterns).
+   A quieter register than the headline; hidden until the engine supplies data. */
+.coach-empty-facts {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--ink);
+  margin: 0;
+}
 .coach-guide-line {
   font-size: 0.95rem;
   line-height: 1.55;

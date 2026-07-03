@@ -95,6 +95,12 @@
                default stands whenever the engine has nothing to say (cold start,
                offline, no API key). -->
           <p id="coach-opening" class="coach-empty-tagline">Let's get stronger.</p>
+          <!-- Opening-message engine briefing (owner 2026-07-03): a deterministic
+               facts line (consistency streak + freshest/overdue movement patterns)
+               rendered by the coach conversation script from the atlas:glance-ready
+               dispatch app.js emits after loadDashboard. Hidden until the engine has
+               data; the tagline + guide below stand on their own when it never arrives. -->
+          <p id="coach-facts" class="coach-empty-facts" hidden></p>
           <!-- Static guidance: works offline / with no API key; the phrasings
                match the composer's deterministic routes (looksLikeSessionRequest,
                looksLikeArtifactRequest) so what Atlas suggests is what works. -->

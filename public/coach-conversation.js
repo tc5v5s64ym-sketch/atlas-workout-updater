@@ -1514,48 +1514,37 @@
   window.atlasOpenCoachPick = typeSuggestedWorkout;
 
   // Composer-first Phase A — the coach speaks first. The greeting renders
-  // instantly and synchronously (deterministic — the hero is never blank), then
-  // the opening line upgrades from ENGINE state via one read-only GET
-  // /api/plan/today (transport-retryable after Phase 0b). Every number shown is
-  // the engine's — the last logged top set of the most-recently-trained lift.
-  // The copy leads with CONTINUITY ("last time: …"), never a prescription: the
-  // recommendations here are sorted by recency, and the opener must not claim a
-  // pick the engine didn't make (that lands in-thread with the canonical
-  // recommendation in Phase B). Any failure, empty history, missing key, or an
-  // already-started conversation leaves the default tagline byte-identical.
-  // No LLM anywhere in this path — the opener survives an outage (Contract
-  // voice invariant 7).
+  // instantly and synchronously (deterministic — the hero is never blank).
   (function setGreeting() {
     const el = document.getElementById('coach-greeting');
     if (!el) return;
     const h = new Date().getHours();
     const part = h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
     el.textContent = `Good ${part}, Dale.`;
-    renderCoachOpening().catch(() => { /* best-effort — the default tagline stands */ });
   })();
 
-  async function renderCoachOpening() {
-    const line = document.getElementById('coach-opening');
+  // Opening-message engine briefing (owner 2026-07-03): the opening line upgrades
+  // from ENGINE state — but the strings are built ONCE by app.js's loadDashboard
+  // from the startup fetches (/api/plan/intent-recommendation + /api/progress/
+  // summary) and handed here via atlas:glance-ready, so the hero and the Today
+  // surface read the same numbers with no extra network call. The headline states
+  // the engine's read for the day ("{Weekday}. Today's read: {label}.") and a
+  // facts line below adds the consistency streak + freshest/overdue patterns.
+  // Deterministic + LLM-free — every value is the engine's; the copy never claims
+  // a pick the engine didn't make. Any failure, empty history, missing key, or an
+  // already-started conversation leaves the default tagline + guide byte-identical
+  // (the degradation path is simply not dispatching / not rendering). The opener
+  // survives an outage (Contract voice invariant 7).
+  function renderCoachOpening(detail) {
     const hero = document.getElementById('coach-empty');
-    if (!line || !hero || hero.hasAttribute('hidden')) return;
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return;
-    const res = await api('/api/plan/today').catch(() => null);
-    const recs = res && res.data && Array.isArray(res.data.recommendations) ? res.data.recommendations : [];
-    const top = recs.find(r => r && r.exercise_name &&
-      Array.isArray(r.last_working_sets) && r.last_working_sets.length);
-    if (hero.hasAttribute('hidden')) return;   // conversation started while fetching
-    if (!top) return;                          // cold start / no history — default tagline stands
-    const last = top.last_working_sets[top.last_working_sets.length - 1];
-    if (!last || last.reps == null) return;    // never render a partial number
-    const weekday = new Date().toLocaleDateString(undefined, { weekday: 'long' });
-    // Bodyweight lifts have no load — "×12" alone reads wrong, so say reps
-    // plainly. hasLoad also treats a literal 0 as bodyweight (sheet rows store
-    // bodyweight sets with weight 0, which rendered "0×12" here).
-    const setBit = hasLoad(last.weight)
-      ? `${last.weight}×${last.reps}`
-      : `${last.reps} reps`;
-    line.textContent = `${weekday}. Last time: ${top.exercise_name} ${setBit}. Ready when you are.`;
+    if (!hero || hero.hasAttribute('hidden')) return;  // conversation already started
+    const d = detail || {};
+    const line = document.getElementById('coach-opening');
+    if (line && d.headline) line.textContent = d.headline;
+    const facts = document.getElementById('coach-facts');
+    if (facts && d.facts) { facts.textContent = d.facts; facts.hidden = false; }
   }
+  document.addEventListener('atlas:glance-ready', e => renderCoachOpening((e && e.detail) || {}));
 
   // The state-driven hero chips (renderCoachChips/emitChipSentence) were
   // retired with the tiles (owner directive, 2026-07-03) — the chip SENTENCES
