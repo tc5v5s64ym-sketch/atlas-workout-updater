@@ -5714,10 +5714,15 @@ function routeMessageToCoach(text) {
 function observeComposerText(text) {
   const message = (text || '').trim();
   if (!message) return;
+  // A BARE fetch, not api() (review #838): api() records every failure into
+  // atlasLastError / the request history that bug reports capture, so a dropped
+  // observation (e.g. a Render cold-start blip) would leave a diagnostic trace —
+  // contradicting "observation must never surface." A bare authenticated fetch
+  // with a swallowed rejection makes a dropped observation truly invisible.
   try {
-    api('/api/debug/intent-observe', {
+    fetch('/api/debug/intent-observe', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': getApiKey() },
       body: JSON.stringify({ message })
     }).catch(() => { /* observation must never surface to the lifter */ });
   } catch { /* nor throw into the submit path */ }

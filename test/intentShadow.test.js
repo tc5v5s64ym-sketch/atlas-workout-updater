@@ -155,10 +155,14 @@ test('shadow wiring: the composer submit chokepoint fires observeComposerText BE
   // The helper posts fire-and-forget to the observe endpoint and swallows errors.
   const helperStart = app.indexOf('function observeComposerText(');
   assert.ok(helperStart > -1, 'observeComposerText helper must exist');
-  const helper = app.slice(helperStart, helperStart + 700);
+  const helper = app.slice(helperStart, helperStart + 1100);
   assert.match(helper, /\/api\/debug\/intent-observe/, 'posts to the observe endpoint');
   assert.match(helper, /\.catch\(/, 'errors are swallowed — observation never surfaces to the lifter');
   assert.ok(!/await\s+api\(/.test(helper), 'the observe POST is fire-and-forget (never awaited)');
+  // A BARE fetch, not api() (review #838): api() records failures into the request
+  // history that bug reports capture, so a dropped observation would leave a trace.
+  assert.match(helper, /fetch\('\/api\/debug\/intent-observe'/, 'uses a bare fetch (not api()) so a dropped observation leaves no error-history trace');
+  assert.match(helper, /'x-atlas-api-key': getApiKey\(\)/, 'the bare fetch still carries auth');
   // The call sits at the TOP of the submit handler, before the first lane branch
   // (parseBugCommand / looksLikeSessionRequest), so every submission is observed.
   const submitIdx = app.indexOf("document.getElementById('logger-form').addEventListener('submit'");
