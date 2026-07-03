@@ -1,7 +1,7 @@
 # Coach-First Home Screen — Design Proposal
 
-> **Status:** PROPOSAL for owner decision. **Not adopted. No code. No UI change. Planning only.**
-> **Decision class:** Owner-reserved — coaching philosophy (CLAUDE.md routing category 2; `docs/OWNER_CHECKIN_RULES.md` Escalation Policy v3). This document proposes a direction and surfaces the reserved forks; it amends no governing doc and changes no runtime.
+> **Status:** DIRECTION APPROVED by owner 2026-07-03; the six reserved forks are resolved (see §10). This remains a **design/planning doc** — no home-screen code is implemented here. Implementation lands in the tiny PRs of §9 (PR-1+ pending an explicit owner go).
+> **Decision class:** Owner-reserved — coaching philosophy (CLAUDE.md routing category 2; `docs/OWNER_CHECKIN_RULES.md` Escalation Policy v3). This document proposed a direction and surfaced the reserved forks; the owner has now decided them (§10). It amends no governing doc and changes no runtime.
 > **Trigger:** Owner brief (2026-07-03): "The Composer-First migration removed the tile home screen, but in doing so we accidentally removed the *feeling* of having a coach. The home screen now feels like a dashboard. Atlas should not greet the user with data — it should greet like a coach who already knows me, making a coaching decision about my day, not showing me a report."
 > **Revision (owner, 2026-07-03):** v1 tightened to a **deterministic-only** opener; six governance guardrails made hard v1 constraints (see §2). LLM wording removed from v1 scope.
 > **Governance grounding:** `docs/CONVERSATION_CONTRACT_V1.md`, `docs/COACHING_ENGINE_ARCHITECTURE.md` (One-Brain), `docs/research/coaching-intelligence/source-archive/07-the-feel-of-atlas.md`, `docs/CONVERSATION_FIRST_DESIGN_REVIEW.md`, `docs/COMPOSER_FIRST_MIGRATION.md`.
@@ -177,16 +177,18 @@ Throughout: **no touch** to preview→approve→write, proof fields, `test_mode`
 
 ---
 
-## 10. Owner decisions required (the reserved forks)
+## 10. Owner decisions — RESOLVED (owner, 2026-07-03)
 
-This is a coaching-philosophy change, so these are the owner's call, not PM authority:
+The six reserved forks were coaching-philosophy calls; the owner has decided them:
 
-1. **LLM voice at the hero — explicitly out of v1.** v1 is deterministic and honors the 2026-07-03 "one text box, LLM-free home" directive. Reintroducing the coach voice (`generatePlanMessage`, with the deterministic line as a floor) would supersede that directive. **Approve superseding it, or keep the hero deterministic-only?** (Recommendation: ship deterministic v1 now; treat the voice as a separate, later, opt-in decision.)
-2. **Posture set and verbosity calibration** — what counts as a "richer" opener vs a one-line one, and how quiet the default is. Encodes how much Atlas speaks. Confirm before build.
-3. **Short-gap restart posture (PR-3)** — approve adding a 3–6 day reentry posture (and a severity-independent days-since fact) so the coach can honestly say "restart clean / keep it controlled" at a sub-week gap, *without* lowering the 7/14/28 layoff thresholds (which retune make-up-volume behavior and are separately owner-gated)?
-4. **Situation-priority order** — the explicit rank for co-occurring situations (e.g. returning-after-layoff *and* deload-active), with "bias to safe/quiet on conflict" as the tie-break.
-5. **Proactivity boundary** — confirm zero push notifications and the "opening is on-request, not proactivity" reading.
-6. **Next-session-due forecast (future)** — approve building a deterministic "next pattern due" signal so a truthful forward-look ("legs back this weekend") becomes possible? Until then, no forward schedule ships.
+1. **LLM voice at the hero → KEEP v1 DETERMINISTIC-ONLY.** No LLM at the hero in v1; the 2026-07-03 "one text box, LLM-free home" directive stands. The coach voice remains a future, explicitly-owner-gated option — not scheduled.
+2. **Verbosity → MINIMAL by default, richer only when context earns it.** The default opener is terse; a fuller opener is spent only on situations that matter (a real layoff, a stall, a deload transition, a PR).
+3. **Short-gap restart posture → APPROVED.** Add the 3–6 day reentry posture + a severity-independent days-since fact (PR-3) so the coach can honestly say "restart clean / keep it controlled" at a sub-week gap — *without* lowering the 7/14/28 `assessLayoff` thresholds (still separately owner-gated). Identified as the smallest engine change that makes the coach feel right.
+4. **Situation-priority order → APPROVED; the Brain owns the ranking.** The rank for co-occurring situations is deterministic engine logic, with "bias to safe/quiet on conflict" as the tie-break.
+5. **Proactivity boundary → NO push notifications.** The opener is on-request (opening the app is the invitation); Atlas never follows the athlete out of the gym.
+6. **Next-session-due forecast → NOT YET.** No forward schedule ships; the opener stops at today's decision. Revisit if/when the owner wants a truthful forward-look.
+
+**Resulting build order (owner-stated):** PR-0 (this docs/backlog capture) → PR-1 (deterministic coach-first opener) → PR-3 (short-gap restart posture) close behind. PR-1+ are code and await an explicit owner go.
 
 ---
 
