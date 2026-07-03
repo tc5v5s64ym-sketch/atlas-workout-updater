@@ -129,7 +129,12 @@ test('analytics valid-input characterization', () => {
   assert.equal(summary.total_volume, 1850);
   assert.equal(summary.top_set.weight, 185);
 
-  const volume = computeMuscleGroupVolume(logRows, 30);
+  // computeMuscleGroupVolume anchors its cutoff on the REAL current date (no
+  // `today` param), so a fixed window over fixed fixture dates is a time bomb —
+  // this assertion broke at the 2026-07-03 UTC midnight rollover when the
+  // 2026-06-02 session aged out of `30`. This characterization is about the
+  // AGGREGATION, not the cutoff; use a window that always covers the fixture.
+  const volume = computeMuscleGroupVolume(logRows, 36500);
   assert.deepEqual(volume, [
     { muscle_group: 'Chest', volume: 2825, set_count: 3 },
     { muscle_group: 'Quads', volume: 1125, set_count: 1 },
