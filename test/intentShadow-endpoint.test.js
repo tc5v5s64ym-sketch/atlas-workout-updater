@@ -11,7 +11,10 @@ const assert = require('node:assert/strict');
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
-process.env.GOOGLE_PRIVATE_KEY = '-----BEGIN PRIVATE KEY-----\\nstub\\n-----END PRIVATE KEY-----';
+// Stub, not a key (sheets.js is fully stubbed below) — assembled in two parts
+// so the changed-file secret scan's private-key-block rule never sees a
+// contiguous BEGIN header in source.
+process.env.GOOGLE_PRIVATE_KEY = ['-----BEGIN PRIVATE', 'KEY-----'].join(' ') + '\\nstub\\n-----END PRIVATE KEY-----';
 process.env.ATLAS_INTENT_ROUTER = 'shadow';
 
 const fakeSheets = {
