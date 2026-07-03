@@ -1,8 +1,9 @@
 const { test, expect } = require('@playwright/test');
 
 // Accessibility, keyboard-navigation, error-state and mobile-overflow coverage.
-// These exercise the chrome (surface switcher + Progress subnav) and the
-// validation path — never the trust loop, which app-smoke.spec.js owns.
+// These exercise the chrome (hamburger drawer + Progress subnav — the surface
+// switcher was retired in Phase D, 2026-07-03) and the validation path — never
+// the trust loop, which app-smoke.spec.js owns.
 
 const TEST_KEY = 'playwright-test-key';
 
@@ -32,48 +33,32 @@ async function openDrawerNav(page, tab) {
   await expect(page.locator('#coach-drawer')).toBeHidden();
 }
 
-test('surface switcher and subnav expose ARIA tab semantics', async ({ page }) => {
+test('subnav exposes ARIA tab semantics; the retired surface switcher is gone', async ({ page }) => {
   await openApp(page);
 
-  await expect(page.locator('.segmented')).toHaveAttribute('role', 'tablist');
-  await expect(page.locator('#surface-coach')).toHaveAttribute('role', 'tab');
-  await expect(page.locator('#surface-progress')).toHaveAttribute('role', 'tab');
+  // Phase D (2026-07-03): the Coach|Progress segmented control no longer exists.
+  await expect(page.locator('.segmented')).toHaveCount(0);
+  await expect(page.locator('.surface-btn')).toHaveCount(0);
+
   await expect(page.locator('#subnav')).toHaveAttribute('role', 'tablist');
   await expect(page.locator('#nav-today')).toHaveAttribute('role', 'tab');
 
   // Panels are tabpanels, focusable so keyboard users can jump into content.
   await expect(page.locator('#tab-logger')).toHaveAttribute('role', 'tabpanel');
   await expect(page.locator('#tab-dashboard')).toHaveAttribute('role', 'tabpanel');
-
-  // Roving tabindex: only the selected tab is in the tab order.
-  await expect(page.locator('#surface-coach')).toHaveAttribute('tabindex', '0');
-  await expect(page.locator('#surface-progress')).toHaveAttribute('tabindex', '-1');
 });
 
-test('keyboard: arrow keys move and activate the Coach/Progress surfaces', async ({ page }) => {
+test('drawer: Coach and Progress stay reachable both ways without the switcher', async ({ page }) => {
   await openApp(page);
-  // The segmented switcher is hidden on the coach surface (the hamburger is the
-  // entry point there); reach Progress first so the switcher is visible.
-  await openDrawerNav(page, 'dashboard'); // hamburger → drawer → Progress (Today)
-  await expect(page.locator('.segmented')).toBeVisible();
-  await expect(page.locator('#subnav')).toBeVisible();
-
-  const coach = page.locator('#surface-coach');
-  const progress = page.locator('#surface-progress');
-
-  // Roving tabindex: only the selected (Progress) tab is in the tab order.
-  await expect(progress).toHaveAttribute('tabindex', '0');
-  await expect(coach).toHaveAttribute('tabindex', '-1');
-
-  // ArrowRight moves focus to Progress and keeps the Progress surface.
-  await coach.focus();
-  await page.keyboard.press('ArrowRight');
-  await expect(progress).toBeFocused();
-  await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
-
-  // ArrowLeft moves to and activates the Coach surface (which hides the switcher).
-  await page.keyboard.press('ArrowLeft');
   await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
+
+  await openDrawerNav(page, 'dashboard'); // hamburger → drawer → Progress (Today)
+  await expect(page.locator('body')).toHaveAttribute('data-surface', 'progress');
+  await expect(page.locator('#tab-dashboard')).toBeVisible();
+
+  await openDrawerNav(page, 'logger');    // and back to the coach
+  await expect(page.locator('body')).toHaveAttribute('data-surface', 'coach');
+  await expect(page.locator('#workout-text')).toBeVisible();
 });
 
 test('keyboard: arrow keys move and activate the Progress subnav', async ({ page }) => {

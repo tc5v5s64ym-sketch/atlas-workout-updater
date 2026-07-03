@@ -1,10 +1,13 @@
 /* Atlas shell navigation — decoupled surface router.
  *
  * Design: app.js owns the underlying tab engine (.tab-btn → #tab-*). This file
- * layers the two-surface model (Coach | Progress) on top WITHOUT touching app.js.
- * It navigates by clicking the existing .tab-btn controls and reflects whatever
- * tab becomes active — including app.js's own programmatic switches (startLift,
- * back-to-session) — via a MutationObserver. The trust loop is never touched.
+ * derives the two-surface model (coach | progress) from whichever tab is
+ * active WITHOUT touching app.js — including app.js's own programmatic
+ * switches (startLift, back-to-session) — via a MutationObserver, and writes
+ * it to body[data-surface] for the chrome CSS. The Coach|Progress segmented
+ * control was retired in Phase D (2026-07-03, owner-approved): the hamburger
+ * drawer and the Progress subnav are the navigation. The trust loop is never
+ * touched.
  */
 
 (function () {
@@ -21,7 +24,6 @@
   };
 
   const body = document.body;
-  const surfaceButtons = Array.from(document.querySelectorAll('.surface-btn'));
   const subnav = document.getElementById('subnav');
 
   function tabButton(tab) {
@@ -39,17 +41,11 @@
     if (btn) btn.click();           // routes through app.js's tab engine
   }
 
-  // Reflect the active tab into the surface chrome (segmented control + subnav).
+  // Reflect the active tab into the surface chrome (body[data-surface] + subnav).
   function sync() {
     const tab = activeTab();
     const surface = TAB_SURFACE[tab] || 'coach';
     body.setAttribute('data-surface', surface);
-
-    for (const btn of surfaceButtons) {
-      const selected = btn.dataset.surface === surface;
-      btn.setAttribute('aria-selected', String(selected));
-      btn.tabIndex = selected ? 0 : -1;            // roving tabindex
-    }
 
     if (subnav) {
       for (const pill of subnav.querySelectorAll('.tab-btn')) {
@@ -62,24 +58,10 @@
     }
   }
 
-  // Segmented control: Coach → logger; Progress → last progress tab or Today.
-  for (const btn of surfaceButtons) {
-    btn.addEventListener('click', () => {
-      const surface = btn.dataset.surface;
-      if (surface === 'coach') {
-        activateTab('logger');
-      } else {
-        const current = activeTab();
-        if (TAB_SURFACE[current] !== 'progress') activateTab('dashboard');
-      }
-      sync();
-    });
-  }
-
-  // Roving keyboard navigation for the two tablists (surface switcher + Progress
-  // subnav). Arrow / Home / End move focus and activate via the existing click
-  // paths, so app.js's tab engine and the surface router stay the single source
-  // of truth — this layer only adds keyboard reach, it never writes.
+  // Roving keyboard navigation for the Progress subnav tablist. Arrow / Home /
+  // End move focus and activate via the existing click paths, so app.js's tab
+  // engine and the surface router stay the single source of truth — this layer
+  // only adds keyboard reach, it never writes.
   function wireTablistKeys(tabs) {
     tabs.forEach((tabEl, i) => {
       tabEl.addEventListener('keydown', e => {
@@ -99,7 +81,6 @@
     });
   }
 
-  wireTablistKeys(surfaceButtons);
   if (subnav) {
     wireTablistKeys(Array.from(subnav.querySelectorAll('.tab-btn')).filter(b => !b.hasAttribute('hidden')));
   }
