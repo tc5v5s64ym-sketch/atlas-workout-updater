@@ -259,6 +259,25 @@ describe('brian-mode composition (real Orchestrator + coachEnginePromotion)', ()
     assert.equal(plan.eligible, false);
     assert.equal(plan.reason, 'active_deload');
   });
+
+  it('a just-logged set always beats an otherwise-answered decision — the in-workout anchor wins', async () => {
+    const { brian, validation } = await runOrchestrator(RICH_ROWS);
+    assert.equal(brian.status, 'answered', 'sanity: Brian would have answered absent the anchor');
+
+    const rec = legacyRecommendation();
+    const plan = planBrianOverride(rec, brian, validation, null, { justLoggedSet: { weight: 225, reps: 5, rir: 3 } });
+    assert.equal(plan.eligible, false,
+      'a sheet-only snapshot cannot see the unsaved set — Brian must not override the fresh anchor');
+    assert.equal(plan.reason, 'just_logged_anchor');
+
+    // Deload still outranks the anchor when both are present (absolute rule first).
+    const both = planBrianOverride(rec, brian, validation, { in_deload: true }, { justLoggedSet: { weight: 225, reps: 5, rir: 3 } });
+    assert.equal(both.reason, 'active_deload');
+
+    // No context / empty context behaves exactly as before (optional param).
+    assert.equal(planBrianOverride(rec, brian, validation, null).eligible, true);
+    assert.equal(planBrianOverride(rec, brian, validation, null, {}).eligible, true);
+  });
 });
 
 // ─── Coach's Pick promotion (owner-approved 2026-07-02) ─────────────────────
