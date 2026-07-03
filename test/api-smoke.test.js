@@ -3697,6 +3697,30 @@ test('api smoke: brian mode falls back to legacy on clarification_needed, with m
   }
 });
 
+test('api smoke: brian mode never overrides the in-workout just-logged anchor (stale-by-one-set guard)', async () => {
+  const original = process.env.ATLAS_COACH_ENGINE;
+  try {
+    delete process.env.ATLAS_COACH_ENGINE;
+    const legacy = await requestJson('/api/recommend/next/BEN01?w=225&reps=5&rir=5');
+
+    process.env.ATLAS_COACH_ENGINE = 'brian';
+    const brian = await requestJson('/api/recommend/next/BEN01?w=225&reps=5&rir=5');
+
+    assert.equal(brian.response.status, 200);
+    assert.ok(brian.body.data.engine_source, 'brian mode must always include engine_source metadata');
+    assert.equal(brian.body.data.engine_source.driven_by, 'legacy');
+    assert.equal(brian.body.data.engine_source.reason, 'just_logged_anchor',
+      'the fresh unsaved set must anchor the reply — Brian\'s sheet-only snapshot cannot see it');
+    // The anchored numbers are byte-identical to legacy — nothing drifted.
+    assert.deepEqual(brian.body.data.next_target, legacy.body.data.next_target);
+    assert.equal(brian.body.data.recommendation, legacy.body.data.recommendation);
+    assert.equal(brian.body.data.reasoning, legacy.body.data.reasoning);
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
 test('api smoke: brian mode never overrides an active deload, even flagged as such in engine_source', async () => {
   const DELOAD_HEADER = ['updated_at', 'training_state', 'deload_protocol', 'deload_reason', 'deload_start_date', 'deload_sessions_remaining', 'deload_exit_criteria'];
   const original = process.env.ATLAS_COACH_ENGINE;

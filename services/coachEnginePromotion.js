@@ -26,10 +26,19 @@ function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray
  * predefined protocol (CLAUDE.md: "AI decides *if*, engine decides *what*")
  * and must never be overridden by a progression decision, which has no
  * deload awareness — an active deload always wins, unconditionally.
+ *
+ * context.justLoggedSet: the in-workout anchor. Under session-level save a
+ * just-logged set is NOT in the sheet yet, so Brian's snapshot-derived
+ * decision is stale by exactly that set — the legacy response anchored on
+ * the fresh set must always win. Lifting this guard requires the envelope
+ * to carry the ephemeral set (filed in BACKLOG), not a bigger override.
  */
-function planBrianOverride(recommendation, brian, validation, activeDeload) {
+function planBrianOverride(recommendation, brian, validation, activeDeload, context) {
   if (activeDeload && activeDeload.in_deload === true) {
     return { eligible: false, reason: 'active_deload' };
+  }
+  if (context && context.justLoggedSet) {
+    return { eligible: false, reason: 'just_logged_anchor' };
   }
   if (!validation || validation.valid !== true || !_isObj(brian)) {
     return { eligible: false, reason: 'invalid_decision' };

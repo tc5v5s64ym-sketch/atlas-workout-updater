@@ -2633,7 +2633,11 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           recommendation.brian = brian;
         }
         if (coachEngineMode === 'brian') {
-          const plan = planBrianOverride(recommendation, brian, validation, activeDeload);
+          // In-workout, the just-logged set is NOT in the sheet yet — Brian's
+          // snapshot-derived decision is stale by exactly that set, so the
+          // legacy response anchored on the fresh set must win (the planner
+          // returns reason 'just_logged_anchor').
+          const plan = planBrianOverride(recommendation, brian, validation, activeDeload, { justLoggedSet });
           if (plan.eligible) {
             applyBrianOverride(recommendation, plan);
             recommendation.engine_source = { mode: 'brian', driven_by: 'brian' };
