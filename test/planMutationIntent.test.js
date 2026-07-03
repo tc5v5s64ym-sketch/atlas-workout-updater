@@ -58,6 +58,65 @@ test('non-mutation messages return null (fall through to coach/substitute flow)'
   }
 });
 
+// --- Owner live repro (2026-07-03): reason clause + compound skip ---
+// "My legs are fried right now I think I'll skip single leg press and leg
+// extensions" fell to the chat LLM (which debated the fatigue claim); the plan
+// never mutated and the pin/composer stayed on the skipped lift.
+
+test('repro: a leading reason clause no longer defeats the classifier', () => {
+  const r = classifyMutationIntent("My legs are fried right now I think I'll skip single leg press and leg extensions");
+  assert.equal(r && r.action, 'skip');
+  assert.equal(r.target, 'single leg press and leg extensions');
+});
+
+test('reason-clause tolerance covers the intent-marker variants', () => {
+  for (const [text, action] of [
+    ["shoulder's cranky today, I'm gonna swap bench for db press", 'replace'],
+    ["long day, i'll drop leg extensions", 'skip'],
+    ["low on time so let's cut deadlift today", 'skip'],
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, action, `${action}: ${text}`);
+  }
+});
+
+test('negated or question-form intent never classifies (reason-clause lane stays conservative)', () => {
+  for (const text of [
+    "i don't think i'll skip leg extensions",
+    "my legs are tired but i won't skip leg press",
+    "i'm tired, should i skip leg extensions",
+    "legs are fried — do you think i'll skip leg press",
+    'my legs are fried right now',                       // reason with no intent
+  ]) {
+    assert.equal(classifyMutationIntent(text), null, `should be null: "${text}"`);
+  }
+});
+
+test('repro: "single leg press" resolves "Single-Leg Seated Leg Press" (token-subset tier)', () => {
+  const plan = [
+    { name: 'Romanian Deadlift', status: 'completed' },
+    { name: 'Single-Leg Seated Leg Press', status: 'pending' },
+    { name: 'Leg Extension', status: 'pending' },
+    { name: 'Hammer Curls', status: 'pending' },
+  ];
+  const names = resolvePlanTargets('single leg press and leg extensions', plan);
+  assert.deepEqual(names, ['Single-Leg Seated Leg Press', 'Leg Extension']);
+});
+
+test('token-subset tier: every word must be present, and it needs two words', () => {
+  const plan = [
+    { name: 'Single-Leg Seated Leg Press', status: 'pending' },
+    { name: 'Leg Extension', status: 'pending' },
+  ];
+  // Both words present in the slot name (not a substring) → subset tier matches.
+  assert.deepEqual(resolvePlanTargets('single press', plan), ['Single-Leg Seated Leg Press']);
+  // One word missing → no match from any tier.
+  assert.deepEqual(resolvePlanTargets('seated curl', plan), []);
+  // (Single generic words still go through the PRE-EXISTING substring tier —
+  // that behavior is owned by tryApplyPlanMutation's slice(0,1) compromise,
+  // unchanged here.)
+});
+
 test('a slash-set log is never read as a mutation', () => {
   assert.equal(classifyMutationIntent('skip 225 5/2'), null);
   assert.equal(classifyMutationIntent('back squat 225 5/2 5/2'), null);

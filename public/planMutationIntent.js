@@ -68,6 +68,17 @@
    * Deadlift". Completed/skipped slots are NEVER matched (a swap/skip can't re-open
    * finished work). Returns [] when nothing matches (caller falls through).
    */
+  // Word-set for the token-subset tier: lowercase, hyphens/slashes → spaces,
+  // each word singularized — so "single leg press" can meet
+  // "Single-Leg Seated Leg Press" word-by-word.
+  function wordSet(s) {
+    return new Set(String(s == null ? '' : s).toLowerCase()
+      .replace(/[-/]+/g, ' ')
+      .split(/\s+/)
+      .map(singular)
+      .filter(Boolean));
+  }
+
   function resolvePlanTargets(targetPhrase, planEntries) {
     const entries = (Array.isArray(planEntries) ? planEntries : [])
       .filter(e => e && e.name && (e.status === undefined || e.status === 'pending'));
@@ -76,7 +87,16 @@
     const names = [];
     for (const e of entries) {
       const en = singular(e.name);
-      const hit = tokens.some(tok => en === tok || en.includes(tok) || tok.includes(en));
+      const enWords = wordSet(e.name);
+      const hit = tokens.some(tok => {
+        if (en === tok || en.includes(tok) || tok.includes(en)) return true;
+        // Token-subset tier (owner live find 2026-07-03: "single leg press"
+        // must resolve "Single-Leg Seated Leg Press"): every word of the
+        // user's phrase appears in the slot name. Two-word minimum so a lone
+        // "press"/"leg" can never vacuum up half the plan.
+        const tokWords = [...wordSet(tok)];
+        return tokWords.length >= 2 && tokWords.every(w => enWords.has(w));
+      });
       if (hit && !names.includes(e.name)) names.push(e.name);
     }
     return names;
@@ -146,6 +166,31 @@
     // skip-only: "skip/drop/cut X" with no replacement clause
     m = t.match(/^(?:skip|drop|cut|ditch)\s+(.+)$/);
     if (m) return skip(m[1]);
+
+    // Reason-clause tolerance (owner live find 2026-07-03: "My legs are fried
+    // right now I think I'll skip single leg press and leg extensions" fell to
+    // the chat LLM, which debated instead of skipping). Every pattern above is
+    // start-anchored, so a leading reason defeats them. When the message
+    // carries a FIRST-PERSON INTENT marker glued to a mutation verb, classify
+    // from that marker onward — the reason clause is context, not the intent.
+    // Negations ("I don't think I'll skip…") never classify.
+    if (/\b(?:don'?t|do not|not|never|won'?t|wouldn'?t|shouldn'?t|can'?t)\s+(?:think\s+)?(?:(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|gonna|going to|wanna|want to)\s+)?(?:skip|drop|cut|ditch|swap|switch|sub(?:stitute)?|replace)\b/.test(t)) {
+      return null;
+    }
+    m = t.match(/\b(?:i think\s+)?(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|let'?s|i want to|i wanna)\s+((?:skip|drop|cut|ditch|swap|switch|sub(?:stitute)?|replace)\b.*)$/);
+    if (m) {
+      // An interrogative frame right before the marker ("do you think i'll
+      // skip…") is a question about intent, not intent — never a mutation.
+      const before = t.slice(0, m.index);
+      if (/\b(?:do|does|did|should|would|could|can|will)\s+(?:you|we|they|i)\s+(?:think|say|guess|reckon|suppose|bet)\s*$/.test(before)) {
+        return null;
+      }
+      const clause = m[1];
+      // Re-run the anchored grammar on the extracted clause only — one code
+      // lane for the patterns, no second grammar to drift.
+      const inner = classifyMutationIntent(clause);
+      if (inner) return inner;
+    }
 
     return null;
   }
