@@ -446,11 +446,24 @@ test('bodyweight display: no-load sets read as reps everywhere — never "0×rep
   assert.match(review, /hasLoad\(g\.set\.weight\)/, 'the review-card set line uses the same rule');
   const opener = cc.slice(cc.indexOf('async function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
   assert.match(opener, /hasLoad\(last\.weight\)/, 'the opener closes its 0-weight edge with the same rule');
-  // The two recap renderers outside the IIFE apply the same rule (review #828).
+  // app.js carries ONE shared helper for every logged-set renderer (review #828
+  // swept the full file: recap, plan card, PR table, best-recent, last-session
+  // hint, plan-sheet labels, in-lift panel).
   const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  const recap = app.slice(app.indexOf("class: 'session-ex-set'") - 600, app.indexOf("class: 'session-ex-set'") + 100);
-  assert.match(recap, /Number\(r\.weight\) !== 0\)\s*\? `\$\{r\.weight\} × \$\{r\.reps\}` : `\$\{r\.reps\} reps`/,
-    'the completed-session recap reads bodyweight sets as reps');
+  const helper = app.slice(app.indexOf('function formatSetLoad('), app.indexOf('function formatSetLoad(') + 300);
+  assert.match(helper, /Number\(weight\) !== 0/, 'the app.js helper carries the same literal-0 rule');
+  for (const site of ["class: 'session-ex-set'", 'coach-plan-last', 'bestWeightSet ?', 'bestRepSet ?', "rows.push(['Last'"]) {
+    const idx = app.indexOf(site);
+    assert.ok(idx > -1, `site marker missing: ${site}`);
+    assert.ok(app.slice(Math.max(0, idx - 300), idx + 300).includes('formatSetLoad('),
+      `logged-set renderer near "${site}" must use formatSetLoad`);
+  }
+  // No LOGGED-set weight×reps template remains outside the helper (engine
+  // TARGET renders — t./target./ex. plan rows — keep their own rendering).
+  for (const bad of ['${s.weight} × ${s.reps}', '${r.weight} × ${r.reps}', '${last.weight} × ${last.reps}',
+    '${lastSet.weight} × ${lastSet.reps}', '${s.weight}×${s.reps}']) {
+    assert.equal(app.includes(bad), false, `unguarded logged-set render remains: ${bad}`);
+  }
   const nav = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'nav.js'), 'utf8');
   assert.match(nav, /Number\(s\.weight\) !== 0\) \? `\$\{s\.weight\}×\$\{s\.reps\}` : `\$\{s\.reps\} reps`/,
     'the last-session chip row reads bodyweight sets as reps');
