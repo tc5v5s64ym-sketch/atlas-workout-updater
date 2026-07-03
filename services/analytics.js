@@ -7,6 +7,7 @@ const { sanitizeLoad } = require('./loadSanity');
 const { deloadFillerWeight, detectDeloadRecovery } = require('./deloadPolicy');
 const { effortVerdict, recommendFromJustLoggedSet } = require('./justLoggedAnchor');
 const { applyStalenessGuard } = require('./stalenessGuard');
+const { bodyweightRepProgression } = require('./bodyweightProgression');
 const { isWarmupNote } = require('./warmupTag');
 
 function asArray(value) {
@@ -630,23 +631,9 @@ function recommendNextSet(logRows, liftCode, options = {}) {
   const isBodyweight = !isPositiveFinite(lastSet.weight);
 
   if (isBodyweight) {
-    recommendation = `Repeat ${lastSet.reps} reps and keep form tight.`;
-    reasoning = 'Bodyweight movement — progress by adding reps, not load.';
-    nextReps = lastSet.reps;
-    confidence = 'low';
-    if (lastSet.rir !== null && lastSet.rir !== undefined && Number.isFinite(lastSet.rir)) {
-      if (lastSet.rir <= 0) {
-        nextReps = lastSet.reps;
-        recommendation = `Hold ${nextReps} reps — the last set was at or near failure.`;
-        reasoning = 'RIR ≤ 0 means the last set was very close to failure. Bank clean reps at this count before chasing more.';
-        confidence = 'high';
-      } else {
-        nextReps = (lastSet.reps || 0) + 1;
-        recommendation = `Add a rep — target ${nextReps} reps next set.`;
-        reasoning = `RIR ${lastSet.rir} leaves room to progress — add a rep before making the movement harder.`;
-        confidence = lastSet.rir >= 2 ? 'high' : 'medium';
-      }
-    }
+    // The rep-based lifecycle decision now lives in
+    // services/bodyweightProgression.js (One-Brain migration item 8).
+    ({ recommendation, reasoning, nextReps, confidence } = bodyweightRepProgression(lastSet));
   } else if (lastSet.rir !== null && lastSet.rir !== undefined && Number.isFinite(lastSet.rir)) {
     if (lastSet.rir >= 2 && priorSet && lastSet.reps === priorSet.reps) {
       nextWeight = lastSet.weight + increaseAmount;
