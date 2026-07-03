@@ -1950,6 +1950,20 @@
         detail: { edit: chatResult.propose_plan_edit, result }
       }));
       if (result.applied) {
+        // Owner directive (2026-07-03): plans read STACKED, never as prose
+        // lines — render the APPLIED edit through the same structured block
+        // the Coach's Pick uses. Deterministic data only: the edit's own
+        // numbers, already applied to the session. remove_exercises has no
+        // block (nothing new to show); the note still confirms it.
+        const edit = chatResult.propose_plan_edit;
+        if ((edit.action === 'replace_plan' || edit.action === 'add_exercises') && Array.isArray(edit.exercises)) {
+          appendWorkoutPlan(bubble, {
+            exercises: edit.exercises.map(x => (typeof x === 'string' ? { exercise: x } : {
+              exercise: x.name || x.exercise,
+              target_weight: x.weight, target_reps: x.reps, target_sets: x.sets, target_rir: x.rir
+            }))
+          });
+        }
         const note = document.createElement('div');
         note.className = 'edit-applied-note';
         note.textContent = 'Plan updated.';
