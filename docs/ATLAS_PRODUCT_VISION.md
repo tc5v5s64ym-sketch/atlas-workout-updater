@@ -448,41 +448,42 @@ Atlas should develop in this order:
 
 ## Current Locked Status Board
 
+*(Factual refresh 2026-07-03 — the board below had frozen at the pre-first-write era. Steps 1–10 of the Product Development Order are shipped and live; step 11, coaching intelligence, is the current era.)*
+
 ✅ Idea defined
 ✅ Backend built
 ✅ Google Sheets connected
-✅ OpenAI Vision parsing working
+✅ Vision parsing working (provider-selectable: OpenAI default / Gemini)
 ✅ Workout ingestion working
 ✅ Exercise enrichment working
-✅ Cleaned sheet live
+✅ Cleaned sheet live (12-column contract)
 ✅ Mission Control working
 ✅ Dry-run safety proven
 ✅ Codex hardening tests/docs/runbooks merged
 ✅ Agent instructions merged
-✅ Secret hygiene docs merged
-✅ .env untracked
-✅ Manual secret rotation complete
-✅ Post-rotation Mission Control passed
+✅ Secret hygiene docs merged; .env untracked; rotation runbook exercised
+✅ First real write — shipped; the preview→approve→write trust loop with proof fields and write_id is the production path
+✅ Real workouts logged end-to-end daily (text, screenshot, and conversational logging)
+✅ Undo-last with read-back verification
+✅ Read-only UI → grew into the full app shell (PWA, installable, offline shell cache)
+✅ Progress views (Today / Trends / History / Body), reached via the drawer
+✅ Workout logger UI → became the conversation-first coach surface (one composer; home = one Atlas text box, owner directive 2026-07-03)
+✅ Apple Watch upload/review (screenshot → Effort tab, 9-column contract)
+✅ Approve-before-save workflow (the trust contract; never changed without owner approval)
+✅ Bodyweight logging
+✅ Better auth / private access (ATLAS_API_KEY on every /api route)
+✅ Deterministic coaching layer: recommendations, set reactions, deload state machine (predefined protocols), constraints, weekly report — engine owns every number; LLM only words facts
+✅ Composer-First Migration complete (Phases A–D, 2026-07-02/03)
 
-🔄 Backup / rollback plan
+🔄 Coaching intelligence — the CURRENT era (step 11): One-Brain engine built and promoted surface-by-surface behind flags (`ATLAS_COACH_ENGINE`, evidence-gated flip); NL Intent Router built and attached in shadow mode (`ATLAS_INTENT_ROUTER=shadow`, default off; promotion evidence-gated)
+🔄 Program/progression engine (prescription + staleness/layoff guards live; multi-style planning is owner-reserved PLANNING)
+🔄 Monitoring / error alerts (CI + coach health endpoints + bug-report sink; no push alerting)
+🔄 Backup / rollback plan (undo + append-only audit trails; no automated sheet backup)
 
-⏳ First real write
-⏳ First real workout logged end-to-end
-⏳ Monitoring / error alerts
-
-⏳ Read-only UI
-⏳ Progress dashboard
-⏳ Workout logger UI
-⏳ Apple Watch upload/review UI
-⏳ Approve-before-save workflow
-
-⏳ Coaching intelligence
-⏳ Program/progression engine
-⏳ Nutrition/bodyweight
-⏳ User profile/settings
-⏳ Better auth / private access
-⏳ Full mobile app
-⏳ Database/backend evolution
+⏳ Nutrition (owner-gated — explicitly out of scope unless requested)
+⏳ User profile/settings beyond the basics
+⏳ Full mobile app (the PWA is the current answer)
+⏳ Database/backend evolution (deliberately none — Sheets is the record)
 
 ## The Dream
 
