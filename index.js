@@ -2212,7 +2212,11 @@ app.get('/api/debug/intent-shadow', (req, res) => {
 // inside observeChatMessage — this handler never awaits it and never reflects it.
 app.post('/api/debug/intent-observe', (req, res) => {
   const message = req.body && typeof req.body.message === 'string' ? req.body.message : '';
-  observeChatMessage(message);   // no-op when the flag is off / message is blank
+  const appVersion = req.body && typeof req.body.app_version === 'string' ? req.body.app_version : '';
+  // route/source label the Intent_Shadow diagnostics row; the classifier's own
+  // source stays 'chat'. Fire-and-forget inside observeChatMessage — no-op when
+  // the flag is off / message is blank.
+  observeChatMessage(message, { route: 'composer', source: 'chat', appVersion });
   return standardSuccess(req, res, 'observed', { observed: Boolean(message.trim()) });
 });
 
