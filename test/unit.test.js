@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v98/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v99/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5623,8 +5623,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v98/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v97\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v99/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v98\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6761,6 +6761,21 @@ test('session pin: wired to every session-state moment (log, plan render, reset)
   assert.match(emitFn, /renderSessionPin\(\)/, 'every logged set refreshes the pin');
   const bannerFn = appSource.slice(appSource.indexOf('function renderActiveSessionBanner('), appSource.indexOf('function renderActiveSessionBanner(') + 4000);
   assert.match(bannerFn, /renderSessionPin\(\)/, 'plan engage/mutate/restore refresh the pin');
+});
+
+test('session chrome: the plan card is a tap-to-expand dropdown behind the pin (owner directive 2026-07-03)', () => {
+  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const bannerFn = appSource.slice(appSource.indexOf('function renderActiveSessionBanner('), appSource.indexOf('function syncPlannedIndexToCanonical('));
+  assert.match(bannerFn, /banner\.hidden = !sessionChromeExpanded/, 'the card renders COLLAPSED until the pin expands it');
+  assert.match(bannerFn, /classList\.add\('session-active'\)/, 'a live session marks the body for the chrome CSS');
+  assert.match(bannerFn, /classList\.remove\('session-active'\)/, 'session end clears the marker');
+  const pinFn = appSource.slice(appSource.indexOf('function renderSessionPin('), appSource.indexOf('function renderSessionPin(') + 3200);
+  assert.match(pinFn, /pin-chevron/, 'the pin advertises the dropdown');
+  assert.match(pinFn, /aria-expanded/, 'expansion state is announced');
+  assert.match(pinFn, /dataset\.chromeWired/, 'the toggle wires once — the pin element persists across re-renders');
+  assert.match(pinFn, /e\.key === 'Enter' \|\| e\.key === ' '/, 'keyboard activation matches the button role');
+  const css = fs.readFileSync(path.join(repoRoot, 'public', 'styles.css'), 'utf8');
+  assert.match(css, /body\.session-active \.coach-read-strip \{ display: none; \}/, 'the glance line steps aside during a session');
 });
 
 test('session pin: hidden by default and never trapped in a display:none rule', () => {
