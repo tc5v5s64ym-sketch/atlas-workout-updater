@@ -83,4 +83,89 @@ function applyBrianOverride(recommendation, plan) {
   recommendation.recommendation = brianVerdictText(plan);
 }
 
-module.exports = { planBrianOverride, applyBrianOverride, brianVerdictText };
+// ── Coach's Pick promotion (owner-approved 2026-07-02) ───────────────────────
+// Decides whether a validated best_workout CoachingDecision is eligible to
+// DRIVE the recommended intent on GET /api/plan/intent-recommendation. Same
+// verbatim-numbers rule as planBrianOverride: every field below is copied
+// straight from `brian.payload.blocks`; nothing is invented. Note the deload
+// difference from the progression promotion: `sessionGenerator.buildSession`
+// IS deload-aware (it applies the predefined protocol to its blocks), so no
+// separate active-deload guard is needed here — Brian's workout decision
+// already honors "AI decides *if*, engine decides *what*".
+
+/**
+ * Returns { eligible:false, reason } or { eligible:true, reason:null, exercises }
+ * where `exercises` is the recommended intent's replacement list, each entry
+ * mapped verbatim from a Brian workout block (target_reps ← block.reps).
+ */
+function planBrianPickOverride(result, brian, validation) {
+  if (!validation || validation.valid !== true || !_isObj(brian)) {
+    return { eligible: false, reason: 'invalid_decision' };
+  }
+  if (brian.decision_type === 'clarification_needed' || brian.status !== 'answered') {
+    return { eligible: false, reason: 'needs_clarification' };
+  }
+  if (brian.decision_type !== 'workout') {
+    return { eligible: false, reason: 'wrong_decision_type' };
+  }
+  const payload = _isObj(brian.payload) ? brian.payload : {};
+  const blocks = Array.isArray(payload.blocks) ? payload.blocks.filter(_isObj) : [];
+  const prescribed = blocks.filter(b =>
+    typeof b.exercise === 'string' && b.exercise && typeof b.target_weight === 'number');
+  if (!prescribed.length) {
+    return { eligible: false, reason: 'no_prescribed_numbers' };
+  }
+  const intents = _isObj(result) && Array.isArray(result.intents) ? result.intents : [];
+  if (!intents.some(i => _isObj(i) && i.recommended === true)) {
+    return { eligible: false, reason: 'no_recommended_intent' };
+  }
+  return {
+    eligible: true,
+    reason: null,
+    // Brian's own surface labels, verbatim from the payload (never invented) —
+    // the swapped exercise list must not sit under a legacy theme label that
+    // no longer describes it (review #813).
+    label: typeof payload.session_label === 'string' && payload.session_label ? payload.session_label : null,
+    focus: typeof payload.focus === 'string' && payload.focus ? payload.focus : null,
+    exercises: prescribed.map(b => ({
+      exercise: b.exercise,
+      lift_code: typeof b.lift_code === 'string' ? b.lift_code : null,
+      target_weight: b.target_weight,
+      ...(typeof b.reps === 'number' ? { target_reps: b.reps } : {}),
+      ...(typeof b.sets === 'number' ? { target_sets: b.sets } : {}),
+      ...(typeof b.target_rir === 'number' ? { target_rir: b.target_rir } : {}),
+      // Deterministic wording of an engine fact (the block's scenario) — the
+      // same fixed-connectives rule as brianVerdictText, no invented content.
+      reason: typeof b.scenario_id === 'string' && b.scenario_id
+        ? `Brian: ${b.scenario_id.replace(/_/g, ' ')}`
+        : 'Brian',
+    })),
+  };
+}
+
+// Applies an eligible pick plan onto `result` IN PLACE (review #813 shape):
+// - exercises: replaced with Brian's blocks (verbatim).
+// - label/focus (+ todays_read.recommended_label): Brian's own session_label/
+//   focus, verbatim, so the card's headline describes the list it shows.
+// - pivot_logic / reason_codes: DELETED — they are derived from the legacy
+//   exercise list and would describe movements no longer shown; the drawer
+//   renders those sections only when present, so absence degrades cleanly.
+// why_today, data_points, what_it_protects, watch_for, the other intents, and
+// todays_read.recommended_reason stay legacy — readiness/theme facts that
+// remain true and are not exercise-derived.
+function applyBrianPickOverride(result, plan) {
+  const recommended = result.intents.find(i => _isObj(i) && i.recommended === true);
+  recommended.exercises = plan.exercises;
+  if (plan.label) recommended.label = plan.label;
+  if (plan.focus) recommended.focus = plan.focus;
+  delete recommended.pivot_logic;
+  delete recommended.reason_codes;
+  if (plan.label && _isObj(result.todays_read) && result.todays_read.recommended_label) {
+    result.todays_read.recommended_label = plan.label;
+  }
+}
+
+module.exports = {
+  planBrianOverride, applyBrianOverride, brianVerdictText,
+  planBrianPickOverride, applyBrianPickOverride,
+};
