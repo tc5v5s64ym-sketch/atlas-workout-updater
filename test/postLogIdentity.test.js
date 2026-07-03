@@ -217,6 +217,9 @@ function loadEmitHarness(catalogOptions) {
        // setIntentData models the ENGAGED Coach's Pick flow (see loadIdentityHarness).
        setIntentData: d => { lastIntentData = d; coachSuggestionEngaged = !!d; },
        setEngaged: v => { coachSuggestionEngaged = !!v; },
+       // setActiveSession models a STARTED/chat-created live session (e.g. an
+       // applied PROPOSE_PLAN_EDIT — names only, no lift codes).
+       setActiveSession: s => { activePlannedSession = s; },
        getCompleted: () => sessionCompleted.slice(),
        emitSetLogged,
      };`
@@ -274,6 +277,54 @@ test('post-log live path: with NO code bridge at all (no enrichment, no catalog)
   const detail = events[events.length - 1].detail;
   assert.ok(detail.plannedQueue.includes('Weighted Dip'),
     'no code bridge → the canonical alias does not resolve (documents why the datalist/enrichment bridge is needed)');
+});
+
+// --- Owner live repro (2026-07-03, 11:23): "Rdl 240 8/3 ×3" against a CHAT-created
+// plan (applied PROPOSE_PLAN_EDIT: names only, NO lift codes) said "next up:
+// Romanian Deadlift" and kept the composer on it. Three stacked gaps: chat plans
+// carry no codes, the datalist had no variants ("RDL"), and enrichment is
+// best-effort (null on a slow dry-run). The fix bridges codes TWO-SIDED via the
+// variant-aware datalist and adds a word-subset tier.
+
+const CHAT_PLAN_SESSION = {
+  label: 'Coach plan',
+  intentId: null,
+  index: 0,
+  exercises: [
+    { name: 'Romanian Deadlift', canonicalName: 'Romanian Deadlift', liftCode: '', weight: 230, reps: 8, sets: 3, rir: 2 },
+    { name: 'Back Squat', canonicalName: 'Back Squat', liftCode: '', weight: 225, reps: 8, sets: 3, rir: 2 },
+    { name: 'Single-Leg Seated Leg Press', canonicalName: 'Single-Leg Seated Leg Press', liftCode: '', weight: 70, reps: 12, sets: 3, rir: 1 },
+  ],
+};
+const VARIANT_CATALOG = [
+  { value: 'Romanian Deadlift', label: 'RDL01' },
+  { value: 'RDL', label: 'RDL01' },              // catalog variant, now in the datalist
+  { value: 'RDLs', label: 'RDL01' },
+  { value: 'Back Squat', label: 'SQ01' },
+  { value: 'Squat', label: 'SQ01' },
+];
+
+test('owner repro: an alias log against a chat-created plan (no lift codes) advances the plan', () => {
+  const { api, events } = loadEmitHarness(VARIANT_CATALOG);
+  api.setActiveSession(JSON.parse(JSON.stringify(CHAT_PLAN_SESSION)));
+  // No enrichment at all — the best-effort dry-run never returned (gym network).
+  api.emitSetLogged([{ exercise: 'RDL', weight: 240, reps: 8, rir: 3 }], '', [], null);
+  assert.ok(api.getCompleted().includes('Romanian Deadlift'),
+    '"RDL" resolves to the planned "Romanian Deadlift" via the two-sided datalist code bridge');
+  const detail = events[events.length - 1].detail;
+  assert.equal(detail.nextPlanned, 'Back Squat', 'handoff/composer advance past the logged lift');
+  assert.ok(!detail.plannedQueue.includes('Romanian Deadlift'), 'the done lift leaves the queue');
+});
+
+test('owner repro: the word-subset tier bridges multi-word aliases with no codes anywhere', () => {
+  const h = loadIdentityHarness();
+  h.setActiveSession(JSON.parse(JSON.stringify(CHAT_PLAN_SESSION)));
+  assert.equal(h.resolveCompletedIdentity('single leg press', undefined), 'Single-Leg Seated Leg Press',
+    'every-word-present (2+ words) reaches the hyphenated, longer plan name');
+  assert.equal(h.resolveCompletedIdentity('seated curl', undefined), 'seated curl',
+    'a phrase with a word NOT in any slot never matches (subset tier stays strict)');
+  // (Single generic words like "leg" keep the PRE-EXISTING substring-tier
+  // behavior — unchanged by this fix.)
 });
 
 test('post-log live path: a coach-suggested plan registers COMPLETE after the last lift (no resurrected next-up)', () => {

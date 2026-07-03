@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v97';
+const ATLAS_SHELL_BUILD = 'v98';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -364,11 +364,23 @@ async function loadExerciseDatalist() {
       document.body.appendChild(dl);
     }
     dl.innerHTML = '';
+    // Canonical names AND catalog variants ("RDL", "Squat") both land in the
+    // datalist, each labeled with the lift code — so liftCodeFromCatalog can
+    // bridge a logged alias to its code CLIENT-SIDE (owner live find
+    // 2026-07-03: "Rdl" logged against a chat-created plan could not reach
+    // "Romanian Deadlift", so the plan never advanced). Dedup by lowercase
+    // value; canonical first so it wins any collision.
+    const seenNames = new Set();
     for (const ex of exercises) {
-      const opt = document.createElement('option');
-      opt.value = ex.canonical_name;
-      if (ex.lift_code) opt.label = ex.lift_code;
-      dl.appendChild(opt);
+      for (const name of [ex.canonical_name, ...(Array.isArray(ex.variants) ? ex.variants : [])]) {
+        const key = String(name || '').toLowerCase();
+        if (!key || seenNames.has(key)) continue;
+        seenNames.add(key);
+        const opt = document.createElement('option');
+        opt.value = name;
+        if (ex.lift_code) opt.label = ex.lift_code;
+        dl.appendChild(opt);
+      }
     }
   } catch {
     // typeahead is optional enhancement — fail silently
@@ -4679,7 +4691,16 @@ function resolveCompletedIdentity(rawName, enrichmentRow) {
       || liftCodeFromCatalog(rawName)
       || '';
     if (loggedCode) {
-      const match = entries.find(e => e.liftCode && e.liftCode.toLowerCase() === String(loggedCode).toLowerCase());
+      const codeKey = String(loggedCode).toLowerCase();
+      // TWO-SIDED code bridge (owner live find 2026-07-03): a chat-created plan
+      // carries no lift codes, so resolve the ENTRY's code from the catalog too
+      // — "Rdl" (RDL01 via the variant-aware datalist) must reach the plan slot
+      // "Romanian Deadlift" (RDL01 via its canonical name) even when the
+      // best-effort enrichment call never returned.
+      const match = entries.find(e => {
+        const entryCode = e.liftCode || liftCodeFromCatalog(e.canonical) || liftCodeFromCatalog(e.name) || '';
+        return entryCode && entryCode.toLowerCase() === codeKey;
+      });
       if (match) return match.name;
     }
     const canonical = (enrichmentRow && enrichmentRow.canonical_exercise) || '';
@@ -4695,6 +4716,19 @@ function resolveCompletedIdentity(rawName, enrichmentRow) {
         return n === rk || n.includes(rk) || rk.includes(n);
       });
       if (match) return match.name;
+      // Word-subset tier (mirrors planMutationIntent's resolver): every word of
+      // the logged name present in the slot name, two-word minimum — bridges
+      // "single leg press" → "Single-Leg Seated Leg Press" without codes.
+      const words = s => new Set(String(s).toLowerCase().replace(/[-/]+/g, ' ').split(/\s+/)
+        .map(w => (/[^s]s$/.test(w) ? w.slice(0, -1) : w)).filter(Boolean));
+      const rawWords = [...words(rk)];
+      if (rawWords.length >= 2) {
+        const sub = entries.find(e => {
+          const ew = words(e.name);
+          return rawWords.every(w => ew.has(w));
+        });
+        if (sub) return sub.name;
+      }
     }
   }
   return rawName;
