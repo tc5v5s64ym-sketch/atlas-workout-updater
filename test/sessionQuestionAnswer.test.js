@@ -278,3 +278,45 @@ test('answerTotalRepsQuestion: defers when not a total question, past-tense, or 
   // No sets in the plan → cannot total without fabricating.
   assert.equal(answerTotalRepsQuestion('total reps for bench?', { clientContext: { current_plan: [{ name: 'Bench Press', reps: 5, sets: null }] } }), null);
 });
+
+// --- Owner live find (2026-07-03): the plan's CURRENT STEP answers bare shorthand ---
+// Mid-session "How much weight?" got "For which lift — Good Mornings, Back Squat,
+// or Single-Leg Seated Leg Press?" while the session pin showed Good Mornings as
+// current. plan_completed makes the current step unambiguous.
+
+test('bare shorthand: a multi-lift plan answers from the FIRST not-completed step', () => {
+  const ctx = {
+    current_plan: [
+      { name: 'Good Mornings', weight: null, reps: 10, sets: 3, rir: 3 },
+      { name: 'Back Squat', weight: 225, reps: 8, sets: 3, rir: 2 },
+      { name: 'Single-Leg Seated Leg Press', weight: 70, reps: 12, sets: 3, rir: 1 },
+    ],
+    plan_completed: [],
+  };
+  const r = answerBareShorthand('How many reps?', ctx);
+  assert.equal(r && r.kind, 'answer', 'the current step answers — no clarify');
+  assert.match(r.text, /^Good Mornings:/, 'the first pending step is the current lift');
+});
+
+test('bare shorthand: completed steps advance the current lift; no plan_completed keeps the old clarify', () => {
+  const plan = [
+    { name: 'Good Mornings', weight: null, reps: 10, sets: 3, rir: 3 },
+    { name: 'Back Squat', weight: 225, reps: 8, sets: 3, rir: 2 },
+  ];
+  const advanced = answerBareShorthand('How many reps?', { current_plan: plan, plan_completed: ['Good Mornings'] });
+  assert.equal(advanced && r_kind(advanced), 'answer');
+  assert.match(advanced.text, /^Back Squat:/, 'done steps are skipped');
+  const legacy = answerBareShorthand('How many reps?', { current_plan: plan });
+  assert.equal(legacy && legacy.kind, 'clarify', 'without plan_completed the clarify behavior stands');
+});
+
+function r_kind(r) { return r && r.kind; }
+
+test('chat swap follow-through: an applied plan edit re-points the composer via the mutation signal', () => {
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  const app = fs2.readFileSync(path2.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const listener = app.slice(app.indexOf("document.addEventListener('atlas:plan-edit-proposed'"), app.indexOf("document.addEventListener('atlas:plan-edit-proposed'") + 900);
+  assert.match(listener, /announcePlanMutation\('', firstUnloggedPlannedLift\(\)\)/,
+    'the chat lane fires the SAME mutation signal as the deterministic lane (empty summary: no extra bubble, composer re-points)');
+});
