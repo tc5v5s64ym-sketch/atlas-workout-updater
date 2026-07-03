@@ -6,6 +6,7 @@ const { sanitizeLoad } = require('./loadSanity');
 // module (Step 1C). Pure extract — behaviour unchanged.
 const { deloadFillerWeight, detectDeloadRecovery } = require('./deloadPolicy');
 const { effortVerdict, recommendFromJustLoggedSet } = require('./justLoggedAnchor');
+const { applyStalenessGuard } = require('./stalenessGuard');
 const { isWarmupNote } = require('./warmupTag');
 
 function asArray(value) {
@@ -668,24 +669,13 @@ function recommendNextSet(logRows, liftCode, options = {}) {
     }
   }
 
-  // Staleness guard. Progression (adding load, adding a rep) assumes the last
-  // session is recent. After a long gap, adding weight off old data is a guess —
-  // repeat the last working weight to reconfirm first. Either way the age is
-  // stated so the advice reads honestly instead of pretending the gap isn't there.
-  if (daysSinceLastSession != null && daysSinceLastSession > 10) {
-    nextReps = lastSet.reps;
-    if (isBodyweight) {
-      recommendation = `Repeat ${nextReps} reps to reconfirm this lift.`;
-      reasoning = `Based on your last session, ${daysSinceLastSession} days ago — too long a gap to assume progression. Repeat last session's reps and see where you are before adding any.`;
-    } else {
-      nextWeight = lastSet.weight;
-      recommendation = `Repeat ${nextWeight} × ${nextReps} to reconfirm this lift.`;
-      reasoning = `Based on your last session, ${daysSinceLastSession} days ago — too long a gap to assume progression. Repeat the last working weight and see where you are before adding load.`;
-    }
-    confidence = confidence === 'high' ? 'medium' : 'low';
-  } else if (daysSinceLastSession != null && daysSinceLastSession >= 7) {
-    reasoning = `${reasoning} Based on your last session, ${daysSinceLastSession} days ago.`;
-  }
+  // Staleness guard — the lifecycle decision now lives in
+  // services/stalenessGuard.js (One-Brain migration item 8); this call applies
+  // it to the in-flight recommendation state, byte-identical behavior.
+  ({ nextWeight, nextReps, recommendation, reasoning, confidence } = applyStalenessGuard(
+    { nextWeight, nextReps, recommendation, reasoning, confidence },
+    { daysSinceLastSession, isBodyweight, lastSet }
+  ));
 
   // Recommended effort target for this lift (role-aware). Drives the effort
   // verdict below; options.intentId lets a caller pass today's training goal.
