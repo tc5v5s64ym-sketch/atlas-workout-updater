@@ -118,6 +118,93 @@ test('shadow: long messages are preview-capped in the log', async () => {
   });
 });
 
+// --- Intent_Shadow Sheet persistence (owner direction 2026-07-03: "review the
+//     shadow" without debug JSON — a durable diagnostics tab, best-effort) ---
+
+test('persist: a SUCCESSFUL classification appends one 13-column row to Intent_Shadow', async () => {
+  await withFlag('shadow', async () => {
+    const appended = [];
+    shadow._resetForTesting({
+      classify: async () => envelope('generate_workout', { focus: 'push' }, { confidence: 0.9, dropped_keys: ['vibe'] }),
+      append: async (tab, rows) => { appended.push({ tab, rows }); },
+    });
+    shadow.observeChatMessage('push day please', { route: 'composer', source: 'chat', appVersion: 'v105' });
+    await tick(); await tick();
+    assert.equal(appended.length, 1, 'exactly one append attempted');
+    assert.equal(appended[0].tab, shadow.SHADOW_TAB, 'appends to the Intent_Shadow tab (never Log_Cleaned/Effort)');
+    const row = appended[0].rows[0];
+    assert.equal(row.length, 13, 'the diagnostics row has all 13 columns');
+    assert.equal(row[1], 'push day please', 'message_preview');
+    assert.equal(row[2], 'generate_workout', 'intent_type');
+    assert.equal(row[3], 0.9, 'confidence');
+    assert.equal(row[4], JSON.stringify(['focus']), 'constraint_keys_json');
+    assert.equal(row[5], JSON.stringify(['vibe']), 'dropped_keys_json');
+    assert.equal(row[6], 'TRUE', 'ok');
+    assert.equal(typeof row[7], 'number', 'latency_ms');
+    assert.equal(row[8], 'chat', 'source');
+    assert.equal(row[9], 'composer', 'route');
+    assert.equal(row[10], 'v105', 'app_version stamped from the client');
+    assert.equal(row[11], '', 'review_status blank (owner fills on review)');
+    assert.equal(row[12], '', 'review_notes blank');
+  });
+});
+
+test('persist: an ok:false classification/failure is ALSO captured as a row (ok=FALSE)', async () => {
+  await withFlag('shadow', async () => {
+    const appended = [];
+    shadow._resetForTesting({
+      classify: async () => null,                       // classification failed / unclassifiable
+      append: async (tab, rows) => { appended.push({ tab, rows }); },
+    });
+    shadow.observeChatMessage('It\'s face pulls next not back squats', { route: 'composer', appVersion: 'v105' });
+    await tick(); await tick();
+    assert.equal(appended.length, 1, 'a failure still persists a row');
+    const row = appended[0].rows[0];
+    assert.equal(row[6], 'FALSE', 'ok column reflects the failed classification');
+    assert.equal(row[2], '', 'intent_type blank on failure');
+  });
+});
+
+test('persist: a Sheets append FAILURE is swallowed — the caller is never affected', async () => {
+  await withFlag('shadow', async () => {
+    shadow._resetForTesting({
+      classify: async () => envelope('best_workout'),
+      append: async () => { throw new Error('no Intent_Shadow tab / no creds / transient'); },
+    });
+    assert.doesNotThrow(() => shadow.observeChatMessage('what should I train', { route: 'composer' }));
+    await tick(); await tick();
+    // The ring still recorded the entry — persistence is a best-effort mirror, not
+    // a precondition; a Sheets failure must not lose the diagnostic or block anyone.
+    const log = shadow.getShadowLog();
+    assert.equal(log.count, 1);
+    assert.equal(log.entries[0].ok, true);
+  });
+});
+
+test('persist: NOTHING is appended when the shadow flag is off (no classify, no Sheet write)', async () => {
+  await withFlag(null, async () => {
+    let appendCalls = 0;
+    shadow._resetForTesting({
+      classify: async () => envelope('best_workout'),
+      append: async () => { appendCalls++; },
+    });
+    shadow.observeChatMessage('push day', { route: 'composer' });
+    await tick(); await tick();
+    assert.equal(appendCalls, 0, 'flag off → no persistence attempt');
+  });
+});
+
+test('persist (source): the shadow module touches ONLY the Intent_Shadow tab — no write/trust path', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'intentShadow.js'), 'utf8');
+  assert.match(src, /Intent_Shadow/, 'persists to the diagnostics tab');
+  // Never the trust-contract tabs / write path / proof fields.
+  for (const forbidden of ['Log_Cleaned', 'Effort', '/api/log-workout', 'sheet_write', 'no_write_confirmed', 'write_id']) {
+    assert.ok(!src.includes(forbidden), `must not reference ${forbidden}`);
+  }
+});
+
 // --- wiring pins (widened 2026-07-03: observation moved to the ONE composer
 //     chokepoint via POST /api/debug/intent-observe, so ALL typed messages are
 //     seen — not just the residue that fell through to /api/coach/chat) ---
@@ -142,7 +229,7 @@ test('shadow wiring: POST /api/debug/intent-observe forwards the message to obse
   const routeIdx = src.indexOf("app.post('/api/debug/intent-observe'");
   assert.ok(routeIdx > -1, 'the observe endpoint must exist');
   const block = src.slice(routeIdx, routeIdx + 600);
-  assert.match(block, /observeChatMessage\(message\)/, 'forwards the posted message to the shadow observer');
+  assert.match(block, /observeChatMessage\(message,/, 'forwards the posted message (+ diagnostics meta) to the shadow observer');
   // Observe-only: it must never await the classification, touch Sheets, or reply
   // with anything but an ack.
   assert.ok(!/await/.test(block.slice(0, block.indexOf('observeChatMessage'))),
