@@ -57,8 +57,10 @@ test('cable_fly_save_preview_no_unknown_lift_warning', () => {
   assert.equal(matches.length, 1, 'exactly one unknown-lift advisory surface');
   assert.equal((appSrc.match(/Didn't catch that lift/g) || []).length, 0,
     'the contradictory "didn\'t catch that lift" failure message must be gone (B2)');
-  assert.match(appSrc, /shouldWarnUnknownLift\(parsed\.warnings, parsed\.rows\[0\]\?\.exercise, liftCodeFromCatalog, parsed\.kbIdentity\)/,
-    'the warning must be gated by shouldWarnUnknownLift including the KB identity');
+  // Per-row gate (QA sweep 2026-07-03): every row is checked; the KB identity
+  // (the PRIMARY lift's) still vouches for row 0 exactly as before.
+  assert.match(appSrc, /shouldWarnUnknownLift\(parsed\.warnings, name, liftCodeFromCatalog, i === 0 \? parsed\.kbIdentity : null\)/,
+    'the warning must be gated by shouldWarnUnknownLift, KB identity vouching for the primary row');
   // The backend-parsed result carries the KB identity through to the gate.
   assert.match(appSrc, /kbIdentity: data\.kb_identity \|\| null/);
 });

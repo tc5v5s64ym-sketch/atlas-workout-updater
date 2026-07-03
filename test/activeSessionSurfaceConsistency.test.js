@@ -48,7 +48,11 @@ function loadShouldWarn() {
 // assertions. It is the last statement in rowsFromWorkoutInput, so it runs up to the
 // shouldWarnUnknownLift definition that immediately follows.
 function unknownLiftBranch() {
-  const start = appSrc.indexOf('if (shouldWarnUnknownLift(parsed.warnings');
+  // The ADVISORY branch (the status-note block). The per-row detection loop now
+  // sits ABOVE the unresolved-lines ask (QA sweep 2026-07-03) so the chips render
+  // even when the ask's early return wins the composer status — slice the status
+  // block itself, which must stay a pure note.
+  const start = appSrc.indexOf('// B2 — the composer status');
   assert.ok(start !== -1, 'the gated unknown-lift advisory branch must exist in app.js');
   const end = appSrc.indexOf('function shouldWarnUnknownLift(', start);
   return appSrc.slice(start, end === -1 ? start + 1200 : end);
