@@ -61,6 +61,41 @@ test('a question is never a correction, even with a cue word', () => {
   }
 });
 
+// ── "X is Y" form (owner live find 2026-07-03) ────────────────────────────────
+test('repro: "Sorry slslp is single leg seated leg prep" → from/to correction', () => {
+  assert.deepEqual(
+    classifyIdentityCorrection('Sorry slslp is single leg seated leg prep'),
+    { from: 'slslp', to: 'single leg seated leg prep' }
+  );
+});
+
+test('"X is/was Y" phrasings carry both sides', () => {
+  const cases = [
+    ['sorry slslp is single leg seated leg press', 'slslp', 'single leg seated leg press'],
+    ['slslp is single leg seated leg press', 'slslp', 'single leg seated leg press'],   // cueless — the caller gates on `from`
+    ['oops, bench was incline bench', 'bench', 'incline bench'],
+    ['actually curls means bicep curl', 'curls', 'bicep curl'],
+    ['slslp should be single leg press', 'slslp', 'single leg press'],
+    ['bench press was actually incline bench', 'bench press', 'incline bench'],
+  ];
+  for (const [text, from, to] of cases) {
+    const r = classifyIdentityCorrection(text);
+    assert.ok(r, `should classify: ${text}`);
+    assert.equal(r.from, from, `from: ${text}`);
+    assert.equal(r.to, to, `to: ${text}`);
+  }
+});
+
+test('"X is Y" never fires on demonstratives or questions', () => {
+  // Demonstratives stay with the cue-gated that-was patterns above.
+  assert.equal(classifyIdentityCorrection('that was squats'), null);
+  assert.equal(classifyIdentityCorrection('this is hard'), null);
+  assert.equal(classifyIdentityCorrection('is slslp single leg press?'), null);
+  // Numeric sides never classify.
+  assert.equal(classifyIdentityCorrection('rest was 2 minutes'), null);
+  assert.equal(classifyIdentityCorrection('225 was the weight'), null);
+});
+
 test('a slash-set log is never read as a correction', () => {
   assert.equal(classifyIdentityCorrection('that was actually 225 5/2'), null);
   assert.equal(classifyIdentityCorrection('make that 185 8/2'), null);

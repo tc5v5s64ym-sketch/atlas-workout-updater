@@ -95,6 +95,7 @@ function loadCorrectionHarness(catalogOptions) {
       getSessionLog:      ()   => sessionLog.map(e => Object.assign({}, e)),
       setSessionCompleted: arr => { sessionCompleted = arr.slice(); },
       getSessionCompleted: ()  => sessionCompleted.slice(),
+      setActivePlannedSession: s => { activePlannedSession = s; },
       tryApplyIdentityCorrection,
       getEvents: () => events.slice(),
     };
@@ -277,6 +278,119 @@ test('IC wiring: question phrasing does not trigger identity correction', () => 
 
   assert.equal(result, false, 'question must not relabel');
   assert.equal(h.getSessionLog()[0].exercise, 'Deadlift');
+});
+
+// ── "X is Y" typo tolerance (owner live find 2026-07-03) ─────────────────────
+
+// 13. LIVE REPRO: "Sorry slslp is single leg seated leg prep" relabels the
+// buffered Slslp group to the PLAN name, bridging the typo ('prep' → 'press').
+test('IC wiring: typo\'d "sorry slslp is single leg seated leg prep" relabels via the plan', () => {
+  const h = loadCorrectionHarness([
+    ['Leg Extension', 'LE01'],
+  ]);
+  h.setActivePlannedSession({
+    label: 'Leg day',
+    exercises: [
+      { name: 'Single-Leg Seated Leg Press', canonicalName: 'Single-Leg Seated Leg Press', liftCode: '' },
+      { name: 'Leg Extension', canonicalName: 'Leg Extension', liftCode: 'LE01' },
+    ],
+    index: 0,
+  });
+  h.setSessionLog([
+    { exercise: 'Slslp', weight: '70', reps: '15', rir: '2' },
+    { exercise: 'Slslp', weight: '70', reps: '15', rir: '2' },
+    { exercise: 'Slslp', weight: '70', reps: '15', rir: '2' },
+    { exercise: 'Slslp', weight: '70', reps: '15', rir: '2' },
+  ]);
+  h.setSessionCompleted(['Slslp']);
+
+  const result = h.tryApplyIdentityCorrection('Sorry slslp is single leg seated leg prep');
+
+  assert.equal(result, true, 'the typo\'d correction must be handled deterministically');
+  const log = h.getSessionLog();
+  assert.ok(log.every(s => s.exercise === 'Single-Leg Seated Leg Press'), 'all four sets relabeled');
+  const completed = h.getSessionCompleted();
+  assert.ok(completed.includes('Single-Leg Seated Leg Press'), 'corrected name in sessionCompleted');
+  assert.ok(!completed.includes('Slslp'), 'stale Slslp removed');
+  const events = h.getEvents();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].detail.from, 'Slslp');
+  assert.equal(events[0].detail.to, 'Single-Leg Seated Leg Press');
+});
+
+// 14. The from-named form relabels the WHOLE group even when later sets of a
+// different lift were logged after it (the live incident's re-log shape).
+test('IC wiring: "X is Y" relabels a non-trailing buffered group', () => {
+  const h = loadCorrectionHarness([
+    ['Single-Leg Seated Leg Press', 'SLP01'],
+    ['Leg Extension', 'LE01'],
+  ]);
+  h.setSessionLog([
+    { exercise: 'Slslp', weight: '70', reps: '15', rir: '2' },
+    { exercise: 'Slslp', weight: '70', reps: '15', rir: '2' },
+    { exercise: 'Leg Extension', weight: '90', reps: '12', rir: '2' },
+  ]);
+  h.setSessionCompleted(['Slslp', 'Leg Extension']);
+
+  const result = h.tryApplyIdentityCorrection('slslp is single leg seated leg press');
+
+  assert.equal(result, true);
+  const log = h.getSessionLog();
+  assert.equal(log[0].exercise, 'Single-Leg Seated Leg Press', 'first buffered set relabeled');
+  assert.equal(log[1].exercise, 'Single-Leg Seated Leg Press', 'second buffered set relabeled');
+  assert.equal(log[2].exercise, 'Leg Extension', 'the other lift is untouched');
+});
+
+// 15. "X is Y" where X is NOT a buffered lift must fall through untouched — an
+// ordinary statement is not a correction just because it contains "is".
+test('IC wiring: "X is Y" with an unknown X falls through', () => {
+  const h = loadCorrectionHarness([
+    ['Bicep Curl', 'BC01'],
+  ]);
+  h.setSessionLog([{ exercise: 'Squat', weight: '225', reps: '5', rir: '2' }]);
+  h.setSessionCompleted(['Squat']);
+
+  const result = h.tryApplyIdentityCorrection('curls is bicep curl');
+
+  assert.equal(result, false, 'X not in the buffer → not an identity correction');
+  assert.equal(h.getSessionLog()[0].exercise, 'Squat', 'sessionLog unchanged');
+  assert.equal(h.getEvents().length, 0, 'no event dispatched');
+});
+
+// 16. Ambiguity refusal: a correction phrase word-subset-matching TWO plan slots
+// relabels nothing (mirrors resolveCatalogExercise's refuse-on-ambiguity).
+test('IC wiring: ambiguous typo-tier target refuses to relabel', () => {
+  const h = loadCorrectionHarness([]);
+  h.setActivePlannedSession({
+    label: 'Push day',
+    exercises: [
+      { name: 'Incline Barbell Press', canonicalName: 'Incline Barbell Press', liftCode: '' },
+      { name: 'Incline Dumbbell Press', canonicalName: 'Incline Dumbbell Press', liftCode: '' },
+    ],
+    index: 0,
+  });
+  h.setSessionLog([{ exercise: 'Ibp', weight: '135', reps: '8', rir: '2' }]);
+  h.setSessionCompleted(['Ibp']);
+
+  const result = h.tryApplyIdentityCorrection('sorry ibp is incline press');
+
+  assert.equal(result, false, 'two candidate slots → refuse rather than guess');
+  assert.equal(h.getSessionLog()[0].exercise, 'Ibp', 'sessionLog unchanged');
+});
+
+// 17. Catalog tier still backs the typo tolerance when no plan is active.
+test('IC wiring: typo\'d correction resolves against the CATALOG when no plan exists', () => {
+  const h = loadCorrectionHarness([
+    ['Single-Leg Seated Leg Press', 'SLP01'],
+    ['Leg Extension', 'LE01'],
+  ]);
+  h.setSessionLog([{ exercise: 'Slslp', weight: '70', reps: '15', rir: '2' }]);
+  h.setSessionCompleted(['Slslp']);
+
+  const result = h.tryApplyIdentityCorrection('sorry slslp is single leg seated leg prep');
+
+  assert.equal(result, true, 'catalog word-subset/typo tier must bridge the typo');
+  assert.equal(h.getSessionLog()[0].exercise, 'Single-Leg Seated Leg Press');
 });
 
 // 11. Source introspection — tryApplyIdentityCorrection must never call a write path

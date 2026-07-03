@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v100';
+const ATLAS_SHELL_BUILD = 'v101';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -2186,24 +2186,134 @@ function tryApplyPlanMutation(text) {
 // the card/recap/write rows agree — deterministically, even when the coach LLM is
 // down (the exact live-gym failure). The app state owns the relabel; the coach only
 // confirms it.
+
+// Small edit distance for the correction lane's typo tier — inputs are single
+// words, so the O(len²) DP is trivial.
+function correctionEditDistance(a, b) {
+  const m = a.length, n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// Typo-tolerant word equality (owner live find 2026-07-03: 'prep' must meet
+// 'press'): exact, singular-equal, or a near-miss — both words ≥4 chars, a shared
+// ≥3-char prefix, edit distance ≤2. The prefix anchor keeps short real-word
+// neighbors apart ('pull' never meets 'push'; 3-letter words must match exactly,
+// so 'leg' never meets 'lat').
+function correctionWordEq(a, b) {
+  if (a === b) return true;
+  const sg = w => (/[^s]s$/.test(w) ? w.slice(0, -1) : w);
+  const x = sg(a), y = sg(b);
+  if (x === y) return true;
+  if (x.length < 4 || y.length < 4) return false;
+  if (x.slice(0, 3) !== y.slice(0, 3)) return false;
+  return correctionEditDistance(x, y) <= 2;
+}
+
+// Word list for the subset tier: lowercase, hyphens/slashes → spaces, deduped
+// (mirrors planMutationIntent's wordSet; singularization lives in correctionWordEq).
+function correctionWords(s) {
+  return [...new Set(String(s == null ? '' : s).toLowerCase()
+    .replace(/[-/]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean))];
+}
+
+// Resolve a correction's TO side when the catalog tiers (exact/singular/unique-
+// substring) miss — the ≥2-word word-subset/typo tier against PLAN names first,
+// then catalog names: "single leg seated leg prep" (typo'd) must still reach
+// "Single-Leg Seated Leg Press". Refuses on ambiguity at each source (mirrors
+// resolveCatalogExercise, PR-570) — a phrase matching two names relabels nothing.
+function resolveCorrectionTargetName(phrase) {
+  const words = correctionWords(phrase);
+  if (words.length < 2) return null; // ≥2-word minimum — a lone word never typo-guesses
+  const matches = names => {
+    const hits = [];
+    for (const n of names) {
+      const nw = correctionWords(n);
+      if (words.every(w => nw.some(cw => correctionWordEq(w, cw))) && !hits.includes(n)) hits.push(n);
+    }
+    return hits;
+  };
+  const plan = matches(plannedExerciseEntries().map(e => e.name));
+  if (plan.length) return plan.length === 1 ? plan[0] : null;
+  const dl = typeof document !== 'undefined' ? document.getElementById('exercise-catalog') : null;
+  const cat = matches(Array.from((dl && dl.options) || []).map(o => o.value).filter(Boolean));
+  return cat.length === 1 ? cat[0] : null;
+}
+
+// Resolve a correction's FROM side ("sorry SLSLP is …") against the DISTINCT
+// buffered lift names, newest first — the mis-typed name is usually the latest
+// group, and is often catalog-UNKNOWN, which is exactly why it needs correcting.
+// Tiers: exact → singular-equal → substring → word-subset/typo (single-word
+// phrases get the typo tier only against single-word names).
+function resolveBufferedLiftName(phrase) {
+  const raw = String(phrase == null ? '' : phrase).trim().toLowerCase();
+  if (!raw) return null;
+  const names = [];
+  for (let i = sessionLog.length - 1; i >= 0; i--) {
+    const n = sessionLog[i].exercise;
+    if (n && !names.includes(n)) names.push(n);
+  }
+  const sg = s => { const t = String(s || '').toLowerCase().trim(); return /[^s]s$/.test(t) ? t.slice(0, -1) : t; };
+  const sraw = sg(raw);
+  let hit = names.find(n => n.toLowerCase() === raw);
+  if (!hit) hit = names.find(n => sg(n) === sraw);
+  if (!hit) hit = names.find(n => { const v = sg(n); return v && (v.includes(sraw) || sraw.includes(v)); });
+  if (!hit) {
+    const pw = correctionWords(raw);
+    hit = names.find(n => {
+      const nw = correctionWords(n);
+      if (pw.length >= 2) return pw.every(w => nw.some(cw => correctionWordEq(w, cw)));
+      return pw.length === 1 && nw.length === 1 && correctionWordEq(pw[0], nw[0]);
+    });
+  }
+  return hit || null;
+}
+
 function tryApplyIdentityCorrection(text) {
   const IC = (typeof window !== 'undefined' && window.identityCorrection) || null;
   if (!IC || !Array.isArray(sessionLog) || !sessionLog.length) return false; // nothing logged to correct
   const intent = IC.classifyIdentityCorrection(text);
   if (!intent) return false;
+  // The lift being corrected: the "X is Y" form names it — resolve X against the
+  // BUFFERED lift names, typo-tolerantly (owner live find 2026-07-03: "Sorry slslp
+  // is single leg seated leg prep" must relabel the buffered Slslp group). The
+  // legacy that-was form corrects the most-recently-logged lift, as before. An
+  // "X is Y" whose X is not a buffered lift is NOT an identity correction — fall
+  // through to the coach untouched.
+  const oldName = intent.from
+    ? resolveBufferedLiftName(intent.from)
+    : sessionLog[sessionLog.length - 1].exercise;
+  if (!oldName) return false;
   const resolved = resolveCatalogExercise(intent.to);
-  const newName = resolved.name;
-  // Only relabel to a phrase that resolves to a KNOWN catalog exercise. An ordinary
-  // in-session remark that happens to carry a cue ("actually that was tough", "make
-  // that lighter") does NOT name a real lift → fall through to the coach instead of
-  // relabeling the logged lift to "tough" (PR-574 review).
-  if (!newName || !resolved.matched) return false;
-  // The lift being corrected is the most-recently-logged one — relabel its TRAILING
-  // contiguous run of sets (an earlier, separately-logged occurrence is untouched).
-  const oldName = sessionLog[sessionLog.length - 1].exercise;
-  if (!oldName || oldName.toLowerCase() === newName.toLowerCase()) return false;
-  for (let i = sessionLog.length - 1; i >= 0 && sessionLog[i].exercise === oldName; i--) {
-    sessionLog[i] = { ...sessionLog[i], exercise: newName };
+  // Only relabel to a phrase that resolves to a KNOWN name. Catalog tiers first
+  // (exact/singular/unique-substring — an ordinary remark like "actually that was
+  // tough" never names a real lift, PR-574 review); then the ≥2-word word-subset/
+  // typo tier against plan + catalog names, so a typo'd correction still lands.
+  const newName = (resolved.matched && resolved.name) || resolveCorrectionTargetName(intent.to);
+  if (!newName) return false;
+  if (oldName.toLowerCase() === newName.toLowerCase()) return false;
+  if (intent.from) {
+    // A name correction applies to the WHOLE mis-labeled group, wherever its sets
+    // sit in the log — later sets of another lift don't shield it.
+    for (let i = 0; i < sessionLog.length; i++) {
+      if (sessionLog[i].exercise === oldName) sessionLog[i] = { ...sessionLog[i], exercise: newName };
+    }
+  } else {
+    // The lift being corrected is the most-recently-logged one — relabel its
+    // TRAILING contiguous run of sets (an earlier, separately-logged occurrence is
+    // untouched).
+    for (let i = sessionLog.length - 1; i >= 0 && sessionLog[i].exercise === oldName; i--) {
+      sessionLog[i] = { ...sessionLog[i], exercise: newName };
+    }
   }
   // Reconcile completion identity: drop the old resolved name iff no remaining set
   // still backs it, and ensure the new resolved name is present (in log order).

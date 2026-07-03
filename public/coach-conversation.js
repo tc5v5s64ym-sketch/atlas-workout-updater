@@ -1599,7 +1599,11 @@
     const d = (e && e.detail) || {};
     if (!d.to) return;
     const node = appendAtlasBubble();
-    if (node && node.body) node.body.textContent = `Got it — relabeled that to ${d.to}.`;
+    // Name the corrected lift when we have it — the "X is Y" form can relabel a
+    // group that is no longer the last-logged one, so "that" would under-specify.
+    if (node && node.body) node.body.textContent = d.from
+      ? `Got it — relabeled ${d.from} to ${d.to}.`
+      : `Got it — relabeled that to ${d.to}.`;
   });
 
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */

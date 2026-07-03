@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v100/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v101/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5623,8 +5623,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v100/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v99\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v101/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v100\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5817,13 +5817,19 @@ test('P0 PR4: identity correction is wired into the message flow and relabels th
   assert.ok(corrIdx !== -1, 'correction route present in the flow');
   assert.ok(mutIdx < corrIdx && corrIdx < subIdx, 'correction runs after plan-mutation, before suggest/coach');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 1900);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 3200);
   assert.match(fn, /classifyIdentityCorrection\(/, 'uses the deterministic classifier (not LLM prose)');
-  // Only relabel to a phrase that resolves to a KNOWN catalog exercise — an ordinary
-  // cued remark ("actually that was tough") must NOT relabel (PR-574 review).
-  assert.match(fn, /if \(!newName \|\| !resolved\.matched\) return false/, 'gates the relabel on an actual catalog match');
-  assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'targets the most-recently-logged lift');
-  assert.match(fn, /sessionLog\[i\] = \{ \.\.\.sessionLog\[i\], exercise: newName \}/, 'relabels the trailing run of logged sets');
+  // Only relabel to a phrase that resolves to a KNOWN name — the catalog tiers, or
+  // the ≥2-word word-subset/typo tier against plan + catalog names (owner live find
+  // 2026-07-03). An ordinary cued remark ("actually that was tough") still must NOT
+  // relabel (PR-574 review) — a lone unresolvable word passes neither gate.
+  assert.match(fn, /\(resolved\.matched && resolved\.name\) \|\| resolveCorrectionTargetName\(intent\.to\)/, 'catalog tiers first, then the plan/catalog typo tier');
+  assert.match(fn, /if \(!newName\) return false/, 'gates the relabel on an actual known-name match');
+  // The "X is Y" form resolves X against the BUFFERED lift names and falls through
+  // when X is not buffered; the legacy that-was form still targets the last lift.
+  assert.match(fn, /resolveBufferedLiftName\(intent\.from\)/, 'from-side resolves against buffered lift names');
+  assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'that-was form targets the most-recently-logged lift');
+  assert.match(fn, /sessionLog\[i\] = \{ \.\.\.sessionLog\[i\], exercise: newName \}/, 'relabels the logged sets');
   assert.match(fn, /resolveCompletedIdentity\(/, 'reconciles completion identity in sessionCompleted');
   assert.match(fn, /announceIdentityCorrection\(/, 'announces the correction for the coach to confirm');
 
