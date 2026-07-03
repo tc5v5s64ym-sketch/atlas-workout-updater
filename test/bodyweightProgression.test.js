@@ -30,6 +30,9 @@ test('bodyweight: RIR above 0 → add a rep; confidence high at RIR ≥ 2, mediu
   const medium = bodyweightRepProgression({ weight: null, reps: 8, rir: 1 });
   assert.equal(medium.nextReps, 9);
   assert.equal(medium.confidence, 'medium');
+
+  // The exact boundary (review #817): RIR 2 is the first high-confidence tier.
+  assert.equal(bodyweightRepProgression({ weight: null, reps: 8, rir: 2 }).confidence, 'high');
 });
 
 test('bodyweight: never prescribes a weight — the return shape carries reps only', () => {
