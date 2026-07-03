@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v92';
+const ATLAS_SHELL_BUILD = 'v93';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1742,11 +1742,11 @@ function renderTodaysPick(data) {
 }
 
 // Composer-first Phase B — the ONE canonical recommendation. Every "today's
-// recommendation" entry point (pick card, START SESSION, nav's session link)
-// lands here: switch to the coach surface and render the same in-thread
-// Coach's Pick the hero tile uses (window.atlasOpenCoachPick, which engages
-// the suggestion). The intent DRAWER remains only for the non-recommended
-// "Other training options" grid.
+// recommendation" entry point (pick card, START SESSION, nav's session link,
+// a typed "what are we doing today?") lands here: switch to the coach surface
+// and render the same in-thread Coach's Pick (window.atlasOpenCoachPick, which
+// engages the suggestion). The intent DRAWER remains only for the
+// non-recommended "Other training options" grid.
 function openCoachPickInThread() {
   document.getElementById('surface-coach')?.click();
   if (typeof window.atlasOpenCoachPick === 'function') window.atlasOpenCoachPick();
@@ -1977,9 +1977,8 @@ function startPlannedSession(intent) {
   };
   // Hide the home-screen hero so the active-session banner and coach panel
   // are the only things visible. hideHomeEmpty() in coach-conversation.js does
-  // the same two ops but is private to that IIFE.
+  // the same op but is private to that IIFE.
   document.getElementById('coach-empty')?.setAttribute('hidden', '');
-  document.getElementById('suggested-tiles')?.setAttribute('hidden', '');
   renderActiveSessionBanner();
   // Step 385: begin the deload state machine when a deload_reset session starts.
   // Fire-and-forget — never block the session UI. 409 = already in deload, fine.
@@ -5452,12 +5451,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     return;
   }
 
-  // Training-plan questions ("what should I train", "today's plan") are routed
-  // to the coach chat so Atlas replies naturally in the thread — no modal first.
+  // Training-plan questions ("what are we doing today", "what should I train")
+  // route to the ONE canonical in-thread Coach's Pick (Phase B) — the same
+  // structured, engagement-carrying render every other recommendation entry
+  // point uses. With the home tiles retired (owner directive 2026-07-03), the
+  // typed sentence IS the pick's entry; a chat-prose answer here would be a
+  // second recommendation voice.
   if (looksLikeSessionRequest(workoutTextInput.value)) {
-    const planText = workoutTextInput.value.trim();
     setTimeout(() => { workoutTextInput.value = ''; }, 0);
-    routeMessageToCoach(planText);
+    openCoachPickInThread();
     return;
   }
 
