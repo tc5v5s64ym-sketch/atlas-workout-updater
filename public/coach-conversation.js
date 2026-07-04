@@ -1523,26 +1523,29 @@
     el.textContent = `Good ${part}, Dale.`;
   })();
 
-  // Opening-message engine briefing (owner 2026-07-03): the opening line upgrades
-  // from ENGINE state — but the strings are built ONCE by app.js's loadDashboard
-  // from the startup fetches (/api/plan/intent-recommendation + /api/progress/
-  // summary) and handed here via atlas:glance-ready, so the hero and the Today
-  // surface read the same numbers with no extra network call. The headline states
-  // the engine's read for the day ("{Weekday}. Today's read: {label}.") and a
-  // facts line below adds the consistency streak + freshest/overdue patterns.
-  // Deterministic + LLM-free — every value is the engine's; the copy never claims
-  // a pick the engine didn't make. Any failure, empty history, missing key, or an
-  // already-started conversation leaves the default tagline + guide byte-identical
-  // (the degradation path is simply not dispatching / not rendering). The opener
-  // survives an outage (Contract voice invariant 7).
+  // Coach-first home opener (owner 2026-07-03, PR-1): paint the engine's spoken
+  // DECISION into the hero and retire the dashboard chrome. app.js's loadDashboard
+  // builds the opener deterministically from its own startup fetch (no second
+  // call, no LLM) and hands it over via atlas:glance-ready; this upgrades
+  // #coach-opening in place. The old "{Weekday}. Today's read: {label}." headline,
+  // the stacked facts wall (streak + freshest patterns + days-since), and the
+  // static tutorial guide are gone — the opener carries its own one-line
+  // invitation. Guarded on the hero still showing; on any failure / empty history
+  // / missing key / already-started conversation, nothing is dispatched and the
+  // default tagline stands byte-identical (Contract voice invariant 7 — survives
+  // an outage).
   function renderCoachOpening(detail) {
     const hero = document.getElementById('coach-empty');
     if (!hero || hero.hasAttribute('hidden')) return;  // conversation already started
     const d = detail || {};
+    if (!d.opener) return;  // no engine read → the default tagline stands
     const line = document.getElementById('coach-opening');
-    if (line && d.headline) line.textContent = d.headline;
+    if (line) line.textContent = d.opener;
+    // The opener speaks the decision now, so retire the dashboard tells for good.
     const facts = document.getElementById('coach-facts');
-    if (facts && d.facts) { facts.textContent = d.facts; facts.hidden = false; }
+    if (facts) facts.hidden = true;
+    const guide = document.getElementById('coach-guide');
+    if (guide) guide.hidden = true;
   }
   document.addEventListener('atlas:glance-ready', e => renderCoachOpening((e && e.detail) || {}));
 

@@ -271,8 +271,12 @@ test('Coach shell loads with guarded preview state', async ({ page }) => {
   // Home = one Atlas guide box (no tiles, no chips) + the composer.
   await expect(page.locator('#coach-empty')).toBeVisible();
   await expect(page.locator('.coach-guide-box')).toBeVisible();
-  await expect(page.locator('.coach-empty-tagline')).toContainText("Let's get stronger");
-  await expect(page.locator('#coach-guide')).toContainText('what are we doing today?');
+  // Coach-first opener (PR-1): the hero speaks the engine's DECISION + invitation,
+  // and the stacked facts wall + static tutorial are retired.
+  await expect(page.locator('#coach-opening')).toContainText('Ready when you are');
+  await expect(page.locator('#coach-opening')).not.toContainText("Today's read:");
+  await expect(page.locator('#coach-facts')).toBeHidden();
+  await expect(page.locator('#coach-guide')).toBeHidden();
   await expect(page.locator('#workout-text')).toBeVisible();
   await expect(page.locator('#suggested-tiles')).toHaveCount(0);
   await expect(page.locator('#learn-chips')).toHaveCount(0);

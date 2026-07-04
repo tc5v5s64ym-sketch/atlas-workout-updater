@@ -421,67 +421,74 @@ test('opening: greeting renders synchronously and issues no fetch', () => {
   assert.doesNotMatch(iife, /await |api\(/, 'the greeting path issues no fetch of its own');
 });
 
-// Opening-message engine briefing (owner 2026-07-03): the "Last time: …" opener
-// is replaced by a deterministic engine briefing (headline + facts line) that
-// app.js builds from the startup fetches and hands over via atlas:glance-ready.
-test('opening: the engine briefing renders app.js-provided strings — LLM-free, no fetch, race-safe', () => {
+// Coach-first home opener (owner 2026-07-03, PR-1): the "Today's read" briefing
+// is replaced by a deterministic coaching DECISION (call + engine reason +
+// invitation). renderCoachOpening paints it and retires the dashboard chrome.
+test('opening: the coach opener renders app.js\'s decision — LLM-free, no fetch, retires the dashboard chrome', () => {
   const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
   const fn = cc.slice(cc.indexOf('function renderCoachOpening'), cc.indexOf("document.addEventListener('atlas:preview-ready'"));
-  assert.match(fn, /addEventListener\('atlas:glance-ready'/, 'renders the briefing app.js dispatched from the startup fetches');
+  assert.match(fn, /addEventListener\('atlas:glance-ready'/, 'renders the opener app.js dispatched from the startup fetch');
   assert.doesNotMatch(fn, /\bapi\(/, 'the opener issues no fetch of its own — app.js already fetched the data');
   assert.doesNotMatch(fn, /\/api\/coach/, 'no LLM anywhere in the opener path');
   assert.match(fn, /hero\.hasAttribute\('hidden'\)/, 'skips when the conversation already started');
-  assert.match(fn, /d\.headline/, 'upgrades the tagline to the engine headline');
-  assert.match(fn, /getElementById\('coach-facts'\)/, 'renders the facts line below the headline');
-  assert.match(fn, /facts\.hidden = false/, 'reveals the facts line only when the engine supplied it');
+  assert.match(fn, /d\.opener/, 'paints the deterministic coach decision');
+  assert.doesNotMatch(fn, /d\.headline|Today's read/, 'no "Today\'s read" headline — that was the dashboard tell');
+  assert.match(fn, /getElementById\('coach-facts'\)[\s\S]*facts\.hidden = true/, 'retires the stacked facts wall');
+  assert.match(fn, /getElementById\('coach-guide'\)[\s\S]*guide\.hidden = true/, 'retires the static tutorial');
 });
 
-// The briefing STRINGS are built in app.js from the same startup dashboard data,
-// so the hero and the Today surface read the same numbers with no extra fetch.
-test('opening briefing: app.js builds the weekday + today\'s-read headline and a facts line, degrading silently', () => {
+// The opener STRING is built in app.js from the same startup fetch — a coaching
+// decision, not a metrics wall. Functional check of the composition: the engine's
+// own why_today sentence (verbatim) for the reason, the recommended focus for the
+// call, a fixed invitation, and degradation to '' when the engine named nothing.
+test('opening: buildCoachOpener words the engine decision + reason verbatim, invites, and degrades to empty', () => {
   const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  const fn = app.slice(app.indexOf('function emitGlanceReady('), app.indexOf('function emitGlanceReady(') + 900);
-  assert.ok(fn.length > 0, 'emitGlanceReady must exist');
-  assert.match(fn, /Today's read: \$\{label\}/, 'headline states the engine read for the day');
-  assert.match(fn, /weekday/, 'headline leads with the weekday');
-  assert.match(fn, /buildConsistencyText\(summaryData\)/, 'facts line reuses the consistency streak text');
-  assert.match(fn, /buildPatternBriefing\(todaysRead\)/, 'facts line adds the freshest/overdue patterns');
-  assert.match(fn, /atlas:glance-ready/, 'dispatches the prebuilt strings');
-  assert.match(fn, /if \(!headline && !facts\) return/, 'stays silent when there is nothing to say (default hero stands)');
-  assert.doesNotMatch(fn, /\/api\/coach/, 'no LLM in the briefing builder');
-  // loadDashboard hands its already-fetched data to the briefing (no second call).
-  assert.match(app, /emitGlanceReady\(intentData, summaryData\)/, 'loadDashboard emits the briefing from its own fetches');
-});
-
-// buildPatternBriefing is honest — it names only genuinely fresh/ready/overdue
-// patterns and returns '' otherwise, so the facts line never invents a read.
-test('opening briefing: buildPatternBriefing names freshest/overdue patterns and returns empty when none', () => {
-  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  // Inject the two module-scope constants the function reads (the real app.js
-  // declarations are pinned by other tests); slice only the function under test.
-  const meta = 'const PATTERN_STATUS_META = { fresh:{rank:0}, ready:{rank:1}, recovering:{rank:2}, fatigued:{rank:3}, unknown:{rank:4} };';
-  const friendly = "const FRIENDLY_PATTERN_LABELS = { Hinge:'Hips & back', Pressing:'Push', Pulling:'Pull', 'Lower body':'Legs' };";
-  const fnSrc = app.slice(app.indexOf('function buildPatternBriefing('), app.indexOf('function emitGlanceReady('));
-  const buildPatternBriefing = new Function(`${meta}\n${friendly}\n${fnSrc}\nreturn buildPatternBriefing;`)();
-  // Fresh + overdue lead; friendly labels; up to two named.
+  const src = app.slice(app.indexOf('function buildCoachOpener('), app.indexOf('function emitGlanceReady('));
+  const buildCoachOpener = new Function(`${src}\nreturn buildCoachOpener;`)();
+  // Reason (verbatim why_today) + call (recommended focus) + invitation. No
+  // weekday, no "Today's read" label, no facts wall, no days-since.
   assert.equal(
-    buildPatternBriefing({ patterns: [
-      { label: 'Pressing', status: 'fresh', daysSince: 7 },
-      { label: 'Pulling', status: 'ready', daysSince: 3 },
-      { label: 'Hinge', status: 'fatigued', daysSince: 1 },
-    ] }),
-    'Freshest: Push (7d), Pull (3d)'
+    buildCoachOpener({
+      todays_read: { recommended_intent_id: 'build_strength', recommended_reason: 'Heavy compound work' },
+      intents: [
+        { id: 'build_strength', recommended: true, focus: 'Heavy compound work', why_today: ['Multiple muscle groups are recovered'] },
+        { id: 'build_muscle', recommended: false, focus: 'Moderate load' },
+      ],
+    }),
+    "Multiple muscle groups are recovered. Today, let's make it heavy compound work. Ready when you are — or tell me to change the plan."
   );
-  // Nothing fresh/ready/recently-overdue → empty (no invented read).
-  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Pressing', status: 'fatigued', daysSince: 1 }] }), '');
-  assert.equal(buildPatternBriefing({ patterns: [] }), '');
-  assert.equal(buildPatternBriefing({}), '');
-  // A still-fatigued/recovering pattern is NOT surfaced under "Freshest" even
-  // when it's 5+ days old — it isn't ready to train (review #835 nit).
-  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Hinge', status: 'fatigued', daysSince: 6 }] }), '');
-  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Pulling', status: 'recovering', daysSince: 8 }] }), '');
-  // An unknown-but-overdue pattern still surfaces (coverage gap).
-  assert.equal(buildPatternBriefing({ patterns: [{ label: 'Lower body', status: 'unknown', daysSince: 9 }] }), 'Freshest: Legs (9d)');
+  // Acronyms in the focus survive the mid-sentence lowercasing (OHP, not ohp).
+  assert.equal(
+    buildCoachOpener({ todays_read: {}, intents: [{ recommended: true, focus: 'Bench + OHP', why_today: ['Pressing patterns are fresh'] }] }),
+    "Pressing patterns are fresh. Today, let's make it bench + OHP. Ready when you are — or tell me to change the plan."
+  );
+  // No why_today → call + invitation only; still no fabrication, no forecast.
+  assert.equal(
+    buildCoachOpener({ todays_read: { recommended_reason: 'Upper body — press + pull' }, intents: [] }),
+    "Today, let's make it upper body — press + pull. Ready when you are — or tell me to change the plan."
+  );
+  // No engine read at all → empty, so nothing is dispatched and the default hero stands.
+  assert.equal(buildCoachOpener({}), '');
+  assert.equal(buildCoachOpener({ intents: [], todays_read: {} }), '');
+  assert.equal(buildCoachOpener(null), '');
+});
+
+// emitGlanceReady dispatches the single opener string and degrades silently; the
+// old weekday/"Today's read" headline, the facts wall, and buildPatternBriefing
+// are gone. loadDashboard hands over its own fetch (no second call, no LLM).
+test('opening: emitGlanceReady dispatches the coach opener and stays silent when the engine named no session', () => {
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const builder = app.slice(app.indexOf('function buildCoachOpener('), app.indexOf('function emitGlanceReady('));
+  assert.doesNotMatch(builder, /Today's read|weekday|toLocaleDateString|buildPatternBriefing|buildConsistencyText|daysSince/,
+    'no weekday / "Today\'s read" label / facts / streak / days-since — the dashboard tells are gone');
+  assert.match(builder, /why_today/, 'the reason is the engine\'s own why_today sentence');
+  assert.equal(app.includes('function buildPatternBriefing('), false, 'the freshest-pattern facts builder is retired');
+  const emit = app.slice(app.indexOf('function emitGlanceReady('), app.indexOf('function emitGlanceReady(') + 400);
+  assert.match(emit, /atlas:glance-ready/, 'dispatches the prebuilt opener');
+  assert.match(emit, /detail: \{ opener \}/, 'hands over the single opener string');
+  assert.match(emit, /if \(!opener\) return/, 'stays silent when the engine named no session (default hero stands)');
+  assert.doesNotMatch(emit, /\/api\/coach/, 'no LLM in the opener path');
+  assert.match(app, /emitGlanceReady\(intentData\);/, 'loadDashboard emits the opener from its own fetch');
 });
 
 test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {
