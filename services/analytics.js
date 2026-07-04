@@ -1212,6 +1212,18 @@ const MUSCLE_PATTERN = Object.freeze({
   abs: 'core', obliques: 'core',
 });
 
+// Short-gap restart posture (owner-approved 2026-07-03, sub-7-day). A 3–6 day gap
+// is below the layoff threshold (layoffGuard RETURN_THRESHOLD_DAYS = 7) — no
+// detraining and NO make-up-volume cap (that stays owner-gated at 7/14/28) — but
+// it's more than a rest day. Returns a WORDING-ONLY reentry note (it changes no
+// prescribed number anywhere) so the coach can honestly frame the session as a
+// clean restart; null outside the 3–6 day window. Pure + deterministic.
+function shortGapRestartNote(gapDays) {
+  if (typeof gapDays !== 'number' || !Number.isFinite(gapDays)) return null;
+  if (gapDays < 3 || gapDays >= 7) return null;  // <3 = rest day; >=7 = layoff (own path)
+  return `Back after ${gapDays} days off — settle in with clean, controlled reps.`;
+}
+
 // ─── Intent scoring engine ────────────────────────────────────────────────────
 function scoreIntents(logRows, effortRows = [], options = {}) {
   const { today = null, goal = null } = options || {};
@@ -2159,13 +2171,28 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
   const top = intents.find(i => i.id !== 'custom');
   for (const i of intents) i.recommended = (i === top);
 
+  // Short-gap restart posture (owner-approved): frame a recommended TRAINING
+  // session as a clean restart at a 3–6 day gap — WORDING ONLY (no prescribed
+  // number changes; the 7/14/28 layoff caps above are untouched). Prepended to
+  // why_today so the opener/coach leads with it. short_session / test_progress /
+  // recovery carry their own "been a few days" framing, so they're excluded.
+  const restartNote = shortGapRestartNote(layoff.days_since_last_session);
+  const RESTART_TRAINING_INTENTS = new Set(['build_strength', 'build_muscle', 'fix_blind_spots', 'balanced']);
+  if (restartNote && top && RESTART_TRAINING_INTENTS.has(top.id) && Array.isArray(top.why_today)) {
+    top.why_today = [restartNote, ...top.why_today];
+    if (Array.isArray(top.reason_codes)) top.reason_codes.push('short_gap_restart');
+  }
+
   return applyLiftRoleGuards({
     today: todayStr,
     todays_read: {
       patterns: readiness,
       recommended_intent_id: top?.id ?? null,
       recommended_label: top?.label ?? null,
-      recommended_reason: top?.focus ?? null
+      recommended_reason: top?.focus ?? null,
+      // Severity-independent gap (assessLayoff emits it for every gap, not just
+      // 7+ day layoffs) so surfaces can reference a sub-week gap honestly.
+      days_since_last_session: layoff.days_since_last_session ?? null
     },
     intents
   });
@@ -2721,6 +2748,7 @@ module.exports = {
   buildMuscleGroupReadiness,
   MUSCLE_PATTERN,
   scoreIntents,
+  shortGapRestartNote,
   recoveryFraction,
   effortIntensityBySession,
   detectSwap,
