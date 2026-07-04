@@ -90,21 +90,20 @@
       <div id="coach-empty" class="coach-empty">
         <div class="coach-guide-box">
           <p id="coach-greeting" class="coach-greeting-line"></p>
-          <!-- Composer-first Phase A: upgraded in place by renderCoachOpening() with a
-               deterministic, engine-grounded opening line when history exists; this
-               default stands whenever the engine has nothing to say (cold start,
-               offline, no API key). -->
+          <!-- Coach-first opener (owner 2026-07-03, PR-1): upgraded in place by
+               renderCoachOpening() into a deterministic coaching DECISION (call +
+               engine reason + invitation) when the engine has a read; this default
+               tagline stands on cold start / offline / no API key. -->
           <p id="coach-opening" class="coach-empty-tagline">Let's get stronger.</p>
-          <!-- Opening-message engine briefing (owner 2026-07-03): a deterministic
-               facts line (consistency streak + freshest/overdue movement patterns)
-               rendered by the coach conversation script from the atlas:glance-ready
-               dispatch app.js emits after loadDashboard. Hidden until the engine has
-               data; the tagline + guide below stand on their own when it never arrives. -->
+          <!-- Retired (owner 2026-07-03, PR-1): the stacked facts wall (streak +
+               freshest patterns + days-since) was the dashboard tell the owner
+               rejected. Kept hidden and never revealed; the opener speaks the
+               engine's read as reasoning instead. -->
           <p id="coach-facts" class="coach-empty-facts" hidden></p>
-          <!-- Static guidance: works offline / with no API key; the phrasings
-               match the composer's deterministic routes (looksLikeSessionRequest,
-               looksLikeArtifactRequest) so what Atlas suggests is what works. -->
-          <p id="coach-guide" class="coach-guide-line">Ask "what are we doing today?" for my pick, log a set like "Bench 225 5/2", or ask me anything about training.</p>
+          <!-- Retired (owner 2026-07-03, PR-1): the static tutorial read like
+               software. Hidden — the opener carries its own one-line invitation, and
+               the same typed sentences still route (looksLikeSessionRequest). -->
+          <p id="coach-guide" class="coach-guide-line" hidden>Ask "what are we doing today?" for my pick, log a set like "Bench 225 5/2", or ask me anything about training.</p>
         </div>
       </div>
 

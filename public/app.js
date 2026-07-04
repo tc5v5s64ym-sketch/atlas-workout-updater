@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v105';
+const ATLAS_SHELL_BUILD = 'v106';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1285,11 +1285,12 @@ async function loadDashboard() {
 
   wireStartSessionBtn(intentData);
 
-  // Opening-message engine briefing (owner 2026-07-03): hand the coach hero a
-  // deterministic, engine-grounded opening built from the SAME startup fetches —
-  // no second network call. coach-conversation.js renders it into the guide box;
-  // it degrades to the default tagline when nothing meaningful is available.
-  emitGlanceReady(intentData, summaryData);
+  // Coach-first home opener (owner 2026-07-03, PR-1): hand the coach hero a
+  // deterministic, engine-grounded coaching DECISION built from the SAME startup
+  // fetch — no second network call, no LLM. coach-conversation.js paints it into
+  // the guide box; it degrades to the default tagline when the engine named no
+  // session (cold start / offline / no key).
+  emitGlanceReady(intentData);
 
   // Below-fold sources load independently; each fills its own glance card.
   loadCoaching();
@@ -1299,56 +1300,78 @@ async function loadDashboard() {
   loadStalls();
 }
 
-// Freshest / overdue movement patterns for the opening briefing — the clearest
-// "what's ready to train" signal. Sorts the way the pattern board does (most-
-// recovered / overdue first) and names up to two. Returns '' when nothing is
-// notable (no patterns, or none fresh/ready/overdue) so the facts line stays
-// honest — it never invents a read. Read-only; values verbatim from the engine.
-function buildPatternBriefing(todaysRead) {
-  const patterns = ((todaysRead && todaysRead.patterns) || []).filter(p => p && (p.label || p.pattern));
-  if (!patterns.length) return '';
-  const rank = s => (PATTERN_STATUS_META[s]?.rank ?? 9);
-  // "Freshest:" must be honest — only genuinely recovered/ready patterns, plus an
-  // unknown-but-overdue one (mirrors the pattern board's own overdue rule:
-  // fresh/unknown + stale). A still-recovering/fatigued pattern is NOT surfaced
-  // here even when it's 5+ days old — it isn't ready to train (review #835 nit).
-  const notable = patterns
-    .filter(p => p.status === 'fresh' || p.status === 'ready' ||
-                 (p.status === 'unknown' && p.daysSince != null && p.daysSince >= 5))
-    .sort((a, b) => {
-      const ra = rank(a.status), rb = rank(b.status);
-      if (ra !== rb) return ra - rb;
-      return (b.daysSince ?? -1) - (a.daysSince ?? -1);
-    })
-    .slice(0, 2);
-  if (!notable.length) return '';
-  const names = notable.map(p => {
-    const label = FRIENDLY_PATTERN_LABELS[p.label || p.pattern] || p.label || p.pattern;
-    const days = p.daysSince != null ? ` (${p.daysSince}d)` : '';
-    return `${label}${days}`;
-  });
-  return `Freshest: ${names.join(', ')}`;
+// Coach-first home opener (owner 2026-07-03, PR-1): the hero speaks a coaching
+// DECISION, not a dashboard. Deterministic + LLM-free — every word is the
+// engine's. The recommended session's own focus states today's call; its own
+// why_today sentence (worded verbatim) gives the one-line reason; a fixed
+// conversational invitation opens the door. Removed on purpose — the dashboard
+// tells the owner named: the "{Weekday}. Today's read: {label}." announcement,
+// the stacked consistency + freshest-pattern facts wall, and any days-since.
+// TODAY-ONLY: focus and why_today are single-session engine output — nothing
+// here forecasts a future session or invents a posture the engine did not pick.
+// Returns '' (→ nothing dispatched) when the engine named no session, so the
+// default tagline stands.
+function buildCoachOpener(intentData) {
+  const todaysRead = (intentData && intentData.todays_read) || {};
+  const intents = (intentData && Array.isArray(intentData.intents)) ? intentData.intents : [];
+  const rec = intents.find(i => i && i.recommended) ||
+              intents.find(i => i && i.id && i.id === todaysRead.recommended_intent_id) ||
+              null;
+  // The decision is the recommended session's focus — a short phrase in the
+  // engine (recommended_reason === top.focus) and the fixtures alike. Fall back
+  // through the read's own fields; with nothing named, there is no opener.
+  const decision = ((rec && rec.focus) || todaysRead.recommended_reason ||
+                    todaysRead.recommended_label || '').toString().trim();
+  if (!decision) return '';
+  // The reason is the engine's OWN why_today sentence, worded verbatim — never
+  // invented, never a forecast (why_today is single-session). Dropped when it's a
+  // near-duplicate of the call (the low-data default why_today can mirror the focus,
+  // e.g. 'Good time for heavy compound work' vs 'Heavy compound work') so the opener
+  // never restates itself.
+  const why = (rec && Array.isArray(rec.why_today) && rec.why_today.length)
+    ? (rec.why_today[0] || '').toString().trim() : '';
+  const reason = (why && !isNearDuplicateReason(why, decision)) ? `${endSentence(why)} ` : '';
+  return `${reason}Today, let's make it ${lowerLead(decision)}. Ready when you are — or tell me to change the plan.`;
 }
 
-// Build the coach-hero opening from the startup dashboard data and dispatch it as
-// atlas:glance-ready (coach-conversation.js renders the strings). Headline =
-// "{Weekday}. Today's read: {label}."; facts = consistency text + freshest/overdue
-// patterns. Deterministic + LLM-free — every value is the engine's. Dispatches
-// nothing when there's neither a read nor a summary, so the default hero copy
-// stands (the degradation path is doing nothing).
-function emitGlanceReady(intentData, summaryData) {
+// End a borrowed clause as its own sentence (strip any trailing terminal
+// punctuation — . ; : , ! ? — and connectors, then add a single period, so a
+// why_today ending in '!'/'?' never double-punctuates to 'Ready?.').
+function endSentence(s) {
+  const t = s.toString().trim().replace(/[\s.;:,!?—–-]+$/, '');
+  return t ? `${t}.` : '';
+}
+
+// Lowercase only a plain leading capital so a label reads mid-sentence; leave
+// acronyms (OHP, RIR) and already-lowercase text untouched.
+function lowerLead(s) {
+  const t = s.toString().trim();
+  return /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t;
+}
+
+// Near-duplicate guard: the engine's low-data default why_today can restate the
+// focus ('Good time for heavy compound work' vs 'Heavy compound work'). Word-
+// boundary containment (either phrase wholly inside the other, punctuation-
+// insensitive) → the opener drops the reason clause rather than echo the call.
+// Whole-word bounded so a shared stem ('push' vs 'pushing patterns are fresh')
+// is NOT treated as a duplicate.
+function isNearDuplicateReason(why, decision) {
+  const norm = s => s.toString().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const w = norm(why), d = norm(decision);
+  if (!w || !d) return false;
+  const wp = ` ${w} `, dp = ` ${d} `;
+  return wp.includes(dp) || dp.includes(wp);
+}
+
+// Dispatch the deterministic coach opener for the hero (coach-conversation.js
+// paints it) — built from loadDashboard's own fetch, no second call, no LLM.
+// Dispatches nothing when the engine named no session, so the default hero
+// stands (degradation = doing nothing).
+function emitGlanceReady(intentData) {
   if (typeof document === 'undefined') return;
-  const todaysRead = (intentData && intentData.todays_read) || {};
-  const label = todaysRead.recommended_label || '';
-  const weekday = new Date().toLocaleDateString(undefined, { weekday: 'long' });
-  const headline = label ? `${weekday}. Today's read: ${label}.` : '';
-  const factsParts = [];
-  if (summaryData) factsParts.push(buildConsistencyText(summaryData));
-  const patternBrief = buildPatternBriefing(todaysRead);
-  if (patternBrief) factsParts.push(patternBrief);
-  const facts = factsParts.join(' · ');
-  if (!headline && !facts) return;  // nothing meaningful → the default hero stands
-  document.dispatchEvent(new CustomEvent('atlas:glance-ready', { detail: { headline, facts } }));
+  const opener = buildCoachOpener(intentData);
+  if (!opener) return;  // nothing meaningful → the default hero stands
+  document.dispatchEvent(new CustomEvent('atlas:glance-ready', { detail: { opener } }));
 }
 
 /* ===== Coach plan card (read-only, Coach surface) =====
