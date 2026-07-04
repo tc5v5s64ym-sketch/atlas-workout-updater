@@ -507,12 +507,88 @@ test('opening: emitGlanceReady dispatches the coach opener and stays silent when
     'no weekday / "Today\'s read" label / facts / streak / days-since — the dashboard tells are gone');
   assert.match(builder, /why_today/, 'the reason is the engine\'s own why_today sentence');
   assert.equal(app.includes('function buildPatternBriefing('), false, 'the freshest-pattern facts builder is retired');
-  const emit = app.slice(app.indexOf('function emitGlanceReady('), app.indexOf('function emitGlanceReady(') + 400);
+  const emit = app.slice(app.indexOf('function emitGlanceReady('), app.indexOf('async function loadCoachPlan('));
   assert.match(emit, /atlas:glance-ready/, 'dispatches the prebuilt opener');
-  assert.match(emit, /detail: \{ opener \}/, 'hands over the single opener string');
+  assert.match(emit, /opener,[\s\S]*compressed:[\s\S]*signature:/, 'hands over the opener + compressed continuation + de-dup signature');
   assert.match(emit, /if \(!opener\) return/, 'stays silent when the engine named no session (default hero stands)');
   assert.doesNotMatch(emit, /\/api\/coach/, 'no LLM in the opener path');
   assert.match(app, /emitGlanceReady\(intentData\);/, 'loadDashboard emits the opener from its own fetch');
+});
+
+// Anti-repetition (PR-2, display-only): the compressed continuation words the SAME
+// decision the engine made (no invention, floored, never blank); the signature
+// keys on the engine read so a same-day reopen with unchanged state can de-dup.
+test('opening: the compressed continuation + signature come from the engine read (PR-2)', () => {
+  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const src = app.slice(app.indexOf('function buildCoachOpener('), app.indexOf('function emitGlanceReady('));
+  const { compressedOpener, openerSignature } =
+    new Function(`${src}\nreturn { compressedOpener, openerSignature };`)();
+  const read = {
+    todays_read: { recommended_intent_id: 'build_strength', days_since_last_session: 5 },
+    intents: [{ id: 'build_strength', recommended: true, focus: 'Heavy compound work', why_today: ['x'] }],
+  };
+  assert.equal(compressedOpener(read), "Still here. Heavy compound work whenever you're ready.",
+    'the short line words the SAME decision — floored, never blank, invents nothing');
+  assert.match(openerSignature(read), /\|build_strength\|5$/, 'signature keys on recommended intent + gap (+ day)');
+  // No engine read → no signature and no compressed line (never compresses).
+  assert.equal(compressedOpener({}), '');
+  assert.equal(openerSignature({}), '');
+});
+
+// The real emitGlanceReady → renderCoachOpening path: a same-day repeat reopen with
+// UNCHANGED engine state shows the compressed continuation instead of re-briefing;
+// a changed state (or a new day) briefs in full again. Driven headless with DOM +
+// localStorage stubs.
+test('opening: a same-state repeat reopen shows the compressed continuation, not a re-brief (PR-2 ledger)', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const cc = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const appSrc = app.slice(app.indexOf('function buildCoachOpener('), app.indexOf('async function loadCoachPlan('));
+  const ccStart = cc.indexOf('const OPENER_LEDGER_KEY');
+  const ccSrc = cc.slice(ccStart, cc.indexOf('\n', cc.indexOf("document.addEventListener('atlas:glance-ready'")));
+
+  const store = {};
+  const localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+  const els = {
+    'coach-empty': { hasAttribute: () => false },
+    'coach-opening': { textContent: "Let's get stronger." },
+    'coach-facts': { hidden: false }, 'coach-guide': { hidden: false },
+  };
+  const listeners = {};
+  const document = {
+    getElementById: id => els[id] || null,
+    addEventListener: (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); },
+    dispatchEvent: ev => { (listeners[ev.type] || []).forEach(fn => fn(ev)); return true; },
+  };
+  const CustomEvent = class { constructor(type, init) { this.type = type; this.detail = (init || {}).detail; } };
+  // Wire the real code once (single listener registration), then reopen repeatedly.
+  const { emitGlanceReady } = new Function('document', 'CustomEvent', 'localStorage',
+    `${appSrc}\n${ccSrc}\nreturn { emitGlanceReady };`)(document, CustomEvent, localStorage);
+
+  const readA = {
+    todays_read: { recommended_intent_id: 'build_strength', days_since_last_session: 5 },
+    intents: [{ id: 'build_strength', recommended: true, focus: 'Heavy compound work', why_today: ['Multiple muscle groups are recovered'] }],
+  };
+
+  emitGlanceReady(readA);  // first open today → full brief
+  assert.match(els['coach-opening'].textContent,
+    /^Multiple muscle groups are recovered\. Today, let's make it heavy compound work\./,
+    'first open of the day briefs in full');
+  assert.equal(els['coach-facts'].hidden, true, 'dashboard chrome still retired');
+
+  els['coach-opening'].textContent = "Let's get stronger.";
+  emitGlanceReady(readA);  // same state, same day → compressed
+  assert.equal(els['coach-opening'].textContent, "Still here. Heavy compound work whenever you're ready.",
+    'a same-state repeat reopen does not re-brief');
+
+  // A CHANGED state (different recommended intent) briefs in full again.
+  els['coach-opening'].textContent = "Let's get stronger.";
+  emitGlanceReady({
+    todays_read: { recommended_intent_id: 'build_muscle', days_since_last_session: 5 },
+    intents: [{ id: 'build_muscle', recommended: true, focus: 'Moderate load, 6–12 reps', why_today: ['Volume is in a good range'] }],
+  });
+  assert.match(els['coach-opening'].textContent, /^Volume is in a good range\. Today, let's make it/,
+    'a changed engine read briefs in full, not compressed');
 });
 
 test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {

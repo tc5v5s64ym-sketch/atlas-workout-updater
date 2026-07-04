@@ -1523,6 +1523,35 @@
     el.textContent = `Good ${part}, Dale.`;
   })();
 
+  // Anti-repetition ledger (PR-2, display-only, no DB): a per-day ring buffer of
+  // opener signatures in localStorage (modeled on the session-snapshot precedent).
+  // If this exact engine read was already shown today, renderCoachOpening shows the
+  // compressed continuation instead of re-briefing. Best-effort — any localStorage
+  // failure (private mode / quota) degrades to always showing the full opener. It
+  // only ever DE-DUPS an identical render; it never decides what to coach.
+  const OPENER_LEDGER_KEY = 'atlas_opener_ledger_v1';
+  const OPENER_LEDGER_CAP = 8;
+  function openerAlreadyShownToday(signature, dayKey) {
+    if (!signature || !dayKey) return false;
+    try {
+      const led = JSON.parse(localStorage.getItem(OPENER_LEDGER_KEY) || 'null');
+      return !!(led && led.day === dayKey && Array.isArray(led.signatures) && led.signatures.includes(signature));
+    } catch { return false; }
+  }
+  function recordOpenerShown(signature, dayKey) {
+    if (!signature || !dayKey) return;
+    try {
+      let led = null;
+      try { led = JSON.parse(localStorage.getItem(OPENER_LEDGER_KEY) || 'null'); } catch { led = null; }
+      if (!led || led.day !== dayKey || !Array.isArray(led.signatures)) led = { day: dayKey, signatures: [] };
+      if (!led.signatures.includes(signature)) {
+        led.signatures.push(signature);
+        if (led.signatures.length > OPENER_LEDGER_CAP) led.signatures = led.signatures.slice(-OPENER_LEDGER_CAP);
+      }
+      localStorage.setItem(OPENER_LEDGER_KEY, JSON.stringify(led));
+    } catch { /* private mode / quota — degrade to no compression */ }
+  }
+
   // Coach-first home opener (owner 2026-07-03, PR-1): paint the engine's spoken
   // DECISION into the hero and retire the dashboard chrome. app.js's loadDashboard
   // builds the opener deterministically from its own startup fetch (no second
@@ -1540,7 +1569,17 @@
     const d = detail || {};
     if (!d.opener) return;  // no engine read → the default tagline stands
     const line = document.getElementById('coach-opening');
-    if (line) line.textContent = d.opener;
+    // Anti-repetition (PR-2, display-only): if this exact engine read was already
+    // shown today, show the short continuation instead of re-briefing. Floored —
+    // never blank; a new day or changed state gets a fresh full opener; any ledger
+    // failure degrades to the full opener.
+    let text = d.opener;
+    if (d.compressed && openerAlreadyShownToday(d.signature, d.day)) {
+      text = d.compressed;
+    } else {
+      recordOpenerShown(d.signature, d.day);
+    }
+    if (line) line.textContent = text;
     // The opener speaks the decision now, so retire the dashboard tells for good.
     const facts = document.getElementById('coach-facts');
     if (facts) facts.hidden = true;
