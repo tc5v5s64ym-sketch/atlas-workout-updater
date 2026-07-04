@@ -891,3 +891,9 @@ These are not engineering items. They are owner-decision hold points: questions 
 
 - **After 1,000 users:**
   Reassess partnership and acquisition positioning. Evaluate whether Atlas should expose an engine/API layer and what that requires architecturally, legally, and operationally.
+
+---
+
+## Parser — unit normalization touches free-text prose (2026-07-04, review note on PR #845) `[polish]`
+
+`normalizeWeightUnits` (the kg→lb / lb·# pre-pass added in PR #845) runs a global replace over the ENTIRE parse input, so a kg/lb/# marker embedded in free-text prose is also rewritten — e.g. a skip note "shoulder felt like 200kg" becomes "…440.9". Correct for structured set tokens; the only edge is if such prose reaches a STORED free-text field (skip notes / notes). Low severity, out of scope for #845 (a targeted fix would need to restrict conversion to set-context tokens, which the downstream parser — not this pre-pass — is what distinguishes). Capture only; revisit if a real note is ever seen corrupted.

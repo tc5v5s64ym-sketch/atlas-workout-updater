@@ -67,6 +67,26 @@ function normalizeParserText(value) {
     .trim();
 }
 
+// Owner decision 2026-07-04: the main training log stores POUNDS only. Kilograms
+// are converted to lb on input (never stored mixed with lb in the weight column);
+// redundant pound units ("225 lb", "225lbs", "225#") are stripped so the bare
+// number reaches the lb-based weight regexes. Idempotent — once a kg token becomes
+// its lb number and pound suffixes are gone, re-running is a no-op, so it is safe
+// to apply at the parse entry even though sub-strings get re-normalized downstream.
+const KG_TO_LB = 2.20462;
+function normalizeWeightUnits(value) {
+  return String(value == null ? '' : value)
+    // kilograms → pounds, rounded to 0.1 lb: 100kg / 100 kg / 100kgs / 100.5 kg.
+    .replace(/(\d+(?:\.\d+)?)\s*kgs?\b/gi, (_, n) => String(Math.round(Number(n) * KG_TO_LB * 10) / 10))
+    // pounds is the stored unit, so an explicit lb marker is redundant — drop it
+    // ("225 lb" / "225lbs" → "225"). Never matches the dumbbell "60s" token.
+    .replace(/(\d+(?:\.\d+)?)\s*lbs?\b/gi, '$1')
+    // "#" after a number means pounds ("225#" / "225 #" → "225"). The negative
+    // lookahead leaves a number-adjacent hashtag alone — both alphabetic ("5 #tag")
+    // and numeric ("5/2 #1", where stripping would fuse the tag digit onto the RIR).
+    .replace(/(\d+(?:\.\d+)?)\s*#(?![A-Za-z0-9])/g, '$1');
+}
+
 function normalizeKey(value) {
   return normalizeParserText(value)
     .toLowerCase()
@@ -353,7 +373,11 @@ function extractSetParagraphs(input) {
 }
 
 function parseWorkoutText(input, context = {}) {
-  const rawText = normalizeParserText(extractSetParagraphs(input));
+  // Normalize weight units (kg→lb, strip redundant lb/#) once at the entry, before
+  // any downstream regex sees the text — the multi-line rescue and every set-parse
+  // path below operate on this converted text.
+  const normalizedInput = normalizeWeightUnits(input);
+  const rawText = normalizeParserText(extractSetParagraphs(normalizedInput));
   const intent = detectIntent(rawText);
 
   if (intent === 'unknown') {
@@ -389,7 +413,7 @@ function parseWorkoutText(input, context = {}) {
   // byte-identical; the single-line G1 refuse-to-merge guardrail is untouched.
   if (result?.intent === 'needs_clarification' &&
       (result.warnings || []).some(w => w === 'multiple_exercises_in_input' || w === 'unattributable_trailing_sets')) {
-    const multiline = parseMultilineLogSets(extractSetParagraphs(input), rawText, context, result);
+    const multiline = parseMultilineLogSets(extractSetParagraphs(normalizedInput), rawText, context, result);
     if (multiline) result = multiline;
   }
 
