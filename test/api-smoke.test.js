@@ -344,6 +344,30 @@ test('api smoke: health returns service status', async () => {
   assert.equal(body.data.service, 'atlas-workout-updater');
 });
 
+test('api smoke: a malformed JSON body returns 400, not 500', async () => {
+  const response = await fetch(`${baseUrl}/api/log-workout`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-atlas-api-key': process.env.ATLAS_API_KEY },
+    body: 'not json{'
+  });
+  const body = await response.json();
+  assert.equal(response.status, 400);
+  assert.equal(body.status, 'error');
+  assert.match(body.message, /malformed json/i);
+});
+
+test('api smoke: log-workout rejects a non-positive set_number (bounds, no write)', async () => {
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'S-setnum', date: '2026-06-23', test_mode: true,
+      log_rows: [{ exercise: 'Bench Press', set_number: -5, weight: 135, reps: 8, rir: 3 }]
+    })
+  });
+  assert.equal(response.status, 400);
+  assert.match(body.message, /set_number/);
+});
+
 test('api smoke: /version reports the Render-injected commit SHA + deploy time', async () => {
   const { response, body } = await requestJson('/version');
 
