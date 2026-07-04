@@ -47,6 +47,16 @@ function validateLogRowBounds(row) {
     if (e) errors.push(e);
   }
 
+  // set_number must be a positive integer. Weight/reps had bounds but set_number
+  // did not, so a negative or fractional set index (e.g. -5) rode straight into
+  // the written row. Sets are 1-indexed; cap at a sane upper bound.
+  if (row.set_number !== undefined && row.set_number !== null && row.set_number !== '') {
+    const n = Number(row.set_number);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      errors.push({ field: 'set_number', error: `set_number must be an integer 1–100, got: ${JSON.stringify(row.set_number)}` });
+    }
+  }
+
   return errors;
 }
 

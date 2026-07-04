@@ -62,6 +62,16 @@ test('validateLogRowBounds rejects non-numeric garbage', () => {
   assert.match(errors[0].error, /must be a number/);
 });
 
+test('validateLogRowBounds rejects a non-positive or fractional set_number', () => {
+  assert.equal(validateLogRowBounds({ weight: 135, reps: 8, set_number: -5 })[0].field, 'set_number');
+  assert.equal(validateLogRowBounds({ weight: 135, reps: 8, set_number: 0 })[0].field, 'set_number');
+  assert.equal(validateLogRowBounds({ weight: 135, reps: 8, set_number: 1.5 })[0].field, 'set_number');
+  assert.equal(validateLogRowBounds({ weight: 135, reps: 8, set_number: 999 })[0].field, 'set_number');
+  // valid set numbers (int and numeric-string) pass
+  assert.deepEqual(validateLogRowBounds({ weight: 135, reps: 8, set_number: 1 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 135, reps: 8, set_number: '3' }), []);
+});
+
 test('validateLogRowsBounds reports row indices for a batch', () => {
   const errors = validateLogRowsBounds([
     { weight: 100, reps: 5 },

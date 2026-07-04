@@ -4466,6 +4466,18 @@ app.use((err, req, res, next) => {
     return standardError(req, res, err.message, null, 400);
   }
 
+  // Body-parser failures are CLIENT errors, not server faults. express.json()
+  // throws a SyntaxError (err.type 'entity.parse.failed', err.status 400) on
+  // malformed JSON and 'entity.too.large' (413) past the size limit. Without
+  // this they fell through to the 500 branch below — a misleading server-error
+  // status for a bad request.
+  if (err && (err.type === 'entity.parse.failed' || (err instanceof SyntaxError && err.status === 400))) {
+    return standardError(req, res, 'Malformed JSON body.', null, 400);
+  }
+  if (err && err.type === 'entity.too.large') {
+    return standardError(req, res, 'Request body too large.', null, 413);
+  }
+
   console.error('Unhandled error:', err);
   return standardError(
     req,
