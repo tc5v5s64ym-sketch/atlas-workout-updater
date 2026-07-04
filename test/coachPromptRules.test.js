@@ -133,6 +133,36 @@ test('chat prompt: conclusion-first rule is presentation order only, not a conte
   );
 });
 
+// ── prescription loads: the LLM words engine numbers, never invents them (owner
+//    decision 2026-07-04). The chat voice previously fabricated "today's plan"
+//    weights when asked for a session the engine had not priced. ──────────────────
+
+test('chat prompt: forbids inventing prescription loads', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(
+    chat.includes('PRESCRIPTION LOADS: never invent a working weight'),
+    'chat prompt must carry an iron rule forbidding invented prescription weights'
+  );
+});
+
+test('chat prompt: states the engine owns loads and the coach only words them', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(
+    chat.includes('The engine owns loads; you word them, you never create them'),
+    'chat prompt must state loads are engine-owned, not coach-created'
+  );
+});
+
+test('chat prompt: gives a load-less prescription when the snapshot has no load', () => {
+  const chat = buildChatSystemPrompt();
+  // When no engine load exists for a requested lift, the coach prescribes the movement
+  // as sets × reps @ a target RIR with NO fabricated weight.
+  assert.ok(
+    chat.includes('put NO specific weight on it'),
+    'chat prompt must instruct a weight-less prescription when the engine has no load'
+  );
+});
+
 // ── G5: coach claims grounding audit (PR / personal-best / session count) ──────
 
 test('set-reaction prompt: PR language IRON RULE requires progression_verdict.level new_ground', () => {
