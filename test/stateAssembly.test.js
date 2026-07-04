@@ -247,4 +247,18 @@ describe('stateAssembly — read-only guard', () => {
     assert.ok(src.includes("require('./trainingStore')"));
     assert.ok(src.includes("require('./deloadState')"));
   });
+
+  it("requires the Sheets client at '../sheets' — a './sheets' typo silently empties _defaultReaders", () => {
+    // The real client is repo-root sheets.js; siblings in services/ require it as '../sheets'.
+    // A './sheets' typo (services/sheets.js does not exist) throws MODULE_NOT_FOUND inside
+    // _defaultReaders' try/catch, which then returns {} — silently stripping deload_state,
+    // profile, and constraints from EVERY brian snapshot (the reader spread degrades to
+    // just getLogRows). Guard the exact path so that never regresses.
+    assert.ok(src.includes("require('../sheets')"),
+      "_defaultReaders must require the root Sheets client as '../sheets'");
+    assert.ok(!/require\(\s*['"]\.\/sheets['"]\s*\)/.test(src),
+      "must NOT require('./sheets') — services/sheets.js does not exist, so it silently returns {}");
+    // and that path must actually resolve to a real module from services/.
+    assert.doesNotThrow(() => require.resolve(path.join(__dirname, '..', 'sheets')));
+  });
 });

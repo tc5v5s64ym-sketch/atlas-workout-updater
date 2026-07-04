@@ -30,7 +30,7 @@ function _defaultReaders() {
     const { getLogRows }              = require('./trainingStore');
     const { readCurrentDeloadState }  = require('./deloadState');
     const { getProfileGoal }          = require('./profileGoal');
-    const { getSheetRows }            = require('./sheets');
+    const { getSheetRows }            = require('../sheets');
     return {
       getLogRows,
       readDeloadState: readCurrentDeloadState,
