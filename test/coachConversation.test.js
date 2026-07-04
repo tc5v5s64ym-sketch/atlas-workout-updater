@@ -441,10 +441,11 @@ test('opening: the coach opener renders app.js\'s decision — LLM-free, no fetc
 // decision, not a metrics wall. Functional check of the composition: the engine's
 // own why_today sentence (verbatim) for the reason, the recommended focus for the
 // call, a fixed invitation, and degradation to '' when the engine named nothing.
-test('opening: buildCoachOpener words the engine decision + reason verbatim, invites, and degrades to empty', () => {
+test('opening: buildCoachOpener words the engine decision + reason verbatim, drops near-duplicates, invites, degrades', () => {
   const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
   const src = app.slice(app.indexOf('function buildCoachOpener('), app.indexOf('function emitGlanceReady('));
-  const buildCoachOpener = new Function(`${src}\nreturn buildCoachOpener;`)();
+  const { buildCoachOpener, endSentence, isNearDuplicateReason } =
+    new Function(`${src}\nreturn { buildCoachOpener, endSentence, isNearDuplicateReason };`)();
   // Reason (verbatim why_today) + call (recommended focus) + invitation. No
   // weekday, no "Today's read" label, no facts wall, no days-since.
   assert.equal(
@@ -467,10 +468,33 @@ test('opening: buildCoachOpener words the engine decision + reason verbatim, inv
     buildCoachOpener({ todays_read: { recommended_reason: 'Upper body — press + pull' }, intents: [] }),
     "Today, let's make it upper body — press + pull. Ready when you are — or tell me to change the plan."
   );
+  // Near-duplicate reason (the engine's low-data default why mirrors the focus) is
+  // DROPPED — the opener states the call once, never restates it.
+  assert.equal(
+    buildCoachOpener({ todays_read: {}, intents: [{ recommended: true, focus: 'Heavy compound work', why_today: ['Good time for heavy compound work'] }] }),
+    "Today, let's make it heavy compound work. Ready when you are — or tell me to change the plan."
+  );
   // No engine read at all → empty, so nothing is dispatched and the default hero stands.
   assert.equal(buildCoachOpener({}), '');
   assert.equal(buildCoachOpener({ intents: [], todays_read: {} }), '');
   assert.equal(buildCoachOpener(null), '');
+
+  // endSentence hardens against terminal !/? — no double punctuation ("Ready?.").
+  assert.equal(endSentence('Bar speed is back!'), 'Bar speed is back.');
+  assert.equal(endSentence('Feeling strong?'), 'Feeling strong.');
+  assert.equal(endSentence('Pressing patterns are fresh'), 'Pressing patterns are fresh.');
+  assert.equal(endSentence('Recovered —'), 'Recovered.');
+  // A why_today ending in "!" flows into the opener cleanly (no "!.").
+  assert.equal(
+    buildCoachOpener({ todays_read: {}, intents: [{ recommended: true, focus: 'Bench + OHP', why_today: ['You crushed it last week!'] }] }),
+    "You crushed it last week. Today, let's make it bench + OHP. Ready when you are — or tell me to change the plan."
+  );
+
+  // The near-duplicate guard is whole-word bounded: a shared stem is NOT a duplicate.
+  assert.equal(isNearDuplicateReason('Good time for heavy compound work', 'Heavy compound work'), true);
+  assert.equal(isNearDuplicateReason('Heavy compound work', 'Heavy compound work'), true);
+  assert.equal(isNearDuplicateReason('Pushing patterns are fresh', 'Push'), false);
+  assert.equal(isNearDuplicateReason('Pressing patterns are fresh', 'Bench + OHP'), false);
 });
 
 // emitGlanceReady dispatches the single opener string and degrades silently; the

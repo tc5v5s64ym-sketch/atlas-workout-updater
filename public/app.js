@@ -1324,16 +1324,21 @@ function buildCoachOpener(intentData) {
                     todaysRead.recommended_label || '').toString().trim();
   if (!decision) return '';
   // The reason is the engine's OWN why_today sentence, worded verbatim — never
-  // invented, never a forecast (why_today is single-session).
+  // invented, never a forecast (why_today is single-session). Dropped when it's a
+  // near-duplicate of the call (the low-data default why_today can mirror the focus,
+  // e.g. 'Good time for heavy compound work' vs 'Heavy compound work') so the opener
+  // never restates itself.
   const why = (rec && Array.isArray(rec.why_today) && rec.why_today.length)
     ? (rec.why_today[0] || '').toString().trim() : '';
-  const reason = why ? `${endSentence(why)} ` : '';
+  const reason = (why && !isNearDuplicateReason(why, decision)) ? `${endSentence(why)} ` : '';
   return `${reason}Today, let's make it ${lowerLead(decision)}. Ready when you are — or tell me to change the plan.`;
 }
 
-// End a borrowed clause as its own sentence (strip a trailing connector/period).
+// End a borrowed clause as its own sentence (strip any trailing terminal
+// punctuation — . ; : , ! ? — and connectors, then add a single period, so a
+// why_today ending in '!'/'?' never double-punctuates to 'Ready?.').
 function endSentence(s) {
-  const t = s.toString().trim().replace(/[\s.;:,—–-]+$/, '');
+  const t = s.toString().trim().replace(/[\s.;:,!?—–-]+$/, '');
   return t ? `${t}.` : '';
 }
 
@@ -1342,6 +1347,20 @@ function endSentence(s) {
 function lowerLead(s) {
   const t = s.toString().trim();
   return /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t;
+}
+
+// Near-duplicate guard: the engine's low-data default why_today can restate the
+// focus ('Good time for heavy compound work' vs 'Heavy compound work'). Word-
+// boundary containment (either phrase wholly inside the other, punctuation-
+// insensitive) → the opener drops the reason clause rather than echo the call.
+// Whole-word bounded so a shared stem ('push' vs 'pushing patterns are fresh')
+// is NOT treated as a duplicate.
+function isNearDuplicateReason(why, decision) {
+  const norm = s => s.toString().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const w = norm(why), d = norm(decision);
+  if (!w || !d) return false;
+  const wp = ` ${w} `, dp = ` ${d} `;
+  return wp.includes(dp) || dp.includes(wp);
 }
 
 // Dispatch the deterministic coach opener for the hero (coach-conversation.js
