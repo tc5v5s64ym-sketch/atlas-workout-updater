@@ -138,20 +138,31 @@ function buildSession(state, constraints) {
     eiBlocks.splice(idx, 1);
   }
 
-  // Deload: apply the persisted protocol (load cut + RIR) when active.
+  // Deload: apply the persisted protocol (load cut + RIR) when active. stateAssembly
+  // feeds the RAW persisted state ({ training_state, deload_protocol: <id string> });
+  // evaluateCurrentDeload feeds the resolved shape ({ in_deload, protocol: <object> }).
+  // Accept either so a brian-driven session reduces load during an active deload
+  // regardless of which layer assembled the snapshot (previously only the resolved
+  // shape was honored, so the raw stateAssembly snapshot silently prescribed full load).
   const deload = state.deload_state;
-  if (deload && (deload.in_deload === true || deload.training_state === 'DELOAD_ACTIVE') && deload.protocol) {
+  const deloadActive = deload && (deload.in_deload === true || deload.training_state === 'DELOAD_ACTIVE');
+  if (deloadActive) {
     try {
-      const { computePrescription } = require('./deloadProtocols');
-      blocks.forEach((b, i) => {
-        const pr = computePrescription(deload.protocol, { working_weight: b.target_weight });
-        if (pr && typeof pr.weight === 'number') {
-          b.target_weight = pr.weight;
-          eiBlocks[i].target_weight = pr.weight;
-          if (typeof pr.target_rir === 'number') { b.target_rir = pr.target_rir; eiBlocks[i].target_rir = pr.target_rir; }
-        }
-      });
-      notes.push('deload protocol applied');
+      const { computePrescription, PROTOCOLS } = require('./deloadProtocols');
+      const protocol = (deload.protocol && typeof deload.protocol === 'object')
+        ? deload.protocol
+        : (typeof deload.deload_protocol === 'string' ? PROTOCOLS[deload.deload_protocol] : null);
+      if (protocol) {
+        blocks.forEach((b, i) => {
+          const pr = computePrescription(protocol, { working_weight: b.target_weight });
+          if (pr && typeof pr.weight === 'number') {
+            b.target_weight = pr.weight;
+            eiBlocks[i].target_weight = pr.weight;
+            if (typeof pr.target_rir === 'number') { b.target_rir = pr.target_rir; eiBlocks[i].target_rir = pr.target_rir; }
+          }
+        });
+        notes.push('deload protocol applied');
+      }
     } catch { /* deload is best-effort; never break the session */ }
   }
 
