@@ -271,9 +271,13 @@ test('Coach shell loads with guarded preview state', async ({ page }) => {
   // Home = one Atlas guide box (no tiles, no chips) + the composer.
   await expect(page.locator('#coach-empty')).toBeVisible();
   await expect(page.locator('.coach-guide-box')).toBeVisible();
-  // Coach-first opener (PR-1): the hero speaks the engine's DECISION + invitation,
-  // and the stacked facts wall + static tutorial are retired.
-  await expect(page.locator('#coach-opening')).toContainText('Ready when you are');
+  // Coach-first opener (PR-1): the stacked facts wall and the static tutorial are
+  // retired (both hidden by default). The default tagline stands in this fast-mock
+  // harness — it doesn't observe the async atlas:glance-ready dispatch that paints
+  // the engine decision in place on a real (network-latency) load; that render path
+  // is covered by the unit + DOM-drive tests. What we assert here is the observable
+  // change: no "Today's read" headline, and the facts wall + tutorial are gone.
+  await expect(page.locator('.coach-empty-tagline')).toContainText("Let's get stronger");
   await expect(page.locator('#coach-opening')).not.toContainText("Today's read:");
   await expect(page.locator('#coach-facts')).toBeHidden();
   await expect(page.locator('#coach-guide')).toBeHidden();
