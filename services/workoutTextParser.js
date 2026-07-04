@@ -81,8 +81,9 @@ function normalizeWeightUnits(value) {
     // pounds is the stored unit, so an explicit lb marker is redundant — drop it
     // ("225 lb" / "225lbs" → "225"). Never matches the dumbbell "60s" token.
     .replace(/(\d+(?:\.\d+)?)\s*lbs?\b/gi, '$1')
-    // "#" after a number means pounds ("225#" / "225 #" → "225").
-    .replace(/(\d+(?:\.\d+)?)\s*#/g, '$1');
+    // "#" after a number means pounds ("225#" / "225 #" → "225"). The negative
+    // lookahead leaves a number-adjacent hashtag ("5 #tag") alone.
+    .replace(/(\d+(?:\.\d+)?)\s*#(?![A-Za-z])/g, '$1');
 }
 
 function normalizeKey(value) {
@@ -374,7 +375,8 @@ function parseWorkoutText(input, context = {}) {
   // Normalize weight units (kg→lb, strip redundant lb/#) once at the entry, before
   // any downstream regex sees the text — the multi-line rescue and every set-parse
   // path below operate on this converted text.
-  const rawText = normalizeParserText(extractSetParagraphs(normalizeWeightUnits(input)));
+  const normalizedInput = normalizeWeightUnits(input);
+  const rawText = normalizeParserText(extractSetParagraphs(normalizedInput));
   const intent = detectIntent(rawText);
 
   if (intent === 'unknown') {
@@ -410,7 +412,7 @@ function parseWorkoutText(input, context = {}) {
   // byte-identical; the single-line G1 refuse-to-merge guardrail is untouched.
   if (result?.intent === 'needs_clarification' &&
       (result.warnings || []).some(w => w === 'multiple_exercises_in_input' || w === 'unattributable_trailing_sets')) {
-    const multiline = parseMultilineLogSets(extractSetParagraphs(input), rawText, context, result);
+    const multiline = parseMultilineLogSets(extractSetParagraphs(normalizedInput), rawText, context, result);
     if (multiline) result = multiline;
   }
 

@@ -1284,6 +1284,22 @@ test('unit: explicit pound markers (lb, lbs, spaced, #) are stripped, number kep
   assert.deepEqual(sets(parseWorkoutText('Bench 225 # 5/2')), expected);   // spaced hash
 });
 
+test('unit: kg converts on the multi-line rescue path (one exercise per line)', () => {
+  // The multi-line paste dead-ends the single-blob parse and re-parses per line;
+  // that path must also see converted units (regression: it previously used raw input).
+  const result = parseWorkoutText('Bench 100kg 5/2\nSquat 140kg 5/2');
+  assert.equal(result.intent, 'log_sets_multi');
+  assert.deepEqual(result.exercises.map(e => e.canonical_name), ['Bench Press', 'Back Squat']);
+  assert.deepEqual(result.exercises[0].sets.map(s => [s.weight, s.reps, s.rir]), [[220.5, 5, 2]]);
+  assert.deepEqual(result.exercises[1].sets.map(s => [s.weight, s.reps, s.rir]), [[308.6, 5, 2]]);
+});
+
+test('unit: a number-adjacent hashtag is left intact (# strip is pounds-only)', () => {
+  // "225#" is pounds; "#pr" is a tag — the strip must not fuse the number into the tag.
+  const result = parseWorkoutText('Bench 225 5/2 #pr');
+  assert.deepEqual(sets(result), [[225, 5, 2]]);
+});
+
 test('unit: normalization does NOT disturb dumbbell "s" notation or bare numbers', () => {
   // "60s" is dumbbell 60/hand — must stay 60, not be treated as a pound marker.
   assert.deepEqual(sets(parseWorkoutText('Bench 60s 10/3')), [[60, 10, 3]]);
