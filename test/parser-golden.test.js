@@ -1298,6 +1298,11 @@ test('unit: a number-adjacent hashtag is left intact (# strip is pounds-only)', 
   // "225#" is pounds; "#pr" is a tag — the strip must not fuse the number into the tag.
   const result = parseWorkoutText('Bench 225 5/2 #pr');
   assert.deepEqual(sets(result), [[225, 5, 2]]);
+  // Numeric tag: stripping "2 #" would corrupt the RIR (5/2 → 5/21). Must stay 5/2.
+  assert.deepEqual(sets(parseWorkoutText('Bench 225 5/2 #1')), [[225, 5, 2]]);
+  assert.deepEqual(sets(parseWorkoutText('Bench 225 5/2 #3')), [[225, 5, 2]]);
+  // Genuine bare-pound markers still strip.
+  assert.deepEqual(sets(parseWorkoutText('Bench 225# 5/2')), [[225, 5, 2]]);
 });
 
 test('unit: normalization does NOT disturb dumbbell "s" notation or bare numbers', () => {

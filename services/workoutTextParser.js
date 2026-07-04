@@ -82,8 +82,9 @@ function normalizeWeightUnits(value) {
     // ("225 lb" / "225lbs" → "225"). Never matches the dumbbell "60s" token.
     .replace(/(\d+(?:\.\d+)?)\s*lbs?\b/gi, '$1')
     // "#" after a number means pounds ("225#" / "225 #" → "225"). The negative
-    // lookahead leaves a number-adjacent hashtag ("5 #tag") alone.
-    .replace(/(\d+(?:\.\d+)?)\s*#(?![A-Za-z])/g, '$1');
+    // lookahead leaves a number-adjacent hashtag alone — both alphabetic ("5 #tag")
+    // and numeric ("5/2 #1", where stripping would fuse the tag digit onto the RIR).
+    .replace(/(\d+(?:\.\d+)?)\s*#(?![A-Za-z0-9])/g, '$1');
 }
 
 function normalizeKey(value) {
