@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v106';
+const ATLAS_SHELL_BUILD = 'v107';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -1363,15 +1363,61 @@ function isNearDuplicateReason(why, decision) {
   return wp.includes(dp) || dp.includes(wp);
 }
 
+// Resolve the recommended intent's focus (the "call") — shared by the compressed
+// opener and its signature.
+function recommendedFrom(intentData) {
+  const todaysRead = (intentData && intentData.todays_read) || {};
+  const intents = (intentData && Array.isArray(intentData.intents)) ? intentData.intents : [];
+  const rec = intents.find(i => i && i.recommended) ||
+              intents.find(i => i && i.id && i.id === todaysRead.recommended_intent_id) || null;
+  const decision = ((rec && rec.focus) || todaysRead.recommended_reason ||
+                    todaysRead.recommended_label || '').toString().trim();
+  return { todaysRead, rec, decision };
+}
+
+// Anti-repetition (PR-2, display-only): a same-day reopen with UNCHANGED engine
+// state should not re-brief the full paragraph. The compressed continuation is a
+// short, floored line (never blank) that words the SAME decision the engine
+// already made — it invents nothing. openerSignature identifies "this engine read
+// today" from the engine's own output; the ledger (coach-conversation.js) uses it
+// to choose full-vs-compressed. Deliberately NOT here: varying the ANGLE and
+// withdrawing advice ignored twice are coaching decisions and stay owner-gated for
+// the engine (North-Star opener endpoint) — the frontend only de-dups an identical
+// render, never decides what to coach.
+function compressedOpener(intentData) {
+  const { decision } = recommendedFrom(intentData);
+  if (!decision) return '';
+  return `Still here. ${decision} whenever you're ready.`;
+}
+function openerDayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;  // local calendar day
+}
+function openerSignature(intentData) {
+  const { todaysRead } = recommendedFrom(intentData);
+  const id = todaysRead.recommended_intent_id;
+  if (!id) return '';  // no read → no signature → never compresses
+  const gap = todaysRead.days_since_last_session ?? '';
+  return `${openerDayKey()}|${id}|${gap}`;
+}
+
 // Dispatch the deterministic coach opener for the hero (coach-conversation.js
 // paints it) — built from loadDashboard's own fetch, no second call, no LLM.
 // Dispatches nothing when the engine named no session, so the default hero
-// stands (degradation = doing nothing).
+// stands (degradation = doing nothing). Carries a same-day de-dup signature + a
+// compressed continuation so a repeat reopen doesn't re-brief.
 function emitGlanceReady(intentData) {
   if (typeof document === 'undefined') return;
   const opener = buildCoachOpener(intentData);
   if (!opener) return;  // nothing meaningful → the default hero stands
-  document.dispatchEvent(new CustomEvent('atlas:glance-ready', { detail: { opener } }));
+  document.dispatchEvent(new CustomEvent('atlas:glance-ready', {
+    detail: {
+      opener,
+      compressed: compressedOpener(intentData),
+      signature: openerSignature(intentData),
+      day: openerDayKey()
+    }
+  }));
 }
 
 /* ===== Coach plan card (read-only, Coach surface) =====
