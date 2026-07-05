@@ -157,8 +157,12 @@
     }, true);
 
     // The existing atlas:* CustomEvents → the matching Flight Recorder event types.
+    // They are dispatched on `document` with the default bubbles:false (see the dispatch
+    // sites in app.js / coach-conversation.js, and every existing consumer in nav.js /
+    // coach-conversation.js), so we MUST subscribe on `document` — a non-bubbling event
+    // targeted at document never reaches a window listener.
     Object.keys(ATLAS_EVENT_MAP).forEach(function (name) {
-      window.addEventListener(name, function () {
+      document.addEventListener(name, function () {
         try {
           record(state, ATLAS_EVENT_MAP[name], { route: currentRoute(), ui_snapshot: snapshotUiState(), session_state: snapshotSessionState() });
         } catch (e2) { /* TOTAL */ }
@@ -185,7 +189,8 @@
     // sendBeacon, still carries the auth header).
     var flushOut = function () { try { flush(state, true); } catch (e2) {} };
     window.addEventListener('pagehide', flushOut);
-    window.addEventListener('visibilitychange', function () {
+    // visibilitychange is a `document` event — subscribe there, not on window.
+    document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'hidden') flushOut();
     });
 

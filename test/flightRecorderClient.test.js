@@ -168,6 +168,18 @@ test('client ATLAS_EVENT_MAP maps to valid taxonomy event types', () => {
   }
 });
 
+// DOM wiring (review #857): the atlas:* events are dispatched on `document` with
+// bubbles:false, so the recorder must subscribe on `document` — a window listener would
+// silently never fire, killing card_rendered / coach_message_rendered / session_state_changed.
+test('client subscribes to atlas:* events on document, not window', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'flightRecorder.js'), 'utf8');
+  assert.match(src, /document\.addEventListener\(name,/, 'atlas:* events must be bound on document');
+  assert.doesNotMatch(src, /window\.addEventListener\(name,/, 'must NOT bind atlas:* events on window (they would never fire)');
+  // Corroborate the premise this fix rests on: every atlas:* dispatch is on document.
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  assert.doesNotMatch(appSrc, /window\.dispatchEvent\(new CustomEvent\('atlas:/, 'atlas:* events are dispatched on document, not window');
+});
+
 // Rate-limit isolation (review #857): best-effort telemetry must NEVER draw from the
 // trust-write budget and 429 a real set-log / undo. /api/flight/ingest gets its own bucket.
 test('ingest has its OWN rate-limiter bucket, separate from the trust-write budget', () => {
