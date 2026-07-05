@@ -110,6 +110,60 @@ const modalityLogRowFieldAliases = {
   notes: ['notes']
 };
 
+// Flight_Recorder — the Atlas Flight Recorder's append-only session transcript
+// (docs/FLIGHT_RECORDER_SPEC.md). An OPTIONAL, feature-flagged (ATLAS_FLIGHT_RECORDER=1,
+// default OFF) debug/observation surface that records the USER-VISIBLE app experience
+// and decision trail during real sessions — answering "what did the user do, what did
+// Atlas think, what did Atlas decide, and what exactly did Atlas show?". One row per
+// event; append-only (new columns ONLY ever added at the END so historical rows stay
+// aligned — never insert or reorder, same rule as Bug_Reports).
+//
+// These are owner/debug TELEMETRY rows, NOT logged sets: they never touch
+// Log_Cleaned/Effort/Modality_Log, carry no write_id, and never route through the
+// preview→approve→write trust loop. The four *_json columns hold compact, redacted,
+// truncated JSON summaries (MVP schema decision — keeps the contract stable as captured
+// fields evolve, like Bug_Reports' Payload JSON), each well under the ~50k Sheets
+// per-cell limit. Same schema-migration rule as every other tab: do not add, remove, or
+// reorder columns without explicit owner approval.
+//   captured_at        — ISO timestamp the event was captured (client clock)
+//   flight_session_id  — one id per app load / observation session (the replay key)
+//   seq                — monotonic per-session counter (deterministic order under batching)
+//   app_version        — shell/app version string
+//   device_id          — stable non-PII device id if available (else blank)
+//   route              — route / screen name visible when the event fired
+//   event_type         — one of the taxonomy below
+//   user_input         — user text (composer / free-form message / bug-marker note)
+//   user_action        — button/tile/tab tapped or nav action
+//   rendered_ui_json   — visible cards/tiles, active card, CTAs, modal, toast, coach message
+//   session_state_json — activePlannedSession/suggestedPlan/plannedExerciseOrder/…
+//   api_endpoint       — endpoint called (api_request/api_response)
+//   request_summary    — redacted/truncated request summary (not a raw body)
+//   response_summary   — redacted/truncated response summary (status + shape + key fields)
+//   decision_summary_json — trimmed engine/router decision summary where safe
+//   shadow_refs_json   — { brain:{created,route,count}, intent:{created,route,count} }
+//   error              — short error/warning string (blank when none)
+//   latency_ms         — round-trip latency for api_response, else blank
+const flightRecorderColumns = [
+  'captured_at',
+  'flight_session_id',
+  'seq',
+  'app_version',
+  'device_id',
+  'route',
+  'event_type',
+  'user_input',
+  'user_action',
+  'rendered_ui_json',
+  'session_state_json',
+  'api_endpoint',
+  'request_summary',
+  'response_summary',
+  'decision_summary_json',
+  'shadow_refs_json',
+  'error',
+  'latency_ms'
+];
+
 const effortRowFieldAliases = {
   date: ['date'],
   session_id: ['session_id', 'sessionId'],
@@ -132,5 +186,6 @@ module.exports = {
   effortRowFieldAliases,
   deloadStateColumns,
   modalityLogColumns,
-  modalityLogRowFieldAliases
+  modalityLogRowFieldAliases,
+  flightRecorderColumns
 };
