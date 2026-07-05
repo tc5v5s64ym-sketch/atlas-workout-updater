@@ -218,8 +218,11 @@ test('hybrid mode: shadow observes Brian\'s deload-reduced Coach\'s Pick without
     // Shadow attach only — hybrid never sets engine_source (that is serve/brian).
     assert.equal(data.engine_source, undefined, 'hybrid must not drive/serve (no engine_source)');
 
+    // In hybrid the wire `.brian` is the TRIMMED summary (coachShadow.summarizeBrianDecision),
+    // not the raw decision — the composed blocks (lift_code/target_weight) live at
+    // data.brian.blocks, not data.brian.payload.blocks.
     const brian = data.brian || {};
-    const blocks = (brian.payload && brian.payload.blocks) || [];
+    const blocks = Array.isArray(brian.blocks) ? brian.blocks : [];
     const squat = blocks.find(b => b.lift_code === 'SQ01');
     assert.ok(squat, `shadow-composed pick must contain a Back Squat block (blocks: ${blocks.map(b => b.lift_code).join(',') || 'none'})`);
 
