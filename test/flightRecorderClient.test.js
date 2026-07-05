@@ -180,6 +180,34 @@ test('client subscribes to atlas:* events on document, not window', () => {
   assert.doesNotMatch(appSrc, /window\.dispatchEvent\(new CustomEvent\('atlas:/, 'atlas:* events are dispatched on document, not window');
 });
 
+// ── FR4: Settings → Debug UX ────────────────────────────────────────────────────────
+
+test('FR4: markIssue / getSessionId are TOTAL and inert when the recorder is off', () => {
+  // In node there is no active browser session → inert, never throws.
+  assert.equal(typeof client.markIssue, 'function');
+  assert.equal(typeof client.getSessionId, 'function');
+  assert.equal(client.getSessionId(), null);
+  const r = client.markIssue('something looks wrong');
+  assert.deepEqual(r, { ok: false, reason: 'inactive' });
+});
+
+test('FR4: the Debug card exists in index.html with all controls', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  for (const id of ['flight-enabled', 'flight-session-id', 'flight-refresh-btn', 'flight-copy-btn', 'flight-mark-form', 'flight-mark-note', 'flight-result']) {
+    assert.ok(html.includes(`id="${id}"`), `#${id} must exist in the Settings Debug card`);
+  }
+});
+
+test('FR4: the client wires the Debug controls and emits a bug_marker', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'flightRecorder.js'), 'utf8');
+  assert.match(src, /getElementById\('flight-refresh-btn'\)/, 'refresh button wired');
+  assert.match(src, /getElementById\('flight-copy-btn'\)/, 'copy button wired');
+  assert.match(src, /getElementById\('flight-mark-form'\)/, 'mark form wired');
+  assert.match(src, /'\/api\/flight\/recent'/, 'debug UX reads the recent endpoint');
+  assert.match(src, /record\(_active, 'bug_marker'/, 'mark issue emits a bug_marker event');
+  assert.match(src, /wireDebugUi\(\)/, 'the debug UX is booted');
+});
+
 // Rate-limit isolation (review #857): best-effort telemetry must NEVER draw from the
 // trust-write budget and 429 a real set-log / undo. /api/flight/ingest gets its own bucket.
 test('ingest has its OWN rate-limiter bucket, separate from the trust-write budget', () => {

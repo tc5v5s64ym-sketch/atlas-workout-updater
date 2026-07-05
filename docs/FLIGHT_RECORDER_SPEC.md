@@ -140,14 +140,16 @@ Identical discipline to the shadow lanes — the recorder is **TOTAL and INERT t
 - No user-visible error unless an explicit debug mode is on (then only in the Debug panel).
 - Non-blocking: batching + `sendBeacon` keep it off the render/save path.
 
-## 7. Debug UX — Settings → Debug
+## 7. Debug UX — Settings → Flight Recorder *(PR-FR4, shipped)*
 
-Read-only surface backed by `GET /api/flight/recent` + the client ring:
+A **Settings → "Flight Recorder (debug)"** card, wired entirely from `public/flightRecorder.js` (no `app.js` handler edits), backed by `GET /api/flight/recent`:
 
-- Current **`flight_session_id`** (copyable).
-- **Last 20 Flight Recorder events** (event_type, route, latency, error), newest first.
-- **Copy / export recent transcript** — dumps the ring as JSON to clipboard (reuses `exposeBugReportJson`'s pattern), so the owner hands over a replayable transcript instead of screenshots.
-- **"Mark issue here"** — inserts a `bug_marker` row (with optional note), flushed promptly, so replay lands on the flagged moment.
+- Current **enabled state** (`ON`/`OFF`) + **`flight_session_id`**.
+- **Refresh events** — renders the **last 20** events (captured_at · event_type · route · endpoint/action · latency · error), newest first.
+- **Copy transcript** — dumps the ring as JSON to the clipboard, so the owner hands over a replayable transcript instead of screenshots.
+- **Mark issue here** — a note field + button that drops a `bug_marker` event (flushed promptly, so replay lands on the flagged moment); a clear hint when the flag is off.
+
+The card is always visible so the owner can see the recorder's state; the buttons degrade gracefully when the flag is off (no session, "Flight Recorder is OFF" copy).
 
 ## 8. Test plan
 
@@ -166,7 +168,7 @@ Follows Atlas invariants T1–T3 (require.cache stub of `sheets.js`); live-path 
 1. **PR-FR1 — schema + contract + pure core (no writes).** `Flight_Recorder` in `optionalSheetTabs`; `flightRecorderColumns`; `services/flightRecorder.js` builder + ring + redaction; unit tests. **Nothing writes; nothing is wired to a runtime path.** *(This slice.)*
 2. **PR-FR2 — server-side API-flow recording + read route** *(shipped)*. `recordApiFlow` + a thin observe-only middleware in `index.js` (flag-gated, best-effort append to the server's own `Flight_Recorder`) + `GET /api/flight/recent`; the sim harness marks its traffic (`x-atlas-simulation`) and the recorder's isolation guard blocks sim writes to a non-sandbox sheet. Covers **both** real app traffic and simulation runs. (The client batch-ingest route moved to FR3, alongside its only producer — the frontend.)
 3. **PR-FR3 — frontend capture + batching + client ingest** *(shipped)*. Self-contained `public/flightRecorder.js` (UMD, never throws) that attaches its OWN listeners (clicks, composer submit, the existing `atlas:*` CustomEvents) and reads the DOM — **no edit to the restricted `public/app.js`** (only the shell-version bump). It self-activates only when `GET /api/flight/recent` reports the flag on; batched flush (25 events / 10s / `pagehide` via `fetch` keepalive); `POST /api/flight/ingest` (`recordClientBatch`) for UI-only events. Shadow-linkage enrichment deferred to a follow-up.
-4. **PR-FR4 — Debug UX.** Settings → Debug surface incl. `bug_marker`.
+4. **PR-FR4 — Debug UX** *(shipped)*. Settings → "Flight Recorder (debug)" card (state, last-20 events, copy transcript, mark issue → `bug_marker`), wired from `flightRecorder.js` with no `app.js` handler edits.
 5. **PR-FR5 (owner-gated) — full `correlation_id`** across `Brain_Shadow` / `Intent_Shadow` (append-only schema change).
 
 Enable only during owner/debug observation windows via `ATLAS_FLIGHT_RECORDER=1`; default OFF everywhere else. Each PR ships behind the flag, so `main` behavior is unchanged until the owner flips it on.

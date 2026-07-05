@@ -30,6 +30,8 @@
   var API_KEY_STORAGE = 'atlas_api_key';
   var DEVICE_ID_STORAGE = 'atlas_flight_device';
 
+  var _active = null; // the live capture session once activated (null = inert/off)
+
   // Secret-shaped VALUE scrubbing — defense in depth; the server re-redacts every event.
   var SECRET_VALUE_PATTERNS = [
     /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -134,6 +136,8 @@
   function activate(state) {
     if (state.active) return;
     state.active = true;
+    _active = state;         // expose the live session to the Debug UX (markIssue / session id)
+    updateDebugStatus();
 
     // user_action — capture-phase click on interactive elements.
     document.addEventListener('click', function (e) {
@@ -310,6 +314,101 @@
     } catch (e) { return {}; }
   }
 
+  // ------------------------------------------------------------------ FR4: Debug UX
+  // The current live session id (or null when the recorder is inert/off).
+  function getSessionId() { return _active ? _active.flightSessionId : null; }
+
+  // Drop a bug_marker pin into the transcript — the owner taps "mark issue here" the
+  // moment something looks wrong, and the marker flushes promptly (shouldFlush) so replay
+  // lands exactly there. No-op with a reason when the recorder is off (flag not enabled).
+  function markIssue(note) {
+    try {
+      if (!_active) return { ok: false, reason: 'inactive' };
+      record(_active, 'bug_marker', {
+        user_action: 'bug_marker',
+        user_input: note || '',
+        route: currentRoute(),
+        ui_snapshot: snapshotUiState(),
+        session_state: snapshotSessionState()
+      });
+      return { ok: true, flight_session_id: _active.flightSessionId };
+    } catch (e) { return { ok: false }; }
+  }
+
+  function _setText(id, text) {
+    try { var el = document.getElementById(id); if (el) el.textContent = text; } catch (e) {}
+  }
+
+  function updateDebugStatus() {
+    _setText('flight-enabled', _active ? 'ON' : 'OFF');
+    _setText('flight-session-id', getSessionId() || '—');
+  }
+
+  // Wire the Settings → Flight Recorder (debug) card. Runs regardless of the flag so the
+  // owner can always SEE the state; the buttons hit the read endpoint (last-20 events),
+  // copy the transcript, or drop a bug_marker. Best-effort throughout.
+  function wireDebugUi() {
+    if (typeof document === 'undefined') return;
+    var apiKeyOf = function () { try { return window.localStorage.getItem(API_KEY_STORAGE) || ''; } catch (e) { return ''; } };
+    var resultEl = document.getElementById('flight-result');
+
+    function render(log) {
+      _setText('flight-enabled', log && log.enabled ? 'ON' : 'OFF');
+      _setText('flight-session-id', getSessionId() || (log && log.entries && log.entries[0] && log.entries[0].flight_session_id) || '—');
+      if (!resultEl) return;
+      var entries = (log && Array.isArray(log.entries)) ? log.entries.slice(0, 20) : [];
+      if (!entries.length) {
+        resultEl.textContent = (log && log.enabled) ? 'No events yet — interact with the app, then Refresh.'
+          : 'Flight Recorder is OFF (set ATLAS_FLIGHT_RECORDER=1 on the server).';
+        return;
+      }
+      var lines = entries.map(function (e) {
+        return [e.captured_at, e.event_type, e.route || '',
+          e.api_endpoint || e.user_action || e.user_input || '',
+          (e.latency_ms != null && e.latency_ms !== '' ? e.latency_ms + 'ms' : ''),
+          e.error || ''].filter(Boolean).join('  ·  ');
+      });
+      var pre = document.createElement('pre');
+      pre.className = 'debug-pre';
+      pre.textContent = lines.join('\n');
+      resultEl.innerHTML = '';
+      resultEl.appendChild(pre);
+    }
+
+    function refresh() {
+      return fetchJson('GET', '/api/flight/recent', null, apiKeyOf())
+        .then(function (json) { render(json && json.data ? json.data : null); })
+        .catch(function () { if (resultEl) resultEl.textContent = 'Could not load the Flight Recorder log.'; });
+    }
+
+    var refreshBtn = document.getElementById('flight-refresh-btn');
+    if (refreshBtn) refreshBtn.addEventListener('click', refresh);
+
+    var copyBtn = document.getElementById('flight-copy-btn');
+    if (copyBtn) copyBtn.addEventListener('click', function () {
+      fetchJson('GET', '/api/flight/recent', null, apiKeyOf()).then(function (json) {
+        var text = JSON.stringify(json && json.data ? json.data : json, null, 2);
+        try { if (navigator.clipboard) navigator.clipboard.writeText(text); } catch (e) {}
+        if (resultEl) { var pre = document.createElement('pre'); pre.className = 'debug-pre'; pre.textContent = text; resultEl.innerHTML = ''; resultEl.appendChild(pre); }
+      }).catch(function () {});
+    });
+
+    var markForm = document.getElementById('flight-mark-form');
+    var markNote = document.getElementById('flight-mark-note');
+    if (markForm) markForm.addEventListener('submit', function (ev) {
+      try { ev.preventDefault(); } catch (e) {}
+      var r = markIssue(markNote && markNote.value ? markNote.value : '');
+      if (resultEl) resultEl.textContent = (r && r.ok)
+        ? ('Issue marked in session ' + (r.flight_session_id || '') + '. Refreshing…')
+        : 'Flight Recorder is OFF — enable ATLAS_FLIGHT_RECORDER on the server to mark issues.';
+      if (markNote) markNote.value = '';
+      if (r && r.ok) window.setTimeout(refresh, 300);
+    });
+
+    updateDebugStatus();
+    if (resultEl && !resultEl.textContent) resultEl.textContent = 'Tap "Refresh events" to load the recent transcript.';
+  }
+
   // ---- exports / auto-init ----
   var exported = {
     FLUSH_AT: FLUSH_AT,
@@ -319,7 +418,9 @@
     redactString: redactString,
     truncate: truncate,
     buildClientEvent: buildClientEvent,
-    shouldFlush: shouldFlush
+    shouldFlush: shouldFlush,
+    markIssue: markIssue,
+    getSessionId: getSessionId
   };
 
   if (typeof module !== 'undefined' && module.exports) {
@@ -327,10 +428,11 @@
   } else {
     root.atlasFlightRecorder = exported;
     if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+      var boot = function () { initBrowser(); wireDebugUi(); };
       if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initBrowser);
+        document.addEventListener('DOMContentLoaded', boot);
       } else {
-        initBrowser();
+        boot();
       }
     }
   }

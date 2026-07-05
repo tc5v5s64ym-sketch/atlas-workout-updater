@@ -441,6 +441,21 @@
       </div>
 
       <div class="card">
+        <h2>Flight Recorder (debug)</h2>
+        <p class="muted">Owner/debug telemetry — active only when <code>ATLAS_FLIGHT_RECORDER=1</code> on the server. Records what you did, what Atlas showed, and the API/decision trail so a session can be replayed instead of screenshotted. Nothing is written when the flag is off.</p>
+        <p id="flight-status" class="muted">Flight Recorder: <strong id="flight-enabled">…</strong> · session <code id="flight-session-id">—</code></p>
+        <div class="action-row">
+          <button type="button" id="flight-refresh-btn" class="secondary">Refresh events</button>
+          <button type="button" id="flight-copy-btn" class="secondary">Copy transcript</button>
+        </div>
+        <form id="flight-mark-form" class="inline-form">
+          <input type="text" id="flight-mark-note" placeholder="Mark issue here (optional note)" autocomplete="off">
+          <button type="submit" id="flight-mark-btn" class="secondary">Mark issue</button>
+        </form>
+        <div id="flight-result"></div>
+      </div>
+
+      <div class="card">
         <h2>Hybrid Coach Compare (dev)</h2>
         <p class="muted">Developer-only. Fetches one lift's recommendation and, only when <code>ATLAS_COACH_ENGINE=hybrid</code> returns a validated Brian decision, shows both coaches side by side so you can flag which one was better. Read-only — no write, no effect on the actual recommendation.</p>
         <form id="hybrid-compare-form" class="inline-form">
