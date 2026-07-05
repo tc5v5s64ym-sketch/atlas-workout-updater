@@ -24,7 +24,7 @@ process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
 
-// Rich fixture (mirrors coachShadowRoute): 6 clean sessions ending on an
+// Rich fixture (coach-engine route harness): 6 clean sessions ending on an
 // over-performing top set, so the scenario classifier composes a valid answered
 // decision — i.e. a WIN the shadow can record.
 function sessions(exercise, muscle, code, startW) {
