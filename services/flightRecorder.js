@@ -261,6 +261,57 @@ function recordApiFlow(info, opts) {
   }
 }
 
+// ── FR3: client batch ingest ─────────────────────────────────────────────────────
+//
+// The frontend (public/flightRecorder.js) captures the UI-only events the server can't
+// see — screen_rendered / user_action / user_input / ui_snapshot / coach_message_rendered
+// / card_rendered / session_state_changed / bug_marker — buffers them, and flushes a BATCH
+// to POST /api/flight/ingest. This handler redacts + builds all rows and appends them in ONE
+// best-effort call. Same guarantees as the server-side lane: flag-gated, TOTAL, writes only
+// Flight_Recorder on the server's own sheet, and never persists sim-marked traffic to a
+// non-sandbox sheet.
+
+const MAX_INGEST_EVENTS = 200; // per-batch cap (defense; the client batches ~25)
+
+// Ingest one client batch: { flight_session_id, device_id, app_version, events:[...] }.
+// TOTAL and flag-gated. Returns { enabled, written } (never throws). Best-effort append of
+// the whole batch in a single appendRows call.
+// opts: { sheetIsSandbox, isSimulation, append }
+function recordClientBatch(payload, opts) {
+  try {
+    if (!isFlightRecorderEnabled()) return { enabled: false, written: 0 };
+    const o = _isObj(opts) ? opts : {};
+    const p = _isObj(payload) ? payload : {};
+    const events = Array.isArray(p.events) ? p.events.slice(0, MAX_INGEST_EVENTS) : [];
+    if (!events.length) return { enabled: true, written: 0 };
+
+    // Batch-level session fields are authoritative for every row.
+    const session = {
+      flight_session_id: p.flight_session_id || '',
+      device_id: p.device_id || '',
+      app_version: p.app_version || ''
+    };
+
+    const rows = [];
+    for (const ev of events) {
+      if (!_isObj(ev)) continue;
+      const event = { ...ev, ...session };
+      recordEvent(event);              // in-memory ring (redacted)
+      rows.push(buildFlightRow(event));
+    }
+    if (!rows.length) return { enabled: true, written: 0 };
+
+    // Isolation: a sim-marked client batch never persists to a non-sandbox sheet.
+    if (o.isSimulation === true && o.sheetIsSandbox !== true) {
+      return { enabled: true, written: 0, isolated: true };
+    }
+    _persistRows(rows, o.append);      // ONE append for the whole batch
+    return { enabled: true, written: rows.length };
+  } catch (_) {
+    return { enabled: false, written: 0 };
+  }
+}
+
 // Read-only snapshot for the future GET /api/flight/recent (and the Settings → Debug
 // surface): the ring newest-first plus basic aggregate counts.
 function getFlightRecorderLog() {
@@ -300,6 +351,8 @@ module.exports = {
   buildFlightRows,
   recordEvent,
   recordApiFlow,
+  recordClientBatch,
+  MAX_INGEST_EVENTS,
   getFlightRecorderLog,
   clearFlightRecorderLog,
   _resetForTesting

@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v107/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v108/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5631,8 +5631,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v107/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v106\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v108/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v107\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5652,12 +5652,15 @@ test('shell cache: service worker version bumped and all shell scripts precached
   assert.match(html, /id="test-coach-btn"/, 'a "Test coach connection" button must exist');
   assert.match(appSrc, /test-coach-btn'\)\?\.addEventListener/, 'the coach-test handler must be wired');
   assert.match(appSrc, /\/api\/coach\/health/, 'the handler must call the coach health endpoint');
-  for (const asset of ['/app/styles.css', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
+  for (const asset of ['/app/styles.css', '/app/flightRecorder.js', '/app/app.js', '/app/nav.js', '/app/drawer.js', '/app/chat.js',
     '/app/sessionQuestion.js', '/app/activeSession.js', '/app/planMutationIntent.js', '/app/identityCorrection.js',
     '/app/displayBlockNormalizer.js',
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
+  // The Flight Recorder client must be loaded in the page (it self-activates only when
+  // ATLAS_FLIGHT_RECORDER is on) — a precached-but-unincluded module would 404 at runtime.
+  assert.match(html, /<script src="flightRecorder\.js"><\/script>/, 'flightRecorder.js must be included in index.html');
   // The display-block normalizer must be loaded in the page (it powers the
   // multi-exercise composer paste) — a precached-but-unincluded module would 404 at runtime.
   assert.match(html, /<script src="displayBlockNormalizer\.js"><\/script>/, 'displayBlockNormalizer.js must be included in index.html');

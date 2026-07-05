@@ -5802,3 +5802,46 @@ test('Flight Recorder middleware: flag-gated, Flight_Recorder-only, sim-isolated
     else process.env.ATLAS_FLIGHT_RECORDER = originalFlag;
   }
 });
+
+// Flight Recorder (PR-FR3) — client batch ingest, end to end. Proves the flag gate
+// (OFF = 202 no-op, zero writes), that a batch lands ONLY in Flight_Recorder (never a
+// workout tab), and that the endpoint always answers the client promptly (best-effort).
+test('Flight Recorder ingest: POST /api/flight/ingest is flag-gated and Flight_Recorder-only', async () => {
+  const originalFlag = process.env.ATLAS_FLIGHT_RECORDER;
+  const settle = () => new Promise(r => setImmediate(r));
+  const frCalls = () => fakeSheetsState.appendCalls.filter(c => c.tabName === 'Flight_Recorder');
+  const trustCalls = () => fakeSheetsState.appendCalls.filter(c => ['Log_Cleaned', 'Effort', 'Modality_Log'].includes(c.tabName));
+  const body = {
+    flight_session_id: 'FR-smoke',
+    device_id: 'dev-smoke',
+    app_version: 'v108',
+    events: [
+      { captured_at: '2026-07-05T12:00:00.000Z', seq: 1, event_type: 'screen_rendered', route: 'home' },
+      { captured_at: '2026-07-05T12:00:01.000Z', seq: 2, event_type: 'user_action', user_action: 'tap: Preview', route: 'logger' }
+    ]
+  };
+  try {
+    // (1) flag OFF → 202 no-op, zero writes.
+    delete process.env.ATLAS_FLIGHT_RECORDER;
+    fakeSheetsState.appendCalls.length = 0;
+    const off = await requestJson('/api/flight/ingest', { method: 'POST', body: JSON.stringify(body) });
+    assert.equal(off.response.status, 202);
+    assert.equal(off.body.data.enabled, false);
+    await settle();
+    assert.equal(frCalls().length, 0, 'flag OFF writes nothing');
+
+    // (2) flag ON → one Flight_Recorder append of the batch, never a workout tab, 202.
+    process.env.ATLAS_FLIGHT_RECORDER = '1';
+    fakeSheetsState.appendCalls.length = 0;
+    const on = await requestJson('/api/flight/ingest', { method: 'POST', body: JSON.stringify(body) });
+    assert.equal(on.response.status, 202);
+    assert.equal(on.body.data.written, 2);
+    await settle();
+    assert.equal(frCalls().length, 1, 'one batch append to Flight_Recorder');
+    assert.equal(frCalls()[0].rows.length, 2);
+    assert.equal(trustCalls().length, 0, 'never a workout/trust tab');
+  } finally {
+    if (originalFlag === undefined) delete process.env.ATLAS_FLIGHT_RECORDER;
+    else process.env.ATLAS_FLIGHT_RECORDER = originalFlag;
+  }
+});
