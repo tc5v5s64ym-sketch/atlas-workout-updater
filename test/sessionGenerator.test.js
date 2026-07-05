@@ -157,6 +157,25 @@ describe('buildSession — deload', () => {
     assert.strictEqual(validateCoachingDecision(asDecision(deloaded)).valid, true);
     assert.strictEqual(deloaded.explanation_inputs.blocks[0].target_weight, deloaded.payload.blocks[0].target_weight);
   });
+
+  // #848 deload proof, pinned at the buildSession unit level (independent of the
+  // brian serve rail). stateAssembly feeds the RAW persisted deload row — a
+  // { training_state: 'DELOAD_ACTIVE', deload_protocol: <id string> } shape with NO
+  // resolved `protocol` object. buildSession must resolve the protocol from its id
+  // and still cut the load; a regression here silently prescribes full load
+  // mid-deload. This is the non-user-served composition proof that outlives the
+  // now-shadow-only Coach's Pick HTTP path.
+  it('resolves the RAW persisted deload shape (deload_protocol id string) and cuts the load', () => {
+    const normal = buildSession(state(fullBodyRows()), { focus: 'squat' });
+    const deloaded = buildSession(
+      state(fullBodyRows(), { deload_state: { training_state: 'DELOAD_ACTIVE', deload_protocol: 'STRENGTH_DELOAD_V1' } }),
+      { focus: 'squat' });
+    assert.ok(normal && deloaded);
+    assert.ok(deloaded.payload.blocks[0].target_weight < normal.payload.blocks[0].target_weight,
+      'raw-shape active deload must reduce the prescribed load below the normal prescription');
+    assert.strictEqual(validateCoachingDecision(asDecision(deloaded)).valid, true);
+    assert.strictEqual(deloaded.explanation_inputs.blocks[0].target_weight, deloaded.payload.blocks[0].target_weight);
+  });
 });
 
 // ─── hinge regression — overperforming → increase_load → 5 lb lower-body step ──

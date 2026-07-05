@@ -14,12 +14,15 @@
 //     into recommendProgression. A Back Squat correctly gets the +5 lb lower-body
 //     step, NOT the 2.5% upper-body one. This test GUARDS that (it PASSES on main).
 //
-//   BUG B (deload shape) — CONFIRMED. stateAssembly feeds the RAW persisted deload
-//     row ({ training_state, deload_protocol:<string> }). sessionGenerator.buildSession
-//     guards on `deload.protocol` (an OBJECT), which the raw shape lacks, so the
-//     deload branch never fires and a brian Coach's Pick prescribes FULL loads
-//     during an active deload. This test asserts the CORRECT (reduced) behavior and
-//     is therefore RED on current main until buildSession reads the raw shape.
+//   BUG B (deload shape) — FIXED in #848 (buildSession now resolves the RAW persisted
+//     { training_state, deload_protocol:<string> } shape and cuts the load). Since the
+//     brian serve-eligibility rail, Coach's Pick (decision_type 'workout') is NOT
+//     serve-eligible: brian mode falls back to legacy and never DRIVES the pick, while
+//     hybrid still shadow-composes it. So the deload proof moved off the (now-refused)
+//     brian DRIVE path to two non-user-served levels: the buildSession unit test
+//     (test/sessionGenerator.test.js, raw-shape deload) and the HYBRID shadow below
+//     (data.brian observes the deload-reduced pick without serving it). The brian-mode
+//     test here now pins the serve rail: Coach's Pick falls back to legacy.
 //
 // Tests-only: no production files are touched.
 
@@ -130,6 +133,10 @@ async function getJson(path) {
 // ---------------------------------------------------------------------------
 // GUARD (audit Bug A REFUTED): the progression DRIVE path threads bodyRegion, so
 // a lower-body lift gets the lower-body increment. PASSES on main.
+//
+// Doubles as the serve-rail regression the other way: `progression` IS serve-
+// eligible, so the rail must NOT block it — this test asserts driven_by:'brian'
+// on the progression route, proving the gate does not touch the live path.
 // ---------------------------------------------------------------------------
 test('brian DRIVE: a lower-body lift uses the lower-body load increment (bodyRegion is threaded)', async () => {
   deloadStateRows = []; // NORMAL — no deload interference on the progression path
@@ -163,12 +170,13 @@ test('brian DRIVE: a lower-body lift uses the lower-body load increment (bodyReg
 });
 
 // ---------------------------------------------------------------------------
-// PROOF (audit Bug B CONFIRMED): Coach's Pick must reduce load during an active
-// deload. RED on main — buildSession's `&& deload.protocol` guard fails on the raw
-// persisted shape, so it prescribes the FULL working load mid-deload.
+// SERVE RAIL (brian mode): Coach's Pick (decision_type 'workout') is not serve-
+// eligible, so brian must NOT drive the pick — it falls back to legacy with the
+// rail reason. This is the regression guard that brian does not serve best_workout
+// while it is not serve-eligible.
 // ---------------------------------------------------------------------------
-test('brian DRIVE: Coach\'s Pick reduces load during an active deload (deload shape)', async () => {
-  deloadStateRows = [ACTIVE_DELOAD_ROW]; // active deload in the RAW persisted shape
+test('brian mode: Coach\'s Pick is not serve-eligible → falls back to legacy (serve rail)', async () => {
+  deloadStateRows = [ACTIVE_DELOAD_ROW]; // active deload present; rail still refuses the pick
   const original = process.env.ATLAS_COACH_ENGINE;
   process.env.ATLAS_COACH_ENGINE = 'brian';
   try {
@@ -176,27 +184,54 @@ test('brian DRIVE: Coach\'s Pick reduces load during an active deload (deload sh
     assert.equal(status, 200);
     const data = body.data;
 
-    // Precondition: brian actually DROVE the pick (the Pick path has no separate
-    // active-deload guard — buildSession is *supposed* to handle deload itself).
     assert.ok(data.engine_source, 'brian mode must attach engine_source');
-    assert.equal(data.engine_source.driven_by, 'brian',
-      `expected brian to DRIVE Coach's Pick; got fallback reason="${data.engine_source && data.engine_source.reason}"`);
+    assert.equal(data.engine_source.driven_by, 'legacy',
+      `Coach's Pick must fall back to legacy, not be driven by brian (got driven_by="${data.engine_source.driven_by}")`);
+    assert.equal(data.engine_source.reason, 'not_serve_eligible',
+      `fallback reason must be the serve rail (got "${data.engine_source.reason}")`);
+
+    // Legacy result still served: the recommended intent keeps its legacy exercises.
+    const rec = (data.intents || []).find(i => i && i.recommended);
+    assert.ok(rec && Array.isArray(rec.exercises) && rec.exercises.length,
+      'the legacy recommended intent must still be served');
+  } finally {
+    if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
+    else process.env.ATLAS_COACH_ENGINE = original;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// SHADOW OBSERVES (hybrid mode): the deload proof lives here now. Hybrid still
+// fully composes Brian's Coach's Pick (deload-aware) and attaches it as `brian`
+// for observation WITHOUT serving it — no engine_source, legacy response otherwise
+// untouched. Confirms hybrid shadow observes Brian while brian serve mode refuses.
+// ---------------------------------------------------------------------------
+test('hybrid mode: shadow observes Brian\'s deload-reduced Coach\'s Pick without serving it', async () => {
+  deloadStateRows = [ACTIVE_DELOAD_ROW]; // active deload in the RAW persisted shape
+  const original = process.env.ATLAS_COACH_ENGINE;
+  process.env.ATLAS_COACH_ENGINE = 'hybrid';
+  try {
+    const { status, body } = await getJson('/api/plan/intent-recommendation');
+    assert.equal(status, 200);
+    const data = body.data;
+
+    // Shadow attach only — hybrid never sets engine_source (that is serve/brian).
+    assert.equal(data.engine_source, undefined, 'hybrid must not drive/serve (no engine_source)');
 
     const brian = data.brian || {};
     const blocks = (brian.payload && brian.payload.blocks) || [];
     const squat = blocks.find(b => b.lift_code === 'SQ01');
-    assert.ok(squat, `driven pick must contain a Back Squat block (blocks: ${blocks.map(b => b.lift_code).join(',') || 'none'})`);
+    assert.ok(squat, `shadow-composed pick must contain a Back Squat block (blocks: ${blocks.map(b => b.lift_code).join(',') || 'none'})`);
 
-    // Independent baseline: the deload-OFF prescription (what main produces).
+    // Independent baseline: the deload-OFF prescription (full working load).
     const fullTarget = prescribeLift(logRows, 'SQ01', ASOF, {}).targetWeight;
     assert.equal(typeof fullTarget, 'number', 'baseline prescription must yield a weight');
 
-    // CORRECT behavior: an active deload reduces the prescribed load below the full
-    // working target. RED on main (raw deload shape ignored → full load prescribed).
+    // Deload proof (#848), now observed via the shadow: an active deload reduces the
+    // composed Back Squat load below the full working target.
     assert.ok(squat.target_weight < fullTarget,
-      `active deload must reduce the Back Squat load below the full ${fullTarget}, ` +
-      `but the driven pick prescribed ${squat.target_weight} — buildSession does not detect the raw deload shape ` +
-      `(guards on deload.protocol object; stateAssembly feeds deload_protocol string)`);
+      `active deload must reduce the shadow-composed Back Squat load below the full ${fullTarget}, ` +
+      `but the shadow pick composed ${squat.target_weight}`);
   } finally {
     if (original === undefined) delete process.env.ATLAS_COACH_ENGINE;
     else process.env.ATLAS_COACH_ENGINE = original;
