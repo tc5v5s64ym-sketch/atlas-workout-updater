@@ -61,6 +61,7 @@ const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrian
 const { foldJustLoggedSet } = require('./services/ephemeralSetFold');
 const { observeChatMessage, getShadowLog } = require('./services/intentShadow');
 const { observeBrianDecision, getCoachShadowLog, summarizeBrianDecision, summarizeLegacyRecommendation } = require('./services/coachShadow');
+const { observeBrainOrchestration, observeBrainFailure, getBrainShadowLog } = require('./services/brainShadow');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -2216,6 +2217,21 @@ app.get('/api/debug/coach-shadow', (req, res) => {
   });
 });
 
+// GET /api/debug/brain-shadow — read-only observability for the Brain ORCHESTRATOR
+// shadow lane (services/brainShadow): the capped in-memory ring of EVERY
+// orchestration at the three coach-engine gates — wins AND failures (declined /
+// invalid / crashed) — with decision_type/status/confidence tier, the declared
+// capabilities that were skipped, and legacy-vs-brian target-number divergence, plus
+// aggregate hit/failure counts. This is the flip blocker: it makes hybrid keep a
+// reviewable record of what the new engine WOULD have said. Auth-gated like every
+// /api route; no Sheets read, no writes, resets on restart by design.
+app.get('/api/debug/brain-shadow', (req, res) => {
+  return standardSuccess(req, res, 'Brain orchestrator shadow log', {
+    mode: process.env.ATLAS_COACH_ENGINE || 'legacy',
+    ...getBrainShadowLog(),
+  });
+});
+
 // POST /api/debug/intent-observe — Phase C2 (widened 2026-07-03). The single
 // composer chokepoint posts EVERY free-text submission here so the shadow lane
 // observes all typed messages, not just the residue that reached /api/coach/chat.
@@ -2428,6 +2444,15 @@ app.get('/api/plan/today', async (req, res) => {
             const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
             const validation = validateCoachingDecision(brian);
             const ms = Date.now() - t0;
+            // Brain ORCHESTRATOR shadow (services/brainShadow). TOTAL — never affects
+            // the served response. Records EVERY orchestration for this lift — win OR
+            // decline/invalid — so the flip blocker's reviewable record exists.
+            try {
+              observeBrainOrchestration({
+                route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode,
+                decision: brian, validation, legacy: legacySummary, ms,
+              });
+            } catch (_) { /* brain-shadow must never affect the response */ }
             if (brian && validation.valid) {
               // hybrid attaches a trimmed SUMMARY (never the raw decision) to the
               // wire; brian keeps the full decision it drives from.
@@ -2456,14 +2481,23 @@ app.get('/api/plan/today', async (req, res) => {
               } catch (_) { /* observation must never affect the response */ }
             }
           } catch (_) {
+            // The Brain CRASHED for this lift — record the failure the empty catch
+            // used to swallow, then fall back to legacy exactly as before.
+            try {
+              observeBrainFailure({ route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode, reason: 'orchestrator_error' });
+            } catch (_) { /* brain-shadow must never affect the response */ }
             if (coachEngineMode === 'brian') {
               rec.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
             }
           }
         }
       } catch (_) {
-        // Snapshot/deload assembly itself failed — leave every entry at its
-        // legacy value, exactly as if the flag were unset.
+        // Snapshot/deload assembly itself failed — record one failure so the crash
+        // is visible, then leave every entry at its legacy value, exactly as if the
+        // flag were unset.
+        try {
+          observeBrainFailure({ route: '/api/plan/today', mode: coachEngineMode, reason: 'assembly_error' });
+        } catch (_) { /* brain-shadow must never affect the response */ }
       }
     }
 
@@ -2524,6 +2558,14 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
         const validation = validateCoachingDecision(brian);
         const ms = Date.now() - t0;
+        // Brain ORCHESTRATOR shadow (services/brainShadow). TOTAL — never affects the
+        // served response. Records EVERY orchestration — win OR decline/invalid.
+        try {
+          observeBrainOrchestration({
+            route: '/api/plan/intent-recommendation', mode: coachEngineMode,
+            decision: brian, validation, legacy: legacySummary, ms,
+          });
+        } catch (_) { /* brain-shadow must never affect the response */ }
         if (brian && validation.valid) {
           // hybrid attaches a trimmed SUMMARY (never the raw decision) to the wire.
           result.brian = coachEngineMode === 'hybrid' ? summarizeBrianDecision(brian) : brian;
@@ -2551,6 +2593,11 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
           } catch (_) { /* observation must never affect the response */ }
         }
       } catch (_) {
+        // The Brain CRASHED — record the failure the empty catch used to swallow,
+        // then fall back to legacy exactly as before.
+        try {
+          observeBrainFailure({ route: '/api/plan/intent-recommendation', mode: coachEngineMode, reason: 'orchestrator_error' });
+        } catch (_) { /* brain-shadow must never affect the response */ }
         if (coachEngineMode === 'brian') {
           result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
         }
@@ -2733,6 +2780,14 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
         const validation = validateCoachingDecision(brian);
         const ms = Date.now() - t0;
+        // Brain ORCHESTRATOR shadow (services/brainShadow). TOTAL — never affects the
+        // served response. Records EVERY orchestration — win OR decline/invalid.
+        try {
+          observeBrainOrchestration({
+            route: '/api/recommend/next', liftCode, mode: coachEngineMode,
+            decision: brian, validation, legacy: legacySummary, ms,
+          });
+        } catch (_) { /* brain-shadow must never affect the response */ }
         if (brian && validation.valid) {
           // hybrid attaches a trimmed SUMMARY (never the raw decision) to the wire.
           recommendation.brian = coachEngineMode === 'hybrid' ? summarizeBrianDecision(brian) : brian;
@@ -2760,8 +2815,12 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           } catch (_) { /* observation must never affect the response */ }
         }
       } catch (_) {
-        // Must never affect the response beyond the brian-mode metadata —
-        // hybrid's shadow attach is simply omitted; brian mode falls back.
+        // The Brain CRASHED — record the failure the empty catch used to swallow.
+        // Must never affect the response beyond the brian-mode metadata — hybrid's
+        // shadow attach is simply omitted; brian mode falls back.
+        try {
+          observeBrainFailure({ route: '/api/recommend/next', liftCode, mode: coachEngineMode, reason: 'orchestrator_error' });
+        } catch (_) { /* brain-shadow must never affect the response */ }
         if (coachEngineMode === 'brian') {
           recommendation.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
         }
