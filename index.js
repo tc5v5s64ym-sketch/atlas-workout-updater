@@ -206,6 +206,14 @@ app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
 }));
+// Flight Recorder ingest gets its OWN limiter bucket — best-effort debug telemetry
+// (the client flushes every ~10s) must NEVER draw from the trust-write budget above and
+// 429 a real set-log / undo. Generous default headroom; still bounded against runaway.
+app.use(['/api/flight/ingest'], createRateLimiter({
+  name: 'flight_ingest',
+  windowMs: Number(process.env.ATLAS_FLIGHT_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+  max: Number(process.env.ATLAS_FLIGHT_RATE_LIMIT_MAX || 600)
+}));
 const { execSync } = require('child_process');
 
 const deploymentTimestamp = new Date().toISOString();
@@ -228,7 +236,7 @@ if (!gitVersion) gitVersion = 'unknown';
 // Simulation traffic (x-atlas-simulation header, set by scripts/sim/harness.js) is never
 // persisted to a non-sandbox sheet (isolation guard in recordApiFlow), so a simulation can
 // never write into the production Flight_Recorder — even a read-only sim pointed at prod.
-const { isFlightRecorderEnabled, recordApiFlow, getFlightRecorderLog } = require('./services/flightRecorder');
+const { isFlightRecorderEnabled, recordApiFlow, recordClientBatch, getFlightRecorderLog } = require('./services/flightRecorder');
 app.use((req, res, next) => {
   try {
     if (!isFlightRecorderEnabled()) return next();
@@ -2268,6 +2276,33 @@ app.get('/api/debug/brain-shadow', (req, res) => {
 // resets on restart by design. Empty/inert when ATLAS_FLIGHT_RECORDER is off.
 app.get('/api/flight/recent', (req, res) => {
   return standardSuccess(req, res, 'Flight Recorder log', getFlightRecorderLog());
+});
+
+// POST /api/flight/ingest — the CLIENT batch sink (docs/FLIGHT_RECORDER_SPEC.md). The
+// frontend (public/flightRecorder.js) buffers the UI-only events the server can't see
+// (screen_rendered / user_action / ui_snapshot / coach_message_rendered / card_rendered /
+// session_state_changed / bug_marker) and flushes a batch here. Flag-gated: a NO-OP 202
+// when ATLAS_FLIGHT_RECORDER is off, so a stale client can never force a write. When on,
+// best-effort appends the whole batch in one call to the optional Flight_Recorder tab on
+// the server's OWN sheet — never a workout/trust tab, no write_id, outside the trust loop.
+// Simulation-marked batches are never persisted to a non-sandbox sheet (isolation guard).
+// The append is fire-and-forget; this handler always returns promptly and never fails the
+// client (telemetry must never surface a user error).
+app.post('/api/flight/ingest', (req, res) => {
+  try {
+    if (!isFlightRecorderEnabled()) {
+      return standardSuccess(req, res, 'Flight Recorder disabled', { enabled: false, written: 0 }, 202);
+    }
+    const isSimulation = /^(1|true|on|yes)$/i.test(String(req.get('x-atlas-simulation') || '').trim());
+    const result = recordClientBatch(req.body, {
+      sheetIsSandbox: getSafeSpreadsheetConfig(process.env.NODE_ENV).isSandboxSheet === true,
+      isSimulation
+    });
+    return standardSuccess(req, res, 'Flight Recorder batch accepted', result, 202);
+  } catch (error) {
+    // TOTAL: never surface a telemetry error to the client.
+    return standardSuccess(req, res, 'Flight Recorder batch accepted', { enabled: true, written: 0 }, 202);
+  }
 });
 
 // POST /api/debug/intent-observe — Phase C2 (widened 2026-07-03). The single

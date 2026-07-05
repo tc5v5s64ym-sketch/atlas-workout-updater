@@ -31,6 +31,7 @@ const routeDefinitions = [
   { path: '/api/debug/brain-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/intent-observe', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/flight/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
+  { path: '/api/flight/ingest', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/bug-report', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/bug-report', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/exercise-match', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
