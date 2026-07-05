@@ -314,6 +314,15 @@
     } catch (e) { return {}; }
   }
 
+  // Headers that link an app API call to this client session, so the server-side
+  // api_response events (FR2 middleware) can be stitched into the same transcript. Empty
+  // when the recorder is inactive → those requests are byte-identical. app.js's api()
+  // spreads these into every /api call.
+  function requestHeaders() {
+    if (!_active) return {};
+    return { 'x-atlas-flight-session': _active.flightSessionId, 'x-atlas-device-id': _active.deviceId };
+  }
+
   // ------------------------------------------------------------------ FR4: Debug UX
   // The current live session id (or null when the recorder is inert/off).
   function getSessionId() { return _active ? _active.flightSessionId : null; }
@@ -420,7 +429,8 @@
     buildClientEvent: buildClientEvent,
     shouldFlush: shouldFlush,
     markIssue: markIssue,
-    getSessionId: getSessionId
+    getSessionId: getSessionId,
+    requestHeaders: requestHeaders
   };
 
   if (typeof module !== 'undefined' && module.exports) {

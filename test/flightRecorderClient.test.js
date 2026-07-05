@@ -180,6 +180,28 @@ test('client subscribes to atlas:* events on document, not window', () => {
   assert.doesNotMatch(appSrc, /window\.dispatchEvent\(new CustomEvent\('atlas:/, 'atlas:* events are dispatched on document, not window');
 });
 
+// ── Live-validation follow-up: API-event session linkage ────────────────────────────
+// The client must send x-atlas-flight-session / x-atlas-device-id on its API calls so the
+// server-side api_response events (FR2 middleware) can be linked to the client session.
+
+test('LINKAGE: client requestHeaders is exported, TOTAL, and inert (empty) when off', () => {
+  assert.equal(typeof client.requestHeaders, 'function');
+  const h = client.requestHeaders();
+  assert.deepEqual(h, {}, 'no flight headers when the recorder is inactive → byte-identical requests');
+});
+
+test('LINKAGE: app.js api() forwards the flight-session headers when active', () => {
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  // The api() header object spreads the recorder headers so every /api call is linkable.
+  assert.match(appSrc, /atlasFlightRecorder[\s\S]{0,60}requestHeaders\(\)/, 'api() must spread flightRecorder.requestHeaders()');
+});
+
+test('LINKAGE: the server reads those exact headers into the api_response event', () => {
+  const idx = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+  assert.match(idx, /x-atlas-flight-session/, 'middleware reads the flight session header');
+  assert.match(idx, /x-atlas-device-id/, 'middleware reads the device header');
+});
+
 // ── FR4: Settings → Debug UX ────────────────────────────────────────────────────────
 
 test('FR4: markIssue / getSessionId are TOTAL and inert when the recorder is off', () => {
