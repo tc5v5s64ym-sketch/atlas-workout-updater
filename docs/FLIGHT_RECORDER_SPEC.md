@@ -59,7 +59,7 @@ error | latency_ms
 - `device_id` — stable random non-PII id in `localStorage`; blank if absent.
 - `ui_snapshot_json` — a broad UI-state snapshot (not only rendered HTML/JSON): visible cards, visible tiles, active card, visible CTAs/buttons, modal shown, toast/banner shown, primary coach message shown, composer state. Named `ui_snapshot_json` (not `rendered_ui_json`) so it can grow to hold more UI state without a rename.
 - `session_state_json` — `activePlannedSession`, `suggestedPlan`, `plannedExerciseOrder`, `sessionCompleted`, `remainingPlannedExercises`, `firstUnloggedPlannedLift`.
-- `request_summary` / `response_summary` — redacted, truncated **summaries** (method + endpoint + status + shape + key fields), not raw bodies.
+- `request_summary` / `response_summary` — **shape summaries, never raw field values.** `request_summary` is the body's top-level keys + size (e.g. `{message, notes} (412 chars)`); `response_summary` is the status. This deliberately keeps **workout content** (notes, weights, free text in `/api/log-workout` et al.) out of the debug tab — `redactBugPayload` scrubs *secret-shaped* values but not *workout data*, so the safe design emits no values at all. (Owner decision 2026-07-05, honoring the "prefer summaries for large JSON" guardrail; can be switched to full-redacted-body fidelity if the owner later prefers.)
 - `decision_summary_json` — trimmed engine/router verdict where safe (the same trimmed shape `coachDecisionSummary.js` emits — never the full internal object).
 - `shadow_refs_json` — `{ brain: {created, route, count}, intent: {created, route, count} }` (see §5).
 

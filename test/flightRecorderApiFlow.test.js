@@ -113,17 +113,22 @@ test('real (non-sim) traffic records regardless of sheet (production records to 
   assert.equal(appended.length, 1, 'a real user request on a production server records to production Flight_Recorder');
 });
 
-test('request bodies are redacted + summarized before they become a row', async () => {
+test('request_summary is a SHAPE summary — top-level keys + size, never raw values', async () => {
   const appended = setup();
   withFlag('1', () => flightRecorder.recordApiFlow({
     ...baseFlow,
-    request_body: { message: 'hi', token: 'sk-proj-ABCDEFGH12345678' }
+    // A log-workout-shaped body: workout content + a secret-shaped value.
+    request_body: { message: 'felt heavy today', notes: 'tweaked my shoulder', token: 'sk-proj-ABCDEFGH12345678' }
   }, { sheetIsSandbox: true }));
   await tick();
-  const row = appended[0].rows[0];
-  const requestSummary = row[12]; // request_summary column
-  assert.ok(requestSummary.includes('message'), 'body summarized');
-  assert.ok(!/sk-proj-ABCDEFGH12345678/.test(requestSummary), 'secret value scrubbed');
+  const requestSummary = appended[0].rows[0][12]; // request_summary column
+  // Keys (the shape) are present...
+  assert.ok(requestSummary.includes('message') && requestSummary.includes('notes'), 'top-level keys captured');
+  assert.ok(/\(\d+ chars\)/.test(requestSummary), 'body size captured');
+  // ...but NO field VALUES ever appear — not workout content, not the secret.
+  assert.ok(!requestSummary.includes('felt heavy today'), 'workout content never emitted');
+  assert.ok(!requestSummary.includes('tweaked my shoulder'), 'workout notes never emitted');
+  assert.ok(!/sk-proj-ABCDEFGH12345678/.test(requestSummary), 'secret value never emitted');
 });
 
 test('GET with no body → blank request_summary', async () => {

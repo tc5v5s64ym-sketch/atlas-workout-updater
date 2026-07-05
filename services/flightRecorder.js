@@ -193,15 +193,25 @@ function _persistRows(rows, appendImpl) {
     .catch(() => { /* best-effort: persistence failure must never surface */ });
 }
 
-// Summarize an API request/response body into a short, safe string for a summary column.
-// Redaction + final truncation happen in buildFlightRow; this only shapes and pre-caps.
-function _summarizeBody(body) {
+// SHAPE summary of a request body — top-level keys + size only, NEVER raw field VALUES.
+// This honors the owner's data-volume guardrail ("prefer summaries for large JSON") and
+// deliberately keeps workout CONTENT (notes, weights, free text in /api/log-workout et al.)
+// out of the debug tab: redactBugPayload scrubs secret-shaped values but not workout data,
+// so the safe design is to never emit values here at all. Records enough to replay the
+// request SHAPE (which endpoint, which fields, how big) without its contents. Secret-shaped
+// value patterns in a key name are still scrubbed downstream by redactFlightEvent.
+function _shapeSummary(body) {
   if (body == null) return '';
   try {
-    const s = typeof body === 'string' ? body : JSON.stringify(body);
-    return _text(s);
+    if (Array.isArray(body)) return `[array length ${body.length}]`;
+    if (typeof body !== 'object') return `[${typeof body}]`;
+    const keys = Object.keys(body);
+    let size = 0;
+    try { size = JSON.stringify(body).length; } catch { size = 0; }
+    const shown = keys.slice(0, 40).join(', ');
+    return _text(`{${shown}${keys.length > 40 ? ', …' : ''}} (${size} chars)`);
   } catch {
-    return '[unserializable]';
+    return '[unsummarizable]';
   }
 }
 
@@ -233,7 +243,7 @@ function recordApiFlow(info, opts) {
       user_input: '',
       user_action: '',
       api_endpoint: method && path ? `${method} ${path}` : (path || ''),
-      request_summary: i.request_summary != null ? _text(i.request_summary) : _summarizeBody(i.request_body),
+      request_summary: i.request_summary != null ? _text(i.request_summary) : _shapeSummary(i.request_body),
       response_summary: i.response_summary != null ? String(i.response_summary) : '',
       decision_summary: i.decision_summary,
       shadow_refs: i.shadow_refs,
