@@ -97,6 +97,9 @@ test('simulation report shape is stable', async () => {
                 isSandboxSheet: true,
                 isProductionSheet: false,
               },
+              coachEngineMode: 'hybrid',
+              brainShadowPersistEnabled: true,
+              intentRouterMode: 'shadow',
             },
           }),
         };
@@ -121,6 +124,7 @@ test('simulation report shape is stable', async () => {
     'mode',
     'sheet_id',
     'server_sheet_verification',
+    'server_shadow_readiness',
     'warnings',
     'base_url',
     'scenario_count',
@@ -130,6 +134,7 @@ test('simulation report shape is stable', async () => {
     'retry_attempts',
     'retry_delay_ms',
     'run_summary',
+    'shadow_summary',
     'variation_summary',
     'results',
     'write_scenarios',
@@ -152,6 +157,9 @@ test('simulation report shape is stable', async () => {
     'runs_failed',
     'rows_written',
     'brain_shadow_entries',
+    'brain_shadow_diverged',
+    'brain_shadow_failures',
+    'intent_shadow_entries',
     'retry_attempts_used',
     'errors',
     'flagged_odd_results',
@@ -293,6 +301,9 @@ test('harness allows write mode only when server confirms sandbox and runs fake 
                 isSandboxSheet: true,
                 isProductionSheet: false,
               },
+              coachEngineMode: 'hybrid',
+              brainShadowPersistEnabled: true,
+              intentRouterMode: 'shadow',
             },
           }),
         };
@@ -355,6 +366,8 @@ test('harness allows write mode only when server confirms sandbox and runs fake 
     'fake_result_logged',
     'rows_written',
     'brain_shadow_entries',
+    'intent_observation_sent',
+    'intent_observation_status',
     'retry_attempts_used',
     'pass',
     'errors',
@@ -384,6 +397,192 @@ test('harness allows write mode only when server confirms sandbox and runs fake 
   assert.deepEqual(new Set(logPayloads[0].log_rows.map(row => row.exercise)), new Set(['Bench Press', 'Overhead Press', 'Triceps Pushdown']));
   assert.ok(logPayloads[0].log_rows.every(row => /^SIMULATION ONLY/.test(row.notes)));
   assert.equal(recommendationReplies.length, 0);
+});
+
+test('shadow observation is refused outside sandbox write mode', () => {
+  assert.throws(
+    () => validateSimulationConfig({ enableShadowObservation: true }),
+    /requires --mode write --sandbox/
+  );
+});
+
+test('sandbox write mode can explicitly observe mock prompts for Intent_Shadow', async () => {
+  const observedMessages = [];
+  const report = await runSimulation({
+    mode: 'write',
+    sheetId: SANDBOX_SHEET_ID,
+    enableWriteScenarios: true,
+    enableShadowObservation: true,
+    baseUrl: 'http://127.0.0.1:3000',
+    scenarios: [],
+    runs: 1,
+    now: new Date('2026-07-05T12:34:56.000Z'),
+    fetchImpl: async (url, requestOptions = {}) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/debug/config') {
+        return {
+          status: 200,
+          text: async () => JSON.stringify({
+            ok: true,
+            data: {
+              sheetVerification: {
+                canVerify: true,
+                idLast6: 'H3CeXE',
+                isSandboxSheet: true,
+                isProductionSheet: false,
+              },
+              coachEngineMode: 'hybrid',
+              brainShadowPersistEnabled: true,
+              intentRouterMode: 'shadow',
+            },
+          }),
+        };
+      }
+      if (parsed.pathname === '/api/debug/intent-observe') {
+        const payload = JSON.parse(requestOptions.body);
+        observedMessages.push(payload.message);
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { observed: true } }) };
+      }
+      if (parsed.pathname === '/api/recommend/next/BEN01') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { recommendation: 'Mock recommendation' } }) };
+      }
+      if (parsed.pathname === '/api/log-workout') {
+        const payload = JSON.parse(requestOptions.body);
+        return {
+          status: 200,
+          text: async () => JSON.stringify({
+            ok: true,
+            data: {
+              sheet_write: 'success',
+              log_rows_written: payload.log_rows.length,
+              effort_rows_written: 0,
+            },
+          }),
+        };
+      }
+      if (parsed.pathname === '/api/debug/brain-shadow') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { enabled: true, persist: true, count: 2, aggregates: { total: 2, failed: 1, diverged: 1 } } }) };
+      }
+      if (parsed.pathname === '/api/debug/intent-shadow') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { enabled: true, count: 1, entries: [{ ok: true }] } }) };
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.deepEqual(observedMessages, ['What should I bench next?']);
+  assert.equal(report.write_scenarios[0].intent_observation_sent, true);
+  assert.equal(report.write_scenarios[0].intent_observation_status, 200);
+  assert.equal(report.shadow_summary.brain.count, 2);
+  assert.equal(report.shadow_summary.intent.count, 1);
+  assert.equal(report.run_summary.brain_shadow_entries, 2);
+  assert.equal(report.run_summary.brain_shadow_diverged, 1);
+  assert.equal(report.run_summary.brain_shadow_failures, 1);
+  assert.equal(report.run_summary.intent_shadow_entries, 1);
+});
+
+test('shadow observation preflight refuses server that is not shadow-ready', async () => {
+  await assert.rejects(
+    () => runSimulation({
+      mode: 'write',
+      sheetId: SANDBOX_SHEET_ID,
+      enableWriteScenarios: true,
+      enableShadowObservation: true,
+      baseUrl: 'http://127.0.0.1:3000',
+      scenarios: [],
+      runs: 1,
+      fetchImpl: async (url) => {
+        const parsed = new URL(url);
+        if (parsed.pathname === '/api/debug/config') {
+          return {
+            status: 200,
+            text: async () => JSON.stringify({
+              ok: true,
+              data: {
+                sheetVerification: {
+                  canVerify: true,
+                  idLast6: 'H3CeXE',
+                  isSandboxSheet: true,
+                },
+                coachEngineMode: 'legacy',
+                brainShadowPersistEnabled: true,
+                intentRouterMode: 'shadow',
+              },
+            }),
+          };
+        }
+        throw new Error(`unexpected URL ${url}`);
+      },
+    }),
+    /coachEngineMode=legacy; expected hybrid/
+  );
+});
+
+test('shadow observation fails loudly when either shadow channel records zero entries', async () => {
+  const report = await runSimulation({
+    mode: 'write',
+    sheetId: SANDBOX_SHEET_ID,
+    enableWriteScenarios: true,
+    enableShadowObservation: true,
+    baseUrl: 'http://127.0.0.1:3000',
+    scenarios: [],
+    runs: 1,
+    now: new Date('2026-07-05T12:34:56.000Z'),
+    fetchImpl: async (url, requestOptions = {}) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/debug/config') {
+        return {
+          status: 200,
+          text: async () => JSON.stringify({
+            ok: true,
+            data: {
+              sheetVerification: {
+                canVerify: true,
+                idLast6: 'H3CeXE',
+                isSandboxSheet: true,
+              },
+              coachEngineMode: 'hybrid',
+              brainShadowPersistEnabled: true,
+              intentRouterMode: 'shadow',
+            },
+          }),
+        };
+      }
+      if (parsed.pathname === '/api/debug/intent-observe') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { observed: true } }) };
+      }
+      if (parsed.pathname === '/api/recommend/next/BEN01') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { recommendation: 'Mock recommendation' } }) };
+      }
+      if (parsed.pathname === '/api/log-workout') {
+        const payload = JSON.parse(requestOptions.body);
+        return {
+          status: 200,
+          text: async () => JSON.stringify({
+            ok: true,
+            data: {
+              sheet_write: 'success',
+              log_rows_written: payload.log_rows.length,
+              effort_rows_written: 0,
+            },
+          }),
+        };
+      }
+      if (parsed.pathname === '/api/debug/brain-shadow') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { enabled: true, persist: true, count: 0, aggregates: { total: 0, failed: 0, diverged: 0 } } }) };
+      }
+      if (parsed.pathname === '/api/debug/intent-shadow') {
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { enabled: true, count: 0, entries: [] } }) };
+      }
+      throw new Error(`unexpected URL ${url}`);
+    },
+  });
+
+  assert.equal(report.pass, false);
+  assert.deepEqual(
+    report.run_summary.flagged_odd_results.map(item => item.reason),
+    ['missing_brain_shadow_entries', 'missing_intent_shadow_entries']
+  );
 });
 
 test('harness retries transient sandbox write backpressure without weakening safety checks', async () => {

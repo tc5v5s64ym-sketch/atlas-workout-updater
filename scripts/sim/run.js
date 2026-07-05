@@ -17,6 +17,7 @@ function parseArgs(argv) {
     delayMs: 0,
     retryAttempts: undefined,
     retryDelayMs: undefined,
+    enableShadowObservation: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -34,6 +35,7 @@ function parseArgs(argv) {
     else if (arg === '--delay-ms') args.delayMs = next();
     else if (arg === '--retry-attempts') args.retryAttempts = next();
     else if (arg === '--retry-delay-ms') args.retryDelayMs = next();
+    else if (arg === '--enable-shadow-observation') args.enableShadowObservation = true;
     else if (arg === '--help' || arg === '-h') args.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -64,6 +66,7 @@ Options:
   --delay-ms N                 Delay between write runs to avoid Sheets quota. Default: 0
   --retry-attempts N           Transient retry attempts per local request. Default: 5
   --retry-delay-ms N           Delay before retrying transient quota/rate failures. Default: 65000
+  --enable-shadow-observation  Sandbox-gated: posts prompts to /api/debug/intent-observe
   --scenarios PATH             Scenario JSON file
   --output-dir PATH            Report output directory
 `);
@@ -85,6 +88,9 @@ async function main() {
     if (report.delay_ms) console.log(`Delay ms: ${report.delay_ms}`);
     console.log(`Retries used: ${report.run_summary.retry_attempts_used || 0}`);
     console.log(`Brain_Shadow entries: ${report.run_summary.brain_shadow_entries}`);
+    console.log(`Brain_Shadow diverged: ${report.run_summary.brain_shadow_diverged || 0}`);
+    console.log(`Brain_Shadow failures: ${report.run_summary.brain_shadow_failures || 0}`);
+    console.log(`Intent_Shadow entries: ${report.run_summary.intent_shadow_entries || 0}`);
     if (report.variation_summary) {
       console.log(`Variation: exercises=${report.variation_summary.unique_exercises}, muscle_groups=${report.variation_summary.unique_muscle_groups}, session_types=${report.variation_summary.session_types.join(',')}`);
     }
