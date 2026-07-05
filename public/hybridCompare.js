@@ -49,15 +49,21 @@
     };
   }
 
-  // Brian (One-Brain orchestrator) summary — projects the CoachingDecision
-  // attached at recommendation.brian. Returns null when absent so the card
-  // logic can stay a simple truthiness check.
+  // Brian (One-Brain orchestrator) summary — projects the decision attached at
+  // recommendation.brian. Returns null when absent so the card logic can stay a
+  // simple truthiness check. Dual-shape: recommendation.brian may be EITHER the
+  // full CoachingDecision (brian mode / legacy fixtures — nested payload/
+  // confidence/safety) OR the trimmed server-side summary now attached in HYBRID
+  // mode (services/coachShadow.summarizeBrianDecision — the same fields, flat, so
+  // the full decision no longer ships to the client). Read whichever is present.
   function summarizeBrian(recommendation) {
     const b = _isObj(recommendation) && _isObj(recommendation.brian) ? recommendation.brian : null;
     if (!b) return null;
-    const payload = _isObj(b.payload) ? b.payload : {};
-    const confidence = _isObj(b.confidence) ? b.confidence : {};
-    const safety = _isObj(b.safety) ? b.safety : {};
+    const full = _isObj(b.payload); // full CoachingDecision vs. flat trimmed summary
+    const payload = full ? b.payload : b;
+    const tier = full ? (_isObj(b.confidence) ? b.confidence.tier : null) : b.confidence_tier;
+    const cAction = full ? (_isObj(b.confidence) ? b.confidence.action : null) : b.confidence_action;
+    const sLevel = full ? (_isObj(b.safety) ? b.safety.level : null) : b.safety_level;
     return {
       decision_type: typeof b.decision_type === 'string' ? b.decision_type : null,
       status: typeof b.status === 'string' ? b.status : null,
@@ -65,9 +71,9 @@
       target_weight: typeof payload.target_weight === 'number' ? payload.target_weight : null,
       target_reps: typeof payload.target_reps === 'number' ? payload.target_reps : null,
       rationale: typeof payload.rationale === 'string' ? payload.rationale : null,
-      confidence_tier: typeof confidence.tier === 'string' ? confidence.tier : null,
-      confidence_action: typeof confidence.action === 'string' ? confidence.action : null,
-      safety_level: typeof safety.level === 'string' ? safety.level : null
+      confidence_tier: typeof tier === 'string' ? tier : null,
+      confidence_action: typeof cAction === 'string' ? cAction : null,
+      safety_level: typeof sLevel === 'string' ? sLevel : null
     };
   }
 

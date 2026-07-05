@@ -60,6 +60,7 @@ const { buildRunners } = require('./services/coachRunners');
 const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrianPickOverride } = require('./services/coachEnginePromotion');
 const { foldJustLoggedSet } = require('./services/ephemeralSetFold');
 const { observeChatMessage, getShadowLog } = require('./services/intentShadow');
+const { observeBrianDecision, getCoachShadowLog, summarizeBrianDecision, summarizeLegacyRecommendation } = require('./services/coachShadow');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
 const { planStateFromContext, buildSessionCloseAnswer } = require('./services/sessionPlanExecutor');
@@ -2203,6 +2204,18 @@ app.get('/api/debug/intent-shadow', (req, res) => {
   return standardSuccess(req, res, 'Intent-router shadow log', getShadowLog());
 });
 
+// GET /api/debug/coach-shadow — read-only observability for the coach-engine
+// (ATLAS_COACH_ENGINE=hybrid|brian) shadow lane: the capped in-memory ring of
+// composed Brain decisions (summarized) with legacy-vs-brian divergence + basic
+// aggregate counts. Auth-gated like every /api route; no Sheets, no writes, resets
+// on restart by design. `mode` echoes the current engine mode for context.
+app.get('/api/debug/coach-shadow', (req, res) => {
+  return standardSuccess(req, res, 'Coach-engine shadow log', {
+    mode: process.env.ATLAS_COACH_ENGINE || 'legacy',
+    ...getCoachShadowLog(),
+  });
+});
+
 // POST /api/debug/intent-observe — Phase C2 (widened 2026-07-03). The single
 // composer chokepoint posts EVERY free-text submission here so the shadow lane
 // observes all typed messages, not just the residue that reached /api/coach/chat.
@@ -2409,10 +2422,16 @@ app.get('/api/plan/today', async (req, res) => {
               source: 'api',
               asOf,
             });
+            // Capture the legacy prescription BEFORE any brian override mutates it.
+            const legacySummary = summarizeLegacyRecommendation(rec);
+            const t0 = Date.now();
             const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
             const validation = validateCoachingDecision(brian);
+            const ms = Date.now() - t0;
             if (brian && validation.valid) {
-              rec.brian = brian;
+              // hybrid attaches a trimmed SUMMARY (never the raw decision) to the
+              // wire; brian keeps the full decision it drives from.
+              rec.brian = coachEngineMode === 'hybrid' ? summarizeBrianDecision(brian) : brian;
             }
             if (coachEngineMode === 'brian') {
               const plan = planBrianOverride(rec, brian, validation, activeDeload);
@@ -2422,6 +2441,19 @@ app.get('/api/plan/today', async (req, res) => {
               } else {
                 rec.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
               }
+            }
+            // Server-side shadow observation (ring-only). TOTAL — never affects
+            // the served response. Records the composed decision (as a summary) +
+            // legacy-vs-brian divergence so real traffic is reviewable over time.
+            if (brian && validation.valid) {
+              try {
+                observeBrianDecision({
+                  route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode,
+                  decision: brian, legacy: legacySummary, ms,
+                  driven_by: rec.engine_source ? rec.engine_source.driven_by : null,
+                  reason: rec.engine_source ? rec.engine_source.reason : null,
+                });
+              } catch (_) { /* observation must never affect the response */ }
             }
           } catch (_) {
             if (coachEngineMode === 'brian') {
@@ -2482,10 +2514,19 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
           source: 'api',
           asOf,
         });
+        // Capture the legacy recommended intent BEFORE any brian override mutates it.
+        const recIntentBefore = Array.isArray(result.intents) ? result.intents.find(i => i && i.recommended === true) : null;
+        const legacySummary = recIntentBefore
+          ? { recommended_label: typeof recIntentBefore.label === 'string' ? recIntentBefore.label : null,
+              exercise_count: Array.isArray(recIntentBefore.exercises) ? recIntentBefore.exercises.length : null }
+          : null;
+        const t0 = Date.now();
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
         const validation = validateCoachingDecision(brian);
+        const ms = Date.now() - t0;
         if (brian && validation.valid) {
-          result.brian = brian;
+          // hybrid attaches a trimmed SUMMARY (never the raw decision) to the wire.
+          result.brian = coachEngineMode === 'hybrid' ? summarizeBrianDecision(brian) : brian;
         }
         if (coachEngineMode === 'brian') {
           const plan = planBrianPickOverride(result, brian, validation);
@@ -2495,6 +2536,19 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
           } else {
             result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
           }
+        }
+        // Server-side shadow observation (ring-only). TOTAL — never affects the
+        // served response. The #849 serve rail keeps Coach's Pick brian-serve-only,
+        // but the composed workout decision is still observed here in BOTH modes.
+        if (brian && validation.valid) {
+          try {
+            observeBrianDecision({
+              route: '/api/plan/intent-recommendation', mode: coachEngineMode,
+              decision: brian, legacy: legacySummary, ms,
+              driven_by: result.engine_source ? result.engine_source.driven_by : null,
+              reason: result.engine_source ? result.engine_source.reason : null,
+            });
+          } catch (_) { /* observation must never affect the response */ }
         }
       } catch (_) {
         if (coachEngineMode === 'brian') {
@@ -2673,10 +2727,15 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           asOf,
           readers: { ...defaultReaders(), getLogRows: async () => foldedRows },
         });
+        // Capture the legacy prescription BEFORE any brian override mutates it.
+        const legacySummary = summarizeLegacyRecommendation(recommendation);
+        const t0 = Date.now();
         const brian = orchestrate({ envelope, snapshot, runners: buildRunners() });
         const validation = validateCoachingDecision(brian);
+        const ms = Date.now() - t0;
         if (brian && validation.valid) {
-          recommendation.brian = brian;
+          // hybrid attaches a trimmed SUMMARY (never the raw decision) to the wire.
+          recommendation.brian = coachEngineMode === 'hybrid' ? summarizeBrianDecision(brian) : brian;
         }
         if (coachEngineMode === 'brian') {
           const plan = planBrianOverride(recommendation, brian, validation, activeDeload, { justLoggedSet, ephemeralSetFolded });
@@ -2686,6 +2745,19 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           } else {
             recommendation.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
           }
+        }
+        // Server-side shadow observation (ring-only). TOTAL — never affects the
+        // served response. Records the composed decision (as a summary) +
+        // legacy-vs-brian divergence + elapsed time so real traffic is reviewable.
+        if (brian && validation.valid) {
+          try {
+            observeBrianDecision({
+              route: '/api/recommend/next', liftCode, mode: coachEngineMode,
+              decision: brian, legacy: legacySummary, ms,
+              driven_by: recommendation.engine_source ? recommendation.engine_source.driven_by : null,
+              reason: recommendation.engine_source ? recommendation.engine_source.reason : null,
+            });
+          } catch (_) { /* observation must never affect the response */ }
         }
       } catch (_) {
         // Must never affect the response beyond the brian-mode metadata —
