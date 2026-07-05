@@ -11,6 +11,26 @@
 
 function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 
+// ── Brian serve-eligibility rail ─────────────────────────────────────────────
+// A safety rail, NOT the final capability-manifest design. HYBRID shadow always
+// composes and observes the full Brain decision (the Orchestrator is untouched by
+// this); this rail only gates whether `brian` SERVE mode may DRIVE a user-facing
+// response. A decision type is serve-eligible only when the Brain path producing it
+// is runner-complete and vetted for production serving:
+//   - `progression` IS eligible — a single guarded per-lift number with real
+//     legacy fallbacks (active deload, just-logged anchor, clarification).
+//   - `workout` (Coach's Pick / best_workout) is NOT eligible yet — its session-
+//     generation capability stack (fatigue/volume/equipment) is not runner-complete,
+//     so a served pick would be a partial decision rendered as authoritative.
+// This is deliberately a coarse decision-type allowlist. Expressing required-vs-
+// optional/defaulted capability semantics precisely in the manifest is deferred
+// (see BACKLOG.md → One-Brain serve-eligibility follow-up). Flipping a type to
+// eligible is an owner-gated promotion decision, never done implicitly here.
+const SERVE_ELIGIBLE_DECISION_TYPES = new Set(['progression']);
+function isBrianServeEligible(decisionType) {
+  return SERVE_ELIGIBLE_DECISION_TYPES.has(decisionType);
+}
+
 /**
  * Decide whether `brian` is eligible to drive `recommendation`, and if so,
  * compute the override values. Returns:
@@ -50,6 +70,12 @@ function planBrianOverride(recommendation, brian, validation, activeDeload, cont
   }
   if (brian.decision_type !== 'progression') {
     return { eligible: false, reason: 'wrong_decision_type' };
+  }
+  // Serve-eligibility rail: `progression` IS serve-eligible today, so this is a
+  // no-op here; kept explicit so both serve paths share one rail and flipping a
+  // type off gates them together.
+  if (!isBrianServeEligible(brian.decision_type)) {
+    return { eligible: false, reason: 'not_serve_eligible' };
   }
   const payload = _isObj(brian.payload) ? brian.payload : {};
   const hasWeight = typeof payload.target_weight === 'number';
@@ -119,6 +145,11 @@ function planBrianPickOverride(result, brian, validation) {
   if (brian.decision_type !== 'workout') {
     return { eligible: false, reason: 'wrong_decision_type' };
   }
+  // Serve-eligibility rail: `workout` (Coach's Pick) is not serve-eligible yet, so
+  // brian falls back to legacy while hybrid still shadows the composed pick.
+  if (!isBrianServeEligible(brian.decision_type)) {
+    return { eligible: false, reason: 'not_serve_eligible' };
+  }
   const payload = _isObj(brian.payload) ? brian.payload : {};
   const blocks = Array.isArray(payload.blocks) ? payload.blocks.filter(_isObj) : [];
   const prescribed = blocks.filter(b =>
@@ -179,4 +210,5 @@ function applyBrianPickOverride(result, plan) {
 module.exports = {
   planBrianOverride, applyBrianOverride, brianVerdictText,
   planBrianPickOverride, applyBrianPickOverride,
+  isBrianServeEligible,
 };

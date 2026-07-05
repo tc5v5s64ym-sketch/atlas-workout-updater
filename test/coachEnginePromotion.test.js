@@ -282,7 +282,7 @@ describe('brian-mode composition (real Orchestrator + coachEnginePromotion)', ()
 
 // ─── Coach's Pick promotion (owner-approved 2026-07-02) ─────────────────────
 
-const { planBrianPickOverride, applyBrianPickOverride } = require('../services/coachEnginePromotion');
+const { planBrianPickOverride, applyBrianPickOverride, isBrianServeEligible } = require('../services/coachEnginePromotion');
 
 function legacyPickResult() {
   return {
@@ -316,29 +316,36 @@ const ANSWERED_WORKOUT = {
   safety: { level: 'green', flags: [], blocking: false },
 };
 
+describe('isBrianServeEligible', () => {
+  it('progression IS serve-eligible; workout (Coach\'s Pick) and every other type are NOT', () => {
+    // The serve rail is a coarse decision-type allowlist. `progression` is the only
+    // type cleared to DRIVE a user-facing brian response today; `workout` (Coach's
+    // Pick) and the rest stay shadow-only until owner-gated promotion.
+    assert.equal(isBrianServeEligible('progression'), true);
+    assert.equal(isBrianServeEligible('workout'), false);
+    assert.equal(isBrianServeEligible('substitution'), false);
+    assert.equal(isBrianServeEligible('recovery'), false);
+    assert.equal(isBrianServeEligible('clarification_needed'), false);
+    assert.equal(isBrianServeEligible(undefined), false);
+  });
+});
+
 describe('planBrianPickOverride', () => {
-  it('eligible: maps every prescribed block verbatim (reps → target_reps)', () => {
+  it('serve rail: a valid, answered workout is NOT serve-eligible yet → not_serve_eligible', () => {
+    // Coach's Pick is not cleared for serving: brian falls back to legacy while
+    // hybrid still shadow-composes the same decision (the rail gates SERVE, not
+    // composition). A fully valid workout returns the rail reason, not eligible.
     const plan = planBrianPickOverride(legacyPickResult(), ANSWERED_WORKOUT, VALID);
-    assert.equal(plan.eligible, true, `got reason=${plan.reason}`);
-    assert.equal(plan.exercises.length, 2);
-    const [squat, bench] = plan.exercises;
-    assert.deepEqual(squat, {
-      exercise: 'Back Squat', lift_code: 'SQUAT', target_weight: 250,
-      target_reps: 5, target_sets: 3, target_rir: 2, reason: 'Brian: on target',
-    });
-    assert.equal(bench.target_weight, 210);
-    assert.equal(bench.reason, 'Brian: underloaded');
+    assert.equal(plan.eligible, false, 'workout must not be serve-eligible while the rail holds');
+    assert.equal(plan.reason, 'not_serve_eligible');
   });
 
-  it('ineligible: invalid decision / clarification / wrong type / no numbers / no recommended intent', () => {
+  it('pre-rail validity gates still fire (invalid / clarification / wrong type)', () => {
+    // These reasons are checked BEFORE the serve rail, so they still surface the
+    // specific defect rather than the generic not_serve_eligible.
     assert.equal(planBrianPickOverride(legacyPickResult(), ANSWERED_WORKOUT, INVALID).reason, 'invalid_decision');
     assert.equal(planBrianPickOverride(legacyPickResult(), CLARIFICATION, VALID).reason, 'needs_clarification');
     assert.equal(planBrianPickOverride(legacyPickResult(), ANSWERED_PROGRESSION, VALID).reason, 'wrong_decision_type');
-    const noNumbers = { ...ANSWERED_WORKOUT, payload: { ...ANSWERED_WORKOUT.payload, blocks: [{ exercise: 'Back Squat' }] } };
-    assert.equal(planBrianPickOverride(legacyPickResult(), noNumbers, VALID).reason, 'no_prescribed_numbers');
-    const noRec = legacyPickResult();
-    noRec.intents.forEach(i => { i.recommended = false; });
-    assert.equal(planBrianPickOverride(noRec, ANSWERED_WORKOUT, VALID).reason, 'no_recommended_intent');
   });
 
   it('never throws on garbage', () => {
@@ -348,11 +355,22 @@ describe('planBrianPickOverride', () => {
 });
 
 describe('applyBrianPickOverride', () => {
+  // planBrianPickOverride does not emit an eligible plan while the serve rail holds
+  // Coach's Pick back (see the rail test above); applyBrianPickOverride is a pure
+  // applier, exercised here with the exact plan shape the mapper emits once
+  // `workout` is promoted to serve-eligible — so the apply-swap contract stays
+  // pinned and ready.
+  const PICK_PLAN = {
+    eligible: true, reason: null, label: 'Full Body', focus: 'full_body',
+    exercises: [
+      { exercise: 'Back Squat', lift_code: 'SQUAT', target_weight: 250, target_reps: 5, target_sets: 3, target_rir: 2, reason: 'Brian: on target' },
+      { exercise: 'Bench Press', lift_code: 'BENCH', target_weight: 210, target_reps: 5, target_sets: 3, target_rir: 2, reason: 'Brian: underloaded' },
+    ],
+  };
   it('swaps exercises + labels verbatim, strips exercise-derived siblings, keeps readiness facts (review #813)', () => {
     const result = legacyPickResult();
     const before = JSON.parse(JSON.stringify(result));
-    const plan = planBrianPickOverride(result, ANSWERED_WORKOUT, VALID);
-    applyBrianPickOverride(result, plan);
+    applyBrianPickOverride(result, PICK_PLAN);
 
     const rec = result.intents.find(i => i.recommended);
     assert.equal(rec.exercises.length, 2);
@@ -372,7 +390,7 @@ describe('applyBrianPickOverride', () => {
   });
 });
 
-describe('pick composition (real Orchestrator → planBrianPickOverride)', () => {
+describe('pick composition (real Orchestrator → serve rail)', () => {
   const ASOF = '2026-06-30T14:00:00Z';
   const FULL_BODY = (() => {
     const dates = ['2026-05-16', '2026-05-20', '2026-05-24', '2026-05-28', '2026-06-01', '2026-06-05'];
@@ -385,7 +403,7 @@ describe('pick composition (real Orchestrator → planBrianPickOverride)', () =>
     return out;
   })();
 
-  it('rich history → answered workout → the pick\'s exercises are Brian\'s blocks verbatim', async () => {
+  it('rich history → Brian fully composes an answered workout, but the serve rail withholds it (shadow observes, serve refuses)', async () => {
     const envelope = buildIntentEnvelope({ type: 'best_workout', constraints: {}, source: 'api', asOf: ASOF });
     const snapshot = await assembleState({
       readers: {
@@ -400,17 +418,22 @@ describe('pick composition (real Orchestrator → planBrianPickOverride)', () =>
     assert.equal(validation.valid, true, `errors: ${validation.errors.join(' | ')}`);
     assert.equal(brian.decision_type, 'workout');
 
-    const result = legacyPickResult();
-    const plan = planBrianPickOverride(result, brian, validation);
-    assert.equal(plan.eligible, true, `got reason=${plan.reason}`);
-    applyBrianPickOverride(result, plan);
+    // Composition proof (exactly what hybrid shadow observes — the rail never
+    // touches this): Brian assembled a full, prescribed workout.
+    assert.ok(Array.isArray(brian.payload.blocks) && brian.payload.blocks.length > 0,
+      'Brian must compose at least one prescribed block');
+    for (const b of brian.payload.blocks) {
+      assert.equal(typeof b.exercise, 'string');
+      assert.equal(typeof b.target_weight, 'number', 'every composed block carries a real prescribed weight');
+    }
 
-    const rec = result.intents.find(i => i.recommended);
-    assert.equal(rec.exercises.length, brian.payload.blocks.length);
-    brian.payload.blocks.forEach((b, i) => {
-      assert.equal(rec.exercises[i].exercise, b.exercise);
-      assert.equal(rec.exercises[i].target_weight, b.target_weight, 'weights trace verbatim from brian.payload');
-      assert.equal(rec.exercises[i].target_reps, b.reps);
-    });
+    // Serve rail: brian mode must NOT drive Coach's Pick — it falls back to legacy
+    // and leaves the legacy result byte-for-byte untouched.
+    const result = legacyPickResult();
+    const before = JSON.parse(JSON.stringify(result));
+    const plan = planBrianPickOverride(result, brian, validation);
+    assert.equal(plan.eligible, false, 'Coach\'s Pick must not be served while the rail holds');
+    assert.equal(plan.reason, 'not_serve_eligible');
+    assert.deepEqual(result, before, 'legacy result stays untouched when brian falls back');
   });
 });
