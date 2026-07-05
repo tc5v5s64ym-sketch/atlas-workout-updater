@@ -5,6 +5,8 @@ const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const privateKeyRaw = process.env.GOOGLE_PRIVATE_KEY;
 const logSheetName = process.env.LOG_SHEET_NAME || 'Log_Cleaned';
 const effortSheetName = process.env.EFFORT_SHEET_NAME || 'Effort';
+const productionSpreadsheetId = '1XQaKGJL5uoE3yFw4Z0wiSfAlc-JnufS2Z7psODuDcA0';
+const sandboxSpreadsheetId = '1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE';
 
 function validateConfig() {
   if (!spreadsheetId || !clientEmail || !privateKeyRaw) {
@@ -16,6 +18,20 @@ function validateConfig() {
 
 function getPrivateKey() {
   return privateKeyRaw.replace(/\\n/g, '\n');
+}
+
+function getSafeSpreadsheetConfig(environment = process.env.NODE_ENV) {
+  const id = spreadsheetId ? String(spreadsheetId).trim() : '';
+  const localMode = environment === 'development' || environment === 'test' || environment === 'local';
+  return {
+    canVerify: Boolean(id),
+    source: 'GOOGLE_SHEETS_ID',
+    idLast6: id ? id.slice(-6) : null,
+    id: localMode && id ? id : null,
+    exactIdExposed: Boolean(localMode && id),
+    isSandboxSheet: id === sandboxSpreadsheetId,
+    isProductionSheet: id === productionSpreadsheetId
+  };
 }
 
 // Append is NOT idempotent — each successful call inserts another row, and the
@@ -317,6 +333,7 @@ module.exports = {
   getHeaderRow,
   getSpreadsheetTabs,
   ensureSheetTab,
+  getSafeSpreadsheetConfig,
   isTransientAppendError,
   retryWithBackoff,
   logSheetName,
