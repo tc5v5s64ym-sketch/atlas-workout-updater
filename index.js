@@ -61,7 +61,7 @@ const { buildRunners } = require('./services/coachRunners');
 const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrianPickOverride } = require('./services/coachEnginePromotion');
 const { foldJustLoggedSet } = require('./services/ephemeralSetFold');
 const { observeChatMessage, getShadowLog } = require('./services/intentShadow');
-const { observeBrianDecision, getCoachShadowLog, summarizeBrianDecision, summarizeLegacyRecommendation } = require('./services/coachShadow');
+const { summarizeBrianDecision, summarizeLegacyRecommendation } = require('./services/coachDecisionSummary');
 const { observeBrainOrchestration, observeBrainFailure, getBrainShadowLog } = require('./services/brainShadow');
 const { computeReadiness } = require('./services/readinessSignal');
 const { enrichCoachFacts } = require('./services/liveIntelligence');
@@ -2206,18 +2206,6 @@ app.get('/api/debug/intent-shadow', (req, res) => {
   return standardSuccess(req, res, 'Intent-router shadow log', getShadowLog());
 });
 
-// GET /api/debug/coach-shadow — read-only observability for the coach-engine
-// (ATLAS_COACH_ENGINE=hybrid|brian) shadow lane: the capped in-memory ring of
-// composed Brain decisions (summarized) with legacy-vs-brian divergence + basic
-// aggregate counts. Auth-gated like every /api route; no Sheets, no writes, resets
-// on restart by design. `mode` echoes the current engine mode for context.
-app.get('/api/debug/coach-shadow', (req, res) => {
-  return standardSuccess(req, res, 'Coach-engine shadow log', {
-    mode: process.env.ATLAS_COACH_ENGINE || 'legacy',
-    ...getCoachShadowLog(),
-  });
-});
-
 // GET /api/debug/brain-shadow — read-only observability for the Brain ORCHESTRATOR
 // shadow lane (services/brainShadow): the capped in-memory ring of EVERY
 // orchestration at the three coach-engine gates — wins AND failures (declined /
@@ -2469,19 +2457,6 @@ app.get('/api/plan/today', async (req, res) => {
                 rec.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
               }
             }
-            // Server-side shadow observation (ring-only). TOTAL — never affects
-            // the served response. Records the composed decision (as a summary) +
-            // legacy-vs-brian divergence so real traffic is reviewable over time.
-            if (brian && validation.valid) {
-              try {
-                observeBrianDecision({
-                  route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode,
-                  decision: brian, legacy: legacySummary, ms,
-                  driven_by: rec.engine_source ? rec.engine_source.driven_by : null,
-                  reason: rec.engine_source ? rec.engine_source.reason : null,
-                });
-              } catch (_) { /* observation must never affect the response */ }
-            }
           } catch (_) {
             // The Brain CRASHED for this lift — record the failure the empty catch
             // used to swallow, then fall back to legacy exactly as before.
@@ -2580,19 +2555,6 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
           } else {
             result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
           }
-        }
-        // Server-side shadow observation (ring-only). TOTAL — never affects the
-        // served response. The #849 serve rail keeps Coach's Pick brian-serve-only,
-        // but the composed workout decision is still observed here in BOTH modes.
-        if (brian && validation.valid) {
-          try {
-            observeBrianDecision({
-              route: '/api/plan/intent-recommendation', mode: coachEngineMode,
-              decision: brian, legacy: legacySummary, ms,
-              driven_by: result.engine_source ? result.engine_source.driven_by : null,
-              reason: result.engine_source ? result.engine_source.reason : null,
-            });
-          } catch (_) { /* observation must never affect the response */ }
         }
       } catch (_) {
         // The Brain CRASHED — record the failure the empty catch used to swallow,
@@ -2802,19 +2764,6 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
           } else {
             recommendation.engine_source = { mode: 'brian', driven_by: 'legacy', reason: plan.reason };
           }
-        }
-        // Server-side shadow observation (ring-only). TOTAL — never affects the
-        // served response. Records the composed decision (as a summary) +
-        // legacy-vs-brian divergence + elapsed time so real traffic is reviewable.
-        if (brian && validation.valid) {
-          try {
-            observeBrianDecision({
-              route: '/api/recommend/next', liftCode, mode: coachEngineMode,
-              decision: brian, legacy: legacySummary, ms,
-              driven_by: recommendation.engine_source ? recommendation.engine_source.driven_by : null,
-              reason: recommendation.engine_source ? recommendation.engine_source.reason : null,
-            });
-          } catch (_) { /* observation must never affect the response */ }
         }
       } catch (_) {
         // The Brain CRASHED — record the failure the empty catch used to swallow.

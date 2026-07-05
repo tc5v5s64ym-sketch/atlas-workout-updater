@@ -54,7 +54,7 @@
   // simple truthiness check. Dual-shape: recommendation.brian may be EITHER the
   // full CoachingDecision (brian mode / legacy fixtures — nested payload/
   // confidence/safety) OR the trimmed server-side summary now attached in HYBRID
-  // mode (services/coachShadow.summarizeBrianDecision — the same fields, flat, so
+  // mode (services/coachDecisionSummary.summarizeBrianDecision — the same fields, flat, so
   // the full decision no longer ships to the client). Read whichever is present.
   function summarizeBrian(recommendation) {
     const b = _isObj(recommendation) && _isObj(recommendation.brian) ? recommendation.brian : null;

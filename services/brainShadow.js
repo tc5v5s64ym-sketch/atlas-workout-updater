@@ -3,16 +3,17 @@
 // Brain (Coach-engine) ORCHESTRATOR shadow lane — the missing observability that
 // must exist BEFORE ATLAS_COACH_ENGINE=hybrid can be safely flipped. Modeled on
 // services/intentShadow.js (capped in-memory ring + one console line + best-effort
-// append to an optional Sheets tab) and sibling to services/coachShadow.js.
+// append to an optional Sheets tab). This is the SINGLE coach-engine shadow
+// recorder; services/coachDecisionSummary.js only projects the trimmed decision
+// summary attached to the hybrid response (no ring, no endpoint).
 //
-// WHY a second shadow: services/coachShadow (observeBrianDecision) records only the
-// WINS — a composed decision that already validated. It never sees the Brain
-// DECLINE (a clarification / invalid decision) or CRASH (a thrown runner). Those
-// paths are silently swallowed by the empty catch blocks at the three orchestrate()
-// call sites in index.js, so today there is no record of how often the new engine
-// backs off vs. answers. This module records EVERY orchestration — wins AND
-// failures (ok:false + a reason) — so the owner can judge the Brain's real hit rate
-// and failure rate on live traffic before any promotion decision.
+// It records EVERY orchestration at the three coach-engine gates — a WIN (a composed
+// decision that validated) AND the Brain's DECLINE (a clarification / invalid
+// decision) or CRASH (a thrown runner). Those decline/crash paths would otherwise be
+// silently swallowed by the empty catch blocks at the orchestrate() call sites, so
+// without this there would be no record of how often the new engine backs off vs.
+// answers — the owner can judge the Brain's real hit rate and failure rate on live
+// traffic before any promotion decision.
 //
 // Per entry it captures the review signal named in the flip blocker: decision_type,
 // status, confidence tier, which DECLARED capabilities were skipped

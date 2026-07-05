@@ -218,7 +218,7 @@ test('hybrid mode: shadow observes Brian\'s deload-reduced Coach\'s Pick without
     // Shadow attach only — hybrid never sets engine_source (that is serve/brian).
     assert.equal(data.engine_source, undefined, 'hybrid must not drive/serve (no engine_source)');
 
-    // In hybrid the wire `.brian` is the TRIMMED summary (coachShadow.summarizeBrianDecision),
+    // In hybrid the wire `.brian` is the TRIMMED summary (coachDecisionSummary.summarizeBrianDecision),
     // not the raw decision — the composed blocks (lift_code/target_weight) live at
     // data.brian.blocks, not data.brian.payload.blocks.
     const brian = data.brian || {};

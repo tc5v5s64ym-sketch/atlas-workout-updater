@@ -28,7 +28,6 @@ const routeDefinitions = [
   { path: '/api/session/compile', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/config', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/intent-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
-  { path: '/api/debug/coach-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/brain-shadow', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/debug/intent-observe', methods: ['POST'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/bug-report', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
