@@ -55,6 +55,41 @@ const baseFlow = {
   app_version: 'abc1234'
 };
 
+// Live-validation follow-up: server-side api_response events must be LINKED to the active
+// client session — flight_session_id + device_id come from the request headers the client
+// now sends, and seq is a server-side per-session monotonic counter (it was blank before).
+test('SESSION LINKAGE: server events carry the client flight_session_id + device_id, and a per-session seq', () => {
+  withFlag('1', () => {
+    flightRecorder._resetForTesting();
+    const r1 = flightRecorder.recordApiFlow({ ...baseFlow, flight_session_id: 'FR-A', device_id: 'dev-A' }, { sheetIsSandbox: true });
+    const r2 = flightRecorder.recordApiFlow({ ...baseFlow, flight_session_id: 'FR-A', device_id: 'dev-A' }, { sheetIsSandbox: true });
+    const b1 = flightRecorder.recordApiFlow({ ...baseFlow, flight_session_id: 'FR-B', device_id: 'dev-B' }, { sheetIsSandbox: true });
+    assert.equal(r1.flight_session_id, 'FR-A');
+    assert.equal(r1.device_id, 'dev-A');
+    assert.equal(r1.seq, 1, 'seq starts at 1 for a session');
+    assert.equal(r2.seq, 2, 'seq is monotonic within a session');
+    assert.equal(b1.seq, 1, 'a different session gets its own seq sequence');
+    assert.equal(b1.flight_session_id, 'FR-B');
+  });
+});
+
+test('SESSION LINKAGE: no client session → seq stays blank (server cannot attribute it)', () => {
+  withFlag('1', () => {
+    flightRecorder._resetForTesting();
+    const r = flightRecorder.recordApiFlow(baseFlow, { sheetIsSandbox: true });
+    assert.equal(r.flight_session_id, '');
+    assert.equal(r.seq, '', 'unlinked server events keep a blank seq (no invented attribution)');
+  });
+});
+
+test('SESSION LINKAGE: an explicit seq still wins (back-compat)', () => {
+  withFlag('1', () => {
+    flightRecorder._resetForTesting();
+    const r = flightRecorder.recordApiFlow({ ...baseFlow, flight_session_id: 'FR-C', seq: 99 }, { sheetIsSandbox: true });
+    assert.equal(r.seq, 99);
+  });
+});
+
 test('flag OFF → recordApiFlow is a no-op and writes NOTHING (disabled-flag proof)', async () => {
   const appended = setup();
   const result = withFlag(undefined, () => flightRecorder.recordApiFlow(baseFlow, { sheetIsSandbox: true }));

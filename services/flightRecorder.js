@@ -60,6 +60,23 @@ const MAX_TEXT_CHARS = 2000;   // scalar text fields (user_input, summaries, err
 let _ring = [];                // newest first
 let _append = null;            // injectable Sheets appendRows; lazy-required otherwise
 
+// Server-side per-flight-session monotonic seq for api_response events. The client owns
+// its own seq for the events IT emits; server events (which the client can't number) get an
+// independent per-session counter here so they stay orderable within a session. Capped +
+// in-memory (diagnostics reset on restart, the right lifetime).
+const _seqBySession = new Map(); // flight_session_id -> last seq
+const SEQ_SESSIONS_MAX = 500;
+function _nextSeq(flightSessionId) {
+  if (!flightSessionId) return '';
+  const n = (_seqBySession.get(flightSessionId) || 0) + 1;
+  _seqBySession.set(flightSessionId, n);
+  if (_seqBySession.size > SEQ_SESSIONS_MAX) {
+    const oldest = _seqBySession.keys().next().value;
+    _seqBySession.delete(oldest);
+  }
+  return n;
+}
+
 function isFlightRecorderEnabled() {
   const v = process.env.ATLAS_FLIGHT_RECORDER;
   return v === '1' || v === 'true' || v === 'on';
@@ -235,7 +252,9 @@ function recordApiFlow(info, opts) {
     const event = {
       captured_at: new Date().toISOString(),
       flight_session_id: i.flight_session_id || '',
-      seq: typeof i.seq === 'number' ? i.seq : '',
+      // Link to the client session: an explicit seq wins; otherwise derive a server-side
+      // per-session seq from the client's flight_session_id (blank when unlinked).
+      seq: typeof i.seq === 'number' ? i.seq : _nextSeq(i.flight_session_id || ''),
       app_version: i.app_version || '',
       device_id: i.device_id || '',
       route: i.route || path || '',
@@ -337,6 +356,7 @@ function clearFlightRecorderLog() { _ring = []; }
 function _resetForTesting({ append } = {}) {
   _ring = [];
   _append = typeof append === 'function' ? append : null;
+  _seqBySession.clear();
 }
 
 module.exports = {
