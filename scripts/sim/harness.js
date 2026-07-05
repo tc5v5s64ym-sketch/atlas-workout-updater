@@ -5,6 +5,12 @@ const path = require('node:path');
 
 const SANDBOX_SHEET_ID = '1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE';
 
+// Marks every simulation request so the server-side Flight Recorder can identify sim
+// traffic (docs/FLIGHT_RECORDER_SPEC.md). Its isolation guard NEVER persists a
+// sim-marked request to a non-sandbox sheet — so a simulation can only ever write
+// Flight Recorder rows into the sandbox Flight_Recorder tab, never production.
+const SIMULATION_HEADERS = { 'x-atlas-simulation': '1' };
+
 const DEFAULT_ALLOWED_ENDPOINTS = [
   { method: 'POST', pattern: /^\/api\/coach\/chat$/ },
   { method: 'POST', pattern: /^\/api\/coach\/ask$/ },
@@ -415,6 +421,7 @@ async function verifyServerSheet(options, config) {
       method: 'GET',
       headers: {
         accept: 'application/json',
+        ...SIMULATION_HEADERS,
         ...(options.apiKey ? { 'x-atlas-api-key': options.apiKey } : {}),
       },
     });
@@ -461,6 +468,7 @@ async function requestJson(options, endpoint, request = {}) {
       method: request.method || 'GET',
       headers: {
         accept: 'application/json',
+        ...SIMULATION_HEADERS,
         ...(request.body ? { 'content-type': 'application/json' } : {}),
         ...(options.apiKey ? { 'x-atlas-api-key': options.apiKey } : {}),
         ...(request.headers || {}),
@@ -647,6 +655,7 @@ async function runScenario(scenario, options) {
       method: request.method,
       headers: {
         ...request.headers,
+        ...SIMULATION_HEADERS,
         ...(options.apiKey ? { 'x-atlas-api-key': options.apiKey } : {}),
       },
       body: request.body,
@@ -840,6 +849,7 @@ async function writeReports(report, outputDir) {
 
 module.exports = {
   SANDBOX_SHEET_ID,
+  SIMULATION_HEADERS,
   BLOCKED_ENDPOINT_PATTERNS,
   DEFAULT_ALLOWED_ENDPOINTS,
   validateSimulationConfig,

@@ -217,6 +217,47 @@ if (!gitVersion) {
   try { gitVersion = execSync('git describe --always --dirty', { encoding: 'utf8' }).trim(); } catch (_) { /* not a git repo or no tags */ }
 }
 if (!gitVersion) gitVersion = 'unknown';
+
+// Flight Recorder (docs/FLIGHT_RECORDER_SPEC.md) — server-side API-flow capture. OBSERVE-ONLY
+// and flag-gated (ATLAS_FLIGHT_RECORDER, default OFF): when off this middleware is a pure
+// pass-through and traffic is byte-identical. When on, it records one best-effort
+// `api_response` row per served /api request (never /api/flight/*) to the optional
+// Flight_Recorder tab on the server's OWN sheet — so a sandbox server records to the sandbox
+// tab and a production server to production. It NEVER reads or mutates the response, never
+// blocks the request (records on 'finish', fire-and-forget), and writes no workout/trust tab.
+// Simulation traffic (x-atlas-simulation header, set by scripts/sim/harness.js) is never
+// persisted to a non-sandbox sheet (isolation guard in recordApiFlow), so a simulation can
+// never write into the production Flight_Recorder — even a read-only sim pointed at prod.
+const { isFlightRecorderEnabled, recordApiFlow, getFlightRecorderLog } = require('./services/flightRecorder');
+app.use((req, res, next) => {
+  try {
+    if (!isFlightRecorderEnabled()) return next();
+    const flightPath = req.path || '';
+    if (!flightPath.startsWith('/api/') || flightPath.startsWith('/api/flight/')) return next();
+    const flightStartedAt = Date.now();
+    const isSimulation = /^(1|true|on|yes)$/i.test(String(req.get('x-atlas-simulation') || '').trim());
+    res.on('finish', () => {
+      try {
+        const body = req.body;
+        const requestBody = (req.method !== 'GET' && body && typeof body === 'object' && !Array.isArray(body)) ? body : null;
+        recordApiFlow({
+          method: req.method,
+          path: flightPath,
+          latency_ms: Date.now() - flightStartedAt,
+          response_summary: String(res.statusCode),
+          request_body: requestBody,
+          flight_session_id: req.get('x-atlas-flight-session') || '',
+          device_id: req.get('x-atlas-device-id') || '',
+          app_version: gitVersion,
+          is_simulation: isSimulation
+        }, { sheetIsSandbox: getSafeSpreadsheetConfig(process.env.NODE_ENV).isSandboxSheet === true });
+      } catch (_) { /* observe-only: telemetry must never surface to the served request */ }
+    });
+    return next();
+  } catch (_) {
+    return next();
+  }
+});
 const { readBuildInfo } = require('./services/buildInfo');
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
@@ -2219,6 +2260,14 @@ app.get('/api/debug/brain-shadow', (req, res) => {
     mode: process.env.ATLAS_COACH_ENGINE || 'legacy',
     ...getBrainShadowLog(),
   });
+});
+
+// GET /api/flight/recent — read-only Flight Recorder ring (docs/FLIGHT_RECORDER_SPEC.md):
+// the capped in-memory transcript (newest first) + aggregate counts, powering the
+// Settings → Debug surface. Auth-gated like every /api route; no Sheets read, no writes,
+// resets on restart by design. Empty/inert when ATLAS_FLIGHT_RECORDER is off.
+app.get('/api/flight/recent', (req, res) => {
+  return standardSuccess(req, res, 'Flight Recorder log', getFlightRecorderLog());
 });
 
 // POST /api/debug/intent-observe — Phase C2 (widened 2026-07-03). The single

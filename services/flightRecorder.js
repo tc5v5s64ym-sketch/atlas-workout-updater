@@ -58,6 +58,7 @@ const MAX_CELL_CHARS = 20000;  // per-cell cap — well under the ~50k Sheets pe
 const MAX_TEXT_CHARS = 2000;   // scalar text fields (user_input, summaries, error, …)
 
 let _ring = [];                // newest first
+let _append = null;            // injectable Sheets appendRows; lazy-required otherwise
 
 function isFlightRecorderEnabled() {
   const v = process.env.ATLAS_FLIGHT_RECORDER;
@@ -161,6 +162,95 @@ function recordEvent(event) {
   }
 }
 
+// ── FR2: server-side API-flow recording ──────────────────────────────────────────
+//
+// The simulation harness (scripts/sim/harness.js) is an HTTP CLIENT that drives a
+// running Atlas server; it has no separate append path. So recording API flows
+// SERVER-SIDE captures BOTH real app traffic and simulation traffic in one place, and
+// — because it appends via the standard sheets.appendRows, which targets the server's
+// own GOOGLE_SHEETS_ID — it AUTOMATICALLY writes to the sandbox Flight_Recorder when the
+// server is the sandbox sheet and the production Flight_Recorder when it is production.
+// (Sim WRITE mode already hard-refuses any server not confirmed as the sandbox sheet;
+// see verifyServerSheet.)
+//
+// Isolation guard (belt-and-suspenders): a request the harness marks as simulation
+// (x-atlas-simulation header) is NEVER persisted to a non-sandbox sheet — so even a
+// read-only sim pointed at a production server can never write sim noise into the
+// production Flight_Recorder tab. It is still kept in the in-memory ring (no sheet write).
+
+// Best-effort, fire-and-forget append of Flight Recorder rows. TOTAL and self-swallowing:
+// a missing tab, absent creds, or a transient error is silently ignored so the caller (a
+// response-finish hook) can NEVER be blocked or failed by telemetry persistence. Like the
+// shadow lanes, it does NOT ensure the tab first — the optional Flight_Recorder tab is an
+// owner setup step; a missing tab simply no-ops. Touches only Flight_Recorder — never a
+// workout/trust tab or the write path.
+function _persistRows(rows, appendImpl) {
+  Promise.resolve()
+    .then(() => {
+      const append = appendImpl || _append || require('../sheets').appendRows;
+      return append(FLIGHT_RECORDER_TAB, rows);
+    })
+    .catch(() => { /* best-effort: persistence failure must never surface */ });
+}
+
+// Summarize an API request/response body into a short, safe string for a summary column.
+// Redaction + final truncation happen in buildFlightRow; this only shapes and pre-caps.
+function _summarizeBody(body) {
+  if (body == null) return '';
+  try {
+    const s = typeof body === 'string' ? body : JSON.stringify(body);
+    return _text(s);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
+// Record ONE served API request/response as an `api_response` Flight Recorder event.
+// TOTAL and flag-gated: a no-op (returns undefined) unless ATLAS_FLIGHT_RECORDER is on, so
+// legacy traffic is byte-identical. Pushes to the in-memory ring and BEST-EFFORT appends
+// one row — EXCEPT simulation traffic against a non-sandbox sheet, which is ring-only (the
+// isolation guard). Returns the stored (redacted) event, or undefined on no-op/failure.
+//
+// info: { method, path, route, status/response_summary, latency_ms, request_body,
+//         flight_session_id, device_id, app_version, seq, error, is_simulation }
+// opts: { sheetIsSandbox, append }  — sheetIsSandbox from getSafeSpreadsheetConfig().
+function recordApiFlow(info, opts) {
+  try {
+    if (!isFlightRecorderEnabled()) return undefined;
+    const i = _isObj(info) ? info : {};
+    const o = _isObj(opts) ? opts : {};
+    const isSim = i.is_simulation === true;
+    const method = i.method ? String(i.method).toUpperCase() : '';
+    const path = i.path || i.route || '';
+    const event = {
+      captured_at: new Date().toISOString(),
+      flight_session_id: i.flight_session_id || '',
+      seq: typeof i.seq === 'number' ? i.seq : '',
+      app_version: i.app_version || '',
+      device_id: i.device_id || '',
+      route: i.route || path || '',
+      event_type: 'api_response',
+      user_input: '',
+      user_action: '',
+      api_endpoint: method && path ? `${method} ${path}` : (path || ''),
+      request_summary: i.request_summary != null ? _text(i.request_summary) : _summarizeBody(i.request_body),
+      response_summary: i.response_summary != null ? String(i.response_summary) : '',
+      decision_summary: i.decision_summary,
+      shadow_refs: i.shadow_refs,
+      error: i.error || '',
+      latency_ms: typeof i.latency_ms === 'number' ? i.latency_ms : '',
+      is_simulation: isSim
+    };
+    const stored = recordEvent(event);
+    // Isolation: simulation traffic is never persisted to a non-sandbox sheet.
+    if (isSim && o.sheetIsSandbox !== true) return stored;
+    _persistRows([buildFlightRow(event)], o.append);
+    return stored;
+  } catch (_) {
+    return undefined;
+  }
+}
+
 // Read-only snapshot for the future GET /api/flight/recent (and the Settings → Debug
 // surface): the ring newest-first plus basic aggregate counts.
 function getFlightRecorderLog() {
@@ -183,7 +273,10 @@ function getFlightRecorderLog() {
 // Clear the ring (ops/tests).
 function clearFlightRecorderLog() { _ring = []; }
 
-function _resetForTesting() { _ring = []; }
+function _resetForTesting({ append } = {}) {
+  _ring = [];
+  _append = typeof append === 'function' ? append : null;
+}
 
 module.exports = {
   FLIGHT_RECORDER_TAB,
@@ -196,6 +289,7 @@ module.exports = {
   buildFlightRow,
   buildFlightRows,
   recordEvent,
+  recordApiFlow,
   getFlightRecorderLog,
   clearFlightRecorderLog,
   _resetForTesting

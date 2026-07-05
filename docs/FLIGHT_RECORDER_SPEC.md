@@ -108,13 +108,24 @@ This bounds Sheets API calls and keeps the flush off the render/save path.
 ## 4. Backend / API capture points (`services/` + `index.js`)
 
 - **`services/flightRecorder.js`** — mirrors the shadow lanes: `isFlightRecorderEnabled()`, capped in-memory ring, `buildFlightRow(event)` / `buildFlightRows(events)`, `redactFlightEvent` (reusing `redactBugPayload` — defense in depth; the server never trusts client redaction). *(PR-FR1 ships this as the pure core, unwired.)*
-- **`POST /api/flight/ingest`** *(PR-FR2)* — `writeCapable:true`, added to the existing write rate-limiter list. Accepts a batch, redacts, `ensureSheetTab('Flight_Recorder', flightRecorderColumns)` once, appends in **one** `appendRows` call. Best-effort: the client ignores the result. No-op when the flag is off so a stale client can't force writes.
-- **`GET /api/flight/recent`** *(PR-FR2)* — read-only (`writeCapable:false`); returns the in-memory ring + current `flight_session_id`. Powers the Debug UX. Modeled on `GET /api/debug/brain-shadow`.
+- **Server-side API-flow recorder** *(PR-FR2, shipped)* — `recordApiFlow(info, opts)` builds one `api_response` event per served request, rings it, and **best-effort** appends one row via the standard `sheets.appendRows` (fire-and-forget, self-swallowing — a missing tab / bad creds / transient error can never surface). A thin **observe-only middleware** in `index.js` (registered once, flag-gated, skips `/api/flight/*`) records on `res.on('finish')` — it never reads or mutates the response and never blocks the request. Because it appends via `appendRows`, which targets the server's own `GOOGLE_SHEETS_ID`, a **sandbox server records to the sandbox `Flight_Recorder` and a production server to production** — the recorder introduces no second sheet target. This is what makes the recorder work for **both** real app traffic and the simulation harness (which is just an HTTP client driving the server). Per-request best-effort append is consistent with the existing shadow-lane volume; server-side batching is a possible future optimization (filed in `BACKLOG.md`).
+- **`GET /api/flight/recent`** *(PR-FR2, shipped)* — read-only (`writeCapable:false`); returns the in-memory ring + aggregates. Powers the Debug UX. Modeled on `GET /api/debug/brain-shadow`.
+- **`POST /api/flight/ingest`** *(PR-FR3)* — the CLIENT batch sink for rich UI-only events (`ui_snapshot`, taps, coach renders) the server can't see. `writeCapable:true`, rate-limited, best-effort batched append, no-op when the flag is off. Ships with the frontend emitters (FR3) since it has no producer until then; the server-side recorder (FR2) already covers the API-flow backbone.
 - **Shadow linkage enrichment** *(PR-FR3)* — the response envelope carries a tiny additive `_flight.shadow` block the client stamps onto its `api_response` event, riding the existing `standardSuccess` builder (no per-route surgery).
 
 ## 5. Linking to `Brain_Shadow` and `Intent_Shadow`
 
 **MVP (no shadow-tab schema change — in scope):** per request, capture whether a Brain/Intent shadow entry was created, its `route`, and a `count`, into `shadow_refs_json` via the additive `_flight.shadow` response block. This answers "did the Brain/Intent lane fire on the call the user just made, and how many times", enough to jump to the right neighborhood of the shadow tab by `captured_at` + `route`.
+
+### Sandbox / production sheet isolation
+
+The Flight Recorder writes to **whichever sheet the server itself is configured for** (`GOOGLE_SHEETS_ID`) — it never hardcodes or picks a second target. Combined with the simulation model, this gives strict isolation:
+
+- **Real production usage** → the production server records to the **production** `Flight_Recorder`.
+- **Real usage on a sandbox server** / **simulation runs** (the harness drives a sandbox-pointed server) → the **sandbox** `Flight_Recorder`.
+- Simulation **write** mode already **hard-refuses** any server not confirmed as the sandbox sheet (`verifyServerSheet`), so a sim can never drive a production server to write training data — or Flight Recorder rows.
+- **Belt-and-suspenders guard:** the harness marks every request with `x-atlas-simulation: 1`, and `recordApiFlow` **never persists a simulation-marked request to a non-sandbox sheet** (it stays in the in-memory ring only). So even a *read-only* sim pointed at production can never write sim noise into the production `Flight_Recorder`.
+- **Flag OFF (default)** → nothing is written anywhere, on any sheet.
 
 **Full correlation (PR-FR5, owner-gated — NOT in initial scope):** mint a `correlation_id` per inbound request and append it as a new trailing column to `Brain_Shadow` and `Intent_Shadow` so a replay tool can join the three tabs on one exact key. This touches two existing tabs' schemas (append-only, low risk, but still a schema change) → owner approval required. Deferred by owner decision (2026-07-05).
 
@@ -143,7 +154,9 @@ Read-only surface backed by `GET /api/flight/recent` + the client ring:
 Follows Atlas invariants T1–T3 (require.cache stub of `sheets.js`); live-path coverage required.
 
 - **`services/flightRecorder.js` unit** *(PR-FR1, shipped)* — row width equals the column contract; scalar/JSON field mapping; server-side re-redaction of planted secrets (`sk-…`, `AIza…`, `Bearer …`, `PRIVATE KEY`, secret-shaped keys); truncation of oversized cells and scalar text; empty objects → blank; non-finite numbers → blank; ring cap + newest-first; flag gate default-OFF; taxonomy exposure; TOTAL on hostile input (circular refs, junk types).
-- **Route smoke (`test/api-smoke.test.js`)** *(PR-FR2)* — flag OFF: `POST /api/flight/ingest` writes zero rows, never touches `Log_Cleaned`. Flag ON: a batch appends one row per event to `Flight_Recorder` only; injected append failure → route still resolves, no error surfaces, and a subsequent `/api/log-workout` still succeeds (isolation proof).
+- **Server-side API-flow unit** *(PR-FR2, shipped — `test/flightRecorderApiFlow.test.js`)* — flag OFF → `recordApiFlow` writes nothing (disabled-flag proof); flag ON → one best-effort append to `Flight_Recorder` only, never a workout/trust tab; **isolation**: sim-marked traffic on a non-sandbox sheet is ring-only (never persisted) while sim-on-sandbox and real-on-any-sheet do persist; request bodies redacted + summarized; TOTAL (a throwing append never surfaces); plus a harness proof that sim requests carry `x-atlas-simulation`.
+- **Route/middleware smoke (`test/api-smoke.test.js`)** *(PR-FR2, shipped)* — end-to-end over the real app: flag ON records an `/api` flow to `Flight_Recorder` only (never `Log_Cleaned`/`Effort`/`Modality_Log`); a simulation-marked request against the non-sandbox stub sheet writes **nothing** (isolation proof); flag OFF writes nothing; `GET /api/flight/recent` returns a safe inert snapshot.
+- **Client ingest smoke** *(PR-FR3)* — `POST /api/flight/ingest` flag-gated batched append + isolation.
 - **Shadow linkage** *(PR-FR3)* — `shadow_refs_json` reflects created/route/count when the observers fire.
 - **Frontend** *(PR-FR3)* — source-introspection test that `record()` is wired at the api/render/coach hooks and flag-guarded; `sendBeacon` flush on `pagehide`; batching thresholds (25 / 10s / error+bug_marker+pagehide).
 - **Regression** — proof-field invariants unchanged with the flag ON.
@@ -151,8 +164,8 @@ Follows Atlas invariants T1–T3 (require.cache stub of `sheets.js`); live-path 
 ## 9. Rollout plan (tiny PRs, one concern each)
 
 1. **PR-FR1 — schema + contract + pure core (no writes).** `Flight_Recorder` in `optionalSheetTabs`; `flightRecorderColumns`; `services/flightRecorder.js` builder + ring + redaction; unit tests. **Nothing writes; nothing is wired to a runtime path.** *(This slice.)*
-2. **PR-FR2 — ingest + read routes.** `POST /api/flight/ingest` + `GET /api/flight/recent`, flag-gated, best-effort batched append, route smoke tests.
-3. **PR-FR3 — frontend capture + batching.** `public/flightRecorder.js` + hooks (names `public/app.js` in scope); batched flush + `sendBeacon`; shadow-linkage enrichment.
+2. **PR-FR2 — server-side API-flow recording + read route** *(shipped)*. `recordApiFlow` + a thin observe-only middleware in `index.js` (flag-gated, best-effort append to the server's own `Flight_Recorder`) + `GET /api/flight/recent`; the sim harness marks its traffic (`x-atlas-simulation`) and the recorder's isolation guard blocks sim writes to a non-sandbox sheet. Covers **both** real app traffic and simulation runs. (The client batch-ingest route moved to FR3, alongside its only producer — the frontend.)
+3. **PR-FR3 — frontend capture + batching + client ingest.** `public/flightRecorder.js` + hooks (names `public/app.js` in scope); batched flush + `sendBeacon`; `POST /api/flight/ingest` for UI-only events; shadow-linkage enrichment.
 4. **PR-FR4 — Debug UX.** Settings → Debug surface incl. `bug_marker`.
 5. **PR-FR5 (owner-gated) — full `correlation_id`** across `Brain_Shadow` / `Intent_Shadow` (append-only schema change).
 

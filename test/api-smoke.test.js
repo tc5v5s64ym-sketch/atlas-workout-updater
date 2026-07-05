@@ -5758,3 +5758,47 @@ test('guard: an explicit manual date still wins over a rejected screenshot date 
   assert.equal(data.screenshot_date_rejected, '2020-06-28', 'still reported so the card can mention what the screenshot showed');
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
+
+// Flight Recorder (PR-FR2) — server-side API-flow capture, end to end. Proves the flag
+// gate (OFF = zero writes), that flow rows land ONLY in Flight_Recorder (never a workout
+// tab), and the sandbox/production isolation guard (simulation-marked traffic never writes
+// to the non-sandbox stub sheet this suite runs against). The Flight_Recorder append is
+// best-effort/fire-and-forget, so we settle a microtask before asserting; the fake's
+// non-sandbox throw for the tab is swallowed and never fails the served request.
+test('Flight Recorder middleware: flag-gated, Flight_Recorder-only, sim-isolated', async () => {
+  const originalFlag = process.env.ATLAS_FLIGHT_RECORDER;
+  const settle = () => new Promise(r => setImmediate(r));
+  const frCalls = () => fakeSheetsState.appendCalls.filter(c => c.tabName === 'Flight_Recorder');
+  const trustCalls = () => fakeSheetsState.appendCalls.filter(c => ['Log_Cleaned', 'Effort', 'Modality_Log'].includes(c.tabName));
+  try {
+    // (1) flag ON, normal app/API request → recorded to Flight_Recorder ONLY.
+    process.env.ATLAS_FLIGHT_RECORDER = '1';
+    fakeSheetsState.appendCalls.length = 0;
+    const schema = await requestJson('/api/schema/log');
+    assert.equal(schema.response.status, 200);
+    await settle();
+    assert.ok(frCalls().length >= 1, 'flag ON records the API flow to Flight_Recorder');
+    assert.equal(trustCalls().length, 0, 'never writes a workout/trust tab');
+
+    // (2) flag ON, simulation-marked request on the non-sandbox stub sheet → NO write.
+    fakeSheetsState.appendCalls.length = 0;
+    await requestJson('/api/schema/log', { headers: { 'x-atlas-simulation': '1' } });
+    await settle();
+    assert.equal(frCalls().length, 0, 'simulation traffic never writes to a non-sandbox (production/unknown) sheet');
+
+    // (3) flag OFF → zero Flight Recorder writes anywhere.
+    delete process.env.ATLAS_FLIGHT_RECORDER;
+    fakeSheetsState.appendCalls.length = 0;
+    await requestJson('/api/schema/log');
+    await settle();
+    assert.equal(frCalls().length, 0, 'flag OFF writes nothing');
+
+    // The read endpoint is inert and safe regardless of flag state.
+    const recent = await requestJson('/api/flight/recent');
+    assert.equal(recent.response.status, 200);
+    assert.ok(recent.body && recent.body.data && typeof recent.body.data.count === 'number');
+  } finally {
+    if (originalFlag === undefined) delete process.env.ATLAS_FLIGHT_RECORDER;
+    else process.env.ATLAS_FLIGHT_RECORDER = originalFlag;
+  }
+});
