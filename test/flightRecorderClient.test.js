@@ -10,6 +10,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const flightRecorder = require('../services/flightRecorder');
 const client = require('../public/flightRecorder');
@@ -164,4 +166,17 @@ test('client ATLAS_EVENT_MAP maps to valid taxonomy event types', () => {
   for (const name of Object.keys(client.ATLAS_EVENT_MAP)) {
     assert.ok(valid.has(client.ATLAS_EVENT_MAP[name]), `${name} → a known event type`);
   }
+});
+
+// Rate-limit isolation (review #857): best-effort telemetry must NEVER draw from the
+// trust-write budget and 429 a real set-log / undo. /api/flight/ingest gets its own bucket.
+test('ingest has its OWN rate-limiter bucket, separate from the trust-write budget', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+  // The shared 'write' limiter's path array must NOT include the ingest route.
+  const writeBlock = src.slice(0, src.indexOf("name: 'write'"));
+  const writeArray = writeBlock.slice(writeBlock.lastIndexOf('app.use(['));
+  assert.ok(writeArray.includes('/api/log-workout'), 'located the write limiter path array');
+  assert.ok(!writeArray.includes('/api/flight/ingest'), 'ingest is NOT in the trust-write bucket');
+  // A dedicated flight_ingest limiter registers /api/flight/ingest.
+  assert.match(src, /app\.use\(\['\/api\/flight\/ingest'\],\s*createRateLimiter\(\{\s*name:\s*'flight_ingest'/, 'ingest has its own flight_ingest limiter');
 });

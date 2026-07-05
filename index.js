@@ -201,10 +201,18 @@ app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_VISION_RATE_LIMIT_MAX || 20)
 }));
-app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality', '/api/bug-report', '/api/flight/ingest'], createRateLimiter({
+app.use(['/api/log-workout', '/api/bodyweight', '/api/log-workout/undo-last', '/api/coaching-notes', '/api/constraints', '/api/log-modality', '/api/bug-report'], createRateLimiter({
   name: 'write',
   windowMs: Number(process.env.ATLAS_WRITE_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
   max: Number(process.env.ATLAS_WRITE_RATE_LIMIT_MAX || 60)
+}));
+// Flight Recorder ingest gets its OWN limiter bucket — best-effort debug telemetry
+// (the client flushes every ~10s) must NEVER draw from the trust-write budget above and
+// 429 a real set-log / undo. Generous default headroom; still bounded against runaway.
+app.use(['/api/flight/ingest'], createRateLimiter({
+  name: 'flight_ingest',
+  windowMs: Number(process.env.ATLAS_FLIGHT_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+  max: Number(process.env.ATLAS_FLIGHT_RATE_LIMIT_MAX || 600)
 }));
 const { execSync } = require('child_process');
 

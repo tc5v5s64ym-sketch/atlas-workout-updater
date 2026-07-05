@@ -308,7 +308,7 @@ function recordClientBatch(payload, opts) {
     _persistRows(rows, o.append);      // ONE append for the whole batch
     return { enabled: true, written: rows.length };
   } catch (_) {
-    return { enabled: false, written: 0 };
+    return { enabled: isFlightRecorderEnabled(), written: 0 };
   }
 }
 

@@ -165,6 +165,22 @@
       });
     });
 
+    // JS errors / unhandled rejections → an `error` event (which flushes promptly). These
+    // are exactly the silent-lockup traces the owner currently can't see in a screenshot.
+    window.addEventListener('error', function (e) {
+      try {
+        var msg = (e && e.message) || String(e);
+        var where = e ? [e.filename, e.lineno, e.colno].filter(function (v) { return v != null; }).join(':') : '';
+        record(state, 'error', { error: where ? (msg + ' @ ' + where) : msg, route: currentRoute() });
+      } catch (e2) { /* TOTAL */ }
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      try {
+        var reason = (e && e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection';
+        record(state, 'error', { error: reason, route: currentRoute() });
+      } catch (e2) { /* TOTAL */ }
+    });
+
     // Flush the tail on the way out (fetch keepalive works during unload and, unlike
     // sendBeacon, still carries the auth header).
     var flushOut = function () { try { flush(state, true); } catch (e2) {} };
