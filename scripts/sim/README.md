@@ -14,6 +14,9 @@ V1 defaults to read-only scenario runs against a local Atlas server. V1.2 adds s
 
 ```powershell
 $env:GOOGLE_SHEETS_ID='1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE'
+$env:ATLAS_COACH_ENGINE='hybrid'
+$env:ATLAS_BRAIN_SHADOW_PERSIST='1'
+$env:ATLAS_INTENT_ROUTER='shadow'
 node index.js
 ```
 
@@ -36,6 +39,14 @@ Batch mode cycles through push, pull, legs, upper, full body, and cardio/recover
 ```powershell
 node scripts\sim\run.js --mode write --sandbox --enable-write-scenarios --runs 100 --base-url http://127.0.0.1:3000
 ```
+
+To also write simulator prompts into `Intent_Shadow` and summarize both shadow debug rings, opt in explicitly:
+
+```powershell
+node scripts\sim\run.js --mode write --sandbox --enable-write-scenarios --enable-shadow-observation --runs 100 --base-url http://127.0.0.1:3000
+```
+
+With shadow observation enabled, the server must preflight as sandbox + `ATLAS_COACH_ENGINE=hybrid` + `ATLAS_BRAIN_SHADOW_PERSIST=1` + `ATLAS_INTENT_ROUTER=shadow`. The run fails if either debug channel reports zero entries after the sandbox pass.
 
 The harness retries transient local request failures such as Sheets quota/rate-limit responses before marking a run failed. Defaults are `--retry-attempts 5` and `--retry-delay-ms 65000`.
 

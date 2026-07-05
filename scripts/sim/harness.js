@@ -53,13 +53,17 @@ function validateSimulationConfig(options = {}) {
   const mode = normalizeMode(options.mode);
   const sheetId = options.sheetId ? String(options.sheetId).trim() : '';
   const writeScenariosEnabled = options.enableWriteScenarios === true;
+  const shadowObservationEnabled = options.enableShadowObservation === true;
   const runs = normalizeRuns(options.runs);
   const delayMs = normalizeDelayMs(options.delayMs);
   const retryAttempts = normalizeRetryAttempts(options.retryAttempts);
   const retryDelayMs = normalizeRetryDelayMs(options.retryDelayMs);
 
   if (mode !== 'write') {
-    return { mode, sheetId: sheetId || null, writeEnabled: false, writeScenariosEnabled: false, runs, delayMs, retryAttempts, retryDelayMs };
+    if (shadowObservationEnabled) {
+      throw new Error('Shadow observation refused: --enable-shadow-observation requires --mode write --sandbox so Intent_Shadow cannot be written outside the sandbox.');
+    }
+    return { mode, sheetId: sheetId || null, writeEnabled: false, writeScenariosEnabled: false, shadowObservationEnabled: false, runs, delayMs, retryAttempts, retryDelayMs };
   }
 
   if (!sheetId) {
@@ -72,7 +76,7 @@ function validateSimulationConfig(options = {}) {
     throw new Error('Simulation write mode refused: pass --enable-write-scenarios to run the sandbox mock session.');
   }
 
-  return { mode, sheetId, writeEnabled: true, writeScenariosEnabled, runs, delayMs, retryAttempts, retryDelayMs };
+  return { mode, sheetId, writeEnabled: true, writeScenariosEnabled, shadowObservationEnabled, runs, delayMs, retryAttempts, retryDelayMs };
 }
 
 function normalizeRuns(value) {
@@ -383,6 +387,11 @@ function extractSheetVerification(body) {
   return data.sheetVerification || data.sheet_verification || null;
 }
 
+function extractDebugConfig(body) {
+  const data = body && body.data ? body.data : body;
+  return data && typeof data === 'object' ? data : {};
+}
+
 function serverVerificationWarning(verification) {
   if (!verification || verification.canVerify !== true) {
     return 'Server sheet verification unavailable; continuing only because simulation mode is read-only.';
@@ -430,6 +439,7 @@ async function verifyServerSheet(options, config) {
     };
   }
 
+  const debugConfig = response.status === 200 ? extractDebugConfig(body) : {};
   const verification = response.status === 200 ? extractSheetVerification(body) : null;
 
   if (config.mode === 'write') {
@@ -442,9 +452,26 @@ async function verifyServerSheet(options, config) {
     }
   }
 
+  if (config.shadowObservationEnabled === true) {
+    if (debugConfig.coachEngineMode !== 'hybrid') {
+      throw new Error(`Shadow observation refused: /api/debug/config reported coachEngineMode=${debugConfig.coachEngineMode || 'unknown'}; expected hybrid.`);
+    }
+    if (debugConfig.brainShadowPersistEnabled !== true) {
+      throw new Error('Shadow observation refused: /api/debug/config did not confirm brainShadowPersistEnabled=true.');
+    }
+    if (debugConfig.intentRouterMode !== 'shadow') {
+      throw new Error(`Shadow observation refused: /api/debug/config reported intentRouterMode=${debugConfig.intentRouterMode || 'unknown'}; expected shadow.`);
+    }
+  }
+
   const warning = serverVerificationWarning(verification);
   return {
     sheetVerification: verification,
+    debugConfig: {
+      coachEngineMode: debugConfig.coachEngineMode || null,
+      brainShadowPersistEnabled: debugConfig.brainShadowPersistEnabled === true,
+      intentRouterMode: debugConfig.intentRouterMode || null,
+    },
     warnings: warning ? [warning] : [],
   };
 }
@@ -500,7 +527,7 @@ function rowsWrittenFromLogResponse(body) {
   return Number(data.log_rows_written || 0) + Number(data.effort_rows_written || 0);
 }
 
-function summarizeWriteScenarioBatch(results) {
+function summarizeWriteScenarioBatch(results, shadowSummary = null, options = {}) {
   const errors = [];
   const flaggedOddResults = [];
   const variationSummary = summarizeSimulationVariation(results);
@@ -534,18 +561,52 @@ function summarizeWriteScenarioBatch(results) {
     flaggedOddResults.push({ reason: 'insufficient_muscle_group_variation', unique_muscle_groups: variationSummary.unique_muscle_groups });
   }
 
+  const observedBrainEntries = shadowSummary && shadowSummary.brain && Number.isFinite(Number(shadowSummary.brain.count))
+    ? Number(shadowSummary.brain.count)
+    : 0;
+  const observedIntentEntries = shadowSummary && shadowSummary.intent && Number.isFinite(Number(shadowSummary.intent.count))
+    ? Number(shadowSummary.intent.count)
+    : 0;
+  const brainAggregates = shadowSummary && shadowSummary.brain && shadowSummary.brain.aggregates
+    ? shadowSummary.brain.aggregates
+    : {};
+  const brainFailures = Number(brainAggregates.failed || 0);
+  const brainDiverged = Number(brainAggregates.diverged || 0);
+
+  if (options.requireShadowEntries === true) {
+    if (observedBrainEntries <= 0) {
+      flaggedOddResults.push({ reason: 'missing_brain_shadow_entries', channel: 'Brain_Shadow' });
+    }
+    if (observedIntentEntries <= 0) {
+      flaggedOddResults.push({ reason: 'missing_intent_shadow_entries', channel: 'Intent_Shadow' });
+    }
+  }
+
   return {
     runs_requested: results.length,
     runs_completed: results.length,
     runs_passed: passed,
     runs_failed: results.length - passed,
     rows_written: rowsWritten,
-    brain_shadow_entries: brainShadowEntries,
+    brain_shadow_entries: Math.max(brainShadowEntries, observedBrainEntries),
+    brain_shadow_diverged: Number.isFinite(brainDiverged) ? brainDiverged : 0,
+    brain_shadow_failures: Number.isFinite(brainFailures) ? brainFailures : 0,
+    intent_shadow_entries: observedIntentEntries,
     retry_attempts_used: retryAttemptsUsed,
     errors,
     flagged_odd_results: flaggedOddResults,
     variation_summary: variationSummary
   };
+}
+
+async function observeIntentPrompt(options, prompt) {
+  return requestJson(options, '/api/debug/intent-observe', {
+    method: 'POST',
+    body: {
+      message: prompt,
+      app_version: 'simulation-harness-v1.3',
+    },
+  });
 }
 
 async function runSandboxMockSession(options, config, runIndex = 0) {
@@ -583,6 +644,8 @@ async function runSandboxMockSession(options, config, runIndex = 0) {
     fake_result_logged: false,
     rows_written: 0,
     brain_shadow_entries: 0,
+    intent_observation_sent: false,
+    intent_observation_status: null,
     retry_attempts_used: 0,
     pass: false,
     errors: [],
@@ -590,6 +653,16 @@ async function runSandboxMockSession(options, config, runIndex = 0) {
   };
 
   try {
+    if (config.shadowObservationEnabled === true) {
+      const observed = await observeIntentPrompt(options, runProfile.prompt);
+      summary.retry_attempts_used += Math.max(0, Number(observed.attempts || 1) - 1);
+      summary.intent_observation_status = observed.response.status;
+      summary.intent_observation_sent = observed.response.status >= 200 && observed.response.status < 300;
+      if (!summary.intent_observation_sent) {
+        throw new Error(`Intent shadow observation failed with HTTP ${observed.response.status}: ${responseSummary(observed.body) || 'no response body'}`);
+      }
+    }
+
     const firstRecommendation = await requestJson(options, summary.recommendation_endpoint);
     summary.retry_attempts_used += Math.max(0, Number(firstRecommendation.attempts || 1) - 1);
     summary.first_recommendation_status = firstRecommendation.response.status;
@@ -628,6 +701,45 @@ async function runSandboxMockSession(options, config, runIndex = 0) {
     summary.errors.push(error.message);
   } finally {
     summary.duration_ms = Date.now() - started;
+  }
+
+  return summary;
+}
+
+function summarizeShadowEndpoint(status, body) {
+  const data = body && body.data ? body.data : body;
+  if (!data || typeof data !== 'object') {
+    return { available: false, status, enabled: null, count: 0, mode: null, persist: null, aggregates: null };
+  }
+  return {
+    available: status >= 200 && status < 300,
+    status,
+    enabled: Object.prototype.hasOwnProperty.call(data, 'enabled') ? data.enabled : null,
+    count: Number(data.count || 0),
+    mode: data.mode || null,
+    persist: Object.prototype.hasOwnProperty.call(data, 'persist') ? data.persist : null,
+    aggregates: data.aggregates || null,
+  };
+}
+
+async function fetchShadowSummary(options) {
+  const summary = {
+    brain: { available: false, status: null, enabled: null, count: 0, mode: null, persist: null, aggregates: null },
+    intent: { available: false, status: null, enabled: null, count: 0, mode: null, persist: null, aggregates: null },
+  };
+
+  try {
+    const brain = await requestJson({ ...options, retryAttempts: 0 }, '/api/debug/brain-shadow');
+    summary.brain = summarizeShadowEndpoint(brain.response.status, brain.body);
+  } catch (error) {
+    summary.brain.error = error.message;
+  }
+
+  try {
+    const intent = await requestJson({ ...options, retryAttempts: 0 }, '/api/debug/intent-shadow');
+    summary.intent = summarizeShadowEndpoint(intent.response.status, intent.body);
+  } catch (error) {
+    summary.intent.error = error.message;
   }
 
   return summary;
@@ -708,13 +820,19 @@ async function runSimulation(options = {}) {
     }));
   }
 
-  const runSummary = summarizeWriteScenarioBatch(writeScenarioResults);
+  const shadowSummary = config.writeScenariosEnabled
+    ? await fetchShadowSummary({ ...options, fetchImpl, retryAttempts: 0, retryDelayMs: config.retryDelayMs })
+    : null;
+  const runSummary = summarizeWriteScenarioBatch(writeScenarioResults, shadowSummary, {
+    requireShadowEntries: config.shadowObservationEnabled === true,
+  });
   const report = {
     schema_version: 1,
     generated_at: new Date().toISOString(),
     mode: config.mode,
     sheet_id: config.sheetId,
     server_sheet_verification: preflight.sheetVerification,
+    server_shadow_readiness: preflight.debugConfig,
     warnings: preflight.warnings,
     base_url: options.baseUrl,
     scenario_count: results.length,
@@ -724,6 +842,7 @@ async function runSimulation(options = {}) {
     retry_attempts: config.retryAttempts,
     retry_delay_ms: config.retryDelayMs,
     run_summary: runSummary,
+    shadow_summary: shadowSummary,
     variation_summary: runSummary.variation_summary,
     results,
     write_scenarios: writeScenarioResults,
@@ -760,6 +879,9 @@ function markdownReport(report) {
     `- Runs failed: ${report.run_summary ? report.run_summary.runs_failed : 0}`,
     `- Rows written: ${report.run_summary ? report.run_summary.rows_written : 0}`,
     `- Brain_Shadow entries: ${report.run_summary ? report.run_summary.brain_shadow_entries : 0}`,
+    `- Brain_Shadow diverged: ${report.run_summary ? report.run_summary.brain_shadow_diverged || 0 : 0}`,
+    `- Brain_Shadow failures: ${report.run_summary ? report.run_summary.brain_shadow_failures || 0 : 0}`,
+    `- Intent_Shadow entries: ${report.run_summary ? report.run_summary.intent_shadow_entries || 0 : 0}`,
     `- Pass: ${report.pass === false ? 'false' : 'true'}`,
   ];
 

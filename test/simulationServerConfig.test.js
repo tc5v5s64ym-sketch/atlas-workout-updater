@@ -9,6 +9,9 @@ process.env.GOOGLE_SHEETS_ID = '1UuprDIBoV2Y9jEraOkKaqdX1PHE6ESiF9ZLFJH3CeXE';
 process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
 process.env.GOOGLE_PRIVATE_KEY = 'test-private-key-stub';
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
+process.env.ATLAS_COACH_ENGINE = 'hybrid';
+process.env.ATLAS_BRAIN_SHADOW_PERSIST = '1';
+process.env.ATLAS_INTENT_ROUTER = 'shadow';
 
 const originalConsoleLog = console.log;
 const { app } = require('../index');
@@ -45,4 +48,7 @@ test('server debug config exposes safe sheet verification info in test mode', as
   assert.equal(body.data.sheetVerification.idLast6, 'H3CeXE');
   assert.equal(body.data.sheetVerification.isSandboxSheet, true);
   assert.equal(Object.prototype.hasOwnProperty.call(body.data.sheetVerification, 'isProductionSheet'), false);
+  assert.equal(body.data.coachEngineMode, 'hybrid');
+  assert.equal(body.data.brainShadowPersistEnabled, true);
+  assert.equal(body.data.intentRouterMode, 'shadow');
 });

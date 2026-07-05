@@ -2250,7 +2250,9 @@ app.get('/api/debug/config', (req, res) => {
     sheetVerification: getSafeSpreadsheetConfig(process.env.NODE_ENV),
     apiKeyAuthEnabled: Boolean(process.env.ATLAS_API_KEY),
     openAiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
-    coachEngineMode: process.env.ATLAS_COACH_ENGINE || 'legacy'
+    coachEngineMode: process.env.ATLAS_COACH_ENGINE || 'legacy',
+    brainShadowPersistEnabled: ['1', 'true', 'on'].includes(String(process.env.ATLAS_BRAIN_SHADOW_PERSIST || '').toLowerCase()),
+    intentRouterMode: process.env.ATLAS_INTENT_ROUTER || 'off'
   });
 });
 
