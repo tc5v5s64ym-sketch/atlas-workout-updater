@@ -19,6 +19,7 @@ const {
   getHeaderRow,
   getSpreadsheetTabs,
   ensureSheetTab,
+  getSafeSpreadsheetConfig = () => ({ canVerify: false, source: 'GOOGLE_SHEETS_ID' }),
   logSheetName,
   effortSheetName
 } = require('./sheets');
@@ -2258,6 +2259,7 @@ app.get('/api/debug/config', (req, res) => {
       logSheetName,
       effortSheetName
     },
+    sheetVerification: getSafeSpreadsheetConfig(process.env.NODE_ENV),
     apiKeyAuthEnabled: Boolean(process.env.ATLAS_API_KEY),
     openAiKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
     coachEngineMode: process.env.ATLAS_COACH_ENGINE || 'legacy'
