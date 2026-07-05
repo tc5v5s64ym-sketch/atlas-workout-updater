@@ -1,0 +1,44 @@
+[
+  {
+    "name": "bench_next",
+    "prompt": "What should I bench next?",
+    "method": "GET",
+    "endpoint": "/api/recommend/next/BEN01"
+  },
+  {
+    "name": "failed_last_bench_set",
+    "prompt": "I failed my last bench set.",
+    "method": "POST",
+    "endpoint": "/api/coach/chat"
+  },
+  {
+    "name": "shoulder_sore",
+    "prompt": "My shoulder is sore today.",
+    "method": "GET",
+    "endpoint": "/api/recommendation/preview?liftCode=BEN01&goal=strength&painFlags=shoulder"
+  },
+  {
+    "name": "missed_two_workouts",
+    "prompt": "I missed two workouts.",
+    "method": "POST",
+    "endpoint": "/api/coach/chat"
+  },
+  {
+    "name": "thirty_minutes",
+    "prompt": "I only have 30 minutes.",
+    "method": "GET",
+    "endpoint": "/api/recommendation/preview?goal=hypertrophy&sessionMinutes=30"
+  },
+  {
+    "name": "train_today",
+    "prompt": "What should I train today?",
+    "method": "GET",
+    "endpoint": "/api/plan/intent-recommendation"
+  },
+  {
+    "name": "should_deload",
+    "prompt": "Should I deload?",
+    "method": "POST",
+    "endpoint": "/api/coach/ask"
+  }
+]
