@@ -48,7 +48,7 @@ New **optional** tab (`config/sheetContract.js` `optionalSheetTabs`; columns in 
 ```
 captured_at | flight_session_id | seq | app_version | device_id |
 route | event_type | user_input | user_action |
-rendered_ui_json | session_state_json |
+ui_snapshot_json | session_state_json |
 api_endpoint | request_summary | response_summary |
 decision_summary_json | shadow_refs_json |
 error | latency_ms
@@ -57,7 +57,7 @@ error | latency_ms
 - `flight_session_id` — one id per app load / observation session; the primary replay key.
 - `seq` — monotonic per-session counter so events order deterministically even when a batch lands in the same millisecond (Sheets append order is not guaranteed under batching).
 - `device_id` — stable random non-PII id in `localStorage`; blank if absent.
-- `rendered_ui_json` — visible cards, visible tiles, active card, visible CTAs/buttons, modal shown, toast/banner shown, primary coach message shown.
+- `ui_snapshot_json` — a broad UI-state snapshot (not only rendered HTML/JSON): visible cards, visible tiles, active card, visible CTAs/buttons, modal shown, toast/banner shown, primary coach message shown, composer state. Named `ui_snapshot_json` (not `rendered_ui_json`) so it can grow to hold more UI state without a rename.
 - `session_state_json` — `activePlannedSession`, `suggestedPlan`, `plannedExerciseOrder`, `sessionCompleted`, `remainingPlannedExercises`, `firstUnloggedPlannedLift`.
 - `request_summary` / `response_summary` — redacted, truncated **summaries** (method + endpoint + status + shape + key fields), not raw bodies.
 - `decision_summary_json` — trimmed engine/router verdict where safe (the same trimmed shape `coachDecisionSummary.js` emits — never the full internal object).
@@ -71,13 +71,13 @@ Ten `event_type` values. Each event populates only the columns it needs; the res
 
 | `event_type` | Fired when | Primary columns |
 |---|---|---|
-| `screen_rendered` | route/screen becomes visible | route, rendered_ui_json, session_state_json |
+| `screen_rendered` | route/screen becomes visible | route, ui_snapshot_json, session_state_json |
 | `user_input` | composer text / free-form message submitted | user_input, route |
 | `user_action` | button/tile/tab tapped, nav | user_action, route |
 | `api_request` | outbound call starts | api_endpoint, request_summary |
 | `api_response` | call resolves/rejects | api_endpoint, response_summary, decision_summary_json, shadow_refs_json, latency_ms, error |
-| `coach_message_rendered` | a coach reply is painted | rendered_ui_json, decision_summary_json |
-| `card_rendered` | a card/tile/preview/confirmation renders | rendered_ui_json |
+| `coach_message_rendered` | a coach reply is painted | ui_snapshot_json, decision_summary_json |
+| `card_rendered` | a card/tile/preview/confirmation renders | ui_snapshot_json |
 | `session_state_changed` | activePlannedSession / plan cursor / completion changes | session_state_json |
 | `error` | JS error, unhandled rejection, or API failure | error, api_endpoint |
 | `bug_marker` | owner taps "mark issue here" in Debug UX | user_action, user_input (note) |
@@ -88,7 +88,7 @@ Ten `event_type` values. Each event populates only the columns it needs; the res
 
 A new `public/flightRecorder.js` (UMD, self-contained, never throws) owns a capped in-memory ring + batched flush. It taps existing hooks rather than adding new instrumentation:
 
-- **`screen_rendered` / `card_rendered`** — hook render/nav functions (`public/nav.js` route switches; card/preview render in `public/app.js` and `public/coach-conversation.js`) via a `snapshotRenderedUi()` helper (an extended `uiStateForBugReport()`).
+- **`screen_rendered` / `card_rendered`** — hook render/nav functions (`public/nav.js` route switches; card/preview render in `public/app.js` and `public/coach-conversation.js`) via a `snapshotUiState()` helper (an extended `uiStateForBugReport()`).
 - **`user_input` / `user_action`** — reuse the existing capture-phase click listener and composer submit.
 - **`api_request` / `api_response` / `error`** — hook the single `api()` wrapper (already measures latency; already records into `atlasRecentApiRequests`). Reuse `snapshotBugBody()` for summaries.
 - **`coach_message_rendered`** — hook the coach reply painter in `public/coach-conversation.js`.

@@ -121,7 +121,7 @@ function buildFlightRow(event) {
     _text(e.event_type, 60),          // event_type
     _text(e.user_input),              // user_input
     _text(e.user_action, 200),        // user_action
-    _jsonCell(e.rendered_ui),         // rendered_ui_json
+    _jsonCell(e.ui_snapshot),         // ui_snapshot_json
     _jsonCell(e.session_state),       // session_state_json
     _text(e.api_endpoint, 200),       // api_endpoint
     _text(e.request_summary),         // request_summary

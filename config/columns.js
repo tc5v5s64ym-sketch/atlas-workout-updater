@@ -134,7 +134,8 @@ const modalityLogRowFieldAliases = {
 //   event_type         — one of the taxonomy below
 //   user_input         — user text (composer / free-form message / bug-marker note)
 //   user_action        — button/tile/tab tapped or nav action
-//   rendered_ui_json   — visible cards/tiles, active card, CTAs, modal, toast, coach message
+//   ui_snapshot_json   — visible cards/tiles, active card, CTAs, modal, toast, coach message,
+//                        composer state (a broad UI snapshot, not only rendered HTML/JSON)
 //   session_state_json — activePlannedSession/suggestedPlan/plannedExerciseOrder/…
 //   api_endpoint       — endpoint called (api_request/api_response)
 //   request_summary    — redacted/truncated request summary (not a raw body)
@@ -153,7 +154,7 @@ const flightRecorderColumns = [
   'event_type',
   'user_input',
   'user_action',
-  'rendered_ui_json',
+  'ui_snapshot_json',
   'session_state_json',
   'api_endpoint',
   'request_summary',

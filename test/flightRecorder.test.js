@@ -50,7 +50,7 @@ test('buildFlightRow maps scalar + JSON fields to the right positions', () => {
   const row = flightRecorder.buildFlightRow(baseEvent({
     user_input: 'skip leg extension',
     user_action: 'tap: Preview',
-    rendered_ui: { active_card: 'coach_pick', visible_tiles: ['streak'], toast: null },
+    ui_snapshot: { active_card: 'coach_pick', visible_tiles: ['streak'], toast: null },
     session_state: { activePlannedSession: { index: 2 }, sessionCompleted: false },
     request_summary: 'POST /api/coach/chat {message}',
     response_summary: '200 { reply, plan_edit }',
@@ -74,7 +74,7 @@ test('buildFlightRow maps scalar + JSON fields to the right positions', () => {
   assert.equal(row[COL.latency_ms], 812);
 
   // JSON-in-cells columns round-trip to the source objects.
-  assert.deepEqual(JSON.parse(row[COL.rendered_ui_json]), { active_card: 'coach_pick', visible_tiles: ['streak'], toast: null });
+  assert.deepEqual(JSON.parse(row[COL.ui_snapshot_json]), { active_card: 'coach_pick', visible_tiles: ['streak'], toast: null });
   assert.deepEqual(JSON.parse(row[COL.session_state_json]), { activePlannedSession: { index: 2 }, sessionCompleted: false });
   assert.deepEqual(JSON.parse(row[COL.decision_summary_json]), { decision_type: 'modify_workout', confidence_tier: 'high' });
   assert.deepEqual(JSON.parse(row[COL.shadow_refs_json]), { intent: { created: true, route: 'composer', count: 1 } });
@@ -86,15 +86,15 @@ test('missing fields become blank cells, never a crash', () => {
   assert.equal(row[COL.event_type], 'screen_rendered');
   assert.equal(row[COL.route], 'home');
   assert.equal(row[COL.user_input], '');
-  assert.equal(row[COL.rendered_ui_json], '');       // absent object → blank
+  assert.equal(row[COL.ui_snapshot_json], '');       // absent object → blank
   assert.equal(row[COL.session_state_json], '');
   assert.equal(row[COL.seq], '');                     // absent number → blank
   assert.equal(row[COL.latency_ms], '');
 });
 
 test('empty objects/arrays serialize to blank, not "{}"/"[]"', () => {
-  const row = flightRecorder.buildFlightRow(baseEvent({ rendered_ui: {}, shadow_refs: {} }));
-  assert.equal(row[COL.rendered_ui_json], '');
+  const row = flightRecorder.buildFlightRow(baseEvent({ ui_snapshot: {}, shadow_refs: {} }));
+  assert.equal(row[COL.ui_snapshot_json], '');
   assert.equal(row[COL.shadow_refs_json], '');
 });
 
@@ -108,13 +108,13 @@ test('REDACTION: secret-shaped values are scrubbed before they become a row', ()
   const row = flightRecorder.buildFlightRow(baseEvent({
     user_input: 'my key is sk-proj-ABCDEFGH12345678 and AIzaABCDEFGH12345678',
     request_summary: 'Authorization: Bearer abcdef012345.token.value',
-    rendered_ui: { note: 'sk-proj-ABCDEFGH12345678' }
+    ui_snapshot: { note: 'sk-proj-ABCDEFGH12345678' }
   }));
   assert.ok(!/sk-proj-ABCDEFGH12345678/.test(row[COL.user_input]), 'openai key scrubbed');
   assert.ok(!/AIzaABCDEFGH12345678/.test(row[COL.user_input]), 'gemini key scrubbed');
   assert.ok(row[COL.user_input].includes('[REDACTED]'));
   assert.ok(!/Bearer abcdef012345/.test(row[COL.request_summary]), 'bearer token scrubbed');
-  assert.ok(!/sk-proj-ABCDEFGH12345678/.test(row[COL.rendered_ui_json]), 'secret in a nested JSON cell scrubbed too');
+  assert.ok(!/sk-proj-ABCDEFGH12345678/.test(row[COL.ui_snapshot_json]), 'secret in a nested JSON cell scrubbed too');
 });
 
 test('REDACTION: secret-shaped KEYS are dropped from JSON cells', () => {
@@ -132,9 +132,9 @@ test('TRUNCATION: an oversized JSON cell is capped well under the Sheets per-cel
   // redactor's own per-string cap), so it exercises the JSON-cell cap, not the inner one.
   const huge = {};
   for (let i = 0; i < 80; i++) huge['k' + i] = 'x'.repeat(500);
-  const row = flightRecorder.buildFlightRow(baseEvent({ rendered_ui: huge }));
-  assert.ok(row[COL.rendered_ui_json].length <= flightRecorder.MAX_CELL_CHARS + 20, 'capped near MAX_CELL_CHARS');
-  assert.ok(row[COL.rendered_ui_json].endsWith('...[truncated]'));
+  const row = flightRecorder.buildFlightRow(baseEvent({ ui_snapshot: huge }));
+  assert.ok(row[COL.ui_snapshot_json].length <= flightRecorder.MAX_CELL_CHARS + 20, 'capped near MAX_CELL_CHARS');
+  assert.ok(row[COL.ui_snapshot_json].endsWith('...[truncated]'));
 });
 
 test('TRUNCATION: an oversized scalar text field is capped', () => {
@@ -218,8 +218,8 @@ test('getFlightRecorderLog aggregates counts by type and errors', () => {
 
 test('TOTAL: builder never throws on hostile input (circular refs, weird types)', () => {
   const circular = baseEvent();
-  circular.rendered_ui = {};
-  circular.rendered_ui.self = circular.rendered_ui; // circular
+  circular.ui_snapshot = {};
+  circular.ui_snapshot.self = circular.ui_snapshot; // circular
   assert.doesNotThrow(() => flightRecorder.buildFlightRow(circular));
   assert.doesNotThrow(() => flightRecorder.buildFlightRow(undefined));
   assert.doesNotThrow(() => flightRecorder.buildFlightRow(42));
