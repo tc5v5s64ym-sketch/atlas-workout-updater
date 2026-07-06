@@ -376,4 +376,9 @@ function canonicalLiftCodeFor(exerciseName) {
   return knownLiftCodeOverrides.get(norm) || null;
 }
 
-module.exports = { normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap, enrichLogRow, closestExerciseMatches, canonicalLiftCodeFor };
+module.exports = {
+  normalizeExerciseKey, generateLiftCode, makeLiftCodeRegistry, buildExerciseCatalogMap,
+  enrichLogRow, closestExerciseMatches, canonicalLiftCodeFor,
+  // Exported for exerciseTruthAudit.js (report-only; not imported by production paths)
+  knownLiftCodeOverrides, PREFERRED_ALIAS_TARGETS, SHORTHAND_EXPANSIONS,
+};

@@ -1346,5 +1346,9 @@ module.exports = {
   canonicalizeExerciseName: findExerciseInText,
   splitMultiExerciseSegments,
   looksLikeCorrection,
-  looksLikeLogIt
+  looksLikeLogIt,
+  // Exported for exerciseTruthAudit.js (report-only; not imported by production paths)
+  EXERCISE_ALIASES,
+  CONTEXTUAL_ALIASES,
+  AMBIGUOUS_ALIASES,
 };
