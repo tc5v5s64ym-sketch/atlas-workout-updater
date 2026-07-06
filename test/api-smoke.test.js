@@ -84,7 +84,12 @@ const fakeSheetsState = {
   // Header row (row 1) returned by getHeaderRow per tab. Unset tabs fall back to
   // the canonical column contract (a valid header), so live-write tests pass by
   // default; header-drift tests override a tab to a reordered/short header.
-  headerRows: {}
+  headerRows: {},
+  // Opt-in overrides for the large-span verify/undo tests. Default null → the stub
+  // behaves exactly as before (getSheetRows returns the shared logRows; readRange
+  // returns []). When set, they let a test model a Log_Cleaned with many rows.
+  logRowsOverride: null,
+  verifyRangeRows: null
 };
 
 function getLocalDateString(dateTime = new Date()) {
@@ -116,6 +121,10 @@ const fakeSheets = {
     if (String(range).startsWith('Deload_State')) {
       return fakeSheetsState.deloadStateSheet.length ? [fakeSheetsState.deloadStateSheet[0]] : [];
     }
+    // Opt-in: the verify-range read-back tests plant the rows the range should find.
+    if (fakeSheetsState.verifyRangeRows && String(range).startsWith('Log_Cleaned')) {
+      return fakeSheetsState.verifyRangeRows;
+    }
     return [];
   },
   deleteRowsByRange: async (tabName, startIndex, endIndex) => {
@@ -141,7 +150,8 @@ const fakeSheets = {
   },
   getSheetRows: async tabName => {
     fakeSheetsState.reads[tabName] = (fakeSheetsState.reads[tabName] || 0) + 1;
-    if (tabName === 'Log_Cleaned') return logRows;
+    // getSheetRowsRaw is aliased to this stub, so the undo-last read-back sees it.
+    if (tabName === 'Log_Cleaned') return fakeSheetsState.logRowsOverride || logRows;
     if (tabName === 'Effort') return [];
     if (tabName === 'Coaching_Notes') return fakeSheetsState.coachingNotesRows || [];
     if (tabName === 'Constraints') return fakeSheetsState.constraintsRows || [];
@@ -4586,6 +4596,54 @@ test('api smoke: undo-last happy path deletes one Log_Cleaned row and returns ro
   assert.equal(call.tabName, 'Log_Cleaned');
   assert.equal(call.startIndex, 2);
   assert.equal(call.endIndex, 3);
+});
+
+// Regression — malformed verify/undo range 400 after a MULTI-SET log.
+// A single /api/log-workout append may write up to MAX_LOG_ROWS (200) rows (a full
+// session closeout writes the whole buffer at once). The post-write verify-range
+// read-back and the undo-last delete previously capped the span at 10, so any write
+// of 11+ rows succeeded (200) yet BOTH verify-range and undo-last 400'd with
+// "Row span must be between 1 and 10" — the exact log-workout 200 → verify 400 →
+// undo 400 sequence seen in the Flight Recorder. These pin the span to MAX_LOG_ROWS.
+test('api smoke: undo-last accepts a 12-row span (multi-set closeout, >10 rows)', async () => {
+  fakeSheetsState.deleteCalls.length = 0;
+  // A Log_Cleaned whose data rows 2..13 (sheet rows) all belong to SESSION-BIG, so
+  // the read-back ownership check passes for the full 12-row span.
+  fakeSheetsState.logRowsOverride = Array.from({ length: 12 }, (_, i) =>
+    ['2026-07-05', 'SESSION-BIG', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', String(i + 1), '135', '10', '2', '', '1350']);
+  try {
+    const { response, body } = await requestJson('/api/log-workout/undo-last', {
+      method: 'POST',
+      body: JSON.stringify({
+        log_appended_range: 'Log_Cleaned!A2:L13', // span = 12
+        session_id: 'SESSION-BIG',
+        rows_to_delete: 12,
+        confirm_delete: true
+      })
+    });
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.rows_deleted, 12);
+    assert.equal(body.data.deleted_range, 'Log_Cleaned!A2:L13');
+    assert.equal(fakeSheetsState.deleteCalls.length, 1);
+    assert.equal(fakeSheetsState.deleteCalls[0].startIndex, 1); // sheet row 2 → 0-based 1
+    assert.equal(fakeSheetsState.deleteCalls[0].endIndex, 13);  // exclusive
+  } finally {
+    fakeSheetsState.logRowsOverride = null;
+  }
+});
+
+test('api smoke: verify-range accepts a 12-row span (multi-set closeout, >10 rows)', async () => {
+  fakeSheetsState.verifyRangeRows = Array.from({ length: 12 }, (_, i) =>
+    ['2026-07-05', 'SESSION-BIG', 'Bench Press', 'Bench Press', 'Chest', 'BEN01', String(i + 1), '135', '10', '2', '', '1350']);
+  try {
+    const params = new URLSearchParams({ range: 'Log_Cleaned!A2:L13', session_id: 'SESSION-BIG', expected_rows: '12' });
+    const { response, body } = await requestJson(`/api/log-workout/verify-range?${params}`);
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.data.verified, true);
+    assert.equal(body.data.rows_found, 12);
+  } finally {
+    fakeSheetsState.verifyRangeRows = null;
+  }
 });
 
 test('api smoke: undo-last with write_id deletes once and skips duplicate retry', async () => {

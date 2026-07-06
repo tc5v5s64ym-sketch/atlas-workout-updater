@@ -287,6 +287,13 @@ const catalogCache = createTtlCache(60 * 1000);
 const SHEET_ROWS_TTL_MS = 30 * 1000;
 let sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
 
+// Maximum log rows a SINGLE /api/log-workout append may write (DoS ceiling; a real
+// session is well under it). This is the source of truth: the post-write verify-range
+// read-back and the undo-last delete MUST accept the same span, or a legitimate
+// multi-set session closeout (>10 rows in one write) succeeds yet cannot be verified
+// or undone. Keeping all three bounded by this one constant prevents that drift.
+const MAX_LOG_ROWS = 200;
+
 async function getSheetRows(tabName) {
   if (tabName !== logSheetName && tabName !== effortSheetName) {
     return getSheetRowsRaw(tabName);
@@ -3492,8 +3499,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
   }
 
   // Bound the array so an oversized payload can't drive unbounded row-by-row
-  // enrichment (DoS). A real session is well under this; 200 is a generous ceiling.
-  const MAX_LOG_ROWS = 200;
+  // enrichment (DoS). A real session is well under this; MAX_LOG_ROWS is a generous
+  // ceiling (module-level: verify-range and undo-last share it — see its definition).
   if (parsedLogRows.length > MAX_LOG_ROWS) {
     if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
     return standardError(req, res, `log_rows_json exceeds the ${MAX_LOG_ROWS}-row limit`, null, 400);
@@ -4444,8 +4451,11 @@ app.post('/api/log-workout/undo-last', async (req, res) => {
   if (rangeTab !== logSheetName) {
     return standardError(req, res, `log_appended_range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
   }
-  if (rowSpan < 1 || rowSpan > 10) {
-    return standardError(req, res, `Row span must be between 1 and 10, got ${rowSpan}.`, null, 400);
+  // Undo the inverse of a single write: the range may span up to the same
+  // MAX_LOG_ROWS a single /api/log-workout append can produce. A tighter cap here
+  // silently broke undo for a full multi-set session closeout (>10 rows in one write).
+  if (rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
+    return standardError(req, res, `Row span must be between 1 and ${MAX_LOG_ROWS}, got ${rowSpan}.`, null, 400);
   }
   if (Number(rows_to_delete) !== rowSpan) {
     return standardError(req, res, `rows_to_delete (${rows_to_delete}) does not match range row span (${rowSpan}).`, null, 400);
@@ -4566,8 +4576,11 @@ app.get('/api/log-workout/verify-range', async (req, res) => {
   if (rangeTab !== logSheetName) {
     return standardError(req, res, `range must target "${logSheetName}", got "${rangeTab}".`, null, 400);
   }
-  if (rowSpan < 1 || rowSpan > 10) {
-    return standardError(req, res, `Row span must be between 1 and 10, got ${rowSpan}.`, null, 400);
+  // Verify the exact range a single write appended: it may span up to the same
+  // MAX_LOG_ROWS that write accepts. A tighter cap here 400'd the post-write
+  // read-back for any multi-set session logging >10 rows in one write.
+  if (rowSpan < 1 || rowSpan > MAX_LOG_ROWS) {
+    return standardError(req, res, `Row span must be between 1 and ${MAX_LOG_ROWS}, got ${rowSpan}.`, null, 400);
   }
 
   if (expected_rows !== undefined) {
