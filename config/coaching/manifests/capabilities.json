@@ -74,7 +74,7 @@
       "produces": ["muscle_volume_zones"], "status": "complete"
     },
     "safety": {
-      "module": { "file": "services/safetyClassifierModule.js", "export": "classify" },
+      "module": { "file": "services/safetyClassifierModule.js", "export": "classifyTrafficLight" },
       "requires": [], "optional": ["constraint.injury"], "depends_on": [],
       "produces": ["safety_level", "safety_flags"], "status": "partial"
     },
