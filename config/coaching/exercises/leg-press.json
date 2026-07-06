@@ -1,7 +1,7 @@
 {
   "id": "leg-press",
   "name": "Leg Press",
-  "aliases": ["45-degree leg press", "horizontal leg press"],
+  "aliases": ["45-degree leg press"],
   "movement_pattern": "squat",
   "nsca_class": "core",
   "implement": "machine",

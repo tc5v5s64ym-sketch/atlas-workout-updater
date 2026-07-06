@@ -1,7 +1,7 @@
 {
   "id": "walking-lunge",
   "name": "Walking Lunge",
-  "aliases": ["dumbbell walking lunge"],
+  "aliases": [],
   "movement_pattern": "lunge",
   "nsca_class": "core",
   "implement": "dumbbell",

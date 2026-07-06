@@ -1347,3 +1347,41 @@ test('unit: normalization does NOT disturb dumbbell "s" notation or bare numbers
   // bare lb number unchanged
   assert.deepEqual(sets(parseWorkoutText('Bench 225 5/2')), [[225, 5, 2]]);
 });
+
+// ---------------------------------------------------------------------------
+// PR-06 — parser (source A) canonicals are FROZEN and unchanged by the
+// exercise-truth reconciliation.
+//
+// PR-06 reconciled the catalog + coaching JSON to Dale's history convention but
+// changed NO parser code (INVARIANT P2). These pins prove the parser's user-facing
+// canonical output for the reconciled/anchored alias families is exactly what it was
+// before — the parser is the history anchor the JSON was aligned to. If a future PR
+// (PR-14) regenerates the parser table from the catalog, these must still hold or be
+// updated deliberately alongside the audit allowlist.
+// ---------------------------------------------------------------------------
+
+test('golden PR-06: reconciled aliases still resolve to the frozen parser canonical', () => {
+  const cases = [
+    ['cable row 100 10/2', 'Seated Row'],
+    ['machine row 100 10/2', 'Seated Row'],
+    ['seated row 100 10/2', 'Seated Row'],
+    ['leg curl 100 10/2', 'Leg Curl'],
+    ['hamstring curl 100 10/2', 'Leg Curl'],
+    ['tricep pushdown 50 12/1', 'Cable Tricep Pushdown'],
+    ['rdl 225 8/2', 'RDL'],
+    ['romanian deadlift 225 8/2', 'RDL'],
+    ['deadlift 315 5/2', 'Deadlift'],
+    ['dips 45 8/1', 'Dips (Weighted)'],
+    ['weighted dips 45 8/1', 'Dips (Weighted)'],
+    ['hanging knee raises 0 12/1', 'Hanging Knee Raises'],
+    ['lateral raise 20 15/1', 'Lateral Raises'],
+    ['laterals 20 15/1', 'Lateral Raises'],
+    ['incline db press 70 8/2', 'Incline DB Press'],
+    ['barbell shrugs 225 12/1', 'Shrug'],
+    ['bent over row 185 8/2', 'Bent-Over Row'],
+  ];
+  for (const [text, expected] of cases) {
+    const r = parseWorkoutText(text);
+    assert.equal(r.canonical_name, expected, `"${text}" → ${r.canonical_name} (expected ${expected})`);
+  }
+});

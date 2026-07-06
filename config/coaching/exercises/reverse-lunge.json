@@ -1,7 +1,7 @@
 {
   "id": "reverse-lunge",
   "name": "Reverse Lunge",
-  "aliases": ["step-back lunge", "dumbbell reverse lunge"],
+  "aliases": ["step-back lunge"],
   "movement_pattern": "lunge",
   "nsca_class": "core",
   "implement": "dumbbell",

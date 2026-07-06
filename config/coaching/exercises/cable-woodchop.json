@@ -1,6 +1,6 @@
 {
   "id": "cable-woodchop",
-  "name": "Cable Woodchop",
+  "name": "Cable Woodchopper",
   "aliases": ["cable chop", "high-to-low chop", "low-to-high chop"],
   "movement_pattern": "rotation",
   "nsca_class": "assistance",

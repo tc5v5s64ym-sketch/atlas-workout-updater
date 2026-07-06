@@ -1,7 +1,7 @@
 {
   "id": "leg-curl",
   "name": "Leg Curl",
-  "aliases": ["lying leg curl", "hamstring curl", "seated leg curl"],
+  "aliases": ["lying leg curl", "hamstring curl"],
   "movement_pattern": "isolation",
   "nsca_class": "assistance",
   "implement": "machine",

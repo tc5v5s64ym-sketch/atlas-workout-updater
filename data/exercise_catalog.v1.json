@@ -1,7 +1,7 @@
 [
   {
     "exercise_id": "barbell_bench_press",
-    "name": "Barbell Bench Press",
+    "name": "Bench Press",
     "category": "barbell",
     "exercise_type": "main_lift",
     "movement_pattern": "horizontal_push",
@@ -32,7 +32,7 @@
   },
   {
     "exercise_id": "incline_barbell_bench_press",
-    "name": "Incline Barbell Bench Press",
+    "name": "Incline Bench Press",
     "category": "barbell",
     "exercise_type": "main_lift",
     "movement_pattern": "horizontal_push",
@@ -308,7 +308,7 @@
   },
   {
     "exercise_id": "barbell_bent_over_row",
-    "name": "Barbell Bent-Over Row",
+    "name": "Bent-Over Row",
     "category": "barbell",
     "exercise_type": "main_lift",
     "movement_pattern": "horizontal_pull",
@@ -369,7 +369,7 @@
   },
   {
     "exercise_id": "seated_cable_row",
-    "name": "Seated Cable Row",
+    "name": "Cable Row",
     "category": "cable",
     "exercise_type": "accessory",
     "movement_pattern": "horizontal_pull",
@@ -575,7 +575,7 @@
   },
   {
     "exercise_id": "dumbbell_lateral_raise",
-    "name": "Dumbbell Lateral Raise",
+    "name": "Lateral Raise",
     "category": "dumbbell",
     "exercise_type": "isolation",
     "movement_pattern": "flexion",
@@ -713,7 +713,7 @@
   },
   {
     "exercise_id": "triceps_pushdown",
-    "name": "Triceps Pushdown",
+    "name": "Tricep Pushdown",
     "category": "cable",
     "exercise_type": "isolation",
     "movement_pattern": "extension",
@@ -792,7 +792,7 @@
   },
   {
     "exercise_id": "lying_leg_curl",
-    "name": "Lying Leg Curl",
+    "name": "Leg Curl",
     "category": "machine",
     "exercise_type": "isolation",
     "movement_pattern": "flexion",
@@ -819,7 +819,7 @@
   },
   {
     "exercise_id": "standing_calf_raise",
-    "name": "Standing Calf Raise",
+    "name": "Calf Raise",
     "category": "machine",
     "exercise_type": "isolation",
     "movement_pattern": "extension",
@@ -1219,7 +1219,7 @@
   },
   {
     "exercise_id": "barbell_box_squat",
-    "name": "Barbell Box Squat",
+    "name": "Box Squat",
     "category": "barbell",
     "exercise_type": "main_lift",
     "movement_pattern": "squat",
@@ -1980,7 +1980,7 @@
   },
   {
     "exercise_id": "barbell_push_press",
-    "name": "Barbell Push Press",
+    "name": "Push Press",
     "category": "barbell",
     "exercise_type": "main_lift",
     "movement_pattern": "vertical_push",
@@ -2325,7 +2325,7 @@
   },
   {
     "exercise_id": "barbell_preacher_curl",
-    "name": "Barbell Preacher Curl",
+    "name": "Preacher Curl",
     "category": "barbell",
     "exercise_type": "isolation",
     "movement_pattern": "flexion",
@@ -2386,7 +2386,7 @@
   },
   {
     "exercise_id": "barbell_skullcrusher",
-    "name": "Barbell Skullcrusher",
+    "name": "Skull Crusher",
     "category": "barbell",
     "exercise_type": "isolation",
     "movement_pattern": "extension",
@@ -2474,7 +2474,7 @@
   },
   {
     "exercise_id": "barbell_good_morning",
-    "name": "Barbell Good Morning",
+    "name": "Good Morning",
     "category": "barbell",
     "exercise_type": "accessory",
     "movement_pattern": "hinge",
@@ -3019,7 +3019,7 @@
   },
   {
     "exercise_id": "dumbbell_rear_delt_raise",
-    "name": "Dumbbell Rear Delt Raise",
+    "name": "Rear Delt Fly",
     "category": "dumbbell",
     "exercise_type": "isolation",
     "movement_pattern": "horizontal_pull",
@@ -3081,7 +3081,7 @@
   },
   {
     "exercise_id": "one_arm_dumbbell_row",
-    "name": "One-Arm Dumbbell Row",
+    "name": "Dumbbell Row",
     "category": "dumbbell",
     "exercise_type": "accessory",
     "movement_pattern": "horizontal_pull",
@@ -4097,7 +4097,7 @@
   },
   {
     "exercise_id": "hack_squat_machine",
-    "name": "Hack Squat Machine",
+    "name": "Hack Squat",
     "category": "machine",
     "exercise_type": "accessory",
     "movement_pattern": "squat",
@@ -6488,7 +6488,7 @@
   },
   {
     "exercise_id": "dip",
-    "name": "Parallel-Bar Dip",
+    "name": "Dip",
     "category": "bodyweight",
     "exercise_type": "bodyweight",
     "movement_pattern": "vertical_push",
@@ -6897,7 +6897,7 @@
   },
   {
     "exercise_id": "reverse_lunge_bodyweight",
-    "name": "Bodyweight Reverse Lunge",
+    "name": "Reverse Lunge",
     "category": "bodyweight",
     "exercise_type": "bodyweight",
     "movement_pattern": "lunge",
@@ -6988,7 +6988,7 @@
   },
   {
     "exercise_id": "step_up_bodyweight",
-    "name": "Bodyweight Step-Up",
+    "name": "Step-Up",
     "category": "bodyweight",
     "exercise_type": "bodyweight",
     "movement_pattern": "lunge",

@@ -1,7 +1,7 @@
 {
   "id": "step-up",
-  "name": "Step-up",
-  "aliases": ["dumbbell step-up", "box step-up"],
+  "name": "Step-Up",
+  "aliases": ["box step-up"],
   "movement_pattern": "lunge",
   "nsca_class": "core",
   "implement": "dumbbell",

@@ -1,7 +1,7 @@
 {
   "id": "dumbbell-row",
   "name": "Dumbbell Row",
-  "aliases": ["one-arm dumbbell row", "single-arm DB row", "chest-supported row"],
+  "aliases": ["one-arm dumbbell row", "single-arm DB row"],
   "movement_pattern": "horizontal_pull",
   "nsca_class": "core",
   "implement": "dumbbell",

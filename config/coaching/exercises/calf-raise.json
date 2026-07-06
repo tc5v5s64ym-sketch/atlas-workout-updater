@@ -1,7 +1,7 @@
 {
   "id": "calf-raise",
   "name": "Calf Raise",
-  "aliases": ["standing calf raise", "seated calf raise", "machine calf raise"],
+  "aliases": ["standing calf raise", "machine calf raise"],
   "movement_pattern": "isolation",
   "nsca_class": "assistance",
   "implement": "machine",

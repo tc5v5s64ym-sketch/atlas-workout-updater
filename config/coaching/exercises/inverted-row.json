@@ -1,7 +1,7 @@
 {
   "id": "inverted-row",
   "name": "Inverted Row",
-  "aliases": ["body row", "Australian pull-up", "TRX row"],
+  "aliases": ["body row", "Australian pull-up"],
   "movement_pattern": "horizontal_pull",
   "nsca_class": "core",
   "implement": "bodyweight",

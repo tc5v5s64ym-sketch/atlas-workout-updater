@@ -1,7 +1,7 @@
 {
   "id": "seated-dumbbell-shoulder-press",
   "name": "Seated Dumbbell Shoulder Press",
-  "aliases": ["DB shoulder press", "dumbbell overhead press"],
+  "aliases": [],
   "movement_pattern": "vertical_push",
   "nsca_class": "core",
   "implement": "dumbbell",
