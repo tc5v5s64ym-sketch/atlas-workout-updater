@@ -1639,14 +1639,10 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
 
   // Failure-work signal for the LIVE session: exercises with a logged set at RIR ≤ 0,
   // so the coach can answer "why to/from failure?" from a real signal (read-only,
-  // invents no loads). Detected from the live preview rows the client sends.
-  const { detectFailureSets } = require('./services/failureSets');
-  const failure_sets = detectFailureSets(previewRows.map(r => ({
-    exercise: r && (r.exercise || r.canonical_exercise || r.name),
-    weight: r && r.weight,
-    reps: r && r.reps,
-    rir: r && r.rir
-  })));
+  // invents no loads). Both the flattening and the detection live in the shared
+  // helper so this and the unit tests can't drift.
+  const { detectFailureSets, sessionSetsFromContext } = require('./services/failureSets');
+  const failure_sets = detectFailureSets(sessionSetsFromContext(cc));
 
   return {
     recommended_label: read.recommended_label || null,

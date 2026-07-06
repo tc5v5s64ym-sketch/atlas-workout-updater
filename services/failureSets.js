@@ -57,7 +57,7 @@ function sessionSetsFromContext(context) {
   const preview = Array.isArray(c.current_preview) ? c.current_preview : [];
   return preview
     .filter(r => r && typeof r === 'object')
-    .map(r => ({ exercise: r.exercise != null ? r.exercise : r.canonical_exercise, weight: r.weight, reps: r.reps, rir: r.rir }));
+    .map(r => ({ exercise: r.exercise || r.canonical_exercise || r.name, weight: r.weight, reps: r.reps, rir: r.rir }));
 }
 
 module.exports = { isFailureRir, detectFailureSets, sessionSetsFromContext };
