@@ -990,7 +990,7 @@ function extractUnknownExerciseLead(rawText) {
   const start = tokens.findIndex(token => looksLikeSetToken(token));
   if (start <= 0) return null;
 
-  const rawName = tokens
+  let rawName = tokens
     .slice(0, start)
     .join(' ')
     // Strip continuation fillers so phrasing like "another 205 5/3" or "same
@@ -998,6 +998,16 @@ function extractUnknownExerciseLead(rawText) {
     // bogus exercise named "Another"/"Same".
     .replace(/^\s*(today|i did|did|was|were|then|and|another|next|same|again|also|plus)\b\s*/i, '')
     .trim();
+  // Strip a TRAILING run of conversational filler sitting between a real leading
+  // exercise name and its sets, e.g. "Curls I did 35 12/2" / "Curls 35 12/2 actually"
+  // (live bug 2026-07-06: these fell through to missing_exercise and dropped the log).
+  // Real lift names never end in these pronoun/connective words, and looksLikeProse
+  // below still guards a lead that is only conversation.
+  let prevName;
+  do {
+    prevName = rawName;
+    rawName = rawName.replace(/\s*\b(i|i'?m|im|i'?ve|ive|today|did|then|and|another|next|same|again|also|plus|actually|really|just|now)\b\s*$/i, '').trim();
+  } while (rawName !== prevName);
   if (!rawName) return null;
 
   // Guard against coining a phantom exercise from conversational feedback. A real
