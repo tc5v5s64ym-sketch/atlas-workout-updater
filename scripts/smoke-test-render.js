@@ -137,6 +137,7 @@ async function main() {
     recordResult(results, 'GET /version', versionOk, `version=${versionValue}${expectedVersion ? ` expected=${expectedVersion}` : ''}`);
     if (!versionOk) throw new Error(`Version mismatch: expected ${expectedVersion}, got ${versionValue}`);
 
+    // eslint-disable-next-line no-unused-vars -- fetch verifies the route responds; return value not needed
     const routes = await publicJson('/routes');
     recordResult(results, 'GET /routes', true, 'routes listed');
 

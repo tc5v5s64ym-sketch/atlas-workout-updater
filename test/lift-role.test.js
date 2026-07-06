@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   classifyLiftRole, isAccessory, isMainCompound,
-  accessoryRepTarget, guardAccessoryReps, recommendedTargetRir, applyLiftRoleGuards,
+  guardAccessoryReps, recommendedTargetRir, applyLiftRoleGuards,
   ACCESSORY_RESET_LABEL,
 } = require('../services/liftRole');
 

@@ -135,6 +135,7 @@ test('edge cases: closestExerciseMatches handles empty input or catalog', () => 
 
 // Acceptance tests for unique generated lift codes (the collision fix)
 test('lift code uniqueness: two unknown exercises colliding on prefix get distinct codes (01/02)', () => {
+  // eslint-disable-next-line no-unused-vars -- map initialised to trigger registry side-effects; values not asserted here
   const map = fakeCatalog(); // or empty; doesn't matter for pure unknowns
   // clear for safety
   const reg = makeLiftCodeRegistry();

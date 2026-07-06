@@ -11,6 +11,7 @@
 
 const { classifyLiftRole } = require('./liftRole');
 
+// eslint-disable-next-line no-unused-vars -- helper defined for planned numeric coercion; not yet wired to callers
 function num(v) {
   if (v == null || v === '') return null;
   const n = Number(v);

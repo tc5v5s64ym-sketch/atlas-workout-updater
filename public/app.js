@@ -1,3 +1,4 @@
+/* eslint-disable no-implicit-globals -- browser script; top-level function declarations are intentional global exports; converted to ES modules in Phase 1 PR-08/09 */
 /* Atlas frontend — read-only views + approve-before-save workout logger.
  * Golden rule: AI/backend can parse, prepare, and preview. The owner approves.
  * Only then does Atlas write. Preview always runs with test_mode=true.
@@ -411,6 +412,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 /* ===== History tab ===== */
 
 // 'YYYY-MM-DD' → "Today" / "Yesterday" / "Mon, Jun 9", parsed in local time.
+// eslint-disable-next-line no-unused-vars -- global export; consumed by other browser scripts or inline HTML; Phase 1 PR-08/09
 function formatSessionDate(dateStr) {
   const parts = String(dateStr || '').split('-').map(Number);
   if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return dateStr || '';
@@ -2002,7 +2004,9 @@ let pendingSubstitution = null;
 // Read-only accessor for coach-conversation.js (coach layer must never mutate
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
+// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function getActivePlannedSession() { return activePlannedSession; }
+// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function getSessionCompleted() { return sessionCompleted; }
 
 // The active training intent id (e.g. 'recovery_pump', 'deload_reset'). A started
@@ -2067,7 +2071,9 @@ function planExercisesFromCanonical(session) {
 
 // Coach-suggestion engagement flag accessors for the coach layer (coach-conversation.js).
 // markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
+// eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
 function getCoachSuggestionEngaged() { return coachSuggestionEngaged; }
+// eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
 function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 
 // Step 373b: replace a prescribed slot in the LIVE planned session with the
@@ -2716,6 +2722,7 @@ document.addEventListener('atlas:plan-edit-proposed', e => {
 // Open the recommended workout — Composer-first Phase B: routes to the ONE
 // canonical in-thread Coach's Pick (which does its own read-only fetch and
 // degrades gracefully), no longer a second drawer rendering of the same pick.
+// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function openTodaySessionPlan() {
   openCoachPickInThread();
 }
@@ -2890,6 +2897,7 @@ function closeIntentDrawer() {
   if (drawer) drawer.hidden = true;
 }
 
+// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 async function loadTodaysPlan() {
   const box = document.getElementById('todays-plan');
   try {
@@ -3664,6 +3672,7 @@ let pendingWrite = null;
 // would fire the newest preview's write. Each card registers a cleanup here;
 // invalidatePreview() runs them all.
 const effortCardCleanups = [];
+// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function registerEffortCardCleanup(fn) { effortCardCleanups.push(fn); }
 function runEffortCardCleanups() {
   while (effortCardCleanups.length) {

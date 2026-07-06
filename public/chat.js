@@ -13,6 +13,7 @@
 
   const form = document.getElementById('logger-form');
   const thread = document.getElementById('thread-messages');
+  // eslint-disable-next-line no-unused-vars -- DOM element captured; referenced via closure in sibling scripts; Phase 1 PR-08/09
   const workoutText = document.getElementById('workout-text');
   const previewPanel = document.getElementById('preview-panel');
   const loggerStatus = document.getElementById('logger-status');

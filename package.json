@@ -8,7 +8,8 @@
     "dev": "node index.js",
     "build:info": "node scripts/write-build-info.js",
     "postinstall": "node scripts/write-build-info.js",
-    "lint": "find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "lint": "eslint .",
+    "check:syntax": "find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test --test-reporter=spec",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
@@ -28,6 +29,8 @@
     "openai": "^4.103.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0"
+    "@playwright/test": "^1.60.0",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0"
   }
 }

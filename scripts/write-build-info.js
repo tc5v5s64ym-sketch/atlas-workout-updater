@@ -35,7 +35,6 @@ try {
     path.join(__dirname, '..', 'public', 'build-info.json'),
     JSON.stringify(info, null, 2) + '\n'
   );
-  // eslint-disable-next-line no-console
   console.log(`[build-info] commit=${info.commit_short || 'unknown'} pr=${info.pr != null ? info.pr : '-'}`);
 } catch (_) {
   // Never break the install/build over a diagnostics file.

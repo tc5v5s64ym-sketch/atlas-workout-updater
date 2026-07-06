@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const { decision, DECISION_TYPES, SEVERITY_TYPES } = require('../rules/ruleTypes');
 const {
-  validateLogRowBounds, validateLogRowsBounds, checkBound, checkE1rmJump, BOUNDS
+  validateLogRowBounds, validateLogRowsBounds, checkE1rmJump, BOUNDS
 } = require('../rules/validationRules');
 const {
   rirCaution, junkRepGuard, painFlag, rirDrift, evaluateSessionSafety, groupBySession

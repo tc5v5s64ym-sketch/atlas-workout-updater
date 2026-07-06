@@ -341,6 +341,7 @@ function buildMockWorkoutPayload(ids, runIndex = 0) {
   };
 }
 
+// eslint-disable-next-line no-unused-vars -- sim helper; used by manual test runs outside the automated suite
 function buildFakeBenchSets(runIndex = 0) {
   const profile = buildMockWorkoutProfile(runIndex);
   const bench = profile.exercises.find(exercise => exercise.exercise === 'Bench Press') || profile.exercises[0];

@@ -22,6 +22,7 @@
 const { computeBenchmark } = require('./exerciseBenchmark');
 const { isWarmupNote } = require('./warmupTag');
 
+// eslint-disable-next-line no-unused-vars -- column index constants; COL_DATE reserved for future date filtering
 const COL_DATE    = 0;
 const COL_SESSION = 1;
 const COL_LIFT    = 5;

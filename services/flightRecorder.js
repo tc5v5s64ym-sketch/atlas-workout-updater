@@ -28,6 +28,7 @@
 // the durable, aggregatable copy for offline replay.
 
 const { redactBugPayload } = require('./bugReport');
+// eslint-disable-next-line no-unused-vars -- imported for schema reference; header validation wired in Phase 0 PR-05
 const { flightRecorderColumns } = require('../config/columns');
 
 // Optional diagnostics tab (declared in config/sheetContract.js). NOT a trust-contract
