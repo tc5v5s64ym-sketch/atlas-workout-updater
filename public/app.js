@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v112';
+const ATLAS_SHELL_BUILD = 'v113';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -4159,8 +4159,72 @@ async function rowsFromUnresolvedPlannedLead(workoutText) {
   }
 }
 
+// Normalize an exercise phrase to singular-word tokens for family matching.
+function bareLeadTokens(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w));
+}
+
+// Plan-aware disambiguation of a BARE/generic leading exercise term. When the lifter
+// types a short generic name ("rows", "bench", "curls") whose words are a subset of a
+// planned exercise's name, and the plan has EXACTLY ONE such exercise, rewrite the
+// lead to that planned name so it logs as the specific movement — the session plan is
+// the highest-confidence reference after the lifter's own words ("seated row is the
+// only row planned, so 'rows' means seated row"). Pure and conservative:
+//   • only the leading name (the words before the first set number) is considered;
+//   • fires only on a UNIQUE family match — zero or multiple planned matches → text
+//     unchanged, so the existing alias/ask/default behavior stands;
+//   • a lead that is already as specific as (or more specific than) the plan entry is
+//     left alone (its tokens wouldn't be a strict subset needing a rewrite).
+function rewriteBareLeadAgainstPlan(text, plannedNames) {
+  const raw = String(text == null ? '' : text);
+  const m = raw.match(/^(\s*)([A-Za-z][A-Za-z' -]*?)\s+(\d[\s\S]*)$/);
+  if (!m) return text;
+  const leadTokens = bareLeadTokens(m[2]);
+  if (!leadTokens.length) return text;
+  const names = Array.isArray(plannedNames) ? plannedNames.filter(Boolean) : [];
+  const matches = [];
+  for (const name of names) {
+    const nameTokens = bareLeadTokens(name);
+    const nameSet = new Set(nameTokens);
+    // Generic match: every lead word appears in the plan name, and the lead is not
+    // MORE specific than the plan entry (lead tokens ⊆ plan tokens).
+    if (leadTokens.length <= nameTokens.length && leadTokens.every(t => nameSet.has(t))) {
+      if (!matches.includes(name)) matches.push(name);
+    }
+  }
+  if (matches.length !== 1) return text;                 // ambiguous or no match → leave it
+  if (bareLeadTokens(matches[0]).join(' ') === leadTokens.join(' ')) return text; // already specific
+  return `${m[1]}${matches[0]} ${m[3]}`;
+}
+
+// Planned exercise names for bare-lead disambiguation — still-unlogged first (the one
+// the lifter is on), then the full plan; deduped, order-preserving.
+function planNamesForDisambiguation() {
+  const remaining = typeof remainingPlannedExercises === 'function' ? remainingPlannedExercises() : [];
+  const planned = typeof plannedExerciseOrder === 'function' ? plannedExerciseOrder() : [];
+  const seen = new Set();
+  const out = [];
+  for (const n of [...remaining, ...planned]) {
+    const key = String(n || '').toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(n);
+  }
+  return out;
+}
+
 async function rowsFromWorkoutInput() {
-  const workoutText = workoutTextInput.value.trim();
+  let workoutText = workoutTextInput.value.trim();
+  // Plan-aware disambiguation: a bare generic lead ("rows", "bench", "curls") means
+  // the plan's unique exercise of that family. Rewrite it to that planned name BEFORE
+  // parsing so it logs as the specific movement; with no plan (or an ambiguous /
+  // absent match) it is byte-identical and the existing alias/ask/default stands.
+  workoutText = rewriteBareLeadAgainstPlan(workoutText, planNamesForDisambiguation());
   if (!workoutText || workoutText === lastParsedWorkoutText) return;
 
   // Multi-exercise display-block paste — the live composer / app-export format:

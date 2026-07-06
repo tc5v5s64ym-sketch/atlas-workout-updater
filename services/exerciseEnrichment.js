@@ -21,7 +21,12 @@ const knownLiftCodeOverrides = new Map([
   ['face pull', 'FP01'], ['face pulls', 'FP01'],
   ['lateral raise', 'LRA01'], ['lateral raises', 'LRA01'], ['laterals', 'LRA01'],
   ['hammer curl', 'HC01'], ['hammer curls', 'HC01'], ['hammers', 'HC01'],
-  ['bicep curl', 'BC01'], ['biceps curl', 'BC01'], ['curl', 'BC01'], ['curls', 'BC01'],
+  // Plain "curl"/"curls" and the bicep-curl synonyms default to BC01 when the catalog
+  // has no code (mirrors the PREFERRED_ALIAS_TARGETS entry for plain curl/curls, defined
+  // below). The distinct "Dumbbell Curl" (CRL01) is intentionally NOT folded in — that's
+  // a separate owner taxonomy decision (filed in BACKLOG.md).
+  ['bicep curl', 'BC01'], ['bicep curls', 'BC01'], ['biceps curl', 'BC01'], ['biceps curls', 'BC01'],
+  ['curl', 'BC01'], ['curls', 'BC01'],
   ['knee raise', 'KR01'], ['knee raises', 'KR01']
 ]);
 
@@ -117,7 +122,17 @@ const PREFERRED_ALIAS_TARGETS = {
   'knee raises': ['hanging knee raises'],
   hammers: ['hammer curls', 'hammer curl'],
   'face pulls': ['face pull'],
-  'leg curls': ['leg curl']
+  'leg curls': ['leg curl'],
+  // Plain "curl" / "curls" is in NO catalog variant list, so it resolved to a
+  // generated fallback code and split from the lifter's other bicep-curl rows
+  // ("Atlas doesn't know what curls are"). Steer the bare word to the "Bicep Curl"
+  // canonical (BC01). Named variants already resolve on their own — "bicep curl" /
+  // "biceps curl" exact-match the Bicep Curl row, and distinct curls (barbell /
+  // hammer / preacher / leg / dumbbell / cable / EZ-bar / …) keep their own codes.
+  // NOTE: folding the distinct "Dumbbell Curl" (CRL01) row into Bicep Curl is a
+  // separate product/taxonomy decision (owner-reserved) — filed in BACKLOG.md.
+  curl: ['bicep curl'],
+  curls: ['bicep curl']
 };
 
 const BLOCKED_AMBIGUOUS_ALIASES = new Set(['lats', 'row', 'rows']);
