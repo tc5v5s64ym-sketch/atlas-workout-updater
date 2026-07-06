@@ -1,5 +1,5 @@
 const requiredSheetTabs = ['Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Logic', 'Session_Summary'];
-const optionalSheetTabs = ['Dashboard', 'Coaching_Notes', 'Constraints', 'Deload_State', 'Modality_Log', 'Brain_Shadow', 'Flight_Recorder'];
+const optionalSheetTabs = ['Dashboard', 'Coaching_Notes', 'Constraints', 'Deload_State', 'Modality_Log', 'Brain_Shadow', 'Intent_Shadow', 'Flight_Recorder'];
 
 // Normalize a header cell or column key to a comparable token: lowercase,
 // strip everything that isn't a letter or digit. This unifies the variants a
