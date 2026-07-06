@@ -198,9 +198,9 @@ const curlCatalogRows = [
 ];
 function curlCatalog() { return buildExerciseCatalogMap(curlCatalogRows); }
 
-test('curl aliases unify to Bicep Curl / BC01 (curl, curls, bicep, dumbbell, db)', () => {
+test('plain/bicep curl aliases resolve to Bicep Curl / BC01', () => {
   const map = curlCatalog();
-  for (const input of ['curl', 'curls', 'Curls', 'bicep curl', 'biceps curls', 'dumbbell curl', 'dumbbell curls', 'DB Curls']) {
+  for (const input of ['curl', 'curls', 'Curls', 'bicep curl', 'bicep curls', 'biceps curl', 'biceps curls']) {
     const { enriched } = enrichLogRow({ exercise: input }, map);
     assert.equal(enriched.lift_code, 'BC01', `"${input}" must map to BC01`);
     assert.equal(enriched.canonical_exercise, 'Bicep Curl', `"${input}" canonical must be Bicep Curl`);
@@ -213,7 +213,12 @@ test('distinct curls keep their own codes (unrelated mappings unchanged)', () =>
     ['barbell curl', 'BBC01', 'Barbell Curl'],
     ['hammer curls', 'HAM01', 'Hammer Curls'],
     ['leg curl', 'LC01', 'Leg Curl'],
-    ['preacher curl', 'PRC01', 'Preacher Curl']
+    ['preacher curl', 'PRC01', 'Preacher Curl'],
+    // Dumbbell Curl (CRL01) is deliberately NOT folded into Bicep Curl at the alias
+    // layer — that taxonomy decision is deferred to the owner (BACKLOG). It keeps its
+    // own catalog row; the plan-aware client layer disambiguates bare "curls".
+    ['dumbbell curl', 'CRL01', 'Dumbbell Curl'],
+    ['db curls', 'CRL01', 'Dumbbell Curl']
   ];
   for (const [input, code, canon] of cases) {
     const { enriched } = enrichLogRow({ exercise: input }, map);
@@ -223,7 +228,7 @@ test('distinct curls keep their own codes (unrelated mappings unchanged)', () =>
 });
 
 test('curl fallback (no catalog code) resolves to BC01 via generateLiftCode', () => {
-  for (const input of ['curl', 'curls', 'bicep curl', 'dumbbell curl', 'db curls']) {
+  for (const input of ['curl', 'curls', 'bicep curl', 'biceps curls']) {
     assert.equal(generateLiftCode(input), 'BC01', `"${input}" fallback must be BC01`);
   }
 });
