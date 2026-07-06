@@ -42,6 +42,25 @@ function toRecords(arr) {
   return arr.map(toRecord).filter(Boolean);
 }
 
+// Normalize an exercise name for completion matching: lowercase, strip punctuation,
+// and singularize each word (drop a trailing "s", but never from an "ss" ending like
+// "press"). This makes a plural logged name match its singular plan entry — "Lateral
+// Raises" ↔ "Lateral Raise", "Barbell Curls" ↔ "Barbell Curl", "Dips" ↔ "Dip" — so a
+// completed exercise isn't re-read as remaining just because the logged form was
+// plural. SAFE: word count and words are preserved (only trailing -s), so distinct
+// exercises ("Bench Press" vs "Incline Bench Press") still never collide. It does NOT
+// resolve abbreviations/aliases ("OHP" → "Overhead Press") — that needs the exercise
+// catalog and belongs to the client's identity resolution / a lift-code match.
+function normalizeExerciseName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w))
+    .join(' ');
+}
+
 /**
  * computePlanState(planned, completed) → { planned, completed, remaining, isComplete }
  */
@@ -49,12 +68,15 @@ function computePlanState(planned, completed) {
   const planRecs  = toRecords(planned);
   const doneRecs  = toRecords(completed);
 
-  const doneNames = new Set(doneRecs.map(r => r.name.toLowerCase()));
+  // Match on the singular-normalized name so a plural logged name still completes its
+  // singular plan entry (the completed-work-read-back-as-remaining bug), plus the
+  // authoritative lift_code when both sides supply one.
+  const doneNames = new Set(doneRecs.map(r => normalizeExerciseName(r.name)));
   const doneCodes = new Set(doneRecs.map(r => r.liftCode.toLowerCase()).filter(Boolean));
 
   const remaining = planRecs
     .filter(r => {
-      if (doneNames.has(r.name.toLowerCase())) return false;
+      if (doneNames.has(normalizeExerciseName(r.name))) return false;
       if (r.liftCode && doneCodes.has(r.liftCode.toLowerCase())) return false;
       return true;
     })

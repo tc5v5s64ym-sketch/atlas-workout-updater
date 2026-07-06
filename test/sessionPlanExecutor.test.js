@@ -570,3 +570,27 @@ test('coach-conversation.js prefers detail.nextPlanned for the next-up handoff; 
   assert.match(src, /detail\.nextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
     'handoff uses detail.nextPlanned first; the API fallback fires only when hasEngagedPlan is true');
 });
+
+// ── Completed-exercise read-back: plural/singular name variants ──────────────
+// Flight Recorder evidence (FR-20260706013655-4t692wuh, bug markers "It read back
+// to me a couple workouts I already did"): a completed exercise re-surfaced as
+// remaining because the logged name form didn't EXACTLY match the plan entry. A
+// plural logged name must still complete its singular plan slot.
+test('computePlanState: a plural completed name excludes its singular plan entry', () => {
+  const s = computePlanState(['Lateral Raise', 'Bench Press'], ['Lateral Raises']);
+  assert.deepEqual(s.remaining, ['Bench Press'], 'Lateral Raise is done (logged plural) → only Bench Press remains');
+});
+
+test('computePlanState: plural variants complete the plan (isComplete)', () => {
+  const s = computePlanState(['Barbell Curl', 'Dip'], ['Barbell Curls', 'Dips']);
+  assert.deepEqual(s.remaining, []);
+  assert.equal(s.isComplete, true);
+});
+
+test('computePlanState: singularization never collapses "press" / distinct movements', () => {
+  // "press" must not lose its final s in a way that mismatches; and a different, more
+  // specific movement must NOT be falsely completed by a shorter logged name.
+  const s = computePlanState(['Overhead Press', 'Incline Bench Press'], ['Overhead Press', 'Bench Press']);
+  assert.deepEqual(s.remaining, ['Incline Bench Press'], 'Bench Press must NOT complete Incline Bench Press');
+  assert.equal(s.completed.includes('Overhead Press'), true);
+});
