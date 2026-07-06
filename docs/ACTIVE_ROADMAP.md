@@ -108,7 +108,19 @@ The original roadmap named Steps 358–360 and 364 differently from the numbers 
 
 ---
 
-## Active queue - Trust-first roadmap refill (Steps 379-385)
+## Active queue — the One-Brain observation window (current)
+
+The trust-first refill below (Steps 379–385) has **shipped in full**; its record is preserved underneath as history. The live queue is now:
+
+1. **One-Brain hybrid observation window** — `ATLAS_COACH_ENGINE=hybrid` is on in production with `Brain_Shadow`/`Intent_Shadow` persistence enabled; evidence accumulates against the acceptance standard in [`ONE_BRAIN_PROMOTION_CRITERIA.md`](./ONE_BRAIN_PROMOTION_CRITERIA.md), with divergence attributed per [`ENGINE_RECONCILIATION_NOTES.md`](./ENGINE_RECONCILIATION_NOTES.md). Detailed build/deferred items: `BACKLOG.md` → "One-Brain Coaching Engine".
+2. **Evidence-gated promotions (owner-reserved)** — the `ATLAS_COACH_ENGINE=brian` serve decision (progression only, per the serve-eligibility rail) after the window concludes, and the separate C3 intent-routing promotion (`ATLAS_INTENT_ROUTER`, judged from the `Intent_Shadow` log).
+3. **Engine-lane follow-ups** as sequenced in `BACKLOG.md` (e.g. manifest required-vs-optional capability semantics — the real Coach's Pick promotion blocker; block-level workout divergence before any `workout` promotion window).
+
+Nothing in this queue changes user-visible behavior; promotions are owner decisions, never automatic.
+
+---
+
+## Shipped queue - Trust-first roadmap refill (Steps 379-385) — history
 
 This sequence is intentionally small. It refills the active roadmap from `BACKLOG.md` and recent app-test findings after the session-state trust-repair series.
 
