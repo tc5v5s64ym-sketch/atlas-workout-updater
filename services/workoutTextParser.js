@@ -411,8 +411,13 @@ function parseWorkoutText(input, context = {}) {
   // ambiguous line surfaces its own specific ask instead of sinking the paste.
   // Runs ONLY on today's failure results — every currently-succeeding input is
   // byte-identical; the single-line G1 refuse-to-merge guardrail is untouched.
+  // `missing_exercise` is included because a conversational opening line collapses
+  // with a clean log line into one over-long "prose lead" blob (flight test 07-06:
+  // "Curls weight you suggested is too light\n\nCurls 35 12/2 12/2 12/2" dead-ended
+  // here and dropped the curls — "You missed curls"); the per-line rescue recovers
+  // the real log and surfaces the feedback line as unresolved.
   if (result?.intent === 'needs_clarification' &&
-      (result.warnings || []).some(w => w === 'multiple_exercises_in_input' || w === 'unattributable_trailing_sets')) {
+      (result.warnings || []).some(w => w === 'multiple_exercises_in_input' || w === 'unattributable_trailing_sets' || w === 'missing_exercise')) {
     const multiline = parseMultilineLogSets(extractSetParagraphs(normalizedInput), rawText, context, result);
     if (multiline) result = multiline;
   }
