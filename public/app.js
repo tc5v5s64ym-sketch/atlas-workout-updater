@@ -630,7 +630,8 @@ async function loadSessionDetail(sessionId, slot) {
       slot.appendChild(buildQualityRow(d.quality_score, d.quality_breakdown));
     }
   } catch (err) {
-    slot.innerHTML = `<span class="muted">Could not load detail: ${err.message}</span>`;
+    slot.textContent = '';
+    slot.appendChild(el('span', { class: 'muted', text: `Could not load detail: ${err.message}` }));
   }
 }
 
@@ -2937,7 +2938,8 @@ async function loadTodaysPlan() {
     }
     box.appendChild(grid);
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
@@ -2983,7 +2985,8 @@ async function loadCoaching() {
       box.appendChild(el('p', { class: 'muted', text: 'No deloads needed — no lift has been stalled 4+ sessions.' }));
     }
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
@@ -3009,7 +3012,8 @@ async function loadWeeklySummary() {
       box.appendChild(svgBarChart(breakdown, { label: 'Weekly volume by muscle group' }));
     }
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
@@ -3029,7 +3033,8 @@ async function loadRecentHistory() {
       sets.map(s => [s.exercise, s.set_number, s.weight, s.reps, s.rir])
     ));
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
@@ -3054,7 +3059,8 @@ async function loadRecentPrs() {
       ])
     ));
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
@@ -3081,7 +3087,8 @@ async function loadStalls() {
     table.appendChild(tbody);
     box.appendChild(table);
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
@@ -3128,7 +3135,8 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
       resultBox.appendChild(el('span', { class: 'muted', text: 'No working sets found for this lift code.' }));
     }
   } catch (err) {
-    resultBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    resultBox.textContent = '';
+    resultBox.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 
   try {
@@ -3161,7 +3169,8 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
       recBox.appendChild(el('p', { class: 'small muted', text: rd.reasoning }));
     }
   } catch (err) {
-    recBox.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    recBox.textContent = '';
+    recBox.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 });
 
@@ -3363,7 +3372,8 @@ async function loadProgressLiftList() {
       .filter(l => l.series.length);
     renderTrends(trendsFrame);
   } catch (err) {
-    resultBox.innerHTML = `<span class="muted">Could not load lifts: ${err.message}</span>`;
+    resultBox.textContent = '';
+    resultBox.appendChild(el('span', { class: 'muted', text: `Could not load lifts: ${err.message}` }));
   }
 }
 
@@ -3503,7 +3513,8 @@ document.getElementById('weekly-report-btn').addEventListener('click', async () 
       box.appendChild(el('p', { class: 'muted', text: 'No training data logged in this period.' }));
     }
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   } finally {
     btn.disabled = false;
     btn.textContent = 'Load weekly report';
@@ -3557,7 +3568,8 @@ document.getElementById('catalog-search-form').addEventListener('submit', async 
       results.map(r => [r.canonical_name, r.muscle_group, r.lift_code, (r.variants || []).join(', ')])
     ));
   } catch (err) {
-    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Search failed: ${err.message}` }));
   }
 });
 
@@ -3611,7 +3623,8 @@ document.getElementById('detail-form').addEventListener('submit', async e => {
       }
     }
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 });
 
@@ -3649,7 +3662,8 @@ document.getElementById('session-search-form').addEventListener('submit', async 
       box.appendChild(el('p', { class: 'muted', text: `Showing first 100 of ${sets.length} rows.` }));
     }
   } catch (err) {
-    box.innerHTML = `<span class="muted">Search failed: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Search failed: ${err.message}` }));
   }
 });
 
@@ -4893,9 +4907,11 @@ function resolveCloseoutWorkoutDate({ manualDate, manualEntered, screenshotDate,
 function renderDateSourceNotice(source, date) {
   if (!date) return null;
   if (source === 'today_fallback') {
-    const warn = el('div', { class: 'preview-warnings preview-date-warning' });
-    warn.innerHTML = `⚠️ Date not found in screenshot — saving as <strong>${date}</strong> (today). ` +
-      `If this workout is from a different day, change the date field above and preview again.`;
+    const warn = el('div', { class: 'preview-warnings preview-date-warning' }, [
+      '⚠️ Date not found in screenshot — saving as ',
+      el('strong', { text: date }),
+      ' (today). If this workout is from a different day, change the date field above and preview again.'
+    ]);
     return warn;
   }
   if (source === 'screenshot') {
@@ -7225,7 +7241,10 @@ async function loadBwHistory() {
     }
     if (hint) hint.textContent = entries.length ? `${entries.length} entries` : '';
   } catch (err) {
-    if (glance) glance.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    if (glance) {
+      glance.textContent = '';
+      glance.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
+    }
   }
 }
 
@@ -7252,7 +7271,8 @@ async function loadPendingExercises() {
     ));
     box.appendChild(el('p', { class: 'muted', text: `${items.length} exercise(s) need catalog entries. Add them to Exercise_Catalog with the canonical name and a variant matching what you type.` }));
   } catch (err) {
-    box.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+    box.textContent = '';
+    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
   }
 }
 
