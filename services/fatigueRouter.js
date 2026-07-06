@@ -10,11 +10,13 @@
 // from rep counts (consistent with the existing form-signal guardrail).
 //
 // PURE / read-only: no I/O, no LLM, no Sheets, NO write path, NO Log_Cleaned schema
-// change, and NOT wired into the live session/coach path. Takes already-classified
-// inputs (pattern / muscles / modalityCategory / fatigue_signal) so it stays
-// decoupled — the wiring layer computes those via patternFor / musclesFor /
-// exerciseModality and threads the governor's fatigue_signal. Routing is a
-// SUGGESTION only; it never auto-reorders or writes.
+// change. WIRED into the live coach path: index.js calls routeNextMove when
+// building set-reaction coach facts (and services/coach.js consumes the routing
+// vocabulary). Takes already-classified inputs (pattern / muscles /
+// modalityCategory / fatigue_signal) so it stays decoupled — the wiring layer
+// computes those via patternFor / musclesFor / exerciseModality and threads the
+// governor's fatigue_signal. Routing is a SUGGESTION only; it never auto-reorders
+// or writes.
 
 // Routing actions (the full vocabulary the router can emit).
 const ROUTE_ACTIONS = Object.freeze([

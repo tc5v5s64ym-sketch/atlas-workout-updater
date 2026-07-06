@@ -14,9 +14,12 @@
 // qualitative descriptors, never load/volume numbers.
 //
 // PURE / read-only: no I/O, no LLM, no Sheets, NO write path, NO Log_Cleaned /
-// Deload_State schema change, no parser / coach / recommendation change. Consumes
-// an already-derived signal snapshot; wiring it into the planner/coach is a later,
-// separately-gated slice.
+// Deload_State schema change. WIRED into the live coach-facts path: index.js
+// calls assessRecoveryDeload to surface a recovery_advisory (deload /
+// recovery_reload only), and ONLY when no engine deload is already active —
+// deloadEngine/Deload_State remains the sole owner of deload STATE and always
+// wins (see docs/ENGINE_RECONCILIATION_NOTES.md). Consumes an already-derived
+// signal snapshot; advisory only, never a state transition.
 
 // The recovery decision ladder outcomes (§10.5).
 const RECOVERY_DECISIONS = Object.freeze([
