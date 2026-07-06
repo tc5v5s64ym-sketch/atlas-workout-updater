@@ -56,7 +56,7 @@ test('server seam: applySubstitution + computePlanState model the Deadlift→Squ
 // contained TODO-failure, not a file-level crash.
 
 function loadActiveSession() {
-  // eslint-disable-next-line global-require
+   
   return require('../public/activeSession');
 }
 
@@ -172,6 +172,7 @@ test('activeSession: replaceExercise is a no-op for an unknown target or an iden
 });
 
 test('activeSession: an ambiguous loose name never silently mutates the wrong slot (review #565)', () => {
+  // eslint-disable-next-line no-unused-vars -- `remaining` imported for type completeness; not asserted in this test case
   const { createActiveSession, markCompleted, replaceExercise, skipExercise, completedExercises, remaining } = require('../public/activeSession');
   const s = createActiveSession({ exercises: ['Seated Row', 'Barbell Row', 'Overhead Press'] });
 

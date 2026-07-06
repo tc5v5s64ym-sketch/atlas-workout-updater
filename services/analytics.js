@@ -270,6 +270,7 @@ function computeExerciseProgress(logRows, liftCode) {
     .filter(row => row.lift_code === normalizedCode && isPositiveFinite(row.weight) && isPositiveFinite(row.reps));
 
   const sessionsByKey = new Map();
+  // eslint-disable-next-line no-unused-vars -- dead accumulator; remove once exercise-history endpoint is wired
   const progressByDate = [];
   const bestWeightValues = [];
   const best1RMValues = [];
@@ -1693,6 +1694,7 @@ function scoreIntents(logRows, effortRows = [], options = {}) {
       && readiness.some(r => ['fatigued', 'recovering', 'ready'].includes(r.status));
     if (trainingConsistently) {
       // Score accounts for every neglected pattern (they ARE overdue, even if not all schedulable today).
+      // eslint-disable-next-line no-unused-vars -- loop variable intentionally unused; counting iterations only
       for (const p of freshPatterns) score += 20;
     }
 

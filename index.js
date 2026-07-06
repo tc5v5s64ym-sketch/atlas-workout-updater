@@ -76,6 +76,7 @@ const {
   resolvePostDeload
 } = require('./services/deloadEngine');
 const { readCurrentDeloadState } = require('./services/deloadState');
+// eslint-disable-next-line no-unused-vars -- roundLoad imported here; phase-2 deload wiring will use it
 const { selectProtocol, roundLoad, computePrescription } = require('./services/deloadProtocols');
 const {
   beginWrite,
@@ -314,7 +315,9 @@ function invalidateSheetRowsCache() {
 }
 
 const { routeDefinitions } = require('./config/routes');
+// eslint-disable-next-line no-unused-vars -- exerciseCatalogColumns unused in this file; imported for catalog-audit route (Phase 0 PR-06)
 const { logCleanedColumns, logRowFieldAliases, effortColumns, exerciseCatalogColumns, effortRowFieldAliases, modalityLogColumns } = require('./config/columns');
+// eslint-disable-next-line no-unused-vars -- requiredSheetTabs, optionalSheetTabs unused here; used in startup health-check via buildSheetContractStatus
 const { requiredSheetTabs, optionalSheetTabs, buildSheetContractStatus, validateHeaderRow } = require('./config/sheetContract');
 
 // --- Header-drift guard (trust-critical write protection) --------------------
@@ -475,6 +478,7 @@ function normalizeEffortRow(row) {
   throw new Error('effort_row must be an object or an array.');
 }
 
+// eslint-disable-next-line no-unused-vars -- exported helper; callers may use it post-Phase 1 ES module conversion
 function formatLogRows(logRows) {
   return logRows.map(normalizeLogRow);
 }

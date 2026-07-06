@@ -22,18 +22,18 @@
   'use strict';
 
   // ---- tunables (exported for tests) ----
-  var FLUSH_AT = 25;              // flush when the buffer reaches this many events
-  var FLUSH_INTERVAL_MS = 10000;  // …or every 10 seconds
-  var RING_MAX = 100;             // capped in-memory transcript
-  var INPUT_MAX = 2000;           // per-field text cap (client-side; server re-caps)
+  let FLUSH_AT = 25;              // flush when the buffer reaches this many events
+  let FLUSH_INTERVAL_MS = 10000;  // …or every 10 seconds
+  let RING_MAX = 100;             // capped in-memory transcript
+  let INPUT_MAX = 2000;           // per-field text cap (client-side; server re-caps)
 
-  var API_KEY_STORAGE = 'atlas_api_key';
-  var DEVICE_ID_STORAGE = 'atlas_flight_device';
+  let API_KEY_STORAGE = 'atlas_api_key';
+  let DEVICE_ID_STORAGE = 'atlas_flight_device';
 
-  var _active = null; // the live capture session once activated (null = inert/off)
+  let _active = null; // the live capture session once activated (null = inert/off)
 
   // Secret-shaped VALUE scrubbing — defense in depth; the server re-redacts every event.
-  var SECRET_VALUE_PATTERNS = [
+  let SECRET_VALUE_PATTERNS = [
     /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
     /\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g,
     /\bAIza[A-Za-z0-9_-]{8,}\b/g,
@@ -42,16 +42,16 @@
 
   function redactString(value) {
     if (value == null) return '';
-    var out = String(value);
-    for (var i = 0; i < SECRET_VALUE_PATTERNS.length; i++) {
+    let out = String(value);
+    for (let i = 0; i < SECRET_VALUE_PATTERNS.length; i++) {
       out = out.replace(SECRET_VALUE_PATTERNS[i], '[REDACTED]');
     }
     return out;
   }
 
   function truncate(value, max) {
-    var cap = max || INPUT_MAX;
-    var s = value == null ? '' : String(value);
+    let cap = max || INPUT_MAX;
+    let s = value == null ? '' : String(value);
     return s.length > cap ? s.slice(0, cap) + '...[truncated]' : s;
   }
 
@@ -61,7 +61,7 @@
 
   // The 10 event types → the ones a client can produce (screen_rendered is emitted on
   // load; api_* are the server's job).
-  var ATLAS_EVENT_MAP = {
+  let ATLAS_EVENT_MAP = {
     'atlas:preview-ready': 'card_rendered',
     'atlas:chat-message': 'coach_message_rendered',
     'atlas:substitute-suggested': 'coach_message_rendered',
@@ -78,9 +78,9 @@
   // Build one event from a type + fields + per-session context. Pure (caller supplies
   // ctx.now for determinism in tests). Mirrors the columns buildFlightRow expects.
   function buildClientEvent(type, fields, ctx) {
-    var f = fields || {};
-    var c = ctx || {};
-    var when = c.now || new Date();
+    let f = fields || {};
+    let c = ctx || {};
+    let when = c.now || new Date();
     return {
       captured_at: when.toISOString(),
       flight_session_id: c.flightSessionId || '',
@@ -105,14 +105,14 @@
 
   // ------------------------------------------------------------------ browser runtime
   function initBrowser() {
-    var hasDom = typeof document !== 'undefined' && typeof window !== 'undefined';
+    let hasDom = typeof document !== 'undefined' && typeof window !== 'undefined';
     if (!hasDom) return;
 
-    var apiKey = '';
+    let apiKey = '';
     try { apiKey = window.localStorage.getItem(API_KEY_STORAGE) || ''; } catch (e) { apiKey = ''; }
     if (!apiKey) return; // no key → cannot auth the enabled-check or the flush; stay inert
 
-    var state = {
+    let state = {
       active: false,
       apiKey: apiKey,
       flightSessionId: mintSessionId(),
@@ -127,7 +127,7 @@
     // Ask the server whether the flag is on; only then wire anything up.
     fetchJson('GET', '/api/flight/recent', null, apiKey)
       .then(function (json) {
-        var enabled = json && json.data && json.data.enabled === true;
+        let enabled = json && json.data && json.data.enabled === true;
         if (enabled) activate(state);
       })
       .catch(function () { /* inert on any failure */ });
@@ -142,9 +142,9 @@
     // user_action — capture-phase click on interactive elements.
     document.addEventListener('click', function (e) {
       try {
-        var t = e.target && e.target.closest && e.target.closest('button, .tab, [role="button"], a, [data-tab]');
+        let t = e.target && e.target.closest && e.target.closest('button, .tab, [role="button"], a, [data-tab]');
         if (!t) return;
-        var label = (t.id || t.getAttribute('aria-label') || (t.textContent || '')).trim().slice(0, 80);
+        let label = (t.id || t.getAttribute('aria-label') || (t.textContent || '')).trim().slice(0, 80);
         record(state, 'user_action', { user_action: label, route: currentRoute(), ui_snapshot: snapshotUiState() });
       } catch (e2) { /* TOTAL */ }
     }, true);
@@ -152,10 +152,10 @@
     // user_input — composer submit.
     document.addEventListener('submit', function (e) {
       try {
-        var form = e.target;
+        let form = e.target;
         if (!form || form.id !== 'logger-form') return;
-        var box = document.getElementById('workout-text');
-        var text = box && box.value ? box.value : '';
+        let box = document.getElementById('workout-text');
+        let text = box && box.value ? box.value : '';
         record(state, 'user_input', { user_input: text, route: currentRoute(), ui_snapshot: snapshotUiState() });
       } catch (e2) { /* TOTAL */ }
     }, true);
@@ -177,21 +177,21 @@
     // are exactly the silent-lockup traces the owner currently can't see in a screenshot.
     window.addEventListener('error', function (e) {
       try {
-        var msg = (e && e.message) || String(e);
-        var where = e ? [e.filename, e.lineno, e.colno].filter(function (v) { return v != null; }).join(':') : '';
+        let msg = (e && e.message) || String(e);
+        let where = e ? [e.filename, e.lineno, e.colno].filter(function (v) { return v != null; }).join(':') : '';
         record(state, 'error', { error: where ? (msg + ' @ ' + where) : msg, route: currentRoute() });
       } catch (e2) { /* TOTAL */ }
     });
     window.addEventListener('unhandledrejection', function (e) {
       try {
-        var reason = (e && e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection';
+        let reason = (e && e.reason && (e.reason.message || String(e.reason))) || 'unhandled rejection';
         record(state, 'error', { error: reason, route: currentRoute() });
       } catch (e2) { /* TOTAL */ }
     });
 
     // Flush the tail on the way out (fetch keepalive works during unload and, unlike
     // sendBeacon, still carries the auth header).
-    var flushOut = function () { try { flush(state, true); } catch (e2) {} };
+    let flushOut = function () { try { flush(state, true); } catch (e2) {} };
     window.addEventListener('pagehide', flushOut);
     // visibilitychange is a `document` event — subscribe there, not on window.
     document.addEventListener('visibilitychange', function () {
@@ -208,7 +208,7 @@
   function record(state, type, fields) {
     try {
       state.seq += 1;
-      var event = buildClientEvent(type, fields, {
+      let event = buildClientEvent(type, fields, {
         flightSessionId: state.flightSessionId,
         deviceId: state.deviceId,
         appVersion: state.appVersion,
@@ -224,8 +224,8 @@
   function flush(state, unloading) {
     try {
       if (!state.buffer.length) return;
-      var events = state.buffer.splice(0, state.buffer.length);
-      var body = {
+      let events = state.buffer.splice(0, state.buffer.length);
+      let body = {
         flight_session_id: state.flightSessionId,
         device_id: state.deviceId,
         app_version: state.appVersion,
@@ -238,7 +238,7 @@
 
   // ---- DOM/context helpers (all best-effort) ----
   function fetchJson(method, path, body, apiKey, keepalive) {
-    var opts = { method: method, headers: { 'x-atlas-api-key': apiKey } };
+    let opts = { method: method, headers: { 'x-atlas-api-key': apiKey } };
     if (body != null) {
       opts.headers['content-type'] = 'application/json';
       opts.body = JSON.stringify(body);
@@ -250,15 +250,15 @@
   }
 
   function mintSessionId() {
-    var rand = Math.random().toString(36).slice(2, 10);
-    var stamp;
+    let rand = Math.random().toString(36).slice(2, 10);
+    let stamp;
     try { stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14); } catch (e) { stamp = 'x'; }
     return 'FR-' + stamp + '-' + rand;
   }
 
   function readDeviceId() {
     try {
-      var id = window.localStorage.getItem(DEVICE_ID_STORAGE);
+      let id = window.localStorage.getItem(DEVICE_ID_STORAGE);
       if (!id) {
         id = 'dev-' + Math.random().toString(36).slice(2, 12);
         window.localStorage.setItem(DEVICE_ID_STORAGE, id);
@@ -269,7 +269,7 @@
 
   function readAppVersion() {
     try {
-      var el = document.getElementById('shell-version') || document.querySelector('[data-shell-version]');
+      let el = document.getElementById('shell-version') || document.querySelector('[data-shell-version]');
       if (el) return (el.getAttribute('data-shell-version') || el.textContent || '').trim();
     } catch (e) {}
     return '';
@@ -277,7 +277,7 @@
 
   function currentRoute() {
     try {
-      var active = document.querySelector('.tab-content:not([hidden]), [data-tab].active, main [aria-current="page"]');
+      let active = document.querySelector('.tab-content:not([hidden]), [data-tab].active, main [aria-current="page"]');
       if (active && active.id) return active.id;
       if (window.location && window.location.hash) return window.location.hash.replace(/^#/, '');
     } catch (e) {}
@@ -285,7 +285,7 @@
   }
 
   function prop(id, name) {
-    try { var n = document.getElementById(id); return n ? !!n[name] : null; } catch (e) { return null; }
+    try { let n = document.getElementById(id); return n ? !!n[name] : null; } catch (e) { return null; }
   }
 
   // The coach's visible message = the MOST RECENT rendered reply bubble, which is a
@@ -300,12 +300,12 @@
   // changes any coach copy.
   function latestCoachMessage() {
     try {
-      var bubbles = document.querySelectorAll('.chat-bubble-atlas .coach-msg');
+      let bubbles = document.querySelectorAll('.chat-bubble-atlas .coach-msg');
       if (bubbles && bubbles.length) {
         return truncate((bubbles[bubbles.length - 1].textContent || '').trim(), 400);
       }
-      var hero = document.getElementById('coach-empty');
-      var opening = document.getElementById('coach-opening');
+      let hero = document.getElementById('coach-empty');
+      let opening = document.getElementById('coach-opening');
       if (opening && (!hero || !hero.hasAttribute('hidden'))) {
         return truncate((opening.textContent || '').trim(), 400);
       }
@@ -315,8 +315,8 @@
 
   function snapshotUiState() {
     try {
-      var modal = document.querySelector('.modal:not([hidden]), [role="dialog"]:not([hidden])');
-      var toast = document.querySelector('.toast:not([hidden]), .banner:not([hidden]), [role="status"]:not([hidden])');
+      let modal = document.querySelector('.modal:not([hidden]), [role="dialog"]:not([hidden])');
+      let toast = document.querySelector('.toast:not([hidden]), .banner:not([hidden]), [role="status"]:not([hidden])');
       return {
         composer_disabled: prop('workout-text', 'disabled'),
         preview_btn_disabled: prop('preview-btn', 'disabled'),
@@ -333,7 +333,7 @@
     // The client cannot see the server's authoritative plan object; capture the visible
     // session pin/next-up chrome instead (server has the rest via the API-flow lane).
     try {
-      var pin = document.querySelector('#session-pin, .session-pin, #session-resume-notice');
+      let pin = document.querySelector('#session-pin, .session-pin, #session-resume-notice');
       return { pin: pin ? truncate((pin.textContent || '').trim(), 200) : null };
     } catch (e) { return {}; }
   }
@@ -369,7 +369,7 @@
   }
 
   function _setText(id, text) {
-    try { var el = document.getElementById(id); if (el) el.textContent = text; } catch (e) {}
+    try { let el = document.getElementById(id); if (el) el.textContent = text; } catch (e) {}
   }
 
   function updateDebugStatus() {
@@ -382,26 +382,26 @@
   // copy the transcript, or drop a bug_marker. Best-effort throughout.
   function wireDebugUi() {
     if (typeof document === 'undefined') return;
-    var apiKeyOf = function () { try { return window.localStorage.getItem(API_KEY_STORAGE) || ''; } catch (e) { return ''; } };
-    var resultEl = document.getElementById('flight-result');
+    let apiKeyOf = function () { try { return window.localStorage.getItem(API_KEY_STORAGE) || ''; } catch (e) { return ''; } };
+    let resultEl = document.getElementById('flight-result');
 
     function render(log) {
       _setText('flight-enabled', log && log.enabled ? 'ON' : 'OFF');
       _setText('flight-session-id', getSessionId() || (log && log.entries && log.entries[0] && log.entries[0].flight_session_id) || '—');
       if (!resultEl) return;
-      var entries = (log && Array.isArray(log.entries)) ? log.entries.slice(0, 20) : [];
+      let entries = (log && Array.isArray(log.entries)) ? log.entries.slice(0, 20) : [];
       if (!entries.length) {
         resultEl.textContent = (log && log.enabled) ? 'No events yet — interact with the app, then Refresh.'
           : 'Flight Recorder is OFF (set ATLAS_FLIGHT_RECORDER=1 on the server).';
         return;
       }
-      var lines = entries.map(function (e) {
+      let lines = entries.map(function (e) {
         return [e.captured_at, e.event_type, e.route || '',
           e.api_endpoint || e.user_action || e.user_input || '',
           (e.latency_ms != null && e.latency_ms !== '' ? e.latency_ms + 'ms' : ''),
           e.error || ''].filter(Boolean).join('  ·  ');
       });
-      var pre = document.createElement('pre');
+      let pre = document.createElement('pre');
       pre.className = 'debug-pre';
       pre.textContent = lines.join('\n');
       resultEl.innerHTML = '';
@@ -414,23 +414,23 @@
         .catch(function () { if (resultEl) resultEl.textContent = 'Could not load the Flight Recorder log.'; });
     }
 
-    var refreshBtn = document.getElementById('flight-refresh-btn');
+    let refreshBtn = document.getElementById('flight-refresh-btn');
     if (refreshBtn) refreshBtn.addEventListener('click', refresh);
 
-    var copyBtn = document.getElementById('flight-copy-btn');
+    let copyBtn = document.getElementById('flight-copy-btn');
     if (copyBtn) copyBtn.addEventListener('click', function () {
       fetchJson('GET', '/api/flight/recent', null, apiKeyOf()).then(function (json) {
-        var text = JSON.stringify(json && json.data ? json.data : json, null, 2);
+        let text = JSON.stringify(json && json.data ? json.data : json, null, 2);
         try { if (navigator.clipboard) navigator.clipboard.writeText(text); } catch (e) {}
-        if (resultEl) { var pre = document.createElement('pre'); pre.className = 'debug-pre'; pre.textContent = text; resultEl.innerHTML = ''; resultEl.appendChild(pre); }
+        if (resultEl) { let pre = document.createElement('pre'); pre.className = 'debug-pre'; pre.textContent = text; resultEl.innerHTML = ''; resultEl.appendChild(pre); }
       }).catch(function () {});
     });
 
-    var markForm = document.getElementById('flight-mark-form');
-    var markNote = document.getElementById('flight-mark-note');
+    let markForm = document.getElementById('flight-mark-form');
+    let markNote = document.getElementById('flight-mark-note');
     if (markForm) markForm.addEventListener('submit', function (ev) {
       try { ev.preventDefault(); } catch (e) {}
-      var r = markIssue(markNote && markNote.value ? markNote.value : '');
+      let r = markIssue(markNote && markNote.value ? markNote.value : '');
       if (resultEl) resultEl.textContent = (r && r.ok)
         ? ('Issue marked in session ' + (r.flight_session_id || '') + '. Refreshing…')
         : 'Flight Recorder is OFF — enable ATLAS_FLIGHT_RECORDER on the server to mark issues.';
@@ -443,7 +443,7 @@
   }
 
   // ---- exports / auto-init ----
-  var exported = {
+  let exported = {
     FLUSH_AT: FLUSH_AT,
     FLUSH_INTERVAL_MS: FLUSH_INTERVAL_MS,
     RING_MAX: RING_MAX,
@@ -463,7 +463,7 @@
   } else {
     root.atlasFlightRecorder = exported;
     if (typeof document !== 'undefined' && typeof window !== 'undefined') {
-      var boot = function () { initBrowser(); wireDebugUi(); };
+      let boot = function () { initBrowser(); wireDebugUi(); };
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', boot);
       } else {

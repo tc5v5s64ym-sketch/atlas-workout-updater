@@ -5548,6 +5548,7 @@ test('api smoke: explicit prescribed pair wins over plan_exercises for the same 
 // ─── /api/suggest-substitute smoke tests ─────────────────────────────────────
 
 test('api smoke: suggest-substitute is registered as read-only and never write-capable', async () => {
+  // eslint-disable-next-line no-unused-vars -- `response` destructured for symmetry; only `body` used in assertions
   const { response, body } = await requestJson('/routes');
   const routeByPath = new Map(body.data.routes.map(r => [r.path, r]));
   assert.ok(routeByPath.has('/api/suggest-substitute'), 'suggest-substitute route must be in the manifest');
