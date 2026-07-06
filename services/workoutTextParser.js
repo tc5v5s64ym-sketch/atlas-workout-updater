@@ -16,7 +16,7 @@ const EXERCISE_ALIASES = [
   ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
   ['Deadlift', ['deadlift', 'dead', 'dl']],
   ['RDL', ['romanian deadlifts', 'romanian deadlift', 'romanian dls', 'romanian dl', 'rdls', 'rdl']],
-  ['Overhead Press', ['overhead press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
+  ['Overhead Press', ['overhead press', 'over head press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
   ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],
   ['Seated Row', ['seated row', 'seated rows', 'cable row', 'cable rows', 'machine row', 'machine rows']],
   ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
