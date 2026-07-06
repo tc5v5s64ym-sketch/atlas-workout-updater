@@ -83,24 +83,57 @@ function norm(name) {
   return String(name == null ? '' : name).trim().toLowerCase().replace(/\s+/g, '_');
 }
 
+// Display-header aliases → the canonical (snake_case) column name. Real sheets label
+// columns for humans ("Set #", "Date_Clean", "Session ID", "Lift Code", "Canonical
+// Name"), which don't all normalize to the contract names — most importantly
+// `norm("Set #")` is "set_#", not "set_number", which silently blanked the set column
+// (and its dup/set anomalies) until a manual patch. An alias only ever SNAPS a header
+// to a canonical column that the tab actually has (see canonicalizeHeaderName), so it
+// can never mis-map a column a tab doesn't declare; unknown extras pass through as-is.
+const HEADER_ALIASES = {
+  'set_#': 'set_number', 'set#': 'set_number', set: 'set_number', set_no: 'set_number',
+  setno: 'set_number', 'set_no.': 'set_number', set_num: 'set_number', set_number: 'set_number',
+  date: 'date_clean', dateclean: 'date_clean', date_clean: 'date_clean',
+  session: 'session_id', sessionid: 'session_id', 'session_#': 'session_id',
+  canonical: 'canonical_exercise', canonical_name: 'canonical_exercise', canonicalexercise: 'canonical_exercise',
+  muscle: 'muscle_group', musclegroup: 'muscle_group',
+  lift: 'lift_code', liftcode: 'lift_code', code: 'lift_code',
+  volume: 'volume_calc', volumecalc: 'volume_calc',
+  rep: 'reps', rirs: 'rir', note: 'notes',
+  bug: 'bug_id', bugid: 'bug_id', created: 'created_at', createdat: 'created_at'
+};
+
+// Resolve one header cell to its canonical column name for a given tab. A normalized
+// header that already IS a known column wins; otherwise an alias is applied ONLY when
+// it maps to a column the tab declares; otherwise the normalized name passes through
+// (so genuine extra columns — e1RM_Calc, Week, … — are preserved, never dropped).
+function canonicalizeHeaderName(cell, knownSet) {
+  const n = norm(cell);
+  if (knownSet.has(n)) return n;
+  const aliased = HEADER_ALIASES[n];
+  if (aliased && knownSet.has(aliased)) return aliased;
+  return n;
+}
+
 // True when the first row looks like a header (contains a majority of the known
-// column names) rather than data.
+// column names, alias-aware) rather than data.
 function looksLikeHeader(firstRow, knownColumns) {
   if (!Array.isArray(firstRow) || !firstRow.length) return false;
-  const known = new Set(knownColumns.map(norm));
-  const hits = firstRow.filter(cell => known.has(norm(cell))).length;
+  const knownSet = new Set(knownColumns.map(norm));
+  const hits = firstRow.filter(cell => knownSet.has(canonicalizeHeaderName(cell, knownSet))).length;
   return hits >= Math.max(2, Math.ceil(knownColumns.length / 2));
 }
 
 // Turn raw A:Z rows into an array of { <column>: value } records. Uses the sheet's
-// own header row when present; otherwise falls back to the known column contract
-// (positional). Column names are normalized to snake_case.
+// own header row when present (alias-aware, so display headers like "Set #" map to
+// the contract name); otherwise falls back to the known column contract (positional).
 function rowsToRecords(rows, knownColumns) {
   if (!Array.isArray(rows) || rows.length === 0) return [];
+  const knownSet = new Set(knownColumns.map(norm));
   let header;
   let dataRows;
   if (looksLikeHeader(rows[0], knownColumns)) {
-    header = rows[0].map(norm);
+    header = rows[0].map(cell => canonicalizeHeaderName(cell, knownSet));
     dataRows = rows.slice(1);
   } else {
     header = knownColumns.map(norm);
@@ -242,33 +275,46 @@ function groupBySession(flightRecords) {
 }
 
 // Shadow entries whose captured_at falls inside [first-window, last+window].
-function correlateByTime(session, records, windowMs) {
+// Shadow entries (Brain/Intent) near a session's time window. Each is tagged by how
+// tightly it correlates: `route+time` when the entry's route also matches a route or
+// endpoint the flight session actually touched (a strong join — the lane fired on the
+// same surface at the same time), else `time` (window only, weaker). Route matches are
+// surfaced first, then by time proximity to the session, so the strongest evidence
+// leads. `routeHints` is the set of routes/endpoints seen in the session's events.
+function correlateByTime(session, records, windowMs, routeHints) {
   if (session.first_at_ms == null) return [];
   const lo = session.first_at_ms - windowMs;
   const hi = (session.last_at_ms == null ? session.first_at_ms : session.last_at_ms) + windowMs;
+  const mid = (lo + hi) / 2;
+  const hints = routeHints instanceof Set ? routeHints : new Set();
   return records
     .map(rec => ({ rec, t: parseTimestamp(rec.captured_at) }))
     .filter(x => x.t != null && x.t >= lo && x.t <= hi)
-    .sort((a, b) => a.t - b.t)
-    .map(x => x.rec);
+    .map(x => {
+      const route = String(x.rec.route || '').trim().toLowerCase();
+      const routeMatch = route !== '' && (hints.has(route) || [...hints].some(h => h.includes(route) || route.includes(h)));
+      return { rec: x.rec, t: x.t, match: routeMatch ? 'route+time' : 'time' };
+    })
+    .sort((a, b) => (a.match === b.match ? Math.abs(a.t - mid) - Math.abs(b.t - mid) : (a.match === 'route+time' ? -1 : 1)))
+    .map(x => ({ rec: x.rec, match: x.match }));
 }
 
-// Log rows correlated to a session: by workout session_id discovered in the flight
-// transcript (strong), then by date window (weak fallback). Each row is tagged with
-// how it matched so a reviewer can weigh it.
+// Log rows correlated to a session. Strong: rows whose session_id was discovered in
+// the flight transcript. Weak fallback: rows on a date in the session's window — but
+// ONLY when NO session_id could be tied to this flight session, so a precisely
+// resolved session no longer also vacuums up every unrelated same-day row (the
+// over-attach called out in the extractor's own backlog). Each row keeps its match tag.
 function correlateLogs(session, logRecords, workoutSessionIds, dateSet) {
   const idSet = new Set(Array.from(workoutSessionIds).map(s => s.toLowerCase()));
-  const out = [];
+  const byId = [];
+  const byDate = [];
   for (const row of logRecords) {
     const sid = String(row.session_id || '').trim();
-    if (sid && idSet.has(sid.toLowerCase())) {
-      out.push({ row, match: 'session_id' });
-      continue;
-    }
+    if (sid && idSet.has(sid.toLowerCase())) { byId.push({ row, match: 'session_id' }); continue; }
     const date = String(row.date_clean || '').trim();
-    if (date && dateSet.has(date)) out.push({ row, match: 'date_window' });
+    if (date && dateSet.has(date)) byDate.push({ row, match: 'date_window' });
   }
-  return out;
+  return byId.length ? byId : byDate;
 }
 
 // The set of local dates spanned by a session window (YYYY-MM-DD), for the
@@ -347,10 +393,20 @@ function buildSessionEvidence(session, corpora, options) {
     }
   }
 
+  // Routes + endpoints the session actually touched — the hints that let a shadow
+  // entry correlate by route as well as time (a tighter join than time alone).
+  const routeHints = new Set();
+  for (const e of events) {
+    const r = String(e.route || '').trim().toLowerCase();
+    if (r) routeHints.add(r);
+    const ep = String(e.api_endpoint || '').trim().toLowerCase();
+    if (ep) routeHints.add(ep.replace(/^[a-z]+\s+/, '')); // drop leading method ("post ")
+  }
+
   const dateSet = sessionDateSet(session, windowMs);
   const logRows = correlateLogs(session, corpora.Log_Cleaned, workoutSessionIds, dateSet);
-  const brain = correlateByTime(session, corpora.Brain_Shadow, windowMs);
-  const intent = correlateByTime(session, corpora.Intent_Shadow, windowMs);
+  const brain = correlateByTime(session, corpora.Brain_Shadow, windowMs, routeHints);
+  const intent = correlateByTime(session, corpora.Intent_Shadow, windowMs, routeHints);
 
   // Bug reports: by matching session id (flight or workout), else within the window.
   const idMatchSet = new Set([session.flight_session_id, ...workoutSessionIds].map(s => String(s).toLowerCase()));
@@ -380,8 +436,8 @@ function buildSessionEvidence(session, corpora, options) {
     bug_markers: bugMarkers,
     errors,
     workout_rows_written: logRows.map(x => ({ match: x.match, ...pickLogRow(x.row) })),
-    brain_shadow_near: brain.map(pickBrainRow),
-    intent_shadow_near: intent.map(pickIntentRow),
+    brain_shadow_near: brain.map(x => ({ match: x.match, ...pickBrainRow(x.rec) })),
+    intent_shadow_near: intent.map(x => ({ match: x.match, ...pickIntentRow(x.rec) })),
     bug_reports: bugReports.map(x => ({ match: x.match, ...pickBugRow(x.rec) }))
   };
   evidence.anomalies = detectAnomalies(evidence);
@@ -676,12 +732,12 @@ function renderMarkdown(report) {
     L.push('');
 
     L.push(`### Brain_Shadow near session (${s.brain_shadow_near.length})`);
-    for (const b of s.brain_shadow_near) L.push(`- \`${short(b.captured_at)}\` ${b.route || ''} ${b.lift_code || ''} mode=${b.mode} ok=${b.ok} reason=${b.reason || ''} ${b.decision_type || ''}/${b.status || ''}`);
+    for (const b of s.brain_shadow_near) L.push(`- \`${short(b.captured_at)}\` (${b.match}) ${b.route || ''} ${b.lift_code || ''} mode=${b.mode} ok=${b.ok} reason=${b.reason || ''} ${b.decision_type || ''}/${b.status || ''}`);
     if (!s.brain_shadow_near.length) L.push('- _none_');
     L.push('');
 
     L.push(`### Intent_Shadow near session (${s.intent_shadow_near.length})`);
-    for (const i of s.intent_shadow_near) L.push(`- \`${short(i.captured_at)}\` ${i.intent_type || ''} conf=${i.confidence || ''} ok=${i.ok} — ${truncate(i.message_preview, 80)}`);
+    for (const i of s.intent_shadow_near) L.push(`- \`${short(i.captured_at)}\` (${i.match}) ${i.intent_type || ''} conf=${i.confidence || ''} ok=${i.ok} — ${truncate(i.message_preview, 80)}`);
     if (!s.intent_shadow_near.length) L.push('- _none_');
     L.push('');
 
@@ -860,6 +916,7 @@ module.exports = {
   TABS,
   KNOWN_COLUMNS,
   norm,
+  canonicalizeHeaderName,
   looksLikeHeader,
   rowsToRecords,
   safeParseJson,

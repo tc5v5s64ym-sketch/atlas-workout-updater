@@ -50,6 +50,46 @@ test('rowsToRecords: falls back to known columns positionally when no header', (
   assert.equal(recs[0].event_type, 'user_input');
 });
 
+test('canonicalizeHeaderName: snaps a display header to a declared column, else passes through', () => {
+  const known = new Set(fr.KNOWN_COLUMNS.Log_Cleaned.map(fr.norm));
+  // "Set #" normalizes to "set_#", which the alias table maps to the declared column.
+  assert.equal(fr.canonicalizeHeaderName('Set #', known), 'set_number');
+  assert.equal(fr.canonicalizeHeaderName('Date_Clean', known), 'date_clean');
+  // An alias only fires when the target column is actually declared by the tab.
+  assert.equal(fr.canonicalizeHeaderName('Bug ID', known), 'bug_id'); // not a Log_Cleaned column → passes through unaliased
+  // A genuine extra column is preserved verbatim, never mis-mapped.
+  assert.equal(fr.canonicalizeHeaderName('e1RM_Calc', known), 'e1rm_calc');
+});
+
+test('rowsToRecords: aliases the "Set #" display header onto set_number', () => {
+  // A real Log_Cleaned export labels the set column "Set #", which norm() turns
+  // into "set_#" — silently blanking set_number (and its dup/set anomalies) until
+  // the alias table snaps it back. Header is otherwise the contract, one column
+  // relabeled to its human display form.
+  const header = fr.KNOWN_COLUMNS.Log_Cleaned.slice();
+  header[6] = 'Set #'; // the set_number column, human-labeled
+  const dataRow = ['2026-07-06', '20260706-PM-01', 'Bench', 'Bench', 'chest', 'BENCH', '3', '225', '5', '2', '', '1125'];
+  const recs = fr.rowsToRecords([header, dataRow], fr.KNOWN_COLUMNS.Log_Cleaned);
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].set_number, '3');
+  assert.equal(Object.prototype.hasOwnProperty.call(recs[0], 'set_#'), false);
+});
+
+test('correlateByTime: an in-window entry on a session route is tagged route+time, else time', () => {
+  const session = { first_at_ms: Date.parse(iso(10)), last_at_ms: Date.parse(iso(20)) };
+  const shadow = [
+    { captured_at: iso(12), route: 'coach' },   // in-window AND on a session route
+    { captured_at: iso(15), route: 'settings' } // in-window but a route the session never touched
+  ];
+  const routeHints = new Set(['coach', '/api/coach/message']);
+  const near = fr.correlateByTime(session, shadow, WINDOW.windowMs, routeHints);
+  const byRoute = near.reduce((m, x) => { m[x.rec.route] = x.match; return m; }, {});
+  assert.equal(byRoute.coach, 'route+time');
+  assert.equal(byRoute.settings, 'time');
+  // Route matches sort ahead of bare time matches (strongest evidence leads).
+  assert.equal(near[0].match, 'route+time');
+});
+
 test('extractStatusCode / statusClass', () => {
   assert.equal(fr.extractStatusCode('500 Internal'), 500);
   assert.equal(fr.extractStatusCode('{status:409}'), 409);
@@ -90,7 +130,10 @@ test('correlateByTime: shadow entries inside the window only', () => {
   assert.equal(near.length, 2);
 });
 
-test('correlateLogs: session_id match beats date fallback and both are tagged', () => {
+test('correlateLogs: a resolved session_id suppresses the same-day date fallback (no over-attach)', () => {
+  // Both rows are on the session's date, but only one carries a session_id the
+  // flight transcript resolved. Precise resolution must NOT also vacuum up the
+  // unrelated same-day PM-09 row (the over-attach the extractor backlog flagged).
   const session = { first_at_ms: Date.parse(iso(0)), last_at_ms: Date.parse(iso(5)) };
   const logs = fr.rowsToRecords([
     fr.KNOWN_COLUMNS.Log_Cleaned,
@@ -100,9 +143,25 @@ test('correlateLogs: session_id match beats date fallback and both are tagged', 
   const ids = new Set(['20260706-PM-01']);
   const dateSet = fr.sessionDateSet(session, WINDOW.windowMs);
   const out = fr.correlateLogs(session, logs, ids, dateSet);
-  const byMatch = out.reduce((m, x) => { m[x.match] = (m[x.match] || 0) + 1; return m; }, {});
-  assert.equal(byMatch.session_id, 1);
-  assert.equal(byMatch.date_window, 1); // the other row still matches on date
+  assert.equal(out.length, 1);
+  assert.equal(out[0].match, 'session_id');
+  assert.equal(out[0].row.session_id, '20260706-PM-01');
+});
+
+test('correlateLogs: date-window fallback engages only when NO session_id resolves', () => {
+  // No workout session_id was recovered from the transcript, so the date window
+  // is the only join available — the same-day rows are still surfaced (tagged
+  // as the weaker date_window evidence), never silently dropped.
+  const session = { first_at_ms: Date.parse(iso(0)), last_at_ms: Date.parse(iso(5)) };
+  const logs = fr.rowsToRecords([
+    fr.KNOWN_COLUMNS.Log_Cleaned,
+    ['2026-07-06', '20260706-PM-01', 'Bench', 'Bench', 'chest', 'BENCH', '1', '225', '5', '2', '', '1125'],
+    ['2026-07-06', '20260706-PM-09', 'Squat', 'Squat', 'legs', 'SQUAT', '1', '315', '5', '2', '', '1575']
+  ], fr.KNOWN_COLUMNS.Log_Cleaned);
+  const dateSet = fr.sessionDateSet(session, WINDOW.windowMs);
+  const out = fr.correlateLogs(session, logs, new Set(), dateSet);
+  assert.equal(out.length, 2);
+  assert.ok(out.every(x => x.match === 'date_window'));
 });
 
 test('anomaly: 4xx/5xx responses flagged', () => {
