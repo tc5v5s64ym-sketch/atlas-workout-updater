@@ -1,5 +1,12 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — no runtime consumer; wire-in-vs-
+// retire decision filed in BACKLOG.md (dark-module disposition item). NOTE the
+// near-name trap: this taxonomy LOOKUP is NOT the manifest's 'movement_patterns'
+// capability — that slot (services/movementPatternModule.js#classifyPattern,
+// status 'missing') is an unbuilt CLASSIFIER placeholder, like equipmentModule.
+// The live movement-pattern map consumers use is services/movementPattern.js.
+
 // MovementPatternsModule — read-only access to the movement-pattern taxonomy
 // from config/coaching/movement-patterns/patterns.json.
 // Loads lazily on first call. No Sheets access, no side effects.

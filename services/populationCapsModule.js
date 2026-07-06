@@ -1,5 +1,9 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — no runtime consumer; intentional
+// build-ahead. Named in docs/COACHING_ENGINE_ARCHITECTURE.md as the 'Goal &
+// population policy' layer, pending wiring alongside goalTemplateModule.
+
 const path = require('path');
 const fs   = require('fs');
 

@@ -1,5 +1,10 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — engine complete, UNWIRED. Declared
+// as the manifest 'onboarding' capability (capabilities.json) but capabilityManifest
+// never require()s module files and coachRunners registers no onboarding runner,
+// so the orchestrator skips it. Wiring is the pending roadmap PR 9 / PR-O4 step.
+
 // Onboarding router — PR 9 (Cold-start onboarding flow), questionnaire → template assignment.
 // Pure / deterministic. No I/O, no LLM, no Sheets writes, no schema, no route.
 //
