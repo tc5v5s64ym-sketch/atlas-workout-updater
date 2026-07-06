@@ -1037,6 +1037,32 @@ test('feedback guard does NOT block known logging language', () => {
   assert.equal(parseWorkoutText('Seated rows 190 11/2 11/2 11/2').intent, 'log_sets');
 });
 
+// Live bug (2026-07-06 flight test): "Curls I did 35 12/2 x3 actually" fell through
+// to needs_clarification / missing_exercise — the conversational filler ("I did")
+// BETWEEN a real (unknown/unaliased) lift name and its sets tripped the prose guard,
+// so nothing logged and Dale marked "Bugging out here". Interposed/trailing filler
+// around a genuine leading name must not block the log; the prose guard must still
+// bail on a lead that is only conversation.
+test('feedback: interposed filler between an unknown lift name and its sets still logs', () => {
+  const result = parseWorkoutText('Curls I did 35 12/2 x3');
+  assert.equal(result.intent, 'log_sets', `got: ${result.intent}`);
+  assert.equal(result.canonical_name, 'Curls');
+  assert.deepEqual(sets(result), [[35, 12, 2], [35, 12, 2], [35, 12, 2]]);
+});
+
+test('feedback: trailing filler after an unknown lift log still logs', () => {
+  const result = parseWorkoutText('Curls I did 35 12/2 x3 actually');
+  assert.equal(result.intent, 'log_sets', `got: ${result.intent}`);
+  assert.equal(result.canonical_name, 'Curls');
+  assert.deepEqual(sets(result), [[35, 12, 2], [35, 12, 2], [35, 12, 2]]);
+});
+
+test('feedback: filler-stripping still bails when the lead is only conversation', () => {
+  // The trailing/interposed strip must NOT rescue a pure-prose lead into a phantom lift.
+  assert.notEqual(parseWorkoutText('I did 205 5/3').intent, 'log_sets');
+  assert.notEqual(parseWorkoutText("i think my form felt off 8/2").intent, 'log_sets');
+});
+
 // ---------------------------------------------------------------------------
 // Bare-set attachment to the current planned lift (2026-06-21 live failure)
 //
