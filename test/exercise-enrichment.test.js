@@ -180,3 +180,50 @@ test('lift code uniqueness: same input set of names yields identical codes acros
   assert.equal(codesA[1], 'BPX01'); // Bar Press (lex smaller)
   assert.equal(codesA[2], 'SOL01');
 });
+
+// ── Curl alias/code consistency ─────────────────────────────────────────────
+// Flight Recorder evidence: curls scattered across BC01 / CRL01 ("Atlas doesn't
+// know what curls are"). The catalog fragments the same movement across two rows —
+// "Bicep Curl" (BC01) and "Dumbbell Curl" (CRL01) — and plain curl/curls is in
+// neither variant list. All generic bicep-curl inputs must unify to BC01 while the
+// genuinely-distinct curls keep their own codes.
+const curlCatalogRows = [
+  ['Exercise', 'Muscle_Group', 'Lift Code', 'Canonical_Exercise', 'Original_Variants'],
+  ['Bicep Curl', 'Biceps', 'BC01', 'Bicep Curl', 'bicep curl|bicep curls|biceps curl|biceps curls'],
+  ['Dumbbell Curl', 'Biceps', 'CRL01', 'Dumbbell Curl', 'dumbbell curl|dumbbell curls|db curl|db curls'],
+  ['Barbell Curl', 'Biceps', 'BBC01', 'Barbell Curl', 'barbell curl|barbell curls'],
+  ['Hammer Curls', 'Biceps', 'HAM01', 'Hammer Curls', 'hammer curls|hammer curl'],
+  ['Leg Curl', 'Hamstrings', 'LC01', 'Leg Curl', 'leg curl|hamstring curl'],
+  ['Preacher Curl', 'Biceps', 'PRC01', 'Preacher Curl', 'preacher curl|preacher curls']
+];
+function curlCatalog() { return buildExerciseCatalogMap(curlCatalogRows); }
+
+test('curl aliases unify to Bicep Curl / BC01 (curl, curls, bicep, dumbbell, db)', () => {
+  const map = curlCatalog();
+  for (const input of ['curl', 'curls', 'Curls', 'bicep curl', 'biceps curls', 'dumbbell curl', 'dumbbell curls', 'DB Curls']) {
+    const { enriched } = enrichLogRow({ exercise: input }, map);
+    assert.equal(enriched.lift_code, 'BC01', `"${input}" must map to BC01`);
+    assert.equal(enriched.canonical_exercise, 'Bicep Curl', `"${input}" canonical must be Bicep Curl`);
+  }
+});
+
+test('distinct curls keep their own codes (unrelated mappings unchanged)', () => {
+  const map = curlCatalog();
+  const cases = [
+    ['barbell curl', 'BBC01', 'Barbell Curl'],
+    ['hammer curls', 'HAM01', 'Hammer Curls'],
+    ['leg curl', 'LC01', 'Leg Curl'],
+    ['preacher curl', 'PRC01', 'Preacher Curl']
+  ];
+  for (const [input, code, canon] of cases) {
+    const { enriched } = enrichLogRow({ exercise: input }, map);
+    assert.equal(enriched.lift_code, code, `"${input}" must stay ${code}`);
+    assert.equal(enriched.canonical_exercise, canon);
+  }
+});
+
+test('curl fallback (no catalog code) resolves to BC01 via generateLiftCode', () => {
+  for (const input of ['curl', 'curls', 'bicep curl', 'dumbbell curl', 'db curls']) {
+    assert.equal(generateLiftCode(input), 'BC01', `"${input}" fallback must be BC01`);
+  }
+});
