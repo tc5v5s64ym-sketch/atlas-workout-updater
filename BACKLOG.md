@@ -21,6 +21,8 @@ Each deferred item should carry one of these tags so future agents know the *ris
 
 ## ▶ Active / Now — read this first
 
+- **Remediation queue now in-repo** (`docs/REMEDIATION_PLAN_V2.md`, 2026-07-06): 25 paste-ready PRs across 7 phases; Phase -1 (PR-0A — fix verify/undo 400) is next up.
+
 Navigation for this file (added 2026-07-01, planning consolidation PR-7). This file has grown several "TOP PRIORITY" lane headers over time; read them as *historical lane labels*, not as four simultaneous priorities. `docs/ACTIVE_ROADMAP.md` is the detailed active queue; this file remains the source of truth for everything open.
 
 **Order of the day (tactical "now"):**

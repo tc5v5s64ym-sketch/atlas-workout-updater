@@ -41,6 +41,7 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 ## Active roadmap / queue
 
 - `docs/ACTIVE_ROADMAP.md` — the detailed active queue. **Freshness note:** the June-2026 trust-first refill (Steps 379–385) it details has **shipped**; its "Active queue" section now carries a banner pointing to the live sequence — the **One-Brain coaching engine** in `BACKLOG.md` → "One-Brain Coaching Engine" and the hybrid observation window (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`).
+- `docs/REMEDIATION_PLAN_V2.md` — **Active** remediation queue (25 PRs, 7 phases): Phase -1 live bug fixes first (PR-0A → PR-0C), then safety net, frontend plumbing, One-Brain resolution, exercise-truth consolidation, backend split, and evidence-gated items. Paste-ready prompts for each PR; work top to bottom.
 - `docs/COMPOSER_FIRST_MIGRATION.md` — design + phase plan for the composer-first surface migration (owner-adopted 2026-07-02; Phases A, B, C1–C2 shadow, and D fully shipped). Reference for how the current surface came to be; the remaining C3 routing promotion is evidence-gated in `BACKLOG.md`.
 - `docs/COACHING_ENGINE_ARCHITECTURE.md` — the canonical One-Brain blueprint the current build follows (also under "Product and architecture reference").
 - `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md` — diagnosis doc for the Trust-Critical P0/P1 coach-interaction work (active-session context, substitution-signal visibility). Reference when touching that area.
