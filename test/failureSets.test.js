@@ -95,4 +95,8 @@ test('chat system prompt instructs the coach to acknowledge failure work without
   assert.match(prompt, /failure_sets/, 'prompt references the failure_sets signal');
   assert.match(prompt, /reps in reserve/i, 'prompt gives the manage-fatigue guidance');
   assert.match(prompt, /never invent a load|invents no loads|never invent/i, 'prompt forbids inventing loads');
+  // The failure_sets rule was ADDED alongside the existing plan_state rule, not in
+  // place of it — the plan_state guidance is still referenced by WHAT'S-LEFT /
+  // PLANNED-VS-DONE / IRON rules and must survive.
+  assert.match(prompt, /`plan_state` \(if present\) is the authoritative session plan/, 'plan_state rule must remain');
 });
