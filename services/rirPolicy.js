@@ -8,8 +8,10 @@
  * recovery each get a distinct effort target instead of one flat number.
  *
  * Deterministic — the rule engine owns the number; the LLM only words it. Day-of
- * autoregulation (services/autoregulation.js) corrects in real time when the lifter's
- * actual RIR comes in off target.
+ * autoregulation (a real-time correction when the lifter's actual RIR comes in off
+ * target) is a future concern — the old unwired services/autoregulation.js draft was
+ * deleted in the 2026-07 dark-code sweep; services/autoregulationModule.js is the
+ * kept build-ahead in that space.
  *
  * Lower RIR = closer to failure (harder); higher RIR = more in reserve (easier).
  */
