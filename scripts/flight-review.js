@@ -274,6 +274,24 @@ function groupBySession(flightRecords) {
   return { sessions, noSession };
 }
 
+// True when two route/endpoint strings name the same surface. Matches on exact
+// equality or a shared whole path segment — NOT bare substring containment, which
+// would over-tag: an api_endpoint like "GET /" normalizes to the hint "/", and a
+// naive `route.includes(hint)` would then mark every slash-bearing route as a strong
+// route+time match. Degenerate hints (empty, or a lone separator with no real segment)
+// therefore match nothing.
+const GENERIC_ROUTE_SEGMENTS = new Set(['api']); // prefixes nearly every endpoint — not a "same surface" signal
+function routeOverlaps(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const segs = s => new Set(
+    String(s).split(/[/\s]+/).filter(seg => seg.length >= 2 && !GENERIC_ROUTE_SEGMENTS.has(seg))
+  );
+  const aSet = segs(a);
+  for (const seg of segs(b)) if (aSet.has(seg)) return true;
+  return false;
+}
+
 // Shadow entries (Brain/Intent) near a session's time window. Each is tagged by how
 // tightly it correlates: `route+time` when the entry's route also matches a route or
 // endpoint the flight session actually touched (a strong join — the lane fired on the
@@ -291,7 +309,7 @@ function correlateByTime(session, records, windowMs, routeHints) {
     .filter(x => x.t != null && x.t >= lo && x.t <= hi)
     .map(x => {
       const route = String(x.rec.route || '').trim().toLowerCase();
-      const routeMatch = route !== '' && (hints.has(route) || [...hints].some(h => h.includes(route) || route.includes(h)));
+      const routeMatch = route !== '' && (hints.has(route) || [...hints].some(h => routeOverlaps(route, h)));
       return { rec: x.rec, t: x.t, match: routeMatch ? 'route+time' : 'time' };
     })
     .sort((a, b) => (a.match === b.match ? Math.abs(a.t - mid) - Math.abs(b.t - mid) : (a.match === 'route+time' ? -1 : 1)))
@@ -926,6 +944,7 @@ module.exports = {
   extractCoachMessage,
   isQuestion,
   groupBySession,
+  routeOverlaps,
   correlateByTime,
   correlateLogs,
   sessionDateSet,

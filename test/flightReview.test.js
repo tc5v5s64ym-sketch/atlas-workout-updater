@@ -90,6 +90,27 @@ test('correlateByTime: an in-window entry on a session route is tagged route+tim
   assert.equal(near[0].match, 'route+time');
 });
 
+test('routeOverlaps: shares a whole segment, ignores degenerate/generic ones', () => {
+  assert.equal(fr.routeOverlaps('coach', 'coach'), true);          // exact
+  assert.equal(fr.routeOverlaps('coach', '/api/coach/message'), true); // shared "coach" segment
+  assert.equal(fr.routeOverlaps('home', '/api/log-workout'), false);   // no shared segment
+  // A bare "/" hint (an api_endpoint like "GET /" → "/") must NOT match every route.
+  assert.equal(fr.routeOverlaps('/api/coach/message', '/'), false);
+  // "api" alone is a generic prefix, not a same-surface signal.
+  assert.equal(fr.routeOverlaps('/api/settings', '/api/coach'), false);
+});
+
+test('correlateByTime: a degenerate "/" hint does not over-tag an unrelated route as route+time', () => {
+  // Real regression: a session whose only endpoint is "GET /" yields the hint "/".
+  // Bare substring containment would then stamp every slash-bearing shadow route as
+  // strong evidence. The segment-aware match keeps it at the weaker `time` tag.
+  const session = { first_at_ms: Date.parse(iso(10)), last_at_ms: Date.parse(iso(20)) };
+  const shadow = [{ captured_at: iso(15), route: '/api/other/thing' }];
+  const near = fr.correlateByTime(session, shadow, WINDOW.windowMs, new Set(['/']));
+  assert.equal(near.length, 1);
+  assert.equal(near[0].match, 'time');
+});
+
 test('extractStatusCode / statusClass', () => {
   assert.equal(fr.extractStatusCode('500 Internal'), 500);
   assert.equal(fr.extractStatusCode('{status:409}'), 409);
