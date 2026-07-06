@@ -1637,6 +1637,17 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     ? detectExtraWork(prescribedForExtra, [...loggedCounts.values()])
     : { extra_sets: [], extra_exercises: [], has_extra: false };
 
+  // Failure-work signal for the LIVE session: exercises with a logged set at RIR ≤ 0,
+  // so the coach can answer "why to/from failure?" from a real signal (read-only,
+  // invents no loads). Detected from the live preview rows the client sends.
+  const { detectFailureSets } = require('./services/failureSets');
+  const failure_sets = detectFailureSets(previewRows.map(r => ({
+    exercise: r && (r.exercise || r.canonical_exercise || r.name),
+    weight: r && r.weight,
+    reps: r && r.reps,
+    rir: r && r.rir
+  })));
+
   return {
     recommended_label: read.recommended_label || null,
     recommended_focus: read.recommended_reason || null,
@@ -1652,6 +1663,7 @@ function buildChatContext(logRows, effortRows, clientContext, coachingNotes, con
     current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
     current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
     extra_work,
+    failure_sets,
     session_count: sessions.length,
     coaching_notes: Array.isArray(coachingNotes) ? coachingNotes.slice(0, 10) : [],
     constraints: Array.isArray(constraints) ? constraints.slice(0, 12) : []
