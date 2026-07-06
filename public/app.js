@@ -10,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v110';
+const ATLAS_SHELL_BUILD = 'v111';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -4499,6 +4499,15 @@ let sessionLog = [];
 // plan_completed so the server can compute which planned exercises remain.
 // Cleared alongside sessionLog at save and on startOver.
 let sessionCompleted = [];
+// DISPLAY-ONLY ledger of exercises already SAVED during this workout. A save
+// concludes the session (sessionLog is cleared, and the next set auto-increments
+// to a new session_id), so without this a later closeout in the same gym session
+// showed only the post-save sets — earlier, already-saved exercises looked
+// "missing" from the confirm/review card even though they're safely on the sheet.
+// This is NEVER part of any write payload (the write comes from the server-
+// previewed buffer / edit table); it is reset only on a deliberate fresh start
+// (startOver / discard restored), NOT on save.
+let sessionSavedLog = [];
 // A closeout screenshot is optional evidence, not workout text. When the plan is
 // already complete, choosing a file under the composer must not auto-route to
 // /api/complete-workout; "done" still saves the buffered session rows.
@@ -4565,6 +4574,7 @@ function clearSessionSnapshot() {
 function discardRestoredSession() {
   sessionLog = [];
   sessionCompleted = [];
+  sessionSavedLog = [];     // discarding the restored workout also clears its saved recap
   endPlannedSession();
   closeoutScreenshotFile = null;
   closeoutScreenshotEffort = null;
@@ -4965,6 +4975,34 @@ function buildRowsFromSessionLog() {
     counts.set(s.exercise, n);
     return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '' };
   });
+}
+
+// Ordered, de-duplicated exercise names from a set-buffer ([{exercise,…}]). Pure —
+// preserves first-seen order, drops blanks/dupes. Used to recap what was logged.
+function orderedUniqueExercises(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const s of (Array.isArray(rows) ? rows : [])) {
+    const name = s && s.exercise != null ? String(s.exercise).trim() : '';
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+// A read-only "already saved this session" recap for the confirm/review card, so a
+// closeout after a mid-workout save still shows the earlier, already-saved
+// exercises. Returns null when nothing was saved yet this workout. DISPLAY ONLY —
+// these names never enter a write payload; the write is the previewed buffer.
+function renderSavedThisSessionRecap() {
+  const names = orderedUniqueExercises(sessionSavedLog);
+  if (!names.length) return null;
+  return el('div', { class: 'saved-this-session muted small' }, [
+    el('span', { text: `Already saved this session: ${names.join(', ')} ✓` })
+  ]);
 }
 
 // Resolve the best stable identity for plan_completed tracking against the ACTIVE
@@ -5417,6 +5455,7 @@ function startOverWorkout() {
   lastParsedWorkoutText = '';
   sessionLog = [];
   sessionCompleted = [];
+  sessionSavedLog = [];     // deliberate fresh start — forget this workout's saved recap
   clearSessionSnapshot();   // a deliberate reset must not resume the old session
   document.dispatchEvent(new CustomEvent('atlas:session-reset'));
   closeoutScreenshotFile = null;
@@ -6478,6 +6517,11 @@ function renderLogWorkoutPreview(result, effortRow) {
     if (dsNotice) previewContent.appendChild(dsNotice);
   }
   previewContent.appendChild(renderRowsSummary(data.log_rows_preview || []));
+  // Show exercises already saved earlier in this same workout (display only) so the
+  // confirm card reflects the FULL session, not just the post-save buffer. Additive:
+  // it never affects data.log_rows_preview or the write payload.
+  const savedRecap = renderSavedThisSessionRecap();
+  if (savedRecap) previewContent.appendChild(savedRecap);
   if (effortRow) {
     previewContent.appendChild(el('h3', { text: 'Effort row to write' }));
     previewContent.appendChild(renderTable(
@@ -6798,6 +6842,15 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // this clears any stale manual range — otherwise a correction after an
     // effort save would Replace-via-undo the wrong (older) rows.
     lastWrite = pendingLastWrite;
+    // Remember the exercises this save wrote (DISPLAY ONLY) before the buffer is
+    // cleared below, so a later closeout in the SAME workout still shows them in the
+    // confirm/review card — a save concludes the session and the next set starts a
+    // new session_id, so without this ledger the earlier work looked "missing."
+    // Gated on a real log write (pendingLastWrite); effort-only / screenshot saves
+    // append no Log_Cleaned rows and are skipped. Never re-written.
+    if (pendingLastWrite && Array.isArray(sessionLog) && sessionLog.length) {
+      for (const s of sessionLog) sessionSavedLog.push({ exercise: s.exercise });
+    }
     // RC4: reset the session on ANY confirmed save — NOT gated on pendingLastWrite (undo
     // state, null for screenshot/effort-only saves). Gating it left a saved session in
     // memory that re-snapshotted and restored as a ghost. endPlannedSession() (not a bare
