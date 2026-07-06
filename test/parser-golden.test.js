@@ -107,6 +107,15 @@ test('golden: face pulls x3 repeat shorthand', () => {
   assert.deepEqual(sets(result), [[50, 15, 2], [50, 15, 2], [50, 15, 2]]);
 });
 
+test('golden: "over head press" spacing variant resolves to Overhead Press', () => {
+  // Live bug (2026-07-06 flight test): Dale typed "Over head press 95 10/5 120 8/2 x3"
+  // and Atlas flagged it unknown_exercise / canonical "Over Head Press". The spaced
+  // form must resolve like the joined "overhead press".
+  const result = parseWorkoutText('Over head press 95 10/5 120 8/2');
+  assert.equal(result.canonical_name, 'Overhead Press');
+  assert.deepEqual(sets(result), [[95, 10, 5], [120, 8, 2]]);
+});
+
 test('golden: hammers — three sets with implied same weight, varying RIR', () => {
   // Weight is set on the first token; subsequent slash groups inherit it
   const result = parseWorkoutText('Hammers 40 10/1 8/2 8/1');
