@@ -274,7 +274,6 @@ function groupBySession(flightRecords) {
   return { sessions, noSession };
 }
 
-// Shadow entries whose captured_at falls inside [first-window, last+window].
 // Shadow entries (Brain/Intent) near a session's time window. Each is tagged by how
 // tightly it correlates: `route+time` when the entry's route also matches a route or
 // endpoint the flight session actually touched (a strong join — the lane fired on the
