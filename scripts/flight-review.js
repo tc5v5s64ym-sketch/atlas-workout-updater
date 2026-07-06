@@ -26,7 +26,9 @@
  *   node scripts/flight-review.js --out=outputs/flight-review
  *
  * Sheet selection precedence: --sheet=<id>  >  FLIGHT_REVIEW_SHEET_ID env
- *   >  DEFAULT_REVIEW_SHEET_ID (the owner's test-data sheet)  >  GOOGLE_SHEETS_ID.
+ *   >  GOOGLE_SHEETS_ID env. No sheet id is embedded in this file (matching the
+ *   sibling scripts/export-sheets-backup.js, which is env-only) — pass the target
+ *   explicitly via --sheet or one of those env vars.
  * Requires the server env vars for the live path: GOOGLE_SERVICE_ACCOUNT_EMAIL,
  * GOOGLE_PRIVATE_KEY (and a sheet id from one of the sources above).
  */
@@ -35,11 +37,6 @@
 
 const fs = require('fs');
 const path = require('path');
-
-// The owner's accumulated test-data sheet named in the task brief. Overridable by
-// --sheet / FLIGHT_REVIEW_SHEET_ID / GOOGLE_SHEETS_ID; kept here so a bare
-// `node scripts/flight-review.js` reviews the intended sheet by default.
-const DEFAULT_REVIEW_SHEET_ID = '1XQaKGJL5uoE3yFw4Z0wiSfAlc-JnufS2Z7psODuDcA0';
 
 const TABS = ['Flight_Recorder', 'Brain_Shadow', 'Intent_Shadow', 'Log_Cleaned', 'Bug_Reports'];
 
@@ -818,7 +815,7 @@ async function main() {
     raw = loadFromDir(opts.fromDir);
   } else {
     try { require('dotenv').config(); } catch { /* dotenv optional */ }
-    spreadsheetId = opts.sheet || process.env.FLIGHT_REVIEW_SHEET_ID || DEFAULT_REVIEW_SHEET_ID || process.env.GOOGLE_SHEETS_ID;
+    spreadsheetId = opts.sheet || process.env.FLIGHT_REVIEW_SHEET_ID || process.env.GOOGLE_SHEETS_ID;
     if (!spreadsheetId || !process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
       console.error('Missing live-sheet config. Set GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_PRIVATE_KEY, and a sheet id via --sheet / FLIGHT_REVIEW_SHEET_ID / GOOGLE_SHEETS_ID.');
       console.error('Or run offline against a backup export: node scripts/flight-review.js --from-dir=backups/<timestamp>');
@@ -853,7 +850,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  DEFAULT_REVIEW_SHEET_ID,
   TABS,
   KNOWN_COLUMNS,
   norm,
