@@ -287,11 +287,13 @@ const catalogCache = createTtlCache(60 * 1000);
 const SHEET_ROWS_TTL_MS = 30 * 1000;
 let sheetRowsCache = createTtlCache(SHEET_ROWS_TTL_MS);
 
-// Maximum log rows a SINGLE /api/log-workout append may write (DoS ceiling; a real
-// session is well under it). This is the source of truth: the post-write verify-range
-// read-back and the undo-last delete MUST accept the same span, or a legitimate
-// multi-set session closeout (>10 rows in one write) succeeds yet cannot be verified
-// or undone. Keeping all three bounded by this one constant prevents that drift.
+// DoS ceiling for a single logged-set append (a real session is well under it).
+// Enforced on the multipart /api/complete-workout write path (parsedLogRows) and
+// shared as the source of truth by the post-write verify-range read-back and the
+// undo-last delete, which MUST accept the same span the write produces — otherwise a
+// legitimate multi-set session closeout (>10 rows in one write) succeeds yet cannot
+// be verified or undone. (The JSON /api/log-workout path does not yet enforce this
+// same cap on log_rows.length — tracked in BACKLOG.md; unreachable for one session.)
 const MAX_LOG_ROWS = 200;
 
 async function getSheetRows(tabName) {
