@@ -288,11 +288,33 @@
     try { var n = document.getElementById(id); return n ? !!n[name] : null; } catch (e) { return null; }
   }
 
+  // The coach's visible message = the MOST RECENT rendered reply bubble, which is a
+  // `.coach-msg` inside a `.chat-bubble-atlas` (readbacks, chat answers, plan edits).
+  // Only when the conversation hasn't started yet (the `#coach-empty` hero is still
+  // visible) does the home opener `#coach-opening` count. The old selector looked for
+  // `.coach-message`/`.coach-guide-box` — neither class exists — so it ALWAYS matched
+  // the hidden `#coach-opening` hero and reported the stale idle greeting no matter
+  // what the coach actually said, making every snapshot look "stuck." Reads the live
+  // DOM only; never changes any coach copy.
+  function latestCoachMessage() {
+    try {
+      var bubbles = document.querySelectorAll('.chat-bubble-atlas .coach-msg');
+      if (bubbles && bubbles.length) {
+        return truncate((bubbles[bubbles.length - 1].textContent || '').trim(), 400);
+      }
+      var hero = document.getElementById('coach-empty');
+      var opening = document.getElementById('coach-opening');
+      if (opening && (!hero || !hero.hasAttribute('hidden'))) {
+        return truncate((opening.textContent || '').trim(), 400);
+      }
+      return null;
+    } catch (e) { return null; }
+  }
+
   function snapshotUiState() {
     try {
       var modal = document.querySelector('.modal:not([hidden]), [role="dialog"]:not([hidden])');
       var toast = document.querySelector('.toast:not([hidden]), .banner:not([hidden]), [role="status"]:not([hidden])');
-      var coach = document.querySelector('.coach-guide-box, #coach-opening, .coach-message');
       return {
         composer_disabled: prop('workout-text', 'disabled'),
         preview_btn_disabled: prop('preview-btn', 'disabled'),
@@ -300,7 +322,7 @@
         preview_panel_hidden: prop('preview-panel', 'hidden'),
         modal: modal ? (modal.id || modal.className || 'modal') : null,
         toast: toast ? truncate((toast.textContent || '').trim(), 200) : null,
-        coach_message: coach ? truncate((coach.textContent || '').trim(), 400) : null
+        coach_message: latestCoachMessage()
       };
     } catch (e) { return {}; }
   }
@@ -430,7 +452,8 @@
     shouldFlush: shouldFlush,
     markIssue: markIssue,
     getSessionId: getSessionId,
-    requestHeaders: requestHeaders
+    requestHeaders: requestHeaders,
+    latestCoachMessage: latestCoachMessage
   };
 
   if (typeof module !== 'undefined' && module.exports) {
