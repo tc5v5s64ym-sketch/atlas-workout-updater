@@ -188,7 +188,11 @@
       });
       wrap.appendChild(more);
     }).catch(err => {
-      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+      const errSpan = document.createElement('span');
+      errSpan.className = 'muted';
+      errSpan.textContent = `Could not load: ${err.message}`;
+      wrap.textContent = '';
+      wrap.appendChild(errSpan);
     });
   }
 
@@ -231,7 +235,11 @@
       });
       wrap.appendChild(more);
     }).catch(err => {
-      wrap.innerHTML = `<span class="muted">Could not load: ${err.message}</span>`;
+      const errSpan = document.createElement('span');
+      errSpan.className = 'muted';
+      errSpan.textContent = `Could not load: ${err.message}`;
+      wrap.textContent = '';
+      wrap.appendChild(errSpan);
     });
   }
 
