@@ -78,7 +78,7 @@ async function retryWithBackoff(operation, options = {}) {
   const onRetry = options.onRetry || (() => {});
 
   let attempt = 0;
-   
+
   while (true) {
     try {
       return await operation();

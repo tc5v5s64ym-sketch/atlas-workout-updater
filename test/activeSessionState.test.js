@@ -56,7 +56,6 @@ test('server seam: applySubstitution + computePlanState model the Deadlift→Squ
 // contained TODO-failure, not a file-level crash.
 
 function loadActiveSession() {
-   
   return require('../public/activeSession');
 }
 

@@ -69,6 +69,7 @@ module.exports = [
       'services/**/*.js',
       'scripts/**/*.js',
       'config/**/*.js',
+      'rules/**/*.js',
       'test/**/*.js',
     ],
     languageOptions: {
