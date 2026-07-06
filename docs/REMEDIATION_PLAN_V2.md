@@ -21,23 +21,28 @@ Rules that hold for **every** PR below (Claude Code already knows these from CLA
 
 ## PHASE -1 — LIVE BUG FIXES (run these first, in this order)
 
+> **✅ PHASE -1 COMPLETE (2026-07-06, owner-confirmed).** All three live-session bugs were already resolved in prior work: PR-0A by `b859abf` (verify/undo 400 — row-span cap mismatch), PR-0B by `5531680` / #863 (already-saved exercises now shown in the confirm/review card), PR-0C by `8c95892` / #864 (coach message layer no longer renders the stale idle greeting). Next up: Phase 0 (PR-01→PR-04 shipped; **PR-05** is next).
+
 These three are real bugs observed in live test sessions. Each prompt follows your standard bug loop: **reproduce → root cause → smallest safe fix → regression test → PR.** All three are Opus — they touch the write path or in-session behavior. Claude Code should mine `/api/flight/recent`, the Bug_Reports tab entries, and `docs/BUG_TRIAGE_LEDGER.md` for the captured evidence before touching code.
 
-### PR-0A — Fix: verify/undo request rejected with a malformed 400 · **Opus 4.8** · `[trust-critical]`
+### ✅ DONE — PR-0A — Fix: verify/undo request rejected with a malformed 400 · **Opus 4.8** · `[trust-critical]`
+**Status:** Shipped in `b859abf` ("Fix verify/undo 400 on multi-set logs — row-span cap mismatch"). Owner-confirmed 2026-07-06.
 **Why (plain terms):** When you try to check or undo a just-saved workout, the server sometimes rejects the request as "badly formed" — meaning either the app is building the request wrong, or the server's checks are stricter than the app expects. Undo is a safety feature; it has to work every time.
 **PROMPT:**
 > STOP — model hold point. This PR requires **Opus 4.8** (undo/write path, trust-critical). State which model you are currently on and wait for owner confirmation before doing anything else.
 >
 > Bug: A live test session hit a **400 (malformed request)** on the verify/undo flow — `GET /api/log-workout/verify-range` and/or `POST /api/log-workout/undo-last`. Follow the standard bug loop, one concern only. (1) **Reproduce**: pull the failing request from the Flight Recorder log / bug-report entries / server logs; if none captured, reconstruct from the client code path in `public/` that builds the verify/undo payload (A1 range, `rows_to_delete`, `session_id`) after a write, and write a failing test that reproduces the 400 at the endpoint level. (2) **Root cause**: determine which side is wrong — the client constructing a payload that violates the endpoint contract (range span vs `rows_to_delete` mismatch, wrong tab, stale `logAppendedRange` shape), or server validation rejecting a legitimately-shaped request. (3) **Smallest safe fix on the side that is actually wrong.** Hard constraints: INVARIANTS W4 (Log_Cleaned only), W5 (read-back before delete, 409 on mismatch), W7 (≤10 rows, span must match) are behavior-frozen — the fix must make valid requests succeed, never loosen those guards. (4) Regression tests: the exact failing payload now succeeds end-to-end in a dry-run-safe test, plus negative tests proving W4/W5/W7 still reject what they should. Acceptance: failing repro test now green, full suite green, PR body states the root cause in two sentences and which side (client/server) was fixed and why.
 
-### PR-0B — Fix: session confirm/review screen missing logged workouts · **Opus 4.8** · `[trust-critical]`
+### ✅ DONE — PR-0B — Fix: session confirm/review screen missing logged workouts · **Opus 4.8** · `[trust-critical]`
+**Status:** Shipped in `5531680` / #863 ("Show already-saved exercises in the confirm/review card"). Owner-confirmed 2026-07-06.
 **Why:** At the end-of-session review, some exercises you actually logged aren't showing up in the confirm list. The review screen is where you decide what gets written to the permanent record — it must show everything, every time.
 **PROMPT:**
 > STOP — model hold point. This PR requires **Opus 4.8** (preview/confirm surface of the trust loop). State your current model and wait for owner confirmation.
 >
 > Bug: During a live session, the **confirm/review step did not display all logged workouts** — at least one exercise the lifter had entered was missing from the review list (and therefore at risk of being silently excluded from, or mismatched with, the approved write). Follow the standard bug loop. (1) **Reproduce**: recover the exact input sequence from Flight Recorder client events (`user_action` / `screen_rendered` / `card_rendered`), bug reports, or the session's parse payloads; build a failing test at the layer where the row goes missing — candidate seams, in order: `workoutTextParser` multi-exercise/stacked parse output → preview assembly in the `/api/log-workout` or `/api/complete-workout` dry-run → client `pendingWrite`/preview state → `displayBlockNormalizer` / render grouping. This is adjacent to the previously-fixed G1/G2/FA parse-merge and interleave family — check those regression tests first and extend, don't duplicate. (2) **Root cause** at exactly one seam. (3) **Smallest safe fix**, with the invariant stated in the PR: *every row present in the dry-run response rows must be visible in the review UI, and the approved write must contain exactly the reviewed rows — no more, no fewer.* (4) Regression tests pin the failing sequence plus a property-style test: N parsed exercises in → N rendered review blocks out, across stacked/interleaved/substituted variants. Acceptance: repro test green, G1/G2/FA suites still green, full suite + e2e green.
 
-### PR-0C — Fix: coach goes idle mid-session and doesn't advance to the next lift · **Opus 4.8** · `[correctness]`
+### ✅ DONE — PR-0C — Fix: coach goes idle mid-session and doesn't advance to the next lift · **Opus 4.8** · `[correctness]`
+**Status:** Shipped in `8c95892` / #864 ("Fix Flight Recorder reporting the stale idle greeting as the coach message" — the coach message layer no longer surfaces the stale idle turn). Owner-confirmed 2026-07-06.
 **Why:** Mid-workout, the coach sometimes just sits there — a stuck or idle message, no "next up" — so you're left prompting it instead of it leading you. The coach's whole job in-session is to always know what's next.
 **PROMPT:**
 > STOP — model hold point. This PR requires **Opus 4.8** (in-session flow correctness). State your current model and wait for owner confirmation.
