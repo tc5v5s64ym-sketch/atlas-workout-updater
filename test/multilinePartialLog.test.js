@@ -116,3 +116,26 @@ test('a G1-stacked LINE inside a multi-line paste is unresolved for that line on
   assert.equal(r.unresolved.length, 1);
   assert.ok(r.unresolved[0].warnings.includes('unattributable_trailing_sets'));
 });
+
+// Live bug (2026-07-06 flight test): "Curls weight you suggested is too light" on
+// its own line, then "Curls 35 12/2 12/2 12/2" on the next, dead-ended as
+// missing_exercise and dropped the curls entirely — Dale had to say "You missed
+// curls." The whole-text blob reads as an over-long prose lead, but the second line
+// is a clean (unaliased) log. The multi-line rescue must engage on that dead-end too.
+test('flight 07-06: opening feedback line does not drop the log line that follows', () => {
+  const r = parseWorkoutText('Curls weight you suggested is too light\n\nCurls 35 12/2 12/2 12/2', {});
+  assert.equal(r.intent, 'log_sets_multi');
+  assert.deepEqual(names(r), ['Curls']);
+  assert.deepEqual(setsOf(r, 'Curls').map(s => [s.weight, s.reps, s.rir]),
+    [[35, 12, 2], [35, 12, 2], [35, 12, 2]]);
+  // The feedback line is surfaced, never silently swallowed.
+  assert.ok(r.warnings.includes('unresolved_lines'));
+  assert.equal(r.unresolved.length, 1);
+  assert.match(r.unresolved[0].line, /too light/i);
+});
+
+test('flight 07-06: a short non-prose opener before a clean log still logs', () => {
+  const r = parseWorkoutText('Too light\n\nCurls 35 12/2 12/2', {});
+  assert.equal(r.intent, 'log_sets_multi');
+  assert.deepEqual(names(r), ['Curls']);
+});
