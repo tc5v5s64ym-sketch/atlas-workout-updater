@@ -1,7 +1,8 @@
 {
   "name": "atlas-workout-updater",
   "version": "1.0.0",
-  "description": "Simple Atlas Workout Updater that appends workout data to Google Sheets.",
+  "description": "AI-assisted workout logging and coaching app: NL parsing, deterministic coaching engine, approve-before-write Google Sheets record",
+  "private": true,
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
