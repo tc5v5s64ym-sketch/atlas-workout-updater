@@ -627,6 +627,7 @@ function buildChatSystemPrompt(context) {
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
     "- `extra_work` (if present) is the engine's read of work done BEYOND today's plan: `extra_sets` (a planned lift logged for more sets than prescribed) and `extra_exercises` (logged but never planned). Keep this ON-ASK and brief — answer it plainly when the lifter asks (e.g. 'did I overdo it?'), state the fact and, if it matters, the why and next action. Do NOT volunteer it for ordinary extra work, and never praise it as compliance. ONLY raise it unprompted when it actually works against recovery or today's recommendation (e.g. extra volume on a pattern the snapshot flags fatigued/under-recovered) — then name it honestly without alarmism. Use only the numbers in `extra_work`; invent nothing.",
     "- `plan_state` (if present) is the authoritative session plan. `plan_state.remaining` lists exercises still to complete. Never drop, replace, or suggest removing a remaining exercise unless the lifter explicitly asks. When the lifter reorders (e.g. 'doing X next because machine is busy'), confirm the change and name what is still in the session — the rest of the plan stays intact. Only call the session complete when `plan_state.isComplete` is true.",
+    "- `failure_sets` (if present) is the engine's read of this session's sets taken to failure (logged RIR ≤ 0), per exercise. When the lifter asks about going / being told to go to (or NOT to go to) failure — 'why till failure for dips?', 'why not to failure?' — acknowledge the failure work honestly from this signal, then give the guidance: taking an isolation or accessory movement to failure now and then is fine, but most working sets should keep 1–3 reps in reserve so fatigue stays manageable and the next session recovers — compounds especially. Use only the sets in `failure_sets`; never invent a load, and never tell them a specific weight to use unless the snapshot already supplies one. If `failure_sets` is empty, say you don't see any failure sets logged rather than assuming.",
     "- WHAT'S-LEFT RULE: when the lifter asks what remains, what's next, or whether they're done — 'what's left?', 'what else?', 'what's next?', 'are we done?' — and `plan_state` is present, answer ONLY from `plan_state.remaining` (and `plan_state.isComplete` for done/not-done). Never derive remaining work from `current_plan`, the recommendation, or earlier conversation turns — those list the whole session, not what is still outstanding, and would falsely report completed lifts as remaining. If `plan_state` is absent, say you don't have an authoritative session state rather than guessing from `current_plan`.",
     '',
     coachBrain.buildPrinciplesFragment(),
@@ -938,6 +939,20 @@ function sanitizeChatContext(context) {
         has_extra: true
       }
     : null;
+  // Failure-work signal: exercises with a logged set at RIR <= 0 this session, so the
+  // coach can acknowledge failure work when the lifter asks. Only known fields survive.
+  const failure_sets = Array.isArray(c.failure_sets)
+    ? c.failure_sets.slice(0, 8).map(g => (g && typeof g === 'object' ? {
+        exercise: strOrNull(g.exercise),
+        failure_count: numOrNull(g.failure_count),
+        sets: Array.isArray(g.sets) ? g.sets.slice(0, 12).map(s => ({
+          weight: numOrNull(s && s.weight),
+          reps: numOrNull(s && s.reps),
+          rir: s && s.rir == null ? null : numOrNull(s.rir)
+        })) : []
+      } : { exercise: null, failure_count: null, sets: [] })).filter(g => g.exercise)
+    : [];
+
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -950,6 +965,7 @@ function sanitizeChatContext(context) {
     current_preview,
     current_plan,
     extra_work,
+    failure_sets,
     session_count,
     coaching_notes,
     constraints
