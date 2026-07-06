@@ -1,5 +1,9 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — no runtime consumer and no named
+// wiring plan; wire-in-vs-retire decision filed in BACKLOG.md (dark-module
+// disposition item).
+
 // EvidenceTiersModule — read-only access to the knowledge-trustworthiness
 // ranking from config/coaching/evidence-tiers.json.
 // Loads lazily on first call. No Sheets access, no side effects.

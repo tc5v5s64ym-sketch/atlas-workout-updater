@@ -1,5 +1,10 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — slice 1 (pure engine) only, per the
+// BACKLOG epic; wiring is deferred slices 2-4 (coach_unavailable fallback route,
+// pre-LLM fast path, voice pass). Not a duplicate of the LIVE set-reaction voice
+// in services/coachVoiceRenderer.js — that one stays canonical until these slices ship.
+
 /**
  * Deterministic Coach Voice Renderer (BACKLOG: "Deterministic Coach Voice
  * Renderer — APPROVED"). Slice 1: the PURE engine + tests only — no route, LLM,

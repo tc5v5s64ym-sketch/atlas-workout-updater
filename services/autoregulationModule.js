@@ -1,5 +1,9 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — no runtime consumer; intentional
+// build-ahead. BACKLOG: shipped with "no runtime consumer yet; unblocks roadmap
+// PR 17, PR 22, PR 23". Not registered in coachRunners.buildRunners().
+
 // AutoregulationModule — e1RM-driven, readiness-aware load prescription.
 //
 // Upgrades the fixed-increment LP (linear progression) approach in

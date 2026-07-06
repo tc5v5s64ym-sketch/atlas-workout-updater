@@ -1,5 +1,10 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — roadmap Step 359 marked complete but
+// no runtime consumer; wire-in-vs-retire decision filed in BACKLOG.md (dark-module
+// disposition item). Distinct from the LIVE frontend classifier
+// public/planMutationIntent.js — do not conflate them.
+
 // Plan Action Classifier — PR 359
 //
 // Deterministic. Pure function. No I/O, no writes.

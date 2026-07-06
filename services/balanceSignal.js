@@ -1,5 +1,9 @@
 'use strict';
 
+// STATUS (2026-07 architecture audit): DARK — no runtime consumer; intentional
+// build-ahead from the PR 3.x coaching series (BACKLOG: "balance signal — pure
+// data (39 tests)"). Wiring target not yet named.
+
 // Balance-signal engine. Pure, read-only.
 //
 // Computes antagonist volume ratios across 4 structural pairs:
