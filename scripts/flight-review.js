@@ -660,7 +660,7 @@ function renderMarkdown(report) {
       L.push('| time | type | endpoint | status | latency | error |');
       L.push('| --- | --- | --- | --- | --- | --- |');
       for (const c of s.api_calls) {
-        L.push(`| ${short(c.at)} | ${c.event_type} | ${c.endpoint || '—'} | ${c.status || ''} | ${c.latency_ms || ''} | ${truncate(c.error, 40)} |`);
+        L.push(`| ${short(c.at)} | ${cell(c.event_type)} | ${cell(c.endpoint) || '—'} | ${cell(c.status)} | ${cell(c.latency_ms)} | ${cell(truncate(c.error, 40))} |`);
       }
     } else L.push('- _none_');
     L.push('');
@@ -670,7 +670,7 @@ function renderMarkdown(report) {
       L.push('| match | session_id | exercise | set | weight | reps | rir |');
       L.push('| --- | --- | --- | --- | --- | --- | --- |');
       for (const r of s.workout_rows_written) {
-        L.push(`| ${r.match} | ${r.session_id || ''} | ${r.exercise || ''} | ${r.set_number || ''} | ${r.weight || ''} | ${r.reps || ''} | ${r.rir || ''} |`);
+        L.push(`| ${cell(r.match)} | ${cell(r.session_id)} | ${cell(r.exercise)} | ${cell(r.set_number)} | ${cell(r.weight)} | ${cell(r.reps)} | ${cell(r.rir)} |`);
       }
     } else L.push('- _none correlated_');
     L.push('');
@@ -720,7 +720,14 @@ function countBy(arr, keyFn) {
   return out;
 }
 function unique(arr) { return Array.from(new Set(arr)); }
-function truncate(s, n) { const str = String(s == null ? '' : s); return str.length > n ? `${str.slice(0, n)}…` : str; }
+// Truncate for a single-line context (bullets, table cells). Line breaks are
+// flattened to a space first so a value with a newline can't split a bullet or a
+// table row; the char budget then reflects the visible one-line content.
+function truncate(s, n) { const str = String(s == null ? '' : s).replace(/[\r\n\t]+/g, ' '); return str.length > n ? `${str.slice(0, n)}…` : str; }
+// Escape a value for a Markdown table cell: `|` breaks column alignment and a
+// newline breaks the row, so neutralize both. Cell values come from sheet data
+// (endpoints, exercise names, error strings) that can contain either.
+function cell(v) { return String(v == null ? '' : v).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' '); }
 function short(ts) { const t = parseTimestamp(ts); return t == null ? String(ts || '') : new Date(t).toISOString().replace('T', ' ').slice(0, 19); }
 
 // ---------------------------------------------------------------------------

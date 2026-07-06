@@ -212,3 +212,23 @@ test('buildReport + renderMarkdown: end-to-end shape, brain/intent correlation, 
   assert.match(md, /Atlas Flight Review/);
   assert.match(md, /Session `S1`/);
 });
+
+test('renderMarkdown: escapes pipe/newline in table cells so alignment survives', () => {
+  const flight = fr.rowsToRecords([
+    fr.KNOWN_COLUMNS.Flight_Recorder,
+    [iso(0), 'S1', '1', '', '', 'home', 'api_response', '', '', '', '', 'POST /api/x?a=1|b=2', '', '500', '', '', 'boom | pipe\nsecond line', '10']
+  ], fr.KNOWN_COLUMNS.Flight_Recorder);
+  const { sessions } = fr.groupBySession(flight);
+  const report = fr.buildReport(emptyCorpora({ Flight_Recorder: flight }), Object.assign({ spreadsheetId: 'T', rowCounts: {} }, WINDOW));
+  void sessions;
+  const md = fr.renderMarkdown(report);
+  // The API-calls TABLE row (a line starting with "| " that names the endpoint),
+  // not the anomaly bullet that also mentions the endpoint.
+  const row = md.split('\n').find(l => l.startsWith('| ') && l.includes('/api/x'));
+  assert.ok(row, 'api table row rendered');
+  // Value pipes are backslash-escaped, so the only unescaped pipes are the 7
+  // column delimiters; the newline in the error is flattened to a space.
+  assert.equal((row.match(/(^|[^\\])\|/g) || []).length, 7, 'exactly the 7 column delimiters are unescaped');
+  assert.ok(row.includes('a=1\\|b=2'), 'endpoint pipe escaped');
+  assert.ok(row.includes('boom') && !row.includes('\n'), 'newline flattened out of the row');
+});
