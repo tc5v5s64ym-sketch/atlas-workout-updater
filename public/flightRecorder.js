@@ -291,11 +291,13 @@
   // The coach's visible message = the MOST RECENT rendered reply bubble, which is a
   // `.coach-msg` inside a `.chat-bubble-atlas` (readbacks, chat answers, plan edits).
   // Only when the conversation hasn't started yet (the `#coach-empty` hero is still
-  // visible) does the home opener `#coach-opening` count. The old selector looked for
-  // `.coach-message`/`.coach-guide-box` — neither class exists — so it ALWAYS matched
-  // the hidden `#coach-opening` hero and reported the stale idle greeting no matter
-  // what the coach actually said, making every snapshot look "stuck." Reads the live
-  // DOM only; never changes any coach copy.
+  // visible) does the home opener `#coach-opening` count. The old selector was
+  // `.coach-guide-box, #coach-opening, .coach-message`: `.coach-message` doesn't exist,
+  // and `.coach-guide-box` is the home hero WRAPPER (index.html, before `#coach-opening`
+  // in tree order), so querySelector always returned the persistent hero box's text —
+  // the stale idle greeting — and never a reply bubble, making every snapshot look
+  // "stuck" no matter what the coach actually said. Reads the live DOM only; never
+  // changes any coach copy.
   function latestCoachMessage() {
     try {
       var bubbles = document.querySelectorAll('.chat-bubble-atlas .coach-msg');

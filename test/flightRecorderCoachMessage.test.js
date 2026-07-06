@@ -3,9 +3,10 @@
 // Regression — the Flight Recorder's UI snapshot must capture the coach's ACTUAL
 // visible message, so a snapshot updates when the user logs a workout or asks a
 // question. The old selector ('.coach-guide-box, #coach-opening, .coach-message')
-// matched only the hidden `#coach-opening` home hero (the other two classes don't
-// exist in the DOM), so every snapshot reported the stale idle greeting — "Still
-// here. Moderate load, 6–12 reps…" — no matter what the coach actually said. This
+// always matched `.coach-guide-box` — the home hero WRAPPER, first in tree order
+// (`.coach-message` doesn't exist) — so every snapshot reported the persistent hero's
+// stale idle greeting — "Still here. Moderate load, 6–12 reps…" — no matter what the
+// coach actually said. This
 // isn't a lost/overwritten API response (replies render fine as `.coach-msg`
 // bubbles); it's the observability capture layer reading the wrong element.
 //
