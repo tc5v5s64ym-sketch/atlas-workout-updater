@@ -252,6 +252,9 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
 // Glanceable build badge in Settings: always-visible deployed commit + boot time,
 // so "is the live app current?" is a glance, not a Debug-JSON dig. /version is
 // public (no auth), so a plain fetch works; failures degrade quietly.
+// Module-local: only written here and read by the bug-report payload below —
+// never crosses a module boundary, so it stays a plain app.js let (not sharedState).
+let atlasServerVersion = null;
 (async function populateBuildInfo() {
   // The running-shell tag is baked into THIS bundle — set it first and
   // unconditionally (its own prominent line) so it shows even if /version is
@@ -265,7 +268,7 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
     const res = await fetch('/version');
     const body = await res.json().catch(() => null);
     const v = (body && body.data) || body || {};
-    sharedState.atlasServerVersion = v;
+    atlasServerVersion = v;
     const raw = String(v.version || 'unknown');
     const short = /^[0-9a-f]{7,40}(-dirty)?$/i.test(raw) ? raw.slice(0, 7) : raw;
     // Lead with the PR number when the build captured it — "PR #461" is something
@@ -562,11 +565,11 @@ function buildAtlasBugReportPayload(note, options = {}) {
     },
     app_version: {
       shell: ATLAS_SHELL_BUILD,
-      version: sharedState.atlasServerVersion?.version || null,
-      deployed_at: sharedState.atlasServerVersion?.deployed_at || null,
-      pr: sharedState.atlasServerVersion?.pr || null,
-      git_sha: sharedState.atlasServerVersion?.version || null,
-      build_timestamp: sharedState.atlasServerVersion?.deployed_at || null
+      version: atlasServerVersion?.version || null,
+      deployed_at: atlasServerVersion?.deployed_at || null,
+      pr: atlasServerVersion?.pr || null,
+      git_sha: atlasServerVersion?.version || null,
+      build_timestamp: atlasServerVersion?.deployed_at || null
     },
     browser: {
       userAgent: navigator.userAgent,

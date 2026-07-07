@@ -5,6 +5,5 @@
 // TODO(PR-10/PR-11): fold these into the state store with the rest.
 export const sharedState = {
   atlasLastError: null,
-  atlasServerVersion: null,
   historyLoaded: false,
 };
