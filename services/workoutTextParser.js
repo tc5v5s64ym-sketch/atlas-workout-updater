@@ -997,10 +997,10 @@ function parseLogSets(rawText, context = {}) {
 function parseWithExercise(rawText, exercise) {
   const rest = exercise.rest || '';
   const sets = parseSetGroups(rest);
-  // PARSE-3: parseSetGroups returns null when a bare space-separated sequence would
-  // only parse into an impossible row (an RIR token read as a weight) — ask for slash
-  // notation instead of emitting a phantom set.
-  if (sets === null) {
+  // PARSE-3: parseSetGroups returns AMBIGUOUS_SET_FORMAT when a bare space-separated
+  // sequence would only parse into an impossible row (an RIR token read as a weight) —
+  // ask for slash notation instead of emitting a phantom set.
+  if (sets === AMBIGUOUS_SET_FORMAT) {
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
@@ -1035,6 +1035,12 @@ function parseWithExercise(rawText, exercise) {
 const MIN_PLAUSIBLE_WEIGHT = 6;
 const MAX_PLAUSIBLE_REPS = 50;
 
+// Distinct sentinel for a PARSE-3 refusal — kept separate from the `null` that
+// parseDaleShorthand already returns for the xN>10 cap (which stays a generic
+// missing_sets clarification). parseSetGroups propagates this sentinel so the
+// caller can emit the specific "use slash notation" ask.
+const AMBIGUOUS_SET_FORMAT = Object.freeze({ ambiguousSetFormat: true });
+
 function parseSetGroups(text) {
   const cleaned = normalizeParserText(text)
     .replace(/\b(today|i did|did|was|were)\b/gi, ' ')
@@ -1050,14 +1056,21 @@ function parseSetGroups(text) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return parseDumbbellSlashRepeats(cleaned)
+  // Higher-priority grammars first, exactly as before (first truthy wins).
+  const early = parseDumbbellSlashRepeats(cleaned)
     || parseDumbbellGroups(cleaned)
     || parseDumbbellList(cleaned)
     || parseSetsFirst(cleaned)
     || parseWeightRepsSets(cleaned)
-    || parseNaturalSets(cleaned)
-    || parseDaleShorthand(cleaned)
-    || [];
+    || parseNaturalSets(cleaned);
+  if (early) return early;
+  // PARSE-3: parseDaleShorthand returns AMBIGUOUS_SET_FORMAT to REFUSE an implausible
+  // bare pair (an RIR token misread as a weight). Propagate that sentinel out of
+  // parseSetGroups — do NOT let the `|| []` fallback swallow it — so the caller can ask
+  // for slash notation. Its xN>10 `null` and a genuine no-match still fall through to [].
+  const shorthand = parseDaleShorthand(cleaned);
+  if (shorthand === AMBIGUOUS_SET_FORMAT) return AMBIGUOUS_SET_FORMAT;
+  return shorthand || [];
 }
 
 function parseUnknownExercise(rawText) {
@@ -1065,7 +1078,7 @@ function parseUnknownExercise(rawText) {
   if (!unknown) return null;
 
   const parsedSets = parseSetGroups(unknown.rest);
-  if (parsedSets === null) return null; // PARSE-3: implausible bare pair → not a clean log
+  if (parsedSets === AMBIGUOUS_SET_FORMAT) return null; // PARSE-3: implausible bare pair → not a clean log
   const sets = parsedSets.length ? parsedSets : parseBodyweightReps(unknown.rest);
   if (!sets.length) return null;
 
@@ -1364,7 +1377,7 @@ function parseDaleShorthand(text) {
       // is always safe. The warm-up climb this branch exists for ("140 15 190 10", and
       // legit light bare pairs like "15 20") stays valid.
       if (w < MIN_PLAUSIBLE_WEIGHT || reps > MAX_PLAUSIBLE_REPS) {
-        return null;
+        return AMBIGUOUS_SET_FORMAT;
       }
       currentWeight = w;
       previousSet = setRecord({ weight: currentWeight, reps, rir: null });

@@ -1525,6 +1525,12 @@ test('PARSE-3: space-separated {w r rir} sequences never emit a phantom sub-weig
     } else {
       assert.equal(r.intent, 'needs_clarification',
         `"${text}" must be a clarification when it can't be read cleanly, got ${r.intent}`);
+      // The refusal must surface the SPECIFIC slash-notation ask, not the generic
+      // "no sets" copy — i.e. the null refusal propagates out of parseSetGroups.
+      assert.ok((r.warnings || []).includes('ambiguous_set_format'),
+        `"${text}" should carry ambiguous_set_format, got ${JSON.stringify(r.warnings)}`);
+      assert.match(r.message || '', /slash notation/i,
+        `"${text}" should ask for slash notation, got: ${r.message}`);
     }
   }
 });
