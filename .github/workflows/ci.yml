@@ -61,6 +61,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build frontend (Vite)
+        run: npm run build
+
+      - name: Verify built output is committed and reproducible
+        # public/ is the Vite build output of src/app/ (Stage-1 verbatim copy).
+        # It is committed so deploys never depend on a build step; this guard
+        # fails if public/ has drifted from a fresh build of src/app/.
+        run: git diff --exit-code -- public/
+
       - name: Lint
         run: npm run -s lint
 

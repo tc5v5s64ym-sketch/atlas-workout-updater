@@ -10,6 +10,19 @@
 - GitHub Actions Mission Control runs production smoke tests.
 - API key auth protects `/api/*`.
 
+## Frontend build
+
+The web UI is built with **Vite**, introduced as a **Stage-1 wrapper** (Remediation Plan v2, PR-07): it puts the assembly line in place without changing what comes off it.
+
+- **Sources** live in `src/app/` (index.html, the classic satellite scripts, `styles.css`, `sw.js`, `manifest.json`, `fonts/`, `icons/`).
+- **`npm run build`** runs Vite, which copies `src/app/` to **`public/` byte-for-byte** — no bundling, no hashing, no ES-module conversion. The classic (non-module) `<script>` tags cannot pass through Rollup, so the build treats `src/app/` as Vite's `publicDir` (verbatim copy); a virtual no-op entry satisfies Rollup's mandatory input and its empty chunk is dropped (`vite.config.js`).
+- **Output target is `public/`** deliberately: `express.static(__dirname/'public')` (`index.js`) and every `/app/*` URL in the service worker's `SHELL_ASSETS` list stay exactly as they were. No server route, SW path, or asset URL changes.
+- **`public/` is committed** for this stage (build output checked in). This keeps deploys safe: the served UI is present in the repo regardless of whether the deploy runs a build step. CI runs `npm run build` and then `git diff --exit-code -- public/` to prove the committed output is a reproducible, drift-free copy of `src/app/`. `public/build-info.json` remains gitignored and is preserved across builds (`emptyOutDir: false`).
+- **`npm run dev`** starts the Vite dev server (HMR) serving `src/app/` under `/app/`, proxying `/api` to the Express backend. Run the backend alongside it with **`npm run dev:server`** (`node index.js`) — the previous single-process `npm run dev` is now `npm run dev:server`.
+- **Playwright e2e** runs against the built output: the e2e static server serves `public/`, and `pretest:e2e` rebuilds it first.
+
+**Deploy note (follow-up):** the Render build command should be set to include `npm run build`. Once that is confirmed, `public/` can be moved to gitignored build output (tracked in `BACKLOG.md`). Later phases (PR-08+) convert the satellites to ES modules and let Vite actually bundle; only then do output URLs change (with a service-worker cache-name bump).
+
 ## Data Flow
 
 1. User logs a workout or uploads an Apple Watch screenshot.
