@@ -994,3 +994,5 @@ Five parallel AI QA testers hit the LIVE deployed app across read-only endpoints
 `docs/COACH_MOMENTS_ENGINE.md` committed and Active in DOCS_INDEX. Implementation blocked on owner decisions for §10 forks (F1 goal-proximity unprompted, F2 frequency dial, F3 teaching default, F4 cross-lift narrative) and on One-Brain promotion (Remediation PR-12A) per §9 sequencing.
 
 Before MO1: two typos in the verbatim spec text (committed byte-for-byte per owner instruction, not fixed here) — §4 rule 5 `streper-fire` and §7 step 4 `The Brian pattern` (→ "Brain"). Owner to decide whether to correct in a follow-up docs-only PR before the builder reads §9.
+
+Before MO3: `config/coaching/exercises/*.json` + `evidenceTiersModule` wiring (§2/§8) and the claim-ceiling whitelist contract (§5) will want a design pass — §9 says MO1–MO3 are buildable from the spec but that wiring detail is under-specified. Confirm before MO3 PR opens.
