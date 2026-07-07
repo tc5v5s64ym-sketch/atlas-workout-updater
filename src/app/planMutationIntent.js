@@ -18,7 +18,7 @@
  *
  * PURE / UMD: no DOM, no I/O — unit-testable in Node, loadable in the browser.
  */
-(function (root) {
+const _exports = (function () {
   'use strict';
 
   // Strip conversational lead-ins so the intent verb lands at the start.
@@ -197,9 +197,7 @@
 
   const exported = { classifyMutationIntent, cleanName, splitTargets, resolvePlanTargets };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.planMutationIntent = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const { classifyMutationIntent, cleanName, splitTargets, resolvePlanTargets } = _exports;

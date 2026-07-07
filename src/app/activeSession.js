@@ -26,7 +26,7 @@
  * markCompleted + the selectors. correctIdentity (PR 4) and insertExercise (PR 5)
  * land in later slices of the same lane.
  */
-(function (root) {
+const _exports = (function () {
   'use strict';
 
   const STATUS = { PENDING: 'pending', COMPLETED: 'completed', SKIPPED: 'skipped' };
@@ -300,9 +300,24 @@
     toEntry,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.activeSession = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const {
+  STATUS,
+  createActiveSession,
+  replaceExercise,
+  skipExercise,
+  markCompleted,
+  correctIdentity,
+  insertExercise,
+  currentExercise,
+  nextUp,
+  remaining,
+  completedExercises,
+  isComplete,
+  hasLoggedWork,
+  entryMatches,
+  findMatchIndex,
+  toEntry,
+} = _exports;

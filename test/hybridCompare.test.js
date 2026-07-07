@@ -1,16 +1,21 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {
-  STORAGE_KEY,
-  MAX_STORED_ENTRIES,
-  PREFERENCES,
-  shouldShowCompareCard,
-  summarizeLegacy,
-  summarizeBrian,
-  buildComparisonEntry,
-  loadComparisons,
-  saveComparisonEntry
-} = require('../public/hybridCompare');
+// PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
+let STORAGE_KEY, MAX_STORED_ENTRIES, PREFERENCES, shouldShowCompareCard, summarizeLegacy,
+  summarizeBrian, buildComparisonEntry, loadComparisons, saveComparisonEntry;
+test.before(async () => {
+  ({
+    STORAGE_KEY,
+    MAX_STORED_ENTRIES,
+    PREFERENCES,
+    shouldShowCompareCard,
+    summarizeLegacy,
+    summarizeBrian,
+    buildComparisonEntry,
+    loadComparisons,
+    saveComparisonEntry
+  } = await import('../src/app/hybridCompare.js'));
+});
 
 /* ===== shouldShowCompareCard — the card's dev/hybrid-only gate ===== */
 

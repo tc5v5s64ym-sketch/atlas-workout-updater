@@ -30,7 +30,7 @@
  *
  * PURE / UMD: no DOM, no I/O — unit-testable in Node, loadable in the browser.
  */
-(function (root) {
+const _exports = (function () {
   // A display set line — the real Atlas/app formats seen in live use:
   //   "135lbs 10 · warm-up"  (unit attached, SPACE separator, warm-up note)
   //   "245lbs 6/2"           (working set in Atlas slash notation reps/RIR)
@@ -221,9 +221,15 @@
     cleanHeaderName
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.displayBlockNormalizer = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const {
+  normalizeDisplayBlocks,
+  looksLikeDisplayBlock,
+  parseDisplaySetLine,
+  isSetLine,
+  setLineHasLeftoverSets,
+  isHeaderLine,
+  cleanHeaderName
+} = _exports;

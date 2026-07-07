@@ -85,12 +85,30 @@ module.exports = [
     rules: nodeRules,
   },
 
-  // Browser + Node dual: src/app/*.js use the UMD global-export pattern.
-  // Files with pervasive top-level global declarations carry a file-level
-  // eslint-disable no-implicit-globals; see Phase 1 PR-08/09 for the real fix.
+  // ES-module frontend (Phase 1 PR-08): every src/app/*.js EXCEPT the still-classic
+  // app.js and the service worker are real ES modules with import/export. They read
+  // app.js's top-level globals as free identifiers (declared in appPublicGlobals).
   {
     files: ['src/app/**/*.js'],
-    ignores: ['src/app/sw.js'],
+    ignores: ['src/app/sw.js', 'src/app/app.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...appPublicGlobals,
+      },
+    },
+    // no-implicit-globals is a no-op for modules (module scope), so nodeRules suffice.
+    rules: nodeRules,
+  },
+
+  // app.js is still a classic browser script (converted to modules in PR-09). It
+  // uses the UMD-era global pattern and carries a file-level eslint-disable for
+  // no-implicit-globals where it intentionally exposes window globals.
+  {
+    files: ['src/app/app.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'script',

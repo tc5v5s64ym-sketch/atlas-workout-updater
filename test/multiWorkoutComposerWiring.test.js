@@ -1,4 +1,4 @@
-const { test } = require('node:test');
+const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -6,7 +6,12 @@ const path = require('node:path');
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
-const { normalizeDisplayBlocks } = require('../public/displayBlockNormalizer');
+// PR-08: displayBlockNormalizer is an ES module now — dynamic import (Node 20 CI
+// has no require(esm)).
+let normalizeDisplayBlocks;
+before(async () => {
+  ({ normalizeDisplayBlocks } = await import('../src/app/displayBlockNormalizer.js'));
+});
 const { isWarmupNote } = require('../services/warmupTag');
 
 // The warm-up note app.js writes MUST be recognized by the server-side reader that
