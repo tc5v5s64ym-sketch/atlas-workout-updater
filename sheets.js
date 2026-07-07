@@ -265,17 +265,29 @@ async function getEffortSessionIds() {
 }
 
 async function getLogCompositeKeys() {
-  // Fetch session_id (B), exercise (C), set_number (G) columns and combine to composite keys
-  const sessionIds = await getColumnValues(logSheetName, 'B');
-  const exercises = await getColumnValues(logSheetName, 'C');
-  const setNumbers = await getColumnValues(logSheetName, 'G');
+  // Composite keys need session_id (B), exercise (C) and set_number (G). Those
+  // three columns fall inside the contiguous B:G span, so a SINGLE range read
+  // (ROWS-major) fetches them together — one API request instead of the three
+  // per-column reads this used to issue. On the Save hot path (dry-run preview +
+  // live write, once each) that removes two redundant Log_Cleaned reads per
+  // request; during a gym session's burst of Saves that is real quota saved.
+  // Result is identical: within each row, index 0 is B, 1 is C, 5 is G; a row
+  // missing any of the three, or a header row, is skipped exactly as before.
+  const sheets = await getSheetsClient();
+  const range = `${logSheetName}!B:G`;
+  console.log(`[sheets.js] Fetching composite-key columns from ${logSheetName} range ${range}`);
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range
+  });
+  const rows = response.data.values || [];
 
   const keys = [];
-  const maxLen = Math.max(sessionIds.length, exercises.length, setNumbers.length);
-  for (let i = 0; i < maxLen; i += 1) {
-    const sid = String(sessionIds[i] || '').trim();
-    const ex = String(exercises[i] || '').trim();
-    const setn = String(setNumbers[i] || '').trim();
+  for (const row of rows) {
+    const sid = String((row && row[0]) || '').trim();   // column B — session_id
+    const ex = String((row && row[1]) || '').trim();    // column C — exercise
+    const setn = String((row && row[5]) || '').trim();  // column G — set_number
     if (!sid || !ex || !setn) continue;
     // Skip header rows that might contain column titles
     if (/session id/i.test(sid) || /exercise/i.test(ex) || /set_number/i.test(setn)) continue;
