@@ -56,7 +56,9 @@ const browserRules = {
 
 module.exports = [
   {
-    ignores: ['node_modules/**'],
+    // public/ is now generated build output (Vite copies src/app/ -> public/,
+    // see vite.config.js). Lint the source in src/app/, not the build artifact.
+    ignores: ['node_modules/**', 'public/**'],
   },
 
   // Node.js CJS backend: index, sheets, middleware, services, scripts, config, tests
@@ -66,6 +68,7 @@ module.exports = [
       'sheets.js',
       'middleware.js',
       'response.js',
+      'vite.config.js',
       'services/**/*.js',
       'scripts/**/*.js',
       'config/**/*.js',
@@ -82,12 +85,12 @@ module.exports = [
     rules: nodeRules,
   },
 
-  // Browser + Node dual: public/*.js use the UMD global-export pattern.
+  // Browser + Node dual: src/app/*.js use the UMD global-export pattern.
   // Files with pervasive top-level global declarations carry a file-level
   // eslint-disable no-implicit-globals; see Phase 1 PR-08/09 for the real fix.
   {
-    files: ['public/**/*.js'],
-    ignores: ['public/sw.js'],
+    files: ['src/app/**/*.js'],
+    ignores: ['src/app/sw.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'script',
@@ -102,7 +105,7 @@ module.exports = [
 
   // Service worker (browser-adjacent runtime)
   {
-    files: ['public/sw.js'],
+    files: ['src/app/sw.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'script',

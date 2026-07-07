@@ -6,12 +6,15 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js",
+    "dev": "vite",
+    "dev:server": "node index.js",
+    "build": "vite build",
     "build:info": "node scripts/write-build-info.js",
     "postinstall": "node scripts/write-build-info.js",
     "lint": "eslint .",
     "check:syntax": "find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test --test-reporter=spec",
+    "pretest:e2e": "npm run build",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "scan:secrets": "node scripts/check-changed-files-for-secrets.js",
@@ -32,6 +35,7 @@
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "eslint": "^10.6.0",
-    "globals": "^17.7.0"
+    "globals": "^17.7.0",
+    "vite": "^6.4.3"
   }
 }
