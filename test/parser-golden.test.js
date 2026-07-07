@@ -1489,3 +1489,16 @@ test('PARSE-2: a genuine continuation set line still attaches to the active lift
   assert.ok(benchSets.some(s => Number(s.weight) === 225) && benchSets.some(s => Number(s.weight) === 205),
     'bench keeps both its continuation sets (225 then 205)');
 });
+
+test('PARSE-2 guard: a contextual-alias sub-header still continues the active lift (no over-rejection)', () => {
+  // Review note on PR-0F: ensure the standalone re-parse does not dead-end a
+  // contextual alias ("lats" under Lat Pulldown). Verified: the whole-text collapse
+  // resolves this before the rescue treats "lats" as a header, so the continuation
+  // set attaches to Lat Pulldown, not lost.
+  const r = parseWorkoutText('lat pulldown 130 8/2\nlats\n120 10/2');
+  const lat = (r.canonical_name === 'Lat Pulldown' || r.exercise === 'Lat Pulldown')
+    ? (r.sets || [])
+    : (r.exercises || []).filter(e => (e.canonical_name || e.exercise) === 'Lat Pulldown').flatMap(e => e.sets || []);
+  assert.ok(lat.some(s => Number(s.weight) === 130) && lat.some(s => Number(s.weight) === 120),
+    'the "lats" sub-header must keep the 120 set on Lat Pulldown');
+});
