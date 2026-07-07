@@ -80,7 +80,12 @@ per-minute read pressure drops by ~2 reads × (previews + writes).
 an in-memory googleapis client and counts `values.get` calls:
 
 - `getLogCompositeKeys` must cost **exactly one** read.
-- One live Save's read sequence must stay **≤ 5** reads.
+- The Save read *sequence* (the five helpers above, called in handler order) must
+  stay **≤ 5** reads.
 
-A regression to per-column fetches, or any new redundant read added to the Save
-path, trips these and fails CI.
+These assert the cost of the `sheets.js` read helpers directly — they do not drive
+the `index.js` Save handler end-to-end, so they catch a regression *inside* a
+helper (e.g. `getLogCompositeKeys` going back to per-column fetches: 1→3 trips the
+budget). They do **not** catch a new redundant read added in the handler itself
+(e.g. a second `getLogCompositeKeys` call) unless the read sequence here is updated
+to match. Keep this list in sync with the handler's reads.
