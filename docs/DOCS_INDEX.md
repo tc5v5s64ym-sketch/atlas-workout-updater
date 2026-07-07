@@ -142,6 +142,7 @@ Useful for history and context. Do not use them as current task lists.
 - `AUDIT.md`
 - `docs/AUDIT_2026-06-12.md`
 - `docs/AUDIT_TRIAGE_2026-06-20.md` — current-state triage of the AUDIT.md Medium/Low findings (ME-5/6/9/10/11/12, LO-1…LO-11), verified against `main` with file:line evidence.
+- `docs/AUDIT_2026-07-07_DEEP_REVIEW.md` — adversarial deep-review of the five trust-critical surfaces (write path, client trust loop, parser, session state, infra); 29 findings with verdicts (empirical/code/plausible) + verified-clean inventory. Open items tracked in `BACKLOG.md` → "Deep-review audit — 2026-07-07 — open findings".
 - `docs/API_AUDIT.md`
 - `docs/FOUNDATION_AUDIT.md`
 - `docs/BASELINE_POST_CUTOVER.md`
