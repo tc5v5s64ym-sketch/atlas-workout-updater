@@ -142,7 +142,8 @@ Useful for history and context. Do not use them as current task lists.
 - `AUDIT.md`
 - `docs/AUDIT_2026-06-12.md`
 - `docs/AUDIT_TRIAGE_2026-06-20.md` — current-state triage of the AUDIT.md Medium/Low findings (ME-5/6/9/10/11/12, LO-1…LO-11), verified against `main` with file:line evidence.
-- `docs/AUDIT_2026-07-07_DEEP_REVIEW.md` — adversarial deep-review of the five trust-critical surfaces (write path, client trust loop, parser, session state, infra); 29 findings with verdicts (empirical/code/plausible) + verified-clean inventory. Open items tracked in `BACKLOG.md` → "Deep-review audit — 2026-07-07 — open findings".
+- `docs/AUDIT_2026-07-07_DEEP_REVIEW.md` — adversarial deep-review of the five trust-critical surfaces (write path, client trust loop, parser, session state, infra); 29 findings with verdicts (empirical/code/plausible) + verified-clean inventory. Open items tracked in `BACKLOG.md` → "Deep-review audit — 2026-07-07 — open findings"; the four P0s are Phase 0.9 (PR-0D→0G) of `docs/REMEDIATION_PLAN_V2.md`.
+- `docs/PHASE1_MINEFIELD_MAP.md` — **active reference for PR-09→11**: frozen app.js behavior contract at post-PR-08 HEAD (load order, 31-variable state inventory + slice assignments, the 10 `atlas:*` event payloads, persistence keys, bridge surface, §7 per-PR acceptance checklists). Behavior may be relocated, not changed; intentional changes need a named PR-body callout.
 - `docs/API_AUDIT.md`
 - `docs/FOUNDATION_AUDIT.md`
 - `docs/BASELINE_POST_CUTOVER.md`
