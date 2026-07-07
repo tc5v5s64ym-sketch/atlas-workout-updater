@@ -85,3 +85,31 @@ exist first (or to happen in the same step).
 2. **Core triad (dashboard/sessionFlow/logger):** revisit after — either as a scrutinized
    PR-09c with byte-for-byte `atlas:*` payload tests, or folded into the PR-10/11 store
    ordering. Owner decision (touches the trust-loop file).
+
+## Executed (PR-09b)
+Extraction #1 landed the six leaf modules + `sharedState.js` via an AST codemod
+(`_pr09b_extract.js`, kept in the session scratchpad). Verbatim symbol moves; every
+import/export generated from the AST edge map. Old→new mapping: the 61 moved statements
+are the `bugReport`/`api`/`dom`/`settingsHealth`/`historyView`/`progressView` rows of the
+`graph.json` assignment (symbol → module → original declLine). Verification: all 54
+cross-module imports resolve to a real export; eslint-scope shows zero app-symbol
+references escaping any module (no missed imports); syntax valid for all 8 files; unit
+4758/4758; guards (shellAssetsCoverage, appJsBridgeCoverage) green; lint 0 errors; e2e
+44/44 chromium + 44/44 mobile-chromium (isolated).
+
+### §7 checklist (PR-09, leaf pass)
+- **§2c disposition:** `atlasLastError`, `historyLoaded` → `sharedState.js` (foreign-written
+  across a new boundary). All other Group-1/2/3 lets stay in app.js core this pass (their
+  owners — logger/sessionFlow/dashboard — are not extracted yet); dispositioned with the
+  triad in PR-09c / PR-10-11.
+- **§1.3:** no bridge-global (`window.activeSession` etc.) access moved into module-eval-time
+  code — leaf top-level is declarations + literal consts; verified via eslint-scope `through`.
+- **§1.4:** `window.atlasRefreshSessions` / `atlasUndoLastWrite` / `atlasCurrentWriteIdentity`
+  assignments untouched (they live in app.js core, not extracted).
+- **§1.5:** `CACHE_NAME` v115→v116; 7 new `/app/*.js` added to `SHELL_ASSETS`; guard passes.
+- **§3:** no `atlas:*` dispatch or listener moved (all 9 app.js dispatch sites remain in core;
+  none leaked into a leaf module). Byte-for-byte payload tests deferred to the triad PR.
+- **§5:** `window.displayBlockNormalizer` untouched (satellite-side bridge; not app.js code).
+- **Load-order note (frozen-surface callout, owner sign-off):** app.js now imports the 6 leaf
+  modules → its init trails the `atlas:glance-ready` dispatch slightly more; the fast-mock e2e
+  harness now paints the engine opener (real-network behavior; harness artifact). Test updated.

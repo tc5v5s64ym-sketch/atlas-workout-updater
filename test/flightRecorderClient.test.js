@@ -196,8 +196,9 @@ test('LINKAGE: client requestHeaders is exported, TOTAL, and inert (empty) when 
 });
 
 test('LINKAGE: app.js api() forwards the flight-session headers when active', () => {
-  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  // The api() header object spreads the recorder headers so every /api call is linkable.
+  // PR-09b: api() moved into the api.js module (verbatim). It still spreads the
+  // recorder headers so every /api call is linkable.
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'api.js'), 'utf8');
   assert.match(appSrc, /atlasFlightRecorder[\s\S]{0,60}requestHeaders\(\)/, 'api() must spread flightRecorder.requestHeaders()');
 });
 
