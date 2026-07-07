@@ -3,73 +3,36 @@
  * Only then does Atlas write. Preview always runs with test_mode=true.
  */
 
-const API_KEY_STORAGE = 'atlas_api_key';
+
 
 // Shell build tag baked INTO this bundle (mirrors the service-worker cache name in
 // public/sw.js). The Settings badge shows it next to the server /version: if the
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v115';
-const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
-const BUG_REPORT_SECRET_VALUE_PATTERNS = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/g,
-  /\bAIza[A-Za-z0-9_-]{8,}\b/g,
-  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}\b/gi,
-  /\b([A-Z][A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Z0-9_]*)\s*=\s*["']?[^"',\s]+["']?/g
-];
-const BUG_REPORT_REDACTED = '[REDACTED]';
-const BUG_REPORT_RECENT_API_LIMIT = 20;
-// Bug-report diagnostics: so one tap on "Report Bug" captures enough to root-cause
-// without the owner typing anything. All of this rides inside the existing Payload JSON
-// column (no Bug_Reports schema change) and is bounded + redacted before it leaves.
-const BUG_REPORT_ERROR_LIMIT = 12;   // ring buffer of recent errors (api + client JS)
-const BUG_REPORT_ACTION_LIMIT = 30;  // ring buffer of UI breadcrumbs (taps, nav)
-const BUG_REPORT_BODY_MAX = 1000;    // per-call request/response body cap (chars)
-const BUG_REPORT_SIZE_BUDGET = 44000; // keep the whole report under the Sheets per-cell limit
-const atlasRecentApiRequests = [];
-const atlasRecentErrors = [];        // last N errors, so a cascade shows AS a cascade
-const atlasActionLog = [];           // last N UI actions, e.g. "tap restore" → nothing
-let atlasLastError = null;
-let atlasServerVersion = null;
+import { sharedState } from './sharedState.js';
+import { API_KEY_STORAGE, api, friendlyTransportMessage, getApiKey } from './api.js';
+import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
+import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
+import { loadHistory, loadSessions } from './historyView.js';
+import { liftListCache, loadProgressLiftList, openLiftDrillDown, renderTrends } from './progressView.js';
+import { checkConnection, runHealthCheck, setBoxSpan } from './settingsHealth.js';
 
-// Truncated + redacted snapshot of a request/response body. Multipart uploads
-// (screenshots) are summarised by field name, never dumped.
-function snapshotBugBody(body) {
-  if (body == null) return null;
-  try {
-    if (typeof FormData !== 'undefined' && body instanceof FormData) {
-      const keys = [];
-      for (const k of body.keys()) keys.push(k);
-      return `[multipart: ${keys.join(', ')}]`;
-    }
-    const text = typeof body === 'string' ? body : JSON.stringify(body);
-    const safe = redactBugReportString(text);
-    return safe.length > BUG_REPORT_BODY_MAX ? `${safe.slice(0, BUG_REPORT_BODY_MAX)}...[truncated]` : safe;
-  } catch {
-    return '[unserializable]';
-  }
-}
+const ATLAS_SHELL_BUILD = 'v116';
 
-// Error/action capture must NEVER throw — diagnostics can't be the thing that breaks logging.
-function recordAtlasError(entry) {
-  try {
-    atlasRecentErrors.push({ at: new Date().toISOString(), ...entry });
-    while (atlasRecentErrors.length > BUG_REPORT_ERROR_LIMIT) atlasRecentErrors.shift();
-  } catch { /* best-effort */ }
-}
 
-function recordAtlasAction(action, detail) {
-  try {
-    atlasActionLog.push({
-      at: new Date().toISOString(),
-      action,
-      ...(detail ? { detail: String(detail).slice(0, 120) } : {})
-    });
-    while (atlasActionLog.length > BUG_REPORT_ACTION_LIMIT) atlasActionLog.shift();
-  } catch { /* best-effort */ }
-}
+
+
+          
+                   // last N UI actions, e.g. "tap restore" → nothing
+
+
+
+
+
+
+
+
 
 // Unhandled JS errors / promise rejections never reach api(), so a UI lockup or a silent
 // "tapped X, nothing happened" would otherwise leave no trace. Capture them, and leave a
@@ -91,306 +54,33 @@ if (typeof window !== 'undefined') {
   }, true);
 }
 
-function getApiKey() {
-  return localStorage.getItem(API_KEY_STORAGE) || '';
-}
 
-// Transport-level fetch failures surface as cryptic browser strings ("Load failed",
-// "Failed to fetch", "The network connection was lost"). When one survives the
-// retry above, translate it into an honest, actionable line — the usual cause is
-// the server cold-starting after idle (diagnosed live 2026-07-02: first request
-// ~36s wall-clock while the instance wakes). Returns null for real HTTP errors so
-// the server's own message always wins.
-function friendlyTransportMessage(err) {
-  if (!err || err.status) return null;
-  const m = err.message ? String(err.message) : '';
-  if (/load failed|failed to fetch|networkerror|network error|network connection was lost|connection appears to be offline/i.test(m)) {
-    return 'the connection dropped — the server was likely waking up. Give it a few seconds and tap Preview again; nothing was saved.';
-  }
-  return null;
-}
 
-async function api(path, options = {}) {
-  // Flight Recorder session-linkage headers (additive, and {} unless the recorder is
-  // active) so server-side api_response telemetry links to this client session. Never
-  // affects request/response semantics or the write path.
-  const flightHeaders = (typeof window !== 'undefined' && window.atlasFlightRecorder && typeof window.atlasFlightRecorder.requestHeaders === 'function')
-    ? window.atlasFlightRecorder.requestHeaders() : {};
-  const headers = { 'x-atlas-api-key': getApiKey(), ...flightHeaders, ...(options.headers || {}) };
-  const method = options.method || 'GET';
-  const startedAt = Date.now();
-  let res = null;
-  let json = null;
-  try {
-    res = await fetch(path, { ...options, headers });
-    json = await res.json().catch(() => null);
-    if (!res.ok) {
-      const message = json?.message || json?.error || `Request failed (${res.status})`;
-      const err = new Error(message);
-      err.status = res.status;
-      err.body = json;
-      throw err;
-    }
-    return json;
-  } catch (err) {
-    atlasLastError = {
-      message: err && err.message ? err.message : String(err),
-      status: err && err.status,
-      endpoint: path,
-      at: new Date().toISOString()
-    };
-    // Keep a HISTORY, not just the latest: a poison cascade (e.g. one bad set 400ing
-    // every save attempt) only makes sense when you can see all of them in order.
-    recordAtlasError({
-      source: 'api',
-      endpoint: path,
-      method,
-      status: atlasLastError.status,
-      message: atlasLastError.message,
-      response_body: snapshotBugBody(json)
-    });
-    // Cold-start resilience (composer-first Phase 0b). Diagnosed live 2026-07-02:
-    // the first request after idle can take ~36s while the Render instance wakes,
-    // and mobile Safari kills the hanging fetch with a TRANSPORT-level failure
-    // ("Load failed" — no HTTP status). Retry exactly once, and ONLY when it is
-    // safe to repeat the request: a transport failure (never an HTTP error, never
-    // a caller abort) on a GET (read-only by the route contract) or a call the
-    // caller explicitly marked retryTransport (the test_mode DRY-RUN previews —
-    // idempotent, proof-field-guarded, no write). The live write path is NEVER
-    // retried here — write_id idempotency notwithstanding, retries of real writes
-    // stay a deliberate human action. Both attempts land in the request history.
-    const transportFailure = err && !err.status && err.name !== 'AbortError';
-    const retryable = transportFailure && !options._retriedTransport &&
-      (method === 'GET' || options.retryTransport === true) &&
-      !(options.signal && options.signal.aborted);
-    if (retryable) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      return api(path, { ...options, _retriedTransport: true });
-    }
-    throw err;
-  } finally {
-    atlasRecentApiRequests.push({
-      at: new Date().toISOString(),
-      method,
-      endpoint: path,
-      status: res ? res.status : null,
-      ok: res ? res.ok : false,
-      duration_ms: Date.now() - startedAt,
-      failed: res ? !res.ok : true,
-      // Bodies (redacted + truncated) so a bad parse/write is diagnosable from the report
-      // itself instead of inferred from downstream state — e.g. exactly what
-      // /api/parse-workout-text returned for "Push ups 40 40 40".
-      request_body: snapshotBugBody(options.body),
-      response_body: snapshotBugBody(json)
-    });
-    while (atlasRecentApiRequests.length > BUG_REPORT_RECENT_API_LIMIT) atlasRecentApiRequests.shift();
-  }
-}
 
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [key, value] of Object.entries(attrs)) {
-    if (key === 'class') node.className = value;
-    else if (key === 'text') node.textContent = value;
-    else node.setAttribute(key, value);
-  }
-  for (const child of [].concat(children)) {
-    node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
-  return node;
-}
 
-function renderTable(headers, rows) {
-  const thead = el('thead', {}, el('tr', {}, headers.map(h => el('th', { text: h }))));
-  const tbody = el('tbody', {}, rows.map(row =>
-    el('tr', {}, row.map(cell => el('td', { text: cell === null || cell === undefined ? '' : String(cell) })))
-  ));
-  return el('table', {}, [thead, tbody]);
-}
 
-function setStatus(container, message, kind) {
-  container.innerHTML = '';
-  if (message) container.appendChild(el('div', { class: `status-msg ${kind}`, text: message }));
-}
 
-// "Session quality: X / 100" with a tappable circled-i that reveals the
-// weighted breakdown. Each criterion shows earned / max points and a
-// session-specific description (e.g. "14 sets — solid session").
-function buildQualityRow(score, breakdown) {
-  const wrap = el('div', { class: 'session-quality' });
-  wrap.appendChild(el('span', { text: `Session quality: ${score} / 100` }));
 
-  const criteria = Array.isArray(breakdown) ? breakdown : [];
-  if (!criteria.length) return wrap;
 
-  const info = el('button', {
-    class: 'quality-info-btn',
-    type: 'button',
-    'aria-label': 'How was this score calculated?',
-    'aria-expanded': 'false',
-    text: 'i'
-  });
 
-  const pop = el('div', { class: 'quality-popover', role: 'dialog', 'aria-label': 'Quality score breakdown' });
-  pop.appendChild(el('div', { class: 'quality-popover-title', text: 'How we scored this' }));
-  for (const c of criteria) {
-    const tier = c.points === c.maxPoints ? 'full' : c.points > 0 ? 'partial' : 'zero';
-    pop.appendChild(el('div', { class: `quality-criterion ${tier}` }, [
-      el('span', { class: 'quality-criterion-label', text: c.label }),
-      el('span', { class: 'quality-criterion-pts', text: `${c.points} / ${c.maxPoints}` }),
-      el('span', { class: 'quality-criterion-desc', text: c.description || '' })
-    ]));
-  }
 
-  const anchor = el('span', { class: 'quality-info-anchor' }, [info, pop]);
 
-  let open = false;
-  function close() {
-    if (!open) return;
-    open = false;
-    anchor.classList.remove('open');
-    info.setAttribute('aria-expanded', 'false');
-    document.removeEventListener('click', onDocClick, true);
-    document.removeEventListener('keydown', onKeydown, true);
-  }
-  function onDocClick(e) {
-    if (!anchor.contains(e.target)) close();
-  }
-  function onKeydown(e) {
-    if (e.key === 'Escape') close();
-  }
-  info.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (open) { close(); return; }
-    open = true;
-    anchor.classList.add('open');
-    info.setAttribute('aria-expanded', 'true');
-    document.addEventListener('click', onDocClick, true);
-    document.addEventListener('keydown', onKeydown, true);
-  });
 
-  wrap.appendChild(anchor);
-  return wrap;
-}
+
 
 /* ===== Inline SVG charts (no dependencies) ===== */
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
 
-function svgEl(tag, attrs = {}) {
-  const node = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
-  return node;
-}
 
-function svgLineChart(points, { width = 420, height = 140, color = '#2563eb', label = '' } = {}) {
-  // points: [{ x: label, y: number }]
-  const pad = { top: 12, right: 12, bottom: 24, left: 44 };
-  const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, role: 'img', 'aria-label': label });
-  const ys = points.map(p => p.y).filter(Number.isFinite);
-  if (points.length < 2 || !ys.length) {
-    return el('p', { class: 'muted', text: 'Not enough data to chart.' });
-  }
 
-  const yMin = Math.min(...ys);
-  const yMax = Math.max(...ys);
-  const ySpan = yMax - yMin || 1;
-  const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
-  const xStep = plotW / (points.length - 1);
-  const toX = i => pad.left + i * xStep;
-  const toY = v => pad.top + plotH - ((v - yMin) / ySpan) * plotH;
 
-  // y-axis min/max labels and gridlines
-  for (const v of [yMin, yMax]) {
-    const y = toY(v);
-    svg.appendChild(svgEl('line', { x1: pad.left, y1: y, x2: width - pad.right, y2: y, stroke: '#dbe2ea', 'stroke-width': 1 }));
-    const text = svgEl('text', { x: pad.left - 6, y: y + 4, 'text-anchor': 'end', 'font-size': 10, fill: '#66788d' });
-    text.textContent = String(Math.round(v));
-    svg.appendChild(text);
-  }
 
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(p.y).toFixed(1)}`).join(' ');
-  svg.appendChild(svgEl('path', { d: path, fill: 'none', stroke: color, 'stroke-width': 2 }));
-  points.forEach((p, i) => {
-    svg.appendChild(svgEl('circle', { cx: toX(i), cy: toY(p.y), r: 3, fill: color }));
-  });
 
-  // first/last x labels
-  const firstLabel = svgEl('text', { x: pad.left, y: height - 8, 'font-size': 10, fill: '#66788d' });
-  firstLabel.textContent = points[0].x;
-  const lastLabel = svgEl('text', { x: width - pad.right, y: height - 8, 'text-anchor': 'end', 'font-size': 10, fill: '#66788d' });
-  lastLabel.textContent = points[points.length - 1].x;
-  svg.appendChild(firstLabel);
-  svg.appendChild(lastLabel);
-  return svg;
-}
 
-function svgBarChart(entries, { width = 420, barHeight = 20, gap = 6, color = '#2563eb', label = '' } = {}) {
-  // entries: [{ name, value }]
-  if (!entries.length) return el('p', { class: 'muted', text: 'No data to chart.' });
-  const labelW = 110;
-  const valueW = 56;
-  const maxValue = Math.max(...entries.map(e => e.value)) || 1;
-  const plotW = width - labelW - valueW;
-  const height = entries.length * (barHeight + gap);
-  const svg = svgEl('svg', { viewBox: `0 0 ${width} ${height}`, width: '100%', height, role: 'img', 'aria-label': label });
-
-  entries.forEach((entry, i) => {
-    const y = i * (barHeight + gap);
-    const name = svgEl('text', { x: labelW - 8, y: y + barHeight * 0.7, 'text-anchor': 'end', 'font-size': 11, fill: '#1c2733' });
-    name.textContent = entry.name;
-    svg.appendChild(name);
-    svg.appendChild(svgEl('rect', {
-      x: labelW, y, height: barHeight,
-      width: Math.max(2, (entry.value / maxValue) * plotW),
-      fill: color, rx: 3
-    }));
-    const value = svgEl('text', { x: labelW + Math.max(2, (entry.value / maxValue) * plotW) + 6, y: y + barHeight * 0.7, 'font-size': 11, fill: '#66788d' });
-    value.textContent = String(Math.round(entry.value));
-    svg.appendChild(value);
-  });
-
-  return svg;
-}
 
 /* ===== Exercise catalog datalist (typeahead) ===== */
 
-async function loadExerciseDatalist() {
-  if (!getApiKey()) return;
-  try {
-    const res = await api('/api/catalog/exercises');
-    const exercises = (res.data?.exercises || []);
-    if (!exercises.length) return;
-    let dl = document.getElementById('exercise-catalog');
-    if (!dl) {
-      dl = document.createElement('datalist');
-      dl.id = 'exercise-catalog';
-      document.body.appendChild(dl);
-    }
-    dl.innerHTML = '';
-    // Canonical names AND catalog variants ("RDL", "Squat") both land in the
-    // datalist, each labeled with the lift code — so liftCodeFromCatalog can
-    // bridge a logged alias to its code CLIENT-SIDE (owner live find
-    // 2026-07-03: "Rdl" logged against a chat-created plan could not reach
-    // "Romanian Deadlift", so the plan never advanced). Dedup by lowercase
-    // value; canonical first so it wins any collision.
-    const seenNames = new Set();
-    for (const ex of exercises) {
-      for (const name of [ex.canonical_name, ...(Array.isArray(ex.variants) ? ex.variants : [])]) {
-        const key = String(name || '').toLowerCase();
-        if (!key || seenNames.has(key)) continue;
-        seenNames.add(key);
-        const opt = document.createElement('option');
-        opt.value = name;
-        if (ex.lift_code) opt.label = ex.lift_code;
-        dl.appendChild(opt);
-      }
-    }
-  } catch {
-    // typeahead is optional enhancement — fail silently
-  }
-}
+
 
 /* ===== Tabs ===== */
 
@@ -410,259 +100,46 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 /* ===== History tab ===== */
 
-// 'YYYY-MM-DD' → "Today" / "Yesterday" / "Mon, Jun 9", parsed in local time.
-// eslint-disable-next-line no-unused-vars -- global export; consumed by other browser scripts or inline HTML; Phase 1 PR-08/09
-function formatSessionDate(dateStr) {
-  const parts = String(dateStr || '').split('-').map(Number);
-  if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return dateStr || '';
-  const dt = new Date(parts[0], parts[1] - 1, parts[2]);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diffDays = Math.round((today - dt) / 86400000);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  return dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-}
 
-// "20260613-AM-01" → "AM" / "PM" / ''.
-function sessionTimeTag(sessionId) {
-  const m = String(sessionId || '').match(/-(AM|PM)\b/i);
-  return m ? m[1].toUpperCase() : '';
-}
 
-function summarizeExercises(exercises, max = 3) {
-  const ex = (exercises || []).filter(Boolean);
-  if (!ex.length) return 'No exercises recorded';
-  if (ex.length <= max) return ex.join(', ');
-  return `${ex.slice(0, max).join(', ')} +${ex.length - max} more`;
-}
 
-const HIST_WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const HIST_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function parseLocalDate(dateStr) {
-  return new Date(`${dateStr}T00:00:00`);
-}
 
-// Monday-start week containing `date`, as a local midnight Date.
-function mondayStart(date) {
-  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  return d;
-}
 
-// "Fri, Jun 12 · PM" — weekday + date, with the AM/PM tag from the session id.
-function sessionWhenLabel(s) {
-  const d = parseLocalDate(s.date || '');
-  const tag = sessionTimeTag(s.session_id);
-  const base = (s.date && !Number.isNaN(d.getTime()))
-    ? `${HIST_WD[d.getDay()]}, ${HIST_MON[d.getMonth()]} ${d.getDate()}`
-    : (s.date || '');
-  return tag ? `${base} · ${tag}` : base;
-}
 
-function weekRangeLabel(weekStart) {
-  const end = new Date(weekStart);
-  end.setDate(end.getDate() + 6);
-  if (weekStart.getMonth() === end.getMonth()) {
-    return `${HIST_MON[weekStart.getMonth()]} ${weekStart.getDate()}–${end.getDate()}`;
-  }
-  return `${HIST_MON[weekStart.getMonth()]} ${weekStart.getDate()} – ${HIST_MON[end.getMonth()]} ${end.getDate()}`;
-}
 
-function weekHeaderLabel(weekStart, currentWeekStart) {
-  const diff = Math.round((currentWeekStart.getTime() - weekStart.getTime()) / (7 * 86400000));
-  if (diff <= 0) return 'This week';
-  if (diff === 1) return 'Last week';
-  return weekRangeLabel(weekStart);
-}
 
-// One clean, tappable session card: when + stats on top, exercises beneath.
-// Full set/effort detail lazy-loads on first expand (unchanged).
-function renderSessionCard(s) {
-  const details = el('details', { class: 'session-item' });
-  const sum = el('summary', { class: 'session-summary' }, [
-    el('div', { class: 'session-head' }, [
-      el('span', { class: 'session-when', text: sessionWhenLabel(s) }),
-      el('span', { class: 'session-stats', text: `${s.sets_count} sets · ${Number(s.total_volume || 0).toLocaleString()} lb` })
-    ]),
-    el('div', { class: 'session-exercises', text: summarizeExercises(s.exercises) })
-  ]);
-  details.appendChild(sum);
 
-  // Effort + per-set detail both render inside the expanded detail slot (below),
-  // so the card itself stays to two clean lines.
-  const detailSlot = el('div', { class: 'session-detail-slot' });
-  details.appendChild(detailSlot);
-  let detailLoaded = false;
-  details.addEventListener('toggle', () => {
-    if (!details.open || detailLoaded) return;
-    detailLoaded = true;
-    loadSessionDetail(s.session_id, detailSlot);
-  });
-  return details;
-}
 
-// Cadence strip — sessions per week over the recent window, current week ember.
-function renderCadenceStrip(summary) {
-  const byWeek = Array.isArray(summary && summary.sessions_by_week) ? summary.sessions_by_week.slice(-8) : [];
-  if (!byWeek.length) return null;
-  const avg = summary.average_sessions_per_week != null
-    ? Math.round(summary.average_sessions_per_week)
-    : Math.round(byWeek.reduce((a, w) => a + (Number(w.sessions) || 0), 0) / byWeek.length);
-  const max = Math.max(1, ...byWeek.map(w => Number(w.sessions) || 0));
 
-  const bars = el('div', { class: 'cadence-bars' });
-  byWeek.forEach((w, i) => {
-    const bar = el('i', { class: i === byWeek.length - 1 ? 'cadence-bar cur' : 'cadence-bar' });
-    bar.style.height = `${Math.max(8, Math.round(((Number(w.sessions) || 0) / max) * 100))}%`;
-    bars.appendChild(bar);
-  });
 
-  return el('div', { class: 'cadence' }, [
-    el('div', { class: 'cadence-top' }, [
-      el('div', { class: 'cadence-big' }, [document.createTextNode(`${avg}×`), el('small', { text: '/ week' })]),
-      el('div', { class: 'cadence-sub', text: `LAST ${byWeek.length} WEEKS` })
-    ]),
-    bars
-  ]);
-}
 
-async function loadSessions() {
-  const result = document.getElementById('sessions-result');
-  result.textContent = 'Loading…';
-  try {
-    const [sessRes, sumRes] = await Promise.allSettled([
-      api('/api/sessions/recent'),
-      api('/api/progress/summary')
-    ]);
-    const sessions = (sessRes.status === 'fulfilled' && sessRes.value && sessRes.value.data && sessRes.value.data.sessions) || [];
-    const summary = (sumRes.status === 'fulfilled' && sumRes.value && (sumRes.value.data || sumRes.value)) || {};
 
-    // Drop phantom 0-set rows — logging artifacts, not real sessions.
-    const real = sessions.filter(s => Number(s.sets_count) > 0);
 
-    result.innerHTML = '';
-    const cadence = renderCadenceStrip(summary);
-    if (cadence) result.appendChild(cadence);
 
-    if (!real.length) {
-      result.appendChild(el('p', { class: 'muted', text: 'No sessions logged yet.' }));
-      return;
-    }
 
-    // Group by Monday-week with per-week totals; most-recent week first.
-    const currentWeekStart = mondayStart(new Date());
-    const groupMap = new Map();
-    const groups = [];
-    for (const s of real) {
-      const ws = mondayStart(parseLocalDate(s.date || getLocalDateString()));
-      const key = ws.getTime();
-      let g = groupMap.get(key);
-      if (!g) { g = { weekStart: ws, sessions: [], volume: 0 }; groupMap.set(key, g); groups.push(g); }
-      g.sessions.push(s);
-      g.volume += Number(s.total_volume || 0);
-    }
-    groups.sort((a, b) => b.weekStart.getTime() - a.weekStart.getTime());
 
-    for (const g of groups) {
-      result.appendChild(el('div', { class: 'session-week-header' }, [
-        el('h2', { text: weekHeaderLabel(g.weekStart, currentWeekStart) }),
-        el('span', { class: 'week-tot', text: `${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'} · ${Math.round(g.volume).toLocaleString()} lb` })
-      ]));
-      for (const s of g.sessions) result.appendChild(renderSessionCard(s));
-    }
-  } catch (err) {
-    result.textContent = err.message || 'Failed to load sessions.';
-  }
-}
 
-async function loadSessionDetail(sessionId, slot) {
-  slot.innerHTML = '<span class="muted">Loading…</span>';
-  try {
-    const res = await api(`/api/session/${encodeURIComponent(sessionId)}/summary`);
-    const d = res.data || {};
-    slot.innerHTML = '';
 
-    // Exactly what was logged, grouped by exercise — each set on its own line in
-    // the same "weight × reps @rir" shorthand the coach uses, instead of a
-    // cramped 6-column table.
-    const sets = d.sets || d.rows || [];
-    if (sets.length) {
-      const order = [];
-      const byExercise = new Map();
-      for (const r of sets) {
-        const name = r.exercise || r.canonical_exercise || 'Exercise';
-        if (!byExercise.has(name)) { byExercise.set(name, []); order.push(name); }
-        byExercise.get(name).push(r);
-      }
-      for (const name of order) {
-        const exSets = byExercise.get(name);
-        const vol = exSets.reduce((sum, r) => sum + (Number(r.volume) || (Number(r.weight) || 0) * (Number(r.reps) || 0)), 0);
-        const block = el('div', { class: 'session-ex' });
-        block.appendChild(el('div', { class: 'session-ex-head' }, [
-          el('span', { class: 'session-ex-name', text: name }),
-          el('span', { class: 'session-ex-vol', text: `${exSets.length} ${exSets.length === 1 ? 'set' : 'sets'} · ${Math.round(vol).toLocaleString()} lb` })
-        ]));
-        for (const r of exSets) {
-          const rir = (r.rir === '' || r.rir == null) ? '' : ` @${r.rir}`;
-          const note = r.notes ? ` · ${r.notes}` : '';
-          block.appendChild(el('div', { class: 'session-ex-set', text: `${formatSetLoad(r.weight, r.reps)}${rir}${note}` }));
-        }
-        slot.appendChild(block);
-      }
-    } else {
-      slot.appendChild(el('p', { class: 'muted', text: 'No set detail recorded for this session.' }));
-    }
 
-    if (d.effort) {
-      const e = d.effort;
-      const parts = [
-        e.duration,
-        e.active_calories != null && `${e.active_calories} active cal`,
-        e.average_hr != null && `avg HR ${e.average_hr}`,
-        e.peak_hr != null && `peak HR ${e.peak_hr}`
-      ].filter(Boolean);
-      if (parts.length) slot.appendChild(el('div', { class: 'session-effort-detail', text: parts.join(' · ') }));
-    }
 
-    if (d.quality_score != null) {
-      slot.appendChild(buildQualityRow(d.quality_score, d.quality_breakdown));
-    }
-  } catch (err) {
-    slot.textContent = '';
-    slot.appendChild(el('span', { class: 'muted', text: `Could not load detail: ${err.message}` }));
-  }
-}
 
-let historyLoaded = false;
-function loadHistory() {
-  if (historyLoaded) return;
-  historyLoaded = true;
-  loadSessions();
-}
+
+
+
+
+
 
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
 window.atlasRefreshSessions = () => {
-  historyLoaded = true;
+  sharedState.historyLoaded = true;
   loadSessions();
 };
 
 /* ===== Connection check ===== */
 
-async function checkConnection() {
-  const status = document.getElementById('conn-status');
-  try {
-    await fetch('/health').then(r => { if (!r.ok) throw new Error(); });
-    status.classList.add('ok');
-    status.classList.remove('fail');
-    status.title = 'Backend reachable';
-  } catch {
-    status.classList.add('fail');
-    status.classList.remove('ok');
-    status.title = 'Backend unreachable';
-  }
-}
+
 
 /* ===== Settings ===== */
 
@@ -689,26 +166,9 @@ document.getElementById('clear-key-btn').addEventListener('click', () => {
 
 /* ===== Backend health / debug ===== */
 
-function setBoxSpan(box, className, text) {
-  const span = document.createElement('span');
-  span.className = className;
-  span.textContent = text;
-  box.replaceChildren(span);
-}
 
-async function runHealthCheck(endpoint, label, resultBox) {
-  setBoxSpan(resultBox, 'muted', `Checking ${label}…`);
-  try {
-    const res = await api(endpoint);
-    const data = res.data || res;
-    const status = data.status || (res.status === 'ok' ? 'ok' : 'unknown');
-    const ok = ['ok', 'connected', 'healthy'].includes(String(status).toLowerCase());
-    const msg = data.message || data.detail || JSON.stringify(data);
-    setBoxSpan(resultBox, ok ? 'status-ok' : 'status-warn', `${label}: ${msg || status}`);
-  } catch (err) {
-    setBoxSpan(resultBox, 'status-error', `${label}: ${err.message}`);
-  }
-}
+
+
 
 document.getElementById('check-sheets-btn')?.addEventListener('click', () => {
   runHealthCheck('/api/health/sheets', 'Google Sheets', document.getElementById('health-result'));
@@ -792,6 +252,9 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
 // Glanceable build badge in Settings: always-visible deployed commit + boot time,
 // so "is the live app current?" is a glance, not a Debug-JSON dig. /version is
 // public (no auth), so a plain fetch works; failures degrade quietly.
+// Module-local: only written here and read by the bug-report payload below —
+// never crosses a module boundary, so it stays a plain app.js let (not sharedState).
+let atlasServerVersion = null;
 (async function populateBuildInfo() {
   // The running-shell tag is baked into THIS bundle — set it first and
   // unconditionally (its own prominent line) so it shows even if /version is
@@ -944,7 +407,7 @@ function bugReportId(now = new Date()) {
   return `BUG-${stamp}`;
 }
 
-function redactBugReportString(value) {
+export function redactBugReportString(value) {
   let out = value;
   for (const pattern of BUG_REPORT_SECRET_VALUE_PATTERNS) {
     out = out.replace(pattern, (match, keyName) => {
@@ -991,7 +454,7 @@ function collectAtlasStorage(storage) {
 // every renderer of LOGGED set data in this file (owner live find 2026-07-03;
 // coach-conversation.js and nav.js carry their own copies inside their IIFEs).
 // Engine TARGETS keep their own rendering — this is for history only.
-function formatSetLoad(weight, reps, sep = ' × ') {
+export function formatSetLoad(weight, reps, sep = ' × ') {
   const loaded = weight != null && weight !== '' && Number(weight) !== 0;
   return loaded ? `${weight}${sep}${reps}` : `${reps} reps`;
 }
@@ -1091,7 +554,7 @@ function buildAtlasBugReportPayload(note, options = {}) {
     pending_preview: previewContent ? previewContent.textContent.trim().slice(0, 4000) : '',
     pending_write: pendingWrite || null,
     write_id: pendingWrite?.writeId || pendingWrite?.payload?.write_id || '',
-    last_error: atlasLastError,
+    last_error: sharedState.atlasLastError,
     recent_errors: atlasRecentErrors.slice(-BUG_REPORT_ERROR_LIMIT),
     action_log: atlasActionLog.slice(-BUG_REPORT_ACTION_LIMIT),
     ui_state: uiStateForBugReport(),
@@ -3172,206 +2635,31 @@ document.getElementById('progress-form').addEventListener('submit', async e => {
 
 /* ===== Progress lift list (name-based) ===== */
 
-// Cache the lift list so repeated tab visits don't re-fetch until a new session.
-let liftListCache = null;
-// Trends: per-lift dated e1RM/best-weight series + the selected timeframe. The
-// Week/Month/YTD/All selector recomputes %/sparkline/counts from this cache —
-// switching periods never re-fetches, and there is no new API.
-let trendsLiftData = null;
-let trendsFrame = 'all';
 
-const TREND_FRAME_CAP = { week: 'vs last week', month: 'vs last month', ytd: 'year to date', all: 'vs all time' };
 
-function trendFrameStartTs(frame) {
-  const now = new Date();
-  if (frame === 'week') return now.getTime() - 7 * 86400000;
-  if (frame === 'month') return now.getTime() - 30 * 86400000;
-  if (frame === 'ytd') return new Date(now.getFullYear(), 0, 1).getTime();
-  return -Infinity; // all time
-}
 
-// Zip the two dated arrays from /api/exercises/:liftCode/progress into one
-// chronological series of { date, e1rm, weight } per session.
-function buildLiftSeries(rec, prog) {
-  const byKey = new Map();
-  for (const p of (prog.estimated_1rm_over_time || [])) {
-    byKey.set(`${p.date}|${p.session_id}`, { date: p.date, e1rm: Number(p.estimated_1rm) || 0, weight: 0 });
-  }
-  for (const p of (prog.best_weight_over_time || [])) {
-    const k = `${p.date}|${p.session_id}`;
-    const entry = byKey.get(k) || { date: p.date, e1rm: 0, weight: 0 };
-    entry.weight = Number(p.best_weight) || 0;
-    byKey.set(k, entry);
-  }
-  const series = Array.from(byKey.values())
-    .filter(p => p.e1rm > 0 || p.weight > 0)
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  return { liftCode: rec.liftCode, name: rec.exercise_name || rec.liftCode, series };
-}
 
-// Real per-period stats: baseline is the value entering the period (the last
-// session before the period start, else the first ever), so % is honest even
-// when only one session falls inside the window.
-function trendStats(series, frame) {
-  if (!series.length) return null;
-  const latest = series[series.length - 1];
-  const startTs = trendFrameStartTs(frame);
-  let baselineIdx = 0;
-  for (let i = 0; i < series.length; i++) {
-    if (Date.parse(series[i].date) < startTs) baselineIdx = i;
-    else break;
-  }
-  const baseline = series[baselineIdx];
-  const baseVal = baseline.e1rm || baseline.weight || 0;
-  const lastVal = latest.e1rm || latest.weight || 0;
-  const pct = baseVal > 0 ? Math.round(((lastVal - baseVal) / baseVal) * 100) : 0;
-  const status = pct >= 2 ? 'up' : (pct <= -1 ? 'stall' : 'hold');
-  const periodSlice = series.slice(baselineIdx).map(p => p.e1rm || p.weight || 0);
-  const sparkVals = periodSlice.length >= 2
-    ? periodSlice.slice(-10)
-    : series.slice(-Math.min(8, series.length)).map(p => p.e1rm || p.weight || 0);
-  return { weight: latest.weight, e1rm: Math.round(lastVal), pct, status, sparkVals };
-}
 
-function trendSparklineSvg(values, status) {
-  const w = 68, h = 22, pad = 3;
-  if (!values || !values.length) return '';
-  const min = Math.min(...values), max = Math.max(...values);
-  const range = (max - min) || 1;
-  const n = values.length;
-  const xy = values.map((v, i) => {
-    const x = n === 1 ? (w - pad) : (pad + i * (w - 2 * pad) / (n - 1));
-    const y = h - pad - ((v - min) / range) * (h - 2 * pad);
-    return [x, y];
-  });
-  const pts = xy.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-  const last = xy[xy.length - 1];
-  return `<svg class="spark spark-${status}" width="68" height="22" viewBox="0 0 68 22" aria-hidden="true">`
-    + `<polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`
-    + `<circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2.6" fill="currentColor"/></svg>`;
-}
 
-function trendPctText(pct) {
-  if (pct > 0) return `▲${pct}%`;
-  if (pct < 0) return `▼${Math.abs(pct)}%`;
-  return 'even';
-}
 
-function fmtLiftWeight(weight) {
-  return weight > 0 ? `${Math.round(weight)} lb` : '—';
-}
 
-function buildTrendRow(lift, st) {
-  const read = el('span', { class: 'trend-read' }, [
-    el('b', { text: fmtLiftWeight(st.weight) }),
-    document.createTextNode(' · '),
-    document.createTextNode(`e1RM ${st.e1rm}`),
-    document.createTextNode(' · '),
-    el('span', { class: `trend-pct trend-${st.status}`, text: trendPctText(st.pct) })
-  ]);
-  const spark = el('span', { class: 'trend-spark' });
-  spark.innerHTML = trendSparklineSvg(st.sparkVals, st.status);
-  const row = el('button', { type: 'button', class: 'trend-row' }, [
-    el('span', { class: 'trend-name', text: lift.name }),
-    el('span', { class: 'trend-l2' }, [read, spark])
-  ]);
-  row.addEventListener('click', () => openLiftDrillDown(lift.name, lift.liftCode));
-  return row;
-}
 
-function trendGlanceItem(kind, n, label) {
-  return el('div', { class: 'trend-glance-item' }, [
-    el('span', { class: `trend-pip trend-pip-${kind}` }),
-    el('b', { text: String(n) }),
-    document.createTextNode(` ${label}`)
-  ]);
-}
 
-function renderTrends(frame) {
-  trendsFrame = frame;
-  const box = document.getElementById('lift-list-result');
-  const glance = document.getElementById('trends-glance');
-  const cap = document.getElementById('trends-cap');
-  const frameEl = document.getElementById('trends-frame');
-  if (!box) return;
-  if (cap) cap.textContent = TREND_FRAME_CAP[frame] || '';
-  if (frameEl) {
-    for (const b of frameEl.children) {
-      const on = b.dataset.frame === frame;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-selected', String(on));
-    }
-  }
 
-  box.innerHTML = '';
-  if (glance) glance.innerHTML = '';
-  if (!trendsLiftData || !trendsLiftData.length) {
-    box.appendChild(el('p', { class: 'muted', text: 'Log a few sessions and Atlas will list your lifts here.' }));
-    return;
-  }
 
-  let up = 0, hold = 0, stall = 0;
-  const list = el('div', { class: 'trend-list' });
-  for (const lift of trendsLiftData) {
-    const st = trendStats(lift.series, frame);
-    if (!st) continue;
-    if (st.status === 'up') up++; else if (st.status === 'hold') hold++; else stall++;
-    list.appendChild(buildTrendRow(lift, st));
-  }
-  if (glance) {
-    glance.appendChild(trendGlanceItem('up', up, 'climbing'));
-    glance.appendChild(trendGlanceItem('hold', hold, 'holding'));
-    glance.appendChild(trendGlanceItem('stall', stall, 'to fix'));
-  }
-  box.appendChild(list);
-}
 
-async function loadProgressLiftList() {
-  const card = document.getElementById('lift-list-card');
-  const resultBox = document.getElementById('lift-list-result');
-  if (!card) return;
 
-  // Show the lift list, hide the drill-down.
-  card.hidden = false;
-  const drillCard = document.getElementById('lift-drilldown-card');
-  if (drillCard) drillCard.hidden = true;
 
-  if (!getApiKey()) {
-    resultBox.innerHTML = '<span class="muted">Set your API key in Settings to see your lifts.</span>';
-    return;
-  }
 
-  // Re-render from cache (within the same page load); period switches never re-fetch.
-  if (trendsLiftData) {
-    renderTrends(trendsFrame);
-    return;
-  }
 
-  resultBox.innerHTML = '<span class="muted">Loading your lifts…</span>';
-  try {
-    const res = await api('/api/plan/today');
-    const recs = res.data?.recommendations || [];
-    liftListCache = recs; // kept for the .lift-link name lookup
-    if (!recs.length) {
-      trendsLiftData = [];
-      renderTrends(trendsFrame);
-      return;
-    }
-    // Fan out: the dated e1RM / best-weight series per lift (existing read endpoint).
-    const settled = await Promise.allSettled(
-      recs.map(r => api(`/api/exercises/${encodeURIComponent(r.liftCode)}/progress`)
-        .then(pr => ({ rec: r, prog: pr.data || {} })))
-    );
-    trendsLiftData = settled
-      .filter(s => s.status === 'fulfilled')
-      .map(s => buildLiftSeries(s.value.rec, s.value.prog))
-      .filter(l => l.series.length);
-    renderTrends(trendsFrame);
-  } catch (err) {
-    resultBox.textContent = '';
-    resultBox.appendChild(el('span', { class: 'muted', text: `Could not load lifts: ${err.message}` }));
-  }
-}
+
+
+
+
+
+
+
+
 
 // Timeframe selector — recomputes from cache, no re-fetch.
 document.getElementById('trends-frame')?.addEventListener('click', e => {
@@ -3379,95 +2667,7 @@ document.getElementById('trends-frame')?.addEventListener('click', e => {
   if (btn) renderTrends(btn.dataset.frame);
 });
 
-async function openLiftDrillDown(exerciseName, liftCode) {
-  const listCard = document.getElementById('lift-list-card');
-  const drillCard = document.getElementById('lift-drilldown-card');
-  const titleEl = document.getElementById('lift-drilldown-title');
-  const contentEl = document.getElementById('lift-drilldown-content');
-  if (!drillCard || !contentEl) return;
 
-  // Switch cards
-  if (listCard) listCard.hidden = true;
-  drillCard.hidden = false;
-  if (titleEl) titleEl.textContent = exerciseName;
-  contentEl.innerHTML = '<span class="muted">Loading…</span>';
-
-  // Fire all three endpoints in parallel.
-  const [progressResult, detailResult, recResult] = await Promise.allSettled([
-    api(`/api/exercises/${encodeURIComponent(liftCode)}/progress`),
-    api(`/api/exercises/${encodeURIComponent(liftCode)}/detail`),
-    api(`/api/recommend/next/${encodeURIComponent(liftCode)}`)
-  ]);
-
-  contentEl.innerHTML = '';
-
-  // ── Recommendation (next target) ──
-  if (recResult.status === 'fulfilled') {
-    const rec = recResult.value.data || {};
-    if (rec.next_target) {
-      const t = rec.next_target;
-      contentEl.appendChild(el('div', { class: 'next-target-card' }, [
-        el('div', { class: 'next-target-weight', text: `${t.weight}` }),
-        el('div', { class: 'next-target-meta', text: `× ${t.reps} reps · ${t.sets} sets` })
-      ]));
-      contentEl.appendChild(el('p', { text: rec.recommendation || '' }));
-      contentEl.appendChild(el('p', { class: 'muted', text: rec.reasoning || '' }));
-      const rd = rec.rule_decision;
-      if (rd && rd.decision !== 'no_data' && rd.reasoning) {
-        contentEl.appendChild(el('p', { class: 'small muted', text: rd.reasoning }));
-      }
-    } else if (rec.recommendation) {
-      contentEl.appendChild(el('p', { text: rec.recommendation }));
-      contentEl.appendChild(el('p', { class: 'muted', text: rec.reasoning || '' }));
-    }
-  } else {
-    contentEl.appendChild(el('p', { class: 'muted small', text: 'Could not load recommendation.' }));
-  }
-
-  // ── Progress chart first (so you see the trend before the raw numbers) ──
-  if (progressResult.status === 'fulfilled') {
-    const p = progressResult.value.data || {};
-    const weights = p.best_weight_over_time || [];
-    if (weights.length >= 2) {
-      const oneRms = p.estimated_1rm_over_time || [];
-      contentEl.appendChild(el('h3', { text: 'Best weight over time' }));
-      contentEl.appendChild(svgLineChart(
-        weights.map(w => ({ x: w.date, y: w.best_weight })),
-        { label: 'Best weight over time' }
-      ));
-      if (oneRms.length >= 2) {
-        contentEl.appendChild(el('h3', { text: 'Estimated 1RM over time' }));
-        contentEl.appendChild(svgLineChart(
-          oneRms.map(r => ({ x: r.date, y: r.estimated_1rm })),
-          { color: '#16a34a', label: 'Estimated 1RM over time' }
-        ));
-      }
-    }
-  }
-
-  // ── Detail (last sessions table below the chart for context) ──
-  if (detailResult.status === 'fulfilled') {
-    const d = detailResult.value.data || {};
-    if (d.sessions_count) {
-      if (d.best_recent_set) {
-        const s = d.best_recent_set;
-        const setText = s.rir != null ? `${formatSetLoad(s.weight, s.reps)} @${s.rir}` : formatSetLoad(s.weight, s.reps);
-        contentEl.appendChild(el('p', { class: 'small muted', text: `Best recent set (30 days): ${setText} on ${s.date}` }));
-      }
-      if (d.last_sessions && d.last_sessions.length) {
-        contentEl.appendChild(el('h3', { text: 'Last sessions' }));
-        contentEl.appendChild(renderTable(
-          ['Date', 'Best weight', 'Est. 1RM', 'Sets'],
-          d.last_sessions.map(s => [s.date, s.best_weight ?? '—', s.estimated_1rm ?? '—', s.sets])
-        ));
-      }
-    }
-  }
-
-  if (!contentEl.children.length) {
-    contentEl.appendChild(el('p', { class: 'muted', text: 'No data found for this lift yet.' }));
-  }
-}
 
 document.getElementById('lift-drilldown-back')?.addEventListener('click', () => {
   const drillCard = document.getElementById('lift-drilldown-card');
@@ -3851,7 +3051,7 @@ function generateSessionId(dateValue) {
   return `${compact}-${suffix}-01`;
 }
 
-function getLocalDateString(dateTime = new Date()) {
+export function getLocalDateString(dateTime = new Date()) {
   const year = dateTime.getFullYear();
   const month = String(dateTime.getMonth() + 1).padStart(2, '0');
   const day = String(dateTime.getDate()).padStart(2, '0');
@@ -6787,7 +5987,7 @@ async function handleUndoLastWrite(expected) {
       })
     });
     lastWrite = null;
-    historyLoaded = false; // sheet changed — History re-fetches on next visit
+    sharedState.historyLoaded = false; // sheet changed — History re-fetches on next visit
     setStatus(loggerStatus, 'Last write undone.', 'ok');
   } catch (err) {
     setStatus(loggerStatus, `Undo failed: ${err.message}`, 'error');
@@ -6925,7 +6125,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
     }
     invalidatePreview();
-    historyLoaded = false; clearLiveHintCaches(); // sheet changed
+    sharedState.historyLoaded = false; clearLiveHintCaches(); // sheet changed
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;

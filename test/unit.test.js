@@ -39,6 +39,16 @@ const {
 
 const repoRoot = path.resolve(__dirname, '..');
 
+// PR-09b: app.js was split into ES modules (api/dom/bugReport/settingsHealth/
+// historyView/progressView + sharedState). Source-grep tests that assert on code
+// which moved into a sibling module read the concatenated app shell so the
+// assertion follows the code regardless of which file now holds it. app.js is
+// first so byte-offset slices into app.js-resident code stay valid.
+const APP_SHELL_FILES = ['app.js', 'sharedState.js', 'api.js', 'dom.js', 'bugReport.js', 'settingsHealth.js', 'historyView.js', 'progressView.js'];
+function readAppShell() {
+  return APP_SHELL_FILES.map(f => fs.readFileSync(path.join(repoRoot, 'public', f), 'utf8')).join('\n');
+}
+
 test('bug report id uses BUG-YYYYMMDD-HHMMSS format', () => {
   assert.equal(bugIdFromDate(new Date('2026-01-02T03:04:05.000Z')), 'BUG-20260102-030405');
 });
@@ -180,7 +190,7 @@ test('/bug command creates payload before normal composer routing', () => {
 });
 
 test('browser bug report payload redacts secret-looking values before save or copy fallback', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const appSource = readAppShell();
   const redactorIdx = appSource.indexOf('function redactBugReportString');
   const valueRedactorIdx = appSource.indexOf('function redactBugReportValue');
   const builderIdx = appSource.indexOf('function buildAtlasBugReportPayload');
@@ -196,13 +206,13 @@ test('browser bug report payload redacts secret-looking values before save or co
 });
 
 test('bug report capture includes failed preview state and recent failed API metadata', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const appSource = readAppShell();
   const builder = appSource.slice(appSource.indexOf('function buildAtlasBugReportPayload'), appSource.indexOf('async function exposeBugReportJson'));
   assert.match(builder, /pending_preview:\s*previewContent/);
-  assert.match(builder, /last_error:\s*atlasLastError/);
+  assert.match(builder, /last_error:\s*sharedState\.atlasLastError/);
   assert.match(builder, /recent_api_requests:\s*atlasRecentApiRequests/);
   const apiFn = appSource.slice(appSource.indexOf('async function api'), appSource.indexOf('function el'));
-  assert.match(apiFn, /atlasLastError\s*=\s*\{/);
+  assert.match(apiFn, /sharedState\.atlasLastError\s*=\s*\{/);
   assert.match(apiFn, /endpoint:\s*path/);
   assert.match(apiFn, /failed:\s*res \? !res\.ok : true/);
   assert.doesNotMatch(apiFn, /atlasRecentApiRequests[\s\S]{0,500}headers/);
@@ -225,11 +235,11 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v115/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v116/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const appSource = readAppShell();
 
   // Ring buffers for errors + UI breadcrumbs, both bounded.
   assert.match(appSource, /const atlasRecentErrors = \[\]/);
@@ -3404,7 +3414,7 @@ test('reaction layer: approve-btn captures lift codes and fires write reaction',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 10400
+    appSource.indexOf(anchor) + 13000
   );
   assert.match(approveSection, /reactionLiftCodes/, 'must capture reactionLiftCodes before invalidatePreview');
   assert.match(approveSection, /fetchReaction/, 'must call fetchReaction after write');
@@ -3460,7 +3470,7 @@ test('verdict: post-write block shows Logged verdict and Next recommendation', (
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 10400
+    appSource.indexOf(anchor) + 13000
   );
   assert.match(approveSection, /buildVerdict\(rec\)/, 'must call buildVerdict');
   assert.match(approveSection, /'Logged'/, 'must label verdict row "Logged"');
@@ -4112,16 +4122,17 @@ test('session history: /api/sessions/recent registered BEFORE /:sessionId in ind
 });
 
 test('session history: auto-load wired in app.js and calls correct endpoint', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const appSource = readAppShell();
   assert.match(appSource, /\/api\/sessions\/recent/, 'must call /api/sessions/recent');
   assert.match(appSource, /loadHistory/, 'loadHistory function must exist');
   assert.match(appSource, /sessions-result/, 'sessions-result container must be used');
   assert.match(appSource, /atlasRefreshSessions/, 'refresh bridge for nav.js must exist');
   const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   assert.doesNotMatch(htmlSource, /load-sessions-btn/, 'manual load button must stay removed — list auto-loads');
-  // With no manual refresh button, writes and undos must invalidate the cache
-  // (declaration + write success + undo success = at least 3 assignments).
-  const invalidations = (appSource.match(/historyLoaded = false/g) || []).length;
+  // With no manual refresh button, writes and undos must invalidate the cache.
+  // (PR-09b: historyLoaded now lives on sharedState — the false-inits are the
+  // sharedState default plus the write-success and undo-success invalidations.)
+  const invalidations = (appSource.match(/historyLoaded\s*[:=]\s*false/g) || []).length;
   assert.ok(invalidations >= 3, 'successful write and undo must reset historyLoaded so History re-fetches');
 });
 
@@ -5643,8 +5654,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v115/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v114\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v116/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v115\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -6716,7 +6727,7 @@ test('date guard: an ACCEPTED screenshot date is still correctable on the card',
 // --- Cold-start resilience (composer-first Phase 0b, diagnosed live 2026-07-02) ---
 
 test('cold-start: api() retries ONCE on transport failure, only for GETs or marked dry-runs', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const appSource = readAppShell();
   const fn = appSource.slice(appSource.indexOf('async function api('), appSource.indexOf('function el('));
   assert.match(fn, /const transportFailure = err && !err\.status && err\.name !== 'AbortError';/,
     'only transport-level failures retry — never HTTP errors, never caller aborts');
@@ -6741,7 +6752,7 @@ test('cold-start: only DRY-RUN call sites are marked retryable; the live write i
 });
 
 test('cold-start: transport failures surface the honest waking-up copy, never for HTTP errors', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
+  const appSource = readAppShell();
   const fn = appSource.slice(appSource.indexOf('function friendlyTransportMessage'), appSource.indexOf('async function api('));
   assert.match(fn, /if \(!err \|\| err\.status\) return null;/,
     'a real HTTP error keeps the server message — the friendly copy never masks it');

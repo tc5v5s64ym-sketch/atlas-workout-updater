@@ -615,7 +615,13 @@ test('bodyweight display: no-load sets read as reps everywhere — never "0×rep
   // app.js carries ONE shared helper for every logged-set renderer (review #828
   // swept the full file: recap, plan card, PR table, best-recent, last-session
   // hint, plan-sheet labels, in-lift panel).
-  const app = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  // PR-09b: app.js was split into ES modules; the logged-set renderers now live
+  // across app.js + the extracted view modules. Read the concatenated shell so
+  // both the "every renderer uses formatSetLoad" sweep and the "no unguarded
+  // template remains" sweep still see every call site.
+  const _fs = require('node:fs'), _p = require('node:path');
+  const app = ['app.js', 'api.js', 'dom.js', 'bugReport.js', 'settingsHealth.js', 'historyView.js', 'progressView.js']
+    .map(f => _fs.readFileSync(_p.join(__dirname, '..', 'public', f), 'utf8')).join('\n');
   const helper = app.slice(app.indexOf('function formatSetLoad('), app.indexOf('function formatSetLoad(') + 300);
   assert.match(helper, /Number\(weight\) !== 0/, 'the app.js helper carries the same literal-0 rule');
   for (const site of ["class: 'session-ex-set'", 'coach-plan-last', 'bestWeightSet ?', 'bestRepSet ?', "rows.push(['Last'"]) {
