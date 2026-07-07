@@ -151,25 +151,74 @@ test('getEffortSessionIds reads Effort column B and drops blanks and the "sessio
 });
 
 // ---------------------------------------------------------------------------
-// getLogCompositeKeys — B/C/G joined, header rows skipped, lowercased
+// getLogCompositeKeys — single B:G read (idx 0=B, 1=C, 5=G), headers skipped,
+// lowercased. A ROWS-major row is [B, C, D, E, F, G] with trailing empties
+// trimmed, so set_number lives at index 5.
 // ---------------------------------------------------------------------------
 test('getLogCompositeKeys builds lowercased session||exercise||set keys, skipping header and incomplete rows', async () => {
-  rangeResponses['Log_Cleaned!B:B'] = { data: { values: [['session_id', 'S1', 'S2', 'S3']] } };
-  rangeResponses['Log_Cleaned!C:C'] = { data: { values: [['exercise', 'Bench', 'Squat', '']] } };
-  rangeResponses['Log_Cleaned!G:G'] = { data: { values: [['set_number', '1', '2', '3']] } };
+  rangeResponses['Log_Cleaned!B:G'] = {
+    data: { values: [
+      ['session_id', 'exercise', '', '', '', 'set_number'], // header row -> skipped
+      ['S1', 'Bench', '', '', '', '1'],
+      ['S2', 'Squat', '', '', '', '2'],
+      ['S3', '', '', '', '', '3']                           // empty exercise -> skipped
+    ] }
+  };
 
   const out = await sheets.getLogCompositeKeys();
 
+  assert.equal(calls.valuesGet[0].range, 'Log_Cleaned!B:G');
   // Row 0 is a header (matches session id / exercise / set_number) -> skipped.
   // Row 3 has an empty exercise -> skipped (all three fields required).
   assert.deepEqual(out, ['s1||bench||1', 's2||squat||2']);
 });
 
-test('getLogCompositeKeys tolerates ragged columns and returns [] when nothing complete', async () => {
-  rangeResponses['Log_Cleaned!B:B'] = { data: { values: [['S1', 'S2']] } };
-  rangeResponses['Log_Cleaned!C:C'] = { data: { values: [['Bench']] } };       // shorter
-  rangeResponses['Log_Cleaned!G:G'] = { data: { values: [[]] } };              // empty
+test('getLogCompositeKeys tolerates ragged rows and returns [] when nothing complete', async () => {
+  rangeResponses['Log_Cleaned!B:G'] = {
+    data: { values: [
+      ['S1', 'Bench'], // set_number (idx 5) missing -> dropped
+      ['S2']           // exercise (idx 1) missing -> dropped
+    ] }
+  };
 
-  // Only index 0 could pair, but set_number is missing -> dropped.
+  // Neither row carries all three required fields.
   assert.deepEqual(await sheets.getLogCompositeKeys(), []);
+});
+
+// ---------------------------------------------------------------------------
+// READ BUDGET (quota regression guard) — see docs/READ_BUDGET.md.
+//
+// The Save path's row-level dedup calls getLogCompositeKeys() once per request
+// (dry-run preview AND live write). It reads session_id (B), exercise (C) and
+// set_number (G) from Log_Cleaned. Historically it fetched each column in a
+// SEPARATE values.get call — three API reads for one logical lookup — which,
+// during a gym session's burst of Save requests, was pure quota waste. These
+// tests pin the per-read budget so a regression back to per-column fetches (or
+// any new redundant read on the save path) fails CI.
+// ---------------------------------------------------------------------------
+test('READ BUDGET: getLogCompositeKeys costs exactly ONE values.get call', async () => {
+  await sheets.getLogCompositeKeys();
+  assert.equal(
+    calls.valuesGet.length,
+    1,
+    `getLogCompositeKeys must read Log_Cleaned in a single request; made ${calls.valuesGet.length}`
+  );
+});
+
+test('READ BUDGET: a single Save stays within its Google Sheets read budget', async () => {
+  // The read calls sheets.js performs for ONE live Save (with an effort row),
+  // in the order index.js issues them. Reads are whole-column / whole-tab, so
+  // this count is O(1) in workout size — a single exercise, a normal workout,
+  // and a large workout all cost the SAME number of reads.
+  await sheets.getExerciseCatalog();                 // enrich: 1 (Exercise_Catalog!A:Z)
+  await sheets.getEffortSessionIds();                // dup-session guard: 1 (Effort!B:B)
+  await sheets.getLogCompositeKeys();                // row dedup: 1 (Log_Cleaned!B:G)
+  await sheets.getHeaderRow('Log_Cleaned');          // header-drift guard: 1
+  await sheets.getHeaderRow('Effort');               // header-drift guard: 1
+
+  const SAVE_READ_BUDGET = 5;
+  assert.ok(
+    calls.valuesGet.length <= SAVE_READ_BUDGET,
+    `one Save must not exceed ${SAVE_READ_BUDGET} Sheets reads; made ${calls.valuesGet.length}`
+  );
 });
