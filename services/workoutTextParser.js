@@ -130,7 +130,7 @@ function buildLogResult({ rawText, rawName, canonicalName, sets, warnings = [], 
   };
 }
 
-function findExerciseInText(text) {
+function findExerciseInText(text, { strictVariantGuard = false } = {}) {
   const normalized = normalizeKey(text);
   if (!normalized) return null;
 
@@ -148,8 +148,25 @@ function findExerciseInText(text) {
 
   for (const candidate of aliases) {
     const atStart = normalized === candidate.key || normalized.startsWith(`${candidate.key} `);
-    const anywhere = new RegExp(`\\b${escapeRegExp(candidate.key)}\\b`).test(normalized);
-    if (atStart || anywhere) {
+    if (atStart) {
+      return {
+        canonicalName: candidate.canonicalName,
+        rawName: candidate.alias,
+        rest: stripExerciseText(text, candidate.key),
+      };
+    }
+    const match = new RegExp(`\\b${escapeRegExp(candidate.key)}\\b`).exec(normalized);
+    if (match) {
+      // PARSE-1 (audit 2026-07-07): on the LOG path (strictVariantGuard), an
+      // anywhere-position match must not silently discard a variant qualifier typed
+      // immediately before the alias — "front squat" is not Back Squat, "close grip
+      // bench" is not Bench Press, "stiff leg deadlift" is not Deadlift. When the token
+      // right before the matched alias is a genuine exercise-name qualifier, reject the
+      // match so the input falls to parseUnknownExercise (typed name preserved +
+      // needs_catalog_review) instead of corrupting the base lift's history.
+      if (strictVariantGuard && aliasIsVariantOfAnotherLift(normalized, match.index)) {
+        continue;
+      }
       return {
         canonicalName: candidate.canonicalName,
         rawName: candidate.alias,
@@ -159,6 +176,22 @@ function findExerciseInText(text) {
   }
 
   return null;
+}
+
+// True when the alias matched at `matchIndex` in `normalized` is preceded by a
+// genuine exercise-name qualifier (making it a DIFFERENT lift — "front" squat,
+// "close grip" bench). Guarded so it fires ONLY for the leading variant phrase:
+//   - no set-group before the alias (a digit in `before` means the alias begins a
+//     NEW segment after sets — leave splitting to the multi-exercise/G1/rescue path);
+//   - the immediately-preceding token is name-like AND not a framing/note word
+//     (do/going/skipped/warmup/heavy…), so natural-language logging like "do bench
+//     225" or "Skipped warmup bench 225" still resolves to the base lift.
+function aliasIsVariantOfAnotherLift(normalized, matchIndex) {
+  const before = normalized.slice(0, matchIndex).trim();
+  if (!before || /\d/.test(before)) return false;
+  const precedingToken = before.split(' ').pop();
+  if (!precedingToken || !isNameLikeWord(precedingToken)) return false;
+  return !NON_QUALIFIER_LEAD_WORDS.has(precedingToken.toLowerCase());
 }
 
 function findExerciseMentions(text) {
@@ -267,6 +300,41 @@ const CONTEXTUAL_ALIAS_WORDS = new Set(
     ...Object.values(CONTEXTUAL_ALIASES).map(list => list.join(' ').split(/\s+/))
   ).map(w => w.toLowerCase()).filter(Boolean)
 );
+
+// Words that can lead an exercise on the LOG path but are NOT variant qualifiers:
+// framing/command verbs, pronouns/articles, skip-note words, and effort adjectives.
+// When one of these immediately precedes a base alias, the alias is still the base
+// lift ("do bench 225", "Skipped warmup bench 225", "heavy bench 225") — PARSE-1
+// must NOT reject it. Genuine qualifiers (front/goblet/close/grip/stiff/leg/…) are
+// deliberately absent, so they still route to the unknown-exercise path. (Continuation
+// and set-notation words are already excluded by isNameLikeWord.) A word missed here
+// only ever errs toward asking (safe); a full catalog-driven variant table is PR-14.
+const NON_QUALIFIER_LEAD_WORDS = new Set([
+  // framing / command / action verbs
+  'do', 'does', 'doing', 'go', 'going', 'gonna', 'get', 'getting', 'got', 'gets',
+  'want', 'wanna', 'need', 'log', 'logged', 'logging', 'hit', 'add', 'added', 'put',
+  'start', 'started', 'finish', 'finished', 'record', 'recorded', 'trying', 'try',
+  // skip-note words
+  'skip', 'skipped', 'skipping', 'warmup', 'warmups', 'warmed', 'warm',
+  // pronouns / articles / determiners
+  'my', 'the', 'a', 'an', 'this', 'some', 'just', 'only',
+  // effort / quality adjectives (notes, not variants)
+  'felt', 'feels', 'feel', 'solid', 'easy', 'tough', 'hard', 'quick', 'clean',
+  'good', 'great', 'heavy', 'light', 'fast', 'slow', 'smooth', 'strong',
+]);
+
+// A "name-like" word: an ordinary word token that is NOT set notation (reps/rir/
+// lb/x…), a continuation/filler word (then/and/today…), a number word, or a
+// contextual-alias word (incline/lats — legitimately mid-phrase). Such a word is
+// part of an exercise NAME. Used both by the trailing-set merge guard (G1) and by
+// PARSE-1 (a name-like qualifier before a base alias means a distinct variant lift).
+function isNameLikeWord(token) {
+  return /^[a-z][a-z-]*$/i.test(token) &&
+    !SET_NOTATION_WORD_RE.test(token) &&
+    !SET_CONTINUATION_WORD_RE.test(token) &&
+    !CONTEXTUAL_ALIAS_WORDS.has(token.toLowerCase());
+}
+
 function hasUnattributableTrailingSets(rest) {
   const tokens = normalizeParserText(rest)
     .split(' ')
@@ -275,11 +343,7 @@ function hasUnattributableTrailingSets(rest) {
   if (tokens.length < 3) return false;
 
   const isSet = t => looksLikeSetToken(t);
-  const isNameWord = t =>
-    /^[a-z][a-z-]*$/i.test(t) &&
-    !SET_NOTATION_WORD_RE.test(t) &&
-    !SET_CONTINUATION_WORD_RE.test(t) &&
-    !CONTEXTUAL_ALIAS_WORDS.has(t.toLowerCase());
+  const isNameWord = isNameLikeWord;
 
   let sawSetBefore = false;
   let i = 0;
@@ -731,7 +795,7 @@ function parseLogSets(rawText, context = {}) {
     };
   }
 
-  const exercise = findExerciseInText(textForParsing);
+  const exercise = findExerciseInText(textForParsing, { strictVariantGuard: true });
   if (exercise?.ambiguous) {
     return {
       intent: 'needs_clarification',

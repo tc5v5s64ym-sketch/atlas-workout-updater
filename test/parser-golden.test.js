@@ -1385,3 +1385,62 @@ test('golden PR-06: reconciled aliases still resolve to the frozen parser canoni
     assert.equal(r.canonical_name, expected, `"${text}" → ${r.canonical_name} (expected ${expected})`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// PARSE-1 (audit 2026-07-07) — a variant qualifier before a base-lift alias must
+// NOT silently collapse to the base lift. `front squat` is not `Back Squat`.
+// findExerciseInText's anywhere-match used to discard the leading qualifier; the
+// fix rejects an anywhere-match when a name-like word immediately precedes the
+// alias, so the input falls to the unknown-exercise path (typed name preserved,
+// needs_catalog_review) instead of corrupting the wrong lift's history.
+// ---------------------------------------------------------------------------
+
+test('PARSE-1: variant qualifiers do not collapse to the base lift (never silent)', () => {
+  const bases = ['Back Squat', 'Bench Press', 'Deadlift'];
+  const cases = [
+    ['front squat 225 5/2', /front squat/i],
+    ['goblet squats 60 12/2 x3', /goblet squat/i],
+    ['close grip bench 185 8/2', /close grip bench/i],
+    ['stiff leg deadlift 275 8/2', /stiff leg deadlift/i],
+  ];
+  for (const [text, namePattern] of cases) {
+    const r = parseWorkoutText(text);
+    // Never the silent base lift.
+    assert.ok(!bases.includes(r.canonical_name),
+      `"${text}" must not collapse to a base lift — got ${r.canonical_name}`);
+    if (r.intent === 'log_sets') {
+      // Unknown-exercise path: the typed variant name is preserved and flagged.
+      assert.match(r.canonical_name, namePattern,
+        `"${text}" should preserve the typed variant name — got ${r.canonical_name}`);
+      assert.ok((r.warnings || []).includes('unknown_exercise'),
+        `"${text}" should carry the unknown_exercise warning`);
+      assert.equal(r.needs_catalog_review, true,
+        `"${text}" should be flagged needs_catalog_review`);
+    } else {
+      // A clarification ask is also acceptable — anything but a silent base-lift log.
+      assert.equal(r.intent, 'needs_clarification',
+        `"${text}" must be unknown-exercise or a clarification, got ${r.intent}`);
+    }
+  }
+});
+
+test('PARSE-1: front squat preserves its sets on the unknown-exercise path', () => {
+  const r = parseWorkoutText('front squat 225 5/2');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Front Squat');
+  assert.deepEqual(sets(r), [[225, 5, 2]]);
+  assert.equal(r.needs_catalog_review, true);
+});
+
+test('PARSE-1 guard: legitimate mid-text + at-start matches still resolve (no over-rejection)', () => {
+  // Continuation/filler words before an alias are NOT variant qualifiers — keep resolving.
+  assert.equal(parseWorkoutText('then bench 185 5/2').canonical_name, 'Bench Press');
+  assert.equal(parseWorkoutText('did squat 315 5/1').canonical_name, 'Back Squat');
+  assert.equal(parseWorkoutText('today bench 185 5/2').canonical_name, 'Bench Press');
+  // At-start base-lift logging is untouched.
+  assert.equal(parseWorkoutText('bench 185 5/2').canonical_name, 'Bench Press');
+  assert.equal(parseWorkoutText('squat 315 5/1').canonical_name, 'Back Squat');
+  // Registered compound aliases (at-start) still win over the bare base.
+  assert.equal(parseWorkoutText('incline bench 185 8/2').canonical_name, 'Incline Bench Press');
+  assert.equal(parseWorkoutText('bent over row 185 8/2').canonical_name, 'Bent-Over Row');
+});
