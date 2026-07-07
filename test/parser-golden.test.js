@@ -1444,3 +1444,61 @@ test('PARSE-1 guard: legitimate mid-text + at-start matches still resolve (no ov
   assert.equal(parseWorkoutText('incline bench 185 8/2').canonical_name, 'Incline Bench Press');
   assert.equal(parseWorkoutText('bent over row 185 8/2').canonical_name, 'Bent-Over Row');
 });
+
+// ---------------------------------------------------------------------------
+// PARSE-2 (audit 2026-07-07) — a digit-free unknown-name line must NOT become a
+// phantom header of the PREVIOUS lift. In the multiline rescue, "rear delt machine"
+// inherited the carried lift as its partial.exercise, was accepted as a header for
+// that lift, and the following bare set line ("95 12/2") merged into it. The fix
+// re-parses the digit-free line standalone: if it doesn't name its own exercise, it
+// is surfaced as unresolved and the carry is reset so following bare sets dead-end.
+// ---------------------------------------------------------------------------
+
+test('PARSE-2: a digit-free unknown line never absorbs the next line\'s sets into the previous lift', () => {
+  const r = parseWorkoutText('bench 225 5/2\nrear delt machine\n95 12/2');
+  const benchSets = (r.canonical_name === 'Bench Press' || r.exercise === 'Bench Press')
+    ? (r.sets || [])
+    : (r.exercises || []).filter(e => (e.canonical_name || e.exercise) === 'Bench Press').flatMap(e => e.sets || []);
+  // The 95×12 belongs to the rear delt machine — it must never land under Bench.
+  assert.ok(!benchSets.some(s => Number(s.weight) === 95),
+    'the 95×12 set must not be absorbed into Bench Press');
+  // Bench keeps its own real set.
+  assert.ok(benchSets.some(s => Number(s.weight) === 225),
+    'Bench Press keeps its own 225 set');
+  // The unknown machine line (and its orphaned set) leave a trace — never silently merged.
+  const traced = (Array.isArray(r.unresolved) ? r.unresolved : []).some(u => /rear delt|95/i.test(u.line || ''))
+    || r.intent === 'needs_clarification';
+  assert.ok(traced, 'the rear delt machine line / its 95 set must surface (unresolved or an ask)');
+});
+
+test('PARSE-2: a legitimate name header + following set line still resolves (no over-rejection)', () => {
+  // "Bench" names its own exercise on the line, so the next bare set line attaches.
+  const r = parseWorkoutText('Bench\n225 5/2');
+  const benchSets = (r.canonical_name === 'Bench Press' || r.exercise === 'Bench Press')
+    ? (r.sets || [])
+    : (r.exercises || []).filter(e => (e.canonical_name || e.exercise) === 'Bench Press').flatMap(e => e.sets || []);
+  assert.ok(benchSets.some(s => Number(s.weight) === 225 && Number(s.reps) === 5),
+    'a real name header must still adopt the following bare set line');
+});
+
+test('PARSE-2: a genuine continuation set line still attaches to the active lift', () => {
+  const r = parseWorkoutText('bench 225 5/2\n205 5/3');
+  const benchSets = (r.canonical_name === 'Bench Press' || r.exercise === 'Bench Press')
+    ? (r.sets || [])
+    : (r.exercises || []).filter(e => (e.canonical_name || e.exercise) === 'Bench Press').flatMap(e => e.sets || []);
+  assert.ok(benchSets.some(s => Number(s.weight) === 225) && benchSets.some(s => Number(s.weight) === 205),
+    'bench keeps both its continuation sets (225 then 205)');
+});
+
+test('PARSE-2 guard: a contextual-alias sub-header still continues the active lift (no over-rejection)', () => {
+  // Review note on PR-0F: ensure the standalone re-parse does not dead-end a
+  // contextual alias ("lats" under Lat Pulldown). Verified: the whole-text collapse
+  // resolves this before the rescue treats "lats" as a header, so the continuation
+  // set attaches to Lat Pulldown, not lost.
+  const r = parseWorkoutText('lat pulldown 130 8/2\nlats\n120 10/2');
+  const lat = (r.canonical_name === 'Lat Pulldown' || r.exercise === 'Lat Pulldown')
+    ? (r.sets || [])
+    : (r.exercises || []).filter(e => (e.canonical_name || e.exercise) === 'Lat Pulldown').flatMap(e => e.sets || []);
+  assert.ok(lat.some(s => Number(s.weight) === 130) && lat.some(s => Number(s.weight) === 120),
+    'the "lats" sub-header must keep the 120 set on Lat Pulldown');
+});
