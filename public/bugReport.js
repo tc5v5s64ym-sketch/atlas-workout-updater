@@ -38,8 +38,6 @@ export const atlasRecentErrors = [];
 // last N errors, so a cascade shows AS a cascade
 export const atlasActionLog = [];
 
-export let atlasServerVersion = null;
-
 // Truncated + redacted snapshot of a request/response body. Multipart uploads
 // (screenshots) are summarised by field name, never dumped.
 export function snapshotBugBody(body) {

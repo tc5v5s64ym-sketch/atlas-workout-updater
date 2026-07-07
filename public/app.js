@@ -12,7 +12,7 @@
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
 import { sharedState } from './sharedState.js';
 import { API_KEY_STORAGE, api, friendlyTransportMessage, getApiKey } from './api.js';
-import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, atlasServerVersion, recordAtlasAction, recordAtlasError } from './bugReport.js';
+import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
 import { liftListCache, loadProgressLiftList, openLiftDrillDown, renderTrends } from './progressView.js';
@@ -265,7 +265,7 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
     const res = await fetch('/version');
     const body = await res.json().catch(() => null);
     const v = (body && body.data) || body || {};
-    atlasServerVersion = v;
+    sharedState.atlasServerVersion = v;
     const raw = String(v.version || 'unknown');
     const short = /^[0-9a-f]{7,40}(-dirty)?$/i.test(raw) ? raw.slice(0, 7) : raw;
     // Lead with the PR number when the build captured it — "PR #461" is something
@@ -562,11 +562,11 @@ function buildAtlasBugReportPayload(note, options = {}) {
     },
     app_version: {
       shell: ATLAS_SHELL_BUILD,
-      version: atlasServerVersion?.version || null,
-      deployed_at: atlasServerVersion?.deployed_at || null,
-      pr: atlasServerVersion?.pr || null,
-      git_sha: atlasServerVersion?.version || null,
-      build_timestamp: atlasServerVersion?.deployed_at || null
+      version: sharedState.atlasServerVersion?.version || null,
+      deployed_at: sharedState.atlasServerVersion?.deployed_at || null,
+      pr: sharedState.atlasServerVersion?.pr || null,
+      git_sha: sharedState.atlasServerVersion?.version || null,
+      build_timestamp: sharedState.atlasServerVersion?.deployed_at || null
     },
     browser: {
       userAgent: navigator.userAgent,
