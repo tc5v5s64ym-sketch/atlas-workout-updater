@@ -963,7 +963,7 @@ function parseLogSets(rawText, context = {}) {
   // ("Dips +25 8/2", "Weighted dips +50 10/2 x3") still parse weighted below, since
   // parseSetGroups resolves their load. All Dips variants share lift code DIP01, so
   // bodyweight/added-load differ only by the weight value, not the exercise.
-  if (resolvedExercise.canonicalName === 'Dips (Weighted)' && !parseSetGroups(resolvedExercise.rest).length) {
+  if (resolvedExercise.canonicalName === 'Dips (Weighted)' && (parseSetGroups(resolvedExercise.rest) || []).length === 0) {
     const bodyweightSets = parseBodyweightReps(resolvedExercise.rest);
     if (bodyweightSets.length) {
       return buildLogResult({
@@ -997,6 +997,18 @@ function parseLogSets(rawText, context = {}) {
 function parseWithExercise(rawText, exercise) {
   const rest = exercise.rest || '';
   const sets = parseSetGroups(rest);
+  // PARSE-3: parseSetGroups returns null when a bare space-separated sequence would
+  // only parse into an impossible row (an RIR token read as a weight) — ask for slash
+  // notation instead of emitting a phantom set.
+  if (sets === null) {
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: `I couldn't read "${rest.trim()}" cleanly — use slash notation so I don't mix up the numbers (e.g. ${exercise.canonicalName} 225 5/2 = weight reps/RIR).`,
+      partial: { exercise: exercise.canonicalName, raw_name: exercise.rawName },
+      warnings: ['ambiguous_set_format'],
+    };
+  }
   if (!sets.length) {
     return {
       intent: 'needs_clarification',
@@ -1014,6 +1026,14 @@ function parseWithExercise(rawText, exercise) {
     sets,
   });
 }
+
+// PARSE-3 plausibility bounds for the bare "{weight} {reps}" pair in a space-separated
+// sequence. RIR values are 0–5, so a "weight" below the floor is almost certainly an
+// RIR token mis-read as a load; a "reps" above the cap is almost certainly a real
+// weight mis-read as reps. These bound only the ambiguous bare-pair branch — slash
+// notation, the whole-text single-set anchor, and xN repeats are unaffected.
+const MIN_PLAUSIBLE_WEIGHT = 6;
+const MAX_PLAUSIBLE_REPS = 50;
 
 function parseSetGroups(text) {
   const cleaned = normalizeParserText(text)
@@ -1045,6 +1065,7 @@ function parseUnknownExercise(rawText) {
   if (!unknown) return null;
 
   const parsedSets = parseSetGroups(unknown.rest);
+  if (parsedSets === null) return null; // PARSE-3: implausible bare pair → not a clean log
   const sets = parsedSets.length ? parsedSets : parseBodyweightReps(unknown.rest);
   if (!sets.length) return null;
 
@@ -1332,8 +1353,21 @@ function parseDaleShorthand(text) {
     // swallows the trailing RIR of a single space-separated set.
     const nextBare = tokens[i + 1]?.match(/^(\d+)$/);
     if (weight && nextBare) {
-      currentWeight = Number(weight[1]);
-      previousSet = setRecord({ weight: currentWeight, reps: Number(nextBare[1]), rir: null });
+      const w = Number(weight[1]);
+      const reps = Number(nextBare[1]);
+      // PARSE-3 (audit 2026-07-07): in a bare space-separated sequence, an RIR token
+      // gets mis-paired as the NEXT set's weight — "225 5 2 185 8 2" → …[2,185]… (a
+      // 2 lb × 185-rep phantom, RIRs lost). A pair whose "weight" is implausibly small
+      // (an RIR value, < MIN_PLAUSIBLE_WEIGHT) or whose "reps" is impossibly large (a
+      // weight read as reps, > MAX_PLAUSIBLE_REPS) is not a real set. Refuse the WHOLE
+      // parse (dead-end to a clarification) rather than emit an impossible row — asking
+      // is always safe. The warm-up climb this branch exists for ("140 15 190 10", and
+      // legit light bare pairs like "15 20") stays valid.
+      if (w < MIN_PLAUSIBLE_WEIGHT || reps > MAX_PLAUSIBLE_REPS) {
+        return null;
+      }
+      currentWeight = w;
+      previousSet = setRecord({ weight: currentWeight, reps, rir: null });
       sets.push(previousSet);
       i += 1;
       continue;
