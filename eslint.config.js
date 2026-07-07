@@ -104,14 +104,14 @@ module.exports = [
     rules: nodeRules,
   },
 
-  // app.js is still a classic browser script (converted to modules in PR-09). It
-  // uses the UMD-era global pattern and carries a file-level eslint-disable for
-  // no-implicit-globals where it intentionally exposes window globals.
+  // app.js is now an ES module (converted in PR-09a). It still carries a
+  // file-level eslint-disable for no-implicit-globals where it intentionally
+  // exposes window globals via the transitional bridge.
   {
     files: ['src/app/app.js'],
     languageOptions: {
       ecmaVersion: 2022,
-      sourceType: 'script',
+      sourceType: 'module',
       globals: {
         ...globals.browser,
         ...globals.node,

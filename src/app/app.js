@@ -1,4 +1,3 @@
-/* eslint-disable no-implicit-globals -- browser script; top-level function declarations are intentional global exports; converted to ES modules in Phase 1 PR-08/09 */
 /* Atlas frontend — read-only views + approve-before-save workout logger.
  * Golden rule: AI/backend can parse, prepare, and preview. The owner approves.
  * Only then does Atlas write. Preview always runs with test_mode=true.
@@ -11,7 +10,7 @@ const API_KEY_STORAGE = 'atlas_api_key';
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-const ATLAS_SHELL_BUILD = 'v114';
+const ATLAS_SHELL_BUILD = 'v115';
 const BUG_REPORT_STORAGE_KEY_RE = /(?:api[_-]?key|authorization|auth|bearer|cookie|credential|jwt|password|private[_-]?key|secret|token)/i;
 const BUG_REPORT_SECRET_VALUE_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -2005,9 +2004,7 @@ let pendingSubstitution = null;
 // Read-only accessor for coach-conversation.js (coach layer must never mutate
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
-// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function getActivePlannedSession() { return activePlannedSession; }
-// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function getSessionCompleted() { return sessionCompleted; }
 
 // The active training intent id (e.g. 'recovery_pump', 'deload_reset'). A started
@@ -2074,7 +2071,6 @@ function planExercisesFromCanonical(session) {
 // markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
 // eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
 function getCoachSuggestionEngaged() { return coachSuggestionEngaged; }
-// eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
 function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 
 // Step 373b: replace a prescribed slot in the LIVE planned session with the
@@ -7302,6 +7298,42 @@ async function loadBodyTab() {
   // Pending/unrecognised exercises moved to Settings → Data; Body is trend-first.
   await loadBwHistory();
 }
+
+/* ===== Temporary app.js → satellite bridge (PR-09) =====
+ * app.js is now an ES module (was a classic global script). The still-unconverted
+ * satellite modules (coach-conversation.js, drawer.js) call these app.js functions
+ * as BARE globals — which resolved for free while app.js was classic. As a module,
+ * app.js's top-level declarations are module-scoped, so we re-expose exactly the
+ * symbols the satellites reference on `window` (bare identifiers in a module resolve
+ * to global-object properties). This block is assigned at module load, before any
+ * satellite handler can fire. It SHRINKS to nothing once the satellites import these
+ * directly (PR-10/PR-11). The `window.atlas*` hooks below/elsewhere are unchanged. */
+window.api = api;
+window.fetchReaction = fetchReaction;
+window.getApiKey = getApiKey;
+window.addSetRow = addSetRow;
+window.emitSetLogged = emitSetLogged;
+window.getActiveIntentId = getActiveIntentId;
+window.getActivePlannedSession = getActivePlannedSession;
+window.getSessionCompleted = getSessionCompleted;
+window.invalidatePreview = invalidatePreview;
+window.normalizePlanExercise = normalizePlanExercise;
+window.previewSetsForLift = previewSetsForLift;
+window.setCoachSuggestionEngaged = setCoachSuggestionEngaged;
+window.getPlanTodayByName = getPlanTodayByName;
+// app.js top-level VALUES the satellites read bare (data tables + the preview table
+// DOM ref) — same transitional bridge, resolved once at load.
+window.FRIENDLY_PATTERN_LABELS = FRIENDLY_PATTERN_LABELS;
+window.FRIENDLY_STATUS_WORDS = FRIENDLY_STATUS_WORDS;
+window.setsTableBody = setsTableBody;
+// e2e test-support: the Playwright suite drives these planned-session helpers via
+// page.evaluate (they were reachable as classic-script globals). Exposing this small
+// subset is strictly less than the old "every function is global" surface. Removed
+// when the e2e suite drives them through real UI actions (test-hardening follow-up).
+window.startPlannedSession = startPlannedSession;
+window.firstUnloggedPlannedLift = firstUnloggedPlannedLift;
+window.plannedExerciseOrder = plannedExerciseOrder;
+window.remainingPlannedExercises = remainingPlannedExercises;
 
 /* ===== Init ===== */
 
