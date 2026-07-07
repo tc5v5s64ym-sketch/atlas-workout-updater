@@ -587,11 +587,12 @@
     </div>
   </aside>
 
-  <!-- app.js stays a classic script (converted to modules in PR-09). The one
-       ES-module entry below is deferred, so it runs after app.js has executed
-       (its globals exist) and before DOMContentLoaded — the satellites + the
-       legacy bridge wire up in time for app.js's DOMContentLoaded handler. -->
-  <script src="app.js"></script>
+  <!-- PR-09: app.js is now an ES module. It loads as its OWN deferred module script
+       FIRST (was a classic script), then the atlasEntry module. Two module scripts
+       evaluate in order with a microtask checkpoint between them, preserving the
+       previous timing where app.js runs first and its init's async work settles
+       before the satellites register their listeners. -->
+  <script type="module" src="app.js"></script>
   <script type="module" src="atlasEntry.js"></script>
 </body>
 </html>
