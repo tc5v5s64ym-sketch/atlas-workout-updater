@@ -712,8 +712,30 @@ function parseMultilineLogSets(preNormalizedInput, rawText, context = {}, origin
         parsed.partial?.exercise &&
         (parsed.warnings || []).includes('missing_sets') &&
         !/\d/.test(line)) {
-      headers.push({ line, exercise: parsed.partial.exercise, message: parsed.message });
-      carryExercise = parsed.partial.exercise;
+      // PARSE-2 (audit 2026-07-07): parsed.partial.exercise may be the CARRIED lift
+      // inherited from activeExercise, NOT a name derivable from this line — e.g. a
+      // digit-free unknown line "rear delt machine" under a prior "bench" carries
+      // Bench Press, is accepted as a Bench header, and the next bare set line merges
+      // into Bench. Re-parse the line standalone (no active context): accept it as a
+      // header only if it names its OWN exercise. Otherwise it is an unknown lift —
+      // surface it and STOP carrying, so following bare set lines dead-end to an ask
+      // instead of silently attaching to the previous exercise.
+      const standalone = parseLogSets(normalizeParserText(line), { ...context, activeExercise: null });
+      const ownExercise = (standalone?.intent === 'needs_clarification' &&
+          (standalone.warnings || []).includes('missing_sets'))
+        ? standalone.partial?.exercise
+        : null;
+      if (ownExercise) {
+        headers.push({ line, exercise: ownExercise, message: standalone.message || parsed.message });
+        carryExercise = ownExercise;
+      } else {
+        unresolved.push({
+          line,
+          message: `I couldn't tell which exercise "${line}" is — add its sets or use a name I know and I'll log it.`,
+          warnings: ['unknown_exercise'],
+        });
+        carryExercise = null;
+      }
       continue;
     }
     unresolved.push({
