@@ -3542,7 +3542,9 @@ test('duplicate-write: successful write sets button text to Written ✓', () => 
 test('duplicate-write: undo button is unaffected — still wired after success', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9000);
+  // Window sized to reach the post-save undo button wiring (PR-0D added an
+  // identity comment above it, nudging the handler length up).
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9600);
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });

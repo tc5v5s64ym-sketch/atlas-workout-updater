@@ -6759,8 +6759,20 @@ function renderCompleteWorkoutPreview(result) {
 
 document.getElementById('cancel-preview-btn').addEventListener('click', invalidatePreview);
 
-async function handleUndoLastWrite() {
+async function handleUndoLastWrite(expected) {
   if (!lastWrite) return;
+  // CLIENT-1 guard (audit 2026-07-07): a saved review card binds the identity of
+  // the write it represents (its log_appended_range) at save time. If that no
+  // longer matches the current lastWrite, a NEWER write has since happened — refuse,
+  // so an older card's Undo can never delete the newer write. `expected` is null for
+  // the direct "Undo last write" button and for effort-only cards (which target the
+  // latest write by definition); the appended range uniquely identifies the rows, so
+  // it is the sole discriminator (session_id is server-minted and only forwarded).
+  if (expected && expected.log_appended_range
+      && expected.log_appended_range !== lastWrite.log_appended_range) {
+    setStatus(loggerStatus, 'That workout is no longer your most recent save — Undo only affects your latest write.', 'error');
+    return;
+  }
   const { log_appended_range, session_id, log_rows_written } = lastWrite;
   const undoBtn = loggerStatus.querySelector('.undo-write-btn');
   if (undoBtn) {
@@ -6792,8 +6804,16 @@ async function handleUndoLastWrite() {
 }
 
 // The end-of-session review card's "Undo" reuses this exact backend path —
-// no reimplementation of the undo/delete logic.
+// no reimplementation of the undo/delete logic. A card may pass its bound write
+// identity so the guard above can refuse a stale card (CLIENT-1).
 window.atlasUndoLastWrite = handleUndoLastWrite;
+
+// CLIENT-1: review cards bind their write identity at save time so their Undo can
+// be refused once a newer write supersedes it. Returns a snapshot copy (never the
+// live ref) of the current write's identity, or null when there is no undoable write.
+window.atlasCurrentWriteIdentity = () => (lastWrite && lastWrite.log_appended_range)
+  ? { log_appended_range: lastWrite.log_appended_range, session_id: lastWrite.session_id }
+  : null;
 
 document.getElementById('approve-btn').addEventListener('click', async () => {
   if (writeInFlight) return;
@@ -6960,7 +6980,9 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
 
     if (pendingLastWrite) {
       const undoBtn = el('button', { class: 'secondary undo-write-btn', text: 'Undo last write' });
-      undoBtn.addEventListener('click', handleUndoLastWrite);
+      // No bound identity — this button always targets the just-completed write.
+      // Wrap so the click Event is not passed as the CLIENT-1 expected-identity arg.
+      undoBtn.addEventListener('click', () => handleUndoLastWrite());
       loggerStatus.appendChild(undoBtn);
     }
     if (pendingLastWrite?.log_appended_range) {
