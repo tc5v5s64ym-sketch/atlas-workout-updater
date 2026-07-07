@@ -5826,7 +5826,9 @@ test('guard: an explicit manual date still wins over a rejected screenshot date 
 // non-sandbox throw for the tab is swallowed and never fails the served request.
 test('Flight Recorder middleware: flag-gated, Flight_Recorder-only, sim-isolated', async () => {
   const originalFlag = process.env.ATLAS_FLIGHT_RECORDER;
-  const settle = () => new Promise(r => setImmediate(r));
+  // Flight Recorder rows are BUFFERED and flushed in one batched append (quota fix,
+  // 2026-07-07) — flush the buffer, then drain microtasks so the append settles.
+  const settle = () => { require('../services/flightRecorder').flushFlightRecorder(); return new Promise(r => setImmediate(r)); };
   const frCalls = () => fakeSheetsState.appendCalls.filter(c => c.tabName === 'Flight_Recorder');
   const trustCalls = () => fakeSheetsState.appendCalls.filter(c => ['Log_Cleaned', 'Effort', 'Modality_Log'].includes(c.tabName));
   try {
@@ -5867,7 +5869,9 @@ test('Flight Recorder middleware: flag-gated, Flight_Recorder-only, sim-isolated
 // workout tab), and that the endpoint always answers the client promptly (best-effort).
 test('Flight Recorder ingest: POST /api/flight/ingest is flag-gated and Flight_Recorder-only', async () => {
   const originalFlag = process.env.ATLAS_FLIGHT_RECORDER;
-  const settle = () => new Promise(r => setImmediate(r));
+  // Flight Recorder rows are BUFFERED and flushed in one batched append (quota fix,
+  // 2026-07-07) — flush the buffer, then drain microtasks so the append settles.
+  const settle = () => { require('../services/flightRecorder').flushFlightRecorder(); return new Promise(r => setImmediate(r)); };
   const frCalls = () => fakeSheetsState.appendCalls.filter(c => c.tabName === 'Flight_Recorder');
   const trustCalls = () => fakeSheetsState.appendCalls.filter(c => ['Log_Cleaned', 'Effort', 'Modality_Log'].includes(c.tabName));
   const body = {
