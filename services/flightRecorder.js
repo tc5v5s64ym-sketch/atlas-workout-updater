@@ -196,18 +196,53 @@ function recordEvent(event) {
 // read-only sim pointed at a production server can never write sim noise into the
 // production Flight_Recorder tab. It is still kept in the in-memory ring (no sheet write).
 
-// Best-effort, fire-and-forget append of Flight Recorder rows. TOTAL and self-swallowing:
-// a missing tab, absent creds, or a transient error is silently ignored so the caller (a
-// response-finish hook) can NEVER be blocked or failed by telemetry persistence. Like the
-// shadow lanes, it does NOT ensure the tab first — the optional Flight_Recorder tab is an
-// owner setup step; a missing tab simply no-ops. Touches only Flight_Recorder — never a
-// workout/trust tab or the write path.
+// Batched, best-effort persistence of Flight Recorder rows.
+//
+// LIVE INCIDENT 2026-07-07: appending ONE row per event exhausted Google Sheets'
+// "Write requests per minute per user" quota (60/min) during an active session — a
+// gym session fires dozens of API calls a minute, and each Flight_Recorder append is
+// a separate write request. That starved the real Log_Cleaned append and a workout
+// Save 500'd (`Quota exceeded ... sheets.googleapis.com`). Telemetry must NEVER be
+// able to knock out the trust path. So events are now BUFFERED and flushed in ONE
+// appendRows call per window (a burst of N events → 1 write request, not N), keeping
+// the flight recorder's quota footprint tiny and leaving headroom for real writes.
+//
+// Still TOTAL and self-swallowing: a missing tab, absent creds, or a transient error
+// is silently ignored so no caller can be blocked or failed by telemetry persistence.
+// Touches only Flight_Recorder — never a workout/trust tab or the write path.
+const FLIGHT_FLUSH_INTERVAL_MS = 2000;   // coalesce bursts; ≤~30 flushes/min worst case
+const FLIGHT_MAX_PENDING_ROWS = 100;     // hard-flush cap (bounds memory + write latency)
+let _pendingRows = [];
+let _pendingAppend = null;
+let _flushTimer = null;
+
+function _scheduleFlush() {
+  if (_flushTimer) return;
+  _flushTimer = setTimeout(() => { _flushTimer = null; flushFlightRecorder(); }, FLIGHT_FLUSH_INTERVAL_MS);
+  // Never keep the process alive just to flush best-effort telemetry.
+  if (_flushTimer && typeof _flushTimer.unref === 'function') _flushTimer.unref();
+}
+
 function _persistRows(rows, appendImpl) {
+  if (!Array.isArray(rows) || !rows.length) return;
+  // Remember an injected append (tests / DI); the default resolves at flush time.
+  if (appendImpl) _pendingAppend = appendImpl;
+  for (const row of rows) _pendingRows.push(row);
+  if (_pendingRows.length >= FLIGHT_MAX_PENDING_ROWS) { flushFlightRecorder(); return; }
+  _scheduleFlush();
+}
+
+// Flush all buffered Flight Recorder rows in ONE best-effort appendRows call. Exposed
+// for graceful shutdown and tests. TOTAL / self-swallowing — a failure never surfaces.
+function flushFlightRecorder(appendImpl) {
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+  if (!_pendingRows.length) return;
+  const rows = _pendingRows;
+  _pendingRows = [];
+  const append = appendImpl || _pendingAppend || _append || require('../sheets').appendRows;
+  _pendingAppend = null;
   Promise.resolve()
-    .then(() => {
-      const append = appendImpl || _append || require('../sheets').appendRows;
-      return append(FLIGHT_RECORDER_TAB, rows);
-    })
+    .then(() => append(FLIGHT_RECORDER_TAB, rows))
     .catch(() => { /* best-effort: persistence failure must never surface */ });
 }
 
@@ -358,6 +393,9 @@ function _resetForTesting({ append } = {}) {
   _ring = [];
   _append = typeof append === 'function' ? append : null;
   _seqBySession.clear();
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+  _pendingRows = [];
+  _pendingAppend = null;
 }
 
 module.exports = {
@@ -373,6 +411,7 @@ module.exports = {
   recordEvent,
   recordApiFlow,
   recordClientBatch,
+  flushFlightRecorder,
   MAX_INGEST_EVENTS,
   getFlightRecorderLog,
   clearFlightRecorderLog,

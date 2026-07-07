@@ -43,8 +43,11 @@ function setup() {
   return appended;
 }
 
-// Let the fire-and-forget _persistRows microtask settle.
-function tick() { return new Promise(r => setImmediate(r)); }
+// Flight Recorder rows are now BUFFERED and flushed in one batched appendRows call
+// (quota fix, 2026-07-07). Force a flush, then let the fire-and-forget append settle.
+function tick() { flightRecorder.flushFlightRecorder(); return new Promise(r => setImmediate(r)); }
+// Settle microtasks WITHOUT forcing a flush — for asserting the buffered (pre-flush) state.
+function settle() { return new Promise(r => setImmediate(r)); }
 
 const baseFlow = {
   method: 'POST',
@@ -97,6 +100,30 @@ test('flag OFF → recordApiFlow is a no-op and writes NOTHING (disabled-flag pr
   await tick();
   assert.equal(appended.length, 0, 'zero Flight Recorder writes when the flag is off');
   assert.equal(flightRecorder.getFlightRecorderLog().count, 0, 'nothing ringed either');
+});
+
+test('QUOTA (2026-07-07): a burst of api_response events coalesces into ONE append, not one-per-event', async () => {
+  // Live incident: one Sheets write per event exhausted the 60/min write quota during
+  // a session and 500'd the workout Save. Batching must collapse a burst into a single
+  // (or very few) appendRows calls so telemetry can never starve the trust-path write.
+  const appended = setup();
+  withFlag('1', () => {
+    for (let i = 0; i < 40; i += 1) {
+      flightRecorder.recordApiFlow({ ...baseFlow, flight_session_id: 'FR-Q', seq: i }, { sheetIsSandbox: true });
+    }
+  });
+  // Buffered, not yet flushed: the 40 events did NOT fire 40 separate Sheets writes.
+  await settle();
+  assert.ok(appended.length <= 1, `40 events must not fire 40 appends before flush (got ${appended.length})`);
+
+  // On flush, every buffered row lands in ONE append (one write request, 40 rows).
+  flightRecorder.flushFlightRecorder();
+  await settle();
+  const totalAppends = appended.length;
+  const totalRows = appended.reduce((n, c) => n + c.rows.length, 0);
+  assert.equal(totalRows, 40, 'all 40 rows are eventually persisted (no telemetry dropped)');
+  assert.ok(totalAppends <= 2, `40 events coalesce into ≤2 write requests, not 40 (got ${totalAppends})`);
+  assert.equal(appended[appended.length - 1].tab, 'Flight_Recorder');
 });
 
 test('flag ON, real traffic → one append to Flight_Recorder ONLY (never a workout/trust tab)', async () => {

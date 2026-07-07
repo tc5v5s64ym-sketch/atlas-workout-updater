@@ -40,7 +40,9 @@ function setup() {
   flightRecorder._resetForTesting({ append: async (tab, rows) => { appended.push({ tab, rows }); } });
   return appended;
 }
-function tick() { return new Promise(r => setImmediate(r)); }
+// Flight Recorder rows are BUFFERED and flushed in one batched append (quota fix,
+// 2026-07-07) — force a flush, then let the fire-and-forget append settle.
+function tick() { flightRecorder.flushFlightRecorder(); return new Promise(r => setImmediate(r)); }
 
 function batch(n) {
   const events = [];
