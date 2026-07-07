@@ -1502,3 +1502,53 @@ test('PARSE-2 guard: a contextual-alias sub-header still continues the active li
   assert.ok(lat.some(s => Number(s.weight) === 130) && lat.some(s => Number(s.weight) === 120),
     'the "lats" sub-header must keep the 120 set on Lat Pulldown');
 });
+
+// ---------------------------------------------------------------------------
+// PARSE-3 (audit 2026-07-07) — space-separated multi-set logs must never emit a
+// phantom row from an RIR token read as a weight. "bench 225 5 2 185 8 2" used to
+// pair the first set's RIR ("2") with the next weight ("185") → a 2 lb × 185-rep
+// row. The bare-pair branch now refuses (dead-ends to a clarification) when a
+// candidate pair is implausible as a load (tiny weight or impossibly high reps),
+// while the warm-up-climb bare pairs ("140 15 190 10") still parse.
+// ---------------------------------------------------------------------------
+
+test('PARSE-3: space-separated {w r rir} sequences never emit a phantom sub-weight row', () => {
+  for (const text of ['bench 225 5 2 185 8 2', 'squat 315 5 1 275 8']) {
+    const r = parseWorkoutText(text);
+    if (r.intent === 'log_sets') {
+      // If it logs, every row must be a plausible load — never a sub-6-lb phantom
+      // or an impossible rep count from a misread token.
+      for (const s of (r.sets || [])) {
+        assert.ok(!(Number(s.weight) < 6) && !(Number(s.reps) > 50),
+          `"${text}" produced an implausible row ${JSON.stringify([s.weight, s.reps, s.rir])}`);
+      }
+    } else {
+      assert.equal(r.intent, 'needs_clarification',
+        `"${text}" must be a clarification when it can't be read cleanly, got ${r.intent}`);
+      // The refusal must surface the SPECIFIC slash-notation ask, not the generic
+      // "no sets" copy — i.e. the null refusal propagates out of parseSetGroups.
+      assert.ok((r.warnings || []).includes('ambiguous_set_format'),
+        `"${text}" should carry ambiguous_set_format, got ${JSON.stringify(r.warnings)}`);
+      assert.match(r.message || '', /slash notation/i,
+        `"${text}" should ask for slash notation, got: ${r.message}`);
+    }
+  }
+});
+
+test('PARSE-3 guard: warm-up bare pairs and single sets still parse (no over-rejection)', () => {
+  // Warm-up climb (bare pairs, weight > reps) is exactly what the bare-pair branch exists for.
+  assert.deepEqual(parseWorkoutText('bench 140 15 190 10').sets.map(s => [s.weight, s.reps, s.rir]),
+    [[140, 15, null], [190, 10, null]]);
+  // A lone space-separated triple is protected by the whole-text single-set anchor.
+  assert.deepEqual(parseWorkoutText('bench 225 5 2').sets.map(s => [s.weight, s.reps, s.rir]),
+    [[225, 5, 2]]);
+  // A single bare pair still logs.
+  assert.deepEqual(parseWorkoutText('bench 140 15').sets.map(s => [s.weight, s.reps, s.rir]),
+    [[140, 15, null]]);
+  // Light high-rep bare pairs (weight >= 6, reps <= 50) are NOT false-refused.
+  assert.deepEqual(parseWorkoutText('lateral 15 20').sets.map(s => [s.weight, s.reps, s.rir]),
+    [[15, 20, null]]);
+  // Slash notation is completely unaffected.
+  assert.deepEqual(parseWorkoutText('bench 225 5/2 185 8/2').sets.map(s => [s.weight, s.reps, s.rir]),
+    [[225, 5, 2], [185, 8, 2]]);
+});
