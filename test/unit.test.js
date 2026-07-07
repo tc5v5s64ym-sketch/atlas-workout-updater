@@ -225,7 +225,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v113/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v114/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -4843,12 +4843,17 @@ test('shell: the segmented control is retired (Phase D) — the drawer is the na
   assert.match(html, /data-tab="logger" class="tab-btn" hidden/, 'programmatic coach switch control survives');
 });
 
-test('shell: loads nav.js after app.js so the trust loop wiring binds first', () => {
+test('shell: loads the module entry after app.js so the trust loop wiring binds first', () => {
+  // PR-08: the satellites are ES modules loaded via one deferred module entry.
+  // The classic app.js executes first; the deferred atlasEntry.js (which imports
+  // nav.js) runs after it — same "app.js first, nav.js after" ordering guarantee.
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const appIdx = html.indexOf('src="app.js"');
-  const navIdx = html.indexOf('src="nav.js"');
-  assert.ok(appIdx >= 0, 'app.js must still be loaded');
-  assert.ok(navIdx > appIdx, 'nav.js must load after app.js');
+  const entryIdx = html.indexOf('type="module" src="atlasEntry.js"');
+  assert.ok(appIdx >= 0, 'app.js must still be loaded (classic)');
+  assert.ok(entryIdx > appIdx, 'the module entry must load after app.js');
+  const entry = fs.readFileSync(path.join(repoRoot, 'public', 'atlasEntry.js'), 'utf8');
+  assert.match(entry, /import '\.\/nav\.js'/, 'atlasEntry must import nav.js');
 });
 
 test('shell: Coach surface keeps the workout composer and approval gate intact', () => {
@@ -5042,12 +5047,17 @@ test('chat: chat.js is a visual layer that never touches write endpoints', () =>
   assert.doesNotMatch(chat, /appendRows|sheet_write|confirm_delete|\/api\//, 'chat.js must never call the API or write paths');
 });
 
-test('chat: chat.js loads last so app.js owns the trust loop wiring', () => {
+test('chat: the module entry loads after app.js so app.js owns the trust loop wiring', () => {
+  // PR-08: nav.js and chat.js are now imported by the deferred atlasEntry.js
+  // (after the classic app.js). app.js still owns the trust loop and runs first.
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   const appIdx = html.indexOf('src="app.js"');
-  const navIdx = html.indexOf('src="nav.js"');
-  const chatIdx = html.indexOf('src="chat.js"');
-  assert.ok(appIdx > -1 && navIdx > appIdx && chatIdx > navIdx, 'script order must be app.js, nav.js, chat.js');
+  const entryIdx = html.indexOf('type="module" src="atlasEntry.js"');
+  assert.ok(appIdx > -1 && entryIdx > appIdx, 'app.js (classic) must load before the module entry');
+  const entry = fs.readFileSync(path.join(repoRoot, 'public', 'atlasEntry.js'), 'utf8');
+  const navIdx = entry.indexOf("import './nav.js'");
+  const chatIdx = entry.indexOf("import './chat.js'");
+  assert.ok(navIdx > -1 && chatIdx > navIdx, 'atlasEntry import order must be nav.js then chat.js');
 });
 
 test('chat: styles define the thread bubbles and in-thread preview card', () => {
@@ -5631,8 +5641,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v113/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v112\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v114/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v113\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5658,12 +5668,16 @@ test('shell cache: service worker version bumped and all shell scripts precached
     '/app/fonts/space-grotesk.woff2', '/app/fonts/jetbrains-mono.woff2', '/app/fonts/inter.woff2']) {
     assert.ok(sw.includes(`'${asset}'`), `${asset} must be precached`);
   }
-  // The Flight Recorder client must be loaded in the page (it self-activates only when
-  // ATLAS_FLIGHT_RECORDER is on) — a precached-but-unincluded module would 404 at runtime.
-  assert.match(html, /<script src="flightRecorder\.js"><\/script>/, 'flightRecorder.js must be included in index.html');
-  // The display-block normalizer must be loaded in the page (it powers the
-  // multi-exercise composer paste) — a precached-but-unincluded module would 404 at runtime.
-  assert.match(html, /<script src="displayBlockNormalizer\.js"><\/script>/, 'displayBlockNormalizer.js must be included in index.html');
+  // PR-08: the satellites load through the one deferred module entry. The Flight
+  // Recorder client (self-activates only when ATLAS_FLIGHT_RECORDER is on) is
+  // imported by atlasEntry.js; the display-block normalizer (multi-exercise
+  // composer paste) is imported by legacyBridge.js. A module missing from the
+  // graph would 404 / be dead at runtime.
+  assert.match(html, /<script type="module" src="atlasEntry\.js"><\/script>/, 'index.html must load the module entry');
+  const entry = fs.readFileSync(path.join(repoRoot, 'public', 'atlasEntry.js'), 'utf8');
+  const bridge = fs.readFileSync(path.join(repoRoot, 'public', 'legacyBridge.js'), 'utf8');
+  assert.match(entry, /import '\.\/flightRecorder\.js'/, 'atlasEntry must import flightRecorder.js');
+  assert.match(bridge, /import \* as displayBlockNormalizer from '\.\/displayBlockNormalizer\.js'/, 'legacyBridge must import displayBlockNormalizer.js');
   // The API must still never be intercepted
   assert.match(sw, /startsWith\('\/api'\)/, 'API traffic must stay uncached');
 });
@@ -5672,7 +5686,12 @@ test('shell cache: service worker version bumped and all shell scripts precached
 // and exposed as the single derived session view (readers switch to it in Sub-PR 2).
 test('P0 wiring: public/activeSession.js is loaded in index.html and app.js exposes getCanonicalSession', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  assert.match(html, /<script src="activeSession\.js"><\/script>/, 'index.html must load activeSession.js');
+  // PR-08: activeSession is an ES module imported by legacyBridge.js (which the
+  // deferred atlasEntry.js loads and which re-exposes it on window for app.js).
+  assert.match(html, /<script type="module" src="atlasEntry\.js"><\/script>/, 'index.html must load the module entry');
+  const bridge = fs.readFileSync(path.join(repoRoot, 'public', 'legacyBridge.js'), 'utf8');
+  assert.match(bridge, /import \* as activeSession from '\.\/activeSession\.js'/, 'legacyBridge must import activeSession.js');
+  assert.match(bridge, /window\.activeSession =/, 'legacyBridge must expose activeSession on window for app.js');
 
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = appSrc.slice(appSrc.indexOf('function getCanonicalSession('), appSrc.indexOf('function getCanonicalSession(') + 1100);
@@ -5689,7 +5708,10 @@ test('P0 wiring: public/activeSession.js is loaded in index.html and app.js expo
 // deterministically (before the suggest/coach routes), and the composer re-points.
 test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message flow', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  assert.match(html, /<script src="planMutationIntent\.js"><\/script>/, 'index.html must load planMutationIntent.js');
+  // PR-08: planMutationIntent is an ES module imported by legacyBridge.js.
+  assert.match(html, /<script type="module" src="atlasEntry\.js"><\/script>/, 'index.html must load the module entry');
+  const bridge = fs.readFileSync(path.join(repoRoot, 'public', 'legacyBridge.js'), 'utf8');
+  assert.match(bridge, /import \* as planMutationIntent from '\.\/planMutationIntent\.js'/, 'legacyBridge must import planMutationIntent.js');
 
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // The mutation check runs BEFORE checkAndSuggestSubstitute / routeMessageToCoach.
@@ -5818,7 +5840,10 @@ test('upperOnly wire: ?upperOnly=true and ?scope=upper are threaded into scoreIn
 // deterministically in the session buffers, before the suggest/coach routes.
 test('P0 PR4: identity correction is wired into the message flow and relabels the buffers', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  assert.match(html, /<script src="identityCorrection\.js"><\/script>/, 'index.html must load identityCorrection.js');
+  // PR-08: identityCorrection is an ES module imported by legacyBridge.js.
+  assert.match(html, /<script type="module" src="atlasEntry\.js"><\/script>/, 'index.html must load the module entry');
+  const bridge = fs.readFileSync(path.join(repoRoot, 'public', 'legacyBridge.js'), 'utf8');
+  assert.match(bridge, /import \* as identityCorrection from '\.\/identityCorrection\.js'/, 'legacyBridge must import identityCorrection.js');
 
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // The correction check runs BEFORE checkAndSuggestSubstitute, AFTER the plan mutation.

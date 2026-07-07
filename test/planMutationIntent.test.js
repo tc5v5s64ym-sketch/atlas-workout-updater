@@ -7,7 +7,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyMutationIntent, splitTargets, resolvePlanTargets } = require('../public/planMutationIntent');
+// PR-08: the module is now an ES module — load it via dynamic import (Node 20 CI
+// has no require(esm)).
+let classifyMutationIntent, splitTargets, resolvePlanTargets;
+test.before(async () => {
+  ({ classifyMutationIntent, splitTargets, resolvePlanTargets } = await import('../src/app/planMutationIntent.js'));
+});
 
 test('repro: "skip deadlifts/rdls and do squats" → replace deadlift with squats', () => {
   const r = classifyMutationIntent('skip deadlifts/rdls and do squats');

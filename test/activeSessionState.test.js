@@ -22,6 +22,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+// PR-08: activeSession + planMutationIntent are ES modules now — preload their
+// namespaces once (Node 20 CI has no require(esm)). The per-test lazy accessors
+// below read these preloaded namespaces, which the before-hook fills first.
+let AS_NS, PM_NS;
+test.before(async () => {
+  AS_NS = await import('../src/app/activeSession.js');
+  PM_NS = await import('../src/app/planMutationIntent.js');
+});
+
 const COACHES_PICK = [
   'Deadlift', 'Overhead Press', 'Seated Row',
   'Lat Pulldown', 'Leg Extension', 'Single-Leg Leg Curl',
@@ -56,7 +65,7 @@ test('server seam: applySubstitution + computePlanState model the Deadlift→Squ
 // contained TODO-failure, not a file-level crash.
 
 function loadActiveSession() {
-  return require('../public/activeSession');
+  return AS_NS;
 }
 
 test('AC1/AC2/AC4: replace makes the substitute the current exercise (composer prefill)', () => {
@@ -134,7 +143,7 @@ test('AC10: the fully-modified session resolves to a clean, writable completed s
 // ── Canonical module primitives (PR 2, passing) ───────────────────────────────
 
 test('activeSession: createActiveSession seeds pending/planned entries and drops blanks', () => {
-  const { createActiveSession, currentExercise, remaining } = require('../public/activeSession');
+  const { createActiveSession, currentExercise, remaining } = AS_NS;
   const s = createActiveSession({ exercises: ['Deadlift', '', { name: 'Overhead Press', liftCode: 'OHP01' }, null] });
   assert.equal(remaining(s).length, 2, 'blank/null entries are dropped');
   assert.equal(currentExercise(s).name, 'Deadlift');
@@ -144,7 +153,7 @@ test('activeSession: createActiveSession seeds pending/planned entries and drops
 });
 
 test('activeSession: skipExercise removes a lift from current/remaining without completing it', () => {
-  const { createActiveSession, skipExercise, currentExercise, remaining, completedExercises } = require('../public/activeSession');
+  const { createActiveSession, skipExercise, currentExercise, remaining, completedExercises } = AS_NS;
   let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   s = skipExercise(s, 'Deadlift');
   assert.equal(currentExercise(s).name, 'Overhead Press', 'current advances past the skipped lift');
@@ -153,7 +162,7 @@ test('activeSession: skipExercise removes a lift from current/remaining without 
 });
 
 test('activeSession: mutations are pure (never mutate the input session)', () => {
-  const { createActiveSession, replaceExercise, markCompleted } = require('../public/activeSession');
+  const { createActiveSession, replaceExercise, markCompleted } = AS_NS;
   const s0 = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   const s1 = replaceExercise(s0, 'Deadlift', { name: 'Back Squat' });
   const s2 = markCompleted(s1, 'Back Squat');
@@ -164,7 +173,7 @@ test('activeSession: mutations are pure (never mutate the input session)', () =>
 });
 
 test('activeSession: replaceExercise is a no-op for an unknown target or an identical substitute', () => {
-  const { createActiveSession, replaceExercise } = require('../public/activeSession');
+  const { createActiveSession, replaceExercise } = AS_NS;
   const s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   assert.equal(replaceExercise(s, 'Bench Press', { name: 'Squat' }), s, 'unknown target → same session');
   assert.equal(replaceExercise(s, 'Deadlift', { name: 'deadlift' }), s, 'same-name substitute → no-op');
@@ -172,7 +181,7 @@ test('activeSession: replaceExercise is a no-op for an unknown target or an iden
 
 test('activeSession: an ambiguous loose name never silently mutates the wrong slot (review #565)', () => {
   // eslint-disable-next-line no-unused-vars -- `remaining` imported for type completeness; not asserted in this test case
-  const { createActiveSession, markCompleted, replaceExercise, skipExercise, completedExercises, remaining } = require('../public/activeSession');
+  const { createActiveSession, markCompleted, replaceExercise, skipExercise, completedExercises, remaining } = AS_NS;
   const s = createActiveSession({ exercises: ['Seated Row', 'Barbell Row', 'Overhead Press'] });
 
   // "Row" substring-matches BOTH rows → ambiguous → no-op (no guess).
@@ -194,7 +203,7 @@ test('activeSession: an ambiguous loose name never silently mutates the wrong sl
 });
 
 test('activeSession: findMatchIndex prefers liftCode over a loose name and refuses ambiguous substrings', () => {
-  const { createActiveSession, findMatchIndex } = require('../public/activeSession');
+  const { createActiveSession, findMatchIndex } = AS_NS;
   const s = createActiveSession({ exercises: [
     { name: 'Seated Row', liftCode: 'ROW01' },
     { name: 'Barbell Row', liftCode: 'BBR01' },
@@ -205,7 +214,7 @@ test('activeSession: findMatchIndex prefers liftCode over a loose name and refus
 });
 
 test('correctIdentity: reconciles a mislabel onto a planned entry (no duplicate, planned one done)', () => {
-  const { createActiveSession, markCompleted, correctIdentity, completedExercises, remaining } = require('../public/activeSession');
+  const { createActiveSession, markCompleted, correctIdentity, completedExercises, remaining } = AS_NS;
   let s = createActiveSession({ exercises: COACHES_PICK });
   s = markCompleted(s, 'Deadlift');                          // mis-logged as Deadlift
   s = correctIdentity(s, { from: 'Deadlift', to: 'Lat Pulldown' });
@@ -217,7 +226,7 @@ test('correctIdentity: reconciles a mislabel onto a planned entry (no duplicate,
 });
 
 test('correctIdentity: relabels in place when the corrected identity is not already in the plan', () => {
-  const { createActiveSession, markCompleted, correctIdentity, completedExercises } = require('../public/activeSession');
+  const { createActiveSession, markCompleted, correctIdentity, completedExercises } = AS_NS;
   let s = createActiveSession({ exercises: ['Incline', 'Overhead Press'] });
   s = markCompleted(s, 'Incline');
   s = correctIdentity(s, { from: 'Incline', to: { name: 'Incline DB Press', liftCode: 'IDB01' } });
@@ -227,7 +236,7 @@ test('correctIdentity: relabels in place when the corrected identity is not alre
 });
 
 test('correctIdentity: no-op for unknown `from`, blank `to`, or an already-correct identity', () => {
-  const { createActiveSession, correctIdentity } = require('../public/activeSession');
+  const { createActiveSession, correctIdentity } = AS_NS;
   const s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   assert.equal(correctIdentity(s, { from: 'Bench', to: 'Squat' }), s, 'unknown from → no-op');
   assert.equal(correctIdentity(s, { from: 'Deadlift', to: '' }), s, 'blank to → no-op');
@@ -235,7 +244,7 @@ test('correctIdentity: no-op for unknown `from`, blank `to`, or an already-corre
 });
 
 test('insertExercise: appends a finisher by default and inserts after a named entry on request', () => {
-  const { createActiveSession, insertExercise, remaining } = require('../public/activeSession');
+  const { createActiveSession, insertExercise, remaining } = AS_NS;
   let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   s = insertExercise(s, { name: 'Hanging Knee Raises' });            // default: end
   assert.deepEqual(remaining(s).map(e => e.name), ['Deadlift', 'Overhead Press', 'Hanging Knee Raises']);
@@ -247,7 +256,7 @@ test('insertExercise: appends a finisher by default and inserts after a named en
 });
 
 test('insertExercise: insert → markCompleted records an off-plan exercise as inserted+completed; blank is a no-op', () => {
-  const { createActiveSession, insertExercise, markCompleted, completedExercises } = require('../public/activeSession');
+  const { createActiveSession, insertExercise, markCompleted, completedExercises } = AS_NS;
   let s = createActiveSession({ exercises: ['Deadlift'] });
   assert.equal(insertExercise(s, ''), s, 'blank ref → no-op');
   s = insertExercise(s, { name: 'Side Bends' });
@@ -259,7 +268,7 @@ test('insertExercise: insert → markCompleted records an off-plan exercise as i
 // ── Wiring guards (PR-565 review notes, hardened for the live mutation path) ───
 
 test('guard: replaceExercise never re-opens a completed or skipped slot', () => {
-  const { createActiveSession, markCompleted, skipExercise, replaceExercise, completedExercises } = require('../public/activeSession');
+  const { createActiveSession, markCompleted, skipExercise, replaceExercise, completedExercises } = AS_NS;
   let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   s = markCompleted(s, 'Deadlift');
   assert.equal(replaceExercise(s, 'Deadlift', { name: 'Back Squat' }), s, 'replacing a COMPLETED slot is a no-op');
@@ -269,7 +278,7 @@ test('guard: replaceExercise never re-opens a completed or skipped slot', () => 
 });
 
 test('guard: correctIdentity never downgrades a finished `to`, and never orphans a second logged set', () => {
-  const { createActiveSession, markCompleted, correctIdentity, completedExercises, remaining } = require('../public/activeSession');
+  const { createActiveSession, markCompleted, correctIdentity, completedExercises, remaining } = AS_NS;
 
   // from pending + to completed → must NOT downgrade the completed `to`; the
   // redundant pending mislabel is reconciled away (kept completed, not re-opened).
@@ -289,7 +298,7 @@ test('guard: correctIdentity never downgrades a finished `to`, and never orphans
 });
 
 test('guard: hasLoggedWork distinguishes a real session from an all-skipped one', () => {
-  const { createActiveSession, skipExercise, markCompleted, isComplete, hasLoggedWork } = require('../public/activeSession');
+  const { createActiveSession, skipExercise, markCompleted, isComplete, hasLoggedWork } = AS_NS;
   let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   s = skipExercise(s, 'Deadlift');
   s = skipExercise(s, 'Overhead Press');
@@ -300,7 +309,7 @@ test('guard: hasLoggedWork distinguishes a real session from an all-skipped one'
 });
 
 test('activeSession: isComplete flips only when the plan exists and nothing pending remains', () => {
-  const { createActiveSession, markCompleted, skipExercise, isComplete } = require('../public/activeSession');
+  const { createActiveSession, markCompleted, skipExercise, isComplete } = AS_NS;
   assert.equal(isComplete(createActiveSession({ exercises: [] })), false, 'empty plan is not "complete"');
   let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press'] });
   assert.equal(isComplete(s), false);
@@ -315,8 +324,8 @@ test('activeSession: isComplete flips only when the plan exists and nothing pend
 // model+resolver seam: once a lift is logged (completed), it is invisible to a
 // later swap/skip target — so an accepted mutation can never re-open finished work.
 test('guard 2b: a logged (completed) lift is never a swap/skip target (no re-opening)', () => {
-  const { createActiveSession, markCompleted } = require('../public/activeSession');
-  const { resolvePlanTargets } = require('../public/planMutationIntent');
+  const { createActiveSession, markCompleted } = AS_NS;
+  const { resolvePlanTargets } = PM_NS;
 
   // Build the canonical session the way getCanonicalSession() does, then log one lift.
   let s = createActiveSession({ exercises: ['Deadlift', 'Overhead Press', 'Seated Row'] });

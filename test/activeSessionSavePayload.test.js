@@ -20,14 +20,15 @@
 // longer drift from the visible session. No write-path / trust-loop / proof-field /
 // schema / parser change.
 
-const { test } = require('node:test');
+const { test, before } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
-// The canonical session model is UMD — the browser IIFE and the tests run the
-// IDENTICAL logic (same pattern as the other activeSession tests).
-const activeSession = require('../public/activeSession');
+// The canonical session model is an ES module (PR-08) — dynamic import (Node 20
+// CI has no require(esm)). The browser and the tests run the IDENTICAL logic.
+let activeSession;
+before(async () => { activeSession = await import('../src/app/activeSession.js'); });
 
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

@@ -8,8 +8,10 @@ const path = require('node:path');
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
-// Real activeSession module — UMD exports cleanly under Node
-const AS = require(path.join(repoRoot, 'public', 'activeSession.js'));
+// Real activeSession module — PR-08: ES module now, dynamic import (Node 20 CI
+// has no require(esm)). The namespace exposes the same named functions.
+let AS;
+test.before(async () => { AS = await import('../src/app/activeSession.js'); });
 
 // ===========================================================================
 // P0-PR7 — End-to-end regression (AC10 full path)

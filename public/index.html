@@ -587,18 +587,11 @@
     </div>
   </aside>
 
-  <script src="flightRecorder.js"></script>
+  <!-- app.js stays a classic script (converted to modules in PR-09). The one
+       ES-module entry below is deferred, so it runs after app.js has executed
+       (its globals exist) and before DOMContentLoaded — the satellites + the
+       legacy bridge wire up in time for app.js's DOMContentLoaded handler. -->
   <script src="app.js"></script>
-  <script src="nav.js"></script>
-  <script src="drawer.js"></script>
-  <script src="chat.js"></script>
-  <script src="coachVoiceTemplates.js"></script>
-  <script src="hybridCompare.js"></script>
-  <script src="activeSession.js"></script>
-  <script src="planMutationIntent.js"></script>
-  <script src="identityCorrection.js"></script>
-  <script src="displayBlockNormalizer.js"></script>
-  <script src="sessionQuestion.js"></script>
-  <script src="coach-conversation.js"></script>
+  <script type="module" src="atlasEntry.js"></script>
 </body>
 </html>

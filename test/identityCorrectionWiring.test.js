@@ -8,8 +8,10 @@ const path = require('node:path');
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
-// Real identityCorrection module — UMD exports cleanly under Node
-const identityCorrection = require(path.join(repoRoot, 'public', 'identityCorrection.js'));
+// Real identityCorrection module — PR-08: ES module now, dynamic import (Node 20
+// CI has no require(esm)). The namespace exposes the same named functions.
+let identityCorrection;
+test.before(async () => { identityCorrection = await import('../src/app/identityCorrection.js'); });
 
 // Node has no CustomEvent; provide a minimal stand-in
 class FakeCustomEvent {

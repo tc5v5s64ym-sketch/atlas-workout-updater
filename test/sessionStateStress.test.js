@@ -25,7 +25,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { isSessionStateQuestion, isPlannedLiftQuestion } = require('../public/sessionQuestion');
+// PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
+let isSessionStateQuestion, isPlannedLiftQuestion;
+test.before(async () => {
+  ({ isSessionStateQuestion, isPlannedLiftQuestion } = await import('../src/app/sessionQuestion.js'));
+});
 const {
   answerBareShorthand,
   isBareSessionShorthand,

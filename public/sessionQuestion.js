@@ -19,7 +19,7 @@
  * The caller gates this behind an active-session signal; this function only judges
  * the message shape.
  */
-(function (root) {
+const _exports = (function () {
   'use strict';
 
   // Workout-state question/command shapes. Each entry is intentionally specific so
@@ -85,9 +85,7 @@
 
   const exported = { isSessionStateQuestion, isPlannedLiftQuestion };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.sessionQuestion = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const { isSessionStateQuestion, isPlannedLiftQuestion } = _exports;

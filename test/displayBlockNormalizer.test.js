@@ -1,15 +1,20 @@
-const { test } = require('node:test');
+const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  normalizeDisplayBlocks,
-  looksLikeDisplayBlock,
-  parseDisplaySetLine,
-  isSetLine,
-  setLineHasLeftoverSets,
-  isHeaderLine,
-  cleanHeaderName
-} = require('../public/displayBlockNormalizer');
+// PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
+let normalizeDisplayBlocks, looksLikeDisplayBlock, parseDisplaySetLine, isSetLine,
+  setLineHasLeftoverSets, isHeaderLine, cleanHeaderName;
+before(async () => {
+  ({
+    normalizeDisplayBlocks,
+    looksLikeDisplayBlock,
+    parseDisplaySetLine,
+    isSetLine,
+    setLineHasLeftoverSets,
+    isHeaderLine,
+    cleanHeaderName
+  } = await import('../src/app/displayBlockNormalizer.js'));
+});
 
 const { parseWorkoutText } = require('../services/workoutTextParser');
 
