@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine, templatedRecoveryAdvisoryLine, governorOverridesProgressionInvite, templatedGovernorHoldLine } = require('../public/coachVoiceTemplates');
+// PR-08: coachVoiceTemplates is an ES module now — dynamic import (Node 20 CI has
+// no require(esm)).
+let liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine,
+  templatedRecoveryAdvisoryLine, governorOverridesProgressionInvite, templatedGovernorHoldLine;
+test.before(async () => {
+  ({ liftLabel, templatedSubstitutionLine, formatSubstituteCoachLine, templatedNextMoveAdvisoryLine,
+    templatedRecoveryAdvisoryLine, governorOverridesProgressionInvite, templatedGovernorHoldLine } =
+    await import('../src/app/coachVoiceTemplates.js'));
+});
 
 /* ===== liftLabel ===== */
 
@@ -391,8 +399,8 @@ test('templatedGovernorHoldLine: null when the governor does not override (progr
 
 // --- PR-4 (composer-first Phase 0a): tier-aware brevity in the deterministic voice ---
 
-test('isBriefTier: short and ack_only are brief; extended/null/per-set are not', () => {
-  const t = require('../public/coachVoiceTemplates.js');
+test('isBriefTier: short and ack_only are brief; extended/null/per-set are not', async () => {
+  const t = await import('../src/app/coachVoiceTemplates.js');
   assert.equal(t.isBriefTier('short'), true);
   assert.equal(t.isBriefTier('ack_only'), true);
   assert.equal(t.isBriefTier('extended'), false);

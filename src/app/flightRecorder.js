@@ -18,7 +18,7 @@
  *   * Batches flush at 25 events, every 10s, and immediately on error / bug_marker / pagehide.
  *   * Owner/debug telemetry — never a workout write; the server owns all Sheets access.
  */
-(function (root) {
+const _exports = (function (root) {
   'use strict';
 
   // ---- tunables (exported for tests) ----
@@ -458,17 +458,34 @@
     latestCoachMessage: latestCoachMessage
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
+  // Browser side-effect: expose the API for the (still-classic) app.js consumer
+  // (window.atlasFlightRecorder) and self-init. `root` is globalThis === window
+  // here. In Node (tests) document is undefined, so nothing attaches — the module
+  // is import-only and byte-inert, exactly as the old UMD Node branch was.
+  if (typeof document !== 'undefined' && typeof window !== 'undefined') {
     root.atlasFlightRecorder = exported;
-    if (typeof document !== 'undefined' && typeof window !== 'undefined') {
-      let boot = function () { initBrowser(); wireDebugUi(); };
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', boot);
-      } else {
-        boot();
-      }
+    let boot = function () { initBrowser(); wireDebugUi(); };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', boot);
+    } else {
+      boot();
     }
   }
+
+  return exported;
 }(typeof globalThis !== 'undefined' ? globalThis : this));
+
+export const {
+  FLUSH_AT,
+  FLUSH_INTERVAL_MS,
+  RING_MAX,
+  ATLAS_EVENT_MAP,
+  redactString,
+  truncate,
+  buildClientEvent,
+  shouldFlush,
+  markIssue,
+  getSessionId,
+  requestHeaders,
+  latestCoachMessage
+} = _exports;

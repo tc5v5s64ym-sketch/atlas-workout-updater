@@ -4,7 +4,7 @@
  *
  * No DOM, no closures, no side effects — unit-testable in isolation.
  */
-(function (root) {
+const _exports = (function () {
   'use strict';
 
   // Handle both object refs ({ name, … }) and bare name strings gracefully.
@@ -170,9 +170,16 @@
     isBriefTier,
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.coachVoiceTemplates = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const {
+  liftLabel,
+  templatedSubstitutionLine,
+  formatSubstituteCoachLine,
+  templatedNextMoveAdvisoryLine,
+  templatedRecoveryAdvisoryLine,
+  governorOverridesProgressionInvite,
+  templatedGovernorHoldLine,
+  isBriefTier,
+} = _exports;

@@ -14,7 +14,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const flightRecorder = require('../services/flightRecorder');
-const client = require('../public/flightRecorder');
+// PR-08: the client is an ES module now — dynamic import (Node 20 CI has no
+// require(esm)). In Node `document` is undefined, so the module attaches nothing.
+let client;
+test.before(async () => { client = await import('../src/app/flightRecorder.js'); });
 
 const FLAG = 'ATLAS_FLIGHT_RECORDER';
 const originalLog = console.log;

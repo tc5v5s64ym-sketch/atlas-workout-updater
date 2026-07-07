@@ -23,6 +23,9 @@
  * Reuses nav.js: window.atlasChipAnswerLast.
  */
 
+import * as coachVoiceTemplates from './coachVoiceTemplates.js';
+import * as sessionQuestion from './sessionQuestion.js';
+
 (function () {
   'use strict';
 
@@ -1732,8 +1735,7 @@
       (Array.isArray(ctx.current_preview) && ctx.current_preview.length > 0) ||
       Array.isArray(ctx.plan_completed) || // present whenever an activePlannedSession exists
       inCoachingConversation;
-    const sessionShaped = typeof sessionQuestion !== 'undefined'
-      && sessionQuestion.isSessionStateQuestion(message);
+    const sessionShaped = sessionQuestion.isSessionStateQuestion(message);
     // Named-lift value questions ("what's the RIR for bench?") aren't matched by the
     // bare-shape classifier, so they leaked to the SME and got generic education.
     // When the named lift is in the live plan/preview, treat it as session-shaped so
@@ -1742,9 +1744,7 @@
       ...(Array.isArray(ctx.current_plan) ? ctx.current_plan.map(p => p && (p.name || p.exercise)) : []),
       ...(Array.isArray(ctx.current_preview) ? ctx.current_preview.map(p => p && p.exercise) : []),
     ].filter(Boolean);
-    const plannedLiftValue = typeof sessionQuestion !== 'undefined'
-      && typeof sessionQuestion.isPlannedLiftQuestion === 'function'
-      && sessionQuestion.isPlannedLiftQuestion(message, planLiftNames);
+    const plannedLiftValue = sessionQuestion.isPlannedLiftQuestion(message, planLiftNames);
     const skipSme = hasActiveWorkout && (sessionShaped || plannedLiftValue);
 
     // SME first: a training-knowledge question gets a deterministic, LLM-free answer

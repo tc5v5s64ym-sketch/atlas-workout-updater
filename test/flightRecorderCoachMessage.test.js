@@ -14,7 +14,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const client = require('../public/flightRecorder');
+// PR-08: the client is an ES module now — dynamic import (Node 20 CI has no
+// require(esm)). In Node `document` is undefined, so the module attaches nothing.
+let client;
+test.before(async () => { client = await import('../src/app/flightRecorder.js'); });
 
 const IDLE = "Good evening, Dale.\n Still here. Moderate load, 6–12 reps, higher volume whenever you're ready.";
 

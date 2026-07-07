@@ -1,8 +1,13 @@
-const { test } = require('node:test');
+const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { parseWorkoutText } = require('../services/workoutTextParser');
-const { normalizeDisplayBlocks } = require('../public/displayBlockNormalizer.js');
+// PR-08: displayBlockNormalizer is an ES module now — dynamic import (Node 20 CI
+// has no require(esm)).
+let normalizeDisplayBlocks;
+before(async () => {
+  ({ normalizeDisplayBlocks } = await import('../src/app/displayBlockNormalizer.js'));
+});
 
 // G1 — the parser must NEVER silently merge a second stacked exercise's set tokens
 // into the first lift (the live "Dumbbell Side Bend 70lb sets absorbed into Dips →

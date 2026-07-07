@@ -7,7 +7,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyIdentityCorrection, cleanName } = require('../public/identityCorrection');
+// PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
+let classifyIdentityCorrection, cleanName;
+test.before(async () => {
+  ({ classifyIdentityCorrection, cleanName } = await import('../src/app/identityCorrection.js'));
+});
 
 test('repro: "sorry that was squats" → correction to squats', () => {
   assert.deepEqual(classifyIdentityCorrection('sorry that was squats'), { to: 'squats' });

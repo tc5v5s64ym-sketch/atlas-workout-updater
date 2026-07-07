@@ -10,7 +10,7 @@
  * (saveComparisonEntry) intentionally do not, so a failed save is never
  * misreported as successful — see that function's own comment.
  */
-(function (root) {
+const _exports = (function () {
   'use strict';
 
   const STORAGE_KEY = 'atlas_hybrid_compare_v1';
@@ -138,9 +138,17 @@
     saveComparisonEntry
   };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.hybridCompare = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const {
+  STORAGE_KEY,
+  MAX_STORED_ENTRIES,
+  PREFERENCES,
+  shouldShowCompareCard,
+  summarizeLegacy,
+  summarizeBrian,
+  buildComparisonEntry,
+  loadComparisons,
+  saveComparisonEntry
+} = _exports;

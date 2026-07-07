@@ -5,7 +5,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { isSessionStateQuestion, isPlannedLiftQuestion } = require('../public/sessionQuestion');
+// PR-08: ES module now — dynamic import (Node 20 CI has no require(esm)).
+let isSessionStateQuestion, isPlannedLiftQuestion;
+test.before(async () => {
+  ({ isSessionStateQuestion, isPlannedLiftQuestion } = await import('../src/app/sessionQuestion.js'));
+});
 
 const repoRoot = path.join(__dirname, '..');
 
@@ -121,12 +125,13 @@ test('getChatReply gates the SME on active-session + session-shaped message', ()
 
 test('the new script is wired into the shell (index.html + service worker)', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  assert.match(html, /<script src="sessionQuestion\.js"><\/script>/,
-    'index.html must load sessionQuestion.js');
-  // Loaded before coach-conversation.js so the global exists when getChatReply runs.
-  assert.ok(
-    html.indexOf('sessionQuestion.js') < html.indexOf('coach-conversation.js'),
-    'sessionQuestion.js must load before coach-conversation.js');
+  // PR-08: sessionQuestion is an ES module imported by coach-conversation.js, so
+  // the ES module graph guarantees it evaluates before coach-conversation's body
+  // runs (getChatReply) — stronger than the old script-tag ordering.
+  assert.match(html, /<script type="module" src="atlasEntry\.js"><\/script>/, 'index.html must load the module entry');
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  assert.match(cc, /import \* as sessionQuestion from '\.\/sessionQuestion\.js'/,
+    'coach-conversation.js must import sessionQuestion.js');
 
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
   assert.match(sw, /sessionQuestion\.js/, 'service worker shell should include sessionQuestion.js');

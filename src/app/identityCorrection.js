@@ -18,7 +18,7 @@
  *
  * PURE / UMD: no DOM, no I/O — unit-testable in Node, loadable in the browser.
  */
-(function (root) {
+const _exports = (function () {
   'use strict';
 
   // Clean a captured exercise phrase: lowercase, drop a trailing set-notation tail
@@ -122,9 +122,7 @@
 
   const exported = { classifyIdentityCorrection, cleanName };
 
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = exported;
-  } else {
-    root.identityCorrection = exported;
-  }
-}(typeof globalThis !== 'undefined' ? globalThis : this));
+  return exported;
+})();
+
+export const { classifyIdentityCorrection, cleanName } = _exports;

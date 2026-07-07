@@ -21,7 +21,16 @@ The web UI is built with **Vite**, introduced as a **Stage-1 wrapper** (Remediat
 - **`npm run dev`** starts the Vite dev server (HMR) serving `src/app/` under `/app/`, proxying `/api` to the Express backend. Run the backend alongside it with **`npm run dev:server`** (`node index.js`) — the previous single-process `npm run dev` is now `npm run dev:server`.
 - **Playwright e2e** runs against the built output: the e2e static server serves `public/`, and `pretest:e2e` rebuilds it first.
 
-**Deploy note (follow-up):** the Render build command should be set to include `npm run build`. Once that is confirmed, `public/` can be moved to gitignored build output (tracked in `BACKLOG.md`). Later phases (PR-08+) convert the satellites to ES modules and let Vite actually bundle; only then do output URLs change (with a service-worker cache-name bump).
+### ES-module frontend (PR-08)
+
+The 12 satellite scripts (everything under `src/app/` **except** `app.js` and `sw.js`) are now real **ES modules** with explicit `import`/`export` — the UMD `typeof module` dual-export blocks are gone. `src/app/package.json` (`{"type":"module"}`) makes Node and Vite treat these `.js` files as modules.
+
+- **One deferred entry.** `index.html` loads the still-classic `app.js`, then one `<script type="module" src="atlasEntry.js">`. Being deferred, the module entry runs *after* `app.js` executes (its top-level globals exist) and *before* `DOMContentLoaded`. `atlasEntry.js` imports the satellites for their side effects and the bridge.
+- **Legacy bridge.** `app.js` is not yet a module; it still reads a few helpers off `window`. `legacyBridge.js` is the single seam that imports the pure helpers (`activeSession`, `planMutationIntent`, `identityCorrection`, `displayBlockNormalizer`, `hybridCompare`) and assigns them to `window` for `app.js`. It shrinks in PR-09 and is deleted once `app.js` is modularised.
+- **No bundling yet.** Vite still copies `src/app/` → `public/` verbatim; the browser resolves the relative ES imports natively (each module keeps its own `/app/*` URL). The SW `SHELL_ASSETS` list gains `atlasEntry.js` + `legacyBridge.js` (and the previously-missing `coachVoiceTemplates.js` / `hybridCompare.js`) and the cache name bumped `v113 → v114` (kept equal to `ATLAS_SHELL_BUILD` in `app.js`).
+- **Node tests** load these ES modules via dynamic `import('../src/app/…')` (Node 20 CI has no `require(esm)`). `test/frontendModuleExports.test.js` pins each module's export surface to its historical UMD key set so a forgotten export fails CI.
+
+**Deploy note (follow-up):** the Render build command should be set to include `npm run build`. Once that is confirmed, `public/` can be moved to gitignored build output (tracked in `BACKLOG.md`). PR-09 splits `app.js` into modules and shrinks the bridge; Vite bundling/hashing remain later phases.
 
 ## Data Flow
 

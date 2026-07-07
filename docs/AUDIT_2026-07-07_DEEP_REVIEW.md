@@ -10,13 +10,15 @@
 
 **Baseline:** `main` @ `eb3cc8d` (2026-07-07). Full test suite green at audit time (162 parser tests, full unit + e2e suites). Nothing in this audit overlaps an open ledger row — `docs/BUG_TRIAGE_LEDGER.md` shows 0 open bugs, so every finding below is new.
 
+> **Rebase note (post-PR-08):** PR-08 (`e6ccf7e`, ES-module conversion of the 12 satellite scripts) merged mid-audit. It **resolved INFRA-2 in passing** (both missing scripts added to `SHELL_ASSETS`, cache `v113→v114`) and shifted `src/app/coach-conversation.js` line numbers by **+3** (import lines added at top); `src/app/app.js` citations are unaffected (its only PR-08 edit was the `ATLAS_SHELL_BUILD` constant). Citations below were re-based to post-PR-08 `main` @ `3964825`; PR-09 will move them again — treat the named symbols as the stable anchors.
+
 **This is an audit, not a fix PR.** Per the PR Execution Contract, every finding is filed in `BACKLOG.md` (same PR as this doc); fixes ship as separate, individually-scoped PRs.
 
 ---
 
 ## Priority fix order (recommendation)
 
-The four **P0** items are live data-integrity hazards in the permanent record and warrant jumping the remediation queue (they are exactly the class Phase -1 of `docs/REMEDIATION_PLAN_V2.md` existed for), ahead of PR-08:
+The four **P0** items are live data-integrity hazards in the permanent record and warrant jumping the remediation queue (they are exactly the class Phase -1 of `docs/REMEDIATION_PLAN_V2.md` existed for), ahead of PR-09:
 
 | # | ID | One line |
 |---|---|---|
@@ -25,7 +27,7 @@ The four **P0** items are live data-integrity hazards in the permanent record an
 | P0-3 | PARSE-2 | Unknown digit-free line merges the next line's sets into the **previous** lift |
 | P0-4 | PARSE-3 | `bench 225 5 2 185 8 2` produces garbage rows (2 lb × 185 reps) |
 
-Second tier (**P1**, correctness on the write/trust path): PARSE-4, PARSE-5, WRITE-1, WRITE-2, WRITE-3, SESS-2, SESS-3, CLIENT-2, INFRA-1, INFRA-2. Everything else can ride the normal backlog cadence. Several CLIENT/SESS items (CLIENT-3, SESS-1, SESS-4) sit in code that PR-09/10/11 will restructure — if a fix does not land before those PRs, its scenario **must** become a required test case in them.
+Second tier (**P1**, correctness on the write/trust path): PARSE-4, PARSE-5, WRITE-1, WRITE-2, WRITE-3, SESS-2, SESS-3, CLIENT-2, INFRA-1, INFRA-3 (INFRA-2 was resolved in passing by PR-08 — see the rebase note). Everything else can ride the normal backlog cadence. Several CLIENT/SESS items (CLIENT-3, SESS-1, SESS-4) sit in code that PR-09/10/11 will restructure — if a fix does not land before those PRs, its scenario **must** become a required test case in them.
 
 ---
 
@@ -130,7 +132,7 @@ Undo read-back is genuinely live (uncached `getSheetRowsRaw`; TTL cache explicit
 
 ### CLIENT-1 · `[trust-critical]` · CONFIRMED (code) — Undo on a stale review card deletes the wrong (newest) write
 
-`src/app/coach-conversation.js:381-389` (every card's Undo → `window.atlasUndoLastWrite()`), `src/app/app.js:6762-6796` (`handleUndoLastWrite` always operates on the global `lastWrite`), `src/app/styles.css:1734-1736` (saved cards permanently show "✓ Saved · Undo").
+`src/app/coach-conversation.js:384-392` (every card's Undo → `window.atlasUndoLastWrite()`), `src/app/app.js:6762-6796` (`handleUndoLastWrite` always operates on the global `lastWrite`), `src/app/styles.css:1734-1736` (saved cards permanently show "✓ Saved · Undo").
 
 Scenario: mid-workout save A → keep training → closeout save B. Scroll up, tap Undo on card A → the handler reads `lastWrite` = B → read-back verifies B's session_id (passes — W5 is satisfied, from the server's view this is a legitimate undo of B) → **workout B's rows are deleted** while the UI user believes A was undone; the "Undone" label lands on the newest card via `currentReview`.
 
@@ -164,7 +166,7 @@ Approve double-submit (in-flight flag + synchronous disable + server write_id); 
 
 ### SESS-1 · `[correctness]` · CONFIRMED by auditor (code) — `handleSetLogged` announces from an emit-time snapshot after up to ~9 s of awaits; concurrent handlers interleave
 
-`src/app/coach-conversation.js:1344-1414` (+ detail built at `src/app/app.js:5216-5239`). Two quick logs: the slow first handler resumes after the fast second and announces a stale "next up: B" *after* B was logged (and can reset the composer placeholder to B, or land a stale next-up after closeout). **Fix sketch:** before announcing/setting the placeholder, re-derive from live state (reject `nextEx` already in `getSessionCompleted()`), or carry an emit sequence number and bail when a newer event has dispatched.
+`src/app/coach-conversation.js:1347-1417` (+ detail built at `src/app/app.js:5216-5239`). Two quick logs: the slow first handler resumes after the fast second and announces a stale "next up: B" *after* B was logged (and can reset the composer placeholder to B, or land a stale next-up after closeout). **Fix sketch:** before announcing/setting the placeholder, re-derive from live state (reject `nextEx` already in `getSessionCompleted()`), or carry an emit sequence number and bail when a newer event has dispatched.
 
 ### SESS-2 · `[correctness]` · CONFIRMED (code) — resume-after-reload restores the advanced cursor but drops `pendingSubstitution`, stranding a declared swap
 
@@ -188,7 +190,7 @@ Guard at `src/app/app.js:5044-5051`; unguarded consumers at `:4980-4988`, `:4960
 
 ### SESS-7 · `[housekeeping]` — concurrent `handleSetLogged` runs push `chatTurns` out of submission order
 
-`src/app/coach-conversation.js:1177` vs `:1238/1302` — two quick logs record user₁, user₂, atlas₂, atlas₁; the compile fallback and chat context see a scrambled transcript. Reserve the turn slot synchronously.
+`src/app/coach-conversation.js:1180` vs `:1241/1305` — two quick logs record user₁, user₂, atlas₂, atlas₁; the compile fallback and chat context see a scrambled transcript. Reserve the turn slot synchronously.
 
 ### Session — verified clean / already filed
 
@@ -202,9 +204,9 @@ Stale `current_exercise` to the substitute endpoint (Step 379) fixed and pinned;
 
 `.github/workflows/ci.yml:71` + `vite.config.js:78` (`emptyOutDir:false`) — `git diff --exit-code -- public/` never reports untracked files (probe verified: created `public/__drift_probe.js`, guard exited 0), and the build never deletes stale ones. Scenario: PR adds `src/app/newWidget.js` + rebuilt `index.html` but forgets to commit `public/newWidget.js` → CI green → Render (no build step at deploy) serves committed `public/` → prod 404 breaks the page. Symmetric: a file deleted from `src/app/` is served forever. **Fix sketch:** `test -z "$(git status --porcelain -- public/)"` after the build, plus a file-list parity test of `src/app/` vs `public/`.
 
-### INFRA-2 · `[correctness]` · CONFIRMED (empirical) — `sw.js` SHELL_ASSETS omits `coachVoiceTemplates.js` and `hybridCompare.js`, which `index.html` loads
+### INFRA-2 · `[correctness]` · CONFIRMED (empirical) — ✅ RESOLVED by PR-08 (`e6ccf7e`) — `sw.js` SHELL_ASSETS omitted `coachVoiceTemplates.js` and `hybridCompare.js`, which `index.html` loads
 
-`src/app/sw.js:13-34` vs `src/app/index.html:595-596`. After a cache-name bump deploy, an offline gym open loads the shell but both scripts 404; `coach-conversation.js:906/1022/1458` calls bare `coachVoiceTemplates.…` → ReferenceError on the set-reaction/fallback render path. **Fix sketch:** add both to `SHELL_ASSETS`, bump `v113→v114` + `ATLAS_SHELL_BUILD`, rebuild; add a test asserting every `<script src>` in `index.html` ⊆ `SHELL_ASSETS`.
+`src/app/sw.js:13-34` vs `src/app/index.html:595-596`. After a cache-name bump deploy, an offline gym open loads the shell but both scripts 404; `coach-conversation.js:909/1025/1461` calls bare `coachVoiceTemplates.…` → ReferenceError on the set-reaction/fallback render path. **Resolution:** PR-08 added both (plus `atlasEntry.js`/`legacyBridge.js`) to `SHELL_ASSETS` and bumped `v113→v114` + `ATLAS_SHELL_BUILD` — verified post-merge (`src/app/sw.js:18,25-26`). **Residual `[housekeeping]`:** the guard test asserting every `<script src>` in `index.html` ⊆ `SHELL_ASSETS` still does not exist; without it the same omission can recur at PR-09/20.
 
 ### INFRA-3 · `[correctness]` · CONFIRMED (empirical) — the secret-scan CI job false-positives on two committed test files
 
