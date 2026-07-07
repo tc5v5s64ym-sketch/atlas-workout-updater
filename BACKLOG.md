@@ -986,3 +986,9 @@ Five parallel AI QA testers hit the LIVE deployed app across read-only endpoints
 - 4 deterministic `ok:false` classifier failures on short/negated inputs silently drop constraints — **one drops an injury** (`tweaky lower back today`); also `arms and abs`, `what's my best squat`, `no shoulder issues today`.
 - `bump the weight to 225` → `log_intent@0.9` (a correction misread as a new log).
 - Cardio/step signal recall 40% (`ran 5k`, `walked 12000 steps` → `clarify_intent@0.3`); undo/delete under-route to `clarify` not `modify_workout`; `no squat rack` → `exclude_exercises` not `equipment`. Constraint precision 87% / recall 90%; compound multi-constraint extraction excellent.
+
+---
+
+## Coach Moments Engine spec adopted — owner forks pending (2026-07-07) `[design]`
+
+`docs/COACH_MOMENTS_ENGINE.md` committed and Active in DOCS_INDEX. Implementation blocked on owner decisions for §10 forks (F1 goal-proximity unprompted, F2 frequency dial, F3 teaching default, F4 cross-lift narrative) and on One-Brain promotion (Remediation PR-12A) per §9 sequencing.

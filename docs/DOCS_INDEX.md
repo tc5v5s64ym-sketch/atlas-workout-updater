@@ -86,6 +86,7 @@ These describe specific systems or constraints. Use them when your PR touches th
 - `docs/DELOAD_SPEC.md`
 - `docs/COACH_VOICE_VALIDATION.md`
 - `docs/COACHING_NOTE_VOICE.md`
+- `docs/COACH_MOMENTS_ENGINE.md` — **Active** — Coach Moments Engine design spec: seven moment types (M1–M7), three tiers, praise-economy budget rules, honesty contract, anti-repetition ledger, pipeline/contracts, and owner-reserved forks (§10); sequenced after One-Brain promotion (PR-12A).
 - `docs/TODAY_SCREEN_SPEC.md`
 - `docs/RECOMMENDATION_PIPELINE_V1_5.md`
 - `docs/TRAINING_SME_LAYER.md`
