@@ -1,4 +1,3 @@
-/* eslint-disable no-implicit-globals -- browser script; top-level function declarations are intentional global exports; converted to ES modules in Phase 1 PR-08/09 */
 /* Atlas frontend — read-only views + approve-before-save workout logger.
  * Golden rule: AI/backend can parse, prepare, and preview. The owner approves.
  * Only then does Atlas write. Preview always runs with test_mode=true.
@@ -2005,9 +2004,7 @@ let pendingSubstitution = null;
 // Read-only accessor for coach-conversation.js (coach layer must never mutate
 // the session directly — only app.js advances/ends it via advancePlannedSession
 // and endPlannedSession).
-// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function getActivePlannedSession() { return activePlannedSession; }
-// eslint-disable-next-line no-unused-vars -- global export consumed by other browser scripts; Phase 1 PR-08/09
 function getSessionCompleted() { return sessionCompleted; }
 
 // The active training intent id (e.g. 'recovery_pump', 'deload_reset'). A started
@@ -2074,7 +2071,6 @@ function planExercisesFromCanonical(session) {
 // markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
 // eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
 function getCoachSuggestionEngaged() { return coachSuggestionEngaged; }
-// eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
 function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 
 // Step 373b: replace a prescribed slot in the LIVE planned session with the
@@ -7324,6 +7320,7 @@ window.invalidatePreview = invalidatePreview;
 window.normalizePlanExercise = normalizePlanExercise;
 window.previewSetsForLift = previewSetsForLift;
 window.setCoachSuggestionEngaged = setCoachSuggestionEngaged;
+window.getPlanTodayByName = getPlanTodayByName;
 // app.js top-level VALUES the satellites read bare (data tables + the preview table
 // DOM ref) — same transitional bridge, resolved once at load.
 window.FRIENDLY_PATTERN_LABELS = FRIENDLY_PATTERN_LABELS;
