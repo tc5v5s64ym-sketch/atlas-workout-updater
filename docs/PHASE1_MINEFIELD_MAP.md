@@ -166,9 +166,24 @@ consumer or flag it to the owner as possibly bridge-dead; do not silently delete
 are spread (`{...module}`) deliberately to preserve the mutable-bag shape of the old UMD globals —
 do not "simplify" to frozen namespace objects until app.js is fully modular.
 
-**app.js → modules:** `window.atlasRefreshSessions`, `window.atlasUndoLastWrite` (see §1.4).
+**app.js → modules:** `window.atlasRefreshSessions`, `window.atlasUndoLastWrite`,
+`window.atlasCurrentWriteIdentity` (see §1.4).
 PR-11 acceptance already says the legacy bridge ends as "`window.atlas*` public hooks only" —
-these two are that list.
+these are that list.
+
+> **PR-0D change (2026-07-07, CLIENT-1 fix) — intentional change to this frozen surface:**
+> `window.atlasUndoLastWrite` now accepts an **optional** `expected` identity argument
+> (`{ log_appended_range, session_id }`); when a caller passes an identity whose
+> `log_appended_range` no longer matches the current `lastWrite`, the undo is **refused**
+> (friendly status, no server request) instead of deleting the newest write. Existing
+> no-arg callers (the direct "Undo last write" button, the "Replace last saved session"
+> flow) are unaffected — no argument means "target the latest write," the prior behavior.
+> A new companion getter `window.atlasCurrentWriteIdentity()` returns a snapshot copy of
+> the current write's identity (or `null`) so `coach-conversation.js` can bind each saved
+> review card to the write it represents at `markReviewSaved` time. This adds one
+> app.js→modules bridge symbol and one new consumer (coach-conversation, at save time),
+> updating the §1.4 count. PR-09/10/11 must preserve this parameterized shape, not restore
+> the old single-global `atlasUndoLastWrite()`.
 
 **Backend surface:** all ~41 endpoints route through the single `api(path, options)` wrapper
 (app.js:114), which injects auth from `atlas_api_key`. Extraction keeps exactly one wrapper; no
@@ -184,7 +199,11 @@ module grows its own fetch with its own auth handling.
 2. **Undo path.** `lastWrite` → `handleUndoLastWrite` → `window.atlasUndoLastWrite` → the
    post-save "Undo last write" button rendered after the `session-reset` dispatch at app.js:6959.
    That ordering (reset first, undo button after, from `pendingLastWrite` captured before reset)
-   is deliberate.
+   is deliberate. **PR-0D (CLIENT-1)** added a per-card identity guard: a saved review card
+   binds its write's `log_appended_range` and passes it to `atlasUndoLastWrite(expected)`, which
+   refuses if a newer write has superseded it (see §5). Preserve the guard through Phase 1 —
+   `lastWrite` migrating to the store (PR-11) must keep the per-card-identity shape, not the old
+   single global the audit flagged as the CLIENT-1 bug.
 3. **RC2 date precedence.** Manual keystroke on `log-date` sets `logDateManuallyEntered = true`
    via a real `input` event only; programmatic `setDefaultDate()` never trips it; a closeout
    screenshot's date must not override a manual entry. Three interacting rules — test all three.

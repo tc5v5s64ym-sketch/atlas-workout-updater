@@ -383,24 +383,44 @@ import * as sessionQuestion from './sessionQuestion.js';
     saved.appendChild(elc('span', 'rv-saved-txt', '✓ Saved to your sheet'));
     const undo = elc('a', 'rv-undo', 'Undo');
     undo.href = '#';
+    // CLIENT-1: pass THIS card's bound write identity so the undo path refuses if a
+    // newer write has since superseded it — an older card can never delete a newer
+    // write. Identity is bound at markReviewSaved time (below); null before then.
     undo.addEventListener('click', e => {
       e.preventDefault();
       if (typeof window.atlasUndoLastWrite === 'function') {
-        window.atlasUndoLastWrite();   // reuse the existing /api/log-workout/undo-last path
+        window.atlasUndoLastWrite(review.identity);   // reuse the existing /api/log-workout/undo-last path
         undo.textContent = 'Undoing…';
       }
     });
     saved.appendChild(undo);
     card.appendChild(saved);
 
-    currentReview = { card, saveBtn, done: false };
+    const review = { card, saveBtn, done: false, identity: null };
+    currentReview = review;
     return card;
+  }
+
+  // CLIENT-1: once a newer write confirms, strip the live Undo from every OTHER
+  // already-saved card so only the newest save is undoable from the thread. (The
+  // request-layer identity guard in app.js is the belt-and-suspenders backstop.)
+  function stripStaleUndoLinks(keepCard) {
+    const thread = document.getElementById('thread-messages');
+    if (!thread) return;
+    thread.querySelectorAll('.review.done .rv-undo').forEach(link => {
+      if (!keepCard || !keepCard.contains(link)) link.remove();
+    });
   }
 
   function markReviewSaved() {
     if (!currentReview || currentReview.done) return;
     currentReview.done = true;
     currentReview.card.classList.add('done');
+    // Bind the identity of the write this card represents so its Undo can be
+    // refused after a later write, then retire every older card's Undo affordance.
+    currentReview.identity = (typeof window.atlasCurrentWriteIdentity === 'function')
+      ? window.atlasCurrentWriteIdentity() : null;
+    stripStaleUndoLinks(currentReview.card);
   }
 
   function markReviewUndone() {
