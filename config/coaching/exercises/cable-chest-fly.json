@@ -1,6 +1,6 @@
 {
   "id": "cable-chest-fly",
-  "name": "Cable Chest Fly",
+  "name": "Cable Fly",
   "aliases": ["cable crossover", "cable fly"],
   "movement_pattern": "horizontal_push",
   "nsca_class": "assistance",

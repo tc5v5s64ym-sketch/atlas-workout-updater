@@ -511,7 +511,7 @@
   },
   {
     "alias": "dip",
-    "exercise_id": "dips",
+    "exercise_id": "dip",
     "alias_type": "common_name",
     "confidence": 0.9
   },
@@ -726,12 +726,6 @@
     "confidence": 1
   },
   {
-    "alias": "bicep curl",
-    "exercise_id": "dumbbell_curl",
-    "alias_type": "common_name",
-    "confidence": 0.7
-  },
-  {
     "alias": "hammer curl",
     "exercise_id": "hammer_curl",
     "alias_type": "common_name",
@@ -817,7 +811,7 @@
   },
   {
     "alias": "skull crusher",
-    "exercise_id": "overhead_triceps_extension",
+    "exercise_id": "barbell_skullcrusher",
     "alias_type": "bodybuilding_name",
     "confidence": 0.6
   },

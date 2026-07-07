@@ -1,7 +1,7 @@
 {
   "id": "romanian-deadlift",
   "name": "Romanian Deadlift",
-  "aliases": ["RDL", "barbell RDL"],
+  "aliases": ["RDL"],
   "movement_pattern": "hinge",
   "nsca_class": "core_structural",
   "implement": "barbell",

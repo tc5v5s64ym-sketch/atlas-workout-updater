@@ -1,7 +1,7 @@
 {
   "id": "bicep-curl",
   "name": "Bicep Curl",
-  "aliases": ["dumbbell bicep curl", "alternating dumbbell curl", "barbell curl"],
+  "aliases": [],
   "movement_pattern": "isolation",
   "nsca_class": "assistance",
   "implement": "dumbbell",

@@ -1,0 +1,309 @@
+{
+  "_meta": {
+    "purpose": "Grandfathered parser/enrichment-anchored Type-1 exercise-truth residuals (PR-06). These are conflicts where the frozen parser (source A) and/or the live write-path enrichment module (source D) diverge from the reconciled catalog (B) + coaching (C) JSON. Editable sources B and C AGREE on every entry here; the divergent source is not editable within PR-06 scope (owner decision, Option 1).",
+    "rule": "test/exerciseTruthAudit.test.js blocks on ANY catalog<->coaching (B<->C) Type-1 conflict, and requires the set of parser/enrichment-anchored residuals to EXACTLY equal this allowlist (new drift fails CI until consciously triaged here).",
+    "resolution": "PR-14 unifies the parser alias table with the catalog; PR-15 syncs the Exercise_Catalog sheet + enrichment from the JSON catalog. Those PRs remove entries here."
+  },
+  "allowlist": [
+    {
+      "alias": "barbell shrugs",
+      "sources": {
+        "A": "Shrug",
+        "B": "Barbell Shrug"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "cable row",
+      "sources": {
+        "A": "Seated Row",
+        "B": "Cable Row",
+        "C": "Cable Row"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "cgbp",
+      "sources": {
+        "B": "Barbell Close-Grip Bench Press",
+        "D": "Close Grip Bench Press"
+      },
+      "reason": "Enrichment (D) write-path lookup differs from the reconciled catalog name; enrichment is a live write-path module, out of scope in PR-06 (sheet catalog synced from JSON in PR-15).",
+      "resolves_in": "PR-15"
+    },
+    {
+      "alias": "db shrugs",
+      "sources": {
+        "A": "Shrug",
+        "B": "Dumbbell Shrug"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "deadlift",
+      "sources": {
+        "A": "Deadlift",
+        "B": "Conventional Deadlift",
+        "C": "Conventional Deadlift"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "decline bench",
+      "sources": {
+        "A": "Decline Bench Press",
+        "B": "Barbell Decline Bench Press"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "decline bench press",
+      "sources": {
+        "A": "Decline Bench Press",
+        "B": "Barbell Decline Bench Press"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "dip",
+      "sources": {
+        "A": "Dips (Weighted)",
+        "B": "Dip",
+        "C": "Dip"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "dips",
+      "sources": {
+        "A": "Dips (Weighted)",
+        "B": "Dips",
+        "D": "Dips Weighted"
+      },
+      "reason": "Parser (A) and enrichment (D) both diverge from the reconciled catalog/coaching name; both are frozen in PR-06.",
+      "resolves_in": "PR-14 & PR-15"
+    },
+    {
+      "alias": "dl",
+      "sources": {
+        "A": "Deadlift",
+        "B": "Conventional Deadlift",
+        "D": "Deadlift"
+      },
+      "reason": "Parser (A) and enrichment (D) both diverge from the reconciled catalog/coaching name; both are frozen in PR-06.",
+      "resolves_in": "PR-14 & PR-15"
+    },
+    {
+      "alias": "dumbbell shrugs",
+      "sources": {
+        "A": "Shrug",
+        "B": "Dumbbell Shrug"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "hammers",
+      "sources": {
+        "A": "Hammer Curl",
+        "B": "Hammer Curl",
+        "D": "Hammer Curls"
+      },
+      "reason": "Parser (A) and enrichment (D) both diverge from the reconciled catalog/coaching name; both are frozen in PR-06.",
+      "resolves_in": "PR-14 & PR-15"
+    },
+    {
+      "alias": "hanging knee raises",
+      "sources": {
+        "A": "Hanging Knee Raises",
+        "B": "Hanging Leg Raise"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "hkr",
+      "sources": {
+        "B": "Hanging Leg Raise",
+        "D": "Hanging Knee Raises"
+      },
+      "reason": "Enrichment (D) write-path lookup differs from the reconciled catalog name; enrichment is a live write-path module, out of scope in PR-06 (sheet catalog synced from JSON in PR-15).",
+      "resolves_in": "PR-15"
+    },
+    {
+      "alias": "incline db bench",
+      "sources": {
+        "A": "Incline DB Press",
+        "B": "Incline Dumbbell Bench Press"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "incline db press",
+      "sources": {
+        "A": "Incline DB Press",
+        "B": "Incline Dumbbell Bench Press"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "incline dumbbell press",
+      "sources": {
+        "A": "Incline DB Press",
+        "B": "Incline Dumbbell Bench Press"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "lateral raise",
+      "sources": {
+        "A": "Lateral Raises",
+        "B": "Lateral Raise",
+        "C": "Lateral Raise"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "lateral raises",
+      "sources": {
+        "A": "Lateral Raises",
+        "B": "Lateral Raise"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "laterals",
+      "sources": {
+        "A": "Lateral Raises",
+        "B": "Lateral Raise",
+        "D": "Lateral Raises"
+      },
+      "reason": "Parser (A) and enrichment (D) both diverge from the reconciled catalog/coaching name; both are frozen in PR-06.",
+      "resolves_in": "PR-14 & PR-15"
+    },
+    {
+      "alias": "machine row",
+      "sources": {
+        "A": "Seated Row",
+        "B": "Seated Machine Row"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "rdl",
+      "sources": {
+        "A": "RDL",
+        "B": "Romanian Deadlift",
+        "C": "Romanian Deadlift",
+        "D": "Romanian Deadlift"
+      },
+      "reason": "Parser (A) and enrichment (D) both diverge from the reconciled catalog/coaching name; both are frozen in PR-06.",
+      "resolves_in": "PR-14 & PR-15"
+    },
+    {
+      "alias": "rdls",
+      "sources": {
+        "A": "RDL",
+        "B": "Romanian Deadlift"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "romanian deadlift",
+      "sources": {
+        "A": "RDL",
+        "B": "Romanian Deadlift",
+        "C": "Romanian Deadlift"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "romanian deadlifts",
+      "sources": {
+        "A": "RDL",
+        "B": "Romanian Deadlift"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "seated row",
+      "sources": {
+        "A": "Seated Row",
+        "B": "Cable Row"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "seated rows",
+      "sources": {
+        "A": "Seated Row",
+        "B": "Cable Row"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "side raises",
+      "sources": {
+        "A": "Lateral Raises",
+        "B": "Lateral Raise"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "sldl",
+      "sources": {
+        "B": "Romanian Deadlift",
+        "D": "Stiff Leg Deadlift"
+      },
+      "reason": "Enrichment (D) write-path lookup differs from the reconciled catalog name; enrichment is a live write-path module, out of scope in PR-06 (sheet catalog synced from JSON in PR-15).",
+      "resolves_in": "PR-15"
+    },
+    {
+      "alias": "tricep pushdown",
+      "sources": {
+        "A": "Cable Tricep Pushdown",
+        "B": "Tricep Pushdown",
+        "C": "Tricep Pushdown"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "tricep pushdowns",
+      "sources": {
+        "A": "Cable Tricep Pushdown",
+        "B": "Tricep Pushdown"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    },
+    {
+      "alias": "weighted dips",
+      "sources": {
+        "A": "Dips (Weighted)",
+        "B": "Weighted Dip"
+      },
+      "reason": "Parser (A) canonical differs from the reconciled catalog/coaching name; parser is frozen in PR-06 (parser aliases are generated from the catalog in PR-14).",
+      "resolves_in": "PR-14"
+    }
+  ]
+}

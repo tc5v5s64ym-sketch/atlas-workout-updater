@@ -1,7 +1,7 @@
 {
   "id": "barbell-row",
-  "name": "Barbell Row",
-  "aliases": ["bent-over row", "barbell bent-over row", "Pendlay row"],
+  "name": "Bent-Over Row",
+  "aliases": ["bent-over row", "barbell bent-over row"],
   "movement_pattern": "horizontal_pull",
   "nsca_class": "core_structural",
   "implement": "barbell",

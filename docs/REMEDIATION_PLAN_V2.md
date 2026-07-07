@@ -21,7 +21,7 @@ Rules that hold for **every** PR below (Claude Code already knows these from CLA
 
 ## PHASE -1 — LIVE BUG FIXES (run these first, in this order)
 
-> **✅ PHASE -1 COMPLETE (2026-07-06, owner-confirmed).** All three live-session bugs were already resolved in prior work: PR-0A by `b859abf` (verify/undo 400 — row-span cap mismatch), PR-0B by `5531680` / #863 (already-saved exercises now shown in the confirm/review card), PR-0C by `8c95892` / #864 (coach message layer no longer renders the stale idle greeting). Next up: Phase 0 (PR-01→PR-04 shipped; **PR-05** is next).
+> **✅ PHASE -1 COMPLETE (2026-07-06, owner-confirmed).** All three live-session bugs were already resolved in prior work: PR-0A by `b859abf` (verify/undo 400 — row-span cap mismatch), PR-0B by `5531680` / #863 (already-saved exercises now shown in the confirm/review card), PR-0C by `8c95892` / #864 (coach message layer no longer renders the stale idle greeting). Next up: Phase 0 (PR-01→PR-06 shipped; **PR-07** is next).
 
 These three are real bugs observed in live test sessions. Each prompt follows your standard bug loop: **reproduce → root cause → smallest safe fix → regression test → PR.** All three are Opus — they touch the write path or in-session behavior. Claude Code should mine `/api/flight/recent`, the Bug_Reports tab entries, and `docs/BUG_TRIAGE_LEDGER.md` for the captured evidence before touching code.
 
@@ -87,7 +87,8 @@ These three are real bugs observed in live test sessions. Each prompt follows yo
 >
 > Task: Add a consistency audit across the four exercise-knowledge sources: (a) `EXERCISE_ALIASES` + `CONTEXTUAL_ALIASES` in `services/workoutTextParser.js`; (b) `data/exercise_catalog.v1.json` + `data/exercise_aliases.v1.json`; (c) `config/coaching/exercises/*.json` (+ `_index.json`); (d) the `Exercise_Catalog` sheet contract columns as encoded in `services/exerciseEnrichment.js` fixtures/tests (no live sheet read). Build `test/exerciseTruthAudit.test.js` + a small pure module `services/exerciseTruthAudit.js` that: normalizes names, maps every alias→canonical per source, and reports (1) aliases resolving to different canonicals across sources, (2) canonicals present in one source but missing in another, (3) case/punctuation-only mismatches. The test PASSES but prints the full disagreement inventory to the test log and writes it to `docs/verification/EXERCISE_TRUTH_AUDIT.md` (generated file, committed). Out of scope: changing ANY data or parser behavior. Acceptance: audit doc generated and committed; all tests green; zero runtime imports of the new module.
 
-### PR-06 — Reconcile disagreements, make the detector blocking · **Opus 4.8** · `[trust-critical]`
+### ✅ DONE — PR-06 — Reconcile disagreements, make the detector blocking · **Opus 4.8** · `[trust-critical]`
+**Status:** Shipped. Reconciled all 67 catalog↔coaching (B↔C) Type-1 conflicts to zero by editing JSON data only (no parser/write-path change); `test/exerciseTruthAudit.test.js` now blocks on any B↔C Type-1. **Owner decision (Option 1):** the frozen parser (A) and the live write-path enrichment module (D) are themselves conflict participants (e.g. the RDL family — parser `RDL` vs history `Romanian Deadlift`), so reaching "zero across all four sources" is out of scope; the 32 parser/enrichment-anchored residuals are grandfathered in `docs/verification/EXERCISE_TRUTH_ALLOWLIST.json` and deferred to PR-14 (parser↔catalog) / PR-15 (sheet/enrichment↔catalog).
 **PROMPT:**
 > STOP — model hold point. This PR requires **Opus 4.8** (touches parser-adjacent data; INVARIANTS P1–P3 apply). State your current model and wait for owner confirmation.
 >

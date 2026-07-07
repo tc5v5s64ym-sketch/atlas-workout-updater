@@ -1,7 +1,7 @@
 {
   "id": "pallof-press",
   "name": "Pallof Press",
-  "aliases": ["anti-rotation press", "cable anti-rotation press"],
+  "aliases": ["anti-rotation press"],
   "movement_pattern": "anti_rotation",
   "nsca_class": "assistance",
   "implement": "cable",

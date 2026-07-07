@@ -1,7 +1,7 @@
 {
   "id": "cable-pull-over",
   "name": "Cable Pull-over",
-  "aliases": ["straight-arm pulldown", "cable straight-arm pull-over"],
+  "aliases": ["cable straight-arm pull-over"],
   "movement_pattern": "vertical_pull",
   "nsca_class": "assistance",
   "implement": "cable",

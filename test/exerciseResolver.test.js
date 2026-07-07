@@ -66,10 +66,12 @@ test('acceptance: cable fly alias coverage all resolves to cable_fly', () => {
   }
 });
 
-test('acceptance: "bb row" resolves to Barbell Bent-Over Row', () => {
+test('acceptance: "bb row" resolves to Bent-Over Row', () => {
   const r = resolveExercise('bb row');
   assert.ok(r && r.exercise_id === 'barbell_bent_over_row');
-  assert.equal(r.name, 'Barbell Bent-Over Row');
+  // Canonical name reconciled to the parser/history convention in PR-06
+  // (exercise_id is unchanged; only the user-facing name aligned to "Bent-Over Row").
+  assert.equal(r.name, 'Bent-Over Row');
 });
 
 test('acceptance: barbell row alias coverage resolves', () => {

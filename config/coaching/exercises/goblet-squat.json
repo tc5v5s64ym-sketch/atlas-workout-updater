@@ -1,7 +1,7 @@
 {
   "id": "goblet-squat",
   "name": "Goblet Squat",
-  "aliases": ["dumbbell goblet squat", "kettlebell goblet squat"],
+  "aliases": ["dumbbell goblet squat"],
   "movement_pattern": "squat",
   "nsca_class": "core",
   "implement": "dumbbell",
