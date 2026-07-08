@@ -32,7 +32,7 @@ Violating any of them requires explicit owner approval before merging.
 
 **W6. Never change GOOGLE_SHEETS_ID without a cutover.** Changing the spreadsheet ID is a production cutover. It requires an explicit owner decision, a rollback plan, and must not happen in a routine feature PR.
 
-**W7. Undo span limit.** The undo endpoint will not delete more than 10 rows in a single request. `rows_to_delete` must match the span of the supplied A1 range; mismatches return 400.
+**W7. Undo span limit.** The undo endpoint will not delete more than `MAX_LOG_ROWS` (200) rows in a single request — raised from the original 10-row cap in `b859abf` so a legitimate multi-set session closeout cannot 400 (owner-approved amendment, PR-21; tracked as WRITE-4). `rows_to_delete` must match the span of the supplied A1 range; mismatches return 400.
 
 ---
 
