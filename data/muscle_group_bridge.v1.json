@@ -1,0 +1,104 @@
+{
+  "schema_version": "v1",
+  "kind": "muscle_group_bridge",
+  "status": "inert_proposed_uncalibrated",
+  "purpose": "Proposed mapping from catalog JSON primary_muscles[] tokens to the sheet Log_Cleaned Muscle_Group vocabulary. INERT in PR-A: no runtime code reads this file. UNCALIBRATED: not yet reconciled against a live Muscle_Group value dump (no sheet access in this environment). classifies_as records how services/analytics.js classifyMuscleGroup would bucket each proposed label today.",
+  "provenance": {
+    "primary_muscle_tokens_from": "data/exercise_catalog.v1.json :: primary_muscles[]",
+    "target_vocabulary_from": "docs/SHEET_CONTRACT.md Exercise_Catalog.Muscle_Group + services/analytics.js MUSCLE_GROUP_LABELS / PATTERN_REGEXES"
+  },
+  "classifier_reference": {
+    "file": "services/analytics.js",
+    "patterns": {
+      "hinge": "posterior chain|lower back",
+      "lower": "leg|quad|hamstring|glute|calf|hip flexor|hip|adductor",
+      "pull": "back|lat|rear delt|bicep|trap|rhomboid|row",
+      "push": "chest|pec|shoulder|delt|tricep",
+      "core": "core|ab|oblique"
+    },
+    "order_note": "hinge before lower; pull before push. Rear Delts -> pull; Posterior Chain -> hinge."
+  },
+  "primary_muscle_to_muscle_group": {
+    "chest": {
+      "label": "Chest",
+      "classifies_as": "push"
+    },
+    "triceps": {
+      "label": "Triceps",
+      "classifies_as": "push"
+    },
+    "front_delts": {
+      "label": "Shoulders",
+      "classifies_as": "push",
+      "owner_decision": "split front/side/rear delts, or keep coarse \"Shoulders\"?"
+    },
+    "side_delts": {
+      "label": "Shoulders",
+      "classifies_as": "push",
+      "owner_decision": "split front/side/rear delts, or keep coarse \"Shoulders\"?"
+    },
+    "rear_delts": {
+      "label": "Rear Delts",
+      "classifies_as": "pull",
+      "critical": "MUST classify as pull (pull regex precedes push); do not fold into \"Shoulders\"."
+    },
+    "lats": {
+      "label": "Back",
+      "classifies_as": "pull"
+    },
+    "upper_back": {
+      "label": "Back",
+      "classifies_as": "pull",
+      "owner_decision": "\"Back\" vs finer \"Upper Back\" (both classify pull)."
+    },
+    "traps": {
+      "label": "Back",
+      "classifies_as": "pull",
+      "owner_decision": "\"Back\" vs finer \"Traps\" (both classify pull)."
+    },
+    "biceps": {
+      "label": "Biceps",
+      "classifies_as": "pull"
+    },
+    "forearms": {
+      "label": "Arms",
+      "classifies_as": null,
+      "owner_decision": "\"Arms\" classifies as null under classifyMuscleGroup (no push/pull/hinge/lower/core match). Acceptable if forearms is never a recovery-tracked primary; otherwise map to \"Biceps\"(pull) or a dedicated pattern."
+    },
+    "quads": {
+      "label": "Quads",
+      "classifies_as": "lower"
+    },
+    "hamstrings": {
+      "label": "Posterior Chain",
+      "classifies_as": "hinge",
+      "note": "Sheet convention: hamstrings -> Posterior Chain (hinge), not \"Legs\"(lower)."
+    },
+    "glutes": {
+      "label": "Posterior Chain",
+      "classifies_as": "hinge",
+      "note": "Sheet convention: glutes -> Posterior Chain (hinge)."
+    },
+    "calves": {
+      "label": "Calves",
+      "classifies_as": null,
+      "blocker": "classifyMuscleGroup(\"Calves\") returns null: services/analytics.js lower regex matches the token \"calf\", not \"calves\". A future inversion that writes \"Calves\" would drop calf work out of the lower/recovery pattern. Fix belongs in analytics (add \"calve?s?\"), NOT in this data-only PR."
+    },
+    "abs": {
+      "label": "Core",
+      "classifies_as": "core"
+    },
+    "obliques": {
+      "label": "Core",
+      "classifies_as": "core"
+    },
+    "lower_back": {
+      "label": "Posterior Chain",
+      "classifies_as": "hinge",
+      "note": "lower_back -> Posterior Chain (hinge). Also matches the \"lower back\" hinge token directly."
+    }
+  },
+  "all_primary_muscle_tokens_covered": true,
+  "uncovered_tokens": [],
+  "do_not_edit": "Proposed only. Final labels require an owner decision on the flagged owner_decision points AND calibration against a live Muscle_Group dump before anything consumes this file."
+}
