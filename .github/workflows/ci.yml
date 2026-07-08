@@ -73,6 +73,11 @@ jobs:
       - name: Lint
         run: npm run -s lint
 
+      - name: Wiring guard (wired-or-deleted)
+        # Fails if a services/*.js is unreachable from production and not in
+        # config/wiring-allowlist.json (or an allowlist entry has expired).
+        run: npm run -s check:wiring
+
       - name: Test
         run: npm test --silent
 

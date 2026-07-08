@@ -1,0 +1,51 @@
+{
+  "_comment": "Wired-or-deleted allowlist (Remediation PR-13). scripts/check-wired-modules.js enforces it; test/wiredModules.test.js runs it in CI. A services/*.js unreachable from production must be WIRED, DELETED, or listed here. Two categories: `modules` = staged for imminent wiring (each REQUIRES `expires` YYYY-MM-DD + `roadmap`; an expired entry FAILS CI so staging can never be permanent; keep small — target <= 8); `testOnly` = production-unreachable BY DESIGN because it is test/CI tooling (needs `reason`, never expires).",
+  "modules": [
+    {
+      "file": "services/objectiveScorer.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/ACTIVE_ROADMAP.md Session Planning Engine (PR 480) + docs/SESSION_PLANNING_ENGINE.md — pure scorer shipped; live-snapshot wiring deferred."
+    },
+    {
+      "file": "services/objectiveScoring.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/ACTIVE_ROADMAP.md Session Planning Engine (PR 479) + docs/SESSION_PLANNING_ENGINE.md — frozen scoring weights; consumed by objectiveScorer, both await daily-planner wiring."
+    },
+    {
+      "file": "services/sessionCloseout.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/ACTIVE_ROADMAP.md Session Planning Engine (Step 360) — deterministic closeout helper; engine wiring deferred."
+    },
+    {
+      "file": "services/deterministicCoachRenderer.js",
+      "expires": "2026-12-31",
+      "roadmap": "BACKLOG.md 'Deterministic Coach Voice Renderer — APPROVED' epic — slice 1 (pure engine) shipped; wiring is slices 2-4 (coach_unavailable fallback, pre-LLM fast path, voice pass)."
+    },
+    {
+      "file": "services/autoregulationModule.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md Phase 3 PR 15 — e1RM/readiness load prescription; build-ahead that unblocks CIL PR 17/22/23, wired via the orchestrator manifest when promoted."
+    },
+    {
+      "file": "services/starterProgramModule.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md Phase 2 PR 7 — StrongLifts/GZCLP template runner; awaits program-selection wiring."
+    },
+    {
+      "file": "services/intermediateProgramModule.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md Phase 4 PR 17 — 5/3/1 program runner; awaits program-selection wiring."
+    },
+    {
+      "file": "services/populationCapsModule.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md PR 17 + docs/COACHING_ENGINE_ARCHITECTURE.md 'Goal & population policy' layer — pending wiring alongside goalTemplateModule."
+    }
+  ],
+  "testOnly": [
+    {
+      "file": "services/exerciseTruthAudit.js",
+      "reason": "Exercise-truth audit tooling (Remediation PR-05/06). Production-unreachable BY DESIGN — powers the blocking test/exerciseTruthAudit.test.js and is loaded only from that test. Not staged for wiring."
+    }
+  ]
+}
