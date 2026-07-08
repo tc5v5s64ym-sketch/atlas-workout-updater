@@ -17,6 +17,20 @@ import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineC
 import { loadHistory, loadSessions } from './historyView.js';
 import { liftListCache, loadProgressLiftList, openLiftDrillDown, renderTrends } from './progressView.js';
 import { checkConnection, runHealthCheck, setBoxSpan } from './settingsHealth.js';
+// PR-10 — single state store (session/plan slice). These loose top-level `let`s
+// used to live here; ownership moved to store.js so every surface reads one source
+// of truth. Getters return the live reference; setters take the reassignments the
+// old `let`s did. Snapshot persistence is the store's persist()/hydrate() seam.
+import {
+  getActivePlannedSession, setActivePlannedSession,
+  getSessionChromeExpanded, setSessionChromeExpanded,
+  getCoachSuggestionEngaged, setCoachSuggestionEngaged,
+  getPendingSubstitution, setPendingSubstitution,
+  getSessionLog, setSessionLog,
+  getSessionCompleted, setSessionCompleted,
+  getSessionSavedLog, setSessionSavedLog,
+  persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
+} from './store.js';
 
 const ATLAS_SHELL_BUILD = 'v116';
 
@@ -231,12 +245,12 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
     const recommended = ((lastIntentData && lastIntentData.intents) || []).find(i => i.recommended);
     const state = {
       shell: ATLAS_SHELL_BUILD,
-      activePlannedSession: activePlannedSession
-        ? { index: activePlannedSession.index, exercises: liteEx(activePlannedSession.exercises) }
+      activePlannedSession: getActivePlannedSession()
+        ? { index: getActivePlannedSession().index, exercises: liteEx(getActivePlannedSession().exercises) }
         : null,
       suggestedPlan: recommended ? liteEx(recommended.exercises) : null,
       plannedExerciseOrder: plannedExerciseOrder(),
-      sessionCompleted: [...sessionCompleted],
+      sessionCompleted: [...getSessionCompleted()],
       remainingPlannedExercises: remainingPlannedExercises(),
       firstUnloggedPlannedLift: firstUnloggedPlannedLift()
     };
@@ -548,7 +562,7 @@ function buildAtlasBugReportPayload(note, options = {}) {
     composer_text: workoutTextInput?.value || '',
     visible_messages: visibleMessagesForBugReport(),
     active_session_object: typeof getCanonicalSession === 'function' ? getCanonicalSession() : null,
-    active_planned_session: activePlannedSession || null,
+    active_planned_session: getActivePlannedSession() || null,
     pending_exercises: pendingRowsForBugReport(),
     parsed_rows: pendingRowsForBugReport(),
     pending_preview: previewContent ? previewContent.textContent.trim().slice(0, 4000) : '',
@@ -1440,11 +1454,8 @@ function normalizePlanExercise(raw) {
 /* ===== Active planned session (in-memory, Start Session) =====
  * Slice 1: track the recommended workout as a queue with a cursor, show a
  * banner with the current step, and open each item in the logger via startLift.
- * No persistence; logging/preview/save stays exactly as it was. */
-let activePlannedSession = null;
-// Owner directive (2026-07-03): in-workout chrome collapses to the pin row —
-// the plan card (Next exercise / End session) is a tap-to-expand dropdown.
-let sessionChromeExpanded = false;
+ * No persistence; logging/preview/save stays exactly as it was.
+ * PR-10: activePlannedSession / sessionChromeExpanded now live in store.js. */
 
 // Whether the lifter has ENGAGED today's coach suggestion (tapped Coach's Pick),
 // as opposed to merely having the dashboard open. `loadDashboard()` always loads
@@ -1455,20 +1466,19 @@ let sessionChromeExpanded = false;
 // the composer was pre-filled with the next suggested lift. Set true by Coach's
 // Pick (typeSuggestedWorkout), false by Freestyle; an active planned session takes
 // precedence regardless. Defaults false on every load (no persistence).
-let coachSuggestionEngaged = false;
+// PR-10: coachSuggestionEngaged now lives in store.js.
 
 // Step 373b: when the lifter declares a swap for the current step ("Lat bar is
 // taken, I'll do seated rows instead"), we record the prescribed (swapped-out)
 // lift here. The NEXT logged exercise is treated as the substitute and replaces
 // that slot in the live session. Gated on an explicit swap declaration so it
 // never misfires on ordinary added work.
-let pendingSubstitution = null;
+// PR-10: pendingSubstitution now lives in store.js.
 
-// Read-only accessor for coach-conversation.js (coach layer must never mutate
-// the session directly — only app.js advances/ends it via advancePlannedSession
-// and endPlannedSession).
-function getActivePlannedSession() { return activePlannedSession; }
-function getSessionCompleted() { return sessionCompleted; }
+// getActivePlannedSession / getSessionCompleted are imported from store.js and
+// re-exported on window below for coach-conversation.js (the coach layer must
+// never mutate the session directly — only app.js advances/ends it via
+// advancePlannedSession and endPlannedSession).
 
 // The active training intent id (e.g. 'recovery_pump', 'deload_reset'). A started
 // session carries it on activePlannedSession; but an ENGAGED Coach's Pick that the
@@ -1478,8 +1488,8 @@ function getSessionCompleted() { return sessionCompleted; }
 // straight from Coach's Pick lost its intent and got an "add load" nudge
 // (BUG-20260629-204817). Returns null in freestyle / when nothing is engaged.
 function getActiveIntentId() {
-  if (activePlannedSession && activePlannedSession.intentId) return activePlannedSession.intentId;
-  if (coachSuggestionEngaged && lastIntentData) {
+  if (getActivePlannedSession() && getActivePlannedSession().intentId) return getActivePlannedSession().intentId;
+  if (getCoachSuggestionEngaged() && lastIntentData) {
     const rec = ((lastIntentData.intents) || []).find(i => i && i.recommended);
     if (rec && rec.id) return rec.id;
   }
@@ -1498,14 +1508,14 @@ function getCanonicalSession() {
   const AS = (typeof window !== 'undefined' && window.activeSession) || (typeof activeSession !== 'undefined' ? activeSession : null);
   if (!AS) return null;
   const entries = plannedExerciseEntries();
-  if (!entries.length && !(Array.isArray(sessionCompleted) && sessionCompleted.length)) return null;
+  if (!entries.length && !(Array.isArray(getSessionCompleted()) && getSessionCompleted().length)) return null;
   let s = AS.createActiveSession({
     exercises: entries.map(e => ({ name: e.canonical || e.name, liftCode: e.liftCode || '' }))
   });
   // Replay logged completions onto the canonical session. A logged name that
   // matches a planned slot marks it done; one that doesn't is an off-plan insert
   // (Hammer Curls / Knee Raises) so it is represented, not dropped.
-  for (const name of (Array.isArray(sessionCompleted) ? sessionCompleted : [])) {
+  for (const name of (Array.isArray(getSessionCompleted()) ? getSessionCompleted() : [])) {
     const after = AS.markCompleted(s, name);
     s = after !== s ? after : AS.markCompleted(AS.insertExercise(s, { name }), name);
   }
@@ -1531,10 +1541,9 @@ function planExercisesFromCanonical(session) {
 }
 
 // Coach-suggestion engagement flag accessors for the coach layer (coach-conversation.js).
-// markCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
-// eslint-disable-next-line no-unused-vars -- global export consumed by coach-conversation.js; Phase 1 PR-08/09
-function getCoachSuggestionEngaged() { return coachSuggestionEngaged; }
-function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
+// setCoachSuggestionEngaged() fires when the lifter taps Coach's Pick; clear on Freestyle.
+// PR-10: get/setCoachSuggestionEngaged are imported from store.js; setter re-exported
+// on window below for coach-conversation.js.
 
 // Step 373b: replace a prescribed slot in the LIVE planned session with the
 // actually-logged substitute, so the swapped-out lift leaves remaining and the
@@ -1545,9 +1554,9 @@ function setCoachSuggestionEngaged(v) { coachSuggestionEngaged = !!v; }
 // duplicate slot removed), false on any no-op/early-return — so the caller only
 // announces a swap that really happened (PR-570 cosmetic note).
 function applySessionSubstitution(prescribedName, subName, subLiftCode, prescription) {
-  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+  if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return false;
   if (!prescribedName || !subName) return false;
-  const exs = activePlannedSession.exercises;
+  const exs = getActivePlannedSession().exercises;
   const prescKey = String(prescribedName).toLowerCase();
   const subKey = String(subName).toLowerCase();
   if (subKey === prescKey) return false; // nothing to swap
@@ -1567,10 +1576,10 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
     // Cursor must follow the removed slot, clamped so it never points past the
     // end (removing the current+last slot would otherwise crash the banner).
     // keep in sync with clampCursorAfterRemoval in services/sessionPlanExecutor.js
-    let next = activePlannedSession.index;
+    let next = getActivePlannedSession().index;
     if (next > idx) next -= 1;
     if (next >= exs.length) next = Math.max(0, exs.length - 1);
-    activePlannedSession.index = Math.max(0, next);
+    getActivePlannedSession().index = Math.max(0, next);
   } else {
     // AC3: use the prescription from the substitute-check API when available so the
     // replacement slot carries the correct weight/reps/sets instead of null.
@@ -1592,15 +1601,15 @@ function startPlannedSession(intent) {
   const exercises = (intent.exercises || []).map(normalizePlanExercise).filter(ex => ex.name);
   if (!exercises.length) return;
   // Lifecycle symmetry (Step 373b): a new session never inherits a stale swap.
-  pendingSubstitution = null;
-  activePlannedSession = {
+  setPendingSubstitution(null);
+  setActivePlannedSession({
     label: intent.label || 'Recommended session',
     // The plan intent id (e.g. 'deload_reset') rides along so the in-workout
     // reaction can flip on a deload day — see fetchReaction.
     intentId: intent.id || null,
     exercises,
     index: 0
-  };
+  });
   // Hide the home-screen hero so the active-session banner and coach panel
   // are the only things visible. hideHomeEmpty() in coach-conversation.js does
   // the same op but is private to that IIFE.
@@ -1664,16 +1673,16 @@ function resolveCatalogExercise(phrase) {
 // a skipped slot as skipped (vs absent) in the canonical recap is deferred to 2b
 // (see BACKLOG.md).
 function skipPlannedExercise(name) {
-  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+  if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return false;
   const key = String(name || '').toLowerCase();
-  const idx = activePlannedSession.exercises.findIndex(e =>
+  const idx = getActivePlannedSession().exercises.findIndex(e =>
     (e.canonicalName || e.name || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
   if (idx === -1) return false;
-  activePlannedSession.exercises.splice(idx, 1);
-  let next = activePlannedSession.index;
+  getActivePlannedSession().exercises.splice(idx, 1);
+  let next = getActivePlannedSession().index;
   if (next > idx) next -= 1;
-  if (next >= activePlannedSession.exercises.length) next = Math.max(0, activePlannedSession.exercises.length - 1);
-  activePlannedSession.index = Math.max(0, next);
+  if (next >= getActivePlannedSession().exercises.length) next = Math.max(0, getActivePlannedSession().exercises.length - 1);
+  getActivePlannedSession().index = Math.max(0, next);
   renderActiveSessionBanner();
   return true;
 }
@@ -1696,19 +1705,19 @@ function announcePlanMutation(summary, currentName) {
 // (carrying its prescription) so the deterministic swap/skip works in BOTH states.
 // Returns true when an active session exists (or was just materialized).
 function ensureActivePlannedSession() {
-  if (activePlannedSession && Array.isArray(activePlannedSession.exercises) && activePlannedSession.exercises.length) return true;
-  if (!coachSuggestionEngaged || !lastIntentData) return false;
+  if (getActivePlannedSession() && Array.isArray(getActivePlannedSession().exercises) && getActivePlannedSession().exercises.length) return true;
+  if (!getCoachSuggestionEngaged() || !lastIntentData) return false;
   const intents = (lastIntentData && lastIntentData.intents) || [];
   const rec = intents.find(i => i.recommended);
   const exercises = (rec && Array.isArray(rec.exercises) ? rec.exercises : [])
     .map(normalizePlanExercise).filter(ex => ex.name);
   if (!exercises.length) return false;
-  activePlannedSession = {
+  setActivePlannedSession({
     label: (rec && rec.label) || 'Recommended session',
     intentId: (rec && rec.id) || null,
     exercises,
     index: 0
-  };
+  });
   renderActiveSessionBanner();
   return true;
 }
@@ -1730,7 +1739,7 @@ function tryApplyPlanMutation(text) {
   const canon = getCanonicalSession();
   const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
     ? canon.exercises
-    : activePlannedSession.exercises.map(e => ({ name: e.canonicalName || e.name, status: 'pending' }));
+    : getActivePlannedSession().exercises.map(e => ({ name: e.canonicalName || e.name, status: 'pending' }));
   const targetNames = PM.resolvePlanTargets(intent.target, planEntries);
   if (!targetNames.length) return false; // not a (pending) planned lift → let the coach handle it
   const curName = () => {
@@ -1738,7 +1747,7 @@ function tryApplyPlanMutation(text) {
     // new current exercise — the stale cursor may not have advanced yet.
     const unlogged = firstUnloggedPlannedLift();
     if (unlogged) return unlogged;
-    const cur = activePlannedSession.exercises[activePlannedSession.index];
+    const cur = getActivePlannedSession().exercises[getActivePlannedSession().index];
     return cur ? (cur.canonicalName || cur.name) : null;
   };
 
@@ -1856,8 +1865,8 @@ function resolveBufferedLiftName(phrase) {
   const raw = String(phrase == null ? '' : phrase).trim().toLowerCase();
   if (!raw) return null;
   const names = [];
-  for (let i = sessionLog.length - 1; i >= 0; i--) {
-    const n = sessionLog[i].exercise;
+  for (let i = getSessionLog().length - 1; i >= 0; i--) {
+    const n = getSessionLog()[i].exercise;
     if (n && !names.includes(n)) names.push(n);
   }
   const sg = s => { const t = String(s || '').toLowerCase().trim(); return /[^s]s$/.test(t) ? t.slice(0, -1) : t; };
@@ -1878,7 +1887,7 @@ function resolveBufferedLiftName(phrase) {
 
 function tryApplyIdentityCorrection(text) {
   const IC = (typeof window !== 'undefined' && window.identityCorrection) || null;
-  if (!IC || !Array.isArray(sessionLog) || !sessionLog.length) return false; // nothing logged to correct
+  if (!IC || !Array.isArray(getSessionLog()) || !getSessionLog().length) return false; // nothing logged to correct
   const intent = IC.classifyIdentityCorrection(text);
   if (!intent) return false;
   // The lift being corrected: the "X is Y" form names it — resolve X against the
@@ -1889,7 +1898,7 @@ function tryApplyIdentityCorrection(text) {
   // through to the coach untouched.
   const oldName = intent.from
     ? resolveBufferedLiftName(intent.from)
-    : sessionLog[sessionLog.length - 1].exercise;
+    : getSessionLog()[getSessionLog().length - 1].exercise;
   if (!oldName) return false;
   const resolved = resolveCatalogExercise(intent.to);
   // Only relabel to a phrase that resolves to a KNOWN name. Catalog tiers first
@@ -1902,27 +1911,27 @@ function tryApplyIdentityCorrection(text) {
   if (intent.from) {
     // A name correction applies to the WHOLE mis-labeled group, wherever its sets
     // sit in the log — later sets of another lift don't shield it.
-    for (let i = 0; i < sessionLog.length; i++) {
-      if (sessionLog[i].exercise === oldName) sessionLog[i] = { ...sessionLog[i], exercise: newName };
+    for (let i = 0; i < getSessionLog().length; i++) {
+      if (getSessionLog()[i].exercise === oldName) getSessionLog()[i] = { ...getSessionLog()[i], exercise: newName };
     }
   } else {
     // The lift being corrected is the most-recently-logged one — relabel its
     // TRAILING contiguous run of sets (an earlier, separately-logged occurrence is
     // untouched).
-    for (let i = sessionLog.length - 1; i >= 0 && sessionLog[i].exercise === oldName; i--) {
-      sessionLog[i] = { ...sessionLog[i], exercise: newName };
+    for (let i = getSessionLog().length - 1; i >= 0 && getSessionLog()[i].exercise === oldName; i--) {
+      getSessionLog()[i] = { ...getSessionLog()[i], exercise: newName };
     }
   }
   // Reconcile completion identity: drop the old resolved name iff no remaining set
   // still backs it, and ensure the new resolved name is present (in log order).
   const oldResolved = resolveCompletedIdentity(oldName);
   const newResolved = resolveCompletedIdentity(newName);
-  const oldStillBacked = sessionLog.some(s => resolveCompletedIdentity(s.exercise) === oldResolved);
+  const oldStillBacked = getSessionLog().some(s => resolveCompletedIdentity(s.exercise) === oldResolved);
   if (!oldStillBacked) {
-    const idx = sessionCompleted.indexOf(oldResolved);
-    if (idx !== -1) sessionCompleted.splice(idx, 1);
+    const idx = getSessionCompleted().indexOf(oldResolved);
+    if (idx !== -1) getSessionCompleted().splice(idx, 1);
   }
-  if (!sessionCompleted.includes(newResolved)) sessionCompleted.push(newResolved);
+  if (!getSessionCompleted().includes(newResolved)) getSessionCompleted().push(newResolved);
   announceIdentityCorrection(oldName, newName);
   return true;
 }
@@ -1940,18 +1949,18 @@ function renderActiveSessionBanner() {
   const banner = document.getElementById('active-session-banner');
   if (!banner) return;
   banner.innerHTML = '';
-  if (!activePlannedSession) {
+  if (!getActivePlannedSession()) {
     banner.hidden = true;
-    sessionChromeExpanded = false;
+    setSessionChromeExpanded(false);
     document.body.classList.remove('session-active');
     return;
   }
   syncPlannedIndexToCanonical();
-  const { label, exercises, index } = activePlannedSession;
+  const { label, exercises, index } = getActivePlannedSession();
   const current = exercises[index];
   if (!current) {
     banner.hidden = true;
-    sessionChromeExpanded = false;
+    setSessionChromeExpanded(false);
     document.body.classList.remove('session-active');
     return;
   }
@@ -1971,7 +1980,7 @@ function renderActiveSessionBanner() {
   // from the thread — the session pin is the always-visible row, and tapping
   // it expands this card. The glance strip steps aside for the session.
   document.body.classList.add('session-active');
-  banner.hidden = !sessionChromeExpanded;
+  banner.hidden = !getSessionChromeExpanded();
   // Plan engagement/mutation/restore all route through this render — the
   // session pin re-derives from the same canonical state at each of those
   // moments (composer-first Phase A).
@@ -1989,7 +1998,7 @@ function renderActiveSessionBanner() {
 // it never mutates the exercise list. No-op when the activeSession model is
 // unavailable (the banner then falls back to the raw index cursor).
 function syncPlannedIndexToCanonical() {
-  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return;
+  if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return;
   const AS = (typeof window !== 'undefined' && window.activeSession) ||
              (typeof activeSession !== 'undefined' ? activeSession : null);
   if (!AS) return;
@@ -1997,35 +2006,35 @@ function syncPlannedIndexToCanonical() {
   const cur = canon && AS.currentExercise(canon);
   if (!cur) return; // nothing pending (all logged/skipped) — leave the cursor as-is
   const key = String(cur.name || '').toLowerCase();
-  const target = activePlannedSession.exercises.findIndex(
+  const target = getActivePlannedSession().exercises.findIndex(
     e => (e.canonicalName || e.name || '').toLowerCase() === key
   );
-  if (target > activePlannedSession.index) activePlannedSession.index = target;
+  if (target > getActivePlannedSession().index) getActivePlannedSession().index = target;
 }
 
 function advancePlannedSession() {
-  if (!activePlannedSession) return;
-  pendingSubstitution = null;
+  if (!getActivePlannedSession()) return;
+  setPendingSubstitution(null);
   // Advance past the banner's current exercise. Two cases:
   // • Already logged (in sessionCompleted): just increment the cursor so the banner
   //   moves to the next slot. The canonical session already shows the next exercise
   //   because it derives "current" from the first-unlogged entry.
   // • Not logged (user clicked "Next" without logging): treat as skipped (absent) —
   //   splice it so the canonical session stays in sync with the banner position.
-  const bannerCur = activePlannedSession.exercises[activePlannedSession.index];
+  const bannerCur = getActivePlannedSession().exercises[getActivePlannedSession().index];
   if (bannerCur) {
-    const completedSet = new Set((sessionCompleted || []).map(c => String(c).toLowerCase()));
+    const completedSet = new Set((getSessionCompleted() || []).map(c => String(c).toLowerCase()));
     const bannerKey = (bannerCur.canonicalName || bannerCur.name || '').toLowerCase();
     if (bannerKey && !completedSet.has(bannerKey)) {
       if (!skipPlannedExercise(bannerCur.canonicalName || bannerCur.name)) {
-        if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
-        activePlannedSession.index += 1;
+        if (getActivePlannedSession().index >= getActivePlannedSession().exercises.length - 1) { endPlannedSession(); return; }
+        getActivePlannedSession().index += 1;
         renderActiveSessionBanner();
       }
       // skipPlannedExercise already called renderActiveSessionBanner if it spliced.
     } else {
-      if (activePlannedSession.index >= activePlannedSession.exercises.length - 1) { endPlannedSession(); return; }
-      activePlannedSession.index += 1;
+      if (getActivePlannedSession().index >= getActivePlannedSession().exercises.length - 1) { endPlannedSession(); return; }
+      getActivePlannedSession().index += 1;
       renderActiveSessionBanner();
     }
   }
@@ -2040,7 +2049,7 @@ function endPlannedSession() {
   // Step 385: advance the deload machine exactly once per session (not per write).
   // The deloadWritten flag is set in the approve handler on the first confirmed
   // live write; firing here instead of per-write keeps the session-count correct.
-  if (activePlannedSession?.intentId === 'deload_reset' && activePlannedSession?.deloadWritten) {
+  if (getActivePlannedSession()?.intentId === 'deload_reset' && getActivePlannedSession()?.deloadWritten) {
     api('/api/deload/advance', { method: 'POST' })
       .then(r => {
         const state = r?.data?.state;
@@ -2050,8 +2059,8 @@ function endPlannedSession() {
       })
       .catch(() => {});
   }
-  activePlannedSession = null;
-  pendingSubstitution = null;
+  setActivePlannedSession(null);
+  setPendingSubstitution(null);
   renderActiveSessionBanner();
 }
 
@@ -2079,25 +2088,25 @@ function matchesPlanEditName(ex, wanted) {
 }
 
 function clampActivePlanIndex() {
-  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return;
-  if (!activePlannedSession.exercises.length) {
+  if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return;
+  if (!getActivePlannedSession().exercises.length) {
     endPlannedSession();
     return;
   }
-  const max = activePlannedSession.exercises.length - 1;
-  activePlannedSession.index = Math.max(0, Math.min(Number(activePlannedSession.index) || 0, max));
+  const max = getActivePlannedSession().exercises.length - 1;
+  getActivePlannedSession().index = Math.max(0, Math.min(Number(getActivePlannedSession().index) || 0, max));
 }
 
 function ensureChatPlannedSession() {
-  if (activePlannedSession && Array.isArray(activePlannedSession.exercises)) return activePlannedSession;
-  activePlannedSession = {
+  if (getActivePlannedSession() && Array.isArray(getActivePlannedSession().exercises)) return getActivePlannedSession();
+  setActivePlannedSession({
     label: 'Coach plan',
     intentId: null,
     exercises: [],
     index: 0
-  };
-  pendingSubstitution = null;
-  return activePlannedSession;
+  });
+  setPendingSubstitution(null);
+  return getActivePlannedSession();
 }
 
 function applyProposedPlanEdit(edit) {
@@ -2107,14 +2116,14 @@ function applyProposedPlanEdit(edit) {
   if (!exercises.length) return false;
 
   if (action === 'replace_plan') {
-    activePlannedSession = {
+    setActivePlannedSession({
       label: edit.label || 'Coach plan',
       intentId: null,
       exercises,
       index: 0
-    };
-    pendingSubstitution = null;
-    sessionCompleted = [];
+    });
+    setPendingSubstitution(null);
+    setSessionCompleted([]);
     renderActiveSessionBanner();
     return true;
   }
@@ -2138,21 +2147,21 @@ function applyProposedPlanEdit(edit) {
   }
 
   if (action === 'remove_exercises') {
-    if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return false;
+    if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return false;
     const wanted = exercises.map(ex => ex.name).filter(Boolean);
-    const before = activePlannedSession.exercises.length;
-    activePlannedSession.exercises = activePlannedSession.exercises.filter(ex =>
+    const before = getActivePlannedSession().exercises.length;
+    getActivePlannedSession().exercises = getActivePlannedSession().exercises.filter(ex =>
       !wanted.some(name => matchesPlanEditName(ex, name))
     );
-    const removed = activePlannedSession.exercises.length !== before;
+    const removed = getActivePlannedSession().exercises.length !== before;
     if (removed) {
-      sessionCompleted = sessionCompleted.filter(done =>
+      setSessionCompleted(getSessionCompleted().filter(done =>
         !wanted.some(name => {
           const key = String(name || '').toLowerCase();
           const d = String(done || '').toLowerCase();
           return key && (d === key || d.includes(key) || key.includes(d));
         })
-      );
+      ));
       clampActivePlanIndex();
       renderActiveSessionBanner();
     }
@@ -3777,11 +3786,11 @@ function canonicalSessionRecap() {
 // Structured client-side buffer of every set logged this session. The end-of-
 // session save (done / effort / screenshot) is built from THIS — never from a
 // Gemini compile or a re-parse — so it's reliable and identical across triggers.
-let sessionLog = [];
+// PR-10: sessionLog now lives in store.js.
 // Unique exercise names logged this session. Sent in chat context as
 // plan_completed so the server can compute which planned exercises remain.
 // Cleared alongside sessionLog at save and on startOver.
-let sessionCompleted = [];
+// PR-10: sessionCompleted now lives in store.js.
 // DISPLAY-ONLY ledger of exercises already SAVED during this workout. A save
 // concludes the session (sessionLog is cleared, and the next set auto-increments
 // to a new session_id), so without this a later closeout in the same gym session
@@ -3790,7 +3799,7 @@ let sessionCompleted = [];
 // This is NEVER part of any write payload (the write comes from the server-
 // previewed buffer / edit table); it is reset only on a deliberate fresh start
 // (startOver / discard restored), NOT on save.
-let sessionSavedLog = [];
+// PR-10: sessionSavedLog now lives in store.js.
 // A closeout screenshot is optional evidence, not workout text. When the plan is
 // already complete, choosing a file under the composer must not auto-route to
 // /api/complete-workout; "done" still saves the buffered session rows.
@@ -3814,36 +3823,25 @@ let logDateManuallyEntered = false;
  * changes coaching, parsing, or the preview→approve→write trust loop — the snapshot
  * is the SAME data the buffers already hold, written/read defensively. The snapshot
  * is cleared on a successful save and on Start Over. Recency-gated so a stale snapshot
- * (>12h) is ignored rather than resurrecting yesterday's half-session. */
-const SESSION_SNAPSHOT_KEY = 'atlas_session_snapshot_v1';
-const SESSION_SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+ * (>12h) is ignored rather than resurrecting yesterday's half-session.
+ * PR-10: the snapshot's state serialization / parse / validation + localStorage I/O
+ * (incl. the recency gate and the v1→v2 shape bump that carries pendingSubstitution)
+ * moved into store.js behind persistSessionSnapshot()/hydrateSessionSnapshot()/
+ * clearPersistedSnapshot(). app.js keeps only the DOM half: the #log-session-id
+ * field and the resume-notice banner. */
 
 function saveSessionSnapshot() {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    // Nothing in progress → don't keep a stale snapshot around.
-    if (!(Array.isArray(sessionLog) && sessionLog.length) && !activePlannedSession) {
-      localStorage.removeItem(SESSION_SNAPSHOT_KEY);
-      return;
-    }
-    // Persist the stable session_id so a re-preview after restore reuses the SAME id,
-    // allowing the server's row-level dedup to catch duplicate rows even if the
-    // write_id is regenerated (which it always is across page loads).
-    const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
-    const sessionId = sessionIdEl ? sessionIdEl.value.trim() : '';
-    localStorage.setItem(SESSION_SNAPSHOT_KEY, JSON.stringify({
-      v: 1,
-      ts: Date.now(),
-      sessionLog,
-      sessionCompleted,
-      activePlannedSession,
-      ...(sessionId ? { sessionId } : {}),
-    }));
-  } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
+  // The stable session_id (a DOM value) rides along so a re-preview after restore
+  // reuses the SAME id, letting the server's row-level dedup catch duplicate rows
+  // even though the write_id is regenerated across page loads. The store owns the
+  // "nothing in progress → drop the snapshot" guard.
+  const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
+  const sessionId = sessionIdEl ? sessionIdEl.value.trim() : '';
+  persistSessionSnapshot(sessionId);
 }
 
 function clearSessionSnapshot() {
-  try { if (typeof localStorage !== 'undefined') localStorage.removeItem(SESSION_SNAPSHOT_KEY); } catch { /* ignore */ }
+  clearPersistedSnapshot();
   // Also hide the resume notice so it doesn't linger after a save or Start Over.
   try {
     const notice = typeof document !== 'undefined' ? document.getElementById('session-resume-notice') : null;
@@ -3855,9 +3853,9 @@ function clearSessionSnapshot() {
 // endPlannedSession), closeout state, the session_id, and the snapshot — so a fresh
 // workout starts clean. Triggered by the restore banner's swipe-to-trash action.
 function discardRestoredSession() {
-  sessionLog = [];
-  sessionCompleted = [];
-  sessionSavedLog = [];     // discarding the restored workout also clears its saved recap
+  setSessionLog([]);
+  setSessionCompleted([]);
+  setSessionSavedLog([]);     // discarding the restored workout also clears its saved recap
   endPlannedSession();
   closeoutScreenshotFile = null;
   closeoutScreenshotEffort = null;
@@ -3872,7 +3870,7 @@ function discardRestoredSession() {
 // rows from the buffer and reveal them, so the restored sets are visible and saveable
 // (the session stays buffered — this only un-hides what was silently restored).
 function restoreSessionToView() {
-  if (!Array.isArray(sessionLog) || !sessionLog.length) return;
+  if (!Array.isArray(getSessionLog()) || !getSessionLog().length) return;
   populateSetRows(buildRowsFromSessionLog());
   if (parsedRowsEditor) {
     parsedRowsEditor.hidden = false;
@@ -3957,39 +3955,24 @@ function renderResumeNotice(setCount, sets) {
 // is ignored (and cleared), never partially applied. Returns true when a session was
 // resumed (caller re-renders the banner). Read-only restore — no network, no writes.
 function restoreSessionSnapshot() {
-  try {
-    if (typeof localStorage === 'undefined') return false;
-    const raw = localStorage.getItem(SESSION_SNAPSHOT_KEY);
-    if (!raw) return false;
-    const snap = JSON.parse(raw);
-    if (!snap || snap.v !== 1 || typeof snap.ts !== 'number' || (Date.now() - snap.ts) > SESSION_SNAPSHOT_MAX_AGE_MS) {
-      clearSessionSnapshot();
-      return false;
-    }
-    if (!Array.isArray(snap.sessionLog) || !Array.isArray(snap.sessionCompleted)) { clearSessionSnapshot(); return false; }
-    // Only resume when there is genuinely LOGGED work to protect. A snapshot that
-    // carries ONLY an engaged plan (no logged sets) must NOT silently reactivate
-    // guided mode on the next app open — that hijacks a fresh freestyle log with a
-    // phantom "1 of N / next up" from a plan the lifter never re-engaged, and with
-    // zero logged sets renderResumeNotice stays hidden, so the resume is invisible
-    // (owner live find 2026-07-03). The snapshot exists to protect unsaved SETS; an
-    // empty plan has no work to lose and is one tap from re-opening. This also keeps
-    // freestyle logging clean after any app reopen (the "freestyle must not
-    // auto-guide" principle). Sessions WITH logged sets resume exactly as before.
-    if (!snap.sessionLog.length) { clearSessionSnapshot(); return false; }
-    sessionLog = snap.sessionLog;
-    sessionCompleted = snap.sessionCompleted;
-    activePlannedSession = (snap.activePlannedSession && Array.isArray(snap.activePlannedSession.exercises))
-      ? snap.activePlannedSession : null;
-    // Restore the stable session_id so re-preview after resume uses the same id.
-    if (snap.sessionId) {
-      const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
-      if (sessionIdEl) sessionIdEl.value = snap.sessionId;
-    }
-    renderResumeNotice(sessionLog.length, sessionLog);
-    if (activePlannedSession) { coachSuggestionEngaged = true; renderActiveSessionBanner(); }
-    return true;
-  } catch { clearSessionSnapshot(); return false; }
+  // The store reads + validates the snapshot (recency gate, malformed guard, and the
+  // "only resume genuinely-LOGGED work" rule — a snapshot carrying ONLY an engaged
+  // plan with no logged sets must NOT silently reactivate guided mode on the next app
+  // open; that hijacks a fresh freestyle log with a phantom "1 of N / next up" from a
+  // plan the lifter never re-engaged, owner live find 2026-07-03) and applies it to
+  // the slice. It ALSO restores pendingSubstitution now (SESS-2). app.js does only the
+  // DOM half: the session_id field, the resume notice, and re-arming guided mode.
+  const res = hydrateSessionSnapshot();
+  if (!res.resumed) return false;
+  // Restore the stable session_id so re-preview after resume uses the same id.
+  if (res.sessionId) {
+    const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
+    if (sessionIdEl) sessionIdEl.value = res.sessionId;
+  }
+  const log = getSessionLog();
+  renderResumeNotice(log.length, log);
+  if (getActivePlannedSession()) { setCoachSuggestionEngaged(true); renderActiveSessionBanner(); }
+  return true;
 }
 
 // Warn before a refresh/close ONLY when there are logged sets not yet saved — so an
@@ -3997,7 +3980,7 @@ function restoreSessionSnapshot() {
 // warning when nothing is logged (a fresh app or a just-saved session). Standard
 // beforeunload contract: setting returnValue triggers the browser's native prompt.
 function hasUnsavedSessionState() {
-  return Array.isArray(sessionLog) && sessionLog.length > 0;
+  return Array.isArray(getSessionLog()) && getSessionLog().length > 0;
 }
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', e => {
@@ -4017,8 +4000,8 @@ if (typeof window !== 'undefined') {
 // handoff, composer, set-effort reroute) resolves a logged lift to the SAME
 // planned name — whether or not the lifter tapped "Start Session".
 function plannedExerciseEntries() {
-  if (activePlannedSession && activePlannedSession.exercises.length) {
-    return activePlannedSession.exercises.map(ex => ({
+  if (getActivePlannedSession() && getActivePlannedSession().exercises.length) {
+    return getActivePlannedSession().exercises.map(ex => ({
       name: ex.canonicalName || ex.name,
       canonical: ex.canonicalName || ex.name,
       liftCode: ex.liftCode || ''
@@ -4029,7 +4012,7 @@ function plannedExerciseEntries() {
   // this gate, a cold direct-composer log (no session started, no pick tapped) was
   // narrated as if mid-plan — "Moving on — next up: <suggested lift>" + composer
   // pre-fill + a phantom next_move_advisory. Freestyle / ad-hoc logging stays clean.
-  if (!coachSuggestionEngaged) return [];
+  if (!getCoachSuggestionEngaged()) return [];
   const intents = (lastIntentData && lastIntentData.intents) || [];
   const recommended = intents.find(i => i.recommended);
   const exs = recommended && Array.isArray(recommended.exercises) ? recommended.exercises : [];
@@ -4053,7 +4036,7 @@ function plannedExerciseOrder() {
 // ("Dips (Weighted)" / "Lat pull") is matched to its planned name
 // ("Weighted Dip" / "Lat Pulldown") and correctly excluded.
 function remainingPlannedExercises() {
-  const completed = new Set(sessionCompleted.map(c => String(c).toLowerCase()));
+  const completed = new Set(getSessionCompleted().map(c => String(c).toLowerCase()));
   return plannedExerciseOrder().filter(name => {
     const n = String(name || '').toLowerCase();
     return n && !completed.has(n);
@@ -4061,7 +4044,7 @@ function remainingPlannedExercises() {
 }
 
 function isPlanCloseoutAwaitingSave() {
-  return sessionLog.length > 0 &&
+  return getSessionLog().length > 0 &&
     plannedExerciseOrder().length > 0 &&
     remainingPlannedExercises().length === 0;
 }
@@ -4169,14 +4152,14 @@ function firstUnloggedPlannedLift() {
 function renderSessionPin() {
   const pin = document.getElementById('session-pin');
   if (!pin) return;
-  const setsDone = sessionLog.length;
+  const setsDone = getSessionLog().length;
   const planned = plannedExerciseOrder();
   const guided = planned.length > 0;
   if (!setsDone && !guided) { pin.hidden = true; pin.textContent = ''; return; }
   const remaining = guided ? remainingPlannedExercises() : [];
   const current = guided
     ? (remaining[0] || planned[planned.length - 1])
-    : (setsDone ? sessionLog[sessionLog.length - 1].exercise : null);
+    : (setsDone ? getSessionLog()[getSessionLog().length - 1].exercise : null);
   const next = guided && remaining.length > 1 ? remaining[1] : null;
   pin.textContent = '';
   if (current) pin.appendChild(el('span', { class: 'pin-lift', text: String(current) }));
@@ -4184,19 +4167,19 @@ function renderSessionPin() {
   if (next) pin.appendChild(el('span', { class: 'pin-next', text: `next: ${next}` }));
   // The pin is the tap target for the collapsed plan card (dropdown) whenever a
   // live session exists. Wired once — the element persists across re-renders.
-  const expandable = Boolean(activePlannedSession);
+  const expandable = Boolean(getActivePlannedSession());
   if (expandable) {
-    pin.appendChild(el('span', { class: 'pin-chevron', text: sessionChromeExpanded ? '\u25B4' : '\u25BE' }));
+    pin.appendChild(el('span', { class: 'pin-chevron', text: getSessionChromeExpanded() ? '\u25B4' : '\u25BE' }));
     pin.setAttribute('role', 'button');
     pin.tabIndex = 0;
-    pin.setAttribute('aria-expanded', String(sessionChromeExpanded));
+    pin.setAttribute('aria-expanded', String(getSessionChromeExpanded()));
     pin.setAttribute('aria-controls', 'active-session-banner');
     pin.title = 'Session controls';
     if (!pin.dataset.chromeWired) {
       pin.dataset.chromeWired = '1';
       const toggle = () => {
-        if (!activePlannedSession) return;
-        sessionChromeExpanded = !sessionChromeExpanded;
+        if (!getActivePlannedSession()) return;
+        setSessionChromeExpanded(!getSessionChromeExpanded());
         renderActiveSessionBanner();
       };
       pin.addEventListener('click', toggle);
@@ -4217,13 +4200,13 @@ function renderSessionPin() {
 // payload. Falls back to the index-based entry when activeSession is unavailable.
 // (P0 PR 2 — docs/ACTIVE_SESSION_STATE_DIAGNOSIS.md)
 function currentPlannedExercise() {
-  if (!activePlannedSession || !Array.isArray(activePlannedSession.exercises)) return null;
+  if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return null;
   const AS = (typeof window !== 'undefined' && window.activeSession) ||
              (typeof activeSession !== 'undefined' ? activeSession : null);
   if (!AS) {
     // activeSession module unavailable — fall back to index-based entry so
     // advancePlannedSession() doesn't silently end the session.
-    return activePlannedSession.exercises[activePlannedSession.index] || null;
+    return getActivePlannedSession().exercises[getActivePlannedSession().index] || null;
   }
   const canon = getCanonicalSession();
   const cur = canon && AS.currentExercise(canon);
@@ -4237,8 +4220,8 @@ function currentPlannedExercise() {
   // peek at the next unswapped remaining exercise instead, so substitute checks and the
   // plan payload always send the actual next-up lift, not the declared-taken one.
   let name = cur.name;
-  if (pendingSubstitution) {
-    const prescKey = (pendingSubstitution.prescribed || '').toLowerCase();
+  if (getPendingSubstitution()) {
+    const prescKey = (getPendingSubstitution().prescribed || '').toLowerCase();
     if (prescKey && name.toLowerCase() === prescKey) {
       const nextName = remainingPlannedExercises().find(n => n.toLowerCase() !== prescKey);
       if (!nextName) return null;
@@ -4247,7 +4230,7 @@ function currentPlannedExercise() {
   }
 
   const key = name.toLowerCase();
-  return activePlannedSession.exercises.find(
+  return getActivePlannedSession().exercises.find(
     ex => (ex.canonicalName || ex.name || '').toLowerCase() === key
   ) || { name, liftCode: cur.liftCode || '', canonicalName: name };
 }
@@ -4255,7 +4238,7 @@ function currentPlannedExercise() {
 // Editor-ready rows from the buffer, numbering sets per exercise.
 function buildRowsFromSessionLog() {
   const counts = new Map();
-  return sessionLog.map(s => {
+  return getSessionLog().map(s => {
     const n = (counts.get(s.exercise) || 0) + 1;
     counts.set(s.exercise, n);
     return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '' };
@@ -4283,7 +4266,7 @@ function orderedUniqueExercises(rows) {
 // exercises. Returns null when nothing was saved yet this workout. DISPLAY ONLY —
 // these names never enter a write payload; the write is the previewed buffer.
 function renderSavedThisSessionRecap() {
-  const names = orderedUniqueExercises(sessionSavedLog);
+  const names = orderedUniqueExercises(getSessionSavedLog());
   if (!names.length) return null;
   return el('div', { class: 'saved-this-session muted small' }, [
     el('span', { text: `Already saved this session: ${names.join(', ')} ✓` })
@@ -4368,11 +4351,11 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   // exercise is the substitute — apply it to the live session BEFORE resolving
   // completed identities, so the substitute (not the swapped-out lift) is what
   // gets marked done and what leaves remaining.
-  if (pendingSubstitution && activePlannedSession && Array.isArray(logObjs) && logObjs.length && logObjs[0].exercise) {
+  if (getPendingSubstitution() && getActivePlannedSession() && Array.isArray(logObjs) && logObjs.length && logObjs[0].exercise) {
     const primaryRaw = logObjs[0].exercise;
     const enr = enrichMap.get(primaryRaw) || {};
-    applySessionSubstitution(pendingSubstitution.prescribed, enr.canonical_exercise || primaryRaw, enr.lift_code || '', pendingSubstitution.prescription || null);
-    pendingSubstitution = null;
+    applySessionSubstitution(getPendingSubstitution().prescribed, enr.canonical_exercise || primaryRaw, enr.lift_code || '', getPendingSubstitution().prescription || null);
+    setPendingSubstitution(null);
   }
   for (const o of (logObjs || [])) {
     if (!o.exercise) continue;
@@ -4383,12 +4366,12 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
       rir: (o.rir === '' || o.rir == null) ? null : Number(o.rir)
     });
     // Accumulate the raw set into the session buffer for the end-of-session save.
-    sessionLog.push({ exercise: o.exercise, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
+    getSessionLog().push({ exercise: o.exercise, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
     // Track the best available planned identity for plan_completed wiring so the
     // server's name-based computePlanState can mark the exercise as done even
     // when the logged canonical name differs from the plan entry name.
     const completedName = resolveCompletedIdentity(o.exercise, enrichMap.get(o.exercise));
-    if (!sessionCompleted.includes(completedName)) sessionCompleted.push(completedName);
+    if (!getSessionCompleted().includes(completedName)) getSessionCompleted().push(completedName);
   }
   if (byExercise.length) {
     try {
@@ -4418,7 +4401,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
           // The completed-lift names this session, so the handoff's /api/plan/today
           // fallback can reject a next-up that's already done (its order can diverge
           // from what was actually logged — the source of the resurrected lift).
-          completed: [...sessionCompleted],
+          completed: [...getSessionCompleted()],
           // The engaged plan's exercise order (active session OR engaged Coach's Pick;
           // empty when freestyling). The handoff uses it to reject a fallback next-up
           // that isn't part of today's session — so the /api/plan/today lookup can't
@@ -4487,7 +4470,7 @@ async function fetchReaction(liftCode, justLoggedSet) {
 // — the coach is suppressed only when a card was actually rendered, so an
 // exercise not in the ~14-entry catalog still gets a coach reply.
 async function checkAndSuggestSubstitute(text) {
-  if (!text || !activePlannedSession || !activePlannedSession.exercises.length) return false;
+  if (!text || !getActivePlannedSession() || !getActivePlannedSession().exercises.length) return false;
   // Use canonical session to find the current exercise — exercises[index] lags after
   // a logged set until "Next exercise →" is clicked, causing stale substitute checks.
   const currentEx = currentPlannedExercise();
@@ -4505,8 +4488,8 @@ async function checkAndSuggestSubstitute(text) {
       // slot in the live session (applied in emitSetLogged).
       // AC3: also store the prescription (weight/reps/sets) from the API response so
       // applySessionSubstitution can populate the replacement slot instead of null.
-      pendingSubstitution = { prescribed: currentEx.canonicalName || currentEx.name,
-        prescription: rec.next_target || null };
+      setPendingSubstitution({ prescribed: currentEx.canonicalName || currentEx.name,
+        prescription: rec.next_target || null });
       // Step 379: advance the authoritative session cursor past the taken/swapped
       // exercise. Otherwise the cursor stays on the lift the lifter just moved off,
       // and a subsequent conversational message would send that stale name as
@@ -4516,8 +4499,8 @@ async function checkAndSuggestSubstitute(text) {
       // NOT call advancePlannedSession(): that clears pendingSubstitution and
       // restarts the logger input mid-conversation. Clamp so we never overrun the
       // plan (no premature session-end on the last slot).
-      if (activePlannedSession.index < activePlannedSession.exercises.length - 1) {
-        activePlannedSession.index += 1;
+      if (getActivePlannedSession().index < getActivePlannedSession().exercises.length - 1) {
+        getActivePlannedSession().index += 1;
         renderActiveSessionBanner();
       }
       document.dispatchEvent(new CustomEvent('atlas:substitute-suggested', {
@@ -4738,9 +4721,9 @@ document.getElementById('logger-form').addEventListener('input', invalidatePrevi
 function startOverWorkout() {
   workoutTextInput.value = '';
   lastParsedWorkoutText = '';
-  sessionLog = [];
-  sessionCompleted = [];
-  sessionSavedLog = [];     // deliberate fresh start — forget this workout's saved recap
+  setSessionLog([]);
+  setSessionCompleted([]);
+  setSessionSavedLog([]);     // deliberate fresh start — forget this workout's saved recap
   clearSessionSnapshot();   // a deliberate reset must not resume the old session
   document.dispatchEvent(new CustomEvent('atlas:session-reset'));
   closeoutScreenshotFile = null;
@@ -4786,7 +4769,7 @@ async function runCloseout() {
   // buffer (sessionLog) — the same source getCanonicalSession() derives from. No
   // Gemini, no re-parse. This is what the visible logged cards were rendered from,
   // so if cards exist, this finds them.
-  if (sessionLog.length) {
+  if (getSessionLog().length) {
     // Only repopulate from the buffer if the table is empty. If the user already
     // ran closeout and then edited or deleted rows (e.g. to fix a bad-RIR row),
     // preserve their edits — don't overwrite with the original bad rows again.
@@ -5049,8 +5032,8 @@ function currentPreviewRowsForChat() {
 // name-based computePlanState reconciles completed↔remaining instead of drifting.
 // Only when no session is active do we fall back to the cached recommendation.
 function currentPlanForChat() {
-  if (activePlannedSession && Array.isArray(activePlannedSession.exercises) && activePlannedSession.exercises.length) {
-    return activePlannedSession.exercises.slice(0, 10).map(ex => ({
+  if (getActivePlannedSession() && Array.isArray(getActivePlannedSession().exercises) && getActivePlannedSession().exercises.length) {
+    return getActivePlannedSession().exercises.slice(0, 10).map(ex => ({
       name: ex.canonicalName || ex.name || null,
       rationale: ex.reason || null,
       weight: ex.weight ?? null,
@@ -5088,7 +5071,7 @@ function routeMessageToCoach(text) {
   // still empty ([]). Gating only on activePlannedSession left chat-rendered plans
   // without plan_state, so later composer edits were based on a non-authoritative
   // transcript instead of the same plan state debug/composer use.
-  if (plannedExerciseOrder().length > 0) context.plan_completed = [...sessionCompleted];
+  if (plannedExerciseOrder().length > 0) context.plan_completed = [...getSessionCompleted()];
   // Defer one tick so chat.js's submit listener paints the user bubble first —
   // without this, the Atlas "Thinking…" bubble appends before the user bubble.
   setTimeout(() => {
@@ -5366,7 +5349,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // set went to the buffer), rebuild the FULL session so one preview covers both
   // the workout rows AND the effort data. Prefer the structured buffer; fall back
   // to the conversational compile only when the buffer is empty.
-  if (!logRows.length && (file || manualEffort) && sessionLog.length) {
+  if (!logRows.length && (file || manualEffort) && getSessionLog().length) {
     const compileDate = mode === 'screenshot' ? '' : (date || getLocalDateString());
     const compileSessionId = mode === 'screenshot' ? '' : (sessionId || generateSessionId(date || getLocalDateString()));
     populateSetRows(buildRowsFromSessionLog());
@@ -5435,7 +5418,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     let midSessionSubstitutions = [];
     let midSessionEnrichment = null;
     const hasPrescribed = Array.isArray(lastPrescribed) && lastPrescribed.length > 0;
-    const hasPlan = activePlannedSession && activePlannedSession.exercises.length > 0;
+    const hasPlan = getActivePlannedSession() && getActivePlannedSession().exercises.length > 0;
     if (hasPrescribed || hasPlan) {
       try {
         const loggedExercise = logRows[0] ? logRows[0].exercise || '' : '';
@@ -5565,7 +5548,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         const loggedExercise = logRows[0].exercise || '';
         payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
       }
-      if (activePlannedSession && activePlannedSession.exercises.length > 0) {
+      if (getActivePlannedSession() && getActivePlannedSession().exercises.length > 0) {
         // B2: derive the closeout plan_exercises from the canonical active session
         // (the same model the card / coach / preview / mid-session sub-payload read),
         // not the raw activePlannedSession holder — so the save payload can never
@@ -5577,7 +5560,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         const canonicalPlan = canon ? planExercisesFromCanonical(canon) : [];
         payload.plan_exercises = canonicalPlan.length
           ? canonicalPlan
-          : activePlannedSession.exercises.map(ex => ({
+          : getActivePlannedSession().exercises.map(ex => ({
               name: ex.name,
               ...(ex.liftCode ? { lift_code: ex.liftCode } : {})
             }));
@@ -6120,8 +6103,8 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
       // Step 385: mark that this deload session had a confirmed live write so
       // endPlannedSession knows to advance the state machine exactly once.
-      if (activePlannedSession?.intentId === 'deload_reset' && !duplicateBlocked) {
-        activePlannedSession.deloadWritten = true;
+      if (getActivePlannedSession()?.intentId === 'deload_reset' && !duplicateBlocked) {
+        getActivePlannedSession().deloadWritten = true;
       }
     }
     invalidatePreview();
@@ -6153,15 +6136,15 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // new session_id, so without this ledger the earlier work looked "missing."
     // Gated on a real log write (pendingLastWrite); effort-only / screenshot saves
     // append no Log_Cleaned rows and are skipped. Never re-written.
-    if (pendingLastWrite && Array.isArray(sessionLog) && sessionLog.length) {
-      for (const s of sessionLog) sessionSavedLog.push({ exercise: s.exercise });
+    if (pendingLastWrite && Array.isArray(getSessionLog()) && getSessionLog().length) {
+      for (const s of getSessionLog()) getSessionSavedLog().push({ exercise: s.exercise });
     }
     // RC4: reset the session on ANY confirmed save — NOT gated on pendingLastWrite (undo
     // state, null for screenshot/effort-only saves). Gating it left a saved session in
     // memory that re-snapshotted and restored as a ghost. endPlannedSession() (not a bare
     // null) keeps Step 385's deload teardown firing before the plan is cleared.
-    sessionLog = [];
-    sessionCompleted = [];
+    setSessionLog([]);
+    setSessionCompleted([]);
     endPlannedSession();
     closeoutScreenshotFile = null;
     closeoutScreenshotEffort = null;
