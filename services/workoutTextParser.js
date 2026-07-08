@@ -8,55 +8,23 @@ const NUMBER_WORDS = {
   five: 5,
 };
 
-const EXERCISE_ALIASES = [
-  ['Incline DB Press', ['incline dumbbell press', 'incline db press', 'incline db bench', 'dumbbell incline press']],
-  ['Incline Bench Press', ['incline bench press', 'incline barbell bench', 'incline bench', 'ibp']],
-  ['Decline Bench Press', ['decline bench press', 'decline barbell bench', 'decline bench']],
-  ['Bench Press', ['bench press', 'barbell bench', 'flat bench', 'bb bench', 'bench', 'bp']],
-  ['Back Squat', ['back squat', 'bb squat', 'squats', 'squat', 'bs']],
-  ['Deadlift', ['deadlift', 'dead', 'dl']],
-  ['RDL', ['romanian deadlifts', 'romanian deadlift', 'romanian dls', 'romanian dl', 'rdls', 'rdl']],
-  ['Overhead Press', ['overhead press', 'over head press', 'military press', 'standing press', 'strict press', 'overhead', 'ohp']],
-  ['Lat Pulldown', ['lat pulldown', 'lat pull down', 'pulldown', 'cable pulldown']],
-  ['Seated Row', ['seated row', 'seated rows', 'cable row', 'cable rows', 'machine row', 'machine rows']],
-  ['Bent-Over Row', ['bent-over row', 'bent over row', 'bent row', 'reverse-grip row', 'reverse row', 'bor']],
-  ['Hammer Curl', ['hammer curls', 'hammer curl', 'hammers', 'hammer']],
-  // Explicit bicep forms only — bare "curl"/"curls" is intentionally NOT aliased so
-  // unknown "X curl" lifts (Zercher Curl, Jefferson Curl) are preserved by name. The
-  // length-sort lets "hammer curls"/"leg curls" still win over these where they overlap.
-  ['Bicep Curl', ['bicep curls', 'biceps curls', 'bicep curl', 'biceps curl']],
-  ['Face Pull', ['face pulls', 'face pull']],
-  // findExerciseInText sorts aliases by key length descending, so "single-leg leg curl" (19 chars)
-  // wins over "leg curl" (8 chars) regardless of array order here.
-  ['Single-Leg Leg Curl', ['single-leg leg curl', 'single leg leg curl', 'sl leg curl']],
-  ['Leg Curl', ['hamstring curl', 'leg curls', 'ham curls', 'leg curl']],
-  ['Leg Extension', ['leg extension', 'leg extensions', 'leg ext', 'knee extension']],
-  ['Shrug', ['shrugs', 'shrug', 'db shrugs', 'dumbbell shrugs', 'barbell shrugs']],
-  ['Single-Leg Seated Leg Press', ['seated single leg press', 'single-leg press', 'single leg press', 'slp']],
-  ['Leg Press', ['leg press', 'machine leg press']],
-  ['Pull-Up', ['pull-up', 'pull up', 'pullup', 'pullups', 'pull-ups']],
-  ['Chin-Up', ['chin-up', 'chin up', 'chinup', 'chinups', 'chin-ups']],
-  ['Hip Thrust', ['hip thrust', 'hip thrusts', 'barbell hip thrust']],
-  ['Hanging Knee Raises', ['hanging knee raises', 'captains chair', 'captain chair', 'knee raises', 'kr']],
-  ['Lateral Raises', ['lateral raises', 'lateral raise', 'side raises', 'laterals', 'lateral']],
-  ['Dips (Weighted)', ['weighted dips', 'dips', 'dip', 'wd']],
-  ['Push-Up', ['push-up', 'push up', 'pushups', 'push ups', 'push-ups', 'pushup']],
-  ['Cable Tricep Pushdown', ['cable tricep pushdown', 'cable tricep pushdowns', 'tricep pushdown', 'tricep pushdowns', 'tricep pulldown', 'tricep pulldowns', 'tricep pull', 'tricep pulls', 'cable triceps', 'cable tricep']],
-];
-
-const AMBIGUOUS_ALIASES = {
-  press: 'Which press - OHP, bench, or incline?',
-  row: 'Which row - seated, bent-over, cable, or machine?',
-  rows: 'Which row - seated, bent-over, cable, or machine?',
-};
-
-// Contextual aliases only resolve when the exercise's strong alias is already
-// present in the same parsed input. They cannot start a new exercise on their
-// own. Longer aliases are listed first so stripping is applied longest-match-first.
-const CONTEXTUAL_ALIASES = {
-  'Lat Pulldown':    ['lat pull', 'lats'],
-  'Incline DB Press': ['incline press', 'incline'],
-};
+// Exercise-alias resolution tables are DATA, sourced from data/parser_aliases.v1.json
+// (Remediation PR-14 — single source for the parser's aliases). ORDER IS LOAD-BEARING
+// and preserved by that file; byte-identical migration is guarded by
+// test/parserAliasParity.test.js. Key ordering rules the consumers depend on:
+//   • EXERCISE_ALIASES is matched longest-normalized-key-first (findExerciseInText
+//     sorts by key length desc), with insertion-order tie-break for equal-length keys
+//     (e.g. "single-leg leg curl" wins over "leg curl"; bare "curl" is intentionally
+//     NOT aliased so unknown "X curl" lifts keep their typed name).
+//   • CONTEXTUAL_ALIASES resolves longest-first BY LIST ORDER (no runtime sort) and
+//     only when its anchor exercise is already active — it can never start a lift.
+// The parser's canonical names are history-critical and intentionally differ from the
+// catalog's for grandfathered residuals (docs/verification/EXERCISE_TRUTH_ALLOWLIST.json);
+// cross-source consistency is audited by test/exerciseTruthAudit.test.js.
+const PARSER_ALIASES = require('../data/parser_aliases.v1.json');
+const EXERCISE_ALIASES = PARSER_ALIASES.exercise_aliases;
+const AMBIGUOUS_ALIASES = PARSER_ALIASES.ambiguous_aliases;
+const CONTEXTUAL_ALIASES = PARSER_ALIASES.contextual_aliases;
 
 function normalizeParserText(value) {
   return String(value || '')
@@ -1480,7 +1448,9 @@ module.exports = {
   splitMultiExerciseSegments,
   looksLikeCorrection,
   looksLikeLogIt,
-  // Exported for exerciseTruthAudit.js (report-only; not imported by production paths)
+  // Sourced from data/parser_aliases.v1.json (PR-14). Exported for
+  // exerciseTruthAudit.js (report-only; not imported by production paths) and the
+  // parser-alias parity guard (test/parserAliasParity.test.js).
   EXERCISE_ALIASES,
   CONTEXTUAL_ALIASES,
   AMBIGUOUS_ALIASES,
