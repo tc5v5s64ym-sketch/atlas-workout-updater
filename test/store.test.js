@@ -48,8 +48,6 @@ test('initial state: everything empty / null', () => {
 test('getters return the LIVE reference (in-place push/splice is visible)', () => {
   store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
   assert.equal(store.getSessionLog().length, 1);
-  assert.equal(store.getSessionSetCount(), 1);
-  assert.equal(store.hasUnsavedSets.value, true);
 
   const plan = { label: 'x', exercises: [{ name: 'Bench Press' }, { name: 'Row' }], index: 0 };
   store.setActivePlannedSession(plan);
@@ -57,7 +55,6 @@ test('getters return the LIVE reference (in-place push/splice is visible)', () =
   assert.equal(store.getActivePlannedSession().index, 1);
   store.getActivePlannedSession().exercises.splice(0, 1);
   assert.equal(store.getActivePlannedSession().exercises.length, 1);
-  assert.equal(store.hasActivePlan.value, true);
 });
 
 test('setters coerce: booleans, null-normalized objects, array-guarded arrays', () => {

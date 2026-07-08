@@ -20,7 +20,7 @@
 // intentional and behavior-identical; the actions cover the reassignments the old
 // `let`s took (`x = []`, `x = {…}`, `x = null`).
 
-import { signal, computed } from './signals-core.js';
+import { signal } from './signals-core.js';
 
 // ── session/plan slice (private signals — never exported directly) ──────────────
 const _activePlannedSession = signal(null);
@@ -49,17 +49,18 @@ export function setSessionLog(v) { _sessionLog.value = Array.isArray(v) ? v : []
 export function setSessionCompleted(v) { _sessionCompleted.value = Array.isArray(v) ? v : []; }
 export function setSessionSavedLog(v) { _sessionSavedLog.value = Array.isArray(v) ? v : []; }
 
-// ── pure derived values over the slice ──────────────────────────────────────────
-// Only the DOM/module-free derivations live here; plan-order selectors
-// (remainingPlannedExercises etc.) stay in app.js because they read the catalog
-// datalist and the activeSession model. `hasUnsavedSets` is the beforeunload guard.
-export const hasUnsavedSets = computed(() => _sessionLog.value.length > 0);
-export const hasActivePlan = computed(() => !!_activePlannedSession.value);
-export function getSessionSetCount() { return _sessionLog.value.length; }
+// Derived values: none live here yet. The derivations callers actually need
+// (remainingPlannedExercises / plannedExerciseOrder / firstUnloggedPlannedLift)
+// read the catalog datalist and the activeSession model, so they stay in app.js.
+// A `computed` over the session BUFFERS would also be a trap: `sessionLog` /
+// `sessionCompleted` are mutated IN PLACE via the live getter (`.push`), which does
+// not bump the signal, so such a computed would go stale. Buffer-derived reads are
+// therefore plain functions off the getters (e.g. app.js's hasUnsavedSessionState).
 
-// ── non-reactive snapshot for callers that must not mutate (getState pattern) ────
-// A structuredClone-style copy of the whole slice; used by tests and any caller
-// that wants a frozen read. Mutations must still go through the actions above.
+// ── whole-slice snapshot (getState pattern) ─────────────────────────────────────
+// Returns the LIVE signal references (not a copy) — the store deliberately hands out
+// live buffers so app.js can keep its in-place mutation. Read them freely; mutations
+// must still go through the actions above, never by writing a field of this object.
 export function getState() {
   return {
     activePlannedSession: _activePlannedSession.value,
