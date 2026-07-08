@@ -12,15 +12,15 @@ write-path:
 approval-path:
   - changed-files:
       - any-glob-to-any-file:
-          - 'public/app.js'
+          - 'src/app/app.js'
 
 coach-behavior:
   - changed-files:
       - any-glob-to-any-file:
           - 'services/coach.js'
           - 'services/vision.js'
-          - 'public/coach-conversation.js'
-          - 'public/chat.js'
+          - 'src/app/coach-conversation.js'
+          - 'src/app/chat.js'
 
 parser-behavior:
   - changed-files:
@@ -31,7 +31,7 @@ trust-sensitive:
   - changed-files:
       - any-glob-to-any-file:
           - 'index.js'
-          - 'public/app.js'
+          - 'src/app/app.js'
           - 'services/sheets.js'
           - 'docs/INVARIANTS.md'
           - 'docs/CONSTITUTION.md'

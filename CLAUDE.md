@@ -95,7 +95,7 @@ Before implementing any roadmap, backlog, or GitHub issue fix, perform the `Curr
 ## Scope discipline for agents
 A task prompt names the file(s) you should work in. If a fix needs a small edit to an ordinary file outside that list — e.g. wiring a new helper into its one call site — you may make it without asking.
 
-The high-risk files — index.js (log/write path, test_mode + proof fields, row enrichment & append), public/app.js (the preview→approve→write trust loop), services/workoutTextParser.js (the slash-notation parser) — may be worked **only when the active roadmap/backlog item explicitly requires it** (owner standing instruction). When you do, treat them as high-risk: a tiny PR, a focused diff, tests, and **stop if the change starts spreading** beyond what the item names. Then report.
+The high-risk files — index.js (log/write path, test_mode + proof fields, row enrichment & append), src/app/app.js (the preview→approve→write trust loop; committed source since PR-22 — `public/` is gitignored build output, see docs/ARCHITECTURE.md), services/workoutTextParser.js (the slash-notation parser) — may be worked **only when the active roadmap/backlog item explicitly requires it** (owner standing instruction). When you do, treat them as high-risk: a tiny PR, a focused diff, tests, and **stop if the change starts spreading** beyond what the item names. Then report.
 
 The deep behaviors on the "Critical behaviours — never change without owner approval" list are still owner-gated regardless: do not change `test_mode`/proof-field semantics, the preview→approve→write trust loop, the slash-notation contract, or the undo flow without explicit owner approval (`docs/OWNER_CHECKIN_RULES.md` criteria 2/3). Editing these files to wire an item the roadmap names is allowed under discipline; silently changing what they *do* on the write/trust path is not.
 
@@ -150,7 +150,7 @@ Atlas's deterministic engine owns every number; the LLM only ever *words* facts 
 - **Provider selection** (`services/vision.js`, `getProviderConfig`): `ATLAS_LLM_PROVIDER` (`openai` default, or `gemini`) + `GEMINI_API_KEY` / `OPENAI_API_KEY` + optional `ATLAS_LLM_MODEL`. `gemini` with no key throws — never a silent fallback.
 - **`services/coach.js`** — the Gemini coaching voice (separate `GEMINI_COACH_MODEL`, defaults to `gemini-2.5-flash-lite`). Three read-only voices: set reaction, plan "why today", and free-form chat. All degrade to `null`/templated copy when Gemini is down.
 - **Read-only endpoints**: `POST /api/coach/message` (set/plan narration), `POST /api/coach/chat` (two-way Q&A grounded in a training snapshot). Neither touches Google Sheets. Both are `writeCapable:false` in `config/routes.js`.
-- **Frontend**: `public/coach-conversation.js` types the replies (visual layer); `public/chat.js` paints user bubbles. Neither calls a write path — the trust loop stays in `public/app.js`.
+- **Frontend**: `src/app/coach-conversation.js` types the replies (visual layer); `src/app/chat.js` paints user bubbles. Neither calls a write path — the trust loop stays in `src/app/app.js`.
 
 When adding to the coach: forward only whitelisted fields to the model (see `sanitizeFacts` / `sanitizeChatContext`), never raw client objects.
 

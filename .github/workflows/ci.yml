@@ -62,13 +62,13 @@ jobs:
         run: npm ci
 
       - name: Build frontend (Vite)
+        # public/ is gitignored (PR-22) -- src/app/ is the only committed frontend
+        # tree, and `npm run build` (also run via `prestart` at deploy time, see
+        # package.json / docs/ARCHITECTURE.md) regenerates public/ verbatim.
         run: npm run build
 
-      - name: Verify built output is committed and reproducible
-        # public/ is the Vite build output of src/app/ (Stage-1 verbatim copy).
-        # It is committed so deploys never depend on a build step; this guard
-        # fails if public/ has drifted from a fresh build of src/app/.
-        run: git diff --exit-code -- public/
+      - name: Verify build output exists
+        run: test -f public/index.html && test -f public/app.js && test -f public/sw.js
 
       - name: Lint
         run: npm run -s lint
@@ -105,6 +105,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build frontend (Vite)
+        # public/ is gitignored (PR-22); several tests (shellAssetsCoverage,
+        # the unit.test.js P0-wiring block) read it from disk, and this job
+        # runs in a separate checkout from unit-tests so it needs its own build.
+        run: npm run build
 
       - name: Run tests with coverage (report only)
         run: |
@@ -191,7 +197,9 @@ jobs:
               const p = normalize(path);
               const lower = p.toLowerCase();
 
-              if (lower.startsWith('public/')) return true;
+              // public/ is gitignored build output (PR-22) -- it never appears as a
+              // changed path in a PR diff. Frontend source changes are caught by
+              // the src/ rule below.
               if (lower.startsWith('tests/e2e/')) return true;
               if (lower === 'playwright.config.js') return true;
               if (lower === 'package.json' || lower === 'package-lock.json') return true;
