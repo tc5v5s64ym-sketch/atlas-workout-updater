@@ -10,7 +10,6 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { sharedState } from './sharedState.js';
 import { API_KEY_STORAGE, api, friendlyTransportMessage, getApiKey } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
@@ -29,10 +28,11 @@ import {
   getSessionLog, setSessionLog,
   getSessionCompleted, setSessionCompleted,
   getSessionSavedLog, setSessionSavedLog,
+  getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
 
-const ATLAS_SHELL_BUILD = 'v118';
+const ATLAS_SHELL_BUILD = 'v119';
 
 
 
@@ -147,7 +147,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 // The list auto-loads on first History visit (loadHistory above). nav.js calls
 // this to force a fresh fetch when jumping here from a chat reply.
 window.atlasRefreshSessions = () => {
-  sharedState.historyLoaded = true;
+  setHistoryLoaded(true);
   loadSessions();
 };
 
@@ -267,7 +267,7 @@ document.getElementById('load-session-state-btn')?.addEventListener('click', () 
 // so "is the live app current?" is a glance, not a Debug-JSON dig. /version is
 // public (no auth), so a plain fetch works; failures degrade quietly.
 // Module-local: only written here and read by the bug-report payload below —
-// never crosses a module boundary, so it stays a plain app.js let (not sharedState).
+// never crosses a module boundary, so it stays a plain app.js let (not store-owned).
 let atlasServerVersion = null;
 (async function populateBuildInfo() {
   // The running-shell tag is baked into THIS bundle — set it first and
@@ -568,7 +568,7 @@ function buildAtlasBugReportPayload(note, options = {}) {
     pending_preview: previewContent ? previewContent.textContent.trim().slice(0, 4000) : '',
     pending_write: pendingWrite || null,
     write_id: pendingWrite?.writeId || pendingWrite?.payload?.write_id || '',
-    last_error: sharedState.atlasLastError,
+    last_error: getAtlasLastError(),
     recent_errors: atlasRecentErrors.slice(-BUG_REPORT_ERROR_LIMIT),
     action_log: atlasActionLog.slice(-BUG_REPORT_ACTION_LIMIT),
     ui_state: uiStateForBugReport(),
@@ -6067,7 +6067,7 @@ async function handleUndoLastWrite(expected) {
       })
     });
     lastWrite = null;
-    sharedState.historyLoaded = false; // sheet changed — History re-fetches on next visit
+    setHistoryLoaded(false); // sheet changed — History re-fetches on next visit
     setStatus(loggerStatus, 'Last write undone.', 'ok');
   } catch (err) {
     setStatus(loggerStatus, `Undo failed: ${err.message}`, 'error');
@@ -6205,7 +6205,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
       }
     }
     invalidatePreview();
-    sharedState.historyLoaded = false; clearLiveHintCaches(); // sheet changed
+    setHistoryLoaded(false); clearLiveHintCaches(); // sheet changed
     document.getElementById('logger-form').reset();
     setsTableBody.innerHTML = '';
     parsedRowsEditor.hidden = true;

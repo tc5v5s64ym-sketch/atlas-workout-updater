@@ -40,11 +40,12 @@ const {
 const repoRoot = path.resolve(__dirname, '..');
 
 // PR-09b: app.js was split into ES modules (api/dom/bugReport/settingsHealth/
-// historyView/progressView + sharedState). Source-grep tests that assert on code
-// which moved into a sibling module read the concatenated app shell so the
-// assertion follows the code regardless of which file now holds it. app.js is
-// first so byte-offset slices into app.js-resident code stay valid.
-const APP_SHELL_FILES = ['app.js', 'sharedState.js', 'api.js', 'dom.js', 'bugReport.js', 'settingsHealth.js', 'historyView.js', 'progressView.js'];
+// historyView/progressView). Source-grep tests that assert on code which moved
+// into a sibling module read the concatenated app shell so the assertion follows
+// the code regardless of which file now holds it. app.js is first so byte-offset
+// slices into app.js-resident code stay valid. (PR-24: sharedState.js folded into
+// store.js and deleted; store.js added here so its app-flag slice is grep-visible.)
+const APP_SHELL_FILES = ['app.js', 'store.js', 'api.js', 'dom.js', 'bugReport.js', 'settingsHealth.js', 'historyView.js', 'progressView.js'];
 function readAppShell() {
   return APP_SHELL_FILES.map(f => fs.readFileSync(path.join(repoRoot, 'public', f), 'utf8')).join('\n');
 }
@@ -209,10 +210,10 @@ test('bug report capture includes failed preview state and recent failed API met
   const appSource = readAppShell();
   const builder = appSource.slice(appSource.indexOf('function buildAtlasBugReportPayload'), appSource.indexOf('async function exposeBugReportJson'));
   assert.match(builder, /pending_preview:\s*previewContent/);
-  assert.match(builder, /last_error:\s*sharedState\.atlasLastError/);
+  assert.match(builder, /last_error:\s*getAtlasLastError\(\)/);
   assert.match(builder, /recent_api_requests:\s*atlasRecentApiRequests/);
   const apiFn = appSource.slice(appSource.indexOf('async function api'), appSource.indexOf('function el'));
-  assert.match(apiFn, /sharedState\.atlasLastError\s*=\s*\{/);
+  assert.match(apiFn, /setAtlasLastError\(/);
   assert.match(apiFn, /endpoint:\s*path/);
   assert.match(apiFn, /failed:\s*res \? !res\.ok : true/);
   assert.doesNotMatch(apiFn, /atlasRecentApiRequests[\s\S]{0,500}headers/);
@@ -235,7 +236,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v118/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v119/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -4146,10 +4147,10 @@ test('session history: auto-load wired in app.js and calls correct endpoint', ()
   const htmlSource = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
   assert.doesNotMatch(htmlSource, /load-sessions-btn/, 'manual load button must stay removed — list auto-loads');
   // With no manual refresh button, writes and undos must invalidate the cache.
-  // (PR-09b: historyLoaded now lives on sharedState — the false-inits are the
-  // sharedState default plus the write-success and undo-success invalidations.)
-  const invalidations = (appSource.match(/historyLoaded\s*[:=]\s*false/g) || []).length;
-  assert.ok(invalidations >= 3, 'successful write and undo must reset historyLoaded so History re-fetches');
+  // (PR-24: historyLoaded moved from sharedState into the store; the invalidations
+  // are now setHistoryLoaded(false) calls on write-success and undo-success.)
+  const invalidations = (appSource.match(/setHistoryLoaded\(false\)/g) || []).length;
+  assert.ok(invalidations >= 2, 'successful write and undo must reset historyLoaded so History re-fetches');
 });
 
 // ── Session Queue UX ──────────────────────────────────────────────────────────
@@ -5673,8 +5674,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v118/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v117\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v119/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v118\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

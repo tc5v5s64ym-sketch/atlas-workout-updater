@@ -57,10 +57,28 @@ export function setSessionSavedLog(v) { _sessionSavedLog.value = Array.isArray(v
 // not bump the signal, so such a computed would go stale. Buffer-derived reads are
 // therefore plain functions off the getters (e.g. app.js's hasUnsavedSessionState).
 
+// ── app-level flags slice (PR-24: folded in from the deleted sharedState.js) ─────
+// These are NOT session state — they are cross-module app flags that pre-PR-24 lived
+// on the mutable `sharedState` object (foreign-written top-level `let`s can't be
+// shared as read-only ES imports, so they needed an object). The store's getter/
+// action pattern removes that need. Deliberately OUTSIDE the session slice and
+// resetSessionStore() below: `atlasLastError` (last API error, for the bug report)
+// and `historyLoaded` (has the History list been fetched this load) are not tied to
+// a workout session and were never reset on session end — that is preserved.
+const _atlasLastError = signal(null);
+const _historyLoaded = signal(false);
+
+export function getAtlasLastError() { return _atlasLastError.value; }
+export function setAtlasLastError(v) { _atlasLastError.value = v || null; }
+export function getHistoryLoaded() { return _historyLoaded.value; }
+export function setHistoryLoaded(v) { _historyLoaded.value = !!v; }
+
 // ── whole-slice snapshot (getState pattern) ─────────────────────────────────────
 // Returns the LIVE signal references (not a copy) — the store deliberately hands out
 // live buffers so app.js can keep its in-place mutation. Read them freely; mutations
 // must still go through the actions above, never by writing a field of this object.
+// SESSION slice only — the app-level flags above are intentionally excluded so the
+// snapshot shape (Minefield Map §4) is unchanged by this fold-in.
 export function getState() {
   return {
     activePlannedSession: _activePlannedSession.value,

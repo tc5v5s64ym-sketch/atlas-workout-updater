@@ -14,7 +14,10 @@
 // exported `let`, imported into app.js, then still reassigned in app.js's
 // populateBuildInfo() — so the build-version badge silently failed to populate.
 // The two sibling foreign-written lets (atlasLastError, historyLoaded) were
-// correctly routed through sharedState; this one was missed.
+// routed through a mutable object (sharedState.js) instead; PR-24 folded them
+// into the store as getter/action pairs and deleted sharedState.js — the store
+// pattern is exactly what lets cross-module state be shared without an import
+// reassignment (writes go through an action, never a rebound binding).
 //
 // The guard is static (no DOM needed): for every frontend ES module, collect
 // the names it imports and assert none is used as an assignment target at
