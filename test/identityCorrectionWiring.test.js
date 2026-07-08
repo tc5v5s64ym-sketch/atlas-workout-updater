@@ -79,7 +79,8 @@ function loadCorrectionHarness(catalogOptions) {
     ${STORE_SHIM}
     let lastIntentData = null;
     let activeExercise = null;   // the exercise currently being discussed/clarified (ADD-5)
-    let coachDiscussionSinceLog = false; // set by the discuss→coach route, reset on log (ADD-5)
+    // coachDiscussionSinceLog (ADD-5, PR-24 slice 2): now store-owned — the shim above
+    // provides get/setCoachDiscussionSinceLog over its own local.
 
     // Stubs for functions outside the slices that are referenced by code in sliceLC
     // but not exercised by tryApplyIdentityCorrection's actual call path.
@@ -98,7 +99,7 @@ function loadCorrectionHarness(catalogOptions) {
       getSessionCompleted: ()  => sessionCompleted.slice(),
       setActivePlannedSession: s => { activePlannedSession = s; },
       setActiveExercise: name => { activeExercise = name || null; },
-      setCoachDiscussionSinceLog: v => { coachDiscussionSinceLog = !!v; },
+      setCoachDiscussionSinceLog,   // store-owned (shim-provided) — controls the ADD-5 focus flag
       tryApplyIdentityCorrection,
       getEvents: () => events.slice(),
     };
@@ -535,11 +536,13 @@ test('ADD-5: a distinct active parse-context exercise also protects the tail lif
 // RESETS it in emitSetLogged, and the correction guard READS it. This ties the fix
 // to real routing rather than a hand-set state.
 test('ADD-5 (source): coachDiscussionSinceLog is set by the coach route, reset on log, read by the guard', () => {
+  // (PR-24 slice 2: the flag is store-owned now — set/reset/read go through the
+  //  get/setCoachDiscussionSinceLog store actions rather than a bare app.js `let`.)
   // (1) discuss→coach route sets it — immediately before the substitute/coach hand-off.
   const routeIdx = appSrc.indexOf('const suggested = await checkAndSuggestSubstitute(pendingChatText)');
   assert.ok(routeIdx !== -1, 'coach route present');
   const beforeRoute = appSrc.slice(routeIdx - 400, routeIdx);
-  assert.match(beforeRoute, /coachDiscussionSinceLog = true/, 'coach route sets the moved-on signal');
+  assert.match(beforeRoute, /setCoachDiscussionSinceLog\(true\)/, 'coach route sets the moved-on signal');
 
   // (2) activeExercise is NULLED on that same route (so it cannot be the signal).
   const afterRoute = appSrc.slice(routeIdx, routeIdx + 800);
@@ -547,11 +550,11 @@ test('ADD-5 (source): coachDiscussionSinceLog is set by the coach route, reset o
 
   // (3) emitSetLogged resets it when a set is logged.
   const emit = appSrc.slice(appSrc.indexOf('function emitSetLogged('), appSrc.indexOf('function emitSetLogged(') + 2600);
-  assert.match(emit, /coachDiscussionSinceLog = false/, 'a logged set resets the moved-on signal');
+  assert.match(emit, /setCoachDiscussionSinceLog\(false\)/, 'a logged set resets the moved-on signal');
 
   // (4) the correction guard reads it.
   const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function announceIdentityCorrection('));
-  assert.match(fn, /const focusMovedOn = coachDiscussionSinceLog/, 'guard reads the moved-on signal');
+  assert.match(fn, /const focusMovedOn = getCoachDiscussionSinceLog\(\)/, 'guard reads the moved-on signal');
 });
 
 // 11. Source introspection — tryApplyIdentityCorrection must never call a write path
