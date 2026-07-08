@@ -15,7 +15,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { analyze } = require('../scripts/check-wired-modules');
+const { analyze, extractSpecifiers } = require('../scripts/check-wired-modules');
 
 test('wiring guard: every services/*.js is wired or validly allowlisted', () => {
   const r = analyze();
@@ -34,6 +34,23 @@ test('wiring guard: the staged allowlist stays small (brief target ≤ 8)', () =
   const r = analyze();
   assert.ok(r.allowlisted.length <= 8,
     `staged allowlist has ${r.allowlisted.length} entries (> 8): ${r.allowlisted.join(', ')}`);
+});
+
+test('wiring guard: a commented-out require is not counted as a real edge', () => {
+  // Precision: a documented/commented-out import must not keep a dead module
+  // silently "wired" (the false negative that would defeat the guard).
+  const src = [
+    "const a = require('./real');",
+    "// const b = require('./commented-line');",
+    "/* const c = require('./commented-block'); */",
+    "const url = 'https://example.com/not-a-comment';", // '//' inside a string is preserved
+    "import d from './imported';",
+  ].join('\n');
+  const specs = extractSpecifiers(src);
+  assert.ok(specs.includes('./real'), 'real require is an edge');
+  assert.ok(specs.includes('./imported'), 'real import is an edge');
+  assert.ok(!specs.includes('./commented-line'), 'a // commented require is NOT an edge');
+  assert.ok(!specs.includes('./commented-block'), 'a /* */ commented require is NOT an edge');
 });
 
 test('wiring guard: expiry mechanism fails once a staged entry passes its date', () => {

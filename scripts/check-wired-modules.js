@@ -85,18 +85,58 @@ function productionRoots() {
 }
 
 // ── static import extraction (literal specifiers only) ──────────────────────
+// Comments are stripped FIRST (respecting string/template literals) so a
+// commented-out or documented `require('./x')` never counts as a real edge —
+// otherwise the guard would keep a dead module silently "wired" (a false
+// negative that defeats its purpose). String CONTENTS are preserved because the
+// specifier itself lives in a string; a stray `from '…'` inside a non-import
+// string resolves to a bare/external specifier and is harmlessly ignored.
 const IMPORT_RES = [
   /\brequire\(\s*['"]([^'"]+)['"]\s*\)/g,      // require('x')
   /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,    // import('x')
   /\bfrom\s*['"]([^'"]+)['"]/g,                 // import … from 'x' / export … from 'x'
 ];
 
+// Remove // and /* */ comments while preserving '…', "…", and `…` literal
+// contents (so `//` inside a URL string or a require path is never mistaken for
+// a comment). A small hand scanner — enough for require-graph extraction.
+function stripComments(src) {
+  let out = '';
+  let state = 'code'; // code | line | block | sq | dq | tpl
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i], c2 = src[i + 1];
+    switch (state) {
+      case 'code':
+        if (c === '/' && c2 === '/') { state = 'line'; i++; }
+        else if (c === '/' && c2 === '*') { state = 'block'; i++; }
+        else if (c === "'") { state = 'sq'; out += c; }
+        else if (c === '"') { state = 'dq'; out += c; }
+        else if (c === '`') { state = 'tpl'; out += c; }
+        else out += c;
+        break;
+      case 'line':
+        if (c === '\n') { state = 'code'; out += c; }
+        break;
+      case 'block':
+        if (c === '*' && c2 === '/') { state = 'code'; i++; }
+        break;
+      case 'sq': case 'dq': case 'tpl':
+        out += c;
+        if (c === '\\') { if (c2 !== undefined) { out += c2; i++; } }
+        else if ((state === 'sq' && c === "'") || (state === 'dq' && c === '"') || (state === 'tpl' && c === '`')) state = 'code';
+        break;
+    }
+  }
+  return out;
+}
+
 function extractSpecifiers(src) {
+  const code = stripComments(src);
   const specs = new Set();
   for (const re of IMPORT_RES) {
     re.lastIndex = 0;
     let m;
-    while ((m = re.exec(src)) !== null) specs.add(m[1]);
+    while ((m = re.exec(code)) !== null) specs.add(m[1]);
   }
   return [...specs];
 }
@@ -259,4 +299,4 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { analyze, formatReport, productionRoots, reachableFiles };
+module.exports = { analyze, formatReport, productionRoots, reachableFiles, extractSpecifiers, stripComments };
