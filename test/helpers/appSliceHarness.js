@@ -193,7 +193,8 @@ async function buildIdentityCorrectionHarness(catalogOptions) {
     ${STORE_SHIM}
     let lastIntentData = null;
     let activeExercise = null;
-    let coachDiscussionSinceLog = false;
+    // coachDiscussionSinceLog (ADD-5, PR-24 slice 2): store-owned — the shim provides
+    // get/setCoachDiscussionSinceLog over its own local.
 
     function getCanonicalSession() { return null; }
     function renderActiveSessionBanner() {}
@@ -210,7 +211,7 @@ async function buildIdentityCorrectionHarness(catalogOptions) {
       getSessionCompleted: ()  => sessionCompleted.slice(),
       setActivePlannedSession: s => { activePlannedSession = s; },
       setActiveExercise: name => { activeExercise = name || null; },
-      setCoachDiscussionSinceLog: v => { coachDiscussionSinceLog = !!v; },
+      setCoachDiscussionSinceLog,   // store-owned (shim-provided) — controls the ADD-5 focus flag
       tryApplyIdentityCorrection,
       getEvents: () => events.slice(),
     };

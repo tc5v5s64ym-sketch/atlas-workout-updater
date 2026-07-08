@@ -43,6 +43,7 @@ test('initial state: everything empty / null', () => {
   assert.deepEqual(s.sessionLog, []);
   assert.deepEqual(s.sessionCompleted, []);
   assert.deepEqual(s.sessionSavedLog, []);
+  assert.equal(s.coachDiscussionSinceLog, false);
 });
 
 test('getters return the LIVE reference (in-place push/splice is visible)', () => {
@@ -113,6 +114,18 @@ test('app-flags are excluded from the session snapshot shape (getState)', () => 
   assert.ok(!('historyLoaded' in s), 'getState is the session snapshot — no app flags');
   store.setAtlasLastError(null);
   store.setHistoryLoaded(false);
+});
+
+// ── ADD-5 session flag (PR-24 slice 2): coachDiscussionSinceLog ─────────────────
+test('coachDiscussionSinceLog: round-trips via the action, appears in getState, IS session-reset', () => {
+  assert.equal(store.getCoachDiscussionSinceLog(), false, 'defaults false');
+  store.setCoachDiscussionSinceLog('truthy');           // coerces to boolean
+  assert.equal(store.getCoachDiscussionSinceLog(), true);
+  assert.equal(store.getState().coachDiscussionSinceLog, true, 'reflected in the session snapshot');
+
+  // Unlike the app-level flags, this IS session state — resetSessionStore clears it.
+  store.resetSessionStore();
+  assert.equal(store.getCoachDiscussionSinceLog(), false, 'session reset clears the ADD-5 focus flag');
 });
 
 test('start → substitution pending → applied clears the pending swap', () => {

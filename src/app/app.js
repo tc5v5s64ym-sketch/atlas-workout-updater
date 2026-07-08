@@ -28,11 +28,12 @@ import {
   getSessionLog, setSessionLog,
   getSessionCompleted, setSessionCompleted,
   getSessionSavedLog, setSessionSavedLog,
+  getCoachDiscussionSinceLog, setCoachDiscussionSinceLog,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
 
-const ATLAS_SHELL_BUILD = 'v119';
+const ATLAS_SHELL_BUILD = 'v120';
 
 
 
@@ -1952,7 +1953,7 @@ function tryApplyIdentityCorrection(text) {
       // the coach since logging it (the durable signal that survives the discuss→coach
       // route — the headline repro), or a distinct exercise is the active parse context.
       const focus = (typeof activeExercise === 'string' && activeExercise.trim()) || '';
-      const focusMovedOn = coachDiscussionSinceLog ||
+      const focusMovedOn = getCoachDiscussionSinceLog() ||
         (!!focus && resolveCompletedIdentity(focus) !== tailId);
       if (targetIsOwnGroup || focusMovedOn) {
         askIdentityCorrectionClarification(oldName, newName);
@@ -2978,13 +2979,13 @@ function runEffortCardCleanups() {
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
-// ADD-5: true once a message has been handled as coach discussion/question SINCE the
-// last set was logged — i.e. the session has moved OFF the just-logged lift. Unlike
-// activeExercise (which the coach route nulls), this survives the discuss→coach route,
+// ADD-5 (PR-24 slice 2): `coachDiscussionSinceLog` — true once a message has been
+// handled as coach discussion/question SINCE the last set was logged — is now
+// store-owned (session slice) via get/setCoachDiscussionSinceLog. Unlike
+// activeExercise (which the coach route nulls), it survives the discuss→coach route,
 // so a later demonstrative correction can tell "re-identify the lift I just logged"
 // (fast path) from "I'm talking about something else now" (must not silently relabel
 // the completed lift). Reset when a set enters the log buffer (emitSetLogged).
-let coachDiscussionSinceLog = false;
 let lastPrescribed = null;
 // Card/advisory consistency (owner 07-02): the exercise name the unknown-lift
 // advisory flagged on the LAST parse (null when the lift resolved). Threaded into
@@ -4465,7 +4466,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   if (byExercise.length) {
     // ADD-5: a set was just logged — the just-logged lift is the fresh focus again,
     // so an immediate demonstrative correction re-identifies IT (fast path restored).
-    coachDiscussionSinceLog = false;
+    setCoachDiscussionSinceLog(false);
     try {
       // nextPlanned (the handoff/composer target) and plannedQueue (the set-effort
       // reroute queue) derive from the SAME remaining-after-this-log source, so the
@@ -5411,7 +5412,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // mutation, or identity correction — it is coach discussion/a question. The
       // session focus has left the just-logged lift, so a later demonstrative
       // correction must not silently relabel that completed lift (it asks instead).
-      coachDiscussionSinceLog = true;
+      setCoachDiscussionSinceLog(true);
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
       if (!suggested) routeMessageToCoach(pendingChatText);
       // Clear the stale active-exercise context so the next bare shorthand input

@@ -30,6 +30,14 @@ const _pendingSubstitution = signal(null);
 const _sessionLog = signal([]);
 const _sessionCompleted = signal([]);
 const _sessionSavedLog = signal([]);
+// ADD-5 session flag (PR-24 slice 2): true once a message has been handled as coach
+// discussion/question SINCE the last set was logged — i.e. the session has moved OFF
+// the just-logged lift. Read by the identity-correction guard so a later demonstrative
+// correction can tell "re-identify the lift I just logged" from "I'm talking about
+// something else now" (which must not silently relabel the completed lift). Session-
+// scoped state (reset when a set enters the log buffer), so it lives in the session
+// slice and resetSessionStore() clears it — unlike the app-level flags below.
+const _coachDiscussionSinceLog = signal(false);
 
 // ── getters (live reference; callers read fields / iterate / spread) ────────────
 export function getActivePlannedSession() { return _activePlannedSession.value; }
@@ -39,6 +47,7 @@ export function getPendingSubstitution() { return _pendingSubstitution.value; }
 export function getSessionLog() { return _sessionLog.value; }
 export function getSessionCompleted() { return _sessionCompleted.value; }
 export function getSessionSavedLog() { return _sessionSavedLog.value; }
+export function getCoachDiscussionSinceLog() { return _coachDiscussionSinceLog.value; }
 
 // ── actions (every reassignment the old top-level `let`s took) ──────────────────
 export function setActivePlannedSession(v) { _activePlannedSession.value = v || null; }
@@ -48,6 +57,7 @@ export function setPendingSubstitution(v) { _pendingSubstitution.value = v || nu
 export function setSessionLog(v) { _sessionLog.value = Array.isArray(v) ? v : []; }
 export function setSessionCompleted(v) { _sessionCompleted.value = Array.isArray(v) ? v : []; }
 export function setSessionSavedLog(v) { _sessionSavedLog.value = Array.isArray(v) ? v : []; }
+export function setCoachDiscussionSinceLog(v) { _coachDiscussionSinceLog.value = !!v; }
 
 // Derived values: none live here yet. The derivations callers actually need
 // (remainingPlannedExercises / plannedExerciseOrder / firstUnloggedPlannedLift)
@@ -88,6 +98,7 @@ export function getState() {
     sessionLog: _sessionLog.value,
     sessionCompleted: _sessionCompleted.value,
     sessionSavedLog: _sessionSavedLog.value,
+    coachDiscussionSinceLog: _coachDiscussionSinceLog.value,
   };
 }
 
@@ -185,4 +196,5 @@ export function resetSessionStore() {
   _sessionLog.value = [];
   _sessionCompleted.value = [];
   _sessionSavedLog.value = [];
+  _coachDiscussionSinceLog.value = false;
 }
