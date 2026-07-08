@@ -65,9 +65,23 @@ The old malformed (column-shifted) row must not return:
 Core | HNR01 | 3 | Hanging Knee Raises
 ```
 
+## `Exercise_Catalog` source of truth & sync (Remediation PR-15)
+
+The JSON catalog **`data/exercise_catalog.v1.json`** is the declared **source of truth** for the exercise roster; the `Exercise_Catalog` sheet is a **synced view** of it. The JSON carries `name` (canonical), `primary_muscles`, `movement_pattern`, etc. — it does **not** carry `Muscle_Group` (the sheet's granular label) or `Lift_Code`, which remain **sheet-owned** fields the owner maintains.
+
+Reconcile the sheet against the source with the DRY-RUN reconciliation report (reads only, **never writes**):
+
+```bash
+node scripts/catalog-maintenance.js --sync-sheet
+```
+
+It lists source exercises absent from the sheet (add them, filling `Muscle_Group` + `Lift_Code`) and sheet rows with no source entry (add to the JSON, or retire). Applying the sync is an **owner-run action**: edit `data/exercise_catalog.v1.json` for roster changes, then append genuinely-new rows with `--file <rows.json> --confirm`. No automated process writes the sheet.
+
+> Note: today `services/exerciseEnrichment.js` still resolves canonical/muscle/lift_code from the **sheet** at write time (the JSON lacks lift_code + muscle_group, and flipping canonical to the JSON names would rewrite `Log_Cleaned` history). Inverting enrichment to read the JSON directly is a deferred, history-affecting migration tracked in `BACKLOG.md`.
+
 ## Safe Manual Edits
 
-- Add new exercises to `Exercise_Catalog`.
+- Add new exercises to `data/exercise_catalog.v1.json` (source of truth), then sync the sheet (see above).
 - Add aliases only if the catalog layout supports them.
 - Keep lift codes stable after they are used in logged workouts.
 

@@ -10,6 +10,7 @@ const assert = require('node:assert');
 
 const {
   planCatalogAppend,
+  planSheetSync,
   resolveColumns,
   buildExistingIdentitySet,
   rowToCells,
@@ -120,8 +121,67 @@ test('catalog-maintenance: only targets Exercise_Catalog; protected tabs are lis
 });
 
 test('catalog-maintenance: parseArgs defaults to dry-run (confirm=false) and the catalog tab', () => {
-  assert.deepEqual(parseArgs(['--file', 'rows.json']), { confirm: false, file: 'rows.json', tab: 'Exercise_Catalog' });
+  assert.deepEqual(parseArgs(['--file', 'rows.json']), { confirm: false, file: 'rows.json', tab: 'Exercise_Catalog', syncSheet: false });
   assert.equal(parseArgs(['--file', 'rows.json', '--confirm']).confirm, true);
+  assert.equal(parseArgs(['--sync-sheet']).syncSheet, true, '--sync-sheet flag parses');
+  assert.equal(parseArgs(['--sync-sheet']).confirm, false, '--sync-sheet never implies a write');
+});
+
+// ── planSheetSync (PR-15 dry-run reconciliation, JSON source vs sheet view) ──────
+
+// The JSON source carries only `name` (+ primary_muscles); no lift_code/muscle_group.
+const JSON_CATALOG = [
+  { exercise_id: 'barbell_bench_press', name: 'Bench Press', primary_muscles: ['chest'] },
+  { exercise_id: 'romanian_deadlift', name: 'Romanian Deadlift', primary_muscles: ['hamstrings'] },
+  { exercise_id: 'overhead_press', name: 'Overhead Press', primary_muscles: ['front_delts'] },
+];
+
+test('catalog-maintenance: planSheetSync reports source exercises missing from the sheet', () => {
+  const sheet = [
+    ['Bench Press', 'Chest', 'BEN01', 'Bench Press, Flat Bench'],
+    // Romanian Deadlift + Overhead Press are in the JSON source but not the sheet.
+  ];
+  const plan = planSheetSync(JSON_CATALOG, HEADER, sheet);
+  const missing = plan.missingFromSheet.map(m => m.name).sort();
+  assert.deepEqual(missing, ['Overhead Press', 'Romanian Deadlift']);
+  assert.equal(plan.inSync, false);
+  // It surfaces primary_muscles as a hint (never fabricates a Muscle_Group value).
+  const rdl = plan.missingFromSheet.find(m => m.name === 'Romanian Deadlift');
+  assert.deepEqual(rdl.primary_muscles, ['hamstrings']);
+});
+
+test('catalog-maintenance: planSheetSync counts a JSON name matched by a sheet VARIANT as present', () => {
+  const sheet = [
+    ['Bench Press', 'Chest', 'BEN01', 'Bench Press'],
+    // "RDL" is the sheet canonical, but "Romanian Deadlift" is a listed variant —
+    // so the JSON "Romanian Deadlift" is represented and must NOT be flagged missing.
+    ['RDL', 'Posterior Chain', 'RDL01', 'RDL, Romanian Deadlift, RDLs'],
+    ['Overhead Press', 'Shoulders', 'OHP01', 'Overhead Press'],
+  ];
+  const plan = planSheetSync(JSON_CATALOG, HEADER, sheet);
+  assert.deepEqual(plan.missingFromSheet, [], 'variant coverage prevents a false "missing"');
+  // "RDL" is a sheet canonical with no JSON source name -> reported as extra.
+  assert.deepEqual(plan.extraInSheet, ['RDL']);
+});
+
+test('catalog-maintenance: planSheetSync reports inSync when identities align', () => {
+  const sheet = [
+    ['Bench Press', 'Chest', 'BEN01', 'Bench Press'],
+    ['Romanian Deadlift', 'Posterior Chain', 'RDL01', 'Romanian Deadlift, RDL'],
+    ['Overhead Press', 'Shoulders', 'OHP01', 'Overhead Press, OHP'],
+  ];
+  const plan = planSheetSync(JSON_CATALOG, HEADER, sheet);
+  assert.equal(plan.inSync, true);
+  assert.deepEqual(plan.missingFromSheet, []);
+  assert.deepEqual(plan.extraInSheet, []);
+});
+
+test('catalog-maintenance: planSheetSync never writes — it is a pure planner returning a diff', () => {
+  // Contract guard: the function has no side effects and returns only report data.
+  const plan = planSheetSync(JSON_CATALOG, HEADER, []);
+  assert.ok(Array.isArray(plan.missingFromSheet) && Array.isArray(plan.extraInSheet));
+  assert.equal(plan.jsonCount, 3);
+  assert.equal(plan.sheetCount, 0);
 });
 
 test('catalog-maintenance: buildExistingIdentitySet / rowToCells helpers behave', () => {

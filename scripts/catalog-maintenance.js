@@ -19,12 +19,21 @@
  * Usage:
  *   node scripts/catalog-maintenance.js --file rows.json            # dry-run preview
  *   node scripts/catalog-maintenance.js --file rows.json --confirm  # actually append
+ *   node scripts/catalog-maintenance.js --sync-sheet                # dry-run sync report
  *
  * rows.json is an array of objects:
  *   [{ "canonical_name": "Bicep Curl", "muscle_group": "Biceps",
  *      "lift_code": "BC01", "original_variants": "Bicep Curl, Bicep Curls" }]
  * `lift_code` and `original_variants` are optional (variants default to the
  * canonical name). canonical_name + muscle_group are required.
+ *
+ * --sync-sheet (Remediation PR-15): the JSON catalog `data/exercise_catalog.v1.json`
+ * is the SOURCE OF TRUTH and the `Exercise_Catalog` sheet is a synced VIEW. This
+ * mode reads both and prints a DRY-RUN reconciliation — source exercises absent
+ * from the sheet (owner adds them, filling Muscle_Group + Lift_Code, which the JSON
+ * does not carry) and sheet rows with no source entry. It NEVER writes; the actual
+ * sync is an owner-run action (edit the JSON, then `--file … --confirm` to append
+ * genuinely-new rows). See docs/SHEET_CONTRACT.md.
  *
  * Requires the same env as the server: GOOGLE_SHEETS_ID,
  * GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_PRIVATE_KEY.
@@ -149,11 +158,76 @@ function planCatalogAppend(header, dataRows, inputs) {
   return { cols, toWrite, skipped, invalid };
 }
 
+// Pure planner for `--sync-sheet` (Remediation PR-15): diff the JSON catalog
+// (data/exercise_catalog.v1.json — the source of truth) against the current
+// Exercise_Catalog sheet (a synced VIEW) and report what a reconciliation would
+// entail. NO I/O, NEVER writes — the output is a dry-run report the owner acts on.
+//
+//   jsonCatalog: [{ exercise_id, name, primary_muscles, ... }]  (the JSON source)
+//   header:      the sheet's header row (array of strings)
+//   dataRows:    the sheet's existing data rows (header excluded)
+//
+// The JSON carries only `name` (and, via data/exercise_aliases.v1.json, aliases) —
+// it has NO `lift_code` or `muscle_group`, which stay sheet-owned. So the sync
+// reports IDENTITY reconciliation only: which source exercises are absent from the
+// sheet (owner adds them, filling muscle/code), and which sheet rows have no source
+// entry (legacy / sheet-only, to reconcile). It never fabricates muscle/code values.
+function planSheetSync(jsonCatalog, header, dataRows) {
+  const cols = resolveColumns(header);
+  if (cols.canonical < 0) {
+    throw new Error('Exercise_Catalog header has no recognizable Canonical_Name / Exercise column.');
+  }
+  const catalog = Array.isArray(jsonCatalog) ? jsonCatalog : [];
+  const sheetIdentities = buildExistingIdentitySet(dataRows, cols); // canonical + variants
+
+  // Present in the JSON source but not represented anywhere in the sheet (neither a
+  // canonical nor a listed variant). Owner should add these (with muscle/code).
+  const missingFromSheet = [];
+  const jsonKeys = new Set();
+  for (const entry of catalog) {
+    const name = String(entry && entry.name || '').trim();
+    if (!name) continue;
+    const key = normalizeKey(name);
+    jsonKeys.add(key);
+    if (!sheetIdentities.has(key)) {
+      missingFromSheet.push({
+        name,
+        exercise_id: entry.exercise_id || '',
+        primary_muscles: Array.isArray(entry.primary_muscles) ? entry.primary_muscles : [],
+      });
+    }
+  }
+
+  // Present in the sheet's canonical column but with no matching JSON source name —
+  // legacy or sheet-only entries to reconcile (add to the JSON source, or retire).
+  const extraInSheet = [];
+  const seen = new Set();
+  for (const row of dataRows) {
+    if (cols.canonical < 0) break;
+    const canonical = String(row[cols.canonical] || '').trim();
+    if (!canonical) continue;
+    const key = normalizeKey(canonical);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!jsonKeys.has(key)) extraInSheet.push(canonical);
+  }
+
+  return {
+    cols,
+    jsonCount: jsonKeys.size,
+    sheetCount: seen.size,
+    missingFromSheet, // source exercises to add to the sheet
+    extraInSheet,     // sheet exercises with no source entry
+    inSync: missingFromSheet.length === 0 && extraInSheet.length === 0,
+  };
+}
+
 function parseArgs(argv) {
-  const args = { confirm: false, file: null, tab: CATALOG_TAB };
+  const args = { confirm: false, file: null, tab: CATALOG_TAB, syncSheet: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--confirm') args.confirm = true;
+    else if (a === '--sync-sheet') args.syncSheet = true;
     else if (a === '--file') { args.file = argv[i + 1]; i += 1; }
     else if (a === '--tab') { args.tab = argv[i + 1]; i += 1; }
     else if (a.startsWith('--file=')) args.file = a.slice('--file='.length);
@@ -178,6 +252,31 @@ async function main() {
     console.error(`Refusing to operate on "${args.tab}". This tool only touches ${CATALOG_TAB}.`);
     if (PROTECTED_TABS.includes(args.tab)) console.error(`"${args.tab}" is a protected data tab and must never be written by this script.`);
     process.exit(2);
+  }
+
+  // --sync-sheet: DRY-RUN reconciliation of the JSON source vs the sheet view.
+  // Reads only; NEVER writes (Remediation PR-15 — the actual sync is owner-run).
+  if (args.syncSheet) {
+    const jsonCatalog = require('../data/exercise_catalog.v1.json');
+    const { validateConfig, getHeaderRow, getExerciseCatalog } = require('../sheets');
+    validateConfig();
+    const header = await getHeaderRow(CATALOG_TAB);
+    const allRows = await getExerciseCatalog();
+    const dataRows = allRows.length > 1 ? allRows.slice(1) : [];
+    const plan = planSheetSync(jsonCatalog, header, dataRows);
+    console.log('\n=== Exercise_Catalog SYNC — DRY-RUN (never writes) ===');
+    console.log('Source of truth: data/exercise_catalog.v1.json');
+    console.log(`Source exercises: ${plan.jsonCount} · Sheet canonical rows: ${plan.sheetCount}`);
+    console.log(`\n${plan.missingFromSheet.length} source exercise(s) absent from the sheet — add them (fill Muscle_Group + Lift_Code; the JSON has neither):`);
+    for (const m of plan.missingFromSheet) {
+      console.log(`  + ${m.name}${m.primary_muscles.length ? `  (muscles: ${m.primary_muscles.join(', ')})` : ''}`);
+    }
+    console.log(`\n${plan.extraInSheet.length} sheet exercise(s) with no source entry — reconcile (add to the JSON source, or retire):`);
+    for (const e of plan.extraInSheet) console.log(`  - ${e}`);
+    console.log(plan.inSync
+      ? '\n✅ Sheet is in sync with the JSON source.'
+      : '\nDRY-RUN — no write performed. This tool never writes the sync; reconcile the items above manually (JSON edits, and `--file … --confirm` appends for genuinely-new exercises).');
+    return;
   }
 
   const inputs = loadInputRows(args.file);
@@ -255,6 +354,7 @@ module.exports = {
   buildExistingIdentitySet,
   rowToCells,
   planCatalogAppend,
+  planSheetSync,
   parseArgs,
   CATALOG_TAB,
   PROTECTED_TABS
