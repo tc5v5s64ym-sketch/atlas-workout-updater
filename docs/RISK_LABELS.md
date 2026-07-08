@@ -27,7 +27,7 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 |---|---|
 | **`trust-sensitive`** | Touches the Atlas trust contract or an `docs/INVARIANTS.md` rule (no blind writes, engine-owns-numbers, owner approves, phantom-set suppression). Implies owner involvement. |
 | **`write-path`** | Touches how rows are written to Sheets, `test_mode`/live-write decision, row enrichment/append, or proof fields. `index.js` log/write path, `services/sheets.js` append. Owner-gated. |
-| **`approval-path`** | Touches the preview → approve → write trust loop (`public/app.js`). Owner-gated. |
+| **`approval-path`** | Touches the preview → approve → write trust loop (`src/app/app.js`). Owner-gated. |
 | **`coach-behavior`** | Touches what the coach says or how it decides to speak (`services/coach.js`, `services/vision.js`, prompts, sanitizers). Owner-gated. |
 | **`parser-behavior`** | Touches `services/workoutTextParser.js` (slash-notation, set extraction, intent). Correctness-sensitive. |
 | **`infrastructure`** | CI/workflows, templates, labels, scripts, automation, repo config. No production application behavior change. |
