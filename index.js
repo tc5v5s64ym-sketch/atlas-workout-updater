@@ -3059,7 +3059,24 @@ app.use((err, req, res, next) => {
   );
 });
 
+// public/ is gitignored Vite build output (PR-22), regenerated from src/app/ by
+// an npm `prestart` hook -- but `prestart` only fires when this process is
+// launched via `npm start`. If the host's start command bypasses npm's
+// lifecycle (e.g. a platform Start Command of `node index.js`), that hook
+// never runs. This is the last line of defense: build it here if it's
+// missing, so express.static('public') below is never silently empty.
+function ensurePublicBuilt() {
+  const indexHtmlPath = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(indexHtmlPath)) return;
+  console.log('[startup] public/ is missing -- running `npm run build` before serving...');
+  execSync('npm run build', { cwd: __dirname, stdio: 'inherit' });
+  if (!fs.existsSync(indexHtmlPath)) {
+    throw new Error('public/index.html still missing after `npm run build` -- cannot serve the frontend.');
+  }
+}
+
 function startServer() {
+  ensurePublicBuilt();
   validateConfig();
   runStartupDiagnostics();
 
