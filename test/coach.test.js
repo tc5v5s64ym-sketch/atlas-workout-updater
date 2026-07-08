@@ -691,6 +691,23 @@ test('parseReplyWithProposals: a coach line that merely starts with a bracket is
   assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT|add_exercises|Barbell Row/, 'the directive is still fully scrubbed');
 });
 
+test('parseReplyWithProposals: a truncated/unbalanced pretty-printed payload never leaks its inner JSON', () => {
+  // Model truncates on a token limit mid-object — the JSON never closes. Everything
+  // from the first bracket on is untrusted and must be dropped, not rendered.
+  const raw = [
+    "Here's the update.",
+    'PROPOSE_PLAN_EDIT:',
+    '{',
+    '  "action": "remove_exercises",',
+    '  "exercises": ['
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(propose_plan_edit, null, 'unbalanced JSON → no proposal');
+  assert.doesNotMatch(reply, /"action"|"exercises"|remove_exercises|PROPOSE_PLAN_EDIT|[{}[\]]/,
+    'no JSON key/value/bracket from a truncated payload may reach chat');
+  assert.match(reply, /Here's the update\./, 'human prose before the directive survives');
+});
+
 test('isValidPlanEditSchema accepts plan actions and rejects empty or unknown edits', () => {
   assert.ok(isValidPlanEditSchema({ action: 'replace_plan', exercises: ['Bench Press'] }));
   assert.ok(isValidPlanEditSchema({ action: 'remove_exercises', exercises: ['Hanging Knee Raises'] }));
