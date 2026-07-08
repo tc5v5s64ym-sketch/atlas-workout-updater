@@ -5,6 +5,7 @@ This file explains which docs are active instructions, which are reference/spec 
 ## Source of truth
 
 - `BACKLOG.md` — the single source of truth for open and deferred work (priority-ordered). Read it first for "what is open."
+- `BACKLOG_ARCHIVE.md` — closed/shipped backlog items moved out of `BACKLOG.md` to keep it focused on open work. Historical record only — never an execution queue, never a place to look for open work.
 - `docs/ACTIVE_ROADMAP.md` — the detailed active execution queue: the in-depth sequence for the items currently being built, promoted from `BACKLOG.md`. Read it before selecting the next PR.
 
 These two are **partners, not competitors**: `BACKLOG.md` is the full open/deferred list; `ACTIVE_ROADMAP.md` is the detailed sequence of the current top items. **When they disagree, stop and ask the owner before changing direction.**
@@ -41,7 +42,7 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 ## Active roadmap / queue
 
 - `docs/ACTIVE_ROADMAP.md` — the detailed active queue. **Freshness note:** the June-2026 trust-first refill (Steps 379–385) it details has **shipped**; its "Active queue" section now carries a banner pointing to the live sequence — the **One-Brain coaching engine** in `BACKLOG.md` → "One-Brain Coaching Engine" and the hybrid observation window (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`).
-- `docs/REMEDIATION_PLAN_V2.md` — **Active** (v2.2, 2026-07-08): remediation is **substantially complete** — read the v2.2 pivot banner first; "continue" no longer means executing the old tail top-to-bottom. Remaining: PR-21 (governance diet, now first) → PR-22 (frontend de-dup) close remediation; then the consolidation queue PR-23 (Flight-Recorder replay harness) → PR-24 (state-store completion). PR-18 deferred behind PR-23; PR-19 dormant; PR-20 cut; GATE A / PR-12A/B moved to the product track.
+- `docs/REMEDIATION_PLAN_V2.md` — **Active** (v2.2, 2026-07-08): remediation is **substantially complete** — read the v2.2 pivot banner first; "continue" no longer means executing the old tail top-to-bottom. **Now/next, unambiguous:** PR-21 (governance diet) ✅ shipped → **PR-22 (frontend de-dup) runs next and closes remediation** → then the consolidation queue PR-23 (Flight-Recorder replay harness) → PR-24 (state-store completion). PR-18 deferred behind PR-23; PR-19 dormant; PR-20 cut; GATE A / PR-12A/B moved to the product track.
 - `docs/REMEDIATION_REVIEW_2026-07-08.md` — **Reference** — independent engineering assessment of the remediation trajectory (owner-requested, at commit `04597c6`): health score, risk analysis, Top-10 ranked next initiatives, and the M-CONSOLIDATE milestone that drove the plan's v2.2 re-scope.
 - `docs/COMPOSER_FIRST_MIGRATION.md` — design + phase plan for the composer-first surface migration (owner-adopted 2026-07-02; Phases A, B, C1–C2 shadow, and D fully shipped). Reference for how the current surface came to be; the remaining C3 routing promotion is evidence-gated in `BACKLOG.md`.
 - `docs/COACHING_ENGINE_ARCHITECTURE.md` — the canonical One-Brain blueprint the current build follows (also under "Product and architecture reference").
