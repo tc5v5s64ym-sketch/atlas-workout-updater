@@ -1925,6 +1925,41 @@ function tryApplyIdentityCorrection(text) {
   const newName = (resolved.matched && resolved.name) || resolveCorrectionTargetName(intent.to);
   if (!newName) return false;
   if (oldName.toLowerCase() === newName.toLowerCase()) return false;
+  // ── ADD-5: identity-correction targeting guard ────────────────────────────
+  // A demonstrative correction ("i meant X" / "sorry that was X") re-identifies the
+  // exercise IN FOCUS — normally the just-logged lift, which the correction is
+  // re-labeling. But when the session has moved on — a different exercise is the
+  // active thing being discussed/clarified, or the corrected identity is already
+  // its OWN logged group — the correction does NOT refer to the completed lift
+  // sitting at the tail of the log. Silently relabeling that completed lift to an
+  // unrelated identity corrupts the permanent record (live bug: Bench Press logged,
+  // incline flyes then discussed, "I meant incline dumbbell flyes" turned the Bench
+  // Press rows into flyes). In that case we refuse the silent mutation and ASK,
+  // instead of guessing at a target. The "X is Y" (intent.from) form is user-named
+  // and keeps its existing, deliberate buffered-lift resolution.
+  if (!intent.from) {
+    const tailId = resolveCompletedIdentity(oldName);
+    const targetId = resolveCompletedIdentity(newName);
+    if (targetId !== tailId) {
+      // (a) the corrected identity already exists as its OWN logged group (so the
+      //     correction plainly refers to that group, not the unrelated tail lift), or
+      // (b) a DISTINCT exercise is the active thing being clarified — focus has
+      //     moved off the tail lift.
+      const targetIsOwnGroup = getSessionLog().some(
+        s => s.exercise !== oldName && resolveCompletedIdentity(s.exercise) === targetId
+      );
+      // Focus has moved off the tail lift when the user has discussed something with
+      // the coach since logging it (the durable signal that survives the discuss→coach
+      // route — the headline repro), or a distinct exercise is the active parse context.
+      const focus = (typeof activeExercise === 'string' && activeExercise.trim()) || '';
+      const focusMovedOn = coachDiscussionSinceLog ||
+        (!!focus && resolveCompletedIdentity(focus) !== tailId);
+      if (targetIsOwnGroup || focusMovedOn) {
+        askIdentityCorrectionClarification(oldName, newName);
+        return true; // handled by asking — the completed lift is left exactly as logged
+      }
+    }
+  }
   if (intent.from) {
     // A name correction applies to the WHOLE mis-labeled group, wherever its sets
     // sit in the log — later sets of another lift don't shield it.
@@ -1959,6 +1994,17 @@ function announceIdentityCorrection(fromName, toName) {
   renderActiveSessionBanner();
   document.dispatchEvent(new CustomEvent('atlas:identity-corrected', {
     detail: { from: fromName || '', to: toName || '' }
+  }));
+}
+
+// ADD-5: ask the lifter to disambiguate instead of relabeling a completed lift we
+// are NOT sure the correction refers to. Read-only narration — it mutates NOTHING
+// (no logged rows, no completion list, no plan, no write path): the tail lift stays
+// exactly as logged. The coach layer renders the question; the lifter can re-state
+// the correction naming the lift ("<logged> is <target>") to apply it deliberately.
+function askIdentityCorrectionClarification(loggedName, targetName) {
+  document.dispatchEvent(new CustomEvent('atlas:identity-correction-ambiguous', {
+    detail: { logged: loggedName || '', target: targetName || '' }
   }));
 }
 
@@ -2932,6 +2978,13 @@ function runEffortCardCleanups() {
 let lastParsedWorkoutText = '';
 let lastParserStatus = null;
 let activeExercise = null;
+// ADD-5: true once a message has been handled as coach discussion/question SINCE the
+// last set was logged — i.e. the session has moved OFF the just-logged lift. Unlike
+// activeExercise (which the coach route nulls), this survives the discuss→coach route,
+// so a later demonstrative correction can tell "re-identify the lift I just logged"
+// (fast path) from "I'm talking about something else now" (must not silently relabel
+// the completed lift). Reset when a set enters the log buffer (emitSetLogged).
+let coachDiscussionSinceLog = false;
 let lastPrescribed = null;
 // Card/advisory consistency (owner 07-02): the exercise name the unknown-lift
 // advisory flagged on the LAST parse (null when the lift resolved). Threaded into
@@ -4404,6 +4457,9 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
     if (!getSessionCompleted().includes(completedName)) getSessionCompleted().push(completedName);
   }
   if (byExercise.length) {
+    // ADD-5: a set was just logged — the just-logged lift is the fresh focus again,
+    // so an immediate demonstrative correction re-identifies IT (fast path restored).
+    coachDiscussionSinceLog = false;
     try {
       // nextPlanned (the handoff/composer target) and plannedQueue (the set-effort
       // reroute queue) derive from the SAME remaining-after-this-log source, so the
@@ -5345,6 +5401,11 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         activeExercise = null;
         return;
       }
+      // ADD-5: reaching here means the message was NOT a log, modality, plan
+      // mutation, or identity correction — it is coach discussion/a question. The
+      // session focus has left the just-logged lift, so a later demonstrative
+      // correction must not silently relabel that completed lift (it asks instead).
+      coachDiscussionSinceLog = true;
       const suggested = await checkAndSuggestSubstitute(pendingChatText);
       if (!suggested) routeMessageToCoach(pendingChatText);
       // Clear the stale active-exercise context so the next bare shorthand input

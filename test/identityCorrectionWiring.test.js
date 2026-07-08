@@ -78,6 +78,8 @@ function loadCorrectionHarness(catalogOptions) {
     // State vars mirroring app.js outer scope (PR-10: via the store shim)
     ${STORE_SHIM}
     let lastIntentData = null;
+    let activeExercise = null;   // the exercise currently being discussed/clarified (ADD-5)
+    let coachDiscussionSinceLog = false; // set by the discuss→coach route, reset on log (ADD-5)
 
     // Stubs for functions outside the slices that are referenced by code in sliceLC
     // but not exercised by tryApplyIdentityCorrection's actual call path.
@@ -95,6 +97,8 @@ function loadCorrectionHarness(catalogOptions) {
       setSessionCompleted: arr => { sessionCompleted = arr.slice(); },
       getSessionCompleted: ()  => sessionCompleted.slice(),
       setActivePlannedSession: s => { activePlannedSession = s; },
+      setActiveExercise: name => { activeExercise = name || null; },
+      setCoachDiscussionSinceLog: v => { coachDiscussionSinceLog = !!v; },
       tryApplyIdentityCorrection,
       getEvents: () => events.slice(),
     };
@@ -390,6 +394,164 @@ test('IC wiring: typo\'d correction resolves against the CATALOG when no plan ex
 
   assert.equal(result, true, 'catalog word-subset/typo tier must bridge the typo');
   assert.equal(h.getSessionLog()[0].exercise, 'Single-Leg Seated Leg Press');
+});
+
+// ── ADD-5: identity-correction targeting guard ───────────────────────────────
+// A demonstrative correction must re-identify the lift IN FOCUS, and must never
+// silently relabel a completed lift the correction does not clearly refer to. Live
+// bug: Bench Press logged → incline flyes discussed → "I meant incline dumbbell
+// flyes" corrupted the completed Bench Press rows into flyes.
+
+// A1 (must-fix / spec 1): a later fly correction must NOT relabel a completed Bench.
+test('ADD-5: later fly correction must NOT relabel a completed Bench Press; it asks', () => {
+  const h = loadCorrectionHarness([
+    ['Bench Press', 'BEN01'],
+    ['Incline Dumbbell Fly', 'IDF01'],
+  ]);
+  h.setSessionLog([
+    { exercise: 'Bench Press', weight: '185', reps: '8', rir: '2' },
+    { exercise: 'Bench Press', weight: '185', reps: '7', rir: '2' },
+  ]);
+  h.setSessionCompleted(['Bench Press']);
+  // The REAL live flow: after logging Bench the lifter DISCUSSED incline flyes (a
+  // coach message). That route sets coachDiscussionSinceLog=true and nulls
+  // activeExercise — so we drive the durable signal the app actually produces, NOT a
+  // hand-set activeExercise the route would have cleared.
+  h.setCoachDiscussionSinceLog(true);
+
+  const result = h.tryApplyIdentityCorrection('i meant incline dumbbell flyes');
+
+  const log = h.getSessionLog();
+  assert.ok(log.every(s => s.exercise === 'Bench Press'), 'Bench Press rows must be untouched');
+  assert.ok(h.getSessionCompleted().includes('Bench Press'), 'Bench stays completed');
+  assert.ok(!h.getSessionCompleted().includes('Incline Dumbbell Fly'), 'no fly identity fabricated');
+  const types = h.getEvents().map(e => e.type);
+  assert.ok(types.includes('atlas:identity-correction-ambiguous'), 'must ask for clarification');
+  assert.ok(!types.includes('atlas:identity-corrected'), 'must NOT announce a silent relabel');
+  assert.equal(result, true, 'message is handled (by asking), not passed through to the coach');
+});
+
+// A2 (spec 2): the demonstrative form must never reach back to an EARLIER completed
+// lift by a partial word match — only the in-focus / last-logged lift is eligible.
+test('ADD-5: demonstrative correction never relabels an earlier completed lift by word overlap', () => {
+  const h = loadCorrectionHarness([
+    ['Bench Press', 'BEN01'],
+    ['Overhead Press', 'OHP01'],
+    ['Incline Bench Press', 'IBP01'],
+  ]);
+  h.setSessionLog([
+    { exercise: 'Bench Press', weight: '185', reps: '8', rir: '2' },   // earlier
+    { exercise: 'Overhead Press', weight: '95', reps: '8', rir: '2' },  // last-logged
+  ]);
+  h.setSessionCompleted(['Bench Press', 'Overhead Press']);
+
+  h.tryApplyIdentityCorrection('i meant incline bench press');
+
+  // "incline bench press" shares words with the earlier Bench Press — it must NOT be
+  // chosen. Only the last-logged Overhead Press is the demonstrative target.
+  const log = h.getSessionLog();
+  assert.equal(log[0].exercise, 'Bench Press', 'earlier Bench Press is never touched');
+  assert.ok(h.getSessionCompleted().includes('Bench Press'), 'earlier Bench stays completed');
+});
+
+// A3 (spec 3): with focus moved on, relabeling a completed lift needs explicit
+// confirmation — Atlas asks rather than silently mutating.
+test('ADD-5: relabeling a completed lift after focus moved on requires confirmation', () => {
+  const h = loadCorrectionHarness([
+    ['Deadlift', 'DL01'],
+    ['Leg Curl', 'LC01'],
+  ]);
+  h.setSessionLog([{ exercise: 'Deadlift', weight: '315', reps: '5', rir: '2' }]);
+  h.setSessionCompleted(['Deadlift']);
+  h.setCoachDiscussionSinceLog(true); // the session moved on (coach discussion since the log)
+
+  const result = h.tryApplyIdentityCorrection('actually that was leg curl');
+
+  assert.equal(h.getSessionLog()[0].exercise, 'Deadlift', 'completed Deadlift not silently relabeled');
+  assert.ok(h.getEvents().some(e => e.type === 'atlas:identity-correction-ambiguous'), 'asks');
+  assert.equal(result, true, 'handled by asking');
+});
+
+// A4 (spec 4): when the corrected identity is already its OWN logged group, the
+// correction refers to that group — never the unrelated tail lift.
+test('ADD-5: target already logged as its own group → tail lift untouched, asks', () => {
+  const h = loadCorrectionHarness([
+    ['Bench Press', 'BEN01'],
+    ['Cable Fly', 'CF01'],
+  ]);
+  h.setSessionLog([
+    { exercise: 'Cable Fly', weight: '30', reps: '12', rir: '2' },     // its own group
+    { exercise: 'Bench Press', weight: '185', reps: '8', rir: '2' },    // last-logged
+  ]);
+  h.setSessionCompleted(['Cable Fly', 'Bench Press']);
+
+  h.tryApplyIdentityCorrection('i meant cable fly');
+
+  const log = h.getSessionLog();
+  assert.equal(log[1].exercise, 'Bench Press', 'tail Bench Press must NOT become Cable Fly');
+  assert.equal(log[0].exercise, 'Cable Fly', 'existing Cable Fly group unchanged');
+  assert.ok(h.getEvents().some(e => e.type === 'atlas:identity-correction-ambiguous'), 'asks');
+});
+
+// A5 (spec 5): the legitimate flow still works — when the last-logged lift IS the
+// focus (nothing newer), a demonstrative correction relabels it as before.
+test('ADD-5: legitimate just-logged correction still relabels (focus is the tail lift)', () => {
+  const h = loadCorrectionHarness([
+    ['Squat', 'SQ01'],
+    ['Front Squat', 'FSQ01'],
+  ]);
+  h.setSessionLog([{ exercise: 'Squat', weight: '225', reps: '5', rir: '2' }]);
+  h.setSessionCompleted(['Squat']);
+  h.setActiveExercise('Squat'); // the just-logged lift is still the active focus
+
+  const result = h.tryApplyIdentityCorrection('sorry that was front squat');
+
+  assert.equal(result, true, 'a genuine re-identification still applies');
+  assert.equal(h.getSessionLog()[0].exercise, 'Front Squat', 'relabeled as before');
+  assert.ok(h.getEvents().some(e => e.type === 'atlas:identity-corrected'), 'announces the relabel');
+});
+
+// A6: the activeExercise parse-context signal is a secondary trigger — when a
+// distinct exercise is the live parse context, the completed tail lift is protected
+// even without a coach-discussion turn.
+test('ADD-5: a distinct active parse-context exercise also protects the tail lift', () => {
+  const h = loadCorrectionHarness([
+    ['Bench Press', 'BEN01'],
+    ['Incline Dumbbell Fly', 'IDF01'],
+  ]);
+  h.setSessionLog([{ exercise: 'Bench Press', weight: '185', reps: '8', rir: '2' }]);
+  h.setSessionCompleted(['Bench Press']);
+  h.setActiveExercise('Incline Dumbbell Fly'); // distinct live parse context
+
+  h.tryApplyIdentityCorrection('i meant incline dumbbell flyes');
+
+  assert.equal(h.getSessionLog()[0].exercise, 'Bench Press', 'Bench Press untouched');
+  assert.ok(h.getEvents().some(e => e.type === 'atlas:identity-correction-ambiguous'), 'asks');
+});
+
+// A7 (real routing, source-level): the durable focus signal that A1 drives is the
+// one the live message handler actually produces — the discuss→coach route SETS it
+// (activeExercise is nulled on that route, so it cannot be the signal), a logged set
+// RESETS it in emitSetLogged, and the correction guard READS it. This ties the fix
+// to real routing rather than a hand-set state.
+test('ADD-5 (source): coachDiscussionSinceLog is set by the coach route, reset on log, read by the guard', () => {
+  // (1) discuss→coach route sets it — immediately before the substitute/coach hand-off.
+  const routeIdx = appSrc.indexOf('const suggested = await checkAndSuggestSubstitute(pendingChatText)');
+  assert.ok(routeIdx !== -1, 'coach route present');
+  const beforeRoute = appSrc.slice(routeIdx - 400, routeIdx);
+  assert.match(beforeRoute, /coachDiscussionSinceLog = true/, 'coach route sets the moved-on signal');
+
+  // (2) activeExercise is NULLED on that same route (so it cannot be the signal).
+  const afterRoute = appSrc.slice(routeIdx, routeIdx + 800);
+  assert.match(afterRoute, /activeExercise = null/, 'coach route nulls activeExercise (why the durable flag is needed)');
+
+  // (3) emitSetLogged resets it when a set is logged.
+  const emit = appSrc.slice(appSrc.indexOf('function emitSetLogged('), appSrc.indexOf('function emitSetLogged(') + 2600);
+  assert.match(emit, /coachDiscussionSinceLog = false/, 'a logged set resets the moved-on signal');
+
+  // (4) the correction guard reads it.
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function announceIdentityCorrection('));
+  assert.match(fn, /const focusMovedOn = coachDiscussionSinceLog/, 'guard reads the moved-on signal');
 });
 
 // 11. Source introspection — tryApplyIdentityCorrection must never call a write path
