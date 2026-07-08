@@ -1740,8 +1740,6 @@ function tryApplyPlanMutation(text) {
   const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
     ? canon.exercises
     : getActivePlannedSession().exercises.map(e => ({ name: e.canonicalName || e.name, status: 'pending' }));
-  const targetNames = PM.resolvePlanTargets(intent.target, planEntries);
-  if (!targetNames.length) return false; // not a (pending) planned lift → let the coach handle it
   const curName = () => {
     // After a mutation (splice/replace), firstUnloggedPlannedLift gives the correct
     // new current exercise — the stale cursor may not have advanced yet.
@@ -1750,6 +1748,15 @@ function tryApplyPlanMutation(text) {
     const cur = getActivePlannedSession().exercises[getActivePlannedSession().index];
     return cur ? (cur.canonicalName || cur.name) : null;
   };
+  // A POSITIONAL intent ("swap next workout for dips", "swap to dips", "replace next
+  // exercise with dips") names the slot by position — resolve it to the current/next
+  // PENDING slot, not by fuzzy-matching a lift name (the live repro: "next workout"
+  // matched nothing, fell through to the coach, and the LLM removed Dips). Otherwise
+  // resolve the (possibly compound) target phrase to matching pending slots.
+  const targetNames = intent.positional
+    ? [firstUnloggedPlannedLift()].filter(Boolean)
+    : PM.resolvePlanTargets(intent.target, planEntries);
+  if (!targetNames.length) return false; // no pending slot to act on → let the coach handle it
 
   if (intent.action === 'skip') {
     // Skip ALL matched slots only for a GENUINELY COMPOUND target ("skip
