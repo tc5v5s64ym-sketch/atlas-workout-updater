@@ -100,6 +100,10 @@ const IMPORT_RES = [
 // Remove // and /* */ comments while preserving '…', "…", and `…` literal
 // contents (so `//` inside a URL string or a require path is never mistaken for
 // a comment). A small hand scanner — enough for require-graph extraction.
+// Known limitation: regex literals (`/.../`) are not tracked, so a regex with a
+// stray quote could flip the scanner into a string state and drop the rest of a
+// file's edges. This FAILS SAFE — it can only make a module look MORE orphaned
+// (CI goes red), never keep a dead module falsely wired — so it is self-correcting.
 function stripComments(src) {
   let out = '';
   let state = 'code'; // code | line | block | sq | dq | tpl

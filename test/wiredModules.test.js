@@ -28,6 +28,19 @@ test('wiring guard: every services/*.js is wired or validly allowlisted', () => 
   assert.equal(r.ok, true);
 });
 
+test('wiring guard: orphan detection positively finds production-unreachable modules', () => {
+  // Positive coverage for the core detection: every allowlisted / testOnly module
+  // is genuinely unreachable from production — that is WHY it is listed — so it
+  // must appear in the raw `orphans` set. This proves the graph walk actually
+  // surfaces orphans (allowlisting only moves them out of `unwired`, not `orphans`).
+  const r = analyze();
+  const listed = [...r.allowlisted, ...r.testOnly];
+  assert.ok(listed.length >= 1, 'there is at least one listed module to check');
+  for (const f of listed) {
+    assert.ok(r.orphans.includes(f), `${f} must be detected as an orphan (unreachable from production)`);
+  }
+});
+
 test('wiring guard: the staged allowlist stays small (brief target ≤ 8)', () => {
   // The allowlist is an escape hatch, not a dumping ground. testOnly tooling is a
   // separate category and not subject to this cap.
