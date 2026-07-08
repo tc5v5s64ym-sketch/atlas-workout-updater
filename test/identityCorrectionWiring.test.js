@@ -79,6 +79,7 @@ function loadCorrectionHarness(catalogOptions) {
     ${STORE_SHIM}
     let lastIntentData = null;
     let activeExercise = null;   // the exercise currently being discussed/clarified (ADD-5)
+    let coachDiscussionSinceLog = false; // set by the discuss→coach route, reset on log (ADD-5)
 
     // Stubs for functions outside the slices that are referenced by code in sliceLC
     // but not exercised by tryApplyIdentityCorrection's actual call path.
@@ -97,6 +98,7 @@ function loadCorrectionHarness(catalogOptions) {
       getSessionCompleted: ()  => sessionCompleted.slice(),
       setActivePlannedSession: s => { activePlannedSession = s; },
       setActiveExercise: name => { activeExercise = name || null; },
+      setCoachDiscussionSinceLog: v => { coachDiscussionSinceLog = !!v; },
       tryApplyIdentityCorrection,
       getEvents: () => events.slice(),
     };
@@ -411,7 +413,11 @@ test('ADD-5: later fly correction must NOT relabel a completed Bench Press; it a
     { exercise: 'Bench Press', weight: '185', reps: '7', rir: '2' },
   ]);
   h.setSessionCompleted(['Bench Press']);
-  h.setActiveExercise('Incline Dumbbell Fly'); // the latest exercise being clarified
+  // The REAL live flow: after logging Bench the lifter DISCUSSED incline flyes (a
+  // coach message). That route sets coachDiscussionSinceLog=true and nulls
+  // activeExercise — so we drive the durable signal the app actually produces, NOT a
+  // hand-set activeExercise the route would have cleared.
+  h.setCoachDiscussionSinceLog(true);
 
   const result = h.tryApplyIdentityCorrection('i meant incline dumbbell flyes');
 
@@ -457,7 +463,7 @@ test('ADD-5: relabeling a completed lift after focus moved on requires confirmat
   ]);
   h.setSessionLog([{ exercise: 'Deadlift', weight: '315', reps: '5', rir: '2' }]);
   h.setSessionCompleted(['Deadlift']);
-  h.setActiveExercise('Leg Curl'); // moved on to a different exercise
+  h.setCoachDiscussionSinceLog(true); // the session moved on (coach discussion since the log)
 
   const result = h.tryApplyIdentityCorrection('actually that was leg curl');
 
@@ -503,6 +509,49 @@ test('ADD-5: legitimate just-logged correction still relabels (focus is the tail
   assert.equal(result, true, 'a genuine re-identification still applies');
   assert.equal(h.getSessionLog()[0].exercise, 'Front Squat', 'relabeled as before');
   assert.ok(h.getEvents().some(e => e.type === 'atlas:identity-corrected'), 'announces the relabel');
+});
+
+// A6: the activeExercise parse-context signal is a secondary trigger — when a
+// distinct exercise is the live parse context, the completed tail lift is protected
+// even without a coach-discussion turn.
+test('ADD-5: a distinct active parse-context exercise also protects the tail lift', () => {
+  const h = loadCorrectionHarness([
+    ['Bench Press', 'BEN01'],
+    ['Incline Dumbbell Fly', 'IDF01'],
+  ]);
+  h.setSessionLog([{ exercise: 'Bench Press', weight: '185', reps: '8', rir: '2' }]);
+  h.setSessionCompleted(['Bench Press']);
+  h.setActiveExercise('Incline Dumbbell Fly'); // distinct live parse context
+
+  h.tryApplyIdentityCorrection('i meant incline dumbbell flyes');
+
+  assert.equal(h.getSessionLog()[0].exercise, 'Bench Press', 'Bench Press untouched');
+  assert.ok(h.getEvents().some(e => e.type === 'atlas:identity-correction-ambiguous'), 'asks');
+});
+
+// A7 (real routing, source-level): the durable focus signal that A1 drives is the
+// one the live message handler actually produces — the discuss→coach route SETS it
+// (activeExercise is nulled on that route, so it cannot be the signal), a logged set
+// RESETS it in emitSetLogged, and the correction guard READS it. This ties the fix
+// to real routing rather than a hand-set state.
+test('ADD-5 (source): coachDiscussionSinceLog is set by the coach route, reset on log, read by the guard', () => {
+  // (1) discuss→coach route sets it — immediately before the substitute/coach hand-off.
+  const routeIdx = appSrc.indexOf('const suggested = await checkAndSuggestSubstitute(pendingChatText)');
+  assert.ok(routeIdx !== -1, 'coach route present');
+  const beforeRoute = appSrc.slice(routeIdx - 400, routeIdx);
+  assert.match(beforeRoute, /coachDiscussionSinceLog = true/, 'coach route sets the moved-on signal');
+
+  // (2) activeExercise is NULLED on that same route (so it cannot be the signal).
+  const afterRoute = appSrc.slice(routeIdx, routeIdx + 800);
+  assert.match(afterRoute, /activeExercise = null/, 'coach route nulls activeExercise (why the durable flag is needed)');
+
+  // (3) emitSetLogged resets it when a set is logged.
+  const emit = appSrc.slice(appSrc.indexOf('function emitSetLogged('), appSrc.indexOf('function emitSetLogged(') + 2600);
+  assert.match(emit, /coachDiscussionSinceLog = false/, 'a logged set resets the moved-on signal');
+
+  // (4) the correction guard reads it.
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function announceIdentityCorrection('));
+  assert.match(fn, /const focusMovedOn = coachDiscussionSinceLog/, 'guard reads the moved-on signal');
 });
 
 // 11. Source introspection — tryApplyIdentityCorrection must never call a write path
