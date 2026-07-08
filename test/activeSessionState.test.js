@@ -419,3 +419,70 @@ test('ADD-4: end-to-end via the canonical session — recap remaining drops the 
   const remaining = AS.reconcileSubstitutedRemaining(completed, remainingRaw);
   assert.deepEqual(remaining, [], 'the recap no longer lists Dumbbell Flyes as still on the plan');
 });
+
+// ── ADD-6 (PR10 regression addendum §6): recap reconciles logged + skipped +
+// substituted across the full live-session shape ──────────────────────────────
+// Verification gate: the PRIMARY invariant — "the recap must NOT show completed or
+// substituted exercises as still remaining" — is delivered by ADD-2 (an explicit
+// skip splices the slot out of the plan) + ADD-4 (a variant satisfies its base
+// slot). These tests lock that composition against regression for the exact live
+// shape the addendum captured. (Positively SURFACING the skipped lift as "skipped"
+// in the recap copy is filed as its own follow-up — it needs session-scoped skipped
+// state; see BACKLOG.md.)
+
+// Mirror getCanonicalSession's reconciliation + canonicalSessionRecap's remaining.
+function canonicalRecap(AS, planNames, completedNames) {
+  let s = AS.createActiveSession({ exercises: planNames.map(n => ({ name: n })) });
+  for (const name of completedNames) {
+    const after = AS.markCompleted(s, name);
+    s = after !== s ? after : AS.markCompleted(AS.insertExercise(s, { name }), name);
+  }
+  const completed = AS.completedExercises(s).map(e => e.name).filter(Boolean);
+  const remainingRaw = AS.remaining(s).map(e => e.name).filter(Boolean);
+  return { completed, remaining: AS.reconcileSubstitutedRemaining(completed, remainingRaw) };
+}
+
+test('ADD-6: full §6 live shape — nothing logged/substituted is shown as remaining', () => {
+  const AS = loadActiveSession();
+  // Plan after the explicit RDL skip (ADD-2 splices it): OHP, Bench, Seated Row,
+  // Face Pull, Curls. The lifter added + logged Incline Dumbbell Flyes (off-plan),
+  // logged OHP/Bench/Seated Row/Face Pull, and did NOT log Curls.
+  const { completed, remaining } = canonicalRecap(
+    AS,
+    ['Overhead Press', 'Bench Press', 'Seated Row', 'Face Pull', 'Curls'],
+    ['Overhead Press', 'Incline Dumbbell Flyes', 'Bench Press', 'Seated Row', 'Face Pull']
+  );
+  // Only the genuinely-undone Curls is remaining — never a logged lift.
+  assert.deepEqual(remaining, ['Curls'], 'only the genuinely-undone lift remains');
+  for (const done of ['Overhead Press', 'Incline Dumbbell Flyes', 'Bench Press', 'Seated Row', 'Face Pull']) {
+    assert.ok(!remaining.includes(done), `${done} (logged) must not appear as remaining`);
+  }
+  // The skipped RDL is not resurrected into remaining.
+  assert.ok(!remaining.includes('Romanian Deadlift') && !remaining.includes('RDL'), 'skipped RDL never reappears as remaining');
+  assert.ok(completed.includes('Incline Dumbbell Flyes'), 'the added fly is in completed');
+});
+
+test('ADD-6: §6 with the fly as a suggested slot — the base fly is reconciled away', () => {
+  const AS = loadActiveSession();
+  // Same shape, but "Dumbbell Flyes" was a suggested slot AND the lifter logged the
+  // Incline variant. The base fly must not be stranded as remaining.
+  const { remaining } = canonicalRecap(
+    AS,
+    ['Overhead Press', 'Dumbbell Flyes', 'Bench Press', 'Seated Row', 'Face Pull', 'Curls'],
+    ['Overhead Press', 'Incline Dumbbell Flyes', 'Bench Press', 'Seated Row', 'Face Pull']
+  );
+  assert.deepEqual(remaining, ['Curls'], 'the substituted Dumbbell Flyes is satisfied, only Curls remains');
+});
+
+test('ADD-6: a canonically SKIPPED slot never appears in remaining', () => {
+  const AS = loadActiveSession();
+  // If a slot is marked skipped in the canonical model (AS.skipExercise), remaining
+  // (PENDING-only) excludes it — the recap never lists a skipped lift as still to do.
+  let s = AS.createActiveSession({ exercises: [
+    { name: 'Overhead Press' }, { name: 'Romanian Deadlift' }, { name: 'Curls' },
+  ] });
+  s = AS.markCompleted(s, 'Overhead Press');
+  s = AS.skipExercise(s, 'Romanian Deadlift');
+  const remaining = AS.remaining(s).map(e => e.name);
+  assert.deepEqual(remaining, ['Curls'], 'skipped RDL is not remaining; only the undone Curls is');
+});
