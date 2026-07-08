@@ -70,6 +70,51 @@ test('setters coerce: booleans, null-normalized objects, array-guarded arrays', 
   assert.deepEqual(store.getSessionLog(), []);
 });
 
+// ── app-level flags slice (PR-24: folded in from the deleted sharedState.js) ────
+test('app-flags: atlasLastError + historyLoaded default empty and round-trip via actions', () => {
+  assert.equal(store.getAtlasLastError(), null);
+  assert.equal(store.getHistoryLoaded(), false);
+
+  const err = { message: 'boom', status: 500, endpoint: '/api/x', at: 'now' };
+  store.setAtlasLastError(err);
+  assert.deepEqual(store.getAtlasLastError(), err);
+  store.setAtlasLastError(null);
+  assert.equal(store.getAtlasLastError(), null);
+
+  store.setHistoryLoaded(true);
+  assert.equal(store.getHistoryLoaded(), true);
+  store.setHistoryLoaded(0);                       // coerces to boolean
+  assert.equal(store.getHistoryLoaded(), false);
+});
+
+test('app-flags are NOT session state: resetSessionStore leaves them untouched', () => {
+  // These are app-level (last API error, history-fetched flag) — never reset on
+  // session end, exactly as when they lived on sharedState. resetSessionStore()
+  // must clear only the session slice.
+  store.setAtlasLastError({ message: 'boom' });
+  store.setHistoryLoaded(true);
+  store.setSessionLog([{ exercise: 'Bench' }]);
+
+  store.resetSessionStore();
+
+  assert.deepEqual(store.getSessionLog(), [], 'session slice IS reset');
+  assert.deepEqual(store.getAtlasLastError(), { message: 'boom' }, 'app flag survives session reset');
+  assert.equal(store.getHistoryLoaded(), true, 'app flag survives session reset');
+  // Cleanup for later tests (beforeEach only resets the session slice).
+  store.setAtlasLastError(null);
+  store.setHistoryLoaded(false);
+});
+
+test('app-flags are excluded from the session snapshot shape (getState)', () => {
+  store.setAtlasLastError({ message: 'boom' });
+  store.setHistoryLoaded(true);
+  const s = store.getState();
+  assert.ok(!('atlasLastError' in s), 'getState is the session snapshot — no app flags');
+  assert.ok(!('historyLoaded' in s), 'getState is the session snapshot — no app flags');
+  store.setAtlasLastError(null);
+  store.setHistoryLoaded(false);
+});
+
 test('start → substitution pending → applied clears the pending swap', () => {
   store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
   store.setPendingSubstitution({ prescribed: 'Leg Press', prescription: null });

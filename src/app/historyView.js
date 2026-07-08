@@ -1,6 +1,6 @@
 'use strict';
 // Atlas frontend — historyView module (PR-09b mechanical extraction from app.js).
-import { sharedState } from './sharedState.js';
+import { getHistoryLoaded, setHistoryLoaded } from './store.js';
 import { api } from './api.js';
 import { formatSetLoad, getLocalDateString } from './app.js';
 import { buildQualityRow, el } from './dom.js';
@@ -231,7 +231,7 @@ async function loadSessionDetail(sessionId, slot) {
 }
 
 export function loadHistory() {
-  if (sharedState.historyLoaded) return;
-  sharedState.historyLoaded = true;
+  if (getHistoryLoaded()) return;
+  setHistoryLoaded(true);
   loadSessions();
 }

@@ -1,6 +1,6 @@
 'use strict';
 // Atlas frontend — api module (PR-09b mechanical extraction from app.js).
-import { sharedState } from './sharedState.js';
+import { setAtlasLastError } from './store.js';
 import { BUG_REPORT_RECENT_API_LIMIT, atlasRecentApiRequests, recordAtlasError, snapshotBugBody } from './bugReport.js';
 
 export const API_KEY_STORAGE = 'atlas_api_key';
@@ -47,20 +47,21 @@ export async function api(path, options = {}) {
     }
     return json;
   } catch (err) {
-    sharedState.atlasLastError = {
+    const lastError = {
       message: err && err.message ? err.message : String(err),
       status: err && err.status,
       endpoint: path,
       at: new Date().toISOString()
     };
+    setAtlasLastError(lastError);
     // Keep a HISTORY, not just the latest: a poison cascade (e.g. one bad set 400ing
     // every save attempt) only makes sense when you can see all of them in order.
     recordAtlasError({
       source: 'api',
       endpoint: path,
       method,
-      status: sharedState.atlasLastError.status,
-      message: sharedState.atlasLastError.message,
+      status: lastError.status,
+      message: lastError.message,
       response_body: snapshotBugBody(json)
     });
     // Cold-start resilience (composer-first Phase 0b). Diagnosed live 2026-07-02:
