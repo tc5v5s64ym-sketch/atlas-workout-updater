@@ -369,6 +369,21 @@ test('ADD-4: reconciliation is directional and word-anchored (no over-satisfacti
   assert.deepEqual(reconcileSubstitutedRemaining(['Dumbbell Flyes'], ['Dumbbell Flyes']), ['Dumbbell Flyes']);
 });
 
+// Qualifier-gated: a DIFFERENT named movement that merely ends with a base slot's
+// phrase must NOT false-satisfy it (else the recap would hide a genuinely-undone
+// lift). Only equipment/angle/grip variants satisfy the base. (PR #911 review.)
+test('ADD-4: a distinct named movement never false-satisfies a base slot', () => {
+  const { reconcileSubstitutedRemaining } = loadActiveSession();
+  // Romanian / Sumo Deadlift are NOT substitutions for a conventional Deadlift slot.
+  assert.deepEqual(reconcileSubstitutedRemaining(['Romanian Deadlift'], ['Deadlift']), ['Deadlift']);
+  assert.deepEqual(reconcileSubstitutedRemaining(['Sumo Deadlift'], ['Deadlift']), ['Deadlift']);
+  // Upright Row (a distinct movement) must not satisfy a bare Row slot...
+  assert.deepEqual(reconcileSubstitutedRemaining(['Upright Row'], ['Row']), ['Row']);
+  // ...but a genuine equipment/grip variant still does.
+  assert.deepEqual(reconcileSubstitutedRemaining(['Barbell Row'], ['Row']), []);
+  assert.deepEqual(reconcileSubstitutedRemaining(['Close-Grip Bench Press'], ['Bench Press']), []);
+});
+
 test('ADD-4: end-to-end via the canonical session — recap remaining drops the substituted slot', () => {
   const AS = loadActiveSession();
   // Reproduce getCanonicalSession's reconciliation: plan has the suggested base fly

@@ -280,22 +280,49 @@ const _exports = (function () {
     return completedExercises(session).length > 0;
   }
 
-  // Recap reconciliation (ADD-4): a planned slot the lifter SUBSTITUTED with a
-  // more-specific variant is satisfied — not "still remaining". Drop a remaining
-  // name when a completed name is a strict SUPERSET variant of it, i.e. the
-  // completed name is "<modifier> <slot>" ("Incline Dumbbell Flyes" satisfies a
-  // suggested "Dumbbell Flyes"; "Barbell Row" satisfies "Row"). Directional and
-  // word-boundary-anchored on purpose:
-  //   - a base movement never satisfies a MORE-specific slot (flat "Bench Press"
-  //     must NOT complete an "Incline Bench Press" slot),
-  //   - the match is a trailing whole-phrase (the base is the tail of the variant),
-  //     so it never fires mid-word.
+  // Equipment / angle / grip / stance qualifiers — words that denote a VARIANT of
+  // the same movement (implement, bench angle, grip, side), NOT a different named
+  // lift. Used by reconcileSubstitutedRemaining to tell "Incline Dumbbell Flyes"
+  // (a fly variant → satisfies "Dumbbell Flyes") from "Romanian Deadlift" or
+  // "Upright Row" (distinct movements that merely END with a base slot's name and
+  // must NOT satisfy it). Deliberately excludes movement-name modifiers
+  // (romanian / sumo / bulgarian / nordic / upright / hack / …).
+  const VARIANT_QUALIFIERS = new Set([
+    // bench angle / body position
+    'incline', 'decline', 'flat', 'seated', 'standing', 'kneeling', 'lying', 'bent', 'bentover', 'prone',
+    // implement / equipment
+    'dumbbell', 'db', 'barbell', 'bb', 'cable', 'machine', 'smith', 'ez', 'ezbar', 'band', 'banded',
+    'kettlebell', 'kb', 'landmine', 'plate',
+    // grip / stance / side / load
+    'close', 'wide', 'narrow', 'neutral', 'reverse', 'underhand', 'overhand', 'supinated', 'pronated',
+    'grip', 'single', 'one', 'unilateral', 'staggered', 'offset', 'arm', 'leg', 'over', 'weighted', 'assisted',
+    'paused', 'tempo', 'deficit', 'elevated',
+  ]);
+
+  // Recap reconciliation (ADD-4): a planned slot the lifter SUBSTITUTED with an
+  // equipment/angle/grip VARIANT is satisfied — not "still remaining". Drop a
+  // remaining name when a completed name is exactly "<qualifier…> <slot>" — the base
+  // slot is a trailing whole-phrase AND every leading modifier word is a recognized
+  // variant qualifier ("Incline Dumbbell Flyes" → "Dumbbell Flyes"; "Barbell Row" →
+  // "Row"). Guarded on purpose:
+  //   - directional: a base movement never satisfies a MORE-specific slot (flat
+  //     "Bench Press" must NOT complete an "Incline Bench Press" slot),
+  //   - word-boundary-anchored: the base is the tail phrase, so it never fires mid-word,
+  //   - qualifier-gated: a DIFFERENT named lift that ends with the base ("Romanian
+  //     Deadlift" → "Deadlift", "Upright Row" → "Row") is NOT a variant, so it never
+  //     false-satisfies (which would hide a genuinely-undone lift from the recap).
   // Read-only: names in, filtered remaining out. Does not touch the session, the
   // written rows, or the save payload — only what the recap narrates as remaining.
   function reconcileSubstitutedRemaining(completedNames, remainingNames) {
     const completed = (Array.isArray(completedNames) ? completedNames : []).map(lc).filter(Boolean);
-    const satisfied = r => completed.some(c =>
-      c !== r && c.endsWith(r) && c[c.length - r.length - 1] === ' ');
+    const satisfied = r => {
+      if (!r) return false;
+      return completed.some(c => {
+        if (c === r || !c.endsWith(r) || c[c.length - r.length - 1] !== ' ') return false;
+        const prefix = c.slice(0, c.length - r.length).trim().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+        return prefix.length > 0 && prefix.every(w => VARIANT_QUALIFIERS.has(w));
+      });
+    };
     return (Array.isArray(remainingNames) ? remainingNames : [])
       .filter(name => !satisfied(lc(name)));
   }
