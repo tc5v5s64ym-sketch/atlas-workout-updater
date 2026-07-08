@@ -1,0 +1,20 @@
+{
+  "id": "add-7-coach-message-not-blank",
+  "scenario": "coach-message-not-blank",
+  "source": "docs/PR10_REGRESSION_ADDENDUM.md #7",
+  "description": "After a successful log response, the UI must not render a blank coach_message -- a transiently-empty trailing bubble (receipt-only block, suppressed message, or mid-typewriter) must not overwrite the last valid coach message.",
+  "events": [
+    {
+      "event_type": "coach_message_rendered",
+      "ui_snapshot": {
+        "coach_bubbles": ["Nice — 225×5 logged, a top-set PR.", "", "   "],
+        "hero_hidden": true,
+        "has_hero": true,
+        "opening_message": "Good evening, Dale.\n Still here. Moderate load, 6–12 reps, higher volume whenever you're ready."
+      }
+    }
+  ],
+  "expected": {
+    "coach_message": "Nice — 225×5 logged, a top-set PR."
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "add-4-substitute-satisfies-slot",
+  "scenario": "substitute-satisfies-slot",
+  "source": "docs/PR10_REGRESSION_ADDENDUM.md #4",
+  "description": "Given Atlas suggests Dumbbell Flyes and the user logs Incline Dumbbell Flyes instead, the original Dumbbell Flyes slot must be considered satisfied -- the final recap must not still list it as remaining.",
+  "events": [
+    {
+      "event_type": "session_state_changed",
+      "session_state": {
+        "plan_exercise_names": ["Overhead Press", "Dumbbell Flyes", "Incline Dumbbell Flyes", "Bench Press"],
+        "completed_exercise_names": ["Overhead Press", "Incline Dumbbell Flyes", "Bench Press"]
+      }
+    }
+  ],
+  "expected": {
+    "completed": ["Overhead Press", "Incline Dumbbell Flyes", "Bench Press"],
+    "remaining_before_reconciliation": ["Dumbbell Flyes"],
+    "remaining_after_reconciliation": []
+  }
+}

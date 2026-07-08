@@ -1,0 +1,33 @@
+{
+  "id": "add-5-identity-correction-guard",
+  "scenario": "identity-correction-guard",
+  "source": "docs/PR10_REGRESSION_ADDENDUM.md #5",
+  "description": "After logging bench, then discussing flyes, 'I meant incline dumbbell flyes' must target the active/latest ambiguous fly item -- it must never silently relabel the completed Bench Press.",
+  "events": [
+    {
+      "event_type": "session_state_changed",
+      "session_state": {
+        "catalog_options": [
+          ["Bench Press", "BEN01"],
+          ["Incline Dumbbell Fly", "IDF01"]
+        ],
+        "sessionLog": [
+          { "exercise": "Bench Press", "weight": "185", "reps": "8", "rir": "2" },
+          { "exercise": "Bench Press", "weight": "185", "reps": "7", "rir": "2" }
+        ],
+        "sessionCompleted": ["Bench Press"],
+        "coachDiscussionSinceLog": true
+      }
+    },
+    {
+      "event_type": "user_input",
+      "user_input": "i meant incline dumbbell flyes"
+    }
+  ],
+  "expected": {
+    "handled": true,
+    "session_log_exercises": ["Bench Press", "Bench Press"],
+    "session_completed": ["Bench Press"],
+    "events_dispatched": ["atlas:identity-correction-ambiguous"]
+  }
+}
