@@ -280,6 +280,57 @@ const _exports = (function () {
     return completedExercises(session).length > 0;
   }
 
+  // Equipment / angle / grip / stance qualifiers — words that denote a VARIANT of
+  // the same movement (implement, bench angle, grip, side), NOT a different named
+  // lift. Used by reconcileSubstitutedRemaining to tell "Incline Dumbbell Flyes"
+  // (a fly variant → satisfies "Dumbbell Flyes") from "Romanian Deadlift" or
+  // "Upright Row" (distinct movements that merely END with a base slot's name and
+  // must NOT satisfy it). Deliberately excludes movement-name modifiers
+  // (romanian / sumo / bulgarian / nordic / upright / hack / …).
+  const VARIANT_QUALIFIERS = new Set([
+    // bench angle / body position
+    'incline', 'decline', 'flat', 'seated', 'standing', 'kneeling', 'lying', 'bent', 'bentover', 'prone',
+    // implement / equipment
+    'dumbbell', 'db', 'barbell', 'bb', 'cable', 'machine', 'smith', 'ez', 'ezbar', 'band', 'banded',
+    'kettlebell', 'kb', 'landmine', 'plate',
+    // grip / stance / side / load. NOTE: deliberately EXCLUDES bodypart/movement-
+    // flipping words (leg / arm / reverse) — those name a DIFFERENT movement, so
+    // "Leg Curl"→"Curl", "Leg Press"→"Press", "Reverse Fly"→"Fly" must NOT satisfy a
+    // bare base slot (that would hide genuinely-undone work). Equipment/angle
+    // qualifiers on a bare slot ARE true variants ("Cable Fly"→"Fly") and stay in.
+    'close', 'wide', 'narrow', 'neutral', 'underhand', 'overhand', 'supinated', 'pronated',
+    'grip', 'single', 'one', 'unilateral', 'staggered', 'offset', 'over', 'weighted', 'assisted',
+    'paused', 'tempo', 'deficit', 'elevated',
+  ]);
+
+  // Recap reconciliation (ADD-4): a planned slot the lifter SUBSTITUTED with an
+  // equipment/angle/grip VARIANT is satisfied — not "still remaining". Drop a
+  // remaining name when a completed name is exactly "<qualifier…> <slot>" — the base
+  // slot is a trailing whole-phrase AND every leading modifier word is a recognized
+  // variant qualifier ("Incline Dumbbell Flyes" → "Dumbbell Flyes"; "Barbell Row" →
+  // "Row"). Guarded on purpose:
+  //   - directional: a base movement never satisfies a MORE-specific slot (flat
+  //     "Bench Press" must NOT complete an "Incline Bench Press" slot),
+  //   - word-boundary-anchored: the base is the tail phrase, so it never fires mid-word,
+  //   - qualifier-gated: a DIFFERENT named lift that ends with the base ("Romanian
+  //     Deadlift" → "Deadlift", "Upright Row" → "Row") is NOT a variant, so it never
+  //     false-satisfies (which would hide a genuinely-undone lift from the recap).
+  // Read-only: names in, filtered remaining out. Does not touch the session, the
+  // written rows, or the save payload — only what the recap narrates as remaining.
+  function reconcileSubstitutedRemaining(completedNames, remainingNames) {
+    const completed = (Array.isArray(completedNames) ? completedNames : []).map(lc).filter(Boolean);
+    const satisfied = r => {
+      if (!r) return false;
+      return completed.some(c => {
+        if (c === r || !c.endsWith(r) || c[c.length - r.length - 1] !== ' ') return false;
+        const prefix = c.slice(0, c.length - r.length).trim().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+        return prefix.length > 0 && prefix.every(w => VARIANT_QUALIFIERS.has(w));
+      });
+    };
+    return (Array.isArray(remainingNames) ? remainingNames : [])
+      .filter(name => !satisfied(lc(name)));
+  }
+
   const exported = {
     STATUS,
     createActiveSession,
@@ -294,6 +345,7 @@ const _exports = (function () {
     completedExercises,
     isComplete,
     hasLoggedWork,
+    reconcileSubstitutedRemaining,
     // exposed for the later slices (identity correction PR4 / insert PR5) and tests
     entryMatches,
     findMatchIndex,
@@ -317,6 +369,7 @@ export const {
   completedExercises,
   isComplete,
   hasLoggedWork,
+  reconcileSubstitutedRemaining,
   entryMatches,
   findMatchIndex,
   toEntry,

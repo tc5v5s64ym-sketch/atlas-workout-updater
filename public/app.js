@@ -3856,9 +3856,15 @@ function canonicalSessionRecap() {
   const AS = (typeof window !== 'undefined' && window.activeSession) || (typeof activeSession !== 'undefined' ? activeSession : null);
   const s = AS ? getCanonicalSession() : null;
   if (!AS || !s || !AS.hasLoggedWork(s)) return null;
+  const completed = AS.completedExercises(s).map(e => e.name).filter(Boolean);
+  const remainingRaw = AS.remaining(s).map(e => e.name).filter(Boolean);
   return {
-    completed: AS.completedExercises(s).map(e => e.name).filter(Boolean),
-    remaining: AS.remaining(s).map(e => e.name).filter(Boolean)
+    completed,
+    // ADD-4: a suggested slot the lifter did a more-specific variant of ("Dumbbell
+    // Flyes" → logged "Incline Dumbbell Flyes") is satisfied, not still remaining.
+    remaining: typeof AS.reconcileSubstitutedRemaining === 'function'
+      ? AS.reconcileSubstitutedRemaining(completed, remainingRaw)
+      : remainingRaw
   };
 }
 
