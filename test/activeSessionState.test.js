@@ -384,6 +384,19 @@ test('ADD-4: a distinct named movement never false-satisfies a base slot', () =>
   assert.deepEqual(reconcileSubstitutedRemaining(['Close-Grip Bench Press'], ['Bench Press']), []);
 });
 
+// Bodypart/movement-flipping prefixes name a DIFFERENT movement and must never
+// satisfy a bare base slot (they would hide undone work); equipment/angle
+// prefixes on a bare slot ARE true variants and still satisfy. (PR #911 review.)
+test('ADD-4: bodypart/reverse prefixes never satisfy a bare base slot; equipment variants do', () => {
+  const { reconcileSubstitutedRemaining } = loadActiveSession();
+  assert.deepEqual(reconcileSubstitutedRemaining(['Leg Curl'], ['Curl']), ['Curl']);      // hamstrings ≠ biceps
+  assert.deepEqual(reconcileSubstitutedRemaining(['Leg Press'], ['Press']), ['Press']);
+  assert.deepEqual(reconcileSubstitutedRemaining(['Reverse Fly'], ['Fly']), ['Fly']);     // rear delts ≠ chest
+  // equipment/angle variants of a bare slot are genuine substitutions
+  assert.deepEqual(reconcileSubstitutedRemaining(['Cable Fly'], ['Fly']), []);
+  assert.deepEqual(reconcileSubstitutedRemaining(['Dumbbell Curl'], ['Curl']), []);
+});
+
 test('ADD-4: end-to-end via the canonical session — recap remaining drops the substituted slot', () => {
   const AS = loadActiveSession();
   // Reproduce getCanonicalSession's reconciliation: plan has the suggested base fly

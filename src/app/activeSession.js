@@ -293,9 +293,13 @@ const _exports = (function () {
     // implement / equipment
     'dumbbell', 'db', 'barbell', 'bb', 'cable', 'machine', 'smith', 'ez', 'ezbar', 'band', 'banded',
     'kettlebell', 'kb', 'landmine', 'plate',
-    // grip / stance / side / load
-    'close', 'wide', 'narrow', 'neutral', 'reverse', 'underhand', 'overhand', 'supinated', 'pronated',
-    'grip', 'single', 'one', 'unilateral', 'staggered', 'offset', 'arm', 'leg', 'over', 'weighted', 'assisted',
+    // grip / stance / side / load. NOTE: deliberately EXCLUDES bodypart/movement-
+    // flipping words (leg / arm / reverse) — those name a DIFFERENT movement, so
+    // "Leg Curl"→"Curl", "Leg Press"→"Press", "Reverse Fly"→"Fly" must NOT satisfy a
+    // bare base slot (that would hide genuinely-undone work). Equipment/angle
+    // qualifiers on a bare slot ARE true variants ("Cable Fly"→"Fly") and stay in.
+    'close', 'wide', 'narrow', 'neutral', 'underhand', 'overhand', 'supinated', 'pronated',
+    'grip', 'single', 'one', 'unilateral', 'staggered', 'offset', 'over', 'weighted', 'assisted',
     'paused', 'tempo', 'deficit', 'elevated',
   ]);
 
