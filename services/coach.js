@@ -1050,7 +1050,12 @@ function scrubDirectiveArtifacts(prose) {
     .filter(line => {
       const t = line.trim();
       if (PROPOSAL_TOKENS.some(([p]) => t.startsWith(p))) return false;
-      if (/^[{[]/.test(t) && /["}\]]/.test(t)) return false; // orphaned JSON fragment
+      // Orphaned JSON fragment: a line that OPENS a JSON object/array with a string
+      // key/element (`{"…` / `["…`), or a bare closing fragment (`}` / `]` / `},`).
+      // Narrow on purpose — a coach aside that merely starts with a bracket
+      // ("[heads up] …") is left intact.
+      if (/^[{[]\s*"/.test(t)) return false;
+      if (/^[}\]][,\s]*$/.test(t)) return false;
       return true;
     })
     .join('\n')

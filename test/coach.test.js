@@ -678,6 +678,19 @@ test('parseReplyWithProposals: a bare token with NO JSON keeps the human prose a
   assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT/, 'the bare token label is still scrubbed');
 });
 
+test('parseReplyWithProposals: a coach line that merely starts with a bracket is not scrubbed as JSON', () => {
+  const raw = [
+    'Nice work.',
+    '[heads up] your bench is stalling — watch the RIR.',
+    'PROPOSE_PLAN_EDIT: {"action":"add_exercises","exercises":[{"name":"Barbell Row"}]}'
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(propose_plan_edit.action, 'add_exercises');
+  assert.match(reply, /\[heads up\] your bench is stalling — watch the RIR\./, 'a bracketed coach aside must survive');
+  assert.match(reply, /Nice work\./);
+  assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT|add_exercises|Barbell Row/, 'the directive is still fully scrubbed');
+});
+
 test('isValidPlanEditSchema accepts plan actions and rejects empty or unknown edits', () => {
   assert.ok(isValidPlanEditSchema({ action: 'replace_plan', exercises: ['Bench Press'] }));
   assert.ok(isValidPlanEditSchema({ action: 'remove_exercises', exercises: ['Hanging Knee Raises'] }));
