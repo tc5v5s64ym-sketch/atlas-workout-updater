@@ -445,6 +445,33 @@ test('chat system prompt instructs model to use actual logged sets for history q
   assert.match(prompt, /current_plan/i, 'must explicitly name current_plan as a forbidden source for history answers');
 });
 
+// Live-retest sweep 2026-07-08, finding #1: mid-conversation about Overhead Press,
+// the lifter asked a false-premise question ("so you're saying I hit a 225 press
+// today, right?"). The reply cited a real number ("The 225 press was logged in
+// your session on July 7th") without naming which lift it belonged to — the real
+// 225 was a Bench Press set, not Overhead Press. The snapshot's `lift_sets` is
+// already keyed per exercise (issue #359), so the data preserves identity; the
+// prompt just never told the model it must say which lift a cited number is
+// FOR, or that it must not let one lift's number appear to answer a question
+// about a different lift.
+test('chat system prompt: LIFT-IDENTITY RULE forbids citing a number without naming its lift', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /LIFT-IDENTITY RULE/i, 'must have an explicit lift-identity rule');
+  assert.match(prompt, /must name the exact exercise it (belongs to|came from)/i, 'must require naming the lift for every cited number');
+  assert.match(prompt, /press.*Bench Press.*Overhead Press|Bench Press.*Overhead Press.*press/i, 'must use the Bench/Overhead Press ambiguity as the worked example');
+  assert.match(prompt, /never imply (it|the number) belongs to (the )?(active|current)/i, 'must forbid implying a different lift\'s number belongs to the active lift');
+});
+
+test('chat system prompt: LIFT-IDENTITY RULE is placed with the other grounding rules, near HISTORY RULE', () => {
+  const prompt = buildChatSystemPrompt();
+  const historyIdx = prompt.indexOf('HISTORY RULE');
+  const identityIdx = prompt.indexOf('LIFT-IDENTITY RULE');
+  assert.ok(historyIdx >= 0 && identityIdx >= 0);
+  // Keep the two closely-related grounding rules adjacent so a future edit to one
+  // doesn't drift away from the other.
+  assert.ok(Math.abs(identityIdx - historyIdx) < 800, 'LIFT-IDENTITY RULE must sit near HISTORY RULE, not scattered elsewhere in the prompt');
+});
+
 test('step-375: chat system prompt forces "what\'s left" answers to read plan_state.remaining, not current_plan', () => {
   const prompt = buildChatSystemPrompt();
   assert.match(prompt, /WHAT'S-LEFT RULE/i, 'must have an explicit what\'s-left rule');
