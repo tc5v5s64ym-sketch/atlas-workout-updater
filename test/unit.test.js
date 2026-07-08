@@ -5890,7 +5890,9 @@ test('P0 PR4: identity correction is wired into the message flow and relabels th
   assert.ok(corrIdx !== -1, 'correction route present in the flow');
   assert.ok(mutIdx < corrIdx && corrIdx < subIdx, 'correction runs after plan-mutation, before suggest/coach');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 3200);
+  // Window covers the whole function body (widened for the ADD-5 targeting guard,
+  // which added a comment + guard block ahead of the relabel/announce lines).
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyIdentityCorrection('), appSrc.indexOf('function tryApplyIdentityCorrection(') + 5400);
   assert.match(fn, /classifyIdentityCorrection\(/, 'uses the deterministic classifier (not LLM prose)');
   // Only relabel to a phrase that resolves to a KNOWN name — the catalog tiers, or
   // the ≥2-word word-subset/typo tier against plan + catalog names (owner live find

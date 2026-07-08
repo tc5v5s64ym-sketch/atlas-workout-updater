@@ -1925,6 +1925,37 @@ function tryApplyIdentityCorrection(text) {
   const newName = (resolved.matched && resolved.name) || resolveCorrectionTargetName(intent.to);
   if (!newName) return false;
   if (oldName.toLowerCase() === newName.toLowerCase()) return false;
+  // ── ADD-5: identity-correction targeting guard ────────────────────────────
+  // A demonstrative correction ("i meant X" / "sorry that was X") re-identifies the
+  // exercise IN FOCUS — normally the just-logged lift, which the correction is
+  // re-labeling. But when the session has moved on — a different exercise is the
+  // active thing being discussed/clarified, or the corrected identity is already
+  // its OWN logged group — the correction does NOT refer to the completed lift
+  // sitting at the tail of the log. Silently relabeling that completed lift to an
+  // unrelated identity corrupts the permanent record (live bug: Bench Press logged,
+  // incline flyes then discussed, "I meant incline dumbbell flyes" turned the Bench
+  // Press rows into flyes). In that case we refuse the silent mutation and ASK,
+  // instead of guessing at a target. The "X is Y" (intent.from) form is user-named
+  // and keeps its existing, deliberate buffered-lift resolution.
+  if (!intent.from) {
+    const tailId = resolveCompletedIdentity(oldName);
+    const targetId = resolveCompletedIdentity(newName);
+    if (targetId !== tailId) {
+      // (a) the corrected identity already exists as its OWN logged group (so the
+      //     correction plainly refers to that group, not the unrelated tail lift), or
+      // (b) a DISTINCT exercise is the active thing being clarified — focus has
+      //     moved off the tail lift.
+      const targetIsOwnGroup = getSessionLog().some(
+        s => s.exercise !== oldName && resolveCompletedIdentity(s.exercise) === targetId
+      );
+      const focus = (typeof activeExercise === 'string' && activeExercise.trim()) || '';
+      const focusMovedOn = !!focus && resolveCompletedIdentity(focus) !== tailId;
+      if (targetIsOwnGroup || focusMovedOn) {
+        askIdentityCorrectionClarification(oldName, newName);
+        return true; // handled by asking — the completed lift is left exactly as logged
+      }
+    }
+  }
   if (intent.from) {
     // A name correction applies to the WHOLE mis-labeled group, wherever its sets
     // sit in the log — later sets of another lift don't shield it.
@@ -1959,6 +1990,17 @@ function announceIdentityCorrection(fromName, toName) {
   renderActiveSessionBanner();
   document.dispatchEvent(new CustomEvent('atlas:identity-corrected', {
     detail: { from: fromName || '', to: toName || '' }
+  }));
+}
+
+// ADD-5: ask the lifter to disambiguate instead of relabeling a completed lift we
+// are NOT sure the correction refers to. Read-only narration — it mutates NOTHING
+// (no logged rows, no completion list, no plan, no write path): the tail lift stays
+// exactly as logged. The coach layer renders the question; the lifter can re-state
+// the correction naming the lift ("<logged> is <target>") to apply it deliberately.
+function askIdentityCorrectionClarification(loggedName, targetName) {
+  document.dispatchEvent(new CustomEvent('atlas:identity-correction-ambiguous', {
+    detail: { logged: loggedName || '', target: targetName || '' }
   }));
 }
 

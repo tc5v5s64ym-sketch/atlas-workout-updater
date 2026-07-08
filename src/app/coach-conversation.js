@@ -1681,6 +1681,20 @@ import * as sessionQuestion from './sessionQuestion.js';
       : `Got it — relabeled that to ${d.to}.`;
   });
 
+  // ADD-5: a correction whose target does NOT clearly refer to the last-logged lift
+  // (a different exercise is in focus, or the target is already its own group). app.js
+  // deliberately left the completed lift untouched; ask which lift was meant rather
+  // than corrupting a finished record. Read-only narration — no state changed.
+  document.addEventListener('atlas:identity-correction-ambiguous', e => {
+    const d = (e && e.detail) || {};
+    const node = appendAtlasBubble();
+    if (node && node.body) {
+      node.body.textContent = d.target
+        ? `I left ${d.logged || 'your last lift'} as logged. Did you mean to correct it to ${d.target}? If so, tell me "${d.logged || 'that'} is ${d.target}".`
+        : `I'm not sure which lift you meant to correct — I've left ${d.logged || 'your last lift'} as logged.`;
+    }
+  });
+
   /* ===== Free-form chat (atlas:chat-message → /api/coach/chat) ===== */
 
   // In-session conversation memory only — resets on reload (no persistence, per
