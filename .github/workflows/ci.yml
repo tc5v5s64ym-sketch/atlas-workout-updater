@@ -106,6 +106,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build frontend (Vite)
+        # public/ is gitignored (PR-22); several tests (shellAssetsCoverage,
+        # the unit.test.js P0-wiring block) read it from disk, and this job
+        # runs in a separate checkout from unit-tests so it needs its own build.
+        run: npm run build
+
       - name: Run tests with coverage (report only)
         run: |
           # Never fail the job on test/coverage output — this is report-only.
