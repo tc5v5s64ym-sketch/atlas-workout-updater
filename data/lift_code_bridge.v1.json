@@ -1,0 +1,225 @@
+{
+  "schema_version": "v1",
+  "kind": "lift_code_bridge",
+  "status": "inert",
+  "purpose": "Permanent, immutable mapping from catalog exercise identity (exercise_id) to the Log_Cleaned lift_code (col5). This is the intended source of truth for future enrichment inversion. INERT in PR-A: no runtime code reads this file. Building it changes zero behaviour.",
+  "provenance": {
+    "lift_codes_from": "services/exerciseEnrichment.js :: knownLiftCodeOverrides",
+    "exercise_ids_from": "data/exercise_catalog.v1.json + data/exercise_aliases.v1.json (name/alias join)",
+    "join_method": "normalized override name -> catalog id/name, else highest-confidence alias -> exercise_id"
+  },
+  "bridge": {
+    "back_squat": {
+      "lift_code": "SQ01",
+      "resolved_via": [
+        "catalog_name",
+        "alias:shorthand"
+      ],
+      "min_confidence": 0.8,
+      "override_names": [
+        "back squat",
+        "squat"
+      ]
+    },
+    "barbell_bench_press": {
+      "lift_code": "BEN01",
+      "resolved_via": [
+        "alias:shorthand",
+        "catalog_name",
+        "alias:common_name"
+      ],
+      "min_confidence": 0.85,
+      "override_names": [
+        "bench",
+        "bench press",
+        "barbell bench press"
+      ]
+    },
+    "conventional_deadlift": {
+      "lift_code": "DL01",
+      "resolved_via": [
+        "alias:common_name"
+      ],
+      "min_confidence": 0.92,
+      "override_names": [
+        "deadlift"
+      ]
+    },
+    "dip": {
+      "lift_code": "DIP01",
+      "resolved_via": [
+        "catalog_id"
+      ],
+      "min_confidence": 1,
+      "override_names": [
+        "dip"
+      ]
+    },
+    "dips": {
+      "lift_code": "DIP01",
+      "resolved_via": [
+        "catalog_id"
+      ],
+      "min_confidence": 1,
+      "override_names": [
+        "dips"
+      ]
+    },
+    "dumbbell_lateral_raise": {
+      "lift_code": "LRA01",
+      "resolved_via": [
+        "catalog_name",
+        "alias:pluralization",
+        "alias:bodybuilding_name"
+      ],
+      "min_confidence": 0.75,
+      "override_names": [
+        "lateral raise",
+        "lateral raises",
+        "laterals"
+      ]
+    },
+    "elliptical": {
+      "lift_code": "ELL01",
+      "resolved_via": [
+        "catalog_id"
+      ],
+      "min_confidence": 1,
+      "override_names": [
+        "elliptical"
+      ]
+    },
+    "face_pull": {
+      "lift_code": "FP01",
+      "resolved_via": [
+        "catalog_name",
+        "alias:pluralization"
+      ],
+      "min_confidence": 1,
+      "override_names": [
+        "face pull",
+        "face pulls"
+      ]
+    },
+    "hammer_curl": {
+      "lift_code": "HC01",
+      "resolved_via": [
+        "catalog_name",
+        "alias:pluralization",
+        "alias:bodybuilding_name"
+      ],
+      "min_confidence": 0.78,
+      "override_names": [
+        "hammer curl",
+        "hammer curls",
+        "hammers"
+      ]
+    },
+    "hanging_leg_raise": {
+      "lift_code": "KR01",
+      "resolved_via": [
+        "alias:shorthand"
+      ],
+      "min_confidence": 0.7,
+      "override_names": [
+        "knee raise"
+      ]
+    },
+    "lat_pulldown": {
+      "lift_code": "LAT01",
+      "resolved_via": [
+        "alias:shorthand",
+        "alias:pluralization",
+        "catalog_name"
+      ],
+      "min_confidence": 0.95,
+      "override_names": [
+        "lat pull",
+        "lat pulls",
+        "lat pulldown",
+        "lat pulldowns"
+      ]
+    },
+    "romanian_deadlift": {
+      "lift_code": "RDL01",
+      "resolved_via": [
+        "catalog_name",
+        "alias:abbreviation"
+      ],
+      "min_confidence": 1,
+      "override_names": [
+        "romanian deadlift",
+        "rdl"
+      ]
+    },
+    "seated_cable_row": {
+      "lift_code": "ROW01",
+      "resolved_via": [
+        "alias:common_name",
+        "alias:pluralization"
+      ],
+      "min_confidence": 0.9,
+      "override_names": [
+        "seated row",
+        "seated rows"
+      ]
+    },
+    "weighted_dip": {
+      "lift_code": "DIP01",
+      "resolved_via": [
+        "catalog_name",
+        "alias:pluralization"
+      ],
+      "min_confidence": 1,
+      "override_names": [
+        "weighted dip",
+        "weighted dips"
+      ]
+    }
+  },
+  "many_to_one": {
+    "DIP01": {
+      "exercise_ids": [
+        "dip",
+        "dips",
+        "weighted_dip"
+      ],
+      "note": "3 distinct catalog identities fold to one lift_code."
+    }
+  },
+  "unresolved_lift_codes": {
+    "BC01": {
+      "override_names": [
+        "bicep curl",
+        "bicep curls",
+        "biceps curl",
+        "biceps curls",
+        "curl",
+        "curls"
+      ],
+      "reason": "Catalog has no generic bicep-curl identity; the sheet BC01 bucket is ambiguous and splits across many catalog identities. Cannot be inverted to one exercise_id without an owner taxonomy decision.",
+      "candidate_exercise_ids": [
+        "band_bicep_curl",
+        "barbell_curl",
+        "barbell_drag_curl",
+        "barbell_preacher_curl",
+        "cable_curl",
+        "concentration_curl",
+        "cross_body_hammer_curl",
+        "dumbbell_curl",
+        "dumbbell_preacher_curl",
+        "ez_bar_curl",
+        "incline_cable_curl",
+        "incline_dumbbell_curl",
+        "machine_biceps_curl",
+        "machine_preacher_curl",
+        "rope_cable_curl",
+        "single_arm_cable_curl",
+        "spider_curl",
+        "zottman_curl"
+      ],
+      "candidate_note": "Plain-biceps \"*curl\" catalog identities (excludes ids already claimed by another lift_code, e.g. hammer_curl->HC01). Illustrative, not exhaustive."
+    }
+  },
+  "do_not_edit": "Generated join, then hand-verified. Regenerate via the documented procedure; do not hand-edit lift_code values — they are the immutable identity contract."
+}
