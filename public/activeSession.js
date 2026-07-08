@@ -280,6 +280,26 @@ const _exports = (function () {
     return completedExercises(session).length > 0;
   }
 
+  // Recap reconciliation (ADD-4): a planned slot the lifter SUBSTITUTED with a
+  // more-specific variant is satisfied — not "still remaining". Drop a remaining
+  // name when a completed name is a strict SUPERSET variant of it, i.e. the
+  // completed name is "<modifier> <slot>" ("Incline Dumbbell Flyes" satisfies a
+  // suggested "Dumbbell Flyes"; "Barbell Row" satisfies "Row"). Directional and
+  // word-boundary-anchored on purpose:
+  //   - a base movement never satisfies a MORE-specific slot (flat "Bench Press"
+  //     must NOT complete an "Incline Bench Press" slot),
+  //   - the match is a trailing whole-phrase (the base is the tail of the variant),
+  //     so it never fires mid-word.
+  // Read-only: names in, filtered remaining out. Does not touch the session, the
+  // written rows, or the save payload — only what the recap narrates as remaining.
+  function reconcileSubstitutedRemaining(completedNames, remainingNames) {
+    const completed = (Array.isArray(completedNames) ? completedNames : []).map(lc).filter(Boolean);
+    const satisfied = r => completed.some(c =>
+      c !== r && c.endsWith(r) && c[c.length - r.length - 1] === ' ');
+    return (Array.isArray(remainingNames) ? remainingNames : [])
+      .filter(name => !satisfied(lc(name)));
+  }
+
   const exported = {
     STATUS,
     createActiveSession,
@@ -294,6 +314,7 @@ const _exports = (function () {
     completedExercises,
     isComplete,
     hasLoggedWork,
+    reconcileSubstitutedRemaining,
     // exposed for the later slices (identity correction PR4 / insert PR5) and tests
     entryMatches,
     findMatchIndex,
@@ -317,6 +338,7 @@ export const {
   completedExercises,
   isComplete,
   hasLoggedWork,
+  reconcileSubstitutedRemaining,
   entryMatches,
   findMatchIndex,
   toEntry,

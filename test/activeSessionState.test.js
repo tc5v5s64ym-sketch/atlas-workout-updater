@@ -338,3 +338,56 @@ test('guard 2b: a logged (completed) lift is never a swap/skip target (no re-ope
   // A compound target spanning a completed + pending lift only resolves the pending one.
   assert.deepEqual(resolvePlanTargets('deadlift/overhead press', entries), ['Overhead Press'], 'the finished half of a compound target is dropped');
 });
+
+// ── ADD-4 (PR10 regression addendum §4): substitute satisfies the original slot ─
+// Atlas suggests "Dumbbell Flyes" (a slot), the lifter does the more-specific
+// "Incline Dumbbell Flyes". The recap must not still list "Dumbbell Flyes" as
+// remaining. Fixed at the read-only recap layer via reconcileSubstitutedRemaining.
+
+test('ADD-4: a completed variant satisfies its base slot (recap reconciliation)', () => {
+  const { reconcileSubstitutedRemaining } = loadActiveSession();
+  // Scenario B: both the suggested base and the logged variant are slots; only the
+  // variant was logged, so the base is left pending until reconciled.
+  assert.deepEqual(
+    reconcileSubstitutedRemaining(['Overhead Press', 'Incline Dumbbell Flyes', 'Bench Press'], ['Dumbbell Flyes']),
+    [],
+    'the suggested Dumbbell Flyes slot is satisfied by the logged Incline Dumbbell Flyes'
+  );
+  // "Barbell Row" satisfies a bare "Row" slot (modifier + base).
+  assert.deepEqual(reconcileSubstitutedRemaining(['Barbell Row'], ['Row']), []);
+});
+
+test('ADD-4: reconciliation is directional and word-anchored (no over-satisfaction)', () => {
+  const { reconcileSubstitutedRemaining } = loadActiveSession();
+  // A BASE movement must NOT satisfy a MORE-specific slot (flat bench ≠ incline slot).
+  assert.deepEqual(reconcileSubstitutedRemaining(['Bench Press'], ['Incline Bench Press']), ['Incline Bench Press']);
+  // Unrelated completed work never drops a remaining slot.
+  assert.deepEqual(reconcileSubstitutedRemaining(['Bench Press'], ['Dumbbell Flyes']), ['Dumbbell Flyes']);
+  // Mid-word containment never matches ("Leg Express" does not satisfy a "press" slot).
+  assert.deepEqual(reconcileSubstitutedRemaining(['Leg Express'], ['press']), ['press']);
+  // An exact-equal name is not a "variant" (handled by the normal completion path).
+  assert.deepEqual(reconcileSubstitutedRemaining(['Dumbbell Flyes'], ['Dumbbell Flyes']), ['Dumbbell Flyes']);
+});
+
+test('ADD-4: end-to-end via the canonical session — recap remaining drops the substituted slot', () => {
+  const AS = loadActiveSession();
+  // Reproduce getCanonicalSession's reconciliation: plan has the suggested base fly
+  // AND the added incline variant as slots; only the incline is logged.
+  function canonical(planNames, completedNames) {
+    let s = AS.createActiveSession({ exercises: planNames.map(n => ({ name: n })) });
+    for (const name of completedNames) {
+      const after = AS.markCompleted(s, name);
+      s = after !== s ? after : AS.markCompleted(AS.insertExercise(s, { name }), name);
+    }
+    return s;
+  }
+  const s = canonical(
+    ['Overhead Press', 'Dumbbell Flyes', 'Incline Dumbbell Flyes', 'Bench Press'],
+    ['Overhead Press', 'Incline Dumbbell Flyes', 'Bench Press']
+  );
+  const completed = AS.completedExercises(s).map(e => e.name);
+  const remainingRaw = AS.remaining(s).map(e => e.name);
+  assert.deepEqual(remainingRaw, ['Dumbbell Flyes'], 'without reconciliation the base fly is stranded (the bug)');
+  const remaining = AS.reconcileSubstitutedRemaining(completed, remainingRaw);
+  assert.deepEqual(remaining, [], 'the recap no longer lists Dumbbell Flyes as still on the plan');
+});

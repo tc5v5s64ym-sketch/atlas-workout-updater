@@ -17,7 +17,8 @@ const EXPECTED = {
   activeSession: [
     'STATUS', 'createActiveSession', 'replaceExercise', 'skipExercise', 'markCompleted',
     'correctIdentity', 'insertExercise', 'currentExercise', 'nextUp', 'remaining',
-    'completedExercises', 'isComplete', 'hasLoggedWork', 'entryMatches', 'findMatchIndex', 'toEntry',
+    'completedExercises', 'isComplete', 'hasLoggedWork', 'reconcileSubstitutedRemaining',
+    'entryMatches', 'findMatchIndex', 'toEntry',
   ],
   planMutationIntent: ['classifyMutationIntent', 'cleanName', 'splitTargets', 'resolvePlanTargets'],
   identityCorrection: ['classifyIdentityCorrection', 'cleanName'],
