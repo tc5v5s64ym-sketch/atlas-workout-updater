@@ -2495,9 +2495,11 @@ test('parse-workout-text route is registered as read-only and no-write capable',
 });
 
 test('last_session_route_registered_before_lift_code_param', () => {
-  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
-  const lastSessionIndex = indexSource.indexOf("app.get('/api/exercises/last-session'");
-  const liftCodeIndex = indexSource.indexOf("app.get('/api/exercises/:liftCode'");
+  // PR-16: the read routes moved to routes/reads.js as an Express Router; the
+  // last-session-before-:liftCode ordering is preserved there (router.get).
+  const source = fs.readFileSync(path.join(repoRoot, 'routes', 'reads.js'), 'utf8');
+  const lastSessionIndex = source.indexOf("router.get('/api/exercises/last-session'");
+  const liftCodeIndex = source.indexOf("router.get('/api/exercises/:liftCode'");
 
   assert.ok(lastSessionIndex >= 0);
   assert.ok(liftCodeIndex >= 0);
@@ -2547,8 +2549,14 @@ test('route_definitions_include_last_session', () => {
 });
 
 test('route_definitions_cover_obvious_registered_routes', () => {
+  // Scan index.js (app.get/post) AND the extracted routers (router.get/post) so
+  // the coverage guard still covers routes moved out of index.js (PR-16 reads.js).
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
-  const registeredRoutes = [...indexSource.matchAll(/app\.(get|post)\('([^']+)'/g)]
+  const readsSource = fs.readFileSync(path.join(repoRoot, 'routes', 'reads.js'), 'utf8');
+  const registeredRoutes = [
+    ...indexSource.matchAll(/app\.(get|post)\('([^']+)'/g),
+    ...readsSource.matchAll(/router\.(get|post)\('([^']+)'/g),
+  ]
     .map(match => ({ method: match[1].toUpperCase(), path: match[2] }))
     .filter(route => route.path !== '/app');
   const definitionKeys = new Set(routeDefinitions.flatMap(route =>
@@ -4115,8 +4123,9 @@ test('session history: /api/sessions/recent endpoint registered as GET and read-
   assert.equal(route.authRequired, true);
 });
 
-test('session history: /api/sessions/recent registered BEFORE /:sessionId in index.js', () => {
-  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+test('session history: /api/sessions/recent registered BEFORE /:sessionId', () => {
+  // PR-16: these read routes moved to routes/reads.js; the ordering is preserved there.
+  const src = fs.readFileSync(path.join(repoRoot, 'routes', 'reads.js'), 'utf8');
   const recentIdx = src.indexOf("'/api/sessions/recent'");
   const paramIdx = src.indexOf("'/api/sessions/:sessionId'");
   assert.ok(recentIdx !== -1, '/api/sessions/recent endpoint must exist');
