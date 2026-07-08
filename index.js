@@ -1398,11 +1398,15 @@ function computeSetEffortExtras(rawFacts) {
 // contradict the engine's read. Returns { message, voice } (voice null when there
 // is no set-effort signal). Read-only — never writes.
 function finalizeSetVoice(message, voiceBase) {
-  if (!voiceBase) return { message, voice: null };
-  const contradictions = findForbiddenContradictions(voiceBase.reason_codes, message);
+  // An empty/whitespace-only model reply is NOT a coach message — normalize it to
+  // null so the endpoint never serializes `message: ""` (PR-11 Bug 4). The client
+  // then falls back to its templated voice instead of rendering a blank.
+  const msg = (typeof message === 'string' && !message.trim()) ? null : message;
+  if (!voiceBase) return { message: msg, voice: null };
+  const contradictions = findForbiddenContradictions(voiceBase.reason_codes, msg);
   const suppress = voiceBase.suppress_generic_prose || contradictions.length > 0;
   return {
-    message: suppress ? null : message,
+    message: suppress ? null : msg,
     voice: { ...voiceBase, contradictions },
   };
 }

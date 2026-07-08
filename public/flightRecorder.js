@@ -302,12 +302,20 @@ const _exports = (function (root) {
     try {
       let bubbles = document.querySelectorAll('.chat-bubble-atlas .coach-msg');
       if (bubbles && bubbles.length) {
-        return truncate((bubbles[bubbles.length - 1].textContent || '').trim(), 400);
+        // Preserve the last VALID coach message (PR-11 Bug 4 / addendum #7): the last
+        // .coach-msg can be transiently EMPTY — a receipt-only (ack) block, a
+        // suppressed message, or a bubble mid-typewriter — so walk back to the most
+        // recent non-empty bubble instead of reporting a blank coach_message.
+        for (let i = bubbles.length - 1; i >= 0; i--) {
+          const t = (bubbles[i].textContent || '').trim();
+          if (t) return truncate(t, 400);
+        }
       }
       let hero = document.getElementById('coach-empty');
       let opening = document.getElementById('coach-opening');
       if (opening && (!hero || !hero.hasAttribute('hidden'))) {
-        return truncate((opening.textContent || '').trim(), 400);
+        const t = (opening.textContent || '').trim();
+        if (t) return truncate(t, 400);
       }
       return null;
     } catch (e) { return null; }
