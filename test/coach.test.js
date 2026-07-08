@@ -670,6 +670,14 @@ test('parseReplyWithProposals: any leftover PROPOSE_* token line is scrubbed fro
   }
 });
 
+test('parseReplyWithProposals: a bare token with NO JSON keeps the human prose after it (no prose loss)', () => {
+  const raw = 'PROPOSE_PLAN_EDIT:\nActually, let me reconsider — keep the plan as is.';
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(propose_plan_edit, null, 'no JSON → no proposal');
+  assert.match(reply, /Actually, let me reconsider — keep the plan as is\./, 'trailing prose must survive');
+  assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT/, 'the bare token label is still scrubbed');
+});
+
 test('isValidPlanEditSchema accepts plan actions and rejects empty or unknown edits', () => {
   assert.ok(isValidPlanEditSchema({ action: 'replace_plan', exercises: ['Bench Press'] }));
   assert.ok(isValidPlanEditSchema({ action: 'remove_exercises', exercises: ['Hanging Knee Raises'] }));

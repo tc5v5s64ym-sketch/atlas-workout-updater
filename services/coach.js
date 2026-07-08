@@ -1080,7 +1080,11 @@ function parseReplyWithProposals(text) {
   const rest = [afterPrefix, ...lines.slice(tokenLineIdx + 1)].join('\n');
   const { value: parsed, endIndex } = extractFirstJson(rest);
   const before = lines.slice(0, tokenLineIdx).join('\n');
-  const trailing = endIndex >= 0 ? rest.slice(endIndex) : '';
+  // When no JSON is found (a bare token with human prose after it, e.g.
+  // "PROPOSE_PLAN_EDIT:\nActually, never mind."), keep that prose — scrub the token
+  // label + any JSON-fragment lines, but don't drop the lifter-facing text. The
+  // no-leak property still holds (scrubDirectiveArtifacts removes token/JSON lines).
+  const trailing = endIndex >= 0 ? rest.slice(endIndex) : rest;
   const prose = scrubDirectiveArtifacts([before, trailing].join('\n'));
 
   let propose_edit = null;
