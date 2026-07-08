@@ -92,6 +92,7 @@ These describe specific systems or constraints. Use them when your PR touches th
 - `docs/TRAINING_SME_LAYER.md`
 - `docs/TRAINING_PROFILE_TAXONOMY.md` — planning spec for multi-style training support (five training profiles, profile-score model, modality schema, onboarding classifier, profile-aware stimulus governor). Owner-gated, not active roadmap; filed in `BACKLOG.md`.
 - `docs/SESSION_PLANNING_ENGINE.md` — planning spec for the Session Planning Engine (daily objective scoring, supported session objectives, deterministic exercise order rules, fatigue-adjusted plans, a recovery/deload model — trigger convergence, profile-aware deload styles, the normal-routing→recovery_reload→deload→taper→maintenance→complete-rest boundary — and a golden-fixture proposal). Builds on the Training Profile Taxonomy; the deload section is planning-only and does not change `docs/DELOAD_SPEC.md`. Owner-gated, not active roadmap; filed in `BACKLOG.md`.
+- `docs/EXERCISE_NAME_UNIFICATION_MIGRATION_PLAN.md` — **planning/audit only** — scopes the parser↔enrichment↔catalog exercise-name / lift-code unification deferred by PR-14/PR-15: the 5-source current-state map, the 32-residual divergence table, the `primary_muscles→Muscle_Group` and `exercise_id→lift_code` bridge proposals (not applied), the `--sync-sheet` plan, a 6-PR safe migration sequence, the test plan, and the owner-decision list. No behavior/write/sheet/data change. Owner-gated past PR-A/B; filed in `BACKLOG.md`.
 
 ## Research (preserved source knowledge)
 
