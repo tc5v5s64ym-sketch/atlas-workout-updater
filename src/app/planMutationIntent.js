@@ -39,7 +39,14 @@ const _exports = (function () {
     let t = String(s == null ? '' : s).trim().toLowerCase();
     t = t.replace(/[.?!,;:]+$/, '').trim();
     t = t.replace(/^(?:the|my|a|an|some)\s+/, '');
-    t = t.replace(/\s+(?:instead|today|this time|for now|now|please|then)$/, '').trim();
+    // Strip trailing session-scope fillers REPEATEDLY so a stacked tail
+    // ("rdls for me today") reduces to the bare exercise ("rdls"). No exercise
+    // name ends in one of these words, so this never eats a real lift.
+    let prev;
+    do {
+      prev = t;
+      t = t.replace(/[,\s]+(?:instead|today|tonight|this time|for now|right now|for me|for the day|for the rest of (?:the\s+)?(?:session|workout|day)|now|please|then)$/, '').trim();
+    } while (t !== prev);
     return t;
   }
 
@@ -88,8 +95,14 @@ const _exports = (function () {
     for (const e of entries) {
       const en = singular(e.name);
       const enWords = wordSet(e.name);
+      // Lift-code stem (owner live find 2026-07-07: "no RDLs" must reach the
+      // "Romanian Deadlift" slot, whose name has no "rdl" substring). Match a token
+      // against the slot's lift code with its trailing serial dropped: RDL01→"rdl",
+      // OHP01→"ohp". Guarded to ≥2 chars so a stub code never over-matches.
+      const codeStem = String(e.liftCode || e.lift_code || '').toLowerCase().replace(/\d+$/, '');
       const hit = tokens.some(tok => {
         if (en === tok || en.includes(tok) || tok.includes(en)) return true;
+        if (codeStem.length >= 2 && tok === codeStem) return true;
         // Token-subset tier (owner live find 2026-07-03: "single leg press"
         // must resolve "Single-Leg Seated Leg Press"): every word of the
         // user's phrase appears in the slot name. Two-word minimum so a lone
@@ -200,6 +213,14 @@ const _exports = (function () {
     m = t.match(/^(?:take\s+out|get\s+rid\s+of|toss(?:\s+out)?)\s+(.+)$/);
     if (m) return skip(m[1]);
 
+    // Negation-style skip: "no [more] X" (owner live find 2026-07-07: "no RDLs for
+    // me today" must skip the RDL slot, not just get a coach reply). Session-scope
+    // fillers were stripped by cleanName; the downstream plan-slot resolution is the
+    // safety net for a non-exercise capture ("no thanks" → no matching slot → falls
+    // through to the coach). "no" alone (nothing after) never matches.
+    m = t.match(/^no\s+(?:more\s+)?(.+)$/);
+    if (m) return skip(m[1]);
+
     // Reason-clause tolerance (owner live find 2026-07-03: "My legs are fried
     // right now I think I'll skip single leg press and leg extensions" fell to
     // the chat LLM, which debated instead of skipping). Every pattern above is
@@ -222,6 +243,18 @@ const _exports = (function () {
       // Re-run the anchored grammar on the extracted clause only — one code
       // lane for the patterns, no second grammar to drift.
       const inner = classifyMutationIntent(clause);
+      if (inner) return inner;
+    }
+
+    // Reason clause + NEGATION skip ("my lower back is a bit sore so no rdls for me
+    // today"): the "no X" grammar above is start-anchored, so a leading reason
+    // defeats it. Peel the reason before a connector (so / but / then / comma) and
+    // re-run on the "no X" clause. The negation guard above still blocks a real
+    // negation ("… so I won't skip squats"); a non-exercise capture falls through
+    // via the plan-slot gate downstream.
+    m = t.match(/(?:\bso\b|\bbut\b|\bthen\b|,)\s*(no\s+(?:more\s+)?.+)$/);
+    if (m) {
+      const inner = classifyMutationIntent(m[1]);
       if (inner) return inner;
     }
 

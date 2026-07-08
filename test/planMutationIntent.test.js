@@ -9,9 +9,9 @@ const assert = require('node:assert/strict');
 
 // PR-08: the module is now an ES module — load it via dynamic import (Node 20 CI
 // has no require(esm)).
-let classifyMutationIntent, splitTargets, resolvePlanTargets;
+let classifyMutationIntent, splitTargets, resolvePlanTargets, cleanName;
 test.before(async () => {
-  ({ classifyMutationIntent, splitTargets, resolvePlanTargets } = await import('../src/app/planMutationIntent.js'));
+  ({ classifyMutationIntent, splitTargets, resolvePlanTargets, cleanName } = await import('../src/app/planMutationIntent.js'));
 });
 
 test('repro: "skip deadlifts/rdls and do squats" → replace deadlift with squats', () => {
@@ -229,4 +229,55 @@ test('a drop-set technique mention is not read as a skip', () => {
   assert.equal(classifyMutationIntent('drop-set the leg press'), null);
   // a genuine "drop X" skip (no "set") still classifies
   assert.equal(classifyMutationIntent('drop the leg curl').action, 'skip');
+});
+
+// ── ADD-2 (PR10 regression addendum §2): negation-style skip ─────────────────
+// "no RDLs for me today" must classify as a skip (it was only getting a coach reply).
+test('ADD-2: negation-style "no X" classifies as a skip', () => {
+  for (const [text, target] of [
+    ['no RDLs for me today', 'rdls'],
+    ['no more curls', 'curls'],
+    ['no rdls', 'rdls'],
+    ['no leg press today', 'leg press'],
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'skip', `skip: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+  }
+});
+
+test('ADD-2: a leading reason clause before "no X" still classifies as skip', () => {
+  const r = classifyMutationIntent('My lower back is a bit sore so no RDLs for me today');
+  assert.equal(r && r.action, 'skip');
+  assert.equal(r.target, 'rdls', 'reason peeled, RDL captured');
+  // comma connector too
+  assert.equal(classifyMutationIntent('legs are cooked, no leg press today').target, 'leg press');
+});
+
+test('ADD-2: cleanName strips stacked session-scope fillers ("for me today")', () => {
+  assert.equal(cleanName('rdls for me today'), 'rdls');
+  assert.equal(cleanName('leg press for the rest of the session'), 'leg press');
+  assert.equal(cleanName('curls right now'), 'curls');
+});
+
+// A negation that is a real REFUSAL to skip must never classify as a skip.
+test('ADD-2: "no X" lane stays conservative on non-skips', () => {
+  // A bare "no" with nothing after is not a skip.
+  assert.equal(classifyMutationIntent('no'), null);
+  // A genuine negation of an intent still returns null (the reason-lane guard).
+  assert.equal(classifyMutationIntent("my back is sore but i won't skip rdls"), null);
+});
+
+// ── ADD-2: lift-code stem resolution so "rdls" reaches the RDL01 slot ─────────
+test('ADD-2: resolvePlanTargets resolves a token to a slot by lift-code stem', () => {
+  const plan = [{ name: 'Romanian Deadlift', liftCode: 'RDL01' }, { name: 'Seated Row', liftCode: 'ROW01' }];
+  // "Romanian Deadlift" has no "rdl" substring — only the code stem RDL01→"rdl" reaches it.
+  assert.deepEqual(resolvePlanTargets('rdls', plan), ['Romanian Deadlift']);
+  assert.deepEqual(resolvePlanTargets('rdl', plan), ['Romanian Deadlift']);
+  // OHP → OHP01
+  assert.deepEqual(resolvePlanTargets('ohp', [{ name: 'Overhead Press', liftCode: 'OHP01' }]), ['Overhead Press']);
+  // no code + no name match → nothing (unchanged behaviour when liftCode absent)
+  assert.deepEqual(resolvePlanTargets('rdls', [{ name: 'Romanian Deadlift' }]), []);
+  // a completed/skipped slot is never re-opened by the code tier either
+  assert.deepEqual(resolvePlanTargets('rdls', [{ name: 'Romanian Deadlift', liftCode: 'RDL01', status: 'completed' }]), []);
 });

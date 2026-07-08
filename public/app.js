@@ -1742,7 +1742,7 @@ function tryApplyPlanMutation(text) {
   const canon = getCanonicalSession();
   const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
     ? canon.exercises
-    : getActivePlannedSession().exercises.map(e => ({ name: e.canonicalName || e.name, status: 'pending' }));
+    : getActivePlannedSession().exercises.map(e => ({ name: e.canonicalName || e.name, liftCode: e.liftCode || '', status: 'pending' }));
   const curName = () => {
     // After a mutation (splice/replace), firstUnloggedPlannedLift gives the correct
     // new current exercise — the stale cursor may not have advanced yet.
