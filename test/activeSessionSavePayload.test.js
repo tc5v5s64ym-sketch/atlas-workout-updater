@@ -60,12 +60,12 @@ function canonicalFrom(plannedExercises, loggedNames) {
 // ── 1. The save payload comes from the canonical model, not the raw holder ────────
 
 test('b2-save: the closeout plan_exercises is derived from getCanonicalSession()', () => {
-  const start = appSrc.indexOf('if (activePlannedSession && activePlannedSession.exercises.length > 0) {');
+  const start = appSrc.indexOf('if (getActivePlannedSession() && getActivePlannedSession().exercises.length > 0) {');
   // Find the manual/closeout block (the one that assigns payload.plan_exercises).
   let idx = appSrc.indexOf('payload.plan_exercises');
   assert.ok(idx !== -1, 'the closeout plan_exercises assignment must exist');
   // Slice a window around the assignment for structural assertions.
-  const blockStart = appSrc.lastIndexOf('if (activePlannedSession', idx);
+  const blockStart = appSrc.lastIndexOf('if (getActivePlannedSession()', idx);
   const block = appSrc.slice(blockStart, idx + 400);
   assert.ok(/getCanonicalSession\(\)/.test(block),
     'the closeout payload must read the canonical session');

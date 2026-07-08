@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const repoRoot = path.join(__dirname, '..');
+const { STORE_SHIM } = require('./helpers/storeShim');
 const { analyzeSetSequence, assessNextMoveConflict } = require('../services/setEffortSignals');
 const { rerouteNote } = require('../services/setEffortCopy');
 
@@ -28,10 +29,8 @@ function loadIdentityHarness() {
   );
   assert.ok(slice1 && slice2, 'identity helpers must be found in app.js');
   const factory = new Function(`
-    let activePlannedSession = null;
+    ${STORE_SHIM}
     let lastIntentData = null;
-    let coachSuggestionEngaged = false;
-    let sessionCompleted = [];
     ${slice1}
     ${slice2}
     return {
@@ -203,12 +202,8 @@ function loadEmitHarness(catalogOptions) {
   function FakeCustomEvent(type, init) { return { type, detail: init && init.detail }; }
   const factory = new Function(
     'document', 'CustomEvent', 'setsTableBody', 'parsedRowsEditor', 'invalidatePreview',
-    `let activePlannedSession = null;
+    `${STORE_SHIM}
      let lastIntentData = null;
-     let coachSuggestionEngaged = false;
-     let sessionCompleted = [];
-     let sessionLog = [];
-     let pendingSubstitution = null;
      let lastParsedWorkoutText = '';
      let lastUnverifiedExercise = null;
      function applySessionSubstitution() {}

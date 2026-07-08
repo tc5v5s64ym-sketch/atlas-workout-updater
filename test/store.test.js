@@ -1,0 +1,181 @@
+'use strict';
+
+// PR-10 — src/app/store.js unit tests (the single session/plan state store).
+//
+// The store is the structural cure for the SESS-* "one representation updated, the
+// other not" audit family: there is now ONE home for activePlannedSession, the
+// session buffers, and the pending swap. These tests exercise the store directly
+// (it has no DOM coupling beyond a localStorage the test fakes) — start/replace/
+// skip/complete-shaped mutation, substitution pending→applied, resume-after-reload,
+// and the v1→v2 snapshot shape bump that carries pendingSubstitution (SESS-2).
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+let store;
+
+function fakeLocalStorage() {
+  const mem = new Map();
+  return {
+    getItem: k => (mem.has(k) ? mem.get(k) : null),
+    setItem: (k, v) => { mem.set(k, String(v)); },
+    removeItem: k => { mem.delete(k); },
+    _mem: mem,
+  };
+}
+
+test.before(async () => {
+  globalThis.localStorage = fakeLocalStorage();
+  store = await import('../src/app/store.js');
+});
+
+test.beforeEach(() => {
+  globalThis.localStorage = fakeLocalStorage();
+  store.resetSessionStore();
+});
+
+test('initial state: everything empty / null', () => {
+  const s = store.getState();
+  assert.equal(s.activePlannedSession, null);
+  assert.equal(s.sessionChromeExpanded, false);
+  assert.equal(s.coachSuggestionEngaged, false);
+  assert.equal(s.pendingSubstitution, null);
+  assert.deepEqual(s.sessionLog, []);
+  assert.deepEqual(s.sessionCompleted, []);
+  assert.deepEqual(s.sessionSavedLog, []);
+});
+
+test('getters return the LIVE reference (in-place push/splice is visible)', () => {
+  store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
+  assert.equal(store.getSessionLog().length, 1);
+
+  const plan = { label: 'x', exercises: [{ name: 'Bench Press' }, { name: 'Row' }], index: 0 };
+  store.setActivePlannedSession(plan);
+  store.getActivePlannedSession().index = 1;       // nested mutation via live ref
+  assert.equal(store.getActivePlannedSession().index, 1);
+  store.getActivePlannedSession().exercises.splice(0, 1);
+  assert.equal(store.getActivePlannedSession().exercises.length, 1);
+});
+
+test('setters coerce: booleans, null-normalized objects, array-guarded arrays', () => {
+  store.setSessionChromeExpanded('yes');
+  assert.equal(store.getSessionChromeExpanded(), true);
+  store.setCoachSuggestionEngaged(0);
+  assert.equal(store.getCoachSuggestionEngaged(), false);
+  store.setActivePlannedSession(undefined);
+  assert.equal(store.getActivePlannedSession(), null);
+  store.setPendingSubstitution(0);
+  assert.equal(store.getPendingSubstitution(), null);
+  store.setSessionLog('not-an-array');
+  assert.deepEqual(store.getSessionLog(), []);
+});
+
+test('start → substitution pending → applied clears the pending swap', () => {
+  store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
+  store.setPendingSubstitution({ prescribed: 'Leg Press', prescription: null });
+  assert.equal(store.getPendingSubstitution().prescribed, 'Leg Press');
+  // caller applies the swap in the live plan then clears the pending marker
+  store.getActivePlannedSession().exercises[0] = { name: 'Hack Squat', reason: 'substituted' };
+  store.setPendingSubstitution(null);
+  assert.equal(store.getPendingSubstitution(), null);
+  assert.equal(store.getActivePlannedSession().exercises[0].name, 'Hack Squat');
+});
+
+test('persist writes a v2 snapshot carrying pendingSubstitution (SESS-2) + sessionId', () => {
+  store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
+  store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
+  store.setSessionCompleted(['Bench Press']);
+  store.setPendingSubstitution({ prescribed: 'Leg Press' });
+  store.persistSessionSnapshot('SESSION-42');
+  const snap = JSON.parse(globalThis.localStorage.getItem('atlas_session_snapshot_v1'));
+  assert.equal(snap.v, 2);
+  assert.equal(typeof snap.ts, 'number');
+  assert.equal(snap.sessionId, 'SESSION-42');
+  assert.deepEqual(snap.pendingSubstitution, { prescribed: 'Leg Press' });
+  assert.deepEqual(snap.sessionCompleted, ['Bench Press']);
+});
+
+test('persist drops the snapshot when nothing is in progress', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', 'stale');
+  store.persistSessionSnapshot('');
+  assert.equal(globalThis.localStorage.getItem('atlas_session_snapshot_v1'), null);
+});
+
+test('resume-after-reload restores buffers, plan, AND the pending swap (SESS-2)', () => {
+  // Simulate: mid-session with a declared-but-unapplied swap, then a reload.
+  store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
+  store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
+  store.setSessionCompleted(['Bench Press']);
+  store.setPendingSubstitution({ prescribed: 'Leg Press', prescription: null });
+  store.persistSessionSnapshot('SID');
+
+  store.resetSessionStore();                        // fresh page load, memory gone
+  assert.equal(store.getPendingSubstitution(), null);
+
+  const res = store.hydrateSessionSnapshot();
+  assert.equal(res.resumed, true);
+  assert.equal(res.sessionId, 'SID');
+  assert.equal(res.hasPlan, true);
+  assert.equal(store.getSessionLog().length, 1);
+  assert.deepEqual(store.getSessionCompleted(), ['Bench Press']);
+  // The stranded-swap bug: before SESS-2 this was lost on reload.
+  assert.deepEqual(store.getPendingSubstitution(), { prescribed: 'Leg Press', prescription: null });
+});
+
+test('v1 snapshot back-compat: resumes; missing pendingSubstitution restores as null', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({
+    v: 1, ts: Date.now(),
+    sessionLog: [{ exercise: 'Squat', weight: 315, reps: 5, rir: 1 }],
+    sessionCompleted: ['Squat'],
+    activePlannedSession: null,
+  }));
+  const res = store.hydrateSessionSnapshot();
+  assert.equal(res.resumed, true);
+  assert.equal(store.getSessionLog().length, 1);
+  assert.equal(store.getPendingSubstitution(), null);
+});
+
+test('hydrate refuses a stale (>12h) snapshot and clears it', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({
+    v: 2, ts: Date.now() - (13 * 60 * 60 * 1000),
+    sessionLog: [{ exercise: 'Squat' }], sessionCompleted: [],
+  }));
+  assert.equal(store.hydrateSessionSnapshot().resumed, false);
+  assert.equal(globalThis.localStorage.getItem('atlas_session_snapshot_v1'), null);
+});
+
+test('hydrate refuses a plan-only snapshot with no logged sets (freestyle must not auto-guide)', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({
+    v: 2, ts: Date.now(),
+    sessionLog: [], sessionCompleted: [],
+    activePlannedSession: { label: 'p', exercises: [{ name: 'Bench' }], index: 0 },
+  }));
+  assert.equal(store.hydrateSessionSnapshot().resumed, false);
+  assert.equal(store.getActivePlannedSession(), null);
+  assert.equal(globalThis.localStorage.getItem('atlas_session_snapshot_v1'), null);
+});
+
+test('hydrate refuses a malformed snapshot without throwing', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', '{not json');
+  assert.equal(store.hydrateSessionSnapshot().resumed, false);
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({ v: 2, ts: Date.now(), sessionLog: 'x' }));
+  assert.equal(store.hydrateSessionSnapshot().resumed, false);
+});
+
+test('clearPersistedSnapshot removes the key (storage only)', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', 'x');
+  store.clearPersistedSnapshot();
+  assert.equal(globalThis.localStorage.getItem('atlas_session_snapshot_v1'), null);
+});
+
+test('persistence is best-effort: a throwing storage never propagates', () => {
+  globalThis.localStorage = {
+    getItem() { throw new Error('boom'); },
+    setItem() { throw new Error('boom'); },
+    removeItem() { throw new Error('boom'); },
+  };
+  store.getSessionLog().push({ exercise: 'Bench', weight: 1, reps: 1, rir: 0 });
+  assert.doesNotThrow(() => store.persistSessionSnapshot('x'));
+  assert.doesNotThrow(() => store.clearPersistedSnapshot());
+  assert.equal(store.hydrateSessionSnapshot().resumed, false);
+});

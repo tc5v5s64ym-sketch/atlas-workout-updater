@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { STORE_SHIM } = require('./helpers/storeShim');
 
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -74,13 +75,9 @@ function loadCorrectionHarness(catalogOptions) {
   // Pass events array as a parameter so the factory body can access it
   // (new Function creates an isolated scope; outer-closure vars are not reachable).
   const factory = new Function('document', 'window', 'CustomEvent', 'events', `
-    // State vars mirroring app.js outer scope
-    let activePlannedSession = null;
+    // State vars mirroring app.js outer scope (PR-10: via the store shim)
+    ${STORE_SHIM}
     let lastIntentData = null;
-    let coachSuggestionEngaged = false;
-    let sessionLog = [];
-    let sessionCompleted = [];
-    let pendingSubstitution = null;
 
     // Stubs for functions outside the slices that are referenced by code in sliceLC
     // but not exercised by tryApplyIdentityCorrection's actual call path.

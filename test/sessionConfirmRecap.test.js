@@ -70,15 +70,15 @@ test('confirm card shows ALL logged exercises across a mid-session save', () => 
 test('wiring: ledger captured before reset, reset only on deliberate fresh start, never written', () => {
   // Captured from the just-saved buffer BEFORE sessionLog is cleared, gated on a
   // real log write.
-  assert.match(appSrc, /if \(pendingLastWrite && Array\.isArray\(sessionLog\) && sessionLog\.length\) \{\s*\n\s*for \(const s of sessionLog\) sessionSavedLog\.push/,
+  assert.match(appSrc, /if \(pendingLastWrite && Array\.isArray\(getSessionLog\(\)\) && getSessionLog\(\)\.length\) \{\s*\n\s*for \(const s of getSessionLog\(\)\) getSessionSavedLog\(\)\.push/,
     'save-success must append to sessionSavedLog before clearing the buffer');
-  const captureIdx = appSrc.indexOf('for (const s of sessionLog) sessionSavedLog.push');
-  const clearIdx = appSrc.indexOf('sessionLog = [];', captureIdx);
+  const captureIdx = appSrc.indexOf('for (const s of getSessionLog()) getSessionSavedLog().push');
+  const clearIdx = appSrc.indexOf('setSessionLog([]);', captureIdx);
   assert.ok(captureIdx !== -1 && clearIdx !== -1 && captureIdx < clearIdx, 'capture must precede the buffer clear');
 
   // Reset ONLY on deliberate fresh starts — startOver and discard — never on save.
-  assert.ok(appSrc.includes('sessionSavedLog = [];     // deliberate fresh start'), 'startOver resets the ledger');
-  assert.ok(appSrc.includes('sessionSavedLog = [];     // discarding the restored workout'), 'discard resets the ledger');
+  assert.ok(appSrc.includes('setSessionSavedLog([]);     // deliberate fresh start'), 'startOver resets the ledger');
+  assert.ok(appSrc.includes('setSessionSavedLog([]);     // discarding the restored workout'), 'discard resets the ledger');
 
   // Surfaced in the confirm/review card.
   assert.match(appSrc, /const savedRecap = renderSavedThisSessionRecap\(\);\s*\n\s*if \(savedRecap\) previewContent\.appendChild\(savedRecap\)/,

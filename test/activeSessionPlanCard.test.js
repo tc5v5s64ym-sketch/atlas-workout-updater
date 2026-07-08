@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { STORE_SHIM } = require('./helpers/storeShim');
 
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -32,7 +33,7 @@ test.before(async () => { AS = await import('../src/app/activeSession.js'); });
 function loadPlanCardHarness() {
   const sliceGCS = appSrc.slice(
     appSrc.indexOf('function getCanonicalSession()'),
-    appSrc.indexOf('function getCoachSuggestionEngaged()')
+    appSrc.indexOf('function applySessionSubstitution(')
   );
   const sliceSYNC = appSrc.slice(
     appSrc.indexOf('function syncPlannedIndexToCanonical()'),
@@ -48,10 +49,8 @@ function loadPlanCardHarness() {
   assert.ok(slicePEE.includes('plannedExerciseEntries'), 'slicePEE must contain plannedExerciseEntries');
 
   const factory = new Function('window', `
-    let activePlannedSession = null;
-    let sessionCompleted = [];
+    ${STORE_SHIM}
     let lastIntentData = null;
-    let coachSuggestionEngaged = false;
 
     ${slicePEE}
     ${sliceGCS}
@@ -159,7 +158,7 @@ test('wiring: syncPlannedIndexToCanonical is forward-only and derives from the c
   assert.ok(body.includes('getCanonicalSession()'), 'must derive from getCanonicalSession()');
   assert.ok(body.includes('currentExercise('), 'must read the canonical current exercise');
   assert.ok(
-    body.includes('target > activePlannedSession.index'),
+    body.includes('target > getActivePlannedSession().index'),
     'must only advance forward (never rewind a deliberate swap-advance)'
   );
 });

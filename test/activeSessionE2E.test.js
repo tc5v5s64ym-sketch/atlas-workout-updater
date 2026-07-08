@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { STORE_SHIM } = require('./helpers/storeShim');
 
 const repoRoot = path.join(__dirname, '..');
 const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -72,7 +73,7 @@ function loadE2EHarness() {
   );
   const sliceGCS = appSrc.slice(
     appSrc.indexOf('function getCanonicalSession()'),
-    appSrc.indexOf('function getCoachSuggestionEngaged()')
+    appSrc.indexOf('function applySessionSubstitution(')
   );
   // Stop before `// In-workout:` so the `let sessionLog/sessionCompleted` variable
   // declarations that follow don't shadow the factory's own state vars.
@@ -86,10 +87,8 @@ function loadE2EHarness() {
   assert.ok(sliceCSR.includes('canonicalSessionRecap'),  'sliceCSR must contain canonicalSessionRecap');
 
   const factory = new Function('window', `
-    let activePlannedSession = null;
-    let sessionCompleted = [];
+    ${STORE_SHIM}
     let lastIntentData = null;
-    let coachSuggestionEngaged = false;
 
     ${slicePEE}
     ${sliceGCS}
@@ -263,7 +262,7 @@ test('E2E (L2): canonicalSessionRecap — Pull-Ups planned slot appears in remai
 
 test('E2E (source): getCanonicalSession never touches the write path', () => {
   const start = appSrc.indexOf('function getCanonicalSession()');
-  const end   = appSrc.indexOf('function getCoachSuggestionEngaged()');
+  const end   = appSrc.indexOf('function applySessionSubstitution(');
   const fnSrc = appSrc.slice(start, end);
   assert.ok(fnSrc.length > 0, 'function must be found');
   assert.ok(!fnSrc.includes('fetch('),          'must not call fetch()');
