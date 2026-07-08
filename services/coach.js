@@ -997,39 +997,97 @@ function parseNoteFromReply(text) {
   return { reply: prose || text.trim(), propose_note };
 }
 
-// Internal parser that handles PROPOSE_EDIT, PROPOSE_NOTE, and PROPOSE_CONSTRAINT
-// in one pass — the last non-blank line can carry at most one token per reply.
+// The planner-directive tokens the model may append. Order does not matter — the
+// FIRST one found (scanning top-down) is the directive; anything after it is either
+// its JSON payload or trailing prose.
+const PROPOSAL_TOKENS = [
+  ['PROPOSE_EDIT:', 'edit'],
+  ['PROPOSE_NOTE:', 'note'],
+  ['PROPOSE_CONSTRAINT:', 'constraint'],
+  ['PROPOSE_PLAN_EDIT:', 'plan_edit'],
+];
+
+// Extract the first balanced JSON value ({...} or [...]) from `s`, respecting string
+// literals. Returns { value, endIndex } — value is the parsed JSON (null on
+// none/malformed), endIndex is the offset in `s` just past the value (-1 if none).
+// Used so a payload the model put on the line(s) AFTER the token label is still
+// consumed, and so trailing prose after the payload is preserved.
+function extractFirstJson(s) {
+  const start = s.search(/[{[]/);
+  if (start === -1) return { value: null, endIndex: -1 };
+  const open = s[start];
+  const close = open === '{' ? '}' : ']';
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) {
+        const raw = s.slice(start, i + 1);
+        try { return { value: JSON.parse(raw), endIndex: i + 1 }; }
+        catch { return { value: null, endIndex: i + 1 }; }
+      }
+    }
+  }
+  return { value: null, endIndex: -1 };
+}
+
+// Belt-and-suspenders: strip any residual planner-directive artifact from prose that
+// is about to be shown to the lifter — a token label line, or an orphaned JSON-object/
+// array line a malformed payload left behind. Coach prose never legitimately begins a
+// line with a PROPOSE_* token or a `{`/`[`, so this can only remove leaked internals.
+function scrubDirectiveArtifacts(prose) {
+  return prose
+    .split('\n')
+    .filter(line => {
+      const t = line.trim();
+      if (PROPOSAL_TOKENS.some(([p]) => t.startsWith(p))) return false;
+      if (/^[{[]/.test(t) && /["}\]]/.test(t)) return false; // orphaned JSON fragment
+      return true;
+    })
+    .join('\n')
+    .trim();
+}
+
+// Internal parser that handles PROPOSE_EDIT, PROPOSE_NOTE, PROPOSE_CONSTRAINT, and
+// PROPOSE_PLAN_EDIT in one pass. Robust to the model putting the JSON payload on the
+// line AFTER the token label, and to trailing prose after the directive — the raw
+// directive (token + JSON) is ALWAYS consumed/scrubbed and can never reach chat.
 function parseReplyWithProposals(text) {
   const empty = { reply: '', propose_edit: null, propose_note: null, propose_constraint: null, propose_plan_edit: null };
   if (typeof text !== 'string') return empty;
   const lines = text.split('\n');
-  let tokenLineIdx = -1;
-  let tokenType = null;
-  for (let i = lines.length - 1; i >= 0; i--) {
+  let tokenLineIdx = -1, tokenType = null, prefix = null;
+  for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (!trimmed) continue;
-    if (trimmed.startsWith('PROPOSE_EDIT:')) { tokenLineIdx = i; tokenType = 'edit'; }
-    else if (trimmed.startsWith('PROPOSE_NOTE:')) { tokenLineIdx = i; tokenType = 'note'; }
-    else if (trimmed.startsWith('PROPOSE_CONSTRAINT:')) { tokenLineIdx = i; tokenType = 'constraint'; }
-    else if (trimmed.startsWith('PROPOSE_PLAN_EDIT:')) { tokenLineIdx = i; tokenType = 'plan_edit'; }
-    break;
+    const hit = PROPOSAL_TOKENS.find(([p]) => trimmed.startsWith(p));
+    if (hit) { tokenLineIdx = i; tokenType = hit[1]; prefix = hit[0]; break; }
   }
   if (tokenLineIdx === -1) return { ...empty, reply: text.trim() };
-  const prefix = tokenType === 'edit'
-    ? 'PROPOSE_EDIT:'
-    : tokenType === 'note'
-      ? 'PROPOSE_NOTE:'
-      : tokenType === 'constraint'
-        ? 'PROPOSE_CONSTRAINT:'
-        : 'PROPOSE_PLAN_EDIT:';
-  const jsonPart = lines[tokenLineIdx].trim().slice(prefix.length).trim();
-  const prose = lines.slice(0, tokenLineIdx).join('\n').trim();
+
+  // The payload is the first JSON value at/after the token label — inline on the
+  // token line or on following lines. Everything before the token, plus anything
+  // after the payload ends, is prose.
+  const afterPrefix = lines[tokenLineIdx].trim().slice(prefix.length);
+  const rest = [afterPrefix, ...lines.slice(tokenLineIdx + 1)].join('\n');
+  const { value: parsed, endIndex } = extractFirstJson(rest);
+  const before = lines.slice(0, tokenLineIdx).join('\n');
+  const trailing = endIndex >= 0 ? rest.slice(endIndex) : '';
+  const prose = scrubDirectiveArtifacts([before, trailing].join('\n'));
+
   let propose_edit = null;
   let propose_note = null;
   let propose_constraint = null;
   let propose_plan_edit = null;
-  try {
-    const parsed = JSON.parse(jsonPart);
+  if (parsed) {
     if (tokenType === 'edit' && isValidEditSchema(parsed)) propose_edit = parsed;
     else if (tokenType === 'note' && parsed && typeof parsed === 'object' && typeof parsed.note === 'string' && parsed.note.trim()) {
       propose_note = { note: parsed.note.trim().slice(0, 200) };
@@ -1038,8 +1096,10 @@ function parseReplyWithProposals(text) {
     } else if (tokenType === 'plan_edit' && isValidPlanEditSchema(parsed)) {
       propose_plan_edit = parsed;
     }
-  } catch { /* malformed JSON — no proposal */ }
-  return { reply: prose || text.trim(), propose_edit, propose_note, propose_constraint, propose_plan_edit };
+  }
+  // Never fall back to the raw text here (it contains the directive) — an all-directive
+  // reply legitimately yields empty prose.
+  return { reply: prose, propose_edit, propose_note, propose_constraint, propose_plan_edit };
 }
 
 // Bound the conversation to the last few turns; only role + text survive. The
