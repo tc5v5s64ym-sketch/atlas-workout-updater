@@ -1,21 +1,42 @@
-# Atlas Remediation Plan v2.1 — PR Execution Queue
+# Atlas Remediation Plan v2.2 — PR Execution Queue
 **Source:** Independent code review, 2026-07-05 (score 6.5/10), revised per owner feedback · **Owner:** Dale · **Builder:** Claude Code
 **Changes in v2:** Added **Phase -1** (three live test-session bug fixes that run BEFORE any architecture work) and split the One-Brain promotion into **PR-12A** (promote, with rollback switch) and **PR-12B** (delete legacy lanes only after burn-in).
 **Changes in v2.1 (2026-07-07):** (1) Status truth-up — PR-07 and PR-08 shipped. (2) Inserted **Phase 0.9 — audit P0 fixes** (four data-integrity bugs from the deep-review audit, [`docs/AUDIT_2026-07-07_DEEP_REVIEW.md`](./AUDIT_2026-07-07_DEEP_REVIEW.md)) to run BEFORE PR-09 — same rationale as Phase -1: real bugs don't get buried under architecture work. (3) Phase 1 (PR-09→11) is now governed by the frozen behavior contract in [`docs/PHASE1_MINEFIELD_MAP.md`](./PHASE1_MINEFIELD_MAP.md) — its §7 checklists paste into each PR body, and the audit's unfixed client/session findings become required regression tests in the PR that restructures their code. (4) INFRA-2 (SW cache omission) was resolved in passing by PR-08 — noted so nobody re-fixes it.
+**Changes in v2.2 (2026-07-08):** Re-scoped per the independent remediation review ([`docs/REMEDIATION_REVIEW_2026-07-08.md`](./REMEDIATION_REVIEW_2026-07-08.md)) — see the pivot banner below. Statuses trued up (Phases -1→1, 0.9, 3, PR-13, PR-16/17 all shipped); the old tail (PR-18/19/20) is deferred/cut, PR-21 moves earliest, a small **Consolidation queue** (PR-22→PR-24) is added, and GATE A / PR-12A / PR-12B move to the product track.
+
+---
+
+> ## ⚑ v2.2 STATUS — REMEDIATION SUBSTANTIALLY COMPLETE; PIVOT TO CONSOLIDATION
+>
+> Per the independent review of 2026-07-08 (`docs/REMEDIATION_REVIEW_2026-07-08.md`), this plan's aims are met: live bugs fixed (Phases -1, 0.9, and the ADD batch), safety nets landed (Phase 0, PR-13), frontend plumbing shipped (Phase 1; PR-09c intentionally skipped by owner decision), exercise-truth consolidation shipped (Phase 3), and the read/coach route splits shipped (PR-16/17).
+>
+> **"Continue" no longer means executing the remaining tail top-to-bottom.** Authoritative dispositions:
+>
+> 1. **PR-21 (governance diet) runs NEXT — earliest, not last.** Fold in the Invariant W7 ↔ code reconciliation (WRITE-4, owner one-liner required) and a stale-status sweep of the governance docs.
+> 2. **PR-22 (NEW) — Frontend de-duplication.** `public/` and `src/app/` are byte-identical committed copies; make the build authoritative. This was the review's biggest missing item. See Consolidation queue below.
+> 3. **PR-23 (NEW) — Flight-Recorder replay harness.** Recorded live sessions become regression fixtures. This is now a **prerequisite for any risky write-path/router refactor** (PR-18 and anything like it).
+> 4. **PR-24 (NEW) — Finish state-store ownership** (complete the PR-10/11 migration; session state 100% store-owned; recap/skip/substitution derived; ad-hoc flags retired). Top consolidation priority — the v116 live session showed scattered state is the dominant live-bug class.
+> 5. **PR-18 (write-path router): DEFERRED** until PR-23 replay coverage exists and can prove behavior-identity. Do not run it before then.
+> 6. **PR-19 (SQLite read cache): DORMANT.** Unchanged trigger (slow dashboards / Log_Cleaned > ~5k rows / Google 429s). Do not schedule; build only when the trigger fires.
+> 7. **PR-20 (Preact island): CUT from remediation.** Re-filed as an evidence-gated backlog item; revisit only if the vanilla conversation layer demonstrably can't carry a needed feature.
+> 8. **GATE A / PR-12A / PR-12B move to the product track.** They are gated on a One-Brain product decision (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`), not technical debt; they no longer live in this queue's tail. Their prompts below remain valid when the product track invokes them.
+>
+> **Remediation v2 closes when PR-21 and PR-22 have shipped.** PR-23/PR-24 continue as the consolidation milestone (M-CONSOLIDATE in the review), after which effort returns to the product track (GATE A evidence, One-Brain era).
 
 **How to use this doc:** Work top to bottom. Copy one **PROMPT** block into Claude Code, let it run to a merged PR under your normal automation rules (Codex gate, tests green, backlog updated in-PR), then take the next one. Every prompt begins with your standard **model hold point**. One concern per PR — if Claude Code discovers adjacent work, it files it in BACKLOG.md and stays in scope.
 
 **Model note:** Tags follow the convention — **Sonnet 4.6** for mechanical/pure-data PRs, **Opus 4.8** for anything behavior-changing or correctness-critical. If your standing "Opus for everything" rule is still in force, just confirm Opus at every hold point; the Sonnet tags are then simply "low-risk" hints.
 
-**The map (8 phases, 29 PRs, 1 owner decision gate):**
+**The map (v2.2 statuses):**
 - **Phase -1 — Live bug fixes first** (PR-0A → PR-0C): ✅ complete. The three real bugs from your test sessions.
 - **Phase 0 — Safety net & fast wins** (PR-01 → PR-06): ✅ complete. Cheap protection before touching anything big.
-- **Phase 0.9 — Audit P0 fixes** (PR-0D → PR-0G): the four data-integrity bugs from the 2026-07-07 deep-review audit. Run before PR-09, same logic as Phase -1.
-- **Phase 1 — Frontend plumbing** (PR-07 → PR-11): PR-07 + PR-08 ✅ shipped; PR-09 → PR-11 remain, now governed by `docs/PHASE1_MINEFIELD_MAP.md`. Modules, build step, one state store. The foundation everything else stands on.
-- **Phase 2 — One Brain resolution** (GATE A, PR-12A, PR-12B, PR-13): finish the switchover or kill it; clear the graveyard.
-- **Phase 3 — One source of exercise truth** (PR-14 → PR-15).
-- **Phase 4 — Backend split** (PR-16 → PR-18): mechanical, do these whenever you want a low-stress week.
-- **Phase 5 — Later / evidence-gated** (PR-19 → PR-21): SQLite read cache, Preact island #1, governance diet.
+- **Phase 0.9 — Audit P0 fixes** (PR-0D → PR-0G): ✅ complete (CLIENT-1 / PARSE-1 / PARSE-2 / PARSE-3 all fixed; see `BACKLOG.md`).
+- **Phase 1 — Frontend plumbing** (PR-07 → PR-11): ✅ complete — PR-07/08 shipped; PR-09 re-scoped to 09a/09b (shipped), 09c skipped by owner decision; PR-10 (partial state store) + PR-11 shipped. Store *completion* continues as **PR-24** below.
+- **Phase 2 — One Brain resolution** (GATE A, PR-12A, PR-12B, PR-13): PR-13 ✅ shipped. **GATE A / PR-12A / PR-12B moved to the product track** (v2.2 banner, item 8).
+- **Phase 3 — One source of exercise truth** (PR-14 → PR-15): ✅ complete.
+- **Phase 4 — Backend split** (PR-16 → PR-18): PR-16/17 ✅ shipped. **PR-18 DEFERRED** until PR-23 replay coverage exists.
+- **Phase 5 — Later / evidence-gated** (PR-19 → PR-21): **PR-21 promoted to run NEXT**; PR-19 dormant (trigger-gated); PR-20 cut from remediation.
+- **Phase 6 — Consolidation (v2.2, NEW)** (PR-22 → PR-24): frontend de-duplication, Flight-Recorder replay harness, state-store completion.
 
 Rules that hold for **every** PR below (Claude Code already knows these from CLAUDE.md, restated for safety): trust loop untouched (preview → approve → write, proof fields, undo, slash notation per INVARIANTS P1–P3/W1–W7); no real Sheets writes; BACKLOG.md updated in the same PR; tests green before merge.
 
@@ -174,7 +195,9 @@ These three are real bugs observed in live test sessions. Each prompt follows yo
 
 ## PHASE 2 — ONE BRAIN: FINISH IT OR KILL IT
 
-### GATE A — Owner decision (not a PR)
+> **v2.2:** GATE A, PR-12A, and PR-12B are **product-track decision work, not remediation** — they are gated on the One-Brain promotion decision (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`), which belongs with `docs/ACTIVE_ROADMAP.md` / `BACKLOG.md` → "One-Brain Coaching Engine". The prompts below stay here as the canonical execution text for when the product track invokes them. PR-13 shipped.
+
+### GATE A — Owner decision (not a PR) — *moved to product track (v2.2)*
 **What you do (30–60 min, no coding):** Set `ATLAS_INTENT_ROUTER=shadow` and `ATLAS_COACH_ENGINE=hybrid` on Render if not already, live with it for **2–3 weeks of real sessions**, then have Claude (chat, not Code) summarize `/api/debug/brain-shadow` + `/api/debug/intent-shadow` against `docs/ONE_BRAIN_PROMOTION_CRITERIA.md`. Decide: **FLIP** (Brian owns decisions), **HOLD** (name the exact missing evidence + a date), or **KILL** (delete the shadow lane). Write the decision in BACKLOG.md. Everything below assumes FLIP; if KILL, PR-12A becomes "delete the shadow/orchestrator lane" instead — same prompt shape, inverted target — and PR-12B is skipped.
 
 ### PR-12A — Promote One-Brain, with a one-switch rollback (no deletions) · **Opus 4.8** · `[trust-critical]`
@@ -217,7 +240,9 @@ These three are real bugs observed in live test sessions. Each prompt follows yo
 
 ## PHASE 4 — BACKEND SPLIT (mechanical; slot these anywhere after Phase 0)
 
-### PR-16 / PR-17 / PR-18 — Express routers by domain · **Sonnet 4.6** (PR-18: **Opus 4.8**) · `[housekeeping]`
+> **v2.2:** PR-16 (`routes/reads.js`) and PR-17 (`routes/coachOps.js`) ✅ shipped. **PR-18 is DEFERRED**: it moves the write path — the best-tested, highest-risk code in the repo — for a purely organizational benefit. Do not run it until the **PR-23 replay harness** exists and can prove behavior-identity across the move. When it does run, the verbatim-move discipline below is unchanged.
+
+### PR-16 ✅ / PR-17 ✅ / PR-18 (deferred — gate: PR-23) — Express routers by domain · **Sonnet 4.6** (PR-18: **Opus 4.8**) · `[housekeeping]`
 Three identical-shape PRs; run the prompt three times with the bracketed slice swapped:
 **PR-16 slice:** read/analytics routes (`/api/history/*`, `/api/exercises/*`, `/api/sessions/*`, `/api/summary|progress|report|prs|stalls|volume|search|catalog`). **PR-17 slice:** coach + deload + debug/flight/bug-report/schema/health routes. **PR-18 slice:** write-path routes (`/api/log-workout*`, `/api/complete-workout`, `/api/parse-workout-*`, `/api/bodyweight*`, `/api/coaching-notes`, `/api/constraints`, `/api/log-modality`) — for PR-18 only, escalate the hold point to **Opus 4.8**.
 **PROMPT (template):**
@@ -230,18 +255,21 @@ Three identical-shape PRs; run the prompt three times with the bracketed slice s
 ## PHASE 5 — LATER / EVIDENCE-GATED
 
 ### PR-19 — SQLite read index beside the sheet · **Opus 4.8** · `[correctness]` · *Trigger: dashboard reads feel slow, or Log_Cleaned > ~5k rows, or Google 429s appear in logs.*
+> **v2.2: DORMANT.** The trigger has not fired. Do not schedule this; build it only when the trigger condition is actually observed, and record the observation in `BACKLOG.md` first.
 **PROMPT:**
 > STOP — model hold point. This PR requires **Opus 4.8**. State your current model and wait for owner confirmation.
 >
 > Task: Add SQLite (better-sqlite3) as a **read cache/index only** — Google Sheets remains the permanent record and sole write target. (1) On boot and after every successful live write/undo, sync `Log_Cleaned` + `Effort` into local tables (full refresh is fine at current scale; keep it simple); (2) route `getSheetRows` reads for those two tabs through SQLite with a staleness stamp + on-demand refresh, replacing the 30 s TTL cache; every other tab and the undo pre-delete read-back stay LIVE sheet reads (preserve that invariant explicitly); (3) a `/api/health/db` endpoint reports row counts + last-sync; (4) failure mode: any SQLite error falls back to direct sheet reads with a warn — the app must run with the DB file deleted. Out of scope: writing workout data to SQLite as source of truth; schema migrations framework. Acceptance: full suite green with a fixture-backed sync test; undo tests prove read-back still hits the sheet live; measured before/after latency for `/api/summary/weekly` in the PR body.
 
 ### PR-20 — First Preact island: the coach conversation · **Opus 4.8** · `[correctness]` · *Prereq: PR-07…11 merged and stable through at least two real gym weeks.*
+> **v2.2: CUT from remediation.** A framework migration of a working surface in a single-user app is speculative; its prereq (two stable gym weeks) hasn't elapsed and the store it must read through isn't finished (PR-24). Re-filed as an evidence-gated `BACKLOG.md` item with a concrete trigger: a conversation-UI capability the vanilla layer demonstrably cannot carry. The prompt below is retained for that future case only.
 **PROMPT:**
 > STOP — model hold point. This PR requires **Opus 4.8**. State your current model and wait for owner confirmation.
 >
 > Task: Introduce Preact (+ `@preact/signals` bindings) and rebuild the **coach conversation surface** (`coach-conversation.js`, 2,037 lines) as components mounted as an island into its existing container, reading/writing exclusively through the PR-10/11 store. Everything outside the island stays vanilla. Preserve exactly: typewriter behavior incl. reduced-motion, the "Save to Sheets clicks #approve-btn" trust-loop delegation, every `atlas:*` event consumed/produced, chip flows, and interleaved multi-lift rendering (regression tests for the G1/G2/FA bug family must pass). Bundle budget: island adds ≤ 15 KB gzip to the shell; SW list updated. The old file is deleted in the same PR — no dual implementations. Acceptance: unit + e2e + simulation-harness conversation scenarios green; side-by-side screen recording checklist in PR body for owner live-test; rollback = revert commit.
 
-### PR-21 — Governance diet + guardrails · **Sonnet 4.6** · `[housekeeping]`
+### PR-21 — Governance diet + guardrails · **Sonnet 4.6** · `[housekeeping]` — *v2.2: PROMOTED — run this NEXT*
+> **v2.2:** Moved from last to first among remaining work. Every agent session pays the doc corpus as context cost and inherits its contradictions as potential bugs — this is the cheapest remaining item with compounding returns. Fold in: (a) the Invariant **W7 ↔ code reconciliation** (docs say undo ≤10 rows; code caps at `MAX_LOG_ROWS`=200 since `b859abf` — needs the owner's one-line amendment, tracked as WRITE-4); (b) a stale-status sweep so no governance doc contradicts another (e.g. the old "25 PRs / 7 phases" vs "29 PRs / 8 phases" mismatch in `DOCS_INDEX.md`/`BACKLOG.md`); (c) collapsing the superseded Escalation Policy v2 text in `docs/OWNER_CHECKIN_RULES.md` to a one-line pointer.
 **PROMPT:**
 > STOP — model hold point. This PR requires **Sonnet 4.6**. State your current model and wait for owner confirmation.
 >
@@ -249,10 +277,37 @@ Three identical-shape PRs; run the prompt three times with the bracketed slice s
 
 ---
 
-## SUGGESTED CALENDAR (relaxed, solo pace — v2.1, from 2026-07-07)
-~~Week 0: Phase -1. Weeks 1–2: PR-01 → PR-06. Weeks 3: PR-07 → PR-08.~~ ✅ all shipped. **Now:** Phase 0.9 — PR-0D → PR-0G, one at a time; PR-0D and PR-0E first (highest live blast radius), live-verify the parser fixes at the next gym session. **Then (weeks 1–3 from now):** PR-09 → PR-11 under the Minefield Map, one per week-ish, with a real gym session between each. **Week 3–4:** GATE A decision → PR-12A. **Weeks 5–6 (during 12A burn-in):** PR-14, PR-15, and/or PR-16/17/18. **Week 6–7:** burn-in clean → PR-12B, then PR-13. **Anytime slack:** PR-21, plus the audit's P1 backend items (WRITE-1/2/3, INFRA-1/3 — tracked in `BACKLOG.md`). **When triggered/ready:** PR-19, PR-20.
+## PHASE 6 — CONSOLIDATION (v2.2, NEW)
+
+> Source: the independent remediation review, `docs/REMEDIATION_REVIEW_2026-07-08.md` (the "M-CONSOLIDATE" milestone). These finish what remediation started and left straddled, and they are ordered: PR-22 first (it halves every subsequent frontend diff), PR-23 before any risky write-path refactor, PR-24 as the top structural priority — the v116 live session (`docs/PR10_REGRESSION_ADDENDUM.md`) proved scattered session state is the dominant live-bug class, and each ADD fix so far added another ad-hoc flag outside the store.
+
+### PR-22 — Frontend de-duplication: one committed source of truth · **Opus 4.8** · `[correctness]`
+**Why (plain terms):** The entire ~12.7K-line frontend is committed twice — `src/app/` (source) and `public/` (Vite's byte-for-byte copy). Every frontend PR doubles its diff, and one missed mirror silently diverges what's reviewed from what's served.
+**PROMPT:**
+> STOP — model hold point. This PR requires **Opus 4.8** (app shell + deploy pipeline). State your current model and wait for owner confirmation.
+>
+> Task: Make the build authoritative so exactly one frontend tree is committed. Preferred shape: `src/app/` stays the committed source; `public/` becomes gitignored build output produced by `npm run build` at deploy time (Render build command) and in CI before e2e. Requirements: (1) served URLs, `express.static` behavior, and the SW's `SHELL_ASSETS` list are byte-identical — prove it with the existing CI drift guard inverted (build then diff against the last committed `public/` snapshot in the migration PR itself); (2) local dev flow documented (`npm run dev` / `npm run build`) in `docs/ARCHITECTURE.md`; (3) the trust loop, `index.html`, and `sw.js` are untouched except location. Out of scope: bundling, hashing, ES-module changes — this is Stage-1 output, just no longer committed twice. Acceptance: repo contains one frontend tree; deploy serves a built `public/` identical to today's; full suite + e2e (against built output) green.
+
+### PR-23 — Flight-Recorder replay harness: live sessions become regression fixtures · **Opus 4.8** · `[correctness]` · *Prerequisite for PR-18 and any future write-path/router refactor.*
+**Why:** One owner gym session (v116) found 7 real state bugs that ~4,600 passing tests missed. The Flight Recorder already records the user-visible experience and decision trail; this turns each recorded session into a permanent, replayable integration test.
+**PROMPT:**
+> STOP — model hold point. This PR requires **Opus 4.8** (test harness over recorded trust-path behavior). State your current model and wait for owner confirmation.
+>
+> Task: Build a replay harness that takes a recorded Flight-Recorder session export (fixture JSON, committed under `test/fixtures/replays/`) and re-drives the client/session state machine through the same sequence, asserting the recorded outcomes (rendered coach turns, session state transitions, preview row counts, recap contents). Seed it by encoding the 7 v116 addendum cases (`docs/PR10_REGRESSION_ADDENDUM.md`) as fixtures — the six fixed ones assert the fix holds; ADD-3 stays pending its Decision Desk verdict (#914). Constraints: replay is read-only — no live Sheets access, no LLM calls (recorded/stubbed responses only), FR redaction rules respected (fixtures contain shape-only request summaries, never raw content beyond what FR already records). Out of scope: FR production-enable (owner-gated), FR5 correlation IDs. Acceptance: all six fixed-case replays green in CI; a README in the fixtures dir documents how to convert a recorded session into a fixture; full suite green.
+
+### PR-24 — Finish state-store ownership (complete the PR-10/11 migration) · **Opus 4.8** · `[trust-critical]`
+**Why:** `store.js` is explicitly a partial slice — non-reactive, handing out live mutable references — and `sharedState.js` still carries a `TODO(PR-10/PR-11)`. The v116 bug class (restored-pin, skip-state, substitution-slot, identity-targeting, recap reconciliation) is scattered-state disease, and the ADD fixes patched it with more scattered flags (e.g. `coachDiscussionSinceLog`).
+**PROMPT:**
+> STOP — model hold point. This PR requires **Opus 4.8** (session-state correctness; gym-day behavior). State your current model and wait for owner confirmation. This may split into 2–3 tiny PRs — one store slice per PR — under the normal one-concern rule.
+>
+> Task: Complete the state-store migration so session state is 100% store-owned: (1) migrate the remaining scattered flags into the store — including the ADD-batch ad-hoc flags (`coachDiscussionSinceLog` and siblings) and the `sharedState.js` residue (`atlasLastError`, `historyLoaded`); delete `sharedState.js`; (2) make recap, skip, and substitution status **derived** from store state (computed values), not independently tracked — the ADD-2/ADD-4/ADD-6 regression tests must pass against the derived versions; (3) stop handing out live mutable references — store mutations go through actions only, grep-proven; (4) every `atlas:*` event payload stays byte-for-byte (snapshot tests per the Minefield Map §3). The trust loop (preview→approve→write, `#approve-btn` delegation) is untouched. Acceptance: zero session-state top-level `let` outside the store (grep-proven); ADD-1/2/4/5/6 regression suites green; PR-23 replay fixtures green; full suite + e2e green.
+
+---
+
+## SUGGESTED CALENDAR (relaxed, solo pace — v2.2, from 2026-07-08)
+~~Phase -1, Phase 0, Phase 0.9, PR-07 → PR-11, PR-13, PR-14/15, PR-16/17, ADD batch~~ ✅ all shipped. **Now:** PR-21 (governance diet, incl. W7 reconciliation) → PR-22 (frontend de-dup). **Remediation v2 closes there.** **Then (consolidation):** PR-23 (replay harness) → PR-24 (state-store completion, split as needed), with a real gym session or replay-suite pass between merged batches that touch session state. **In parallel (product track):** GATE A evidence package when the observation window matures → PR-12A/PR-12B on the owner's FLIP decision; ADD-3 on the Decision Desk verdict (#914). **Deferred/gated:** PR-18 (after PR-23), PR-19 (trigger), PR-20 (cut — evidence-gated backlog). **Anytime slack:** audit P1 backend items (WRITE-1/2/3, INFRA-1/3 — tracked in `BACKLOG.md`), service-orphan pruning via `check:wiring`.
 
 ---
 
 ## QUICK SUMMARY (plain terms)
-This v2.1 queue is 29 paste-ready Claude Code jobs across 8 phases. Everything through PR-08 has shipped: the three original gym-session bugs, the safety nets, Vite, and the ES-module conversion. What changed in v2.1: a deep code audit (2026-07-07) found four more data-corrupting bugs — a wrong-target Undo and three parser misparses that silently log the wrong lift or impossible rows — and they now run as Phase 0.9, before any more architecture work, exactly like Phase -1 did. The big app.js breakup (PR-09 → PR-11) now has a written behavior contract (`docs/PHASE1_MINEFIELD_MAP.md`) listing everything that must survive the move — event payloads, saved-session format, offline cache, load order — with per-PR checklists, and the audit's remaining findings become required tests in those same PRs. The One-Brain switchover and everything after is unchanged: flip with a one-switch rollback, burn in, then delete the old system. Start with PR-0D.
+The remediation queue did its job and is substantially complete: the live-session bugs, the safety nets, the frontend plumbing, the exercise-truth consolidation, and the read/coach route splits have all shipped. v2.2 records the pivot from the 2026-07-08 independent review: don't run the old tail on autopilot. What's left of *remediation* is just the governance diet (PR-21, now first) and a new frontend de-duplication PR (PR-22) — then this plan closes. After that comes a short **consolidation** phase: turn recorded gym sessions into permanent regression tests (PR-23) and finish moving all session state into the one store (PR-24), because the live evidence shows scattered state is where the remaining bugs live. The One-Brain switchover (GATE A → PR-12A/B) is product-track decision work, not remediation. The SQLite cache stays asleep until its trigger fires, and the Preact rewrite is cut until something actually needs it. Start with PR-21.
