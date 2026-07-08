@@ -5739,7 +5739,7 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.ok(mutIdx !== -1 && subIdx !== -1, 'both routes present');
   assert.ok(mutIdx < subIdx, 'deterministic mutation is tried before the suggest/coach route');
 
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 2900);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 5400);
   assert.match(fn, /classifyMutationIntent\(/, 'uses the deterministic classifier (not LLM prose)');
   // v48 fix: classify FIRST, then materialize an engaged Coach's Pick suggestion into
   // a live session — so a swap fires even when the session wasn't formally "started"
@@ -5756,6 +5756,11 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.match(fn, /getCanonicalSession\(\)/, 'target resolution uses the canonical session state');
   assert.match(fn, /applySessionSubstitution\(/, 'a replace mutates the live session');
   assert.match(fn, /skipPlannedExercise/, 'a skip mutates the live session');
+  // PR-11 review guard: a POSITIONAL / destination-only swap ("switch to X") must
+  // require the substitute to resolve to a real catalog exercise before mutating, so
+  // a coaching phrase ("switch to a lighter weight") falls through to the coach.
+  assert.match(fn, /intent\.positional && !resolved\.matched.*return false/,
+    'a positional swap only mutates when the substitute is a recognized exercise');
   // A replace skips the OTHER matched slots ONLY for a genuinely compound target
   // ("deadlifts/rdls"). A single token that fuzzily over-matches several slots
   // ("curls" → Bicep Curl + Leg Curl) must replace only the first and never
@@ -5821,7 +5826,7 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   assert.match(sub, /return true;/, 'a real swap/dedupe returns true');
 
   // tryApplyPlanMutation only announces when something changed.
-  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 3800);
+  const fn = appSrc.slice(appSrc.indexOf('function tryApplyPlanMutation('), appSrc.indexOf('function tryApplyPlanMutation(') + 5400);
   assert.match(fn, /const swapped = applySessionSubstitution\(/, 'captures whether the swap changed the plan');
   assert.match(fn, /if \(!swapped && !extraSkipped\.length\) return false/, 'a no-op swap with no skips falls through (no phantom announce)');
   // The announce text reflects what ACTUALLY happened: a real swap, or a skip-only

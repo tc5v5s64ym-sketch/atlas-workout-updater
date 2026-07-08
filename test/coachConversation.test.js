@@ -599,6 +599,37 @@ test('opening: a same-state repeat reopen shows the compressed continuation, not
     'a changed engine read briefs in full, not compressed');
 });
 
+// PR-11 Bug 3 — logging identical sets must summarize, not repeat. The readback tile
+// listed every set individually ("225×5 RIR 2 · 225×5 RIR 2 · 225×5 RIR 2"); it must
+// group consecutive identical sets ("225×5 RIR 2 ×3") the way the review card does.
+test('PR-11 Bug 3: consecutive identical sets group with a count via one shared helper', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const start = cc.indexOf('function groupConsecutiveSets(');
+  assert.ok(start !== -1, 'a shared groupConsecutiveSets helper must exist');
+  const end = cc.indexOf('\n  function ', start + 1);
+  // Newline before `return` so a trailing line comment in the slice can't swallow it.
+  const groupConsecutiveSets = new Function(`${cc.slice(start, end)}\nreturn groupConsecutiveSets;`)();
+
+  // Three identical bench sets → ONE group, count 3 (no repetition).
+  const g1 = groupConsecutiveSets([{ weight: 225, reps: 5, rir: 2 }, { weight: 225, reps: 5, rir: 2 }, { weight: 225, reps: 5, rir: 2 }]);
+  assert.equal(g1.length, 1);
+  assert.equal(g1[0].count, 3);
+  // A warm-up climb → three DISTINCT groups, count 1 each (different sets never merge).
+  const g2 = groupConsecutiveSets([{ weight: 135, reps: 12, rir: 4 }, { weight: 185, reps: 10, rir: 2 }, { weight: 225, reps: 5, rir: 0 }]);
+  assert.equal(g2.length, 3);
+  assert.ok(g2.every(x => x.count === 1));
+  // Only CONSECUTIVE identical sets collapse (matches the review card exactly).
+  const g3 = groupConsecutiveSets([{ weight: 225, reps: 5, rir: 2 }, { weight: 185, reps: 8, rir: 2 }, { weight: 225, reps: 5, rir: 2 }]);
+  assert.equal(g3.length, 3);
+
+  // The readback tile now groups via the shared helper (the visible Bug-3 fix), and the
+  // review-card set line uses the SAME helper (one grouping source of truth).
+  const readout = cc.slice(cc.indexOf('function appendSetReadout('), cc.indexOf('function buildReadback('));
+  assert.match(readout, /groupConsecutiveSets\(/, 'appendSetReadout must group identical sets');
+  const review = cc.slice(cc.indexOf('function buildReviewSetLine('), cc.indexOf('function buildEffortGrid('));
+  assert.match(review, /groupConsecutiveSets\(/, 'buildReviewSetLine must use the same shared grouper');
+});
+
 test('bodyweight display: no-load sets read as reps everywhere — never "0×reps" (owner live find 2026-07-03)', () => {
   const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
   const guard = cc.slice(cc.indexOf('function hasLoad('), cc.indexOf('function appendSetReadout('));

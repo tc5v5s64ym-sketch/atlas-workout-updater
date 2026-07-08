@@ -84,3 +84,18 @@ test('snapshotUiState wires coach_message to latestCoachMessage(), not the dead 
   assert.match(src, /coach_message:\s*latestCoachMessage\(\)/, 'coach_message must come from latestCoachMessage()');
   assert.doesNotMatch(src, /querySelector\('\.coach-guide-box, #coach-opening, \.coach-message'\)/, 'the dead selector must be gone');
 });
+
+// PR-11 Bug 4 — the recorder reported coach_message:"" (FR-20260708014918). The last
+// .coach-msg can be transiently EMPTY (a receipt-only block, a suppressed message, or a
+// bubble mid-typewriter). latestCoachMessage must PRESERVE the last VALID message
+// (addendum #7), never report a blank.
+test('PR-11 Bug 4: an empty trailing coach bubble preserves the last valid message (no blank)', () => {
+  const valid = 'Nice — 225×5 logged, a top-set PR.';
+  const msg = withDoc(fakeDoc({ bubbles: [valid, '', '   '] }), () => client.latestCoachMessage());
+  assert.equal(msg, valid, 'must skip the empty trailing bubbles and report the last real message');
+});
+
+test('PR-11 Bug 4: all-empty coach bubbles yield null, never an empty string', () => {
+  const msg = withDoc(fakeDoc({ bubbles: ['', '   '], hasHero: false }), () => client.latestCoachMessage());
+  assert.equal(msg, null, 'no valid message → null (a blank string is never reported)');
+});

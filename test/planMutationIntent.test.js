@@ -52,6 +52,53 @@ test('skip-only phrasings classify as skip', () => {
   }
 });
 
+// PR-11 Bug 2 — the live repro: "Swap next workout for dips" meant "make dips the
+// next exercise", but the parser read "next workout" as a lift NAME (matching no
+// slot), fell through to the LLM, and the LLM removed Dips. A positional reference
+// must resolve to the current/next slot, and a destination-only swap must be a
+// substitution INTO the current slot — never a removal.
+test('positional swap: "swap next workout for dips" is a positional replace, not a named target', () => {
+  const r = classifyMutationIntent('swap next workout for dips');
+  assert.equal(r && r.action, 'replace');
+  assert.equal(r.substitute, 'dips');
+  assert.equal(r.positional, true, 'target is positional (current/next slot), not a lift named "next workout"');
+});
+
+test('destination-only swaps ("swap to/for X", "sub in X") are positional replaces', () => {
+  for (const text of ['swap to dips', 'swap for dips', 'switch to incline bench', 'sub in leg curls', 'replace with dips']) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'replace', `replace: ${text}`);
+    assert.equal(r.positional, true, `positional: ${text}`);
+    assert.ok(r.substitute && r.substitute.length, `substitute captured: ${text}`);
+  }
+});
+
+test('"replace next exercise/lift/one with X" is a positional replace', () => {
+  for (const text of ['replace next exercise with dips', 'replace the next one with dips', 'replace next lift with dips']) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'replace', `replace: ${text}`);
+    assert.equal(r.substitute, 'dips', `substitute: ${text}`);
+    assert.equal(r.positional, true, `positional: ${text}`);
+  }
+});
+
+test('"remove X" / "take out X" / "get rid of X" classify as skip (removal)', () => {
+  for (const [text, target] of [['remove dips', 'dips'], ['take out leg extensions', 'leg extensions'], ['get rid of curls', 'curls'], ['delete deadlift', 'deadlift']]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'skip', `skip: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+    assert.ok(!r.positional, `named removal is not positional: ${text}`);
+  }
+});
+
+test('named swaps stay named (source + destination), never positional', () => {
+  const r = classifyMutationIntent('swap bench for dips');
+  assert.equal(r.action, 'replace');
+  assert.equal(r.target, 'bench');
+  assert.equal(r.substitute, 'dips');
+  assert.ok(!r.positional, 'a named source is not a positional swap');
+});
+
 test('non-mutation messages return null (fall through to coach/substitute flow)', () => {
   for (const text of [
     'how many reps?', 'what should I do next?', 'should I skip deadlift?',

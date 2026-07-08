@@ -627,6 +627,87 @@ test('parseReplyWithProposals strips PROPOSE_PLAN_EDIT and returns a sanitized p
   });
 });
 
+// PR-11 Bug 1 — a planner directive must NEVER leak into the rendered reply, no
+// matter how the model formats it. The live leak (FR-20260708014918) put the label
+// and JSON on separate lines, which the last-non-blank-line parser missed entirely.
+test('parseReplyWithProposals: PROPOSE_PLAN_EDIT split across two lines is consumed, not leaked', () => {
+  const raw = [
+    'Dropped weighted dips from the plan.',
+    'PROPOSE_PLAN_EDIT:',
+    '{"action":"remove_exercises","exercises":["Dips (Weighted)"]}'
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(reply, 'Dropped weighted dips from the plan.');
+  // The planner behaviour is preserved (the edit is consumed); exercises normalize
+  // to {name} objects via isValidPlanEditSchema.
+  assert.equal(propose_plan_edit.action, 'remove_exercises');
+  assert.deepEqual(propose_plan_edit.exercises, [{ name: 'Dips (Weighted)' }]);
+  assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT|remove_exercises|\{.*\}/, 'no token, action name, or raw JSON may reach chat');
+});
+
+test('parseReplyWithProposals: a directive followed by trailing prose is still stripped', () => {
+  const raw = [
+    'Added core at the end.',
+    'PROPOSE_PLAN_EDIT: {"action":"add_exercises","exercises":[{"name":"Hanging Knee Raises","sets":3,"reps":15,"rir":2}]}',
+    'Let me know if you want to tweak it!'
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.deepEqual(propose_plan_edit, { action: 'add_exercises', exercises: [{ name: 'Hanging Knee Raises', sets: 3, reps: 15, rir: 2 }] });
+  assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT|add_exercises|Hanging Knee Raises.*sets/, 'the directive line must be removed even when it is not the last line');
+  assert.match(reply, /Added core at the end\./);
+  assert.match(reply, /Let me know if you want to tweak it!/);
+});
+
+test('parseReplyWithProposals: any leftover PROPOSE_* token line is scrubbed from the reply (belt-and-suspenders)', () => {
+  // Even a malformed / duplicate directive the structured parse cannot consume must
+  // never render — raw JSON, action names, and internal commands can never reach chat.
+  for (const token of ['PROPOSE_EDIT', 'PROPOSE_NOTE', 'PROPOSE_CONSTRAINT', 'PROPOSE_PLAN_EDIT']) {
+    const raw = `Here is your plan.\n${token}: {"action":"replace_plan"\n{"exercises":["Bench Press"]}`;
+    const { reply } = parseReplyWithProposals(raw);
+    assert.doesNotMatch(reply, new RegExp(token), `${token} must be scrubbed from the reply`);
+    assert.doesNotMatch(reply, /"action"|"exercises"/, 'no planner JSON payload may survive in the reply');
+    assert.match(reply, /Here is your plan\./, 'the human prose is preserved');
+  }
+});
+
+test('parseReplyWithProposals: a bare token with NO JSON keeps the human prose after it (no prose loss)', () => {
+  const raw = 'PROPOSE_PLAN_EDIT:\nActually, let me reconsider — keep the plan as is.';
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(propose_plan_edit, null, 'no JSON → no proposal');
+  assert.match(reply, /Actually, let me reconsider — keep the plan as is\./, 'trailing prose must survive');
+  assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT/, 'the bare token label is still scrubbed');
+});
+
+test('parseReplyWithProposals: a coach line that merely starts with a bracket is not scrubbed as JSON', () => {
+  const raw = [
+    'Nice work.',
+    '[heads up] your bench is stalling — watch the RIR.',
+    'PROPOSE_PLAN_EDIT: {"action":"add_exercises","exercises":[{"name":"Barbell Row"}]}'
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(propose_plan_edit.action, 'add_exercises');
+  assert.match(reply, /\[heads up\] your bench is stalling — watch the RIR\./, 'a bracketed coach aside must survive');
+  assert.match(reply, /Nice work\./);
+  assert.doesNotMatch(reply, /PROPOSE_PLAN_EDIT|add_exercises|Barbell Row/, 'the directive is still fully scrubbed');
+});
+
+test('parseReplyWithProposals: a truncated/unbalanced pretty-printed payload never leaks its inner JSON', () => {
+  // Model truncates on a token limit mid-object — the JSON never closes. Everything
+  // from the first bracket on is untrusted and must be dropped, not rendered.
+  const raw = [
+    "Here's the update.",
+    'PROPOSE_PLAN_EDIT:',
+    '{',
+    '  "action": "remove_exercises",',
+    '  "exercises": ['
+  ].join('\n');
+  const { reply, propose_plan_edit } = parseReplyWithProposals(raw);
+  assert.equal(propose_plan_edit, null, 'unbalanced JSON → no proposal');
+  assert.doesNotMatch(reply, /"action"|"exercises"|remove_exercises|PROPOSE_PLAN_EDIT|[{}[\]]/,
+    'no JSON key/value/bracket from a truncated payload may reach chat');
+  assert.match(reply, /Here's the update\./, 'human prose before the directive survives');
+});
+
 test('isValidPlanEditSchema accepts plan actions and rejects empty or unknown edits', () => {
   assert.ok(isValidPlanEditSchema({ action: 'replace_plan', exercises: ['Bench Press'] }));
   assert.ok(isValidPlanEditSchema({ action: 'remove_exercises', exercises: ['Hanging Knee Raises'] }));

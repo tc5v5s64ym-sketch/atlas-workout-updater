@@ -111,14 +111,38 @@ const _exports = (function () {
     return /[a-z]/.test(s);
   }
 
+  // A POSITIONAL reference names a slot by position, not by exercise name:
+  // "next exercise/workout/lift/one", "the next one", "current exercise", "this one".
+  // The caller resolves it against the LIVE plan (the current/next pending slot) —
+  // the classifier must never treat it as a lift NAME to fuzzy-match (the live repro:
+  // "swap next workout for dips" matched no slot and fell through to the LLM, which
+  // then removed Dips). `positional:true` tells the caller to resolve by position.
+  const POSITIONAL = '__current__';
+  const POSITIONAL_RE = /^(?:next|current|upcoming|following|this)(?:\s+(?:one|exercise|workout|lift|set|movement|thing))?$/;
+  function isPositional(phrase) {
+    return POSITIONAL_RE.test(cleanName(phrase));
+  }
+
   function replace(target, substitute) {
-    const t = cleanName(target), sub = cleanName(substitute);
-    if (!looksLikeExercise(t) || !looksLikeExercise(sub)) return null;
+    const sub = cleanName(substitute);
+    if (!looksLikeExercise(sub)) return null;
+    const t = cleanName(target);
+    // Positional source ("swap NEXT WORKOUT for dips") → substitute into the current slot.
+    if (isPositional(t)) return { action: 'replace', target: POSITIONAL, substitute: sub, positional: true };
+    if (!looksLikeExercise(t)) return null;
     if (t === sub) return null;
     return { action: 'replace', target: t, substitute: sub };
   }
+  // Destination-only swap ("swap to/for X", "sub in X", "replace with X") — no source
+  // named, so it substitutes X into the current/next slot (positional).
+  function replaceInto(substitute) {
+    const sub = cleanName(substitute);
+    if (!looksLikeExercise(sub)) return null;
+    return { action: 'replace', target: POSITIONAL, substitute: sub, positional: true };
+  }
   function skip(target) {
     const t = cleanName(target);
+    if (isPositional(t)) return { action: 'skip', target: POSITIONAL, positional: true };
     if (!looksLikeExercise(t)) return null;
     return { action: 'skip', target: t };
   }
@@ -149,8 +173,14 @@ const _exports = (function () {
     m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace)\s+(.+?)\s+(?:for|with|to|->|→)\s+(.+)$/);
     if (m) return replace(m[1], m[2]);
 
-    // "skip/drop/cut X [,/and] do|hit|use Y"  (explicit swap-by-skip)
-    m = t.match(/^(?:skip|drop|cut|ditch)\s+(.+?)[,\s]+(?:and\s+|then\s+)?(?:do|doing|hit|use|go with|run)\s+(.+)$/);
+    // Destination-only: "swap/switch/sub/replace to|for|in|with Y" — no source named,
+    // so Y goes INTO the current/next slot (positional). Distinct from the pattern
+    // above, which needs a source before the preposition.
+    m = t.match(/^(?:swap|switch|sub(?:stitute)?|replace)\s+(?:to|for|in|with)\s+(.+)$/);
+    if (m) return replaceInto(m[1]);
+
+    // "skip/drop/cut/remove X [,/and] do|hit|use Y"  (explicit swap-by-skip)
+    m = t.match(/^(?:skip|drop|cut|ditch|remove|delete)\s+(.+?)[,\s]+(?:and\s+|then\s+)?(?:do|doing|hit|use|go with|run)\s+(.+)$/);
     if (m) return replace(m[1], m[2]);
 
     // "X is/are/'s taken|busy|in use ... do|use|hit Y"
@@ -163,8 +193,11 @@ const _exports = (function () {
     m = t.match(/^(.+?)\s+instead of\s+(.+)$/);
     if (m) return replace(m[2], m[1]);
 
-    // skip-only: "skip/drop/cut X" with no replacement clause
-    m = t.match(/^(?:skip|drop|cut|ditch)\s+(.+)$/);
+    // skip/remove-only: "skip/drop/cut/remove/delete X" with no replacement clause,
+    // plus the two-word removal verbs "take out X" / "get rid of X".
+    m = t.match(/^(?:skip|drop|cut|ditch|remove|delete)\s+(.+)$/);
+    if (m) return skip(m[1]);
+    m = t.match(/^(?:take\s+out|get\s+rid\s+of|toss(?:\s+out)?)\s+(.+)$/);
     if (m) return skip(m[1]);
 
     // Reason-clause tolerance (owner live find 2026-07-03: "My legs are fried
@@ -174,10 +207,10 @@ const _exports = (function () {
     // carries a FIRST-PERSON INTENT marker glued to a mutation verb, classify
     // from that marker onward — the reason clause is context, not the intent.
     // Negations ("I don't think I'll skip…") never classify.
-    if (/\b(?:don'?t|do not|not|never|won'?t|wouldn'?t|shouldn'?t|can'?t)\s+(?:think\s+)?(?:(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|gonna|going to|wanna|want to)\s+)?(?:skip|drop|cut|ditch|swap|switch|sub(?:stitute)?|replace)\b/.test(t)) {
+    if (/\b(?:don'?t|do not|not|never|won'?t|wouldn'?t|shouldn'?t|can'?t)\s+(?:think\s+)?(?:(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|gonna|going to|wanna|want to)\s+)?(?:skip|drop|cut|ditch|remove|delete|swap|switch|sub(?:stitute)?|replace)\b/.test(t)) {
       return null;
     }
-    m = t.match(/\b(?:i think\s+)?(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|let'?s|i want to|i wanna)\s+((?:skip|drop|cut|ditch|swap|switch|sub(?:stitute)?|replace)\b.*)$/);
+    m = t.match(/\b(?:i think\s+)?(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|let'?s|i want to|i wanna)\s+((?:skip|drop|cut|ditch|remove|delete|swap|switch|sub(?:stitute)?|replace)\b.*)$/);
     if (m) {
       // An interrogative frame right before the marker ("do you think i'll
       // skip…") is a question about intent, not intent — never a mutation.

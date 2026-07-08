@@ -115,10 +115,27 @@ import * as sessionQuestion from './sessionQuestion.js';
     return weight != null && weight !== '' && Number(weight) !== 0;
   }
 
-  // "135×12 RIR 4 · 185×10 RIR 2 · 225×5 RIR 0" — RIR always in ember; RIR 0 /
-  // failure gets the brighter "max" treatment. Appends into `target`.
+  // Collapse consecutive identical sets into one group with a count — so logging the
+  // same set three times summarizes ("225×5 RIR 2 ×3") instead of repeating itself
+  // (PR-11 Bug 3). Only CONSECUTIVE identical sets merge; a warm-up climb stays listed.
+  // ONE grouping source of truth, shared by the readback tile and the review-card line.
+  function groupConsecutiveSets(sets) {
+    const groups = [];
+    for (const s of (Array.isArray(sets) ? sets : [])) {
+      const key = `${s.weight}|${s.reps}|${s.rir}`;
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.count += 1;
+      else groups.push({ key, set: s, count: 1 });
+    }
+    return groups;
+  }
+
+  // "135×12 RIR 4 · 185×10 RIR 2 · 225×5 RIR 0 ×3" — RIR always in ember; RIR 0 /
+  // failure gets the brighter "max" treatment; identical sets carry a "×N" count.
+  // Appends into `target`.
   function appendSetReadout(target, sets) {
-    sets.forEach((s, i) => {
+    groupConsecutiveSets(sets).forEach((g, i) => {
+      const s = g.set;
       if (i) target.appendChild(document.createTextNode(' · '));
       target.appendChild(document.createTextNode(hasLoad(s.weight) ? `${s.weight}×${s.reps} ` : `${s.reps} reps `));
       if (s.rir != null && Number.isFinite(Number(s.rir))) {
@@ -126,6 +143,7 @@ import * as sessionQuestion from './sessionQuestion.js';
         const rir = elc('span', failure ? 'rir rir-max' : 'rir', `RIR ${s.rir}`);
         target.appendChild(rir);
       }
+      if (g.count > 1) target.appendChild(document.createTextNode(` ×${g.count}`));
     });
   }
 
@@ -185,17 +203,10 @@ import * as sessionQuestion from './sessionQuestion.js';
     }).observe(approveBtn, { attributes: true, attributeFilter: ['disabled'] });
   }
 
-  // Group consecutive identical sets — "225 × 10 · RIR 2  ×3".
+  // Group consecutive identical sets — "225 × 10 · RIR 2  ×3" — via the shared grouper.
   function buildReviewSetLine(sets) {
     const span = elc('span', 'rv-es');
-    const groups = [];
-    for (const s of sets) {
-      const key = `${s.weight}|${s.reps}|${s.rir}`;
-      const last = groups[groups.length - 1];
-      if (last && last.key === key) last.count += 1;
-      else groups.push({ key, set: s, count: 1 });
-    }
-    groups.forEach((g, i) => {
+    groupConsecutiveSets(sets).forEach((g, i) => {
       if (i) span.appendChild(document.createTextNode('  '));
       span.appendChild(document.createTextNode(hasLoad(g.set.weight) ? `${g.set.weight} × ${g.set.reps} ` : `${g.set.reps} reps `));
       if (g.set.rir != null && Number.isFinite(Number(g.set.rir))) {
