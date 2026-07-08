@@ -1024,3 +1024,19 @@ Five parallel AI QA testers hit the LIVE deployed app across read-only endpoints
 Before MO1: two typos in the verbatim spec text (committed byte-for-byte per owner instruction, not fixed here) — §4 rule 5 `streper-fire` and §7 step 4 `The Brian pattern` (→ "Brain"). Owner to decide whether to correct in a follow-up docs-only PR before the builder reads §9.
 
 Before MO3: `config/coaching/exercises/*.json` + `evidenceTiersModule` wiring (§2/§8) and the claim-ceiling whitelist contract (§5) will want a design pass — §9 says MO1–MO3 are buildable from the spec but that wiring detail is under-specified. Confirm before MO3 PR opens.
+
+---
+
+## Owner-approved AI live-retest sweep — deferred findings (2026-07-08)
+
+Five simulated conversational sessions against the LIVE deployed app (read-only, `test_mode:true` dry-run preview only, no writes). Finding #1 (coach cross-lift number misattribution) was fixed in the same-day PR that added this section (`services/coach.js` LIFT-IDENTITY RULE + `test/coach.test.js` regression tests). Findings #2–#5 below are deferred, not fixed here.
+
+- **Harness limitation, not a product bug:** headless-Chromium browser automation against the deployed app is currently blocked in the Claude Code remote-execution environment (TLS connection reset mid-handshake through the session's egress proxy; plain HTTPS `fetch`/`curl` to the identical endpoint succeed). The sweep fell back to driving the same read-only/dry-run endpoints directly over HTTPS. This means pure client-DOM behavior — the session-pin, active-session banner, and the localStorage restore-banner flow after a reload — could not be exercised or verified by this sweep. Revisit with either an owner hands-on pass or a future environment where headless Chromium can reach the deployment.
+
+- **Off-plan/unframed lift logged mid-mutation is silently absorbed with no coherence flag** `[correctness]` — during a plan-mutation conversation (e.g. "switch to upper body day"), logging a lift that doesn't correspond to any current plan slot (e.g. a squat variant, on what the plan now frames as an upper-body day) is accepted with zero acknowledgment; the next "what's next?" answer never flags the mismatch. Likely the same scattered-session-state class already flagged as the top active risk in `docs/REMEDIATION_REVIEW_2026-07-08.md`. No trust/write-path risk (nothing mis-saved) — a recap-coherence gap in the coach/state-store layer.
+
+- **Mid-session "how many sets have I done" can undercount** `[correctness]` — asked after logging 2 sets of one exercise + 1 set of another (3 sets total), the chat replied "2 sets" — apparently derived from the count of distinct completed exercises (`plan_completed`) rather than a true set tally. The chat context payload (`current_preview`, `current_plan`, `plan_completed`) carries no cumulative set-count field for the coach to cite. `services/coach.js` / `buildChatSystemPrompt` chat-context contract.
+
+- **Plan-mutation reply coherence is non-deterministic** `[polish]` — repeating the same "switch to upper body day" prompt twice produced one internally coherent reply (clean upper-body-only `propose_plan_edit`) and one internally contradictory reply (narrated "switching to upper body" while the proposed plan still retained a lower-body lift, justified with the old rationale in the same breath). LLM sampling variance on today's `buildChatSystemPrompt` PROPOSE_PLAN_EDIT instructions; no data was written either way.
+
+- **Ambiguous referent after a "what's next?" answer** `[polish]` — a follow-up "how much?" / "how many sets?" right after the coach names the next planned exercise answers about the just-**logged** exercise instead of the just-**named-next** one. Minor conversational-referent-resolution gap in the chat voice, not a numbers-safety issue.
