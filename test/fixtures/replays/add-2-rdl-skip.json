@@ -1,0 +1,33 @@
+{
+  "id": "add-2-rdl-skip",
+  "scenario": "plan-skip",
+  "source": "docs/PR10_REGRESSION_ADDENDUM.md #2",
+  "description": "A spoken negation-style skip must become real session state (the RDL01 slot removed from the active plan), not just a coach-language reply.",
+  "flight_session_id": "replay-add-2",
+  "events": [
+    {
+      "event_type": "session_state_changed",
+      "session_state": {
+        "activePlannedSession": {
+          "label": "Pull day",
+          "exercises": [
+            { "name": "Overhead Press", "canonicalName": "Overhead Press", "liftCode": "OHP01" },
+            { "name": "Romanian Deadlift", "canonicalName": "Romanian Deadlift", "liftCode": "RDL01" },
+            { "name": "Bench Press", "canonicalName": "Bench Press", "liftCode": "BEN01" }
+          ],
+          "index": 0
+        }
+      }
+    },
+    {
+      "event_type": "user_input",
+      "user_input": "My lower back is a bit sore so no RDLs for me today"
+    }
+  ],
+  "expected": {
+    "mutation_applied": true,
+    "remaining_plan_exercise_names": ["Overhead Press", "Bench Press"],
+    "announced_summary": "Skipped Romanian Deadlift.",
+    "events_dispatched": ["atlas:plan-mutated"]
+  }
+}

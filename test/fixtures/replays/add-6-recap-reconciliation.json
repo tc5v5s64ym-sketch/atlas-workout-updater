@@ -1,0 +1,19 @@
+{
+  "id": "add-6-recap-reconciliation",
+  "scenario": "recap-reconciliation",
+  "source": "docs/PR10_REGRESSION_ADDENDUM.md #6",
+  "description": "The full live-session shape: plan OHP/RDL/Bench/Seated Row/Face Pull/Curls, RDL already skipped (ADD-2 splices it out before recap), OHP/Bench/Seated Row/Face Pull logged, an off-plan Incline Dumbbell Flyes added and logged. The save/review recap must show only the genuinely-undone Curls as remaining -- never a logged or skipped exercise.",
+  "events": [
+    {
+      "event_type": "session_state_changed",
+      "session_state": {
+        "plan_exercise_names": ["Overhead Press", "Bench Press", "Seated Row", "Face Pull", "Curls"],
+        "completed_exercise_names": ["Overhead Press", "Incline Dumbbell Flyes", "Bench Press", "Seated Row", "Face Pull"]
+      }
+    }
+  ],
+  "expected": {
+    "completed": ["Overhead Press", "Bench Press", "Seated Row", "Face Pull", "Incline Dumbbell Flyes"],
+    "remaining": ["Curls"]
+  }
+}

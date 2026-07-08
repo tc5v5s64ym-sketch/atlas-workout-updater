@@ -1,0 +1,39 @@
+{
+  "id": "add-1-restored-session-discard",
+  "scenario": "restored-session-discard",
+  "source": "docs/PR10_REGRESSION_ADDENDUM.md #1",
+  "description": "Discarding a restored session must clear the restored-session pin from both state and UI, not just hide it visually.",
+  "flight_session_id": "replay-add-1",
+  "events": [
+    {
+      "event_type": "screen_rendered",
+      "route": "/app",
+      "session_state": {
+        "sessionLog": [
+          { "exercise": "Bench Press", "weight": "185", "reps": "8", "rir": "2" }
+        ],
+        "activePlannedSession": {
+          "label": "Push day",
+          "exercises": [{ "name": "Bench Press" }],
+          "index": 0
+        }
+      },
+      "ui_snapshot": {
+        "session_resume_notice_visible": true,
+        "session_resume_notice_text": "Session restored — 1 set logged (Bench Press)"
+      }
+    },
+    {
+      "event_type": "user_action",
+      "user_action": "tap:discard-restored-session"
+    }
+  ],
+  "expected": {
+    "session_resume_notice_hidden": true,
+    "session_log": [],
+    "active_planned_session": null,
+    "session_id_cleared": true,
+    "persisted_snapshot_cleared": true,
+    "events_dispatched": ["atlas:session-reset"]
+  }
+}
