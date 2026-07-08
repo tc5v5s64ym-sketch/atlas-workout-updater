@@ -40,7 +40,7 @@ test('wiring: currentPlannedExercise() has index fallback when AS unavailable', 
   const body = appSrc.slice(start, next === -1 ? start + 1500 : next);
   // When window.activeSession is absent, must return exercises[index] not null.
   assert.ok(
-    body.includes('activePlannedSession.exercises[activePlannedSession.index]'),
+    body.includes('getActivePlannedSession().exercises[getActivePlannedSession().index]'),
     'must fall back to exercises[index] when AS is unavailable'
   );
 });

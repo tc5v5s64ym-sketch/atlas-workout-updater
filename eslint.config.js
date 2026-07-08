@@ -58,7 +58,9 @@ module.exports = [
   {
     // public/ is now generated build output (Vite copies src/app/ -> public/,
     // see vite.config.js). Lint the source in src/app/, not the build artifact.
-    ignores: ['node_modules/**', 'public/**'],
+    // src/app/signals-core.js is vendored, minified third-party code (@preact/
+    // signals-core) — not ours to restyle, so it is excluded from lint.
+    ignores: ['node_modules/**', 'public/**', 'src/app/signals-core.js'],
   },
 
   // Node.js CJS backend: index, sheets, middleware, services, scripts, config, tests

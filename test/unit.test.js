@@ -235,7 +235,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v116/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v117/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -1043,7 +1043,7 @@ test('live-audit PR3: "log it" with an empty buffer after a save says "nothing n
   assert.ok(compileIdx > nothingNewIdx, 'the nothing-new guard must precede the compile fallback');
   // The structured-buffer branch still wins first, so NEW sets logged after a save
   // (sessionLog non-empty) are unaffected.
-  const bufferIdx = fn.indexOf('if (sessionLog.length)');
+  const bufferIdx = fn.indexOf('if (getSessionLog().length)');
   assert.ok(bufferIdx >= 0 && bufferIdx < nothingNewIdx, 'the sessionLog branch precedes the nothing-new guard');
 });
 
@@ -1061,7 +1061,7 @@ test('P0 closeout: runCloseout reads the canonical buffer first and never gives 
   const src = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fn = src.slice(src.indexOf('async function runCloseout()'), src.indexOf('async function runCloseout()') + 3500);
   // Canonical source: sessionLog buffer first (what the visible cards were built from).
-  const bufIdx = fn.indexOf('if (sessionLog.length)');
+  const bufIdx = fn.indexOf('if (getSessionLog().length)');
   assert.ok(bufIdx >= 0, 'closeout builds from the sessionLog buffer (canonical set data)');
   // When the buffer is empty it consults the canonical session before declaring nothing.
   assert.match(fn, /hasLoggedWork\(canon\)/, 'checks canonical hasLoggedWork before any "no sets" verdict');
@@ -1192,7 +1192,7 @@ test('Step 373: currentPlanForChat reads the live planned session before the cac
     appSource.indexOf('function currentPlanForChat()') + 1100
   );
   // The authoritative branch reads activePlannedSession.exercises FIRST...
-  const sessionIdx = fn.indexOf('activePlannedSession.exercises');
+  const sessionIdx = fn.indexOf('getActivePlannedSession().exercises');
   const fallbackIdx = fn.indexOf('lastIntentData');
   assert.ok(sessionIdx !== -1, 'must derive the plan from the live activePlannedSession');
   assert.ok(fallbackIdx !== -1, 'must keep the cached-recommendation fallback');
@@ -1206,7 +1206,8 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
   // State + helper exist, and the helper is the keep-in-sync mirror of the engine.
-  assert.match(appSource, /let pendingSubstitution = null/, 'must declare pendingSubstitution state');
+  // PR-10: pendingSubstitution now lives in store.js; app.js manages it via the setter.
+  assert.match(appSource, /setPendingSubstitution\(/, 'must manage pendingSubstitution via the store setter');
   assert.match(appSource, /function applySessionSubstitution\(/, 'must define the live-session substitution helper');
   assert.match(appSource, /keep in sync with applySubstitution in services\/sessionPlanExecutor\.js/,
     'helper must carry the keep-in-sync marker to the engine');
@@ -1216,7 +1217,7 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
     appSource.indexOf('async function checkAndSuggestSubstitute'),
     appSource.indexOf('async function checkAndSuggestSubstitute') + 1200
   );
-  assert.match(suggestFn, /pendingSubstitution = \{ prescribed:/, 'must record the prescribed lift on a declared swap');
+  assert.match(suggestFn, /setPendingSubstitution\(\{ prescribed:/, 'must record the prescribed lift on a declared swap');
 
   // emitSetLogged applies the swap BEFORE the identity-resolution loop so the
   // substitute (not the swapped-out lift) is what gets marked done.
@@ -1243,14 +1244,14 @@ test('Step 373b: a declared swap is recorded and applied to the live session at 
     appSource.indexOf('function endPlannedSession()'),
     appSource.indexOf('function endPlannedSession()') + 900
   );
-  assert.match(endFn, /pendingSubstitution = null/, 'ending the session must clear any pending swap');
+  assert.match(endFn, /setPendingSubstitution\(null\)/, 'ending the session must clear any pending swap');
 
   // Lifecycle symmetry: starting a session must not inherit a stale swap.
   const startFn = appSource.slice(
     appSource.indexOf('function startPlannedSession('),
     appSource.indexOf('function startPlannedSession(') + 320
   );
-  assert.match(startFn, /pendingSubstitution = null/, 'starting a session must clear any stale pending swap');
+  assert.match(startFn, /setPendingSubstitution\(null\)/, 'starting a session must clear any stale pending swap');
 });
 
 test('Step 379: a declared swap advances the session cursor so subsequent checks use the next slot', () => {
@@ -1265,8 +1266,8 @@ test('Step 379: a declared swap advances the session cursor so subsequent checks
   // not the stale index cursor — so the swap is declared against the correct exercise
   // and the cursor still moves so the next check sees the next slot.
   const currentExIdx = suggestFn.indexOf('currentPlannedExercise()');
-  const recordIdx = suggestFn.indexOf('pendingSubstitution = { prescribed:');
-  const advanceIdx = suggestFn.indexOf('activePlannedSession.index += 1');
+  const recordIdx = suggestFn.indexOf('setPendingSubstitution({ prescribed:');
+  const advanceIdx = suggestFn.indexOf('getActivePlannedSession().index += 1');
   assert.ok(currentExIdx !== -1, 'current_exercise must be read via currentPlannedExercise() (canonical session)');
   assert.ok(recordIdx !== -1, 'must record the prescribed lift before advancing');
   assert.ok(advanceIdx !== -1, 'must advance the authoritative session cursor after a declared swap');
@@ -1277,7 +1278,7 @@ test('Step 379: a declared swap advances the session cursor so subsequent checks
   // The advance must be clamped so the last slot does not overrun / end the session,
   // and must re-render the banner so the displayed step matches the new cursor.
   const advanceBlock = suggestFn.slice(recordIdx, advanceIdx + 120);
-  assert.match(advanceBlock, /activePlannedSession\.index < activePlannedSession\.exercises\.length - 1/,
+  assert.match(advanceBlock, /getActivePlannedSession\(\)\.index < getActivePlannedSession\(\)\.exercises\.length - 1/,
     'the cursor advance must be clamped to the plan length');
   assert.match(advanceBlock, /renderActiveSessionBanner\(\)/, 'must re-render the banner after advancing');
 
@@ -1455,17 +1456,19 @@ test('PR 484: getInWorkoutNote voices next-move + recovery advisories on the det
 
 test('coach-pick gate: plannedExerciseEntries treats lastIntentData as a plan ONLY when engaged', () => {
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  // The engagement flag exists, defaults false, and has accessors for the coach layer.
-  assert.match(appSrc, /let coachSuggestionEngaged = false;/, 'engagement flag must default false');
-  assert.match(appSrc, /function setCoachSuggestionEngaged\(v\)/, 'a setter must be exposed for the coach layer');
+  // The engagement flag exists (PR-10: in store.js, defaulting false) and app.js
+  // re-exports the store setter on window for the coach layer.
+  const storeSrc = fs.readFileSync(path.join(repoRoot, 'public', 'store.js'), 'utf8');
+  assert.match(storeSrc, /_coachSuggestionEngaged = signal\(false\)/, 'engagement flag must default false in the store');
+  assert.match(appSrc, /window\.setCoachSuggestionEngaged = setCoachSuggestionEngaged;/, 'the store setter must be re-exposed for the coach layer');
   // plannedExerciseEntries() short-circuits to [] for the lastIntentData branch unless engaged.
   const block = appSrc.slice(
     appSrc.indexOf('function plannedExerciseEntries('),
     appSrc.indexOf('function plannedExerciseOrder(')
   );
   assert.ok(block, 'plannedExerciseEntries block must be present');
-  const activeIdx = block.indexOf('activePlannedSession && activePlannedSession.exercises.length');
-  const gateIdx = block.indexOf('if (!coachSuggestionEngaged) return [];');
+  const activeIdx = block.indexOf('getActivePlannedSession() && getActivePlannedSession().exercises.length');
+  const gateIdx = block.indexOf('if (!getCoachSuggestionEngaged()) return [];');
   const intentIdx = block.indexOf('lastIntentData && lastIntentData.intents');
   assert.ok(gateIdx > -1, 'the engagement gate must be present');
   // The gate must sit AFTER the activePlannedSession branch (a started session always wins)
@@ -5222,19 +5225,21 @@ test('saved-no-restore: a confirmed save clears the in-memory session regardless
   const block = app.slice(app.indexOf('lastWrite = pendingLastWrite;', app.indexOf(anchor)),
     app.indexOf("dispatchEvent(new CustomEvent('atlas:session-reset'))", app.indexOf(anchor)) + 60);
   // The buffers + active plan are cleared UNCONDITIONALLY (not behind `if (pendingLastWrite)`).
-  assert.match(block, /\n    sessionLog = \[\];/, 'sessionLog is cleared on any confirmed save');
-  assert.match(block, /\n    sessionCompleted = \[\];/, 'sessionCompleted is cleared on any confirmed save');
+  // PR-10: the buffers live in the store; the save clears them via the setters.
+  assert.match(block, /\n    setSessionLog\(\[\]\);/, 'sessionLog is cleared on any confirmed save');
+  assert.match(block, /\n    setSessionCompleted\(\[\]\);/, 'sessionCompleted is cleared on any confirmed save');
   // The plan is ended via endPlannedSession() (deload-aware teardown), NOT a bare null —
   // so the Step 385 Deload_State machine still advances on a saved deload session.
   assert.match(block, /\n    endPlannedSession\(\);/, 'the active plan is ended (deload-aware) so it cannot re-snapshot');
-  assert.doesNotMatch(block, /\n    activePlannedSession = null;/, 'must not bypass endPlannedSession with a bare null (would stall the deload machine)');
-  assert.doesNotMatch(block, /if \(pendingLastWrite\) sessionLog = \[\]/, 'the reset must NOT be gated on the undo-only pendingLastWrite');
+  assert.doesNotMatch(block, /\n    setActivePlannedSession\(null\);/, 'must not bypass endPlannedSession with a bare null (would stall the deload machine)');
+  assert.doesNotMatch(block, /if \(pendingLastWrite\) setSessionLog\(\[\]\)/, 'the reset must NOT be gated on the undo-only pendingLastWrite');
   // The snapshot is still cleared, and undo state (lastWrite) still tracks pendingLastWrite.
   assert.match(block, /clearSessionSnapshot\(\);/, 'the persisted snapshot is still cleared on save');
-  // saveSessionSnapshot removes the snapshot when nothing is in progress, so an empty
-  // buffer + null plan means a saved session can never be re-persisted/restored.
-  assert.match(app, /if \(!\(Array\.isArray\(sessionLog\) && sessionLog\.length\) && !activePlannedSession\) \{[\s\S]*?removeItem\(SESSION_SNAPSHOT_KEY\)/,
-    'saveSessionSnapshot drops the snapshot once the buffer and plan are clear');
+  // PR-10: the "drop the snapshot when nothing is in progress" guard moved into the
+  // store's persist seam, so an empty buffer + null plan can never be re-persisted.
+  const storeSrc = fs.readFileSync(path.join(repoRoot, 'public', 'store.js'), 'utf8');
+  assert.match(storeSrc, /if \(!\(Array\.isArray\(log\) && log\.length\) && !plan\) \{ store\.removeItem\(SNAPSHOT_KEY\)/,
+    'persistSessionSnapshot drops the snapshot once the buffer and plan are clear');
 });
 
 test('RC2: an abandoned closeout preview does not leak its date-source label onto a later normal save', () => {
@@ -5549,20 +5554,21 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
   // beforeunload warns ONLY when there are unsaved logged sets.
   assert.match(app, /addEventListener\('beforeunload'/, 'a beforeunload handler exists');
   assert.match(app, /function hasUnsavedSessionState\(\)/, 'the unsaved-state guard exists');
-  assert.match(app, /sessionLog\) && sessionLog\.length > 0/, 'warns based on logged-but-unsaved sets');
-  // Snapshot save/restore/clear of the in-progress session.
+  assert.match(app, /getSessionLog\(\)\) && getSessionLog\(\)\.length > 0/, 'warns based on logged-but-unsaved sets');
+  // Snapshot save/restore/clear of the in-progress session. PR-10: app.js keeps the
+  // DOM-facing wrappers; the state serialization / validation / recency gate live in
+  // the store's persist seam (asserted against store.js below).
   assert.match(app, /function saveSessionSnapshot\(\)/, 'saves a session snapshot');
   assert.match(app, /function restoreSessionSnapshot\(\)/, 'restores a session snapshot on load');
+  assert.match(app, /function clearSessionSnapshot\(\)/, 'clears the snapshot');
+  const storeSrc = fs.readFileSync(path.join(repoRoot, 'public', 'store.js'), 'utf8');
   // Owner live find 2026-07-03: a snapshot carrying ONLY an engaged plan (no logged
   // sets) must NOT auto-resume — that silently reactivated guided mode ("1 of N /
   // next up") on a fresh freestyle log, with no visible resume banner. Resume now
-  // requires genuinely logged work.
-  assert.match(app, /if \(!snap\.sessionLog\.length\) \{ clearSessionSnapshot\(\); return false; \}/,
+  // requires genuinely logged work. (Moved into the store with PR-10.)
+  assert.match(storeSrc, /if \(!snap\.sessionLog\.length\) \{ clearPersistedSnapshot\(\); return \{ resumed: false \}; \}/,
     'a snapshot with no logged sets never auto-resumes (an engaged-but-unlogged plan cannot silently reactivate guided mode)');
-  assert.doesNotMatch(app, /if \(!snap\.sessionLog\.length && !snap\.activePlannedSession\)/,
-    'the old plan-only resume path (which auto-engaged guided mode with no logged sets) is gone');
-  assert.match(app, /function clearSessionSnapshot\(\)/, 'clears the snapshot');
-  assert.match(app, /SESSION_SNAPSHOT_MAX_AGE_MS/, 'recency-gated (stale snapshot ignored)');
+  assert.match(storeSrc, /SNAPSHOT_MAX_AGE_MS/, 'recency-gated (stale snapshot ignored)');
   // Wired: restore at init, clear on save + start-over.
   assert.match(app, /restoreSessionSnapshot\(\);\n?\s*loadDashboard\(\)|restoreSessionSnapshot\(\);/, 'restore runs at startup');
   assert.match(app, /clearSessionSnapshot\(\);\s*\/\/ saved/, 'snapshot cleared on a successful save');
@@ -5594,7 +5600,7 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
   assert.doesNotMatch(render, /resume-dismiss-btn/, 'the bare × dismiss is replaced by swipe-to-discard');
   // Discard fully clears the session (deload-aware) so a saved/abandoned ghost can't linger.
   const discard = app.slice(app.indexOf('function discardRestoredSession('), app.indexOf('function restoreSessionToView('));
-  assert.match(discard, /sessionLog = \[\];/, 'discard clears the buffer');
+  assert.match(discard, /setSessionLog\(\[\]\);/, 'discard clears the buffer');
   assert.match(discard, /endPlannedSession\(\);/, 'discard ends the plan (deload-aware), not a bare null');
   assert.match(discard, /getElementById\('log-session-id'\)/, 'discard clears the restored session_id so a fresh start is clean');
   assert.match(discard, /clearSessionSnapshot\(\);/, 'discard removes the persisted snapshot');
@@ -5644,8 +5650,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
   assert.match(app, /function getActiveIntentId\(\)/, 'app.js must expose getActiveIntentId');
   const fn = app.slice(app.indexOf('function getActiveIntentId()'), app.indexOf('function getActiveIntentId()') + 500);
-  assert.match(fn, /activePlannedSession && activePlannedSession\.intentId/, 'prefers a started session intent');
-  assert.match(fn, /coachSuggestionEngaged && lastIntentData/, 'falls back to the engaged suggestion intent');
+  assert.match(fn, /getActivePlannedSession\(\) && getActivePlannedSession\(\)\.intentId/, 'prefers a started session intent');
+  assert.match(fn, /getCoachSuggestionEngaged\(\) && lastIntentData/, 'falls back to the engaged suggestion intent');
 
   // The recommend call and the set-reaction facts both source the intent via the helper.
   assert.match(app, /const intentId = getActiveIntentId\(\)/, 'the next-set recommend call uses getActiveIntentId');
@@ -5654,8 +5660,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v116/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v115\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v117/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v116\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5743,7 +5749,7 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   assert.ok(ensureAt > classifyAt, 'materializes the session only AFTER classifying a genuine mutation');
   // The materializer promotes an engaged suggestion (coachSuggestionEngaged + lastIntentData).
   const ensureFn = appSrc.slice(appSrc.indexOf('function ensureActivePlannedSession('), appSrc.indexOf('function ensureActivePlannedSession(') + 800);
-  assert.match(ensureFn, /coachSuggestionEngaged/, 'materializes from an engaged Coach\'s Pick suggestion');
+  assert.match(ensureFn, /getCoachSuggestionEngaged\(\)/, 'materializes from an engaged Coach\'s Pick suggestion');
   assert.match(ensureFn, /lastIntentData/, 'sources the suggestion plan from lastIntentData');
   assert.match(ensureFn, /normalizePlanExercise/, 'carries the suggestion prescription into the live session');
   assert.match(fn, /resolvePlanTargets\(/, 'resolves the (compound) target against the canonical session, pending-aware');
@@ -5763,7 +5769,7 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
     'a single-token skip that over-matches skips only the first slot');
   // The announced "current" is derived from the cursor, not hardcoded to the
   // substitute, so swapping a LATER slot doesn't yank the composer (PR-570 review).
-  assert.match(fn, /activePlannedSession\.exercises\[activePlannedSession\.index\]/,
+  assert.match(fn, /getActivePlannedSession\(\)\.exercises\[getActivePlannedSession\(\)\.index\]/,
     'current lift is read from the cursor after a mutation');
 
   // resolveCatalogExercise must use the conservative singularization (drop a plural
@@ -5877,8 +5883,8 @@ test('P0 PR4: identity correction is wired into the message flow and relabels th
   // The "X is Y" form resolves X against the BUFFERED lift names and falls through
   // when X is not buffered; the legacy that-was form still targets the last lift.
   assert.match(fn, /resolveBufferedLiftName\(intent\.from\)/, 'from-side resolves against buffered lift names');
-  assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'that-was form targets the most-recently-logged lift');
-  assert.match(fn, /sessionLog\[i\] = \{ \.\.\.sessionLog\[i\], exercise: newName \}/, 'relabels the logged sets');
+  assert.match(fn, /getSessionLog\(\)\[getSessionLog\(\)\.length - 1\]\.exercise/, 'that-was form targets the most-recently-logged lift');
+  assert.match(fn, /getSessionLog\(\)\[i\] = \{ \.\.\.getSessionLog\(\)\[i\], exercise: newName \}/, 'relabels the logged sets');
   assert.match(fn, /resolveCompletedIdentity\(/, 'reconciles completion identity in sessionCompleted');
   assert.match(fn, /announceIdentityCorrection\(/, 'announces the correction for the coach to confirm');
 
@@ -6038,7 +6044,7 @@ test('handoff: the /api/plan/today fallback never resurrects an already-complete
   assert.match(block, /if \(!nextEx && detail\.planIsComplete\)/);
   // app.js threads the completed-lift names into the event for that rejection.
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /completed: \[\.\.\.sessionCompleted\]/);
+  assert.match(appSource, /completed: \[\.\.\.getSessionCompleted\(\)\]/);
   // A fallback next-up must ALSO belong to the engaged plan — an off-plan stored-program
   // lift (the live "next up: Hammer Curls") is rejected so it can't override the closeout
   // or appear during freestyle logging. app.js threads the engaged plan order for it.
@@ -6802,7 +6808,7 @@ test('session pin: derives from the canonical selectors and honors freestyle qui
   const fn = appSource.slice(appSource.indexOf('function renderSessionPin('), appSource.indexOf('function renderSessionPin(') + 1600);
   assert.match(fn, /remainingPlannedExercises\(\)/, 'reads the same canonical remaining list as the handoff');
   assert.match(fn, /plannedExerciseOrder\(\)/, 'guided-ness derives from the engaged plan order');
-  assert.match(fn, /sessionLog\[sessionLog\.length - 1\]\.exercise/, 'freestyle current = last logged lift');
+  assert.match(fn, /getSessionLog\(\)\[getSessionLog\(\)\.length - 1\]\.exercise/, 'freestyle current = last logged lift');
   assert.match(fn, /guided && remaining\.length > 1 \? remaining\[1\] : null/,
     'next-up renders ONLY when guided — freestyle stays quiet (B9)');
   assert.match(fn, /pin\.hidden = true/, 'hides when nothing is in progress');
@@ -6821,7 +6827,7 @@ test('session pin: wired to every session-state moment (log, plan render, reset)
 test('session chrome: the plan card is a tap-to-expand dropdown behind the pin (owner directive 2026-07-03)', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const bannerFn = appSource.slice(appSource.indexOf('function renderActiveSessionBanner('), appSource.indexOf('function syncPlannedIndexToCanonical('));
-  assert.match(bannerFn, /banner\.hidden = !sessionChromeExpanded/, 'the card renders COLLAPSED until the pin expands it');
+  assert.match(bannerFn, /banner\.hidden = !getSessionChromeExpanded\(\)/, 'the card renders COLLAPSED until the pin expands it');
   assert.match(bannerFn, /classList\.add\('session-active'\)/, 'a live session marks the body for the chrome CSS');
   assert.match(bannerFn, /classList\.remove\('session-active'\)/, 'session end clears the marker');
   const pinFn = appSource.slice(appSource.indexOf('function renderSessionPin('), appSource.indexOf('function renderSessionPin(') + 3200);

@@ -32,7 +32,7 @@ import {
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
 
-const ATLAS_SHELL_BUILD = 'v116';
+const ATLAS_SHELL_BUILD = 'v117';
 
 
 
