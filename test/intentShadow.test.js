@@ -212,21 +212,23 @@ test('persist (source): the shadow module touches ONLY the Intent_Shadow tab —
 const _fs = require('node:fs');
 const _path = require('node:path');
 const _indexSrc = () => _fs.readFileSync(_path.join(__dirname, '..', 'index.js'), 'utf8');
+// PR-17: the coach/chat + debug/intent-observe routes moved to routes/coachOps.js.
+const _coachOpsSrc = () => _fs.readFileSync(_path.join(__dirname, '..', 'routes', 'coachOps.js'), 'utf8');
 const _appSrc = () => _fs.readFileSync(_path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 
 test('shadow wiring: /api/coach/chat NO LONGER observes (it only ever saw the fall-through residue)', () => {
-  const src = _indexSrc();
-  const routeIdx = src.indexOf("app.post('/api/coach/chat'");
+  const src = _coachOpsSrc();
+  const routeIdx = src.indexOf("router.post('/api/coach/chat'");
   assert.ok(routeIdx > -1);
-  const nextRouteIdx = src.indexOf('app.post(', routeIdx + 10);
+  const nextRouteIdx = src.indexOf('router.post(', routeIdx + 10);
   const block = src.slice(routeIdx, nextRouteIdx > -1 ? nextRouteIdx : routeIdx + 4000);
   assert.ok(!block.includes('observeChatMessage('),
     'the chat route must not observe — that missed every deterministically-claimed lane');
 });
 
 test('shadow wiring: POST /api/debug/intent-observe forwards the message to observeChatMessage (observe-only)', () => {
-  const src = _indexSrc();
-  const routeIdx = src.indexOf("app.post('/api/debug/intent-observe'");
+  const src = _coachOpsSrc();
+  const routeIdx = src.indexOf("router.post('/api/debug/intent-observe'");
   assert.ok(routeIdx > -1, 'the observe endpoint must exist');
   const block = src.slice(routeIdx, routeIdx + 600);
   assert.match(block, /observeChatMessage\(message,/, 'forwards the posted message (+ diagnostics meta) to the shadow observer');

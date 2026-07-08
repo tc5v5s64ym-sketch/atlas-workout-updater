@@ -1296,7 +1296,8 @@ test('two-way chat: coach-conversation handles the chat event read-only via /api
   // The coach-chat route gives Gemini more than the 8s default before aborting, so a
   // slow-but-successful reply lands within the client's 15s budget instead of
   // dead-ending early. (Resilience PR — reduces spurious "Coach is unavailable".)
-  const idxSrc = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // PR-17: the coach/chat route moved to routes/coachOps.js.
+  const idxSrc = fs.readFileSync(path.join(repoRoot, 'routes', 'coachOps.js'), 'utf8');
   const chatTimeout = Number((idxSrc.match(/const COACH_CHAT_TIMEOUT_MS = (\d+)/) || [])[1]);
   assert.ok(chatTimeout > 8000 && chatTimeout <= 15000, `chat timeout must be >8s default and <=15s client budget, got ${chatTimeout}`);
   assert.match(idxSrc, /generateChatReply\(\{ message, context, history \}, \{ timeoutMs: COACH_CHAT_TIMEOUT_MS \}\)/,
@@ -2507,13 +2508,14 @@ test('last_session_route_registered_before_lift_code_param', () => {
 });
 
 test('coach set-reaction stimulus_grade is engine-only (always overwritten, no client passthrough)', () => {
-  const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
+  // PR-17: the coach/message route moved to routes/coachOps.js.
+  const source = fs.readFileSync(path.join(repoRoot, 'routes', 'coachOps.js'), 'utf8');
   // The route must ALWAYS set stimulus_grade from the engine (or null), never
   // conditionally leave a client-supplied value in place.
   assert.match(
-    indexSource,
+    source,
     /stimulus_grade:\s*isSetLike\s*\?\s*\(computed\.set_grade \|\| null\)\s*:\s*null/,
-    'index.js must overwrite stimulus_grade with the engine value or null (engine-only; set + block)');
+    'the coach route must overwrite stimulus_grade with the engine value or null (engine-only; set + block)');
 });
 
 test('ME-12: dotenv config is guarded so a missing dotenv never blocks app load', () => {
@@ -2553,9 +2555,11 @@ test('route_definitions_cover_obvious_registered_routes', () => {
   // the coverage guard still covers routes moved out of index.js (PR-16 reads.js).
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   const readsSource = fs.readFileSync(path.join(repoRoot, 'routes', 'reads.js'), 'utf8');
+  const coachOpsSource = fs.readFileSync(path.join(repoRoot, 'routes', 'coachOps.js'), 'utf8');
   const registeredRoutes = [
     ...indexSource.matchAll(/app\.(get|post)\('([^']+)'/g),
     ...readsSource.matchAll(/router\.(get|post)\('([^']+)'/g),
+    ...coachOpsSource.matchAll(/router\.(get|post)\('([^']+)'/g),
   ]
     .map(match => ({ method: match[1].toUpperCase(), path: match[2] }))
     .filter(route => route.path !== '/app');
