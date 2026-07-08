@@ -480,7 +480,11 @@ test('chat system prompt documents PROPOSE_PLAN_EDIT for workout plan mutations'
   assert.match(prompt, /replace_plan/, 'must document full plan replacement');
   assert.match(prompt, /add_exercises/, 'must document exercise additions');
   assert.match(prompt, /remove_exercises/, 'must document exercise removals');
-  assert.match(prompt, /Omit unknown weight\/reps\/sets\/rir/i, 'must forbid invented plan numbers');
+  // PR-12 (Bug 2): the structured edit is the faithful source the block renders, so
+  // the coach's own sets/reps/RIR must ride in it — only a WEIGHT is snapshot-gated
+  // (omitted, never invented, when there is no load).
+  assert.match(prompt, /include the sets, reps, and RIR/i, 'must carry the coach-prescribed sets/reps/RIR in the edit');
+  assert.match(prompt, /omit ONLY the weight when there is no snapshot load/i, 'only the weight may be omitted — never invented');
 });
 
 test('parseEditFromReply strips the PROPOSE_EDIT line and returns the edit object', () => {

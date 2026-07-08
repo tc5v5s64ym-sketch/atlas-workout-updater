@@ -470,10 +470,14 @@ import * as sessionQuestion from './sessionQuestion.js';
 
   // Format one suggested-workout set as "{weight}lbs {reps}/{rir}". RIR is NEVER
   // silently dropped: when the engine gave no RIR we render "/?", never a bare
-  // "{weight}lbs {reps}". Pure (no DOM, no closure deps) so it is unit-testable.
+  // "{weight}lbs {reps}". A load-less lift (accessory/bodyweight with no snapshot
+  // weight — e.g. Face Pull) renders "{reps} reps/{rir}" so reps and RIR survive
+  // instead of leaking a "nulllbs" (PR-12 Bug 2). Pure (no DOM, no closure deps)
+  // so it is unit-testable.
   function formatPlanSetLine(ex) {
     const rir = (ex.rir != null && Number.isFinite(Number(ex.rir))) ? `${ex.rir}` : '?';
-    return `${ex.weight}lbs ${ex.reps}/${rir}`;
+    const hasWeight = ex.weight != null && ex.weight !== '' && Number.isFinite(Number(ex.weight));
+    return hasWeight ? `${ex.weight}lbs ${ex.reps}/${rir}` : `${ex.reps} reps/${rir}`;
   }
 
   // Format one engine-owned warm-up (priming) set as "{weight}lbs {reps} · warm-up".
@@ -508,7 +512,10 @@ import * as sessionQuestion from './sessionQuestion.js';
       lines.push(ex.name);
       // Warm-up ramp first (main compounds only) — climb into the working sets.
       for (const w of warmupSetsFor(raw)) lines.push(formatWarmupSetLine(w));
-      if (ex.weight != null && ex.reps != null) {
+      // Render the working sets whenever reps are known — a load-less accessory
+      // (no snapshot weight) still shows reps/sets/RIR; the prescription never
+      // disappears (PR-12 Bug 2). formatPlanSetLine handles the absent weight.
+      if (ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         for (let i = 0; i < count; i++) {
           lines.push(formatPlanSetLine(ex));
@@ -549,7 +556,10 @@ import * as sessionQuestion from './sessionQuestion.js';
         warm.textContent = formatWarmupSetLine(w);
         exEl.appendChild(warm);
       }
-      if (ex.weight != null && ex.reps != null) {
+      // Working sets render whenever reps are known — a load-less accessory
+      // (no snapshot weight) still shows its reps/sets/RIR rather than collapsing
+      // to a bare name (PR-12 Bug 2). formatPlanSetLine renders the absent weight.
+      if (ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
         for (let i = 0; i < count; i++) {
           const set = document.createElement('div');
@@ -2011,24 +2021,20 @@ import * as sessionQuestion from './sessionQuestion.js';
     }
 
     if (chatResult.propose_plan_edit) {
-      const result = { applied: false };
+      const result = { applied: false, exercises: [] };
       document.dispatchEvent(new CustomEvent('atlas:plan-edit-proposed', {
         detail: { edit: chatResult.propose_plan_edit, result }
       }));
       if (result.applied) {
-        // Owner directive (2026-07-03): plans read STACKED, never as prose
-        // lines — render the APPLIED edit through the same structured block
-        // the Coach's Pick uses. Deterministic data only: the edit's own
-        // numbers, already applied to the session. remove_exercises has no
-        // block (nothing new to show); the note still confirms it.
-        const edit = chatResult.propose_plan_edit;
-        if ((edit.action === 'replace_plan' || edit.action === 'add_exercises') && Array.isArray(edit.exercises)) {
-          appendWorkoutPlan(bubble, {
-            exercises: edit.exercises.map(x => (typeof x === 'string' ? { exercise: x } : {
-              exercise: x.name || x.exercise,
-              target_weight: x.weight, target_reps: x.reps, target_sets: x.sets, target_rir: x.rir
-            }))
-          });
+        // Owner directive (2026-07-03): plans read STACKED, never as prose lines —
+        // render the APPLIED edit through the same structured block the Coach's
+        // Pick uses. PR-12 (Bug 3): render the SINGLE normalized model app.js just
+        // stored on activePlannedSession (handed back on result.exercises), not a
+        // second independent re-mapping of edit.exercises — so this block, the
+        // active-session banner, and the store never drift. remove_exercises hands
+        // back [] (nothing new to show); the note still confirms it.
+        if (Array.isArray(result.exercises) && result.exercises.length) {
+          appendWorkoutPlan(bubble, { exercises: result.exercises });
         }
         const note = document.createElement('div');
         note.className = 'edit-applied-note';

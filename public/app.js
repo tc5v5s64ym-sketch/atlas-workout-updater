@@ -32,7 +32,7 @@ import {
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
 
-const ATLAS_SHELL_BUILD = 'v117';
+const ATLAS_SHELL_BUILD = 'v118';
 
 
 
@@ -1436,17 +1436,20 @@ function wireStartSessionBtn(data) {
 function normalizePlanExercise(raw) {
   if (!raw) return { name: '', canonicalName: '', liftCode: '', weight: null, reps: null, sets: null, rir: null, reason: '' };
   const t = raw.next_target || {};
-  const pick = (a, b) => (a != null ? a : (b != null ? b : null));
+  const pick = (...vals) => { for (const v of vals) if (v != null) return v; return null; };
   return {
-    name: raw.exercise || raw.exercise_name || raw.lift_code || raw.liftCode || '',
+    // Idempotent: also reads an already-normalized entry's plain `.name`/`.weight`
+    // keys (PR-12) so a single stored model can be re-rendered by appendWorkoutPlan
+    // without a second, drift-prone re-mapping. The raw API-intent keys keep priority.
+    name: raw.exercise || raw.exercise_name || raw.name || raw.lift_code || raw.liftCode || '',
     // canonicalName mirrors currentPlanForChat's preference (canonical_exercise first)
     // so resolveCompletedIdentity and current_plan[].name always agree.
-    canonicalName: raw.canonical_exercise || raw.canonicalExercise || '',
+    canonicalName: raw.canonical_exercise || raw.canonicalExercise || raw.canonicalName || '',
     liftCode: raw.lift_code || raw.liftCode || '',
-    weight: pick(raw.target_weight, t.weight),
-    reps: pick(raw.target_reps, t.reps),
-    sets: pick(raw.target_sets, t.sets),
-    rir: pick(raw.target_rir, t.rir),
+    weight: pick(raw.target_weight, t.weight, raw.weight),
+    reps: pick(raw.target_reps, t.reps, raw.reps),
+    sets: pick(raw.target_sets, t.sets, raw.sets),
+    rir: pick(raw.target_rir, t.rir, raw.rir),
     reason: raw.reason || ''
   };
 }
@@ -2123,11 +2126,18 @@ function ensureChatPlannedSession() {
   return getActivePlannedSession();
 }
 
+// PR-12 (Bug 3): returns { applied, exercises } — `exercises` is the SINGLE
+// normalized model the chat block renders, the very array stored on
+// activePlannedSession (replace) or the subset just appended (add). The chat
+// caller renders these instead of re-mapping edit.exercises a second time, so the
+// rendered block, the active-session banner, and the store can never drift apart.
+// `exercises` is [] for a remove (nothing new to show) or an unapplied edit.
 function applyProposedPlanEdit(edit) {
-  if (!edit || typeof edit !== 'object' || !Array.isArray(edit.exercises)) return false;
+  const none = { applied: false, exercises: [] };
+  if (!edit || typeof edit !== 'object' || !Array.isArray(edit.exercises)) return none;
   const action = edit.action;
   const exercises = edit.exercises.map(normalizePlanEditExercise).filter(ex => ex && ex.name);
-  if (!exercises.length) return false;
+  if (!exercises.length) return none;
 
   if (action === 'replace_plan') {
     setActivePlannedSession({
@@ -2139,29 +2149,29 @@ function applyProposedPlanEdit(edit) {
     setPendingSubstitution(null);
     setSessionCompleted([]);
     renderActiveSessionBanner();
-    return true;
+    return { applied: true, exercises };
   }
 
   if (action === 'add_exercises') {
     const session = ensureChatPlannedSession();
     const existing = new Set(session.exercises.map(ex => String(ex.canonicalName || ex.name || '').toLowerCase()));
-    let changed = false;
+    const added = [];
     for (const ex of exercises) {
       const key = String(ex.canonicalName || ex.name || '').toLowerCase();
       if (!key || existing.has(key)) continue;
       session.exercises.push(ex);
       existing.add(key);
-      changed = true;
+      added.push(ex);
     }
-    if (changed) {
+    if (added.length) {
       clampActivePlanIndex();
       renderActiveSessionBanner();
     }
-    return changed;
+    return { applied: added.length > 0, exercises: added };
   }
 
   if (action === 'remove_exercises') {
-    if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return false;
+    if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return none;
     const wanted = exercises.map(ex => ex.name).filter(Boolean);
     const before = getActivePlannedSession().exercises.length;
     getActivePlannedSession().exercises = getActivePlannedSession().exercises.filter(ex =>
@@ -2179,22 +2189,28 @@ function applyProposedPlanEdit(edit) {
       clampActivePlanIndex();
       renderActiveSessionBanner();
     }
-    return removed;
+    return { applied: removed, exercises: [] };
   }
 
-  return false;
+  return { applied: false, exercises: [] };
 }
 
 document.addEventListener('atlas:plan-edit-proposed', e => {
-  const applied = applyProposedPlanEdit(e.detail && e.detail.edit);
-  if (applied) {
+  const outcome = applyProposedPlanEdit(e.detail && e.detail.edit) || { applied: false, exercises: [] };
+  if (outcome.applied) {
     // Owner live find (2026-07-03): a chat-applied swap must follow through to
     // the composer exactly like the deterministic mutation lane — same signal,
     // EMPTY summary (the chat reply already narrates; no extra bubble), so the
     // placeholder re-points to the new current exercise.
     announcePlanMutation('', firstUnloggedPlannedLift());
   }
-  if (e.detail && e.detail.result && typeof e.detail.result === 'object') e.detail.result.applied = applied;
+  // PR-12 (Bug 3): hand the applied model back so the chat block renders the SAME
+  // normalized exercises stored here — a single source of presentation truth.
+  if (e.detail && e.detail.result && typeof e.detail.result === 'object') {
+    e.detail.result.applied = outcome.applied;
+    e.detail.result.exercises = outcome.exercises;
+  }
+  const applied = outcome.applied;
   try {
     document.dispatchEvent(new CustomEvent('atlas:plan-edit-applied', {
       detail: { applied, edit: e.detail && e.detail.edit }

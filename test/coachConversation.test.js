@@ -680,8 +680,11 @@ test('stacked plans: an applied chat plan edit renders the structured block, not
   const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
   const branch = cc.slice(cc.indexOf('if (chatResult.propose_plan_edit)'), cc.indexOf("// Show \"Save this note?\""));
   assert.match(branch, /appendWorkoutPlan\(bubble,/, 'the applied edit renders through the SAME structured block the pick uses');
-  assert.match(branch, /replace_plan|add_exercises/, 'block renders for replace/add');
-  assert.match(branch, /target_weight: x\.weight/, 'the edit exercises map to the normalizer shape (deterministic data, no LLM prose)');
+  // PR-12 (Bug 3): the block renders the single normalized model app.js stored
+  // (handed back on result.exercises), not a second independent re-mapping of
+  // edit.exercises — so the block, the banner, and the store cannot drift.
+  assert.match(branch, /result\.exercises/, 'block renders the applied single-source model');
+  assert.doesNotMatch(branch, /target_weight: x\.weight/, 'no second, drift-prone re-mapping of edit.exercises');
   assert.match(branch, /Plan updated\./, 'the confirmation note survives');
 });
 
