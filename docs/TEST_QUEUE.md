@@ -62,6 +62,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | If the screenshot writes without a preview, STOP — that is a trust-loop regression; revert FB. If the plan-complete line still nags, refine G3 copy. |
 
+### LT-007 — Live validation: current-session truth in coach chat
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-007 |
+| **Related PR / feature** | Current-session truth in coach chat (per-exercise session tally, capture-vs-saved vocabulary, session-identity number keying, completion-claim gating — #925–#930). **Hard gate** for the Soul Plan (`docs/SOUL_PLAN_V1.md` PR-B4 and all later register wiring). |
+| **Shell / app version expected** | Any build with the #925–#930 session-truth fixes deployed (commit `2539d23` / PR #930 or later). |
+| **Steps** | 1. **Mid-session asks** — with sets logged this session, ask the coach: how many sets for a named lift; the weights just used; total working sets so far; "what did I just do." Every answer must match `session_tally` exactly, with **no hedging** that the tally is unavailable. 2. **Off-plan then planned-vs-extra** — log an off-plan exercise, then ask what's planned vs extra; the planned/extra flags must be right. 3. **Substitution then "what was done"** — perform a substitution, then ask what was done; the coach must report the lift that was actually **logged**, not the earlier suggestion. 4. **Capture vocabulary** — with sets captured but NOT yet saved, confirm the coach uses **capture** vocabulary and never claims a write happened; then save + verify and confirm the vocabulary **may flip to saved**. 5. **Completion gating** — say "I'm done" with plan items remaining (expect **no completion praise**); say it with the plan genuinely complete (expect an **appropriate closeout**). |
+| **Expected result** | Every mid-session fact answer matches `session_tally` (no "tally unavailable" hedging); planned-vs-extra is correct after an off-plan log; a substitution is reported as the logged lift (not the suggestion); unsaved sets get capture vocabulary (never a write claim) and only flip to saved language after save + verify; "I'm done" with plan remaining draws no completion praise while a genuinely complete plan draws an appropriate closeout. |
+| **Screenshot** | — |
+| **Owner result** | PASS / FAIL — |
+| **Follow-up if FAIL** | **Any failure blocks Soul Plan PR-B4 and all later register wiring** until the finding is fixed (trust-critical lane) and LT-007 is re-run to PASS. File the finding, fix-PR it, then re-run before B4 may build. PASS recorded here is the gate artifact. |
+
 ---
 
 ## Completed

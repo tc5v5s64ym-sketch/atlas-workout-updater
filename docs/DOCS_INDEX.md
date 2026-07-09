@@ -48,6 +48,9 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 - `docs/COACHING_ENGINE_ARCHITECTURE.md` — the canonical One-Brain blueprint the current build follows (also under "Product and architecture reference").
 - `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md` — diagnosis doc for the Trust-Critical P0/P1 coach-interaction work (active-session context, substitution-signal visibility). Reference when touching that area.
 - `docs/QA_CAMPAIGN_2026-06-26_LIVE_GYM.md` — campaign controller for the 2026-06-26 live gym + composer trust/UX findings. Use it to sequence the B1-B10 follow-up PRs; it is not an implementation PR by itself.
+- `docs/SOUL_PLAN_V1.md` — **Active** — the executable Soul build queue and PR prompts (personality / voice / soul): one paste-ready PROMPT per PR in order (Part A "getting to soul-ready" → Part B "the soul build"). Companion to the planning brief `docs/ATLAS_SOUL_READINESS_PLAN.md`; voice/taste decisions are governed by `docs/ATLAS_VOICE_RATIFICATION_V1.md`. Docs-only governance today — implements nothing; each PR runs from its own prompt. Hard gate: TEST_QUEUE `LT-007` must PASS before PR-B4.
+- `docs/ATLAS_SOUL_READINESS_PLAN.md` — **Active reference** — the companion planning brief behind `docs/SOUL_PLAN_V1.md`: the holistic where-Atlas-is snapshot, the Part A / Part B PR-level game plan, and the two-clocks (evidence vs build) sequencing. Reference for the plan's reasoning; the executable queue lives in `docs/SOUL_PLAN_V1.md`, not here.
+- `docs/ATLAS_VOICE_RATIFICATION_V1.md` — **Active** — the owner voice/personality ratification: the persona core text (§1), the register decision menu D1–D8 (§2), and the Set C golden corpus (§3). **Owner sign-off pending** — §1–§3 are not ratified until the owner's marked-up version is committed. Consumed by `docs/SOUL_PLAN_V1.md` PRs A2 / A3 / B2 / B6 / B7 / B8a once ratified.
 
 ## Conversation-first coach direction (captured; surface adoption owner-gated)
 
