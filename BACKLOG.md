@@ -1042,3 +1042,19 @@ Five simulated conversational sessions against the LIVE deployed app (read-only,
 - **Plan-mutation reply coherence is non-deterministic** `[polish]` — repeating the same "switch to upper body day" prompt twice produced one internally coherent reply (clean upper-body-only `propose_plan_edit`) and one internally contradictory reply (narrated "switching to upper body" while the proposed plan still retained a lower-body lift, justified with the old rationale in the same breath). LLM sampling variance on today's `buildChatSystemPrompt` PROPOSE_PLAN_EDIT instructions; no data was written either way.
 
 - **Ambiguous referent after a "what's next?" answer** `[polish]` — a follow-up "how much?" / "how many sets?" right after the coach names the next planned exercise answers about the just-**logged** exercise instead of the just-**named-next** one. Minor conversational-referent-resolution gap in the chat voice, not a numbers-safety issue.
+
+---
+
+## Coach voice architecture — findings from PR-A1 review (2026-07-09)
+
+Five items filed per `docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md` §6 and `docs/SOUL_PLAN_V1.md` PR-A1 scope. Do not act on these out of sequence — the Soul Plan dependency chain governs.
+
+- **Persona-core extraction** `[correctness]` — `services/coach.js:48` ("sharp, encouraging") contradicts the owner-ratified `:1258` logbook-keeper identity. Extract `services/coachPersonaCore.js`; wire `:1258` into all five prompt builders; delete `:48` placeholder. Authorized by `docs/SOUL_PLAN_V1.md` PR-A2. **Dependency: none** (PR-A1 is this doc).
+
+- **Persona doc–code drift reconciliation** `[polish]` — six deterministic copy sources (`coachVoiceRenderer.js`, `deterministicCoachRenderer.js`, `setEffortCopy.js`, `src/app/coachVoiceTemplates.js`, `VERDICT_VARIANTS`/`coachOpener` in `coach-conversation.js`, `coachPolish.js`) may carry phrasing that contradicts the ratified persona core. Review-only pass after PR-A2 lands; actual copy fixes are a later-pass item. **Dependency: PR-A2** (persona core must exist first).
+
+- **Athlete-identity facts object** `[correctness]` — `detectRecentPrs` (`services/analytics.js:383`) and `buildProgressSummary` (`services/analytics.js:2287`) are never forwarded to any coach prompt builder or sanitizer. The cite-never-invent rule cannot be enforced for longitudinal facts until these are explicitly whitelisted. Build `services/athleteIdentity.js` + forward as `athlete_identity` through `sanitizeFacts`/`sanitizeChatContext`. Authorized by `docs/SOUL_PLAN_V1.md` PR-A7. **Dependency: PR-A2** (persona core must carry the cite-never-invent rule before forwarding).
+
+- **Engine-triggered challenge + reassurance modes** `[correctness]` — no tripwire in the chat path for discouragement language or drift patterns. `buildChatSystemPrompt` has no engine input that could trigger a challenge or reassurance register shift. Authorized by `docs/SOUL_PLAN_V1.md` PR-B5a/B5b. **Dependency: PR-B4** (mode wiring must exist before B5 trigger logic).
+
+- **`generateVerdictReaction` / `buildVerdictReactionSystemPrompt` standing decision point** `[correctness]` — unwired since creation (`services/coach.js:1255`); the ratified persona lives there but has never been connected to a live path. Fold into an existing builder or wire as a new path. Authorized by `docs/SOUL_PLAN_V1.md` PR-A6. **Dependency: PR-A2** (persona core must exist before folding).
