@@ -480,6 +480,32 @@ test('step-375: chat system prompt forces "what\'s left" answers to read plan_st
   assert.match(prompt, /conversation turns/i, 'must forbid using earlier conversation turns as the remaining source');
 });
 
+// AI Adversarial/Verification Sweeps (2026-07-08/09): when the lifter DECLARED
+// they were stopping — "ok im done that was hard did i do good" (Tomás),
+// "skipping the last one im done bruh" (Deshawn) — the coach agreed the session
+// was complete and manufactured praise ("You've completed your workout! Great
+// job", "you're done with the session, great work") even though only 1–2 sets
+// were logged and none of the planned lower-body work was touched. The WHAT'S-LEFT
+// RULE gates the "are we done?" QUESTION on plan_state, but a user's own "I'm done"
+// DECLARATION had no gate, so false-completion praise slipped through. The engine
+// already carries plan_state.isComplete; the prompt just never bound a completion
+// or congratulation claim to it on the declaration path.
+test('chat system prompt: COMPLETION-CLAIM RULE gates completion/praise on plan_state for a user "I\'m done" declaration', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /COMPLETION-CLAIM RULE/i, 'must have an explicit completion-claim rule');
+  assert.match(prompt, /declar/i, 'must cover the user DECLARING they are done, not just the "are we done?" question');
+  assert.match(prompt, /plan_state\.isComplete/i, 'must gate a completion claim on plan_state.isComplete');
+  assert.match(prompt, /only the work actually logged|never manufacture|not.*praise/i, 'must forbid manufacturing praise for planned work that was never logged');
+});
+
+test('chat system prompt: COMPLETION-CLAIM RULE sits with the plan/what\'s-left grounding rules', () => {
+  const prompt = buildChatSystemPrompt();
+  const whatsLeftIdx = prompt.indexOf("WHAT'S-LEFT RULE");
+  const completionIdx = prompt.indexOf('COMPLETION-CLAIM RULE');
+  assert.ok(whatsLeftIdx >= 0 && completionIdx >= 0);
+  assert.ok(Math.abs(completionIdx - whatsLeftIdx) < 1200, 'COMPLETION-CLAIM RULE must sit near the WHAT\'S-LEFT / plan_state rules');
+});
+
 test('sanitizeChatHistory maps roles, bounds to the last 8 turns, and drops empties', () => {
   const history = [];
   for (let i = 0; i < 12; i += 1) history.push({ role: i % 2 ? 'atlas' : 'user', text: `turn ${i}` });
