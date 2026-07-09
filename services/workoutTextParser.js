@@ -1045,6 +1045,24 @@ function parseUnknownExercise(rawText) {
   const unknown = extractUnknownExerciseLead(rawText);
   if (!unknown) return null;
 
+  // G1 refuse-to-merge, unrecognized-leading-exercise path (live-retest sweep,
+  // Session 5, 2026-07-08): extractUnknownExerciseLead takes EVERYTHING after the
+  // first set-token-looking word as this exercise's own rest text, with no
+  // boundary check — so a conversational transition into a second, also-
+  // unrecognized exercise ("front squat 185 5/2 then straight into wallballs 20
+  // 15") silently absorbed the second exercise's numbers as more Front Squat
+  // sets. The recognized-exercise path already refuses to merge in exactly this
+  // shape (see the sibling check below); apply the same guard here so an
+  // unrecognized leading exercise gets the same protection.
+  if (hasUnattributableTrailingSets(unknown.rest)) {
+    return {
+      intent: 'needs_clarification',
+      raw_text: rawText,
+      message: `I logged sets for ${titleCaseFallback(unknown.rawName)}, but it looks like another exercise is stacked in the same entry and I can't tell its sets apart. Please re-enter that exercise on its own so nothing is mis-logged.`,
+      warnings: ['unattributable_trailing_sets'],
+    };
+  }
+
   const parsedSets = parseSetGroups(unknown.rest);
   if (parsedSets === AMBIGUOUS_SET_FORMAT) return null; // PARSE-3: implausible bare pair → not a clean log
   const sets = parsedSets.length ? parsedSets : parseBodyweightReps(unknown.rest);
