@@ -378,6 +378,59 @@ test('api smoke: log-workout rejects a non-positive set_number (bounds, no write
   assert.match(body.message, /set_number/);
 });
 
+test('api smoke: log-workout rejects an ambiguous test_mode instead of writing (WRITE-6, fail-closed)', async () => {
+  for (const tm of ['yes', 1, 'on', 'TRUE!']) {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'S-tm', date: '2026-06-23', test_mode: tm, write_id: 'wid-tm',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }]
+      })
+    });
+    assert.equal(response.status, 400, `test_mode=${JSON.stringify(tm)} must be rejected`);
+    assert.match(body.message, /test_mode must be true, false, or omitted/);
+  }
+});
+
+test('api smoke: log-workout still honors an explicit boolean/string test_mode dry-run', async () => {
+  for (const tm of [true, 'true', 'TRUE ']) {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'S-tm-ok', date: '2026-06-23', test_mode: tm,
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }]
+      })
+    });
+    assert.equal(response.status, 200, `test_mode=${JSON.stringify(tm)} must preview`);
+    assert.equal(body.data.sheet_written, false);
+    assert.equal(body.data.no_write_confirmed, true);
+  }
+});
+
+test('api smoke: log-workout rejects an unparseable date instead of writing it verbatim (LT-008 F1)', async () => {
+  for (const bad of ['not-a-date', '2026-13-45', 'yesterday']) {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'S-date', date: bad, test_mode: true,
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }]
+      })
+    });
+    assert.equal(response.status, 400, `date=${bad} must be rejected`);
+    assert.match(body.message, /valid calendar date/);
+  }
+});
+
+test('api smoke: log-workout caps log_rows at MAX_LOG_ROWS on the JSON path (LT-008 F5/WRITE)', async () => {
+  const rows = Array.from({ length: 201 }, (_, i) => ({ exercise: 'Bench Press', set_number: (i % 100) + 1, weight: 135, reps: 8, rir: 3 }));
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: 'S-cap', date: '2026-06-23', test_mode: true, log_rows: rows })
+  });
+  assert.equal(response.status, 400);
+  assert.match(body.message, /row limit/);
+});
+
 test('api smoke: /version reports the Render-injected commit SHA + deploy time', async () => {
   const { response, body } = await requestJson('/version');
 
@@ -5275,6 +5328,26 @@ test('history/recent: recent_effort returns the NEWEST effort rows, tail of the 
       'recent_effort must be the newest rows in sheet order'
     );
     assert.equal(recentEffort[2].session_id, 'EFFORT-07');
+  } finally {
+    fakeSheetsState.effortRecentRows = [];
+  }
+});
+
+test('history/recent: limit is clamped to [1,200] for absurd/negative/NaN input (LT-008 F5)', async () => {
+  fakeSheetsState.effortRecentRows = ['01', '02', '03', '04', '05'].map(d => [
+    `2026-06-${d}`, `EFFORT-${d}`, '00:45:00', '400', '500', '140', '165', 'Gym', ''
+  ]);
+  try {
+    // limit=-5 clamps to 1 (newest only); 99999 and abc are graceful 200s, not runaways.
+    const neg = await requestJson('/api/history/recent?limit=-5');
+    assert.equal(neg.response.status, 200);
+    assert.equal(neg.body.data.recent_effort.length, 1);
+    assert.equal(neg.body.data.recent_effort[0].session_id, 'EFFORT-05');
+    for (const q of ['99999', 'abc', '0']) {
+      const r = await requestJson(`/api/history/recent?limit=${q}`);
+      assert.equal(r.response.status, 200, `limit=${q} must be a graceful 200`);
+      assert.ok(r.body.data.recent_effort.length <= 5);
+    }
   } finally {
     fakeSheetsState.effortRecentRows = [];
   }

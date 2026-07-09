@@ -19,7 +19,7 @@ Violating any of them requires explicit owner approval before merging.
 
 **W1. Dry-run never writes.** When `test_mode=true` (or `confirm_delete` is absent), no row is appended, deleted, or modified in any Google Sheet. The response must carry `sheet_written:false` and `no_write_confirmed:true`.
 
-**W2. `test_mode` absent = live write.** The default when `test_mode` is not supplied is a real write. Callers must pass `test_mode:true` explicitly for dry-runs. AI agents must never omit this field unless a real write is intended and approved.
+**W2. `test_mode` absent = live write.** The default when `test_mode` is not supplied is a real write. Callers must pass `test_mode:true` explicitly for dry-runs. AI agents must never omit this field unless a real write is intended and approved. **Amendment (WRITE-6, owner-approved 2026-07): a *present but ambiguous* `test_mode` fails closed.** A value that is not omitted, a real boolean, or the string `"true"`/`"false"` (case/space-insensitive) — e.g. `1`, `"yes"`, `"on"` — is rejected with 400 rather than silently treated as a live write. Absent still = live (this invariant is unchanged); only ambiguous *present* values are now refused, on all write handlers.
 
 **W3. Live writes require proof fields.** Every successful live write response must include:
 - `sheet_write: 'success'`

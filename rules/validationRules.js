@@ -6,10 +6,19 @@
 // cover the set rows, which previously had no plausibility checks at all.
 
 const BOUNDS = {
+  // weight allows fractional values (micro-plates, 2.5 lb jumps); reps must be a
+  // whole number — a fractional rep count (e.g. 3.7) is impossible and, without
+  // this guard, rode straight into the written row (range-checked but not integer-
+  // checked, unlike set_number). rir stays range-only (half-RIR is plausible).
   weight: { min: 0, max: 1500, label: 'lbs' },
-  reps:   { min: 1, max: 100,  label: 'reps' },
+  reps:   { min: 1, max: 100,  label: 'reps', integer: true },
   rir:    { min: 0, max: 10,   label: 'RIR' },
 };
+
+// Longest believable exercise name. Real names are well under this ("Barbell
+// Bench Press" ≈ 19 chars); a 500-char blob is malformed input that should never
+// reach a sheet cell.
+const MAX_EXERCISE_NAME_LENGTH = 120;
 
 // Maximum believable e1RM increase vs the previous session best (typo guard).
 const E1RM_JUMP_MAX_PCT = 0.15;
@@ -23,6 +32,9 @@ function checkBound(field, value) {
   }
   if (n < b.min || n > b.max) {
     return { field, error: `${field} must be ${b.min}–${b.max} ${b.label}, got: ${n}` };
+  }
+  if (b.integer && !Number.isInteger(n)) {
+    return { field, error: `${field} must be a whole number, got: ${n}` };
   }
   return null;
 }
@@ -57,6 +69,13 @@ function validateLogRowBounds(row) {
     }
   }
 
+  // exercise name length — an unbounded name (500-char blob) is malformed input,
+  // not a real lift. Presence/emptiness is already enforced upstream; here we only
+  // reject an implausibly long value so it can never land in a sheet cell.
+  if (typeof row.exercise === 'string' && row.exercise.length > MAX_EXERCISE_NAME_LENGTH) {
+    errors.push({ field: 'exercise', error: `exercise name must be ≤${MAX_EXERCISE_NAME_LENGTH} characters, got ${row.exercise.length}` });
+  }
+
   return errors;
 }
 
@@ -89,4 +108,4 @@ function checkE1rmJump(newBestE1rm, previousBestE1rm) {
   return null;
 }
 
-module.exports = { validateLogRowBounds, validateLogRowsBounds, checkBound, checkE1rmJump, BOUNDS, E1RM_JUMP_MAX_PCT };
+module.exports = { validateLogRowBounds, validateLogRowsBounds, checkBound, checkE1rmJump, BOUNDS, E1RM_JUMP_MAX_PCT, MAX_EXERCISE_NAME_LENGTH };
