@@ -336,6 +336,28 @@ function hasUnattributableTrailingSets(rest) {
   return false;
 }
 
+// Leading analogue of the trailing refuse-to-merge guard: the text BEFORE a
+// recognized exercise name carries set data that belongs to an earlier (usually
+// unrecognized) exercise, so it must NOT be absorbed as leading sets of the
+// recognized lift. Fires on either a slash-notation set ("20/15" — the original
+// check) OR a run of two consecutive bare set-like tokens ("20 15" = weight reps),
+// the bare-space form that slipped past the slash-only check (AI Regression
+// Verification Sweep 2026-07-09: "wall balls 20 15 bench 225 5/2" absorbed 20×15
+// into Bench Press). A lone incidental number in leading prose ("did 3 sets of")
+// is a single set-like token surrounded by notation/filler words — never two
+// adjacent — so it never trips this. Pure; NO catalog/KB lookup.
+function hasLeadingUnattributableSets(preText) {
+  if (/\d+\s*\/\s*\d+/.test(preText)) return true;
+  const tokens = normalizeParserText(preText)
+    .split(' ')
+    .map(t => t.replace(/[,.;:]+$/, '').trim())
+    .filter(Boolean);
+  for (let i = 0; i + 1 < tokens.length; i += 1) {
+    if (looksLikeSetToken(tokens[i]) && looksLikeSetToken(tokens[i + 1])) return true;
+  }
+  return false;
+}
+
 function stripExerciseText(text, exerciseKey) {
   const normalizedWords = normalizeKey(text).split(' ');
   const exerciseWords = exerciseKey.split(' ');
@@ -871,7 +893,7 @@ function parseLogSets(rawText, context = {}) {
   // line and resolves the unknown name as its own freeform entry.
   {
     const nameIdx = textForParsing.toLowerCase().indexOf(String(resolvedExercise.rawName || '').toLowerCase());
-    if (nameIdx > 0 && /\d+\s*\/\s*\d+/.test(textForParsing.slice(0, nameIdx))) {
+    if (nameIdx > 0 && hasLeadingUnattributableSets(textForParsing.slice(0, nameIdx))) {
       return {
         intent: 'needs_clarification',
         raw_text: rawText,

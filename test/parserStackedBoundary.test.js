@@ -63,6 +63,60 @@ test('unrecognized leading exercise: "then straight into" still merges cleanly w
   assert.equal(r.sets[1].weight, 175);
 });
 
+// --- AI Regression Verification Sweep (2026-07-09): a sibling of the above in the
+//    RECOGNIZED-exercise leading guard. That guard (parseLogSets, the `nameIdx > 0`
+//    check) only detected SLASH-notation set tokens before the recognized name, so
+//    BARE space-separated set numbers from an earlier/unrecognized exercise slipped
+//    through and were absorbed as leading sets of the recognized lift. Repro:
+//    "wall balls 20 15 bench 225 5/2" logged Bench Press carrying [20×15, 225×5] —
+//    the 20×15 belongs to the (uncataloged) wall balls, not Bench. Trust-critical:
+//    the same phantom-set / wrong-identity corruption class as #924, different path.
+//    Boundary controls confirm the fix stays narrow: the slash form was already
+//    refused, and normal recognized-exercise logging (name FIRST, bare sets after)
+//    is untouched. ---
+
+test('recognized exercise: bare leading set numbers before the name refuse to merge (verification sweep)', () => {
+  const r = parseWorkoutText('wall balls 20 15 bench 225 5/2');
+  // It must NOT log a single Bench Press block carrying the leading 20×15.
+  assert.notEqual(r.intent, 'log_sets', 'must not log a single merged exercise');
+  assert.equal(r.intent, 'needs_clarification');
+  assert.ok((r.warnings || []).includes('unattributable_trailing_sets'),
+    `expected the refuse-to-merge warning, got [${(r.warnings || []).join(', ')}]`);
+  assert.ok(!(r.sets || []).some(s => s.weight === 20),
+    'the 20×15 wall-balls set must never be attributed to Bench Press');
+});
+
+test('recognized exercise: bare leading set numbers with no leading name still refuse to merge (verification sweep)', () => {
+  const r = parseWorkoutText('20 15 bench 225 5/2');
+  assert.notEqual(r.intent, 'log_sets', 'must not log a single merged exercise');
+  assert.equal(r.intent, 'needs_clarification');
+  assert.ok((r.warnings || []).includes('unattributable_trailing_sets'),
+    `expected the refuse-to-merge warning, got [${(r.warnings || []).join(', ')}]`);
+  assert.ok(!(r.sets || []).some(s => s.weight === 20),
+    'the leading 20×15 must never be attributed to Bench Press');
+});
+
+test('false-positive control: a recognized exercise with its own bare-space sets still logs normally', () => {
+  const single = parseWorkoutText('bench 225 5');
+  assert.equal(single.intent, 'log_sets');
+  assert.equal(single.canonical_name, 'Bench Press');
+  assert.deepEqual(single.sets.map(s => [s.weight, s.reps]), [[225, 5]]);
+
+  const multi = parseWorkoutText('bench 225 5 225 5');
+  assert.equal(multi.intent, 'log_sets');
+  assert.equal(multi.canonical_name, 'Bench Press');
+  assert.equal(multi.sets.length, 2, 'both bare-space sets of the recognized lift are kept');
+});
+
+test('false-positive control: an incidental number in leading prose does not trip the guard', () => {
+  // "did 3 sets of" carries a lone number amid notation words — NOT a leading set
+  // group — so the recognized lift must still log its own sets normally.
+  const r = parseWorkoutText('did 3 sets of bench 225 5/2');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Bench Press');
+  assert.deepEqual(r.sets.map(s => [s.weight, s.reps]), [[225, 5]]);
+});
+
 // --- false-positive guards: notation / annotation / continuation are NOT a new exercise ---
 
 test('a trailing annotation after sets is not treated as a second exercise', () => {
