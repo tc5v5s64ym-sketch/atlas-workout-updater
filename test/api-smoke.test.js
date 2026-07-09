@@ -1636,27 +1636,31 @@ test('step-377: coach/chat session-close fallback never appends to a sheet', asy
 // ---------------------------------------------------------------------------
 // LT-007 regression tests — current-session facts in coach chat context
 //
-// Background: The LT-007 live validation (2026-07-09) ran API calls directly,
-// without the client-side `context` object the browser always assembles and
-// sends. All five coach "failures" were test methodology artifacts — the
-// architecture already wires session_tally, current_plan, and plan_completed
-// correctly. These tests prove the server-side behavior is correct when the
-// required payload IS provided, locking that contract so future changes
-// cannot silently regress it.
+// The LT-007 live validation (2026-07-09) exposed two related issues:
+//   1. The API-only test omitted the client-side `context` payload entirely.
+//   2. buildChatContext (routes/coachOps.js) dropped session_tally from its
+//      return value, so the field never reached sanitizeChatContext or the LLM —
+//      a real code bug (fixed by this PR) that would have caused failures in the
+//      browser too.
+//
+// These tests assert on the output of buildChatContext (the changed line) as
+// captured by fakeCoachState.lastChatContext. generateChatReply is stubbed, so
+// sanitizeChatContext never runs here — "reaches the coach context" means
+// "appears in the object buildChatContext returns to the route's coach call".
 //
 // The browser assembles context in routeMessageToCoach() (src/app/app.js):
 //   context.session_tally = buildSessionTally(getSessionLog(), planNames)
 //   context.current_plan  = currentPlanForChat()
 //   context.plan_completed = [...getSessionCompleted()]
-// The server sanitizes them in sanitizeChatContext (services/coach.js) and
-// the LLM is bound by SESSION-TALLY RULE, COMPLETION-CLAIM RULE, and
-// WHAT'S-LEFT RULE in the system prompt (services/coach.js buildChatSystemPrompt).
+// sanitizeChatContext (services/coach.js) whitelists/bounds it downstream;
+// the LLM follows SESSION-TALLY RULE, COMPLETION-CLAIM RULE, and WHAT'S-LEFT
+// RULE from buildChatSystemPrompt (services/coach.js).
 // ---------------------------------------------------------------------------
 
 test('LT-007: coach/chat — session_tally with bench sets reaches the coach context intact', async () => {
   // LT-007 check 1 & 2: "how many bench sets?" / "what weights did I use?"
-  // The sanitizer must pass session_tally through so the coach reads facts from
-  // it rather than guessing from the capped 8-turn transcript or sheet history.
+  // buildChatContext must forward session_tally from the client context so the
+  // coach reads facts from it rather than guessing from sheet history.
   fakeCoachState.configured = true;
   fakeCoachState.lastChatContext = null;
   try {
@@ -1705,10 +1709,10 @@ test('LT-007: coach/chat — session_tally with bench sets reaches the coach con
   }
 });
 
-test('LT-007: coach/chat — session_tally per_set weights survive sanitizeChatContext', async () => {
+test('LT-007: coach/chat — session_tally per_set weights reach the coach context intact', async () => {
   // LT-007 check 2: "what weights did I just use on bench?" must be answerable
-  // from session_tally.exercises[0].per_set — sanitizer must not drop or corrupt
-  // weight/reps/rir fields.
+  // from session_tally.exercises[0].per_set — buildChatContext must forward
+  // per_set weight/reps/rir fields without dropping or corrupting them.
   fakeCoachState.configured = true;
   fakeCoachState.lastChatContext = null;
   try {
@@ -1739,7 +1743,7 @@ test('LT-007: coach/chat — session_tally per_set weights survive sanitizeChatC
     });
     assert.equal(response.status, 200);
     const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
-    assert.ok(tally, 'session_tally must survive to the coach context');
+    assert.ok(tally, 'session_tally must reach the coach context via buildChatContext');
     const benchEx = tally.exercises.find(e => e.exercise === 'Bench Press');
     assert.ok(benchEx, 'Bench Press in tally');
     const weights = benchEx.per_set.map(s => s.weight);
