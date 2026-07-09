@@ -472,6 +472,33 @@ test('chat system prompt: LIFT-IDENTITY RULE is placed with the other grounding 
   assert.ok(Math.abs(identityIdx - historyIdx) < 800, 'LIFT-IDENTITY RULE must sit near HISTORY RULE, not scattered elsewhere in the prompt');
 });
 
+// AI Regression Verification Sweep (2026-07-09), V7 (bodybuilder): rows were
+// logged this session at 190, but asked "is that my usual volume for rows?" the
+// coach replied "Today's 3 sets at 130 is less volume…" — 130 was the Lat
+// Pulldown weight carried in current_preview, mis-attributed to today's rows.
+// The LIFT-IDENTITY RULE keyed lift_sets (history) per exercise but never said
+// the CURRENT session arrays (current_preview / current_plan / failure_sets) are
+// keyed the same way, so a number from one exercise's session entry leaked onto
+// another. The deeper fix (a richer per-exercise session tally from the client)
+// is app.js/state-store scope; this closes the coach-voice grounding gap.
+test('chat system prompt: SESSION-IDENTITY RULE extends per-exercise keying to the current session context', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /SESSION-IDENTITY RULE/i, 'must have an explicit session-identity rule');
+  assert.match(prompt, /current_preview/i, 'must name current_preview as per-exercise keyed session context');
+  assert.match(prompt, /never attribute a (weight|number)[^.]*from one exercise[^.]*to a different exercise/i,
+    'must forbid attributing one exercise\'s session number to another');
+  assert.match(prompt, /unless that exact number appears under that exact lift/i,
+    'must require the cited session number to appear under that exact lift');
+});
+
+test('chat system prompt: SESSION-IDENTITY RULE sits beside the LIFT-IDENTITY RULE', () => {
+  const prompt = buildChatSystemPrompt();
+  const liftIdx = prompt.indexOf('LIFT-IDENTITY RULE');
+  const sessionIdx = prompt.indexOf('SESSION-IDENTITY RULE');
+  assert.ok(liftIdx >= 0 && sessionIdx >= 0);
+  assert.ok(Math.abs(sessionIdx - liftIdx) < 900, 'SESSION-IDENTITY RULE must sit next to LIFT-IDENTITY RULE');
+});
+
 test('step-375: chat system prompt forces "what\'s left" answers to read plan_state.remaining, not current_plan', () => {
   const prompt = buildChatSystemPrompt();
   assert.match(prompt, /WHAT'S-LEFT RULE/i, 'must have an explicit what\'s-left rule');
