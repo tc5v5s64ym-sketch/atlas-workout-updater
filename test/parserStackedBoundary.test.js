@@ -32,6 +32,37 @@ test('stacked inline entry surfaces the second exercise instead of merging its s
   assert.ok(!(r.sets || []).some(s => s.weight === 70), 'the 70lb Side Bend sets must not be attributed to Dips');
 });
 
+// --- AI Adversarial Coaching Sweep, Session 5 (2026-07-08): the G1 guard above
+//    only ran on the RECOGNIZED-exercise path (resolvedExercise.rest inside
+//    parseLogSets). When the LEADING exercise itself is unrecognized/uncataloged
+//    (e.g. "Front Squat", which isn't in the alias catalog and falls to
+//    parseUnknownExercise/extractUnknownExerciseLead), that path had no such
+//    guard at all — a conversational transition ("then straight into") plus a
+//    second unrecognized exercise name got silently swallowed into the first
+//    lift's sets. Repro: "front squat 185 5/2 then straight into wallballs 20 15"
+//    logged TWO sets under Front Squat — 185×5@2 (real), then 20×15 (actually
+//    the wallballs set, mis-attributed). Trust-critical: if approved, this
+//    permanently corrupts workout history with a set that never happened. ---
+
+test('unrecognized leading exercise: a "then straight into" transition to a second exercise refuses to merge (live-retest sweep Session 5)', () => {
+  const r = parseWorkoutText('front squat 185 5/2 then straight into wallballs 20 15');
+  // It must NOT silently log Front Squat with the wallballs set absorbed.
+  assert.notEqual(r.intent, 'log_sets', 'must not log a single merged exercise');
+  assert.equal(r.intent, 'needs_clarification');
+  assert.ok((r.warnings || []).includes('unattributable_trailing_sets'),
+    `expected the refuse-to-merge warning, got [${(r.warnings || []).join(', ')}]`);
+});
+
+test('unrecognized leading exercise: "then straight into" still merges cleanly when there is no second exercise', () => {
+  // False-positive guard: a continuation-only transition with no trailing name run
+  // (just more sets of the same unrecognized lift) must still log normally.
+  const r = parseWorkoutText('front squat 185 5/2 then 175 5/2');
+  assert.equal(r.intent, 'log_sets');
+  assert.equal(r.canonical_name, 'Front Squat');
+  assert.equal(r.sets.length, 2);
+  assert.equal(r.sets[1].weight, 175);
+});
+
 // --- false-positive guards: notation / annotation / continuation are NOT a new exercise ---
 
 test('a trailing annotation after sets is not treated as a second exercise', () => {
