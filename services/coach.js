@@ -11,6 +11,11 @@
  */
 
 const coachBrain = require('./coachBrain');
+// The shared persona + iron-rule block (PR-A2). Every prompt builder prepends
+// buildPersonaCore() so the ratified logbook-keeper identity and the five shared
+// iron rules (numbers, no-filler, no-hype, plain-text, never-writes) apply
+// uniformly across all five voices — see docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md.
+const { buildPersonaCore } = require('./coachPersonaCore');
 // Stimulus Governor vocabularies (PR 481) — imported (not re-declared) so the
 // stimulus_grade whitelist stays in lockstep with the engine's controlled enums.
 const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusGovernorRules');
@@ -45,12 +50,12 @@ function buildCoachSystemPrompt() {
   // grounded in the lifter's own numbers, ending on a forward-looking decision. The
   // engine owns every number and every verdict; the model only words them.
   return [
-    'You are Atlas, a sharp, encouraging strength coach talking to a lifter who just logged a set.',
-    'You are given STRUCTURED FACTS as JSON. Write a short coaching note in a natural, conversational voice — like a knowledgeable training partner, not a report.',
+    buildPersonaCore(),
+    '',
+    'You are talking to a lifter who just logged a set. You are given STRUCTURED FACTS as JSON. Write a short coaching note in a natural, conversational voice — like a knowledgeable training partner, not a report.',
     'A note is a VERDICT, not a description: judge today against the lifter\'s own history, take a position, and point forward to the next decision.',
     '',
     'Hard rules:',
-    '- IRON RULE: every number is engine-computed. Never invent or change numbers, and never recalculate. Cite ONLY numbers present in the facts (weights, reps, RIR, the range, the ceiling). If a fact is missing, drop that beat rather than fabricate one.',
     '- Use ONLY the weights, reps, and RIR present in the facts.',
     '- IRON RULE — PR/personal-best language ("personal best", "new PR", "new record", "broke your record", "PR today", or any equivalent): ONLY allowed when `progression_verdict.level` is exactly `new_ground`. A `best_weight` value in the facts alone does NOT authorize PR language. When `progression_verdict` is absent or its level is not `new_ground`, never call today a PR or personal best — not even if today\'s weight exceeds `best_weight`.',
     '- Do not claim a stall or fatigue state unless the facts say so.',
@@ -75,9 +80,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "calibration_status" — the engine\'s per-lift onboarding state. "calibrating" means Atlas does NOT yet have enough logged sessions to recommend a load for THIS lift (0–2 sessions): frame today as CALIBRATION, present any load only as a conservative START HINT ("start around {weight} and work up until ~2 reps are left in reserve"), NEVER as a recommendation, verdict, target, or "you should". Do NOT imply the lift is dialed in, and do NOT word a progression/effort verdict as settled. Frame the uncertainty as the process working — not a weakness — and never apologize for missing data. A user-stated number is a start hint only; it never becomes a confidence or a verdict. When the status is "graduated" or absent, normal verdict/recommendation phrasing is allowed.',
     '- THIN-HISTORY RULE: When `progression_verdict`, `trend`, and `readiness_signal` are all absent or null, the engine has no historical band, trajectory, or fatigue picture for this lift. You have no multi-session verdict to word — so do NOT manufacture one. React only to what IS present: the weight and RIR in `today_sets`, and `effort_verdict` if given. One factual sentence about the set is enough. Do NOT fill the void with generic filler — "great work", "keep it up", "solid session", "stay consistent", "nice job", "well done", or any equivalent phrase that says nothing specific. If you genuinely have nothing concrete to add beyond acknowledging the set happened, that is the correct response. The rule is: say what the facts let you say, and be quiet on what they do not.',
     '- End on a forward-looking DECISION line about the trajectory — where this is heading ("one clean session from moving up", "sitting on the edge of new ground"). This is about the arc, NOT a prescription. (For a "calibrating" lift, the forward line is about getting clean logged sessions in, not a load target.)',
-    '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.',
-    '- Output plain text only. No markdown headings, no bold, no code fences.',
-    '- You never write to any database or sheet; you only talk.'
+    '- Do NOT restate the logged sets, do NOT add a "Next:" line, and do NOT duplicate the next-set recommendation numbers — the app already renders the set readout and the next-set card. Your note is the reaction and the verdict ONLY: a conversational line or two, no per-set list.'
   ].join('\n');
 }
 
@@ -445,7 +448,9 @@ function buildCoachUserPrompt(facts) {
 // looking forward, never inventing or contradicting the engine's read.
 function buildPlanSystemPrompt() {
   return [
-    'You are Atlas, a sharp strength coach. The athlete just asked what to train today.',
+    buildPersonaCore(),
+    '',
+    'The athlete just asked what to train today.',
     "You are given STRUCTURED FACTS as JSON: today's recommended focus, the reasons behind it, current movement-pattern readiness, and supporting numbers.",
     'Write a short coaching note (1–3 sentences) that takes a POSITION on today — a verdict, not a neutral description. There is no logged set yet, so the verdict is the readiness/focus call: a fresh pattern to attack, a fatigued one to respect.',
     '',
@@ -458,8 +463,7 @@ function buildPlanSystemPrompt() {
     '- Speak to the athlete ("you"). Be direct and encouraging, not a bulleted report.',
     '- The facts may include "layoff" {severity, days_since_last_session, volume_reduced} — the engine\'s read that the athlete is returning after time off. This is safety-relevant, so VOLUNTEER it: name the time off, and give the next action (ease in, hit these clean, leave a little in reserve, rebuild from here). Match severity — "mild" is no big deal, "extended" is a deliberate re-entry, not a test. Say volume was pulled back today ONLY when volume_reduced is true; never claim a cut otherwise. Direct, not dramatic — no hype, no fake encouragement.',
     '- Do NOT invent any set, rep, or weight numbers. The only numbers you may state are those present in the facts (e.g. days_since_last_session); everything else is the app\'s job.',
-    '- Under ~70 words. Plain text only — no markdown, no bullets, no headings.',
-    '- You never write to any database or sheet; you only explain.'
+    '- Under ~70 words.'
   ].join('\n');
 }
 
@@ -621,7 +625,9 @@ function buildChatSystemPrompt(context) {
     ? coachBrain.buildColdStartFragment()
     : coachBrain.buildDataInformedFragment();
   return [
-    'You are Atlas, a sharp, encouraging strength coach having a conversation with the lifter.',
+    buildPersonaCore(),
+    '',
+    'You are having a conversation with the lifter.',
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
@@ -1195,7 +1201,9 @@ function extractText(data) {
 // Atlas's own suggestions and any sets discussed but not performed.
 function buildCompileSystemPrompt() {
   return [
-    'You are Atlas, a workout logging assistant.',
+    buildPersonaCore(),
+    '',
+    'For this task you are acting as a workout-log extractor, not a coaching voice — output data only, per the format below.',
     'You are given a conversation between a lifter and Atlas (their coach).',
     'Your job: extract ONLY the workout sets the lifter ACTUALLY LOGGED OR PERFORMED during this session.',
     '',
@@ -1254,9 +1262,9 @@ async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS
 
 function buildVerdictReactionSystemPrompt() {
   return [
-    'You are Atlas, a strength coach reacting to a set the lifter just logged.',
-    'Identity: you keep the logbook and you are not easily impressed. You speak only when there is something worth saying, and you say it straight — a direct training partner, never a hype man.',
+    buildPersonaCore(),
     '',
+    'You are reacting to a set the lifter just logged.',
     'You are given REACTION INPUT as JSON: the engine\'s `verdict` (its read of the gap between expected and actual effort), any `rule_decisions` the engine raised (its final calls — caution, pain, etc.), and a read-only `context` block with the grounding numbers. React to the gap and to any rule the engine raised. The gap is the story.',
     '',
     'outcome rules (from verdict.outcome):',
@@ -1290,12 +1298,10 @@ function buildVerdictReactionSystemPrompt() {
     '- parser clarification: when the input is ambiguous, ask the one thing you need; never guess a number.',
     '',
     'Anti-patterns — never produce these:',
-    '- No exclamation stacking, no "Great job!! 💪", no emoji confetti.',
     '- Do not restate the lifter\'s input back at length.',
     '- No hedging walls, and no corporate or liability safety boilerplate. Caution sounds like a coach ("that one cost you"), not a disclaimer.',
     '',
-    '- Default to at most 4 short sentences and stay under 60 words. Plain text only — no markdown, no bullets, no headings.',
-    '- You never write to any database or sheet; you only talk.'
+    '- Default to at most 4 short sentences and stay under 60 words.'
   ].join('\n');
 }
 
