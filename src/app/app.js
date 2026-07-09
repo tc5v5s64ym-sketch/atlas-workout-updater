@@ -16,6 +16,7 @@ import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineC
 import { loadHistory, loadSessions } from './historyView.js';
 import { liftListCache, loadProgressLiftList, openLiftDrillDown, renderTrends } from './progressView.js';
 import { checkConnection, runHealthCheck, setBoxSpan } from './settingsHealth.js';
+import { buildSessionTally } from './sessionTally.js';
 // PR-10 — single state store (session/plan slice). These loose top-level `let`s
 // used to live here; ownership moved to store.js so every surface reads one source
 // of truth. Getters return the live reference; setters take the reassignments the
@@ -33,7 +34,7 @@ import {
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
 
-const ATLAS_SHELL_BUILD = 'v120';
+const ATLAS_SHELL_BUILD = 'v121';
 
 
 
@@ -5159,6 +5160,14 @@ function routeMessageToCoach(text) {
   const context = {};
   if (preview.length) context.current_preview = preview;
   if (plan.length) context.current_plan = plan;
+  // Deterministic per-exercise session tally (targeted validation sweep 2026-07-09):
+  // the coach used to infer set counts and per-exercise weights from the capped
+  // 8-turn transcript, which fabricated weights, undercounted sets past the window,
+  // and lost substitution identity. Send the authoritative count/weight/identity
+  // straight from the session buffer so the coach reads facts instead of guessing.
+  // Read-only, additive — never touches the preview→approve→write path.
+  const sessionTally = buildSessionTally(getSessionLog(), plan.map(p => p.name));
+  if (sessionTally) context.session_tally = sessionTally;
   // Step 375 + composer plan edits: send plan_completed whenever the client has
   // an authoritative visible plan (started OR chat/suggested) — even when it's
   // still empty ([]). Gating only on activePlannedSession left chat-rendered plans

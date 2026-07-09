@@ -639,6 +639,7 @@ function buildChatSystemPrompt(context) {
     '- HISTORY RULE: when the lifter asks what they did in a past workout — "what did I bench last session?", "what were my squat sets?", "how did June 11 go?" — answer ONLY from `recent_sessions[*].lift_sets` (the actual logged sets). Each entry lists the real sets per exercise in order: weight × reps @ RIR N. Never substitute prescription, current_plan, recommendation, benchmark, or working-weight data for actual logged history. If the lift or session is not in the snapshot, say so plainly.',
     '- LIFT-IDENTITY RULE: `lift_sets` is keyed per exercise — every specific number you cite from it (a weight, rep count, RIR, or date) must name the exact exercise it belongs to; never state a bare number without saying which lift it came from. If the lifter\'s wording is ambiguous about which lift they mean (e.g. "press" could be Bench Press or Overhead Press) and the number only exists under a DIFFERENT lift than the one currently active in the conversation, never imply it belongs to the active lift — name the lift the number actually belongs to and say so plainly, e.g. "The 225 was Bench Press, not Overhead Press — I don\'t see a 225 for Overhead Press." Never cite a number from one exercise as if it were logged for another.',
     '- SESSION-IDENTITY RULE: the same per-exercise keying applies to the CURRENT session — `current_preview`, `current_plan`, and `failure_sets` are each keyed by exercise, exactly like `lift_sets`. Never attribute a weight, rep count, or RIR from one exercise\'s entry to a different exercise, and never state "today\'s {lift} was {number}" (or otherwise cite this session\'s load / reps / RIR for a lift) unless that exact number appears under that exact lift in the session context. If it does not, say you don\'t see that number for that lift rather than borrowing a nearby one from another exercise.',
+    '- SESSION-TALLY RULE: when `session_tally` is present it is the AUTHORITATIVE deterministic record of what was logged THIS session — `session_tally.exercises[*]` gives, per exercise, the exact `sets` count, each set\'s `per_set` {weight, reps, rir}, and `planned` (true = part of today\'s plan, false = extra / off-plan), plus `total_working_sets`. Answer EVERY in-session count, weight, "what did I just do", "how many sets", "how many total", "how many sets of {lift}", and planned-vs-extra question ONLY from `session_tally` — read the numbers straight from it, never infer them from the conversation transcript, and never guess a weight or count that is not in it. For a substitution, report the exercise that actually appears in `session_tally` (what was logged), not a lift you earlier suggested. If `session_tally` is absent, say you don\'t have the session logged yet rather than inferring from the transcript.',
     "- PLANNED-VS-DONE RULE: numbers in `current_plan`, `current_preview`, and the recommendation are PLANNED targets, NOT work performed. Never describe them as already done — do not say \"you've done\", \"you did\", \"you hit\", \"you got\", or report a completed total/volume from them. Only `recent_sessions[*].lift_sets` (and `plan_state` completion) reflect work actually logged. Never multiply sets × reps (or sets × weight) and state the product as work performed; a planned total is \"planned\", e.g. \"3 × 15 = 45 reps planned today\".",
     '- Ground every specific in the SNAPSHOT. Never invent or change weights, reps, RIR, dates, PRs, trends, or session counts that are not in the snapshot.',
     "- If the snapshot does not contain what you need, say you don't have that data yet — never guess a number.",
@@ -942,6 +943,27 @@ function sanitizeChatContext(context) {
         has_extra: true
       }
     : null;
+  // Deterministic per-exercise current-session tally (src/app/sessionTally.js). The
+  // authoritative record of what was logged THIS session — set counts, each set's
+  // weight/reps/rir, planned-vs-extra, and the working-set total — so the coach reads
+  // counts/weights/identity from data instead of inferring them from the capped
+  // transcript. Bounded whitelist; null when empty so the coach has no tally to lean on.
+  const rawTally = c.session_tally && typeof c.session_tally === 'object' && !Array.isArray(c.session_tally) ? c.session_tally : null;
+  const tallyExercises = rawTally && Array.isArray(rawTally.exercises)
+    ? rawTally.exercises.slice(0, 16).map(e => (e && typeof e === 'object' ? {
+        exercise: strOrNull(e.exercise),
+        sets: numOrNull(e.sets),
+        per_set: Array.isArray(e.per_set) ? e.per_set.slice(0, 20).map(s => ({
+          weight: numOrNull(s && s.weight),
+          reps: numOrNull(s && s.reps),
+          rir: s && s.rir == null ? null : numOrNull(s.rir)
+        })) : [],
+        planned: e.planned == null ? null : e.planned === true
+      } : { exercise: null, sets: null, per_set: [], planned: null })).filter(e => e.exercise)
+    : [];
+  const session_tally = tallyExercises.length
+    ? { exercises: tallyExercises, total_working_sets: numOrNull(rawTally.total_working_sets) }
+    : null;
   // Failure-work signal: exercises with a logged set at RIR <= 0 this session, so the
   // coach can acknowledge failure work when the lifter asks. Only known fields survive.
   const failure_sets = Array.isArray(c.failure_sets)
@@ -967,6 +989,7 @@ function sanitizeChatContext(context) {
     plan_state,
     current_preview,
     current_plan,
+    session_tally,
     extra_work,
     failure_sets,
     session_count,
