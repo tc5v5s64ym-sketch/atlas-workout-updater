@@ -499,6 +499,52 @@ test('chat system prompt: SESSION-IDENTITY RULE sits beside the LIFT-IDENTITY RU
   assert.ok(Math.abs(sessionIdx - liftIdx) < 900, 'SESSION-IDENTITY RULE must sit next to LIFT-IDENTITY RULE');
 });
 
+// Targeted validation sweep (2026-07-09): the coach inferred set counts / per-
+// exercise weights from the capped 8-turn transcript and fabricated them. The
+// client now sends a deterministic `session_tally` (services/coach.js consumes it,
+// src/app/sessionTally.js builds it). The prompt must direct the model to answer
+// in-session count/weight/identity questions ONLY from that structured tally.
+test('chat system prompt: SESSION-TALLY RULE points count/weight questions at session_tally', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /SESSION-TALLY RULE/i, 'must have an explicit session-tally rule');
+  assert.match(prompt, /session_tally/i, 'must name the session_tally field');
+  assert.match(prompt, /never infer.*from the (conversation )?transcript|only from `?session_tally`?/i,
+    'must forbid inferring counts/weights from the transcript');
+  assert.match(prompt, /total_working_sets|per_set|sets/i, 'must reference the tally shape');
+});
+
+test('sanitizeChatContext forwards a bounded session_tally', () => {
+  const clean = sanitizeChatContext({
+    session_tally: {
+      exercises: [
+        { exercise: 'Seated Row', sets: 3, per_set: [{ weight: 190, reps: 10, rir: 2 }], planned: true, injected: 'DROP ME' },
+        { exercise: 'Lat Pulldown', sets: 2, per_set: [{ weight: 130, reps: 12, rir: 2 }], planned: true }
+      ],
+      total_working_sets: 5,
+      injected_top: 'DROP ME'
+    }
+  });
+  assert.ok(clean.session_tally, 'session_tally survives sanitization');
+  assert.equal(clean.session_tally.total_working_sets, 5);
+  assert.equal(clean.session_tally.exercises.length, 2);
+  const row = clean.session_tally.exercises[0];
+  assert.equal(row.exercise, 'Seated Row');
+  assert.equal(row.sets, 3);
+  assert.equal(row.planned, true);
+  assert.deepEqual(row.per_set[0], { weight: 190, reps: 10, rir: 2 });
+  assert.ok(!('injected' in row), 'unknown per-exercise fields are dropped');
+  assert.ok(!('injected_top' in clean.session_tally), 'unknown top-level fields are dropped');
+});
+
+test('sanitizeChatContext session_tally: absent/empty → null, and caps sizes', () => {
+  assert.equal(sanitizeChatContext({}).session_tally, null, 'absent tally is null');
+  assert.equal(sanitizeChatContext({ session_tally: { exercises: [] } }).session_tally, null, 'no exercises → null');
+  const many = { exercises: Array.from({ length: 30 }, (_, i) => ({ exercise: `Ex${i}`, sets: 1, per_set: Array.from({ length: 40 }, () => ({ weight: 1, reps: 1, rir: 1 })), planned: false })), total_working_sets: 30 };
+  const clean = sanitizeChatContext({ session_tally: many }).session_tally;
+  assert.ok(clean.exercises.length <= 16, 'exercises capped');
+  assert.ok(clean.exercises[0].per_set.length <= 20, 'per_set capped');
+});
+
 // AI Adversarial/Verification Sweeps (2026-07-08/09), V6 & V8: when acknowledging a
 // set the lifter had just typed, the coach used persistence vocabulary — "The set is
 // logged", "that set of Bench Press... is logged", "everything looks good from a
