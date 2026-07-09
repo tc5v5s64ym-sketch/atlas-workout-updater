@@ -72,6 +72,22 @@ test('validateLogRowBounds rejects a non-positive or fractional set_number', () 
   assert.deepEqual(validateLogRowBounds({ weight: 135, reps: 8, set_number: '3' }), []);
 });
 
+test('validateLogRowBounds rejects a fractional rep count (LT-008 F2)', () => {
+  assert.equal(validateLogRowBounds({ weight: 185, reps: 3.7 })[0].field, 'reps');
+  assert.match(validateLogRowBounds({ weight: 185, reps: 3.7 })[0].error, /whole number/);
+  // integer reps (and numeric strings) still pass; weight stays fractional-friendly
+  assert.deepEqual(validateLogRowBounds({ weight: 187.5, reps: 5 }), []);
+  assert.deepEqual(validateLogRowBounds({ weight: 185, reps: '8' }), []);
+});
+
+test('validateLogRowBounds rejects an over-long exercise name (LT-008 F4)', () => {
+  const errors = validateLogRowBounds({ exercise: 'X'.repeat(500), weight: 185, reps: 5 });
+  assert.equal(errors[0].field, 'exercise');
+  assert.match(errors[0].error, /≤120 characters/);
+  // a normal name passes
+  assert.deepEqual(validateLogRowBounds({ exercise: 'Barbell Bench Press', weight: 185, reps: 5 }), []);
+});
+
 test('validateLogRowsBounds reports row indices for a batch', () => {
   const errors = validateLogRowsBounds([
     { weight: 100, reps: 5 },

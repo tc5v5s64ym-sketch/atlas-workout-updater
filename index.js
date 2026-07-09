@@ -569,7 +569,42 @@ function partitionLogRowsByExisting(formattedRows, existingLogKeys) {
 const { generateSessionId, nextAvailableSessionId } = require('./services/sessionId');
 
 function isTestModeEnabled(value) {
-  return String(value || '').toLowerCase() === 'true';
+  return String(value || '').trim().toLowerCase() === 'true';
+}
+
+// A test_mode value is unambiguous only when it is omitted (absent = live write,
+// INVARIANT W2), a real boolean, or the string "true"/"false" (case/space-
+// insensitive). Any other value — 1, "yes", "on", "TRUE!" — previously fell
+// through isTestModeEnabled as a SILENT LIVE write; reject it so the trust loop
+// fails closed on ambiguous input instead of writing to the permanent record
+// (BACKLOG WRITE-6). The documented "absent = live" default is preserved.
+function isAmbiguousTestMode(value) {
+  if (value === undefined || value === null || value === '') return false;
+  if (typeof value === 'boolean') return false;
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    return v !== 'true' && v !== 'false';
+  }
+  return true; // numbers, arrays, objects — never an intended flag
+}
+
+const AMBIGUOUS_TEST_MODE_MESSAGE =
+  'test_mode must be true, false, or omitted. Ambiguous values (e.g. 1, "yes") are rejected so a preview is never silently treated as a live write.';
+
+// Validate + normalize a workout date to YYYY-MM-DD. Returns '' when the value is
+// not a real calendar date. Accepts YYYY-MM-DD and MM/DD/YYYY (matching the
+// parser's leniency via normalizeDateCandidate), and additionally rejects a
+// syntactically-plausible-but-impossible date (e.g. 2026-13-45) via a round-trip
+// check. Without this, /api/log-workout accepted an unparseable `date` and wrote
+// it verbatim into the date_clean column (unlike /api/log-modality, which already
+// format-guards). The Effort/undo/analytics layers all key on a clean date.
+function normalizeWorkoutDateStrict(value) {
+  const norm = normalizeDateCandidate(value); // '' | 'YYYY-MM-DD'
+  if (!norm) return '';
+  const [y, m, d] = norm.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return '';
+  return norm;
 }
 
 function buildEffortRowFromParsedMetrics(parsedMetrics, formFields) {
@@ -1048,6 +1083,9 @@ app.post('/api/log-modality', async (req, res) => {
   const session_id = typeof payload.session_id === 'string' ? payload.session_id.trim() : '';
   const date = typeof payload.date === 'string' ? payload.date.trim() : '';
   const notes = typeof payload.notes === 'string' ? payload.notes.trim() : '';
+  if (isAmbiguousTestMode(payload.test_mode)) {
+    return standardError(req, res, AMBIGUOUS_TEST_MODE_MESSAGE, null, 400);
+  }
   const testMode = isTestModeEnabled(payload.test_mode);
   const writeId = payload.write_id;
 
@@ -1622,6 +1660,9 @@ app.get('/api/session/:sessionId', async (req, res) => {
 app.post('/api/bodyweight', async (req, res) => {
 
   const { date, weight, notes } = req.body || {};
+  if (isAmbiguousTestMode(req.body?.test_mode)) {
+    return standardError(req, res, AMBIGUOUS_TEST_MODE_MESSAGE, null, 400);
+  }
   const testMode = isTestModeEnabled(req.body?.test_mode);
   const writeId = req.body?.write_id;
   if (!date) {
@@ -1854,6 +1895,9 @@ app.post('/api/parse-workout-image', upload.single('image'), async (req, res) =>
 app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
   const formFields = req.body || {};
+  if (isAmbiguousTestMode(formFields.test_mode)) {
+    return standardError(req, res, AMBIGUOUS_TEST_MODE_MESSAGE, null, 400);
+  }
   const testMode = isTestModeEnabled(formFields.test_mode);
   const writeId = formFields.write_id;
   const hasManualEffortMetrics = Boolean(formFields.effort_json || formFields.effort || formFields.duration);
@@ -2418,6 +2462,9 @@ app.post('/api/log-workout', async (req, res) => {
   }
 
   const { session_id, date, log_rows, effort_row } = payload;
+  if (isAmbiguousTestMode(payload.test_mode)) {
+    return standardError(req, res, AMBIGUOUS_TEST_MODE_MESSAGE, null, 400);
+  }
   const testMode = isTestModeEnabled(payload.test_mode);
   const writeId = payload.write_id;
 
@@ -2427,6 +2474,12 @@ app.post('/api/log-workout', async (req, res) => {
 
   if (!date) {
     return standardError(req, res, 'date is required.', null, 400);
+  }
+
+  // Reject an unparseable date rather than write it into date_clean verbatim.
+  const workoutDate = normalizeWorkoutDateStrict(date);
+  if (!workoutDate) {
+    return standardError(req, res, 'date must be a valid calendar date (YYYY-MM-DD).', null, 400);
   }
 
   if (log_rows === undefined) {
@@ -2441,6 +2494,13 @@ app.post('/api/log-workout', async (req, res) => {
     return standardError(req, res, 'log_rows must be a non-empty array.', null, 400);
   }
 
+  // Bound the batch size on the JSON path too — MAX_LOG_ROWS was enforced only on
+  // the multipart /api/complete-workout path, so a single JSON write of >200 rows
+  // would append yet be un-verifiable and un-undoable (both cap at MAX_LOG_ROWS).
+  if (log_rows.length > MAX_LOG_ROWS) {
+    return standardError(req, res, `log_rows exceeds the ${MAX_LOG_ROWS}-row limit.`, null, 400);
+  }
+
   if (effort_row !== undefined && !Array.isArray(effort_row) && !(effort_row && typeof effort_row === 'object')) {
     return standardError(req, res, 'effort_row must be an array or object when provided.', null, 400);
   }
@@ -2452,7 +2512,7 @@ app.post('/api/log-workout', async (req, res) => {
   let ruleFlags = [];
   let enrichedRowObjects = [];
   try {
-    const logResult = await enrichAndFormatLogRows(log_rows, session_id, date);
+    const logResult = await enrichAndFormatLogRows(log_rows, session_id, workoutDate);
     formattedLogRows = logResult.formattedRows;
     warnings = logResult.warnings || [];
     pendingExercisesForPreview = logResult.pending_exercises || [];
@@ -2563,7 +2623,7 @@ app.post('/api/log-workout', async (req, res) => {
   const idempotency = beginWrite(writeId, {
     endpoint: '/api/log-workout',
     session_id,
-    date,
+    date: workoutDate,
     log_rows_count: formattedLogRows.length,
     effort_row_present: Boolean(formattedEffortRow)
   });

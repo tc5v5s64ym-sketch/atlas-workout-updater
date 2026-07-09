@@ -77,7 +77,9 @@ module.exports = function registerReadRoutes({ getSheetRows }) {
   // GET /api/history/recent
   router.get('/api/history/recent', async (req, res) => {
 
-    const limit = Number(req.query.limit) || 5;
+    // Clamp limit to [1, 200]: a raw Number() let limit=99999 read the whole log
+    // (~387 KB) and limit=-5 slice from the wrong end. parseInt||5 handles NaN/0.
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 5));
     const exerciseFilter = req.query.exercise ? String(req.query.exercise).toLowerCase() : null;
 
     try {
