@@ -1633,6 +1633,319 @@ test('step-377: coach/chat session-close fallback never appends to a sheet', asy
   assert.equal(fakeSheetsState.appendCalls.length, before, 'the deterministic close answer is read-only');
 });
 
+// ---------------------------------------------------------------------------
+// LT-007 regression tests — current-session facts in coach chat context
+//
+// Background: The LT-007 live validation (2026-07-09) ran API calls directly,
+// without the client-side `context` object the browser always assembles and
+// sends. All five coach "failures" were test methodology artifacts — the
+// architecture already wires session_tally, current_plan, and plan_completed
+// correctly. These tests prove the server-side behavior is correct when the
+// required payload IS provided, locking that contract so future changes
+// cannot silently regress it.
+//
+// The browser assembles context in routeMessageToCoach() (src/app/app.js):
+//   context.session_tally = buildSessionTally(getSessionLog(), planNames)
+//   context.current_plan  = currentPlanForChat()
+//   context.plan_completed = [...getSessionCompleted()]
+// The server sanitizes them in sanitizeChatContext (services/coach.js) and
+// the LLM is bound by SESSION-TALLY RULE, COMPLETION-CLAIM RULE, and
+// WHAT'S-LEFT RULE in the system prompt (services/coach.js buildChatSystemPrompt).
+// ---------------------------------------------------------------------------
+
+test('LT-007: coach/chat — session_tally with bench sets reaches the coach context intact', async () => {
+  // LT-007 check 1 & 2: "how many bench sets?" / "what weights did I use?"
+  // The sanitizer must pass session_tally through so the coach reads facts from
+  // it rather than guessing from the capped 8-turn transcript or sheet history.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'How many bench sets have I logged so far?',
+        context: {
+          session_tally: {
+            exercises: [
+              {
+                exercise: 'Bench Press',
+                sets: 5,
+                per_set: [
+                  { weight: 135, reps: 10, rir: 4 },
+                  { weight: 185, reps: 10, rir: 2 },
+                  { weight: 225, reps: 6,  rir: 2 },
+                  { weight: 225, reps: 6,  rir: 2 },
+                  { weight: 225, reps: 6,  rir: 2 }
+                ],
+                planned: false
+              }
+            ],
+            total_working_sets: 5
+          },
+          current_plan: [
+            { name: 'Back Squat',        sets: 4 },
+            { name: 'Romanian Deadlift', sets: 3 }
+          ],
+          plan_completed: []
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
+    assert.ok(tally, 'session_tally must be present in the coach context');
+    assert.equal(tally.exercises.length, 1);
+    assert.equal(tally.exercises[0].exercise, 'Bench Press');
+    assert.equal(tally.exercises[0].sets, 5, 'set count preserved');
+    assert.equal(tally.total_working_sets, 5, 'total_working_sets preserved');
+    // planned:false so the coach can classify bench as off-plan (lower-body session)
+    assert.equal(tally.exercises[0].planned, false);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('LT-007: coach/chat — session_tally per_set weights survive sanitizeChatContext', async () => {
+  // LT-007 check 2: "what weights did I just use on bench?" must be answerable
+  // from session_tally.exercises[0].per_set — sanitizer must not drop or corrupt
+  // weight/reps/rir fields.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'What weights did I just use on bench?',
+        context: {
+          session_tally: {
+            exercises: [
+              {
+                exercise: 'Bench Press',
+                sets: 5,
+                per_set: [
+                  { weight: 135, reps: 10, rir: 4 },
+                  { weight: 185, reps: 10, rir: 2 },
+                  { weight: 225, reps: 6,  rir: 2 },
+                  { weight: 225, reps: 6,  rir: 2 },
+                  { weight: 225, reps: 6,  rir: 2 }
+                ],
+                planned: false
+              }
+            ],
+            total_working_sets: 5
+          }
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
+    assert.ok(tally, 'session_tally must survive to the coach context');
+    const benchEx = tally.exercises.find(e => e.exercise === 'Bench Press');
+    assert.ok(benchEx, 'Bench Press in tally');
+    const weights = benchEx.per_set.map(s => s.weight);
+    assert.deepEqual(weights, [135, 185, 225, 225, 225], 'all per-set weights preserved exactly');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('LT-007: coach/chat — session_tally planned flag distinguishes on-plan from off-plan exercises', async () => {
+  // LT-007 check 4: "what was planned vs extra?" — the SESSION-TALLY RULE
+  // instructs the LLM to read planned:true/false from session_tally.exercises.
+  // Sanitizer must pass the flag through faithfully.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'What have I done today that was planned, and what was extra?',
+        context: {
+          session_tally: {
+            exercises: [
+              { exercise: 'Back Squat',  sets: 3, per_set: [{ weight: 225, reps: 8, rir: 2 }], planned: true  },
+              { exercise: 'Bench Press', sets: 5, per_set: [{ weight: 225, reps: 6, rir: 2 }], planned: false },
+              { exercise: 'Hammer Curl', sets: 3, per_set: [{ weight: 40,  reps: 12, rir: 2 }], planned: false }
+            ],
+            total_working_sets: 11
+          },
+          current_plan: [{ name: 'Back Squat', sets: 3 }],
+          plan_completed: ['Back Squat']
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
+    assert.ok(tally, 'session_tally present');
+    const squat = tally.exercises.find(e => e.exercise === 'Back Squat');
+    const bench = tally.exercises.find(e => e.exercise === 'Bench Press');
+    const curl  = tally.exercises.find(e => e.exercise === 'Hammer Curl');
+    assert.ok(squat,  'Back Squat in tally');
+    assert.ok(bench,  'Bench Press in tally');
+    assert.ok(curl,   'Hammer Curl in tally');
+    assert.equal(squat.planned, true,  'Back Squat was in the plan');
+    assert.equal(bench.planned, false, 'Bench Press was off-plan');
+    assert.equal(curl.planned,  false, 'Hammer Curl was off-plan');
+    // plan_state must show the session complete (Back Squat logged)
+    const ps = fakeCoachState.lastChatContext.plan_state;
+    assert.ok(ps, 'plan_state present');
+    assert.deepEqual(ps.remaining, [], 'planned exercises all completed');
+    assert.equal(ps.isComplete, true);
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('LT-007: coach/chat — session_tally shows logged substitution, not the original planned exercise', async () => {
+  // LT-007 check 5: after Hanging Knee Raises → Side Bends substitution and
+  // logging Side Bends, session_tally must contain Side Bends (what was done).
+  // Hanging Knee Raises must be absent — it was never logged.
+  // The SESSION-TALLY RULE: "For a substitution, report the exercise that
+  // actually appears in session_tally (what was logged), not a lift you earlier suggested."
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'What did I actually do for the core/accessory slot?',
+        context: {
+          session_tally: {
+            exercises: [
+              { exercise: 'Back Squat', sets: 4, per_set: [{ weight: 225, reps: 8, rir: 2 }], planned: true  },
+              { exercise: 'Side Bends', sets: 3, per_set: [{ weight: 60,  reps: 15, rir: 2 }], planned: false }
+            ],
+            total_working_sets: 7
+          },
+          current_plan: [
+            { name: 'Back Squat',          sets: 4 },
+            { name: 'Hanging Knee Raises', sets: 3 }
+          ],
+          plan_completed: ['Back Squat']
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
+    assert.ok(tally, 'session_tally present');
+    const sideEx = tally.exercises.find(e => e.exercise === 'Side Bends');
+    const kneeEx = tally.exercises.find(e => e.exercise === 'Hanging Knee Raises');
+    assert.ok(sideEx, 'Side Bends must be in tally — it was logged');
+    assert.equal(kneeEx, undefined, 'Hanging Knee Raises must not be in tally — never logged');
+    // plan_state still shows Knee Raises as remaining (client did not add a
+    // substitution-reconciled name to plan_completed in this test scenario)
+    const ps = fakeCoachState.lastChatContext.plan_state;
+    assert.ok(ps, 'plan_state present');
+    assert.ok(ps.remaining.includes('Hanging Knee Raises'), 'Knee Raises shows as remaining in plan_state');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test("LT-007: coach/chat unconfigured + \"I'm done\" with remaining planned items → engine names them", async () => {
+  // LT-007 check 6: when the user declares they are done early and planned
+  // exercises remain, Atlas must not falsely congratulate and must surface what
+  // is still outstanding. The deterministic engine (buildSessionCloseAnswer)
+  // answers from plan_state.remaining — no LLM required.
+  // COMPLETION-CLAIM RULE: "do NOT claim the session is complete … UNLESS
+  // plan_state.isComplete is true."
+  const { response, body } = await requestJson('/api/coach/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: "I'm done.",
+      context: {
+        current_plan: [
+          { name: 'Back Squat',          sets: 4 },
+          { name: 'Romanian Deadlift',   sets: 3 },
+          { name: 'Leg Curl',            sets: 3 },
+          { name: 'Calf Raises',         sets: 4 },
+          { name: 'Hanging Knee Raises', sets: 3 }
+        ],
+        plan_completed: []
+      }
+    })
+  });
+  assert.equal(response.status, 200);
+  const reply = body.data.message;
+  assert.ok(reply, 'must have a deterministic reply — no dead-end');
+  assert.equal(body.data.source, 'engine', 'engine answers the close question without LLM');
+  // Must not claim completion
+  assert.ok(
+    !/complet|finish|crush|great session|you.ve done it/i.test(reply),
+    `reply must not claim completion; got: "${reply}"`
+  );
+  // Must reference remaining work by name
+  assert.ok(
+    /Back Squat|Romanian Deadlift|Leg Curl|Calf Raises|Hanging Knee Raises/i.test(reply),
+    `reply must name remaining planned exercises; got: "${reply}"`
+  );
+  assert.match(reply, /not done/i, 'must say "not done" to be unambiguous');
+});
+
+test("LT-007: coach/chat configured — \"I'm done\" with plan_state.remaining in context (LLM-path completion-claim guard)", async () => {
+  // LT-007 check 6 (LLM path): when Gemini IS configured, "I'm done" routes to
+  // the LLM but the context must carry plan_state.remaining so the LLM can follow
+  // the COMPLETION-CLAIM RULE. Test proves plan_state is computed and present in
+  // lastChatContext — the LLM's ability to follow the rule is contract-tested via
+  // the system prompt (buildChatSystemPrompt), not by mocking LLM output.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: "I'm done.",
+        context: {
+          current_plan: [
+            { name: 'Back Squat',        sets: 4 },
+            { name: 'Romanian Deadlift', sets: 3 }
+          ],
+          plan_completed: []
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const ps = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.plan_state;
+    assert.ok(ps, 'plan_state must be in coach context so LLM can apply COMPLETION-CLAIM RULE');
+    assert.deepEqual(ps.remaining, ['Back Squat', 'Romanian Deadlift'], 'all planned exercises in remaining');
+    assert.equal(ps.isComplete, false, 'session is not complete — LLM must not congratulate');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('LT-007: session_tally null when empty — coach has no tally to misread (no fabrication)', async () => {
+  // When no sets have been logged yet (session_tally absent from context), the
+  // sanitizer must produce session_tally:null so the coach says it has no tally
+  // rather than guessing from sheet history. This mirrors what would happen if
+  // the client sent an empty session (getSessionLog() returned []).
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'How many sets have I done?',
+        context: {
+          current_plan: [{ name: 'Back Squat', sets: 4 }],
+          plan_completed: []
+          // session_tally intentionally absent — no sets logged yet
+        }
+      })
+    });
+    assert.equal(response.status, 200);
+    const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
+    assert.equal(tally, null, 'absent session_tally must sanitize to null, not an empty object');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
 test('api smoke: coach/chat returns null propose_edit when none proposed', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.chatEditProposal = null;

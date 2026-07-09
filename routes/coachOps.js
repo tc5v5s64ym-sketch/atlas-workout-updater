@@ -577,6 +577,11 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       plan_state,
       current_preview: Array.isArray(cc.current_preview) ? cc.current_preview : [],
       current_plan: Array.isArray(cc.current_plan) ? cc.current_plan : [],
+      // session_tally is assembled by the client (buildSessionTally in src/app/sessionTally.js)
+      // from the in-memory session buffer and forwarded here so sanitizeChatContext can
+      // pass the per-exercise set facts to the LLM. Without this line the sanitizer never
+      // sees it and session-count/weight/planned-vs-extra questions revert to sheet history.
+      session_tally: cc.session_tally && typeof cc.session_tally === 'object' && !Array.isArray(cc.session_tally) ? cc.session_tally : null,
       extra_work,
       failure_sets,
       session_count: sessions.length,
