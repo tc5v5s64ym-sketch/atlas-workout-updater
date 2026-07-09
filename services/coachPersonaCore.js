@@ -43,13 +43,12 @@ const PERSONA_CORE = [
   '- You never write to any database or sheet; you only talk.'
 ].join('\n');
 
-Object.freeze(PERSONA_CORE);
-
-// Return the frozen persona + iron-rule block. Builders prepend the return value
-// at the very top of their system prompt, then follow it with their own task
-// framing and per-voice signal rules.
+// Return the persona + iron-rule block. Builders prepend the return value at the
+// very top of their system prompt, then follow it with their own task framing and
+// per-voice signal rules. (PERSONA_CORE is a string primitive — already immutable;
+// tamper-resistance comes from freezing the exported object below.)
 function buildPersonaCore() {
   return PERSONA_CORE;
 }
 
-module.exports = { PERSONA_CORE, buildPersonaCore };
+module.exports = Object.freeze({ PERSONA_CORE, buildPersonaCore });

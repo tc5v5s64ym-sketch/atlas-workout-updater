@@ -23,10 +23,12 @@ const BUILDERS = [
 
 // ── (2) the module: one frozen persona + iron-rule block ──────────────────────
 
-test('persona core: buildPersonaCore returns the frozen PERSONA_CORE block', () => {
+test('persona core: buildPersonaCore returns the PERSONA_CORE block, and the module export is frozen', () => {
   assert.equal(buildPersonaCore(), PERSONA_CORE, 'accessor must return the constant');
   assert.equal(typeof PERSONA_CORE, 'string');
-  assert.ok(Object.isFrozen(PERSONA_CORE), 'the persona block must be frozen');
+  // PERSONA_CORE is a string primitive (already immutable); tamper-resistance is
+  // on the exported object, so a consumer can't swap out buildPersonaCore/PERSONA_CORE.
+  assert.ok(Object.isFrozen(require('../services/coachPersonaCore')), 'the module export must be frozen');
 });
 
 // ── (1a) every builder emits the persona core exactly once, at the top ────────
