@@ -1943,7 +1943,7 @@ test('LT-007: session_tally null when empty — coach has no tally to misread (n
     });
     assert.equal(response.status, 200);
     const tally = fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.session_tally;
-    assert.equal(tally, null, 'absent session_tally must sanitize to null, not an empty object');
+    assert.equal(tally, null, 'absent session_tally: buildChatContext must return null, not an empty object');
   } finally {
     fakeCoachState.configured = false;
     fakeCoachState.lastChatContext = null;
