@@ -513,6 +513,25 @@ test('chat system prompt: SESSION-TALLY RULE points count/weight questions at se
   assert.match(prompt, /total_working_sets|per_set|sets/i, 'must reference the tally shape');
 });
 
+// Post-deploy validation (2026-07-09): with `session_tally` present the coach
+// correctly answered primary count/weight questions, but on some FOLLOW-UPS it
+// claimed the tally was absent ("I don't have the session tally yet"; "the
+// snapshot doesn't show any logged sets for Front Squat") even though it was
+// present and had just been read. The rule needs to (a) read total_working_sets
+// directly for the "how many total" question, (b) forbid claiming the tally is
+// absent / an exercise is unlogged when it IS in session_tally, and (c) scope the
+// "absent" fallback to only when session_tally is genuinely not in the snapshot.
+test('chat system prompt: SESSION-TALLY RULE forbids claiming the tally is absent when it is present', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /total_working_sets/i, 'must name total_working_sets for the "how many total" question');
+  assert.match(prompt, /when `?session_tally`? is present, never say you (don'?t have|lack|can'?t see)/i,
+    'must forbid claiming absence when the tally is present');
+  assert.match(prompt, /before saying (you )?(don'?t see|it isn'?t logged|there (are|is) no)[^.]*look it up in `?session_tally`?/i,
+    'must require looking an exercise up in session_tally before declaring it unlogged');
+  assert.match(prompt, /ONLY when `?session_tally`? is (entirely )?absent|not (present|in the snapshot)/i,
+    'must scope the absent-fallback to a genuinely missing tally');
+});
+
 test('sanitizeChatContext forwards a bounded session_tally', () => {
   const clean = sanitizeChatContext({
     session_tally: {
