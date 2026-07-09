@@ -499,6 +499,22 @@ test('chat system prompt: SESSION-IDENTITY RULE sits beside the LIFT-IDENTITY RU
   assert.ok(Math.abs(sessionIdx - liftIdx) < 900, 'SESSION-IDENTITY RULE must sit next to LIFT-IDENTITY RULE');
 });
 
+// AI Adversarial/Verification Sweeps (2026-07-08/09), V6 & V8: when acknowledging a
+// set the lifter had just typed, the coach used persistence vocabulary — "The set is
+// logged", "that set of Bench Press... is logged", "everything looks good from a
+// logging perspective" — which reads as "saved to the sheet" even though nothing is
+// persisted until the lifter says "log it" and approves the write (which the coach
+// never performs). The existing rule forbids CLAIMING a save, but the loose
+// "logged/recorded" wording for conversation-only capture still slipped the same
+// implication. The ideal phrasing already appeared once (V6: "I've captured it for
+// our conversation") — this makes that the consistent contract.
+test('chat system prompt: capture-vocabulary rule reserves logged/saved/recorded for real persistence', () => {
+  const prompt = buildChatSystemPrompt();
+  assert.match(prompt, /captured or noted in this conversation/i, 'must instruct the model to describe a typed set as captured/noted in the conversation');
+  assert.match(prompt, /do NOT call it "logged", "saved", "recorded", or "stored"/i, 'must forbid persistence vocabulary for conversation-only capture');
+  assert.match(prompt, /nothing is persisted until the lifter says "log it"/i, 'must anchor persistence to the lifter saying "log it" and approving the write');
+});
+
 test('step-375: chat system prompt forces "what\'s left" answers to read plan_state.remaining, not current_plan', () => {
   const prompt = buildChatSystemPrompt();
   assert.match(prompt, /WHAT'S-LEFT RULE/i, 'must have an explicit what\'s-left rule');
