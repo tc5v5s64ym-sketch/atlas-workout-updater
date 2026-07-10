@@ -281,3 +281,83 @@ test('ADD-2: resolvePlanTargets resolves a token to a slot by lift-code stem', (
   // a completed/skipped slot is never re-opened by the code tier either
   assert.deepEqual(resolvePlanTargets('rdls', [{ name: 'Romanian Deadlift', liftCode: 'RDL01', status: 'completed' }]), []);
 });
+
+// ── PR-I2 (canary find, 2026-07-10): gerund mutation verbs ────────────────────
+// The primary Coach's Pick canary typed "Swapping seated row for bent over row";
+// the classifier only matched the imperative base verb "swap", so the present
+// participle "swapping" fell through to the coach challenge lane instead of
+// applying the substitution. A leading gerund mutation verb normalizes to its
+// imperative so ALL the existing swap/skip grammar applies unchanged.
+test('PR-I2: a leading gerund swap verb classifies like its imperative', () => {
+  const r = classifyMutationIntent('Swapping seated row for bent over row');
+  assert.equal(r && r.action, 'replace', 'gerund "Swapping X for Y" is a replace');
+  assert.equal(r.target, 'seated row');
+  assert.equal(r.substitute, 'bent over row');
+});
+
+test('PR-I2: gerund forms of every swap/skip verb classify', () => {
+  const cases = [
+    ['swapping bench for dips', 'replace', 'bench', 'dips'],
+    ['switching lat pulldown to pull ups', 'replace', 'lat pulldown', 'pull ups'],
+    ['replacing overhead press with db press', 'replace', 'overhead press', 'db press'],
+    ['substituting deadlift for squats', 'replace', 'deadlift', 'squats'],
+  ];
+  for (const [text, action, target, substitute] of cases) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, action, `${action}: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+    assert.equal(r.substitute, substitute, `substitute: ${text}`);
+  }
+  for (const [text, target] of [
+    ['skipping leg extensions', 'leg extensions'],
+    ['dropping the leg curl', 'leg curl'],
+    ['removing dips', 'dips'],
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'skip', `skip: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+  }
+});
+
+test('PR-I2: gerund normalization only fires at the head, never mid-name', () => {
+  // "rowing" is not a mutation verb; a bare exercise phrase stays a non-mutation.
+  assert.equal(classifyMutationIntent('rowing'), null);
+  // A drop-set technique mention is still not a skip even with the gerund lane.
+  assert.equal(classifyMutationIntent('dropping into a drop set on bench'), null);
+});
+
+// ── PR-I2 (canary find, 2026-07-10): explicit decline-to-do skip ──────────────
+// The canary typed "I don't want to do leg extensions"; the classifier had no
+// grammar for a declined NAMED exercise, so it fell to the coach, which produced
+// an early-stop message. An explicit decline that NAMES a planned exercise is a
+// deterministic skip. This is narrow, NAMED-exercise language only — no broad
+// sentiment inference (bare fatigue / vague pronouns still route to the coach).
+test('PR-I2: an explicit decline naming an exercise classifies as skip', () => {
+  for (const [text, target] of [
+    ["I don't want to do leg extensions", 'leg extensions'],
+    ["i don't want to do squats", 'squats'],
+    ["i do not want to do deadlift", 'deadlift'],
+    ["i don't want leg extensions", 'leg extensions'],
+    ["i'd rather not do leg press", 'leg press'],
+    ["i'd rather not do the deadlift", 'deadlift'],
+    ["i don't wanna do curls", 'curls'],
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'skip', `skip: ${text}`);
+    assert.equal(r.target, target, `target: ${text}`);
+  }
+});
+
+test('PR-I2: decline lane stays conservative — no broad sentiment, no double-negation', () => {
+  for (const text of [
+    "i don't want to skip squats",     // negation of a skip → keep it (never skip "squats")
+    "i don't want to swap bench for dips", // negation of a swap
+    "i don't want to do this",         // vague pronoun → not a named exercise
+    "i don't want to do anything",     // vague → coach handles the sentiment
+    "i don't want to be here",         // pure sentiment, no exercise
+    "i am tired",                      // bare fatigue is never a mutation
+    "i don't feel like it",            // sentiment, no named target
+  ]) {
+    assert.equal(classifyMutationIntent(text), null, `should be null: "${text}"`);
+  }
+});
