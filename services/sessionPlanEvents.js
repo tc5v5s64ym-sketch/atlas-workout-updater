@@ -33,8 +33,13 @@ const OUTCOMES = Object.freeze(['planned', 'completed', 'skipped', 'substituted'
 // Outcomes an item_outcome event may carry (a resolved outcome, not the initial
 // 'planned' state which belongs to plan_accepted).
 const ITEM_OUTCOMES = Object.freeze(['completed', 'skipped', 'substituted']);
-// closeout_status is PR-A's proposed vocabulary (the owner froze event_type +
-// outcome; closeout_status was left to the contract). Kept minimal + revisable.
+// closeout_status vocabulary — OWNER-APPROVED (Decision Desk #952, 2026-07-10),
+// frozen alongside event_type + outcome. `finalized` = the athlete explicitly closed
+// the session (NOT a completion claim, and NOT proof rows were saved — plan
+// completion is derived from item outcomes, not this field); `abandoned` = the
+// athlete explicitly cancelled/discarded with no intent to continue. Never inferred
+// from inactivity/timeout/redeploy/missing data; null on plan_accepted/item_outcome
+// events and while a session is still open.
 const CLOSEOUT_STATUSES = Object.freeze(['finalized', 'abandoned']);
 
 // Field delimiter for the idempotency hash input. A NUL (0x00) can never appear in
