@@ -139,7 +139,12 @@ export async function runAcceptance(rec, deps) {
     plan_version: planVersion,
     accepted: true,
     items: built.items,
-    exercises,
+    // Tag each execution-view entry with its immutable plan_item_id (PR-G1). items[]
+    // is built 1:1 from exercises, so items[i] ↔ exercises[i]. The tag travels with
+    // the object through reorder/advance and is persisted in the snapshot, so a later
+    // skip/substitution reads the item identity DIRECTLY off the slot — never
+    // recovered by lift-code / name / array position (owner: fail closed if missing).
+    exercises: exercises.map((ex, i) => ({ ...ex, plan_item_id: built.items[i].plan_item_id })),
     index: 0,
   };
 
