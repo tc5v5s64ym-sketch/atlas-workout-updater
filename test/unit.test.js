@@ -2557,10 +2557,12 @@ test('route_definitions_cover_obvious_registered_routes', () => {
   const indexSource = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8');
   const readsSource = fs.readFileSync(path.join(repoRoot, 'routes', 'reads.js'), 'utf8');
   const coachOpsSource = fs.readFileSync(path.join(repoRoot, 'routes', 'coachOps.js'), 'utf8');
+  const sessionPlansSource = fs.readFileSync(path.join(repoRoot, 'routes', 'sessionPlans.js'), 'utf8');
   const registeredRoutes = [
     ...indexSource.matchAll(/app\.(get|post)\('([^']+)'/g),
     ...readsSource.matchAll(/router\.(get|post)\('([^']+)'/g),
     ...coachOpsSource.matchAll(/router\.(get|post)\('([^']+)'/g),
+    ...sessionPlansSource.matchAll(/router\.(get|post)\('([^']+)'/g),
   ]
     .map(match => ({ method: match[1].toUpperCase(), path: match[2] }))
     .filter(route => route.path !== '/app');
