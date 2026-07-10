@@ -41,19 +41,19 @@ test('wiring guard: orphan detection positively finds production-unreachable mod
   }
 });
 
-test('wiring guard: the staged allowlist stays small (brief target ≤ 12)', () => {
+test('wiring guard: the staged allowlist stays small (brief target ≤ 13)', () => {
   // The allowlist is an escape hatch, not a dumping ground. testOnly tooling is a
   // separate category and not subject to this cap.
   // (The B1–B3 window raised this to 11; PR-B4 wired those three and dropped it to 8.
   // PR-B5a/B5b Part 1 each stage one pure signal module — driftSignal +
   // discouragementSignal — ahead of their Part 2 wiring (→10). Session_Plans (Decision
-  // Desk #952) stages its PR-A builders (sessionPlanEvents) and PR-B writer
-  // (sessionPlanStore) ahead of the PR-C reader + live capture wiring, so the cap is
-  // 12 for this window; drop back toward 8 as each B5x Part 2 and the Session_Plans
-  // reader/wiring land and remove their entries.)
+  // Desk #952) stages its three pure module layers — PR-A builders (sessionPlanEvents),
+  // PR-B writer (sessionPlanStore), PR-C reader/fold (sessionPlanReader) — ahead of the
+  // single live-capture + drift wiring slice, so the cap is 13 for this window; it drops
+  // sharply (toward 8) once that slice wires all three and the B5x Part 2s land.)
   const r = analyze();
-  assert.ok(r.allowlisted.length <= 12,
-    `staged allowlist has ${r.allowlisted.length} entries (> 12): ${r.allowlisted.join(', ')}`);
+  assert.ok(r.allowlisted.length <= 13,
+    `staged allowlist has ${r.allowlisted.length} entries (> 13): ${r.allowlisted.join(', ')}`);
 });
 
 test('wiring guard: a commented-out require is not counted as a real edge', () => {
