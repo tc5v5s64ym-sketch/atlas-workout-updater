@@ -159,14 +159,24 @@ test('reassure: an explicit discouragement signal maps to reassure', () => {
   assert.equal(selectCoachMode({ layoff: { returning_from_layoff: true } }).mode, 'reassure');
 });
 
-test('reassure precedence: safety/refuse/challenge outrank a discouraged message', () => {
-  // safety (pain/form) beats reassure
+test('reassure precedence: safety/refuse outrank discouragement; discouragement outranks challenge (Owner Decision 1)', () => {
+  // safety (pain/form) beats reassure — discouragement was NOT moved above safety.
   assert.equal(selectCoachMode({ discouraged: true, note_trigger: TRIGGERS.FORM_SAFETY }).mode, 'safety');
-  // a real consistent_underperformance pattern still challenges even when discouraged (B1 precedence)
+  // Owner Decision 1 (LT-011): explicit discouragement now overrides a standing
+  // consistent_underperformance challenge pattern — for that message only.
   assert.equal(selectCoachMode({
     discouraged: true,
     memory_patterns: [{ liftCode: 'BEN01', patterns: [{ type: 'consistent_underperformance' }] }],
+  }).mode, 'reassure');
+  // …but with no discouragement the same standing pattern still challenges.
+  assert.equal(selectCoachMode({
+    memory_patterns: [{ liftCode: 'BEN01', patterns: [{ type: 'consistent_underperformance' }] }],
   }).mode, 'challenge');
-  // a reject rule still refuses
+  // a reject rule still refuses (refuse/correct stay above discouragement).
   assert.equal(selectCoachMode({ discouraged: true, rule_decisions: [{ decision: 'reject' }] }).mode, 'refuse');
+  // the layoff-return reassure was NOT promoted: a standing challenge still beats it.
+  assert.equal(selectCoachMode({
+    layoff: { returning_from_layoff: true },
+    memory_patterns: [{ liftCode: 'BEN01', patterns: [{ type: 'consistent_underperformance' }] }],
+  }).mode, 'challenge');
 });

@@ -1066,6 +1066,60 @@ test('api smoke: coach/chat recovery routing never writes a sheet', async () => 
   assert.equal(fakeSheetsState.appendCalls.length, before, 'recovery routing is read-only');
 });
 
+// ── Owner Decision 1 (LT-011): explicit discouragement → reassure, route order ──
+
+test('api smoke: coach/chat — explicit discouragement that names a lift reaches the reassure voice, not the lift-answer lane (D1-7)', async () => {
+  // "my bench reps are going nowhere" fires detectDiscouragement (frustration) AND
+  // would otherwise be SWALLOWED by answerPlannedLiftQuestion (attrs=['reps'], bench
+  // in the plan). Owner Decision 1: an explicit-discouragement message must be
+  // evaluated before the deterministic lift-answer lanes so it reaches reassurance.
+  const prevChat = fakeCoachState.chatMessage;
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.lastChatContext = null;
+  fakeCoachState.chatMessage = 'Zooming out — squat is up, and you show up. One next move: keep the bench plan and add a back-off single.';
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'my bench reps are going nowhere',
+        context: { current_plan: [{ name: 'Bench Press', reps: 8, sets: 3 }] },
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini', 'discouragement must reach the LLM reassure voice, not the terse lift-answer lane');
+    assert.doesNotMatch(body.data.message, /Bench Press today: 8 reps/, 'the lift-answer lane must NOT swallow the discouragement');
+    assert.equal(fakeCoachState.lastChatContext && fakeCoachState.lastChatContext.coach_mode, 'reassure',
+      'the chat coach_mode forwarded to Gemini must be reassure');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = prevChat;
+  }
+});
+
+test('api smoke: coach/chat — tiredness + discouragement routes to recovery, NOT reassure (D1-5)', async () => {
+  // A message that reads as BOTH tired and discouraged ("I'm exhausted and my bench
+  // is stuck") must resolve on the recovery read — recovery outranks reassure. The
+  // route short-circuits tiredness to recovery routing before the LLM is called.
+  const prevChat = fakeCoachState.chatMessage;
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatMessage = "Zooming out — you're doing fine, keep going."; // the reassure LLM line we must NOT surface
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "I'm exhausted and my bench is stuck" }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'recovery routing owns a tired lifter, even when the message is also discouraged');
+    assert.notEqual(body.data.message, fakeCoachState.chatMessage, 'the reassure LLM line must be bypassed by recovery');
+    assert.match(body.data.message, /recovery|pull-back|rest|lighter|reserve|recovered/i, 'it routes on recovery, not reassurance');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = prevChat;
+  }
+});
+
 test('api smoke: coach/chat computes extra_work from the live plan vs preview', async () => {
   fakeCoachState.configured = true;
   fakeCoachState.throwError = null;

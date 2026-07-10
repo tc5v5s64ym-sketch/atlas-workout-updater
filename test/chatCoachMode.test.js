@@ -67,8 +67,11 @@ test('foundation reaches the coach: the derived mode round-trips through sanitiz
 
 test('reassure: an explicit discouragement signal routes the chat mode to reassure (B5b Part 2)', () => {
   assert.equal(deriveChatCoachMode({}, { discouraged: true }), 'reassure');
-  // challenge still outranks reassure when a memory pattern is also present (B1 precedence)
-  assert.equal(deriveChatCoachMode(UNDERPERF, { discouraged: true }), 'challenge');
+  // Owner Decision 1 (LT-011): explicit discouragement overrides a standing
+  // challenge pattern for THAT MESSAGE ONLY — reassure now beats challenge here.
+  // The next ordinary turn (discouraged:false) challenges again (message-scoped).
+  assert.equal(deriveChatCoachMode(UNDERPERF, { discouraged: true }), 'reassure');
+  assert.equal(deriveChatCoachMode(UNDERPERF, { discouraged: false }), 'challenge');
   // no discouragement, no pattern → silent; opts optional (back-compat)
   assert.equal(deriveChatCoachMode({}, {}), 'silent');
   assert.equal(deriveChatCoachMode({}), 'silent');
