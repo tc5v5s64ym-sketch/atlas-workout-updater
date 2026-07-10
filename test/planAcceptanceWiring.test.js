@@ -53,9 +53,6 @@ test('acceptance posts ONLY /api/session-plans/accept — no outcome or closeout
   // closeout stays unwired until PR-H.)
   assert.doesNotMatch(acceptBlock, /\/api\/session-plans\/outcome/, 'the accept flow does not send an outcome');
   assert.doesNotMatch(acceptBlock, /\/api\/session-plans\/closeout/, 'the accept flow does not send a closeout');
-  for (const src of [app, cc]) {
-    assert.doesNotMatch(src, /\/api\/session-plans\/closeout/, 'no closeout event is wired yet (PR-H)');
-  }
 });
 
 test('acceptance never touches the main workout-write / trust path', () => {
@@ -89,5 +86,5 @@ test('the button is restored (never stuck on "Starting…") when a concurrent ac
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planAcceptance\.js/, 'planAcceptance.js is in SHELL_ASSETS (offline-safe)');
-  assert.match(sw, /atlas-shell-v124/, 'the SW cache version is bumped for the new asset');
+  assert.match(sw, /atlas-shell-v125/, 'the SW cache version is bumped for the new asset');
 });

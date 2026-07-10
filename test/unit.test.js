@@ -236,7 +236,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v124/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v125/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5613,9 +5613,9 @@ test('restore banner: tap-to-view + swipe-to-discard wiring', () => {
   // the recovered workout into view, swipe to reveal a trash can and discard the session.
   const app = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // The banner renders a content layer (slides) + a trash layer behind it.
-  const render = app.slice(app.indexOf('function renderResumeNotice('), app.indexOf('function renderResumeNotice(') + 1200);
+  const render = app.slice(app.indexOf('function renderResumeNotice('), app.indexOf('function renderResumeNotice(') + 1800);
   assert.match(render, /class: 'resume-trash'/, 'a trash affordance is rendered');
-  assert.match(render, /trash\.addEventListener\('click', discardRestoredSession\)/, 'tapping the trash discards');
+  assert.match(render, /trash\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('abandoned'\); discardRestoredSession\(\); \}\)/, 'tapping the trash emits the abandoned closeout (PR-H) then discards');
   assert.match(render, /class: 'resume-content'/, 'a sliding content layer is rendered');
   assert.match(render, /wireResumeNoticeGestures\(content\)/, 'swipe/tap gestures are wired to the content');
   assert.doesNotMatch(render, /resume-dismiss-btn/, 'the bare × dismiss is replaced by swipe-to-discard');
@@ -5651,8 +5651,8 @@ test('freestyle finish: explicit "Finish session" affordance triggers the existi
   // The button exists, is hidden by default (contextual), and lives in the logger form.
   assert.match(html, /id="finish-session-btn"[^>]*\bhidden\b/, 'finish button exists and starts hidden');
   // Clicking it runs the existing closeout (handleLogIt → runCloseout) — no new write path.
-  assert.match(app, /getElementById\('finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
-    'finish button click runs handleLogIt (the existing closeout)');
+  assert.match(app, /getElementById\('finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('finalized'\); handleLogIt\(\); \}\)/,
+    'finish button click emits the finalized closeout (PR-H) then runs handleLogIt (the existing closeout)');
   // It is contextual: shown once a set is logged, hidden on session reset/save.
   assert.match(app, /addEventListener\('atlas:set-logged', \(\) => setFinishSessionVisible\(true\)\)/, 'shown on set-logged');
   assert.match(app, /addEventListener\('atlas:session-reset', \(\) => setFinishSessionVisible\(false\)\)/, 'hidden on session reset');
@@ -5681,8 +5681,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v124/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v123\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v125/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v124\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

@@ -9,7 +9,7 @@
  *    app still opens from the home screen on a dead gym connection.
  */
 
-const CACHE_NAME = 'atlas-shell-v124';
+const CACHE_NAME = 'atlas-shell-v125';
 const SHELL_ASSETS = [
   '/app/',
   '/app/index.html',
@@ -18,6 +18,7 @@ const SHELL_ASSETS = [
   '/app/store.js',
   '/app/planAcceptance.js',
   '/app/planOutcome.js',
+  '/app/planCloseout.js',
   '/app/signals-core.js',
   '/app/api.js',
   '/app/dom.js',

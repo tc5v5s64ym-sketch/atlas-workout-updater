@@ -54,13 +54,14 @@ test('identity is resolved by plan_item_id only — never lift-code / name / pos
   assert.doesNotMatch(resolve, /planned_lift_code|\.name|\.liftCode/, 'no lift-code/name fallback in identity resolution');
 });
 
-test('PR-G1 scope: no completed outcome and no closeout are emitted in this slice', () => {
-  // The two handler emits use skipped/substituted only.
-  assert.doesNotMatch(skipBlock + subBlock, /outcome: 'completed'/, 'no completed outcome in PR-G1');
-  assert.doesNotMatch(app, /\/api\/session-plans\/closeout/, 'no closeout wiring in PR-G1');
+test('PR-G1 scope: the skip/substitute outcome handlers emit neither completed nor closeout', () => {
+  // The two outcome handlers use skipped/substituted only (completed is PR-G2, on a
+  // different handler; closeout is PR-H, on the explicit close/discard affordances).
+  assert.doesNotMatch(skipBlock + subBlock, /outcome: 'completed'/, 'skip/substitute never emit completed');
+  assert.doesNotMatch(skipBlock + subBlock, /\/api\/session-plans\/closeout/, 'skip/substitute never emit closeout');
 });
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planOutcome\.js/, 'planOutcome.js is in SHELL_ASSETS');
-  assert.match(sw, /atlas-shell-v124/, 'SW cache version bumped for the new asset');
+  assert.match(sw, /atlas-shell-v125/, 'SW cache version bumped for the new asset');
 });
