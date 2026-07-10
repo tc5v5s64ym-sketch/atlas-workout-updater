@@ -40,6 +40,11 @@
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
       "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md PR 17 + docs/COACHING_ENGINE_ARCHITECTURE.md 'Goal & population policy' layer — pending wiring alongside goalTemplateModule."
+    },
+    {
+      "file": "services/coachMode.js",
+      "expires": "2026-10-31",
+      "roadmap": "docs/SOUL_PLAN_V1.md PR-B1 — coaching-mode enum, pure by design until PR-B4 (the mode/register wiring PR) imports its frozen enum into the sanitizer whitelist (stimulusGovernor lockstep pattern) and wires selectCoachMode into the live voice paths."
     }
   ],
   "testOnly": [
