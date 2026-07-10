@@ -1662,7 +1662,11 @@ async function acceptDisplayedPlan(rec) {
       guard: {},
       sessionId,
       sessionDate,
-      setActivePlan: setActivePlannedSession,
+      // A newly-accepted session must not inherit a stale swap from an
+      // abandoned/reloaded prior session (mirrors startPlannedSession's
+      // setPendingSubstitution(null), Step 373b) — cleared as the accepted plan is
+      // stored, before it is persisted.
+      setActivePlan: (plan) => { setPendingSubstitution(null); setActivePlannedSession(plan); },
       persist: () => {
         document.getElementById('coach-empty')?.setAttribute('hidden', '');
         if (sessionIdEl && !existingId) sessionIdEl.value = sessionId; // reuse this id on the eventual save

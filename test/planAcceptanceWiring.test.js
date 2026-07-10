@@ -67,6 +67,23 @@ test('the generic "Start Session" control is unchanged (still non-authoritative)
   assert.doesNotMatch(app, /start-session-btn[\s\S]{0,200}atlasAcceptPlan/, 'the generic control is not repurposed for acceptance');
 });
 
+test('acceptance clears any stale pending swap (new-session boundary, parity with startPlannedSession)', () => {
+  assert.match(acceptBlock, /setPendingSubstitution\(null\)/,
+    'a newly-accepted session must not inherit a stale swap');
+});
+
+test('the "Start this plan" button is suppressed for a deload pick (deload stays owner-gated / out of scope)', () => {
+  const btnBlock = cc.slice(cc.indexOf('function appendStartThisPlanButton('), cc.indexOf('function appendStartThisPlanButton(') + 1800);
+  assert.match(btnBlock, /rec\.id === 'deload_reset'\) return;/, 'the acceptance button is not rendered for a deload pick');
+});
+
+test('the button is restored (never stuck on "Starting…") when a concurrent acceptance is ignored', () => {
+  const btnBlock = cc.slice(cc.indexOf('function appendStartThisPlanButton('), cc.indexOf('function appendStartThisPlanButton(') + 1800);
+  const ignoredBranch = btnBlock.slice(btnBlock.indexOf('result.ignored'), btnBlock.indexOf('} else {', btnBlock.indexOf('result.ignored')));
+  assert.match(ignoredBranch, /btn\.disabled = false/, 'the ignored branch re-enables the button');
+  assert.match(ignoredBranch, /btn\.textContent = original/, 'the ignored branch restores the label');
+});
+
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planAcceptance\.js/, 'planAcceptance.js is in SHELL_ASSETS (offline-safe)');
   assert.match(sw, /atlas-shell-v122/, 'the SW cache version is bumped for the new asset');

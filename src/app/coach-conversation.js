@@ -584,6 +584,10 @@ import * as sessionQuestion from './sessionQuestion.js';
   // is NOT acceptance — only pressing this button is.
   function appendStartThisPlanButton(container, rec) {
     if (!rec || !Array.isArray(rec.exercises) || !rec.exercises.length) return;
+    // Deload sessions are owner-gated and begin their own state machine via
+    // /api/deload/begin on the existing start path. PR-F does not touch deload, so the
+    // acceptance button is NOT shown for a deload pick (it keeps its existing flow).
+    if (rec.id === 'deload_reset') return;
     if (typeof window.atlasAcceptPlan !== 'function') return;
     const wrap = document.createElement('div');
     wrap.className = 'workout-plan-accept';
@@ -605,7 +609,10 @@ import * as sessionQuestion from './sessionQuestion.js';
       if (result && result.started) {
         btn.textContent = result.message || 'Plan started.'; // stays disabled — this plan is accepted
       } else if (result && result.ignored) {
-        // a concurrent acceptance is already running — leave it to finish
+        // a concurrent acceptance is already running (e.g. another plan card) — restore
+        // THIS button so it is never stuck on "Starting…".
+        btn.disabled = false;
+        btn.textContent = original;
       } else {
         // blocked (e.g. an unresolved exercise): re-enable so the lifter can retry
         btn.disabled = false;
