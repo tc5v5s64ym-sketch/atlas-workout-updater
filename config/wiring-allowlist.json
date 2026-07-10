@@ -40,6 +40,11 @@
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
       "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md PR 17 + docs/COACHING_ENGINE_ARCHITECTURE.md 'Goal & population policy' layer — pending wiring alongside goalTemplateModule."
+    },
+    {
+      "file": "services/driftSignal.js",
+      "expires": "2026-10-31",
+      "roadmap": "docs/SOUL_PLAN_V1.md PR-B5a Part 1 — pure drift-signal module (skipped-pattern streak / plan deviation / sandbag persistence); Part 2 wires detectDrift into selectCoachMode's challenge trigger + the persona challenge block, removing this entry."
     }
   ],
   "testOnly": [
