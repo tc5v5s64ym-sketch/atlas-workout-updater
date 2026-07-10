@@ -60,6 +60,11 @@
       "file": "services/sessionPlanStore.js",
       "expires": "2026-10-31",
       "roadmap": "Decision Desk #952 (Option A) Session_Plans persistence PR-B — idempotent append-only writer (imports sessionPlanEvents). The live capture wiring lands with the reader (PR-C) at the accepted-plan/closeout boundaries so the whole data loop is wired + tested together, removing this entry."
+    },
+    {
+      "file": "services/sessionPlanReader.js",
+      "expires": "2026-10-31",
+      "roadmap": "Decision Desk #952 (Option A) Session_Plans persistence PR-C — pure reader/fold (folds event rows into detectDrift's plannedVsCompleted shape; completion from item outcomes; fail-closed). The live capture read + drift wiring slice consumes this at the Session_Plans read boundary, removing this entry."
     }
   ],
   "testOnly": [
