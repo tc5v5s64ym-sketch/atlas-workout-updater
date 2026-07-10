@@ -132,6 +132,16 @@ test('a malformed event fails closed: its session is excluded from the drift vie
   assert.equal(toPlannedVsCompleted(folded).length, 0, 'error sessions never reach drift (fail closed)');
 });
 
+test('a row truncated AFTER its identity columns still fails closed (attributed via early cols)', () => {
+  // #959 review: a hand-edit that drops trailing cells leaves session_id/plan_version
+  // readable — the session must be marked error, not silently skipped (fail open).
+  const rows = sessionRows(S(), { i1: 'completed', i2: 'completed' }, 'finalized');
+  const truncated = rows[1].slice(0, IDX.plan_version + 1); // keep through plan_version, drop the rest
+  const folded = foldSessionPlans([...rows, truncated]);
+  assert.equal(folded.find(s => s.session_id === 'S1').status, 'error');
+  assert.equal(toPlannedVsCompleted(folded).length, 0, 'a session with a truncated row never reaches drift');
+});
+
 test('same idempotency_key with different content fails closed (conflict)', () => {
   const base = buildPlanAcceptedEvents(S(), [items[0]], { recordedAt: 'r0' })[0];
   const conflict = base.slice(); conflict[IDX.planned_lift_code] = 'INC01'; // same key, changed lift

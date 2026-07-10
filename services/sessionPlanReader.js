@@ -39,8 +39,15 @@ const _skey = (sid, ver) => `${sid}${SEP}${ver}`;
 // Parse a raw sheet row into a typed event, or flag it malformed. Structural
 // validation only — the vocab must match the frozen contract.
 function _parseRow(row) {
-  if (!Array.isArray(row) || row.length < sessionPlansColumns.length) return { malformed: true, sid: null, ver: null };
+  if (!Array.isArray(row)) return { malformed: true, sid: null, ver: null };
   const get = (c) => String(row[IDX[c]] == null ? '' : row[IDX[c]]).trim();
+  // Read identity FIRST (session_id/plan_version are early columns) so a row
+  // truncated AFTER its identity columns is still ATTRIBUTED to its session and
+  // marked malformed — otherwise that session would fail OPEN (silently skipped)
+  // instead of fail closed (status:'error'). (#959 review.)
+  const sid = get('session_id') || null;
+  const ver = get('plan_version') || null;
+  if (row.length < sessionPlansColumns.length) return { malformed: true, sid, ver };
   const e = {
     idempotency_key: get('idempotency_key'),
     session_id: get('session_id'),
