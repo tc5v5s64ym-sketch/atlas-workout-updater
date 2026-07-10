@@ -103,7 +103,7 @@ async function logSet(page, text) {
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
 }
 
-test('End session and the completed boundary are reachable in the active-session UI via the session pin', async ({ page }) => {
+test('the completed boundary is reachable MID-PLAN (after the cursor advances) and End session is present', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
@@ -115,27 +115,27 @@ test('End session and the completed boundary are reachable in the active-session
   await startBtn.click();
   await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
 
-  // Log both planned exercises. The cursor auto-advances past Seated Row; logging
-  // the final exercise (Leg Extension) leaves it current WITH performed evidence.
+  // Log ONLY the first exercise. The cursor auto-advances to Leg Extension — so under
+  // the old current-slot gate the completed boundary would be unreachable here. It must
+  // now be reachable for the just-logged Seated Row (mid-plan).
   await logSet(page, 'seated row 140 10/2 x3');
-  await logSet(page, 'leg extension 90 12/2 x3');
 
-  // The session pin is the always-visible control; tapping it expands the banner.
   const pin = page.locator('#session-pin');
   await expect(pin).toBeVisible();
   await pin.click();
 
   const banner = page.locator('#active-session-banner');
   await expect(banner).toBeVisible();
-  // "End session" (finalized closeout affordance) is always present for an active session.
   await expect(banner.getByText('End session', { exact: true })).toBeVisible();
-  // "Done with this exercise" (the explicit completed boundary) is reachable for the
-  // final planned item, which retains its evidence.
-  await expect(banner.locator('.start-done-btn')).toBeVisible();
-  await expect(banner.locator('.start-done-btn')).toHaveText('Done with this exercise');
+  // Mid-plan: "Done with Seated Row" is offered even though the cursor moved to Leg Extension.
+  const doneBtn = banner.locator('.start-done-btn');
+  await expect(doneBtn).toBeVisible();
+  await expect(doneBtn).toHaveText('Done with Seated Row');
 
   // Tapping it emits the explicit completed outcome (the CLICK is authoritative —
-  // logging never auto-completed it).
-  await banner.locator('.start-done-btn').click();
-  await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/outcome' && p.body && p.body.item && p.body.item.outcome === 'completed').length).toBeGreaterThan(0);
+  // logging never auto-completed it), carrying a pi_ plan_item_id.
+  await doneBtn.click();
+  await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/outcome' && p.body?.item?.outcome === 'completed').length).toBeGreaterThan(0);
+  const completed = capture.sessionPlanPosts.find(p => p.path === '/api/session-plans/outcome' && p.body?.item?.outcome === 'completed');
+  expect(completed.body.item.plan_item_id).toMatch(/^pi_/);
 });
