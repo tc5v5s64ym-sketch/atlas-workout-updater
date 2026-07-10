@@ -72,6 +72,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "evidence_context" {reference_sets[], date_range, benchmark, confidence} — the engine\'s historical record behind today\'s verdict. When evidence_context is present you MUST ground at least one statement in it: cite `trend.sessions_analyzed` as the session count ("Based on your last N sessions…") when present, the date span, the benchmark, or a specific reference weight/reps. Every figure you cite must appear in the facts; never fabricate a number. NEVER derive a session count by counting the `reference_sets` array — those are individual sets, not sessions, and counting them would give the wrong number.',
     '- The facts may include "deviation" {verdict, delta, magnitude} — the engine\'s read of today\'s reps vs. the lifter\'s historical expectation at this weight. "above_expected" = logged more reps than usual (positive delta); "below_expected" = fewer reps than usual (negative delta); "on_target" = consistent with history; "insufficient_data" = not enough history to judge. When deviation is present and is not "insufficient_data", weave it into the reaction once: name whether today was better or worse than their norm at this load, and name the magnitude when it is significant. Never contradict the deviation verdict, and never use a single below_expected result to call fatigue — that belongs to readiness_signal.',
     '- You MAY reference ONE history number from the facts (working_weight, first_weight, best_weight, the range/ceiling, or the most recent entry from last_working_sets) to ground progress, e.g. "right at your working weight of {working_weight}" or "up from {first_weight}" or "right in your {range_low}–{range_high}" — but only when it is present and only if it is truthful given the sets. Never invent a past number.',
+    '- The facts may include "athlete_identity" — the engine\'s longitudinal record of THIS lifter: first_session_date + tenure_months, per-lift dated PR progressions (lift_prs[*].history and current_best), consistency (current_weekly_streak, sessions_per_week_8wk), longest_gap_days, days_since_last_session, and recent_milestones. You MAY use ONE of these facts to deepen the arc — "up from the 185 you opened at in 2026-03" — counting as the one history reference above, and only when it genuinely fits today\'s set. CITE, never invent: every tenure, streak, gap, date, or past-weight claim must appear verbatim in athlete_identity (or another history field in the facts). When athlete_identity is absent or a field is null, make NO claim of that kind — the thin-history rule below applies to the athlete story exactly as it does to verdicts.',
     '- The facts may include "trend" {trend, confidence, sessions_analyzed} — the engine\'s e1RM trajectory across recent sessions. "improving" = e1RM is clearly rising; "flat" = holding steady; "declining" = e1RM is drifting down; "noisy" = high variance, no clear read. When trend is present and is not "noisy", name the direction once as part of the arc narrative. Never claim a trend when the field is absent, and never contradict the engine\'s verdict. `trend` is the authoritative e1RM trajectory signal — use only this object, never any other trend field in the facts.',
     '- The facts may include "readiness_signal" {signal, confidence, note} — the engine\'s fatigue inference from the recent deviation streak. "monitoring" = watching, no fatigue signal; "possible_fatigue" = 3+ consecutive below-expected sessions; "likely_fatigue" = sustained streak + declining e1RM trend. When monitoring, say nothing about fatigue. When possible_fatigue, gently name the pattern without catastrophising. When likely_fatigue, be direct and honest: name the trend and suggest the lifter consider a recovery week. Never diagnose fatigue from a single session and never contradict the engine\'s verdict.',
     '- The facts may include "stimulus_grade" {profile, effort_interpretation, progression_verdict, fatigue_signal} — the engine\'s PROFILE-AWARE read of this set (the same RIR reads differently by training profile). Respect it and never contradict it: progression_verdict "hold" or "back_off" means do NOT tell them to add load/push; "+load"/"+reps" means there is room to progress; fatigue_signal "high" means flag recovery, not progression. Critically, for a "general_fitness" profile do NOT celebrate grinding to failure — maximal effort is not the goal there. It is consistent with effort_verdict (never contradict either); word it, and never invent a number from it.',
@@ -178,8 +179,84 @@ function sanitizeFacts(facts) {
     // forbids the add-weight / "get back in the groove" steer (BUG recurrence of
     // -204817: the prescribed intent never reached the LLM facts, so the note
     // scolded the exact loads the plan prescribed).
-    session_intent: sanitizeSessionIntent(f.intentId)
+    session_intent: sanitizeSessionIntent(f.intentId),
+    // PR-A7 — the engine's longitudinal athlete story (services/athleteIdentity.js):
+    // tenure, dated per-lift PR history, consistency, gaps, recent milestones. The
+    // model may CITE these facts to ground the arc; it never invents one. Server-
+    // computed on the route (engine-only overwrite) — a client-shaped object still
+    // only survives through this whitelist.
+    athlete_identity: sanitizeAthleteIdentity(f.athlete_identity)
   };
+}
+
+// PR-A7: whitelist the Athlete Identity Facts object. Every field is explicitly
+// named; strings pass strOrNull (length-capped, injection-stripped), numbers pass
+// numOrNull, dates must be literal YYYY-MM-DD. Lifts capped at 8, PR history at 3
+// per lift, milestones at 6 — mirroring the module's own bounds. An identity with
+// no real signal (no first session, no PRs, no milestones, no tenure) → null so
+// the prompt's "absent = no history claims" rule engages.
+function sanitizeAthleteIdentity(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  // numOrNull coerces null → 0 (Number(null) === 0); identity fields must keep
+  // "absent" as null — a fabricated tenure_months: 0 would be a history claim.
+  const numOrAbsent = x => (x == null ? null : numOrNull(x));
+  const dateOrNull = s => {
+    const t = strOrNull(s);
+    return t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+  };
+  const toPr = p => {
+    if (!p || typeof p !== 'object') return null;
+    const weight = numOrAbsent(p.weight);
+    const reps = numOrAbsent(p.reps);
+    const date = dateOrNull(p.date);
+    return weight != null && weight > 0 && date ? { weight, reps, date } : null;
+  };
+  const lift_prs = {};
+  if (v.lift_prs && typeof v.lift_prs === 'object' && !Array.isArray(v.lift_prs)) {
+    let liftCount = 0;
+    for (const rawName of Object.keys(v.lift_prs)) {
+      if (liftCount >= 8) break;
+      const name = strOrNull(rawName);
+      const entry = v.lift_prs[rawName];
+      if (!name || !entry || typeof entry !== 'object') continue;
+      const history = Array.isArray(entry.history)
+        ? entry.history.slice(0, 3).map(toPr).filter(Boolean)
+        : [];
+      const current_best = toPr(entry.current_best);
+      if (!history.length && !current_best) continue;
+      lift_prs[name] = { history, current_best };
+      liftCount++;
+    }
+  }
+  const rawCons = v.consistency && typeof v.consistency === 'object' ? v.consistency : null;
+  const consistency = rawCons
+    ? {
+        current_weekly_streak: numOrAbsent(rawCons.current_weekly_streak),
+        sessions_per_week_8wk: numOrAbsent(rawCons.sessions_per_week_8wk)
+      }
+    : null;
+  const recent_milestones = Array.isArray(v.recent_milestones)
+    ? v.recent_milestones.slice(0, 6).map(m => {
+        if (!m || typeof m !== 'object') return null;
+        const exercise = strOrNull(m.exercise);
+        const pr = toPr(m);
+        return exercise && pr ? { exercise, ...pr } : null;
+      }).filter(Boolean)
+    : [];
+  const out = {
+    first_session_date: dateOrNull(v.first_session_date),
+    tenure_months: numOrAbsent(v.tenure_months),
+    days_since_last_session: numOrAbsent(v.days_since_last_session),
+    longest_gap_days: numOrAbsent(v.longest_gap_days),
+    consistency,
+    lift_prs,
+    recent_milestones
+  };
+  const hasSignal = out.first_session_date !== null
+    || out.tenure_months !== null
+    || Object.keys(lift_prs).length > 0
+    || recent_milestones.length > 0;
+  return hasSignal ? out : null;
 }
 
 // PR-O3: whitelist the per-lift onboarding calibration_status. Only the two enum
@@ -631,6 +708,7 @@ function buildChatSystemPrompt(context) {
     "You are given a read-only TRAINING SNAPSHOT (recent sessions, movement-pattern readiness, today's recommended focus, current workout plan, stalled lifts, and under-coverage gaps) as JSON, then the conversation so far. Answer the latest message in a natural, conversational coaching voice.",
     "- `muscle_gaps` in the snapshot lists muscles below their weekly minimum effective sets. When the lifter asks what to train or you're suggesting accessories, weave in a nudge toward 1–2 of the most under-served muscles with a concrete lift suggestion. Keep it to one sentence, only when it fits naturally — never recite the full list unprompted.",
     "- `memory_patterns` (if present) lists engine-detected recurring patterns for specific lifts — e.g. consistent underperformance or a repeated substitution. Reference these naturally when discussing the relevant lift. Never recite the full list unprompted, and never invent a pattern that is not in the snapshot.",
+    "- `athlete_identity` (if present) is the engine's longitudinal story of this lifter: tenure (first_session_date, tenure_months), per-lift dated PR progressions (lift_prs[*].history and current_best), consistency (current_weekly_streak, sessions_per_week_8wk), gaps (longest_gap_days, days_since_last_session), and recent_milestones. Use it to ground long-arc answers and natural callbacks ('that's up from the 185 you opened at in 2026-03') when the conversation touches history or progress. CITE, never invent: every tenure, streak, gap, date, or PR claim must appear verbatim in athlete_identity (or the logged sets in recent_sessions); when it is absent or a field is null, say you don't have that history rather than guessing. Never recite the whole object unprompted.",
     "- `extra_work` (if present) is the engine's read of work done BEYOND today's plan: `extra_sets` (a planned lift logged for more sets than prescribed) and `extra_exercises` (logged but never planned). Keep this ON-ASK and brief — answer it plainly when the lifter asks (e.g. 'did I overdo it?'), state the fact and, if it matters, the why and next action. Do NOT volunteer it for ordinary extra work, and never praise it as compliance. ONLY raise it unprompted when it actually works against recovery or today's recommendation (e.g. extra volume on a pattern the snapshot flags fatigued/under-recovered) — then name it honestly without alarmism. Use only the numbers in `extra_work`; invent nothing.",
     "- `plan_state` (if present) is the authoritative session plan. `plan_state.remaining` lists exercises still to complete. Never drop, replace, or suggest removing a remaining exercise unless the lifter explicitly asks. When the lifter reorders (e.g. 'doing X next because machine is busy'), confirm the change and name what is still in the session — the rest of the plan stays intact. Only call the session complete when `plan_state.isComplete` is true.",
     "- `failure_sets` (if present) is the engine's read of this session's sets taken to failure (logged RIR ≤ 0), per exercise. When the lifter asks about going / being told to go to (or NOT to go to) failure — 'why till failure for dips?', 'why not to failure?' — acknowledge the failure work honestly from this signal, then give the guidance: taking an isolation or accessory movement to failure now and then is fine, but most working sets should keep 1–3 reps in reserve so fatigue stays manageable and the next session recovers — compounds especially. Use only the sets in `failure_sets`; never invent a load, and never tell them a specific weight to use unless the snapshot already supplies one. If `failure_sets` is empty, say you don't see any failure sets logged rather than assuming.",
@@ -1000,7 +1078,11 @@ function sanitizeChatContext(context) {
     failure_sets,
     session_count,
     coaching_notes,
-    constraints
+    constraints,
+    // PR-A7 — the engine's longitudinal athlete story (services/athleteIdentity.js),
+    // computed server-side in buildChatContext from the log rows the route already
+    // fetched. Same explicit whitelist as the set-reaction facts.
+    athlete_identity: sanitizeAthleteIdentity(c.athlete_identity)
   };
 }
 
@@ -1428,6 +1510,7 @@ module.exports = {
   buildCoachSystemPrompt,
   buildCoachUserPrompt,
   sanitizeFacts,
+  sanitizeAthleteIdentity,
   sanitizeStimulusGrade,
   sanitizeNextMoveAdvisory,
   sanitizeRecoveryAdvisory,

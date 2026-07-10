@@ -26,8 +26,9 @@ const {
 const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
 const coachPolish = require('../services/coachPolish');
-const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads } = require('../services/analytics');
+const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso } = require('../services/analytics');
 const { enrichCoachFacts } = require('../services/liveIntelligence');
+const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { assessLayoff } = require('../services/layoffGuard');
 const { getProfileGoal } = require('../services/profileGoal');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('../services/coachVoiceRenderer');
@@ -405,14 +406,22 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // working_weight, trend, readiness_signal, deviation, and evidence_context
     // from the lift's history. Failure is best-effort — never blocks the response.
     let facts = rawFacts;
+    // PR-A7 — athlete identity is ENGINE-ONLY: computed below from the log rows the
+    // enrichment path already fetches (zero additional Sheets reads), and ALWAYS
+    // overwritten onto the facts so a client-supplied athlete_identity can never
+    // reach the coach. No liftCode → no rows in hand → null (a missing story is
+    // honest; we never add a read for it — docs/READ_BUDGET.md discipline).
+    let athleteIdentity = null;
     if (rawFacts.liftCode) {
       try {
         const allLog = await getSheetRows(logSheetName);
         facts = enrichCoachFacts(rawFacts, allLog);
+        athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
       } catch (_) {
         // Keep client facts as-is if Sheets read or enrichment fails.
       }
     }
+    facts = { ...facts, athlete_identity: athleteIdentity };
 
     // Plan voice: derive the return-after-layoff signal from the log server-side so
     // a "volume pulled back" claim can only come from the engine, never the client.
@@ -586,7 +595,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       failure_sets,
       session_count: sessions.length,
       coaching_notes: Array.isArray(coachingNotes) ? coachingNotes.slice(0, 10) : [],
-      constraints: Array.isArray(constraints) ? constraints.slice(0, 12) : []
+      constraints: Array.isArray(constraints) ? constraints.slice(0, 12) : [],
+      // PR-A7 — the longitudinal athlete story, computed from the SAME logRows this
+      // context is already built from (zero additional Sheets reads). Constructed
+      // fresh here — never read from clientContext — so it is engine-only; bounded
+      // again by coach.sanitizeChatContext's explicit whitelist.
+      athlete_identity: buildAthleteIdentity(logRows, { asOf: todayIso() })
     };
   }
 
