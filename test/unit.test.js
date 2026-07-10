@@ -236,7 +236,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v121/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v122/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5581,9 +5581,14 @@ test('mobile PWA: unsaved-session warning + persist/restore session safety', () 
   // Owner live find 2026-07-03: a snapshot carrying ONLY an engaged plan (no logged
   // sets) must NOT auto-resume — that silently reactivated guided mode ("1 of N /
   // next up") on a fresh freestyle log, with no visible resume banner. Resume now
-  // requires genuinely logged work. (Moved into the store with PR-10.)
-  assert.match(storeSrc, /if \(!snap\.sessionLog\.length\) \{ clearPersistedSnapshot\(\); return \{ resumed: false \}; \}/,
-    'a snapshot with no logged sets never auto-resumes (an engaged-but-unlogged plan cannot silently reactivate guided mode)');
+  // requires genuinely logged work. (Moved into the store with PR-10.) PR-F carves out
+  // ONE exception: an EXPLICITLY ACCEPTED plan (`accepted === true`, via "Start this
+  // plan") DOES survive reload so its minted pv_/pi_ identity is not lost — an
+  // unaccepted plan-only snapshot still does not resume.
+  assert.match(storeSrc, /if \(!snap\.sessionLog\.length && !acceptedPlanOnly\) \{ clearPersistedSnapshot\(\); return \{ resumed: false \}; \}/,
+    'an UNACCEPTED plan-only snapshot never auto-resumes (guided mode cannot silently reactivate on a fresh freestyle log)');
+  assert.match(storeSrc, /snap\.activePlannedSession\.accepted === true/,
+    'the resume carve-out is gated on an explicitly accepted plan only (PR-F)');
   assert.match(storeSrc, /SNAPSHOT_MAX_AGE_MS/, 'recency-gated (stale snapshot ignored)');
   // Wired: restore at init, clear on save + start-over.
   assert.match(app, /restoreSessionSnapshot\(\);\n?\s*loadDashboard\(\)|restoreSessionSnapshot\(\);/, 'restore runs at startup');
@@ -5676,8 +5681,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v121/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v120\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v122/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v121\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');

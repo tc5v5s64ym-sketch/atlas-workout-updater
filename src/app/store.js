@@ -164,7 +164,15 @@ export function hydrateSessionSnapshot() {
       return { resumed: false };
     }
     if (!Array.isArray(snap.sessionLog) || !Array.isArray(snap.sessionCompleted)) { clearPersistedSnapshot(); return { resumed: false }; }
-    if (!snap.sessionLog.length) { clearPersistedSnapshot(); return { resumed: false }; }
+    // A plan-only snapshot (no logged sets) is normally NOT resumed — an unaccepted
+    // plan is one tap from re-opening and must not silently re-activate guided mode on
+    // a fresh freestyle log. But an EXPLICITLY ACCEPTED plan (PR-F: the user pressed
+    // "Start this plan", so it carries `accepted:true` + minted pv_/pi_ identity) MUST
+    // survive reload with its identity intact — restore it even with no sets yet.
+    const acceptedPlanOnly = snap.activePlannedSession
+      && snap.activePlannedSession.accepted === true
+      && Array.isArray(snap.activePlannedSession.exercises);
+    if (!snap.sessionLog.length && !acceptedPlanOnly) { clearPersistedSnapshot(); return { resumed: false }; }
     setSessionLog(snap.sessionLog);
     setSessionCompleted(snap.sessionCompleted);
     setActivePlannedSession((snap.activePlannedSession && Array.isArray(snap.activePlannedSession.exercises))

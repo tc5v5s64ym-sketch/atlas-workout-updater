@@ -33,8 +33,12 @@ import {
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
 } from './store.js';
+// PR-F — the "Start this plan" acceptance orchestrator (pure/DI; app.js injects the
+// real store/persist/start/api deps). Identity minting + snapshot + sidecar POST live
+// there so this file's diff stays a thin adapter.
+import { runAcceptance } from './planAcceptance.js';
 
-const ATLAS_SHELL_BUILD = 'v121';
+const ATLAS_SHELL_BUILD = 'v122';
 
 
 
@@ -1632,6 +1636,54 @@ function startPlannedSession(intent) {
   saveSessionSnapshot();   // persist the started plan for resume safety
   const first = exercises[0];
   startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
+}
+
+// ── PR-F: "Start this plan" — the authoritative plan-acceptance boundary ───────
+// The ONLY new acceptance action (docs/SESSION_PLANS_CAPTURE_SPEC.md §5). Thin
+// adapter: gather real deps and delegate to runAcceptance (planAcceptance.js), which
+// mints opaque pv_/pi_ identity, stores + persists the immutable accepted snapshot,
+// starts the workout, and fires the non-blocking /accept sidecar POST. The workout
+// starts regardless of the flag/sidecar; memory language is shown only on
+// captured===true. `_acceptInFlight` guards a double-tap from minting a 2nd revision.
+let _acceptInFlight = false;
+async function acceptDisplayedPlan(rec) {
+  if (_acceptInFlight) return { started: false, ignored: true, message: null };
+  _acceptInFlight = true;
+  try {
+    const exercises = ((rec && rec.exercises) || []).map(normalizePlanExercise).filter(ex => ex.name);
+    const sessionDate = getLocalDateString();
+    const sessionIdEl = typeof document !== 'undefined' ? document.getElementById('log-session-id') : null;
+    const existingId = sessionIdEl && sessionIdEl.value ? sessionIdEl.value.trim() : '';
+    const sessionId = existingId || generateSessionId(sessionDate);
+    const cryptoObj = (typeof window !== 'undefined' && window.crypto) ? window.crypto
+      : (typeof crypto !== 'undefined' ? crypto : null);
+    return await runAcceptance({ label: rec && rec.label, id: rec && rec.id, exercises }, {
+      crypto: cryptoObj,
+      guard: {},
+      sessionId,
+      sessionDate,
+      // A newly-accepted session must not inherit a stale swap from an
+      // abandoned/reloaded prior session (mirrors startPlannedSession's
+      // setPendingSubstitution(null), Step 373b) — cleared as the accepted plan is
+      // stored, before it is persisted.
+      setActivePlan: (plan) => { setPendingSubstitution(null); setActivePlannedSession(plan); },
+      persist: () => {
+        document.getElementById('coach-empty')?.setAttribute('hidden', '');
+        if (sessionIdEl && !existingId) sessionIdEl.value = sessionId; // reuse this id on the eventual save
+        saveSessionSnapshot();
+      },
+      startWorkout: (plan) => {
+        renderActiveSessionBanner();
+        const first = plan.exercises[0];
+        if (first) startLift(first.name, first.liftCode, first.weight, first.reps, first.sets || 3);
+      },
+      postAccept: (payload) => api('/api/session-plans/accept', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }),
+    });
+  } finally {
+    _acceptInFlight = false;
+  }
 }
 
 // ── P0 Sub-PR 2a: deterministic plan mutation from explicit user intent ────────
@@ -6621,6 +6673,9 @@ window.setsTableBody = setsTableBody;
 // subset is strictly less than the old "every function is global" surface. Removed
 // when the e2e suite drives them through real UI actions (test-hardening follow-up).
 window.startPlannedSession = startPlannedSession;
+// PR-F: the coach-conversation IIFE calls this from the "Start this plan" plan-card
+// button (the authoritative acceptance boundary).
+window.atlasAcceptPlan = acceptDisplayedPlan;
 window.firstUnloggedPlannedLift = firstUnloggedPlannedLift;
 window.plannedExerciseOrder = plannedExerciseOrder;
 window.remainingPlannedExercises = remainingPlannedExercises;
