@@ -46,9 +46,11 @@ test('suppressor: MILD casual words (hell/damn/crap) are NOT treated as profanit
       findRegisterViolations(line, { mode: 'note', register: { profanity_ok: false } }), [],
       `"${line}" is casual register, not profanity`);
   }
-  // But genuine profanity still fires.
-  assert.ok(findRegisterViolations('That was fucking strong.', { mode: 'note', register: { profanity_ok: false } })
-    .some(v => v.code === 'profanity_without_permission'));
+  // But genuine profanity still fires — incl. the one-word 'dickhead' (review #948).
+  for (const bad of ['That was fucking strong.', 'Don\'t be a dickhead about the rest times.', 'dickheads everywhere']) {
+    assert.ok(findRegisterViolations(bad, { mode: 'note', register: { profanity_ok: false } })
+      .some(v => v.code === 'profanity_without_permission'), `"${bad}" must fire`);
+  }
 });
 
 test('suppressor: celebration/PR vocabulary is a violation outside celebrate/praise', () => {
@@ -76,7 +78,7 @@ const HISTORY = [
 ];
 
 test('engine gate: confirms new_ground only when today\'s top clears the engine\'s own ceiling', () => {
-  // 225 clears the 205 ceiling → engine new_ground.
+  // 225 clears the 205 ceiling (and is within the 1.5× plausibility cap) → new_ground.
   assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [{ weight: 225, reps: 3 }] }, HISTORY), true);
   // 200 is within the band, not new ground.
   assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [{ weight: 200, reps: 5 }] }, HISTORY), false);
@@ -86,6 +88,17 @@ test('engine gate: confirms new_ground only when today\'s top clears the engine\
   assert.equal(confirmTodayNewGround({}, HISTORY), false);
   assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [] }, HISTORY), false);
   assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [{ weight: 225, reps: 3 }] }, null), false);
+});
+
+test('engine gate: an ABSURD forged weight is rejected by the plausibility cap (review #948)', () => {
+  // todayTop is inherently client-asserted (the just-logged set isn't in the sheet).
+  // The gate can't fully verify it, but an implausible "PR" far above the 205 ceiling
+  // (a forged / fat-fingered weight) is rejected — killing the 99999-forgery path.
+  assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [{ weight: 99999, reps: 1 }] }, HISTORY), false,
+    'a wildly implausible weight must not confirm new_ground');
+  // 205 * 1.5 = 307.5 → 307 passes, 320 is rejected as implausible.
+  assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [{ weight: 305, reps: 1 }] }, HISTORY), true);
+  assert.equal(confirmTodayNewGround({ liftCode: 'BEN01', todaySets: [{ weight: 320, reps: 1 }] }, HISTORY), false);
 });
 
 // ── (1) the certified cell + the full gate chain (property test) ──────────────

@@ -147,11 +147,20 @@ function enrichCoachFacts(facts, allLog) {
 //
 // confirmTodayNewGround recomputes TODAY's progression verdict SERVER-SIDE from the
 // log — mirroring analyzeLift's just-logged branch (today's top working weight vs the
-// band over all prior rows for the lift, services/analytics.js) — and returns true
-// ONLY when the engine itself reads today's set as new_ground. The route gates
-// profanity on this independent signal, so a forged client verdict cannot reach the
-// profanity cell (defense-in-depth over grantRegister's cell logic + the suppressor).
-// Pure — no I/O; the caller passes the already-fetched log rows.
+// band over all prior rows for the lift, services/analytics.js). The route gates the
+// profanity permission on this signal.
+//
+// HONEST SCOPE (raised by the #948 review): the band is server-computed from allLog,
+// but `todayTop` comes from `facts.todaySets` — the just-logged set, which is NOT in
+// the sheet yet and is therefore inherently CLIENT-ASSERTED. So this gate raises the
+// bar (a forger must now claim a plausible PR weight, not merely flip a verdict flag)
+// but does NOT fully close client trust: a client that claims a believable new-ground
+// weight can still reach the cell. That residual is bounded here — an ABSURD forged
+// weight (e.g. 99999) is rejected by the plausibility cap below — and is low-impact
+// (single-owner, read-only endpoint, profanity staged OFF, worst case one swear in the
+// owner's own reply). The layer-3 suppressor is the other net. Residual filed in
+// BACKLOG. A full close would require reacting only to a WRITTEN set. Pure — no I/O.
+const MAX_PLAUSIBLE_PR_FACTOR = 1.5; // a real new-ground PR is incremental, not ≫ the prior ceiling
 function confirmTodayNewGround(facts, allLog) {
   if (!facts || typeof facts !== 'object' || !Array.isArray(allLog)) return false;
   const liftCode = typeof facts.liftCode === 'string' ? facts.liftCode.trim().toUpperCase() : '';
@@ -167,7 +176,12 @@ function confirmTodayNewGround(facts, allLog) {
   // today's set is not in the sheet yet → band is built from all prior rows.
   const band = progressionBand(rows);
   const verdict = progressionVerdict(todayTop, band);
-  return !!(verdict && verdict.level === 'new_ground');
+  if (!verdict || verdict.level !== 'new_ground') return false;
+  // Plausibility cap — reject an implausibly large "PR" (a forged / fat-fingered
+  // weight far above the prior ceiling). A genuine new ground is an increment.
+  const ceiling = band && Number.isFinite(band.ceiling) ? band.ceiling : null;
+  if (ceiling == null || todayTop > ceiling * MAX_PLAUSIBLE_PR_FACTOR) return false;
+  return true;
 }
 
 module.exports = { enrichCoachFacts, confirmTodayNewGround };

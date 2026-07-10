@@ -245,7 +245,7 @@ function sanitizeRegister(v) {
 // stays (clearly profane) even though bare "damn" does not.
 const PROFANITY_TOKENS = [
   /\bfuck\w*/i, /\bshit\w*/i, /\basshole[s]?\b/i, /\bbitch\w*/i,
-  /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick head\b/i,
+  /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick\s?heads?\b/i,
 ];
 const CELEBRATION_VOCAB = [
   /\bpersonal best\b/i, /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
