@@ -45,6 +45,11 @@
       "file": "services/coachMode.js",
       "expires": "2026-10-31",
       "roadmap": "docs/SOUL_PLAN_V1.md PR-B1 — coaching-mode enum, pure by design until PR-B4 (the mode/register wiring PR) imports its frozen enum into the sanitizer whitelist (stimulusGovernor lockstep pattern) and wires selectCoachMode into the live voice paths."
+    },
+    {
+      "file": "services/registerPermissions.js",
+      "expires": "2026-10-31",
+      "roadmap": "docs/SOUL_PLAN_V1.md PR-B2 — register permissions, pure by design until PR-B4 (the mode/register wiring PR) imports grantRegister + the calibration into the live voice paths and sanitizer whitelist."
     }
   ],
   "testOnly": [

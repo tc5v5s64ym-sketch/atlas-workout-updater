@@ -1068,6 +1068,10 @@ Five simulated conversational sessions against the LIVE deployed app (read-only,
 - **`[correctness]` discouragement has no engine trigger** — `reassure` is reachable only from the layoff-return state; discouragement language in chat has no deterministic tripwire. → PR-B5b (sequenced).
 - **Recorded readings (PM authority, documented in the module header; revisit in PR-B4 wiring review if wrong):** (1) a routine info-level `hold`/`load` rule decision does NOT map to `refuse` (mirrors `hasActionableRuleDecision` — info-level progression calls never break silence); `reject` at any severity, or `hold` at warning/error, refuses. (2) `PAIN_INJURY` maps to `safety` alongside `FORM_SAFETY` (pain is the highest safety class everywhere else). (3) `UNEXPECTED_EXCELLENCE` maps to `note`, not `praise` — praise stays reserved for an earned `beat`; if the owner wants positive-deviation praise, that is a one-line remap in PR-B4. (4) `new_ground` with a spent scarcity budget downgrades `celebrate` → `praise` (the PR-B3 fixture's expected downgrade lives here, not in B2).
 
+## Soul Plan PR-B2 — recorded reading (2026-07-10)
+
+- **D1's second certified profanity moment (earned comeback beat) is intensity-only in PR-B2.** `grantRegister` gives a comeback-beat praise MAX intensity (owner-enabled via `config/coaching/register.calibration.json` → `max_on_comeback_beat_praise`), but `profanity_ok` stays celebrate-cell-only — B2's own iron invariant pins `profanity_ok ⟹ mode==='celebrate'`, and there is no engine-certified "comeback beat" fact yet for the grant to trust. When PR-B4/B6 wire a deterministic comeback-beat signal, deciding whether that cell also earns profanity per D1 is a one-line calibration+schema change — do it consciously then, not silently now.
+
 ## Coach voice architecture — findings from PR-A1 review (2026-07-09)
 
 Five items filed per `docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md` §6 and `docs/SOUL_PLAN_V1.md` PR-A1 scope. Do not act on these out of sequence — the Soul Plan dependency chain governs.
