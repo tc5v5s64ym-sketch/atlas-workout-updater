@@ -95,6 +95,10 @@ test('clicking "Start this plan" POSTs /api/session-plans/accept with an accepte
   const startBtn = bubble.locator('.start-this-plan-btn');
   await expect(startBtn).toBeVisible();
 
+  // The acceptance boundary the canary flagged: merely RENDERING the Coach's Pick
+  // card is not acceptance — no /accept POST fires until the button is pressed.
+  expect(capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept')).toHaveLength(0);
+
   await startBtn.click();
 
   // Question 3: clicking it creates and persists the accepted plan identity via the
