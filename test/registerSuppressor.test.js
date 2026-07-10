@@ -26,9 +26,9 @@ function row(date, sessionId, canonical, liftCode, weight, reps, { rir = 2, note
 // ── (3) the suppressor: findRegisterViolations ────────────────────────────────
 
 test('suppressor: profanity in prose is a violation unless profanity_ok is granted', () => {
-  const withProfanity = 'Hell yes — that was a damn strong pull.';
-  assert.equal(findRegisterViolations(withProfanity, { mode: 'celebrate', register: { profanity_ok: false } }).length, 1,
-    'profanity without the permission is a violation');
+  const withProfanity = 'That was a shit-hot pull.';
+  assert.ok(findRegisterViolations(withProfanity, { mode: 'celebrate', register: { profanity_ok: false } })
+    .some(v => v.code === 'profanity_without_permission'), 'profanity without the permission is a violation');
   assert.equal(findRegisterViolations(withProfanity, { mode: 'celebrate', register: { profanity_ok: true } })
     .filter(v => v.code === 'profanity_without_permission').length, 0,
     'granted profanity is allowed');
@@ -36,6 +36,19 @@ test('suppressor: profanity in prose is a violation unless profanity_ok is grant
   assert.ok(findRegisterViolations(withProfanity, { mode: 'celebrate' }).some(v => v.code === 'profanity_without_permission'));
   // Clean prose → no violation.
   assert.deepEqual(findRegisterViolations('Solid work — right on target.', { mode: 'note', register: { profanity_ok: false } }), []);
+});
+
+test('suppressor: MILD casual words (hell/damn/crap) are NOT treated as profanity (review #948 narrowing)', () => {
+  // These double as normal coaching prose and are casual register, not the D1
+  // swearing gate — they must pass even when profanity is ungranted.
+  for (const line of ['That was a hell of a set.', 'Damn good work.', 'Your form on that last rep was crap.']) {
+    assert.deepEqual(
+      findRegisterViolations(line, { mode: 'note', register: { profanity_ok: false } }), [],
+      `"${line}" is casual register, not profanity`);
+  }
+  // But genuine profanity still fires.
+  assert.ok(findRegisterViolations('That was fucking strong.', { mode: 'note', register: { profanity_ok: false } })
+    .some(v => v.code === 'profanity_without_permission'));
 });
 
 test('suppressor: celebration/PR vocabulary is a violation outside celebrate/praise', () => {

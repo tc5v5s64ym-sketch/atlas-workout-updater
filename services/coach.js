@@ -237,9 +237,15 @@ function sanitizeRegister(v) {
 //   - profanity in the prose when profanity_ok is not granted;
 //   - celebration / PR vocabulary when the mode is not celebrate or praise.
 // Case-insensitive, word-boundary anchored. Never throws.
+// Genuine profanity only (the D1 ceiling). Deliberately EXCLUDES the mild words
+// that double as normal coaching prose — "hell of a set", "damn good", "that was
+// crap" — which are casual register (governed by casual_ok), not the swearing D1
+// gates. Suppressing those would strip natural buddy-direct lines to the
+// deterministic fallback for no trust benefit (review note, #948). "goddamn"
+// stays (clearly profane) even though bare "damn" does not.
 const PROFANITY_TOKENS = [
-  /\bfuck\w*/i, /\bshit\w*/i, /\bass(?:hole|es)?\b/i, /\bdamn\b/i, /\bhell\b/i,
-  /\bbitch\w*/i, /\bcrap\b/i, /\bbastard\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i,
+  /\bfuck\w*/i, /\bshit\w*/i, /\basshole[s]?\b/i, /\bbitch\w*/i,
+  /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick head\b/i,
 ];
 const CELEBRATION_VOCAB = [
   /\bpersonal best\b/i, /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
