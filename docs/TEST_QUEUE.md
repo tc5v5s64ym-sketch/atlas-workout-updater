@@ -71,6 +71,18 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | If profanity appears outside the certified cell or on unearned/forged input, STOP and set `ATLAS_COACH_PROFANITY` off (or `ownerPrefs.profanity_enabled=false`) — that is a trust regression; file the finding and fix the gate/suppressor before re-enabling. If mode/register misread the moment, tune `selectCoachMode`/the grant, not the model. |
 
+### LT-011 — Reassure voice live behavior (Soul Plan PR-B5b Part 2) — ⛔ BLOCKED-FOR-DATA + finding (agent live test 2026-07-10)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-011 |
+| **Related PR / feature** | Soul Plan PR-B5b Part 2 (#961) — the chat voice words `coach_mode: 'reassure'` for an explicit discouragement message: acknowledge briefly, zoom out with real snapshot facts, one next move, thin history = say less, no filler, defer to safety/recovery. |
+| **Shell / app version expected** | #961 deployed (verified live 2026-07-10 against `https://atlas-workout-updater.onrender.com`; `/version` = `698120b`, `pr:961`). |
+| **Steps** | Agent-performed read-only probes (`POST /api/coach/chat`): (a) discouragement message naming a lift; (a2) discouragement message with NO lift named; (c) tiredness message; (d) pain mention. |
+| **Result** | **⛔ BLOCKED-FOR-DATA — reassure could not be exercised live on the current production account (no manufactured data).** What WAS confirmed: (1) **deploy live** (#961); (2) **recovery precedence holds** — "I'm exhausted" → `source:engine` recovery routing, not reassure; (3) **challenge-over-reassure precedence holds** — a no-lift discouragement message ("I feel like I'm going backwards, frustrated") returned a **challenge** reply ("Bench Press has come in under target in 5 of the last 5 sessions…"), because the athlete has a standing `consistent_underperformance` pattern on Bench, so `deriveChatCoachMode` resolves to `challenge` on **every** chat turn (ratified B1 precedence: challenge > reassure). **⇒ reassure is dormant for any athlete who has a standing consistent_underperformance pattern.** Additional shadow: a discouragement message that NAMES a liftable exercise ("bench is stuck") is answered by a deterministic lift-recommendation lane before the mode/Gemini path. |
+| **Owner decision surfaced** | Is the challenge-shadow intended? Options: (A) keep it — challenge > reassure is ratified (B1); reassure only fires when there is no challenge-worthy pattern (accept it stays rare). (B) let an EXPLICIT discouragement MESSAGE override a standing challenge PATTERN (reassure > challenge for the message-intent case) — a precedence change, owner-gated. (C) also let reassure/challenge run ahead of the deterministic lift-answer lanes for a discouraged message. **No change made — surfaced for owner decision; precedence is ratified and not re-litigated unilaterally.** |
+| **Follow-up** | Re-run when a qualifying athlete-moment exists (a discouragement message with no active consistent_underperformance pattern), or after the owner's precedence decision. The wiring itself is unit/route-tested (`npm test` 5020 pass) and byte-correct; only the LIVE observation is blocked. |
+
 ### LT-009 — Challenge voice live behavior (Soul Plan PR-B5a sandbag challenge) — ✅ PASS (agent live test 2026-07-10)
 
 | Field | Value |
