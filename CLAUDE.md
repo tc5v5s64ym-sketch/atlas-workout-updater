@@ -141,6 +141,16 @@ updated_at | training_state | deload_protocol | deload_reason | deload_start_dat
 
 **Append-only**: each state change appends a row; the current state is the *last* row (keeps an audit trail). Read/written by `services/deloadState.js`, never by hand. These are **system-state writes, not logged sets** — they do NOT route through the preview→approve→write trust loop, carry no `write_id`, and never touch `Log_Cleaned`/`Effort`. Same schema-migration rule as the other tabs: do not add, remove, or reorder columns without explicit owner approval.
 
+### Session_Plans tab (13 columns)
+
+The durable, **event-sourced** record of accepted/final plan state (Decision Desk #952, owner-approved Option A) — the data layer that unblocks the drift detector's `skipped_pattern_streak` / `plan_deviation` kinds. Columns in this order:
+
+```
+idempotency_key | session_id | session_date | plan_version | event_type | plan_item_id | planned_order | planned_lift_code | movement_pattern | outcome | performed_lift_code | closeout_status | recorded_at
+```
+
+**Append-only, never mutated.** Three event types (`event_type`, frozen): `plan_accepted` (one row per accepted planned item, `outcome='planned'`), `item_outcome` (an item's final `outcome` ∈ `completed | skipped | substituted`; `performed_lift_code` set only when `substituted`), `session_closeout` (session-level `closeout_status`). `outcome` is frozen to `planned | completed | skipped | substituted`. The reader folds by `(session_id + plan_version + plan_item_id)`, last-wins. Every event carries a deterministic `idempotency_key` (a hash of the event's semantic identity, never the timestamp) so retries collapse. **Canonical lift CODES only** (`planned_lift_code` / `performed_lift_code`) — never free-text lift identity as the contract. **No loads, reps, target RIR, or progression data** in this version. Rows are built by `services/sessionPlanEvents.js` (pure); the writer (`services/sessionPlanStore.js`) and its live capture wiring land in later PRs. Like the other typed tabs it is **optional** (`config/sheetContract.js`) — the future write route returns 503 until the tab exists — and these are **system-state writes, not logged sets**: no `write_id`, never through the preview→approve→write trust loop, never touching `Log_Cleaned`/`Effort`. Same schema-migration rule: do not add, remove, or reorder columns without explicit owner approval.
+
 ---
 
 ## Coaching voice (LLM)

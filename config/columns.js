@@ -62,6 +62,33 @@ const deloadStateColumns = [
   'deload_exit_criteria'
 ];
 
+// Session_Plans — the durable, append-only record of ACCEPTED/FINAL plan state
+// (Decision Desk #952, owner-approved Option A). Event-sourced: `plan_accepted`
+// item events are written when a plan is accepted; `item_outcome` and
+// `session_closeout` events are appended later. Prior rows are NEVER mutated; the
+// reader (PR-C) folds by (session_id + plan_version + plan_item_id), last-wins.
+// Column order is OWNER-APPROVED (do not add/remove/reorder without a schema
+// migration + owner approval). Like Constraints/Deload_State/Modality_Log it is a
+// system-state tab, NOT logged sets — these writes never route through
+// preview→approve→write, carry no write_id, and never touch Log_Cleaned/Effort.
+// Canonical lift CODES only (never free-text lift identity); no loads/reps/RIR/
+// progression data in this first version.
+const sessionPlansColumns = [
+  'idempotency_key',
+  'session_id',
+  'session_date',
+  'plan_version',
+  'event_type',
+  'plan_item_id',
+  'planned_order',
+  'planned_lift_code',
+  'movement_pattern',
+  'outcome',
+  'performed_lift_code',
+  'closeout_status',
+  'recorded_at'
+];
+
 // Modality_Log — the persistence target for NON-slash modality logs recognized by
 // services/multiModalityParser.js (timed holds / steady cardio / cardio intervals
 // / circuits — PR 486). This is a NEW typed sibling tab; it leaves the 12-col
@@ -186,6 +213,7 @@ module.exports = {
   constraintsColumns,
   effortRowFieldAliases,
   deloadStateColumns,
+  sessionPlansColumns,
   modalityLogColumns,
   modalityLogRowFieldAliases,
   flightRecorderColumns
