@@ -104,6 +104,9 @@ test('rows after asOf are invisible; warm-ups never create an event', () => {
     [...BASE, row('2026-06-08', 'S3', 'Bench Press', 245, { notes: 'warm-up' }),
       row('2026-06-08', 'S3', 'Bench Press', 188)],
     { asOf: '2026-06-08' });
+  // INTENTIONAL divergence from the live coach top (analytics.js:720-722 includes
+  // warm-ups in progressionTop): this module excludes them, matching the band, so a
+  // tagged warm-up never manufactures a PR. PR-B4 must not assume byte-parity here.
   assert.equal(warm.last_new_ground, null, 'a tagged heavy warm-up is not new ground');
 });
 

@@ -10,14 +10,27 @@
 //   { scarcityClear, last_new_ground: {lift, date}|null,
 //     new_ground_last_7d, new_ground_last_30d }
 //
-// SEMANTICS — identical to the live new_ground verdict path, by construction:
+// SEMANTICS — reconstructs the live new_ground verdict from the SAME helpers:
 // a historical new-ground EVENT on session day D for a lift is detected by
-// running the SAME two live helpers the coach uses today —
-// progressionVerdict(topOfDayD, progressionBand(all prior rows for the lift))
-// — and checking level === 'new_ground'. Both helpers are IMPORTED from
+// running progressionVerdict(topOfDayD, progressionBand(all prior rows for the
+// lift)) and checking level === 'new_ground'. Both helpers are IMPORTED from
 // services/analytics.js (per-session top working weights, note-tagged warm-ups
-// excluded, ceiling = max prior session top, strictly-greater comparison).
-// No re-derived PR math; if the live verdict changes, this changes with it.
+// excluded from the band, ceiling = max prior session top, strictly-greater
+// comparison). No re-derived PR math; if the band/verdict logic changes, this
+// changes with it.
+//
+// ONE INTENTIONAL DIFFERENCE from the live coach top: the live `analyzeLift`
+// path (services/analytics.js:720-722) computes its session `progressionTop`
+// filtering only on a positive weight — it INCLUDES a tagged heavy warm-up —
+// while its band excludes warm-ups. This module excludes warm-ups from the
+// event-day top too, matching the band. So for a session whose max weight is a
+// tagged warm-up, this module suppresses the "event" while the live verdict
+// could read new_ground. That is the more-correct reading (a warm-up must never
+// manufacture a working-weight PR — the reason warm-up tagging exists), but it
+// means PR-B4 wiring must NOT assume byte-parity between this scarcity signal
+// and a given live verdict on that edge. Reconciling the live `progressionTop`
+// to exclude warm-ups is a separate trust-sensitive analytics change — filed in
+// BACKLOG for PR-B4, not done here.
 //
 // Scarcity: `caps` defaults from config/coaching/register.calibration.json
 // (PR-B2's owner data: profanity.cap → { max_per_window, rolling_days }).
