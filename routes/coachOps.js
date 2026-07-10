@@ -27,7 +27,7 @@ const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
 const coachPolish = require('../services/coachPolish');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso } = require('../services/analytics');
-const { enrichCoachFacts } = require('../services/liveIntelligence');
+const { enrichCoachFacts, confirmTodayNewGround } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { selectCoachMode } = require('../services/coachMode');
 const { grantRegister } = require('../services/registerPermissions');
@@ -333,7 +333,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   // code (finalizeSetVoice), OR the swap is a good pivot whose deterministic line
   // owns the acknowledgement / the prose would lecture it. Returns
   // { message, voice, sub_voice }. Read-only — never writes.
-  function finalizeCoachVoice(message, voiceBase, subVoiceBase) {
+  function finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx = null) {
     const setFin = finalizeSetVoice(message, voiceBase);
     let outMessage = setFin.message;
     let sub_voice = null;
@@ -342,6 +342,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const contradictions = findSubstitutionContradictions(goodPivot, message);
       sub_voice = { ...subVoiceBase, contradictions };
       if (subVoiceBase.suppress_generic_prose || contradictions.length > 0) outMessage = null;
+    }
+    // PR-B4 slice 3 — register suppressor. The deterministic engine wins here too:
+    // if the LLM prose outran its granted register (a swear word without
+    // profanity_ok, or celebration/PR vocabulary outside an earned celebrate/praise
+    // moment), suppress the prose (→ null) so the client falls back to the
+    // deterministic line — exactly like a reason-code contradiction.
+    if (outMessage && registerCtx && typeof coach.findRegisterViolations === 'function') {
+      const violations = coach.findRegisterViolations(outMessage, registerCtx);
+      if (violations.length > 0) outMessage = null;
     }
     return { message: outMessage, voice: setFin.voice, sub_voice };
   }
@@ -420,12 +429,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // liftCode (no rows in hand — the mode falls back to its scarcity-clear default,
     // which only ever downgrades celebrate→praise, never up).
     let scarcity = null;
+    // PR-B4 slice 3 — the engine's OWN read of whether today's set is new_ground,
+    // recomputed server-side (never trusting the client's rec.progression_verdict).
+    // Gates the profanity permission below so a forged verdict can't reach the cell.
+    let engineNewGround = false;
     if (rawFacts.liftCode) {
       try {
         const allLog = await getSheetRows(logSheetName);
         facts = enrichCoachFacts(rawFacts, allLog);
         athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
         scarcity = computeCelebrationScarcity(allLog, { asOf: todayIso() });
+        engineNewGround = confirmTodayNewGround(rawFacts, allLog);
       } catch (_) {
         // Keep client facts as-is if Sheets read or enrichment fails.
       }
@@ -509,6 +523,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // gate the register on an engine-only signal). Also complete the selectCoachMode
     // input set then (rule_decisions/verdict/memory_patterns/layoff) so a `reject`
     // rule reaches its conservative `refuse` floor. Filed in BACKLOG (B4-3).
+    let registerCtx = null;
     if (isSetLike) {
       const rec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
       const scarcityClear = scarcity ? scarcity.scarcityClear !== false : true;
@@ -519,7 +534,22 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         progression_verdict: rec.progression_verdict,
         substitution: facts.substitution,
       }, { scarcityClear }).mode;
-      const register = grantRegister({ mode, scarcity: { scarcityClear } });
+      // Profanity is OFF in production by default — activated only by the owner
+      // setting ATLAS_COACH_PROFANITY=on on Render (after reviewing mode/register in
+      // the flight recorder, per the plan's live-validation gate). This mirrors the
+      // ATLAS_COACH_ENGINE / ATLAS_INTENT_ROUTER staging pattern; the ratified D1
+      // calibration file stays enabled:true, and this env gate defaults it off.
+      const profanityLive = process.env.ATLAS_COACH_PROFANITY === 'on';
+      const register = grantRegister({
+        mode,
+        scarcity: { scarcityClear },
+        ownerPrefs: { profanity_enabled: profanityLive },
+      });
+      // Engine-confirmed-new_ground gate (trust): profanity requires the engine's OWN
+      // recompute, not just the client-derivable celebrate mode. Belt-and-suspenders
+      // over grantRegister's cell + the finalizeCoachVoice suppressor.
+      if (register.profanity_ok && !engineNewGround) register.profanity_ok = false;
+      registerCtx = { mode, register };
       facts = { ...facts, coach_mode: mode, register };
     } else {
       facts = { ...facts, coach_mode: null, register: null };
@@ -530,8 +560,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         ? await coach.generatePlanMessage(facts)
         : await coach.generateCoachMessage(facts);
       // Deterministic engine controls the coaching meaning: suppress the LLM prose
-      // when it contradicts (or would speak over) a non-neutral set-effort signal.
-      const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase);
+      // when it contradicts (or would speak over) a non-neutral set-effort signal,
+      // or when it outruns its granted register (slice 3).
+      const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx);
       return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras });
     } catch (error) {
       // Degrade gracefully: tell the client to use its templated fallback rather

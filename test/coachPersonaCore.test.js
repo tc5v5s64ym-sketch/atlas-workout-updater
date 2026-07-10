@@ -132,9 +132,17 @@ test('register block: the engine grants the level; the model never chooses its o
     'register must be subordinate to the grounding rules (no invented numbers even at max)');
 });
 
-test('register block: profanity is NOT described in this slice (it lands with its suppressor in B4-3)', () => {
-  assert.doesNotMatch(PERSONA_CORE, /profanit|swear|curse|\bfuck|\bshit/i,
-    'the persona core must NOT mention profanity until B4-3 wires it with its deterministic suppressor');
+test('register block (B4-3): profanity is gated on the engine grant, and the rule itself carries no swear words', () => {
+  // The profanity RULE is now present (shipped with its suppressor in B4-3)…
+  assert.match(PERSONA_CORE, /PROFANITY is the engine's call, never yours/,
+    'the register block must carry the profanity rule');
+  assert.match(PERSONA_CORE, /ONLY when the facts' "register\.profanity_ok" is exactly true/,
+    'profanity must be gated on the engine-granted register.profanity_ok');
+  assert.match(PERSONA_CORE, /NEVER in a safety, pain, correction, or uncertainty moment/i,
+    'the D1 hard-ban contexts must be stated');
+  // …but the instruction must not itself contain actual profanity (it describes the rule).
+  assert.doesNotMatch(PERSONA_CORE, /\bfuck\w*|\bshit\w*|\bbitch\w*/i,
+    'the persona core states the rule without containing swear words');
 });
 
 test('register block reaches every voice via the core, exactly once', () => {

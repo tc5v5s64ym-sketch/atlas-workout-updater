@@ -22,6 +22,7 @@
  */
 
 const { resolveWorkingWeight, computeBenchmark } = require('./exerciseBenchmark');
+const { normalizeLogRow, progressionBand, progressionVerdict } = require('./analytics');
 const { detectTrend } = require('./trendDetector');
 const { computeReadiness } = require('./readinessSignal');
 const { computeExpectedPerformance } = require('./expectedPerformance');
@@ -136,4 +137,37 @@ function enrichCoachFacts(facts, allLog) {
   return { ...facts, rec, deviation, evidence_context };
 }
 
-module.exports = { enrichCoachFacts };
+// PR-B4 slice 3 — engine-confirmed new-ground gate for the profanity permission.
+//
+// The coaching MODE (services/coachMode.js) is derived from `rec.progression_verdict`
+// / `rec.effort_verdict`, which are CLIENT-INFLUENCED (enrichCoachFacts preserves the
+// client's `rec`). A client could forge `progression_verdict.level:'new_ground'` →
+// `celebrate` → `max` → the certified profanity cell. So the forwarded profanity
+// permission must NOT be gated on the client-derivable mode alone.
+//
+// confirmTodayNewGround recomputes TODAY's progression verdict SERVER-SIDE from the
+// log — mirroring analyzeLift's just-logged branch (today's top working weight vs the
+// band over all prior rows for the lift, services/analytics.js) — and returns true
+// ONLY when the engine itself reads today's set as new_ground. The route gates
+// profanity on this independent signal, so a forged client verdict cannot reach the
+// profanity cell (defense-in-depth over grantRegister's cell logic + the suppressor).
+// Pure — no I/O; the caller passes the already-fetched log rows.
+function confirmTodayNewGround(facts, allLog) {
+  if (!facts || typeof facts !== 'object' || !Array.isArray(allLog)) return false;
+  const liftCode = typeof facts.liftCode === 'string' ? facts.liftCode.trim().toUpperCase() : '';
+  if (!liftCode) return false;
+  const todaySets = Array.isArray(facts.todaySets) ? facts.todaySets : [];
+  const todayTop = todaySets.reduce((m, s) => {
+    const w = Number(s && s.weight);
+    return Number.isFinite(w) && w > m ? w : m;
+  }, 0);
+  if (!(todayTop > 0)) return false;
+  const rows = allLog.map(normalizeLogRow).filter(r => r && r.lift_code === liftCode);
+  if (!rows.length) return false;
+  // today's set is not in the sheet yet → band is built from all prior rows.
+  const band = progressionBand(rows);
+  const verdict = progressionVerdict(todayTop, band);
+  return !!(verdict && verdict.level === 'new_ground');
+}
+
+module.exports = { enrichCoachFacts, confirmTodayNewGround };

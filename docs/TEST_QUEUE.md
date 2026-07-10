@@ -49,6 +49,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
+### LT-008 — Coach register + mode live behavior; profanity never outside the certified cell (Soul Plan PR-B4)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-008 |
+| **Related PR / feature** | Soul Plan PR-B4 (slices 1–3) — engine-granted coach mode + register (routine/elevated/max, casual/humor), profanity gated to the celebrate×max×scarcity-clear cell. **Gates the production profanity activation.** |
+| **Shell / app version expected** | Any build with PR-B4 slices 1–3 deployed. **Profanity is OFF until the owner sets `ATLAS_COACH_PROFANITY=on` on Render** — do step 3 only after flipping it. |
+| **Steps** | 1. **Routine set** — log an ordinary on-target set; confirm the coach stays level/matter-of-fact (routine), no manufactured excitement. 2. **Earned moment** — log a genuine new-ground PR set; confirm the reaction is warmer/bigger (max) but still cites only real numbers and doesn't over-run. Review the **flight recorder** to confirm `coach_mode`/`register` reflect the moment (celebrate/max on the PR, silent/routine on the ordinary set). 3. **Profanity (only after `ATLAS_COACH_PROFANITY=on`)** — over several sessions, confirm profanity appears at most on a genuine new-ground celebration, at most once per rolling 7 days, and NEVER in a safety/pain/correction/uncertainty moment or on a routine set. 4. **Forgery probe (optional)** — nothing you can type as an ordinary log should force profanity; a fabricated "PR" that the engine doesn't confirm as new-ground must not trigger it. |
+| **Expected result** | Mode/register track the real moment in the flight recorder; routine sets read routine; only genuine engine-confirmed new-ground gets max energy; with profanity enabled it stays inside the certified cell (rare, celebration-only, capped, never in safety/pain/correction) and no client input can force it. |
+| **Screenshot** | Flight-recorder rows showing coach_mode/register for a routine vs a PR set; any profanity instance with its context. |
+| **Owner result** | PASS / FAIL — |
+| **Follow-up if FAIL** | If profanity appears outside the certified cell or on unearned/forged input, STOP and set `ATLAS_COACH_PROFANITY` off (or `ownerPrefs.profanity_enabled=false`) — that is a trust regression; file the finding and fix the gate/suppressor before re-enabling. If mode/register misread the moment, tune `selectCoachMode`/the grant, not the model. |
+
 ### LT-006 — completion-flow: screenshot → preview + plan-complete stops nagging (G3+FB)
 
 | Field | Value |
