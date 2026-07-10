@@ -495,6 +495,20 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // coach_mode + { intensity, casual_ok, humor_ok } (profanity_ok withheld until
     // its suppressor lands), and the prompt does not yet instruct their use — so
     // there is no behavior change, only new engine facts on the payload.
+    //
+    // ⚠️ B4-3 TRUST GATE (must fix before profanity_ok is ever forwarded):
+    // `rec.progression_verdict` / `rec.effort_verdict` are CLIENT-INFLUENCED —
+    // enrichCoachFacts (services/liveIntelligence.js) preserves the client's `rec`
+    // and only overwrites working_weight/trend/readiness_signal, so a client could
+    // POST progression_verdict.level:'new_ground' → celebrate → max. Scarcity is
+    // server-computed (not forgeable), but on a scarcity-clear lift the forged
+    // verdict is the last lever to the certified profanity cell. Harmless HERE
+    // (profanity dropped, prompt unchanged), but B4-3 MUST gate the forwarded
+    // profanity permission on an ENGINE-recomputed verdict, never this client-
+    // derivable mode (recompute the verdicts server-side before mode selection, or
+    // gate the register on an engine-only signal). Also complete the selectCoachMode
+    // input set then (rule_decisions/verdict/memory_patterns/layoff) so a `reject`
+    // rule reaches its conservative `refuse` floor. Filed in BACKLOG (B4-3).
     if (isSetLike) {
       const rec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
       const scarcityClear = scarcity ? scarcity.scarcityClear !== false : true;
