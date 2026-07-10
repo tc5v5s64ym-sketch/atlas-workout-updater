@@ -152,3 +152,13 @@ test('idempotency: key is stable across the different fold dimensions', () => {
   // exposed idempotencyKey() matches the row's embedded key
   assert.equal(idempotencyKey({ event_type: 'item_outcome', session_id: SESSION.session_id, plan_version: SESSION.plan_version, plan_item_id: 'i1', outcome: 'completed', performed_lift_code: '', closeout_status: '' }), k1);
 });
+
+test('idempotency: golden hashes are pinned (any delimiter/field/order change is a regression)', () => {
+  // The idempotency_key must stay stable FOREVER — it dedups against already-written
+  // rows and the PR-C reader folds on it. Pin the absolute digest for fixed events so
+  // an accidental change to the KEY_DELIM byte, the field set, or the field order is
+  // caught here instead of silently re-keying the tab. (Review #956.)
+  assert.equal(buildPlanAcceptedEvents(SESSION, [{ plan_item_id: 'i1', planned_order: 1, planned_lift_code: 'BEN01', movement_pattern: 'horizontal_push' }])[0][IDX.idempotency_key], 'b66f4b794ea54b23');
+  assert.equal(buildItemOutcomeEvent(SESSION, { plan_item_id: 'i1', planned_lift_code: 'BEN01', outcome: 'completed' })[IDX.idempotency_key], 'e9b9f567a59f0014');
+  assert.equal(buildSessionCloseoutEvent(SESSION, 'finalized')[IDX.idempotency_key], 'e0344432eee1f7ec');
+});
