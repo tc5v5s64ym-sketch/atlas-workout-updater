@@ -1762,6 +1762,32 @@ test('LT-007: coach/chat — session_tally with bench sets reaches the coach con
   }
 });
 
+test('B5 foundation: coach/chat wires an engine coach_mode into the chat context', async () => {
+  // The chat path now derives a coaching MODE (deriveChatCoachMode) into the context
+  // it hands the coach, exactly as the set-reaction path does — the seam B5 Part 2
+  // attaches challenge/reassure to. With no memory pattern in the default fixture the
+  // mode floors to the honest 'silent'; the derivation logic (memory_patterns →
+  // challenge) is pinned in test/chatCoachMode.test.js. Here we assert the route
+  // WIRING: coach_mode is present and a valid mode, and register stays null (no
+  // register/profanity expansion in this foundation).
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my training going?' })
+    });
+    assert.equal(response.status, 200);
+    const ctx = fakeCoachState.lastChatContext;
+    assert.ok(ctx, 'buildChatContext output must reach the coach');
+    assert.equal(ctx.coach_mode, 'silent', 'default fixture (no memory pattern) → silent');
+    assert.ok(!('register' in ctx) || ctx.register == null, 'no register granted on the chat path (B4-4 deferred)');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
 test('LT-007: coach/chat — session_tally per_set weights reach the coach context intact', async () => {
   // LT-007 check 2: "what weights did I just use on bench?" must be answerable
   // from session_tally.exercises[0].per_set — buildChatContext must forward

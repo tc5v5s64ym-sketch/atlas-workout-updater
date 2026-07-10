@@ -30,6 +30,7 @@ const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, r
 const { enrichCoachFacts, confirmTodayNewGround } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { selectCoachMode } = require('../services/coachMode');
+const { deriveChatCoachMode } = require('../services/chatCoachMode');
 const { grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
@@ -685,7 +686,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // context is already built from (zero additional Sheets reads). Constructed
       // fresh here — never read from clientContext — so it is engine-only; bounded
       // again by coach.sanitizeChatContext's explicit whitelist.
-      athlete_identity: buildAthleteIdentity(logRows, { asOf: todayIso() })
+      athlete_identity: buildAthleteIdentity(logRows, { asOf: todayIso() }),
+      // B5 foundation — the engine-decided coaching MODE for the chat voice, derived
+      // (deriveChatCoachMode) from the SAME snapshot facts just assembled above; no
+      // new detection, no extra reads. Today only `memory_patterns` → `challenge`;
+      // else `silent`. Additive/plumbing like the set-reaction path (PR-B4 slice 1):
+      // the chat prompt does not yet instruct its use, so there is no behavior change
+      // — this establishes the seam B5 Part 2 attaches challenge/reassure to. Register
+      // is intentionally NOT granted here (that is B4-4); the sanitizer floors it to
+      // null. The route resolves the higher-precedence tiredness/recovery moment
+      // before the LLM, so this mode only ever rides the non-tired turn.
+      coach_mode: deriveChatCoachMode({ memory_patterns })
     };
   }
 
