@@ -22,14 +22,14 @@ const epBody = app.slice(epStart, app.indexOf('\nfunction ', epStart + 10));
 const advStart = app.indexOf('function advancePlannedSession(');
 const advBody = app.slice(advStart, app.indexOf('\nfunction ', advStart + 10));
 
-test('app.js imports the pure closeout orchestrator', () => {
-  assert.match(app, /import \{ runCloseout \} from '\.\/planCloseout\.js';/);
+test('app.js imports the pure closeout orchestrator (aliased to avoid the existing save-flow runCloseout)', () => {
+  assert.match(app, /import \{ runCloseout as runPlanCloseout \} from '\.\/planCloseout\.js';/);
 });
 
 test('emitPlanCloseout is a non-blocking sidecar POST to /closeout, gated on an accepted plan', () => {
   assert.match(emitBlock, /plan\.accepted !== true\) return;/, 'only accepted sessions emit closeout');
   assert.match(emitBlock, /\/api\/session-plans\/closeout/, 'posts to the closeout endpoint');
-  assert.match(emitBlock, /runCloseout\(/, 'delegates to the pure orchestrator');
+  assert.match(emitBlock, /runPlanCloseout\(/, 'delegates to the pure orchestrator');
   assert.match(emitBlock, /\.catch\(/, 'fire-and-forget — never blocks the close/discard');
 });
 

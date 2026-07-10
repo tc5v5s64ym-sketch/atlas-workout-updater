@@ -43,7 +43,7 @@ import { runOutcome } from './planOutcome.js';
 // PR-H — explicit session closeout (finalized / abandoned). Pure/DI; wired ONLY at
 // the explicit Finish/End-session and Start-over/discard affordances (never inside
 // the implicit endPlannedSession cleanup paths).
-import { runCloseout } from './planCloseout.js';
+import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased — app.js already has a save-flow runCloseout()
 
 const ATLAS_SHELL_BUILD = 'v125';
 
@@ -1729,11 +1729,11 @@ function emitPlanItemOutcome(outcomeInput) {
 function emitPlanCloseout(closeoutStatus) {
   const plan = getActivePlannedSession();
   if (!plan || plan.accepted !== true) return; // closeout only for an accepted session
-  runCloseout(plan, closeoutStatus, {
+  runPlanCloseout(plan, closeoutStatus, {
     postCloseout: (payload) => api('/api/session-plans/closeout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     }),
-  }).catch(() => { /* runCloseout never throws; belt-and-suspenders */ });
+  }).catch(() => { /* runPlanCloseout never throws; belt-and-suspenders */ });
 }
 
 // ── P0 Sub-PR 2a: deterministic plan mutation from explicit user intent ────────
