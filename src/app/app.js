@@ -40,8 +40,12 @@ import { runAcceptance } from './planAcceptance.js';
 // PR-G1 — explicit item-outcome capture (skipped / substituted). Pure/DI; app.js
 // fires it non-blocking from the explicit skip/substitution handlers.
 import { runOutcome } from './planOutcome.js';
+// PR-H — explicit session closeout (finalized / abandoned). Pure/DI; wired ONLY at
+// the explicit Finish/End-session and Start-over/discard affordances (never inside
+// the implicit endPlannedSession cleanup paths).
+import { runCloseout } from './planCloseout.js';
 
-const ATLAS_SHELL_BUILD = 'v124';
+const ATLAS_SHELL_BUILD = 'v125';
 
 
 
@@ -1716,6 +1720,22 @@ function emitPlanItemOutcome(outcomeInput) {
   }).catch(() => { /* runOutcome never throws; belt-and-suspenders */ });
 }
 
+// PR-H — fire an EXPLICIT session closeout (finalized / abandoned) for the current
+// accepted plan, non-blocking. Reads the immutable session_id + plan_version off the
+// plan and fails closed for a non-accepted session. Wired ONLY at the explicit
+// Finish/End-session and Start-over/discard affordances — NEVER inside the implicit
+// endPlannedSession cleanup paths. Fire-and-forget: the local close/discard proceeds
+// regardless; a sidecar failure never blocks it, and retries reuse the same identity.
+function emitPlanCloseout(closeoutStatus) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return; // closeout only for an accepted session
+  runCloseout(plan, closeoutStatus, {
+    postCloseout: (payload) => api('/api/session-plans/closeout', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    }),
+  }).catch(() => { /* runCloseout never throws; belt-and-suspenders */ });
+}
+
 // ── P0 Sub-PR 2a: deterministic plan mutation from explicit user intent ────────
 // A swap/skip the lifter STATES ("skip deadlifts and do squats") mutates the
 // canonical session IMMEDIATELY — the app state owns the change, not LLM prose.
@@ -2138,7 +2158,10 @@ function renderActiveSessionBanner() {
     }
   }
   const endBtn = el('button', { type: 'button', class: 'secondary', text: 'End session' });
-  endBtn.addEventListener('click', endPlannedSession);
+  // PR-H: an explicit "End session" is a `finalized` closeout (emit BEFORE the plan
+  // is cleared, so its session_id/plan_version are still in scope). Gated on an
+  // accepted plan; the implicit endPlannedSession callers do NOT emit.
+  endBtn.addEventListener('click', () => { emitPlanCloseout('finalized'); endPlannedSession(); });
   row.appendChild(endBtn);
   banner.appendChild(row);
   // Collapsed by default (owner directive 2026-07-03): the card takes space
@@ -3908,7 +3931,9 @@ function setFinishSessionVisible(visible) {
   const btn = typeof document !== 'undefined' ? document.getElementById('finish-session-btn') : null;
   if (btn) btn.hidden = !visible;
 }
-document.getElementById('finish-session-btn')?.addEventListener('click', () => { handleLogIt(); });
+// PR-H: the explicit "Finish session" affordance is a `finalized` closeout (emit
+// before the save-review flow; gated on an accepted plan → no-op for freestyle).
+document.getElementById('finish-session-btn')?.addEventListener('click', () => { emitPlanCloseout('finalized'); handleLogIt(); });
 document.addEventListener('atlas:set-logged', () => setFinishSessionVisible(true));
 document.addEventListener('atlas:session-reset', () => setFinishSessionVisible(false));
 // The pin re-derives (and hides) on every session reset — same signal that
@@ -4161,7 +4186,10 @@ function renderResumeNotice(setCount, sets) {
   notice.innerHTML = '';
   // Trash layer sits behind the content; swiping the content left exposes it.
   const trash = el('button', { type: 'button', class: 'resume-trash', title: 'Discard restored session', 'aria-label': 'Discard restored session', text: '🗑' });
-  trash.addEventListener('click', discardRestoredSession);
+  // PR-H: the explicit trash discard of a restored session is an `abandoned` closeout
+  // (emit before discardRestoredSession clears state; gated on an accepted plan). Kept
+  // at the click site so discardRestoredSession stays pure for its eval-harness tests.
+  trash.addEventListener('click', () => { emitPlanCloseout('abandoned'); discardRestoredSession(); });
   notice.appendChild(trash);
   // Content layer (slides). Tap to view the recovered workout.
   const content = el('div', { class: 'resume-content' }, [
@@ -4973,7 +5001,9 @@ function startOverWorkout() {
   workoutTextInput.focus();
 }
 
-document.getElementById('start-over-btn')?.addEventListener('click', startOverWorkout);
+// PR-H: an explicit "Start over" is an `abandoned` closeout (emit before the state
+// is cleared; gated on an accepted plan → no-op for freestyle).
+document.getElementById('start-over-btn')?.addEventListener('click', () => { emitPlanCloseout('abandoned'); startOverWorkout(); });
 
 // End-of-session compilation: take the in-memory chat history, ask the server
 // to extract the workout sets the lifter logged conversationally, then populate
