@@ -555,9 +555,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       facts = { ...facts, coach_mode: null, register: null };
       // Plan / non-set voices carry no register grant, but the suppressor should
       // still backstop them (layer 3 must cover every LLM voice): a conservative
-      // floor ctx strips any un-granted profanity or celebration/PR vocab the plan
-      // model emits, into the same deterministic-fallback ladder.
-      registerCtx = { mode: null, register: { profanity_ok: false } };
+      // floor ctx strips any un-granted profanity the plan model emits. profanity_only
+      // skips the earned-moment celebration/PR-vocab check — the plan "why today"
+      // voice may legitimately reference a real personal best in its rationale.
+      registerCtx = { mode: null, register: { profanity_ok: false }, profanity_only: true };
     }
 
     try {

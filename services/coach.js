@@ -251,6 +251,11 @@ const CELEBRATION_VOCAB = [
   /\bpersonal best\b/i, /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
   /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
 ];
+// ctx.profanity_only (bool): when true, run ONLY the profanity check and skip the
+// celebration/PR-vocabulary check. Used by the plan / "why today" voice, which is
+// NOT a set-reaction moment — it may legitimately reference a real personal best in
+// its rationale, so the earned-moment vocab gate (a set-reaction concern) must not
+// suppress it. The profanity backstop still applies to every voice.
 function findRegisterViolations(message, ctx) {
   const text = typeof message === 'string' ? message : '';
   if (!text.trim()) return [];
@@ -264,7 +269,7 @@ function findRegisterViolations(message, ctx) {
       if (m) { out.push({ code: 'profanity_without_permission', phrase: m[0] }); break; }
     }
   }
-  if (mode !== 'celebrate' && mode !== 'praise') {
+  if (!c.profanity_only && mode !== 'celebrate' && mode !== 'praise') {
     for (const re of CELEBRATION_VOCAB) {
       const m = text.match(re);
       if (m) { out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: m[0] }); break; }

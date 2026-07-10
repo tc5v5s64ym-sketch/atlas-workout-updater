@@ -63,6 +63,19 @@ test('suppressor: celebration/PR vocabulary is a violation outside celebrate/pra
     .filter(v => v.code === 'celebration_vocab_outside_earned_mode').length, 0, 'PR language in praise is fine');
 });
 
+test('suppressor: profanity_only (plan voice) strips profanity but allows a real PR reference', () => {
+  // The plan "why today" voice may legitimately cite a personal best in its rationale.
+  const planPr = 'Today pushes toward your personal best on bench.';
+  assert.deepEqual(findRegisterViolations(planPr, { mode: null, register: { profanity_ok: false }, profanity_only: true }), [],
+    'a real PR reference in plan rationale must not be suppressed');
+  // But profanity is still stripped on the plan voice.
+  assert.ok(findRegisterViolations('This fucking session is heavy.', { mode: null, register: { profanity_ok: false }, profanity_only: true })
+    .some(v => v.code === 'profanity_without_permission'), 'profanity is still backstopped on the plan voice');
+  // Without profanity_only, the same PR reference IS suppressed (set-reaction default).
+  assert.ok(findRegisterViolations(planPr, { mode: 'note', register: { profanity_ok: false } })
+    .some(v => v.code === 'celebration_vocab_outside_earned_mode'), 'the set-reaction default still gates PR vocab');
+});
+
 test('suppressor: totality — empty/garbage input never throws', () => {
   assert.deepEqual(findRegisterViolations('', {}), []);
   assert.deepEqual(findRegisterViolations(null, null), []);
