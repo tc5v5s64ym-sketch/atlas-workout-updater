@@ -62,5 +62,5 @@ test('PR-G1 scope: no completed outcome and no closeout are emitted in this slic
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planOutcome\.js/, 'planOutcome.js is in SHELL_ASSETS');
-  assert.match(sw, /atlas-shell-v123/, 'SW cache version bumped for the new asset');
+  assert.match(sw, /atlas-shell-v124/, 'SW cache version bumped for the new asset');
 });
