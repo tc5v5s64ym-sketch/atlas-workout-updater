@@ -163,6 +163,42 @@ test('chat prompt: gives a load-less prescription when the snapshot has no load'
   );
 });
 
+// ── PR-B5a sandbag challenge: the chat challenge-mode prompt block ─────────────
+// Deterministic side already merged (#953): deriveChatCoachMode maps a
+// consistent_underperformance memory pattern → coach_mode 'challenge' into the chat
+// snapshot. This slice adds the smallest prompt wiring that words that mode —
+// evidence + one question, never a lecture, hold the line on pushback, grounded in
+// memory_patterns, and NO register/profanity escalation. All other chat behavior is
+// unchanged (the block is semantically gated on coach_mode === 'challenge').
+
+test('chat prompt: carries a CHALLENGE MODE block gated on coach_mode', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('CHALLENGE MODE'), 'chat prompt must carry a challenge-mode block');
+  assert.ok(chat.includes('challenge ONLY when'), 'challenge must be gated to coach_mode challenge, not raised in other modes');
+});
+
+test('chat prompt: challenge states the evidence and ASKS, never lectures', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('State the evidence and ASK'), 'challenge must state the pattern then ask a question');
+  assert.ok(chat.includes('never lecture'), 'challenge must forbid lecturing');
+});
+
+test('chat prompt: challenge holds the line on pushback (does not cave)', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('do NOT cave'), 'challenge must not cave when the lifter pushes back');
+  assert.ok(chat.includes("restate the pattern's facts once"), 'challenge holds the line by restating the facts, neutrally');
+});
+
+test('chat prompt: challenge is grounded in memory_patterns — never invents a pattern', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('Never invent a pattern that is not in'), 'challenge must never invent a pattern absent from memory_patterns');
+});
+
+test('chat prompt: challenge carries no register/profanity escalation (honesty, not heat)', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('challenge is honesty, not heat'), 'challenge stays in the ordinary direct register — no escalation');
+});
+
 // ── G5: coach claims grounding audit (PR / personal-best / session count) ──────
 
 test('set-reaction prompt: PR language IRON RULE requires progression_verdict.level new_ground', () => {
