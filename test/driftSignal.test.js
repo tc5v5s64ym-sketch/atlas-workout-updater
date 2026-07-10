@@ -44,6 +44,19 @@ test('skipped_pattern_streak: does NOT fire if the pattern was performed in any 
   assert.notEqual(out.kind, 'skipped_pattern_streak');
 });
 
+test('skipped_pattern_streak: unrecognized lifts never manufacture an "other" streak (review #949)', () => {
+  // Three different unknown lifts, each planned-not-done — they must NOT collapse
+  // to one "other" streak. plan_deviation may still fire (100% missed), but never a
+  // skipped_pattern_streak on the meaningless 'other' bucket.
+  const sessions = [
+    pvc('2026-06-08', ['Zercher Thruster'], []),
+    pvc('2026-06-14', ['Jefferson Curl'], []),
+    pvc('2026-06-19', ['Copenhagen Plank'], []),
+  ];
+  const out = detectDrift(recentLog, sessions, [], { asOf: ASOF });
+  assert.notEqual(out.kind, 'skipped_pattern_streak', 'no streak on the "other" bucket');
+});
+
 // ── Kind 2: plan_deviation ────────────────────────────────────────────────────
 
 test('plan_deviation: ≥50% of planned lifts unperformed across 3 sessions', () => {

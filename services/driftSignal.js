@@ -50,14 +50,18 @@ function _names(arr) {
   return Array.isArray(arr) ? arr.map(n => (typeof n === 'string' ? n.trim() : '')).filter(Boolean) : [];
 }
 
-// The distinct movement patterns present in a name list. patternFor returns
-// { pattern, needsReview }; we key on the pattern string.
+// The distinct, RECOGNIZED movement patterns present in a name list. patternFor
+// returns { pattern, needsReview }; unknown lifts collapse to { pattern:'other',
+// needsReview:true }. We exclude that bucket — "you keep skipping your OTHER work"
+// is not a meaningful movement-pattern challenge, and every unrecognized lift would
+// otherwise share the same 'other' key and manufacture a false streak (review #949).
 function _patternsOf(names) {
   const out = new Set();
   for (const n of names) {
     const p = patternFor(n);
     const key = p && typeof p === 'object' ? p.pattern : p;
-    if (key && typeof key === 'string') out.add(key);
+    const needsReview = p && typeof p === 'object' && p.needsReview === true;
+    if (key && typeof key === 'string' && key !== 'other' && !needsReview) out.add(key);
   }
   return out;
 }
