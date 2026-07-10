@@ -1,0 +1,114 @@
+'use strict';
+
+// ── Discouragement signal (Soul Plan PR-B5b, Part 1 — pure, unwired) ──────────
+//
+// The deterministic seed for engine-triggered REASSURANCE. When the lifter types
+// "bench is stuck, I feel like I'm going backwards," the zoom-out that follows
+// ("squat's up 15 since June; you haven't missed a Monday in two months") should be
+// the engine handing over the exact facts that make it true — not model
+// improvisation. This module is the tripwire: the smallest honest version —
+// EXPLICIT frustration/self-talk phrases plus stall context, NOT a sentiment model
+// and NOT the 16-state research model (07-the-feel-of-atlas stays non-governing).
+//
+// PURE + UNWIRED: no I/O, no LLM, no clock. Part 2 wires detectDiscouragement into
+// selectCoachMode's `reassure` trigger + assembles the deterministic zoom-out
+// evidence pack (per-lift trends, athlete_identity streaks, the stalled lift's own
+// history) + the persona reassure block. This part only classifies the language.
+//
+// detectDiscouragement(messageText, context) →
+//   { discouraged: bool, kind: 'frustration'|'negative_self_talk'|'stall_frustration'|null, matched: string|null }
+//
+// Guards (mirroring services/recoveryRouting.js isTirednessExpression discipline):
+//   - Explicit phrases only, \b-anchored so a lift name can't collide.
+//   - A negated phrase ("I'm NOT going backwards", "bench isn't stuck") never fires.
+//   - A leading interrogative ("why is my bench stuck?") is an analytical question
+//     for the coach, not a frustration report — it does not fire.
+//   - Pure TIREDNESS ("I'm exhausted", "legs are toast") is NOT discouragement — it
+//     routes to the existing recovery read; deferred here so the two never collide.
+//   - `stall_frustration` = a frustration/self-talk phrase co-occurring with the
+//     engine's `stalls` context (context.stalls non-empty).
+//
+// Pure tiredness ("I'm exhausted", "legs are toast") does NOT fire here BY
+// CONSTRUCTION — fatigue words are not discouragement phrases — so this module
+// stays uncoupled from recoveryRouting; when a message reads as both, the Part 2
+// selectCoachMode precedence decides (recovery/safety over reassure), not this
+// classifier.
+
+// Explicit frustration about progress / a lift being stuck.
+const FRUSTRATION = [
+  /\b(stuck|stalled|plateaued|plateauing|plateaus?)\b/,
+  /\b(going|getting) nowhere\b/,
+  /\bnot getting anywhere\b/,
+  /\bspinning my wheels\b/,
+  /\bstuck in a rut\b/,
+  /\b(so |really |very |super )?frustrat(?:ed|ing)\b/,
+  /\bcan'?t (?:break|get) (?:through|past)\b/,
+  /\bhitting a wall\b/,
+  /\bfed up\b/,
+];
+
+// Negative self-talk about themselves / their trajectory.
+const NEGATIVE_SELF_TALK = [
+  /\b(?:going|moving|sliding) backwards?\b/,
+  /\bgetting worse\b/,
+  /\bi'?m (?:so |such |just )?(?:weak|useless|terrible|hopeless|pathetic|garbage|trash|worthless)\b/,
+  /\bi (?:suck|stink)\b/,
+  /\bi'?ll never\b/,
+  /\bnever (?:going to|gonna) (?:get|make|hit|reach)\b/,
+  /\bwhat'?s the point\b/,
+  /\bfeel like (?:i'?m |i am )?(?:going backwards?|failing|falling behind|a failure)\b/,
+];
+
+// Negation before a discouragement term flips the meaning — allow up to two words
+// between the negator and the phrase ("bench is not really stuck").
+const NEGATED = /\b(not|never|no longer|isn'?t|aren'?t|ain'?t|don'?t|doesn'?t|didn'?t|wasn'?t|hardly|barely)\s+(\w+\s+){0,2}(stuck|stalled|plateaued|frustrat\w*|backwards?|worse|weak|useless|nowhere|failing)\b/;
+
+// A genuine analytical question → for the coach, not a frustration report. Narrow
+// on purpose: a trailing "?" OR an unambiguous analytical opener. NOT bare "what"
+// ("what's the point anymore" is rhetorical despair, not a question) and NOT "can"
+// (must not swallow "can't break through").
+function _isAnalyticalQuestion(t) {
+  if (/\?\s*$/.test(t)) return true;
+  if (/^(why|how|when|where|which|who)\b/.test(t)) return true;
+  if (/^what\s+(should|do|can|to|is|are)\b/.test(t)) return true;
+  if (/^(should|could|would|can|do|does|did|is|are|am)\s+(i|we|my|you)\b/.test(t)) return true;
+  return false;
+}
+
+function _firstMatch(text, patterns) {
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+function detectDiscouragement(messageText, context) {
+  const t = String(messageText == null ? '' : messageText).toLowerCase().trim();
+  const none = { discouraged: false, kind: null, matched: null };
+  if (!t) return none;
+  if (_isAnalyticalQuestion(t)) return none;
+  if (NEGATED.test(t)) return none;
+
+  const selfTalk = _firstMatch(t, NEGATIVE_SELF_TALK);
+  const frustration = _firstMatch(t, FRUSTRATION);
+  const matched = selfTalk || frustration;
+  if (!matched) {
+    // No explicit discouragement phrase. Pure tiredness is handled elsewhere; we
+    // never reclassify it as discouragement.
+    return none;
+  }
+
+  // Base kind: self-talk is the more specific/serious read; else frustration.
+  let kind = selfTalk ? 'negative_self_talk' : 'frustration';
+
+  // Boost: an explicit frustration/self-talk co-occurring with the engine's own
+  // stall context is stall-anchored frustration — the strongest, most groundable
+  // case for the zoom-out (Part 2 pulls the stalled lift's history).
+  const stalls = context && typeof context === 'object' && Array.isArray(context.stalls) ? context.stalls : [];
+  if (stalls.length > 0) kind = 'stall_frustration';
+
+  return { discouraged: true, kind, matched };
+}
+
+module.exports = { detectDiscouragement };
