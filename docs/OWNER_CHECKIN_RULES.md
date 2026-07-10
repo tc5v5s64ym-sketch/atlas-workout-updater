@@ -46,6 +46,23 @@ v3 governs *who decides*, not data safety. The "Absolute data-safety" section be
 
 ---
 
+## Owner amendment (2026-07-10) — standing full-auto authorization + agent-performed live verification
+
+Owner standing instruction, given in-session 2026-07-10. Recorded here so it persists across sessions. It refines — does not replace — Escalation Policy v3.
+
+1. **Full-auto execution reaffirmed.** Run continuously under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`): work the queue in `docs/ACTIVE_ROADMAP.md` / `BACKLOG.md` order, one concern per PR, merge merge-ready PRs, and keep going. Stop only for the four reserved categories (v3 above) or the stop conditions in this amendment. Do not idle waiting for the owner: gym-gated items (LT-### cards, proving-run evidence) are queued clearly for the owner while work continues on the next non-gated item.
+2. **Agent-performed live verification against production is authorized** (amends criterion 1 below, which previously framed live testing as owner-performed only — agent verification now complements, not replaces, owner live tests):
+   - **Default: read-only.** Use read-only endpoints and dry-run/preview paths, following the Mission Control conventions (`docs/MISSION_CONTROL.md`, incl. its dry-run safety contract). Production base: `https://atlas-workout-updater.onrender.com`, authenticated via the production API key held only in the gitignored `.env` (never printed, logged, committed, or quoted anywhere).
+   - **A live WRITE test is allowed only when a change cannot be verified any other way.** If performed: mark the data unmistakably as test data per repo convention, verify, then remove/revert it **in the same session**. The owner's real training log must be identical before and after, except for changes the owner made himself.
+   - **Never** run destructive or bulk operations against production.
+   - **Any production data-integrity anomaly is a reserved-category stop:** freeze writes, report, wait for the owner.
+3. **Gym-gated tests remain owner-only.** Anything requiring a real gym session (LT-### live cards, proving-run evidence) only the owner can perform — queue it and continue.
+4. **Credential stop.** A missing or invalid credential is a stop-and-ask; never guess or hardcode secrets.
+
+**Relation to "Absolute data-safety":** the no-real-write-without-explicit-owner-approval rule stands; item 2 above **is** the explicit owner approval, standing and narrowly scoped to a last-resort, test-marked, same-session-reverted verification write. It does not authorize migrations, deletions of owner data, schema changes, or any write outside that scope.
+
+---
+
 ## Escalation Policy v2 — SUPERSEDED BY v3 (pointer only)
 
 > **Fully superseded by Escalation Policy v3 above; do not follow v2.** v2 pre-authorized the same PM-authority list under five reserved-owner categories instead of v3's four (v3 merged "schema/storage" + "destructive operations" into one, added coaching-philosophy as an explicit reserved category, and — the one substantive behavior change — stopped treating coach surface/wording/rendering/frontend/UX as an automatic escalation trigger). The criteria numbering (1–8) in the table below is unchanged across v2→v3 so other docs' references still resolve. Full v2 text lives in git history (`docs/OWNER_CHECKIN_RULES.md` pre-PR-21) if the rationale is ever needed.
@@ -58,7 +75,7 @@ v3 governs *who decides*, not data safety. The "Absolute data-safety" section be
 
 For each, "Codex decides" means Codex answers the panel and Claude proceeds; "escalate-to-owner" means Codex routes that specific item to the owner.
 
-1. **Live application testing — owner-initiated, NOT an automatic stop.** The owner decides when an app test is warranted and says so; automation does not halt for one. When a change would benefit from live validation (UI/interaction change, anything only confirmable on a real device or the real sheet, a roadmap hold point), the builder labels it `owner-live-test`, includes a **live test script** in the merge card, and **keeps going**. **Live tests require deployed code — they are post-merge validations, never pre-merge gates.** The `owner-live-test` flag does NOT set `Owner action required: Yes` on the merge card and does NOT produce `hold-for-owner` as the merge recommendation; the PR merges normally and the live test happens after deployment. _Disposition: owner-initiated (advisory)._
+1. **Live application testing — owner-initiated, NOT an automatic stop.** The owner decides when an app test is warranted and says so; automation does not halt for one. When a change would benefit from live validation (UI/interaction change, anything only confirmable on a real device or the real sheet, a roadmap hold point), the builder labels it `owner-live-test`, includes a **live test script** in the merge card, and **keeps going**. **Live tests require deployed code — they are post-merge validations, never pre-merge gates.** The `owner-live-test` flag does NOT set `Owner action required: Yes` on the merge card and does NOT produce `hold-for-owner` as the merge recommendation; the PR merges normally and the live test happens after deployment. _Disposition: owner-initiated (advisory)._ **Owner amendment 2026-07-10:** the agent may additionally perform its own live verification against production (read-only/dry-run by default; last-resort test-marked write) — see the amendment section above; gym-session tests remain owner-only.
 
 2. **Write-path behavior changes.** Any change to how rows are written to `Log_Cleaned`, `Effort`, `Constraints`, or `Deload_State`; the `test_mode`/live-write decision; row enrichment/append; or the dry-run vs live-write proof fields (`sheet_written`, `no_write_confirmed`, `sheet_write`, `log_rows_written`). See the "Critical behaviours" table in `CLAUDE.md`. _Disposition: **Codex decides** the design/approach. Executing a real production write still needs owner approval — see "Absolute data-safety" below._
 
@@ -80,7 +97,7 @@ For each, "Codex decides" means Codex answers the panel and Claude proceeds; "es
 
 Decision routing does **not** touch these. They are standing Constitutional safety, not "how to proceed" panels, and are never delegated to Codex:
 
-- No real Google Sheets write without explicit owner approval (`test_mode=true` for dry-runs); the preview → approve → write trust loop and the dry-run/live-write proof fields are unchanged.
+- No real Google Sheets write without explicit owner approval (`test_mode=true` for dry-runs); the preview → approve → write trust loop and the dry-run/live-write proof fields are unchanged. (The 2026-07-10 owner amendment above is a standing, narrowly-scoped approval for last-resort, test-marked, same-session-reverted verification writes only.)
 - No secret/credential exposure; no `GOOGLE_SHEETS_ID` or Render env change without owner approval.
 
 Codex answering a *decision* never authorizes a real production write. If the owner wants even these delegated, that requires a separate explicit instruction.
