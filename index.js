@@ -81,6 +81,7 @@ const { buildWorkoutTextParseDryRunResponse } = require('./services/workoutTextP
 const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
+const { applyUnresolvedLiftGate } = require('./services/unresolvedLiftGate');
 const registerReadRoutes = require('./routes/reads');
 const registerCoachOpsRoutes = require('./routes/coachOps');
 const { validateLogRowsBounds } = require('./rules/validationRules');
@@ -1809,6 +1810,15 @@ app.post('/api/parse-workout-text', (req, res) => {
   const t0 = Date.now();
   try {
     const responseBody = buildWorkoutTextParseDryRunResponse(req.body);
+    // D7(a) refuse-and-ask (Decision Desk #942): at the per-line orchestration
+    // boundary — after the parser resolved the recognized lines and with the KB
+    // resolver in hand, before the client assembles preview rows — withhold any set
+    // line whose exercise NEITHER the parser NOR the KB recognizes (needs_clarification,
+    // zero rows), while KB-known parser-narrow lifts (Front Squat / Cable Fly) keep
+    // logging. Read-only: only the dry-run parse shape changes — never a write, proof
+    // field, schema, or the parser grammar (resolveExercise is injected so the
+    // KB→parser decoupling holds and parser goldens stay untouched).
+    responseBody.parsed = applyUnresolvedLiftGate(responseBody.parsed, resolveExercise);
     // Unify exercise identity: the parser's internal catalog is narrower than the
     // KB, so a real lift (e.g. Cable Fly) is flagged `unknown_exercise` even though
     // the KB recognizes it. Attach the KB identity so the client's "didn't catch

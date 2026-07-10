@@ -2183,6 +2183,57 @@ test('api smoke: parse-workout-text attaches KB identity for Cable Fly (no split
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// ── Decision Desk #942 — D7(a) refuse-and-ask for a genuinely-unresolved lift ──
+// A set line whose exercise neither the parser NOR the KB recognizes must refuse
+// and ask (needs_clarification, ZERO rows) rather than silently logging a made-up
+// lift. KB-known-but-parser-narrow lifts (Front Squat / Cable Fly) keep logging.
+test('api smoke: parse-workout-text refuses a genuinely-unknown lift (D7(a) refuse-and-ask, no rows)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'zercher thrust 95 8/2', test_mode: true })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.parsed.intent, 'needs_clarification', 'a lift neither parser nor KB knows must refuse-and-ask');
+  assert.ok(!body.data.parsed.sets, 'no sets survive the refusal');
+  assert.ok(Array.isArray(body.data.parsed.unresolved) && body.data.parsed.unresolved.length >= 1);
+  assert.equal(body.data.sheet_written, false);
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: parse-workout-text keeps logging a KB-known parser-narrow lift (Front Squat — no over-refusal)', async () => {
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'front squat 185 5/2', test_mode: true })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.parsed.intent, 'log_sets', 'KB rescues Front Squat — it must still log');
+  assert.ok(body.data.parsed.sets && body.data.parsed.sets.length === 1);
+  assert.ok(body.data.kb_identity, 'KB identity attached');
+});
+
+test('api smoke: parse-workout-text — mixed known + unknown lines: known survives, unknown withheld', async () => {
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'bench 225 5/2\nzercher thrust 95 8/2', test_mode: true })
+  });
+  assert.equal(response.status, 200);
+  const p = body.data.parsed;
+  assert.equal(p.intent, 'log_sets_multi');
+  assert.deepEqual(p.exercises.map(e => e.canonical_name || e.exercise), ['Bench Press'], 'only the known lift survives as a row');
+  assert.ok(Array.isArray(p.unresolved) && p.unresolved.some(u => /zercher/i.test(u.line)), 'the unknown lift is withheld for clarification');
+});
+
+test('api smoke: parse-workout-text — a recognized lift + a trailing question still logs (question does not block)', async () => {
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST',
+    body: JSON.stringify({ text: 'bench 225 5/2, should I go heavier next week?', test_mode: true })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.parsed.intent, 'log_sets', 'a recognized lift with set tokens logs even with a question present');
+  assert.equal(body.data.parsed.sets.length, 1);
+});
+
 // ── PR 486 slice 4b — /api/log-modality trust-loop write route ────────────────
 test('api smoke: log-modality dry-run (test_mode) previews the normalized row and writes nothing', async () => {
   fakeSheetsState.appendCalls.length = 0;
