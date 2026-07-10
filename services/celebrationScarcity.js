@@ -97,9 +97,18 @@ function computeCelebrationScarcity(logRows, { asOf, caps } = {}) {
       || String(a.session_id || '').localeCompare(String(b.session_id || '')));
     // Group rows by session (session_id, falling back to the day).
     const sessions = [];
+    // Group by session_id ALONE — exactly as progressionBand does internally —
+    // so the event-day top and the band it is judged against are computed from
+    // the same session partition (the "identical by construction" guarantee). We
+    // deliberately do NOT add a per-day fallback for a blank session_id: that
+    // would split blank-session rows by day while progressionBand collapses them
+    // into one `''` session, and the two groupings could then disagree on which
+    // day clears the ceiling. Every real Log_Cleaned row carries a session_id
+    // (col 2); a blank id is malformed input, and here it degrades identically to
+    // the live band path rather than diverging from it.
     const seen = new Map();
     for (const r of liftRows) {
-      const key = r.session_id || `day:${r._ms}`;
+      const key = r.session_id;
       let s = seen.get(key);
       if (!s) { s = { ms: r._ms, date: String(r.date_clean).slice(0, 10), rows: [] }; seen.set(key, s); sessions.push(s); }
       s.rows.push(r);

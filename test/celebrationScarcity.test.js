@@ -122,6 +122,22 @@ test('caps: override param wins; defaults come from the PR-B2 calibration', () =
   assert.equal(shortWin.scarcityClear, true);
 });
 
+test('blank session_id: grouping matches progressionBand (collapsed to one session), never diverges or throws', () => {
+  // Malformed input — every real Log_Cleaned row carries a session_id. With blank
+  // ids, our per-session grouping keys on '' exactly like progressionBand, so
+  // blank-session rows collapse into ONE session instead of splitting by day.
+  const blank = [
+    row('2026-06-01', '', 'Bench Press', 200),
+    row('2026-06-04', '', 'Bench Press', 190),
+    row('2026-06-08', '', 'Bench Press', 205),
+  ];
+  const out = computeCelebrationScarcity(blank, { asOf: '2026-06-08' });
+  // All three rows are one '' session → no prior session exists to form a band →
+  // no new_ground event fires (matching how progressionBand sees this input).
+  assert.equal(out.last_new_ground, null);
+  assert.equal(out.scarcityClear, true);
+});
+
 test('determinism: same inputs, same output (pure, no hidden clock)', () => {
   const rows = [...BASE, row('2026-06-08', 'S3', 'Bench Press', 205)];
   assert.deepEqual(
