@@ -45,7 +45,7 @@ import { runOutcome } from './planOutcome.js';
 // the implicit endPlannedSession cleanup paths).
 import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased — app.js already has a save-flow runCloseout()
 
-const ATLAS_SHELL_BUILD = 'v125';
+const ATLAS_SHELL_BUILD = 'v126';
 
 
 
