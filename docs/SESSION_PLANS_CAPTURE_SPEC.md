@@ -2,7 +2,7 @@
 
 > **Governance layer:** Spec / design record. Subordinate to `docs/CONSTITUTION.md`, `docs/INVARIANTS.md`, and the trust contract. See `docs/GOVERNANCE.md` for the hierarchy.
 >
-> **Status:** Owner-authorized **Option A** (explicit lifecycle capture), 2026-07-10, following the STOP-&-REPORT finding that no authoritative server-side capture boundary exists. This is the **docs-only** first deliverable (**PR-D**). It writes **no production code**. Server protocol (PR-E) is a separate PR and **stops for owner approval after PR-D is reviewed and green.**
+> **Status:** Owner-authorized **Option A** (explicit lifecycle capture), 2026-07-10, following the STOP-&-REPORT finding that no authoritative server-side capture boundary exists. This is the **docs-only** first deliverable (**PR-D**). It writes **no production code**. **Owner-reviewed and APPROVED WITH AMENDMENTS (2026-07-10)** — the client-state contract, the three endpoint shapes, the capture-site classification, and the PR-E→PR-I split are approved; identity is **client-generated opaque UUIDs** (§4.4), acceptance is a distinct **"Start this plan"** plan-card button (§5), and plan-replacement capture is **deferred** (§5/§9). PR-E is authorized to proceed after this merges.
 >
 > **Standing flags (unchanged by this lane):** `ATLAS_SESSION_PLANS_WRITE` remains **OFF**. `ATLAS_COACH_PROFANITY` remains **OFF**. `skipped_pattern_streak` / `plan_deviation` drift kinds stay **unwired** until the PR-I canary passes.
 
@@ -81,7 +81,7 @@ The accepted plan is the single source of persisted identity. It **extends** tod
 {
   "session_id":   "20260710-AM-01",   // reuse the existing workout session_id (minted at accept time if absent)
   "session_date": "2026-07-10",       // YYYY-MM-DD, fixed at acceptance
-  "plan_version": "a1b2c3d4",         // deterministic, established at acceptance (see §4.4)
+  "plan_version": "pv_9f1c8e0a-…",    // opaque UUID-backed revision id, minted at acceptance (see §4.4)
   "accepted":     true,               // false/absent = draft (NEVER persisted to Session_Plans)
 
   "label":   "Recommended session",   // existing UI field, retained
@@ -89,7 +89,7 @@ The accepted plan is the single source of persisted identity. It **extends** tod
 
   "items": [                          // immutable accepted snapshot — reorder/exec does NOT rewrite this
     {
-      "plan_item_id":     "a1b2-1",   // immutable, created once at acceptance (§4.4)
+      "plan_item_id":     "pi_3b7d…", // opaque UUID-backed id, minted once at acceptance, immutable (§4.4)
       "planned_order":    1,          // fixed accepted order
       "planned_lift_code":"BEN01",    // canonical CODE, fixed at acceptance
       "movement_pattern": "horizontal_push",
@@ -108,7 +108,7 @@ Mapping from today's shape: each normalized `exercises[]` entry `{ name, canonic
 - `items[]` is the **immutable accepted snapshot**. Substitution mutates only the live execution view; the accepted `plan_item_id` + `planned_lift_code` are retained and the substitution is recorded as an `item_outcome` carrying `performed_lift_code`.
 - Reordering execution changes only `index`/execution view, never `items[]` or `planned_order`.
 - **Extra/off-plan exercises never become planned items.** They are logged as sets (Log_Cleaned) as they are today, and are simply absent from `items[]` — the reader already ignores non-planned lifts.
-- A **materially different** accepted plan (different item set) produces a **new `plan_version`** (§4.4). A retry of the same acceptance reproduces the **same** IDs.
+- **Every explicit acceptance mints a new `plan_version`** (§4.4) — re-accepting an identical-looking plan, or a materially changed plan, is always a new revision. A **network retry** of the same acceptance reuses the **stored** IDs (never re-minted); IDs are never regenerated from the exercise array after acceptance.
 
 ---
 
@@ -133,7 +133,7 @@ Three narrow authenticated endpoints. All are **`writeCapable: true`** in `confi
     "captured": true | false,        // true ONLY when an append actually succeeded OR was an idempotent skip of an already-persisted event
     "written": 0,                    // rows appended this call
     "skipped": 0,                    // idempotent duplicates collapsed
-    "plan_version": "a1b2c3d4",
+    "plan_version": "pv_9f1c8e0a-…",
     "reason": null                   // human-readable diagnostic when captured=false
   }
 }
@@ -146,10 +146,10 @@ Three narrow authenticated endpoints. All are **`writeCapable: true`** in `confi
 {
   "session_id":   "20260710-AM-01",
   "session_date": "2026-07-10",
-  "plan_version": "a1b2c3d4",
+  "plan_version": "pv_9f1c8e0a-4d2b-4f6a-9c11-7e5b2a0d1c33",
   "items": [
-    { "plan_item_id": "a1b2-1", "planned_order": 1, "planned_lift_code": "BEN01", "movement_pattern": "horizontal_push" },
-    { "plan_item_id": "a1b2-2", "planned_order": 2, "planned_lift_code": "SQ01",  "movement_pattern": "squat" }
+    { "plan_item_id": "pi_3b7d1e2f-…", "planned_order": 1, "planned_lift_code": "BEN01", "movement_pattern": "horizontal_push" },
+    { "plan_item_id": "pi_a0c94d55-…", "planned_order": 2, "planned_lift_code": "SQ01",  "movement_pattern": "squat" }
   ]
 }
 ```
@@ -159,9 +159,9 @@ Three narrow authenticated endpoints. All are **`writeCapable: true`** in `confi
 ```jsonc
 // request
 {
-  "session_id": "20260710-AM-01", "session_date": "2026-07-10", "plan_version": "a1b2c3d4",
+  "session_id": "20260710-AM-01", "session_date": "2026-07-10", "plan_version": "pv_9f1c8e0a-…",
   "item": {
-    "plan_item_id": "a1b2-1", "planned_order": 1, "planned_lift_code": "BEN01", "movement_pattern": "horizontal_push",
+    "plan_item_id": "pi_3b7d1e2f-…", "planned_order": 1, "planned_lift_code": "BEN01", "movement_pattern": "horizontal_push",
     "outcome": "substituted",              // completed | skipped | substituted
     "performed_lift_code": "DBP01"          // REQUIRED iff outcome === "substituted"; omit otherwise
   }
@@ -172,24 +172,24 @@ Three narrow authenticated endpoints. All are **`writeCapable: true`** in `confi
 ### 4.3 `POST /api/session-plans/closeout` — one explicit closeout
 ```jsonc
 // request
-{ "session_id": "20260710-AM-01", "session_date": "2026-07-10", "plan_version": "a1b2c3d4", "closeout_status": "finalized" }
+{ "session_id": "20260710-AM-01", "session_date": "2026-07-10", "plan_version": "pv_9f1c8e0a-…", "closeout_status": "finalized" }
 ```
 → `writeSessionCloseout({session_id, session_date, plan_version}, closeout_status)` — one `session_closeout` row. `closeout_status ∈ finalized | abandoned` (builder-enforced). Completion is **derived from item outcomes**, never from this field.
 
-### 4.4 Identity generation — **recommendation: client-generated, deterministic**
+### 4.4 Identity generation — **client-generated OPAQUE UUID-backed IDs** (owner decision, 2026-07-10)
 
-The owner's identity rules ("IDs created once and retained in active client session state; a retry must reuse the same IDs; a materially different accepted plan gets a new `plan_version`") point to **client-generated deterministic IDs**, minted at the explicit acceptance action:
+Identity is **client-generated and opaque** — minted at the explicit acceptance action, **before** the acceptance request, and **never derived from the plan's contents**:
 
-- **`plan_version`** = a short hash over the **ordered accepted item set** (`session_id` + each `planned_order|planned_lift_code|movement_pattern`, joined with a NUL-escaped delimiter). Property: re-accepting the identical plan (a retry) reproduces the **same** `plan_version` (idempotent); a materially different item set hashes to a **new** `plan_version`. Execution reordering never feeds this (it hashes the fixed accepted snapshot).
-- **`plan_item_id`** = a short hash over `(plan_version, planned_order, planned_lift_code)` — immutable, reproduced identically on retry, and stable across substitution (it is keyed to the **planned** identity, which substitution never changes).
-- Both are **stored** in the active-plan snapshot (and `localStorage`) as a performance/UX optimization, but determinism — not retained state — is the retry-safety **guarantee** (a reload that lost state still reproduces the same IDs from the same accepted plan).
+- **`plan_version`** = a fresh opaque token `pv_<uuid>`. It is the **opaque identity of one immutable accepted-plan revision** in v1 — NOT a numeric counter and NOT a hash of the plan. Every explicit acceptance mints a new `pv_<uuid>`, so re-accepting an identical-looking plan, or a materially changed plan, always yields a **new** `plan_version`.
+- **`plan_item_id`** = one fresh opaque token `pi_<uuid>` per accepted item, minted at acceptance, **immutable** thereafter. Substitution keeps the original `plan_item_id` and records `performed_lift_code`; it is never regenerated.
+- **Generation:** use the platform cryptographic UUID generator (`crypto.randomUUID()` where available; a crypto-backed fallback otherwise). **Never** use timestamps or `Math.random()` as identity.
+- **Storage & reuse:** all IDs are written into active client-session state (and the `localStorage` snapshot) **before** the request is sent. **Network retries reuse the stored IDs.** A page reload/resume reuses the **persisted** active-session IDs. IDs are **never regenerated from the current exercise array** after acceptance.
 
-**Why client-generated, not server-issued:**
-- The plan must be **usable immediately** on acceptance; server-issuance would gate plan usability on a network round-trip, and — critically — when `ATLAS_SESSION_PLANS_WRITE` is **OFF** the server issues nothing, leaving accepted plans with no identity and breaking the draft-vs-accepted distinction. Client-generated IDs make identity **independent of the flag**, so the sidecar stays truly optional.
-- Retry-safety is **structural** (deterministic hash) rather than dependent on the server storing and re-returning the same IDs.
-- **Tamper surface is acceptable:** this is a single-owner app; a client that forges an id only corrupts its own fold bucket (the server re-derives `idempotency_key` from semantic identity, so a forged `plan_item_id` cannot corrupt a *different* session). The server still **validates shape** (canonical code, no whitespace, required fields) via the existing builders, which throw on malformed identity.
+**Why client-generated (not server-issued):** the plan must be usable immediately on acceptance, and — critically — when `ATLAS_SESSION_PLANS_WRITE` is **OFF** a server would issue nothing, leaving accepted plans with no identity and breaking the draft-vs-accepted distinction. Client-generated UUIDs make identity **independent of the flag**, so the sidecar stays truly optional; the workout starts whether or not capture is enabled.
 
-The endpoints therefore **accept** client IDs and validate them; they do not mint them. (If the owner prefers server-issued IDs, PR-E can add an `issue` step, but that reintroduces the flag-OFF identity gap above — flagged as an open decision in §9.)
+**Why opaque UUID, not a content-derived hash (owner reason):** a content hash could (a) **collapse two distinct acceptances** of the same-looking plan into one identity, (b) **change when normalization changes** (coupling identity to representation), and (c) tie identity to plan content. Opaque UUIDs cleanly separate identity from content: two acceptances are always distinct revisions, and identity is stable regardless of how the plan is rendered or normalized.
+
+**Retry-safety** is therefore provided by **stored-ID reuse** (retry/reload reuse the same persisted IDs), not by re-derivation. The endpoints **accept** the client IDs and validate their **shape** (`pv_`/`pi_` prefix + non-empty token; canonical lift codes via the existing builders, which throw on malformed identity); they do not mint IDs. Tamper surface is acceptable for this single-owner app — a forged id only mis-buckets that client's own fold and cannot corrupt a different session (the server re-derives `idempotency_key` from the event's semantic identity).
 
 ---
 
@@ -207,9 +207,20 @@ The endpoints therefore **accept** client IDs and validate them; they do not min
 - A coach **`replace_plan` / `add_exercises`** auto-apply (`app.js:2190/2204`) with no user confirm.
 - The **first logged set**, page navigation, or any **LLM-inferred** intent from chat text.
 
-**Gap → smallest explicit interaction (proposed, PR-F):** the **primary Coach's Pick** flow has no explicit accept affordance. The smallest honest fix is to route the Coach's Pick through the **same explicit `startPlannedSession` acceptance** as the alternative intents — i.e. add a deliberate **"Start / Use this plan"** affordance to the engaged Coach's Pick (or make the existing prominent "START SESSION" control that currently only opens the coach surface, `app.js:1428`, actually start the engaged pick). Until such an explicit affordance is pressed, the Coach's Pick remains a **draft** and is **never** persisted. This is a small, self-contained UX addition (its exact placement/label is the one open UX decision — §9); it does **not** redefine any existing ambiguous action as acceptance.
+**Gap → the decided explicit affordance (owner decision, 2026-07-10; built in PR-F):** the **primary Coach's Pick** flow has no explicit accept affordance today, so PR-F adds a **distinct explicit control on the rendered plan card** labelled **"Start this plan"**. It is the **authoritative acceptance boundary for v1**. It must:
+- **clearly refer to the displayed plan** (it acts on the plan the card shows, not a generic surface);
+- **mint and store the accepted-plan identity** (`pv_`/`pi_` UUIDs, §4.4) into active session state + the snapshot **before** any request;
+- **establish the immutable accepted snapshot locally** (`items[]`, §3);
+- **call `/api/session-plans/accept`** when capture is enabled;
+- **start the workout even when the sidecar flag is OFF or the sidecar request fails** (capture is a non-blocking sidecar — the session always starts);
+- **never claim "remembered", "captured", or persisted** unless the endpoint returns `captured:true`.
 
-**Plan replacement:** if the owner wants coach `replace_plan` to be persistable, it must first gain an explicit confirm step; until then it stays a draft. A replacement that IS explicitly accepted is a fresh acceptance (new `plan_version`); the prior accepted snapshot is never mutated (append-only history retains both).
+Do **not** repurpose a generic "Start Session" control that currently only opens the coach/composer surface (`app.js:1428` `openCoachPickInThread`) — that stays as-is; the new "Start this plan" button is a distinct, deliberate acceptance affordance. A later PR may add deterministic *conversational* acceptance, but that is outside this lane.
+
+**Plan replacement — DEFERRED (owner decision, 2026-07-10).** The current implicit `replace_plan` behavior (`app.js:2190`, auto-apply of a coach proposal) is **NOT** treated as a newly accepted revision. Until a separate explicit confirmation exists:
+- **no new `plan_accepted` event** is written for an implicit replacement;
+- the **existing accepted snapshot remains** the persisted plan identity — its item IDs and accepted rows are **not mutated**.
+Filed as a later narrow UX item — *"Add explicit 'Replace current plan' confirmation"* (`BACKLOG.md`). When eventually built, the confirmation mints a new `plan_version` and a new immutable item set.
 
 ---
 
@@ -229,7 +240,7 @@ The endpoints therefore **accept** client IDs and validate them; they do not min
 |---|---|---|
 | **PR-D** (this) | Docs/spec + exact capture-point map. **No code.** | Owner review; **stop for owner approval before PR-E.** |
 | **PR-E** | Server protocol: 3 endpoints + `config/routes.js` entries + request schemas + flag (default OFF) + exact-header validation + envelope; **existing builders/store only**; **no client calls**; tests-first. | CI + review; flag OFF ⇒ zero writes proven. |
-| **PR-F** | Accepted-plan identity in client state: one authoritative acceptance helper (in `startPlannedSession`), mint/store `plan_version` + `plan_item_id`, extend the snapshot shape, call `/accept`. Drafts stay unpersisted. Flag OFF stays safe. Includes the smallest explicit Coach's-Pick accept affordance (§5). | CI + review. |
+| **PR-F** | Accepted-plan identity in client state: one authoritative acceptance helper, mint/store opaque `pv_`/`pi_` UUIDs (§4.4), extend the snapshot shape, call `/accept`. Adds the distinct **"Start this plan"** plan-card button as the v1 acceptance boundary (§5). Drafts stay unpersisted; the session starts even with the flag OFF or a sidecar failure. | CI + review. |
 | **PR-G** | Explicit item-outcome capture: `completed` / `skipped` / `substituted` at the existing explicit handlers (`skipPlannedExercise`, `applySessionSubstitution`, and an explicit per-accepted-item completed signal). Same immutable `plan_item_id`. **No inference from arbitrary logged sets.** | CI + review. |
 | **PR-H** | Explicit closeout capture: `finalized` (finish/end) and `abandoned` (discard) at the explicit affordances only. No implicit-path emission. | CI + review. |
 | **PR-I** | Canary + reader verification: flag stays **OFF** until owner confirmation → enable for **one** controlled real session → inspect raw rows → verify `readPlannedVsCompleted` output → **only then** consider wiring `skipped_pattern_streak` / `plan_deviation`. | Owner-run canary PASS. |
@@ -242,24 +253,24 @@ Wiring (PR-F…PR-H) progressively removes the three `sessionPlan*` entries from
 
 | Threat | Mitigation |
 |---|---|
-| **Duplicate clicks / network retries** | Deterministic `idempotency_key` (semantic identity, never timestamp) ⇒ a repeat append is `skipped`, not duplicated. Deterministic client IDs ⇒ a retried accept reuses the same `plan_version`/`plan_item_id`. |
-| **Stale client state** (old accepted plan) | Identity is content-derived; a stale snapshot re-sends the same IDs (idempotent). A genuinely changed plan hashes to a new `plan_version` (new append, reader folds per version). |
+| **Duplicate clicks / network retries** | The client sends the **stored** `pv_`/`pi_` IDs, so a retried accept carries identical identity ⇒ the writer's deterministic `idempotency_key` (semantic identity, never timestamp) `skip`s the duplicate. A double-tap on "Start this plan" is guarded client-side (idempotent: if the active plan is already `accepted`, re-use its stored IDs / no re-mint). |
+| **Stale client state** (old accepted plan) | A stale snapshot re-sends its stored IDs (idempotent skip). A genuinely new **explicit** acceptance mints a **new** `plan_version` (a new revision — new append; the reader folds per `plan_version`), so a new plan under the same `session_id` never overwrites the prior revision. |
 | **Plan revision collision** (same key, different content) | Writer **fails closed** (`revision_collision`); the client must bump `plan_version`. Reader also marks a same-key-conflict session `status:'error'` and excludes it. |
 | **Outcome sent before acceptance** | The reader folds an `item_outcome` for an item with no `plan_accepted` as an item with `planned_lift_code:null` unless the outcome carries it; per §4.2 the client always sends the accepted item metadata, but a genuinely orphan outcome contributes nothing to `planned[]` (drift ignores it). PR-G only fires outcomes for items in the **accepted** `items[]`, so an outcome without acceptance is unreachable by construction. |
 | **Closeout sent twice** | `session_closeout` idempotency_key hashes `(session_id, plan_version, closeout_status)` ⇒ identical re-send is `skipped`; a *conflicting* closeout (finalized then abandoned) is last-wins in the reader (and a same-key/different-content case fails closed). |
 | **New plan accepted under an existing session** | A new acceptance mints a new `plan_version`; the reader folds per `(session_id + plan_version + plan_item_id)`, so the two plans are distinct histories under the same `session_id`. The prior accepted snapshot is never mutated. |
 | **Sidecar failure while the main workout save succeeds** | The three endpoints are **separate** from `/api/log-workout`; they never share a code path, so a Session_Plans failure is structurally incapable of affecting the workout write. Failure ⇒ `captured:false` ⇒ no memory claim; the workout save is untouched. |
 | **Client tampering with lift codes / plan IDs** | Builders validate canonical codes (non-empty, no whitespace) and reject malformed identity. A forged id only mis-buckets that client's own fold (single-owner app); it cannot corrupt another session (server re-derives the key). No trust-contract tab is reachable. |
-| **Page reload / resume** | Deterministic IDs reproduce identically from the restored accepted plan; the `localStorage` snapshot already carries `activePlannedSession`. A reload never emits `abandoned` (that requires an explicit discard). |
+| **Page reload / resume** | The `localStorage` snapshot carries `activePlannedSession` **including its minted `pv_`/`pi_` IDs**, so a resumed session reuses the **persisted** identity (never re-mints from the exercise array). A reload never emits `abandoned` (that requires an explicit discard). |
 | **Feature flag OFF** | No Sheets access, no rows, `{status:'disabled', captured:false}`; the app is byte-identical in behavior. Client identity still mints/stores (flag-independent) so turning the flag ON later is seamless. |
 
 ---
 
-## 9. Open decisions to return to the owner
+## 9. Owner decisions (resolved 2026-07-10)
 
-1. **ID issuance (recommendation made):** client-generated deterministic IDs (§4.4). The only alternative — server-issued — reintroduces a flag-OFF identity gap; flagged for an explicit owner call if server-issuance is preferred.
-2. **Coach's-Pick acceptance affordance (UX):** the one genuine UX addition — exact **placement + label** of the explicit "Start / Use this plan" control for the primary Coach's Pick (options: repurpose the existing prominent "START SESSION" control at `app.js:1428` to actually start the engaged pick; or add a distinct "Use this plan" button on the Coach's Pick card). Behavior is fixed by this spec; only the surface wording/placement is open.
-3. **Coach `replace_plan` persistence:** currently an auto-apply with no confirm ⇒ stays a draft. Whether to add an explicit confirm so a coach-replaced plan can be accepted is a later, optional decision (not required for this lane).
+1. **ID issuance — RESOLVED: client-generated OPAQUE UUID-backed IDs** (`pv_<uuid>` / `pi_<uuid>`), minted at acceptance, stored before the request, reused on retry/reload, a new `plan_version` per explicit acceptance, never derived from plan contents and never regenerated from the exercise array (§4.4). Content-derived hashes are explicitly rejected (they could collapse distinct acceptances and couple identity to representation).
+2. **Coach's-Pick acceptance affordance — RESOLVED: a distinct "Start this plan" button on the rendered plan card** is the v1 authoritative acceptance boundary (§5). Do **not** repurpose the generic "Start Session" control that only opens the coach surface. The button starts the workout regardless of the flag/sidecar and never claims persistence unless `captured:true`.
+3. **Coach `replace_plan` persistence — DEFERRED (owner):** the implicit replace stays a draft; no `plan_accepted` is written and the existing accepted snapshot is not mutated. Filed as *"Add explicit 'Replace current plan' confirmation"* in `BACKLOG.md` for a later narrow UX PR (when built, confirmation mints a new `plan_version` + new immutable item set).
 
 ---
 
