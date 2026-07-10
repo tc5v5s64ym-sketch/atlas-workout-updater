@@ -84,6 +84,7 @@ const { resolveExercise } = require('./services/exerciseResolver');
 const { applyUnresolvedLiftGate } = require('./services/unresolvedLiftGate');
 const registerReadRoutes = require('./routes/reads');
 const registerCoachOpsRoutes = require('./routes/coachOps');
+const registerSessionPlanRoutes = require('./routes/sessionPlans');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
@@ -287,6 +288,11 @@ function invalidateSheetRowsCache() {
 // injected so writes still invalidate what these reads see.
 app.use(registerReadRoutes({ getSheetRows }));
 app.use(registerCoachOpsRoutes({ getSheetRows }));
+// Session_Plans capture routes (Decision Desk #952 → Option A, PR-E) — explicit,
+// feature-flagged (ATLAS_SESSION_PLANS_WRITE, default OFF) sidecar endpoints. Global
+// /api auth + rate limiting run before this router; it writes only the Session_Plans
+// tab (never Log_Cleaned/Effort). No client calls this yet (PR-F wires the client).
+app.use(registerSessionPlanRoutes());
 
 const { routeDefinitions } = require('./config/routes');
 // eslint-disable-next-line no-unused-vars -- exerciseCatalogColumns unused in this file; imported for catalog-audit route (Phase 0 PR-06)

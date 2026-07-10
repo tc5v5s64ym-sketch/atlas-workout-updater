@@ -468,6 +468,14 @@ test('api smoke: routes include key endpoints and write metadata', async () => {
   assert.equal(routeByPath.get('/api/log-workout').writeCapable, true);
   assert.equal(routeByPath.get('/api/complete-workout').readOnly, false);
   assert.equal(routeByPath.get('/api/complete-workout').writeCapable, true);
+  // Session_Plans capture endpoints (PR-E): authenticated, write-capable sidecar
+  // (they write only the Session_Plans tab — never Log_Cleaned/Effort).
+  for (const p of ['/api/session-plans/accept', '/api/session-plans/outcome', '/api/session-plans/closeout']) {
+    assert.ok(paths.includes(p), `${p} must be in the manifest`);
+    assert.equal(routeByPath.get(p).authRequired, true, `${p} must require auth`);
+    assert.equal(routeByPath.get(p).readOnly, false);
+    assert.equal(routeByPath.get(p).writeCapable, true);
+  }
 });
 
 test('api smoke: coach/message + health/gemini are registered read-only', async () => {
