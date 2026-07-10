@@ -123,6 +123,10 @@ test('runAcceptance: happy path stores the accepted snapshot, starts the workout
   assert.equal(stored.accepted, true);
   assert.equal(stored.plan_version, r.plan_version);
   assert.equal(stored.items.length, 2);
+  // PR-G1: each execution-view exercise is tagged with its immutable plan_item_id
+  // (items[i] ↔ exercises[i]), so a later skip/substitution resolves identity DIRECTLY
+  // off the slot — never by lift-code/name/position.
+  assert.deepEqual(stored.exercises.map(e => e.plan_item_id), stored.items.map(i => i.plan_item_id));
   assert.equal(stored.session_id, '20260710-AM-01');
   assert.equal(calls.persist, 1, 'snapshot persisted before/with the request');
   assert.equal(calls.startWorkout.length, 1, 'workout started');

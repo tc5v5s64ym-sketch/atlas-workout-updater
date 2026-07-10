@@ -236,7 +236,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v122/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v123/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5681,8 +5681,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v122/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v121\b/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v123/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v122\b/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5842,7 +5842,7 @@ test('P0 wiring 2b: a no-op swap does not announce a phantom mutation (PR-570 co
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
   // applySessionSubstitution reports whether it actually changed the plan.
-  const sub = appSrc.slice(appSrc.indexOf('function applySessionSubstitution('), appSrc.indexOf('function applySessionSubstitution(') + 2200);
+  const sub = appSrc.slice(appSrc.indexOf('function applySessionSubstitution('), appSrc.indexOf('function startPlannedSession('));
   assert.match(sub, /return false; \/\/ nothing to swap/, 'a same-name swap returns false (no-op)');
   assert.match(sub, /return true;/, 'a real swap/dedupe returns true');
 

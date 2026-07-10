@@ -18,7 +18,7 @@ const cc = fs.readFileSync(path.join(publicDir, 'coach-conversation.js'), 'utf8'
 const sw = fs.readFileSync(path.join(publicDir, 'sw.js'), 'utf8');
 
 // The acceptDisplayedPlan function body (adapter) — sliced for scoped assertions.
-const acceptBlock = app.slice(app.indexOf('async function acceptDisplayedPlan('), app.indexOf('// ── P0 Sub-PR 2a'));
+const acceptBlock = app.slice(app.indexOf('async function acceptDisplayedPlan('), app.indexOf('function emitPlanItemOutcome('));
 
 test('the "Start this plan" button is rendered on the plan card and refers to the displayed plan', () => {
   assert.match(cc, /function appendStartThisPlanButton\(container, rec\)/, 'the plan-card accept button helper exists');
@@ -48,10 +48,13 @@ test('acceptDisplayedPlan is bridged and delegates to the pure orchestrator', ()
 
 test('acceptance posts ONLY /api/session-plans/accept — no outcome or closeout in PR-F', () => {
   assert.match(acceptBlock, /\/api\/session-plans\/accept/, 'the adapter posts to the accept endpoint');
-  // PR-F scope: no item-outcome or closeout capture anywhere in the frontend yet.
+  // The ACCEPTANCE flow itself emits only /accept — never an outcome or closeout.
+  // (PR-G1 adds /outcome elsewhere in app.js at the explicit skip/substitute handlers;
+  // closeout stays unwired until PR-H.)
+  assert.doesNotMatch(acceptBlock, /\/api\/session-plans\/outcome/, 'the accept flow does not send an outcome');
+  assert.doesNotMatch(acceptBlock, /\/api\/session-plans\/closeout/, 'the accept flow does not send a closeout');
   for (const src of [app, cc]) {
-    assert.doesNotMatch(src, /\/api\/session-plans\/outcome/, 'no outcome event is sent in PR-F');
-    assert.doesNotMatch(src, /\/api\/session-plans\/closeout/, 'no closeout event is sent in PR-F');
+    assert.doesNotMatch(src, /\/api\/session-plans\/closeout/, 'no closeout event is wired yet (PR-H)');
   }
 });
 
@@ -86,5 +89,5 @@ test('the button is restored (never stuck on "Starting…") when a concurrent ac
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planAcceptance\.js/, 'planAcceptance.js is in SHELL_ASSETS (offline-safe)');
-  assert.match(sw, /atlas-shell-v122/, 'the SW cache version is bumped for the new asset');
+  assert.match(sw, /atlas-shell-v123/, 'the SW cache version is bumped for the new asset');
 });

@@ -37,8 +37,11 @@ import {
 // real store/persist/start/api deps). Identity minting + snapshot + sidecar POST live
 // there so this file's diff stays a thin adapter.
 import { runAcceptance } from './planAcceptance.js';
+// PR-G1 — explicit item-outcome capture (skipped / substituted). Pure/DI; app.js
+// fires it non-blocking from the explicit skip/substitution handlers.
+import { runOutcome } from './planOutcome.js';
 
-const ATLAS_SHELL_BUILD = 'v122';
+const ATLAS_SHELL_BUILD = 'v123';
 
 
 
@@ -1573,6 +1576,10 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
     (e.canonicalName || e.name || '').toLowerCase() === prescKey ||
     (e.name || '').toLowerCase() === prescKey);
   if (idx === -1) return false;
+  // PR-G1: the substituted item KEEPS the original planned item's immutable
+  // plan_item_id (read off the slot before it is replaced/spliced). The replacement
+  // slot below retains it so a later action still resolves the accepted item.
+  const originalItemId = exs[idx].plan_item_id;
   const subCode = String(subLiftCode || '').toLowerCase();
   // Dedupe: if the substitute is already a slot elsewhere, drop the prescribed
   // slot instead of duplicating it (one logged set must not close two slots).
@@ -1599,10 +1606,17 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
       reps: p.reps != null ? p.reps : null,
       sets: p.sets != null ? p.sets : null,
       rir: p.rir != null ? p.rir : null,
-      reason: 'substituted'
+      reason: 'substituted',
+      // Keep the ORIGINAL planned item's identity on the slot (PR-G1) — the item was
+      // substituted, not replaced by a new plan item.
+      plan_item_id: originalItemId
     };
   }
   renderActiveSessionBanner();
+  // PR-G1: emit the explicit `substituted` outcome — the accepted item keeps its
+  // planned_lift_code (resolved server-side by plan_item_id) and records the actual
+  // performed_lift_code. Fails closed if the slot had no identity (unaccepted plan).
+  if (originalItemId) emitPlanItemOutcome({ plan_item_id: originalItemId, outcome: 'substituted', performed_lift_code: subLiftCode });
   return true;
 }
 
@@ -1686,6 +1700,22 @@ async function acceptDisplayedPlan(rec) {
   }
 }
 
+// PR-G1 — fire an EXPLICIT item outcome (skipped / substituted) for the current
+// accepted plan, non-blocking. Identity is the immutable plan_item_id read off the
+// slot by the caller; runOutcome fails closed (no event) when the plan isn't an
+// accepted session or the id is unknown — never a lift-code/name/position fallback.
+// Fire-and-forget: the workout action already happened; a sidecar failure never
+// blocks it, and retries reuse the same event identity (server idempotency).
+function emitPlanItemOutcome(outcomeInput) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return; // only accepted plans carry identity
+  runOutcome(plan, outcomeInput, {
+    postOutcome: (payload) => api('/api/session-plans/outcome', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    }),
+  }).catch(() => { /* runOutcome never throws; belt-and-suspenders */ });
+}
+
 // ── P0 Sub-PR 2a: deterministic plan mutation from explicit user intent ────────
 // A swap/skip the lifter STATES ("skip deadlifts and do squats") mutates the
 // canonical session IMMEDIATELY — the app state owns the change, not LLM prose.
@@ -1735,12 +1765,17 @@ function skipPlannedExercise(name) {
   const idx = getActivePlannedSession().exercises.findIndex(e =>
     (e.canonicalName || e.name || '').toLowerCase() === key || (e.name || '').toLowerCase() === key);
   if (idx === -1) return false;
+  // PR-G1: capture the immutable plan_item_id off the slot BEFORE splicing (accepted
+  // plans only), so the explicit skip can emit its outcome by identity — not by the
+  // name/position that the splice destroys.
+  const removedItemId = getActivePlannedSession().exercises[idx].plan_item_id;
   getActivePlannedSession().exercises.splice(idx, 1);
   let next = getActivePlannedSession().index;
   if (next > idx) next -= 1;
   if (next >= getActivePlannedSession().exercises.length) next = Math.max(0, getActivePlannedSession().exercises.length - 1);
   getActivePlannedSession().index = Math.max(0, next);
   renderActiveSessionBanner();
+  if (removedItemId) emitPlanItemOutcome({ plan_item_id: removedItemId, outcome: 'skipped' });
   return true;
 }
 
