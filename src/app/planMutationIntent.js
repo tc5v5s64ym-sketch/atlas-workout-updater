@@ -160,6 +160,34 @@ const _exports = (function () {
     return { action: 'skip', target: t };
   }
 
+  // A vague/pronoun target carries no exercise identity — "I don't want to do THIS /
+  // ANYTHING / it" is sentiment, not a named skip. Rejected so the decline lane never
+  // infers a skip from a phrase that names nothing to skip (owner: no broad sentiment
+  // inference). A genuine named decline ("… do LEG EXTENSIONS") still resolves.
+  const VAGUE_TARGET = /^(?:it|this|that|these|those|them|anything|everything|something|nothing|any|all(?:\s+of\s+(?:it|this|them))?|the\s+rest|much|stuff|more|be\s+.+|feel\s+.+)$/;
+
+  // An EXPLICIT decline that NAMES a planned exercise ("I don't want to do leg
+  // extensions") is a deterministic skip — NOT the coach's early-stop/quitting lane.
+  // Conservative by construction: a mutation-verb capture is a double negation
+  // ("don't want to skip squats" — keep it), a positional/vague capture names nothing,
+  // and the downstream plan-slot resolution is the final gate (a non-exercise capture
+  // matches no slot and falls through to the coach).
+  function declineSkip(target) {
+    const t = cleanName(target);
+    if (isPositional(t) || VAGUE_TARGET.test(t)) return null;
+    if (/^(?:skip|drop|cut|ditch|remove|delete|swap|switch|sub(?:stitute)?|replace)\b/.test(t)) return null;
+    if (!looksLikeExercise(t)) return null;
+    return { action: 'skip', target: t };
+  }
+
+  // Leading gerund mutation verbs → their imperative base (see the head-anchored
+  // normalize in classifyMutationIntent). Closed set — only mutation verbs.
+  const GERUND_BASE = {
+    swapping: 'swap', switching: 'switch', subbing: 'sub', substituting: 'substitute',
+    replacing: 'replace', skipping: 'skip', dropping: 'drop', cutting: 'cut',
+    ditching: 'ditch', removing: 'remove', deleting: 'delete',
+  };
+
   /**
    * classifyMutationIntent(text) → { action:'replace', target, substitute }
    *                              | { action:'skip', target }
@@ -174,7 +202,14 @@ const _exports = (function () {
     if (/\?\s*$/.test(raw)) return null;               // a question is never a mutation
     if (/\d+\s*\/\s*\d+/.test(raw)) return null;       // a slash-set log, never a mutation
     if (/\bdrop[\s-]?set/.test(raw.toLowerCase())) return null; // "drop set" is a technique, not a skip
-    const t = stripLeads(raw.toLowerCase());
+    let t = stripLeads(raw.toLowerCase());
+    // Normalize a LEADING gerund mutation verb to its imperative so the whole
+    // swap/skip grammar below applies unchanged (canary find 2026-07-10: "Swapping
+    // seated row for bent over row" fell through because only the base verb "swap"
+    // was matched). Head-anchored + a closed verb set, so it never rewrites a
+    // mid-sentence word or a real lift name ("rowing" stays "rowing").
+    t = t.replace(/^(?:swapping|switching|subbing|substituting|replacing|skipping|dropping|cutting|ditching|removing|deleting)\b/,
+      m => GERUND_BASE[m]);
     // Interrogative lead → a question, never a plan mutation (contract: questions → null).
     // The single-word forms are unambiguous; the auxiliary forms require a following
     // pronoun ("do you" / "should i") so the imperative "do squats…" is preserved.
@@ -230,6 +265,26 @@ const _exports = (function () {
     // Negations ("I don't think I'll skip…") never classify.
     if (/\b(?:don'?t|do not|not|never|won'?t|wouldn'?t|shouldn'?t|can'?t)\s+(?:think\s+)?(?:(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|gonna|going to|wanna|want to)\s+)?(?:skip|drop|cut|ditch|remove|delete|swap|switch|sub(?:stitute)?|replace)\b/.test(t)) {
       return null;
+    }
+
+    // Explicit DECLINE of a named exercise → skip (canary find 2026-07-10: "I don't
+    // want to do leg extensions" produced a coach early-stop message, never the skip
+    // path). Runs AFTER the negation guard above, so a double negation ("don't want to
+    // skip squats") has already been rejected. NAMED targets only — declineSkip drops
+    // positional/vague/sentiment captures, and the plan-slot resolution downstream is
+    // the final gate.
+    m = t.match(/^i\s*(?:'?d)?\s+(?:really\s+|honestly\s+)?(?:don'?t\s+want\s+to|do\s+not\s+want\s+to|don'?t\s+wanna|dont\s+wanna|would\s+rather\s+not|rather\s+not|prefer\s+not\s+to)\s+(?:do\s+|doing\s+|perform\s+)?(.+)$/);
+    if (m) {
+      const inner = declineSkip(m[1]);
+      if (inner) return inner;
+    }
+    // "i don't want X" (no "to do") — the same explicit decline, minus the verb. The
+    // negative lookahead defers the "…want to do X" form to the regex above (else it
+    // would capture "to do X" here, defeating the positional/vague gate).
+    m = t.match(/^i\s+(?:really\s+|honestly\s+)?(?:don'?t\s+want|do\s+not\s+want|don'?t\s+wanna|dont\s+wanna)(?!\s+to\b)\s+(.+)$/);
+    if (m) {
+      const inner = declineSkip(m[1]);
+      if (inner) return inner;
     }
     m = t.match(/\b(?:i think\s+)?(?:i'?ll|i will|i'?m gonna|im gonna|i'?m going to|let'?s|i want to|i wanna)\s+((?:skip|drop|cut|ditch|remove|delete|swap|switch|sub(?:stitute)?|replace)\b.*)$/);
     if (m) {
