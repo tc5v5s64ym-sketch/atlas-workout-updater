@@ -149,3 +149,24 @@ test('nod: an approved pivot or a swap verdict is a brief acknowledgment', () =>
   assert.equal(selectCoachMode({ substitution: { decision: 'approve' } }).mode, 'nod');
   assert.equal(selectCoachMode({ verdict: { outcome: 'swap' } }).mode, 'nod');
 });
+
+// ── Reassure: explicit discouragement trigger (Soul Plan B5b Part 2) ───────────
+
+test('reassure: an explicit discouragement signal maps to reassure', () => {
+  assert.equal(selectCoachMode({ discouraged: true }).mode, 'reassure');
+  assert.deepEqual(selectCoachMode({ discouraged: true }).evidence, { discouraged: true });
+  // layoff-return still reassures too.
+  assert.equal(selectCoachMode({ layoff: { returning_from_layoff: true } }).mode, 'reassure');
+});
+
+test('reassure precedence: safety/refuse/challenge outrank a discouraged message', () => {
+  // safety (pain/form) beats reassure
+  assert.equal(selectCoachMode({ discouraged: true, note_trigger: TRIGGERS.FORM_SAFETY }).mode, 'safety');
+  // a real consistent_underperformance pattern still challenges even when discouraged (B1 precedence)
+  assert.equal(selectCoachMode({
+    discouraged: true,
+    memory_patterns: [{ liftCode: 'BEN01', patterns: [{ type: 'consistent_underperformance' }] }],
+  }).mode, 'challenge');
+  // a reject rule still refuses
+  assert.equal(selectCoachMode({ discouraged: true, rule_decisions: [{ decision: 'reject' }] }).mode, 'refuse');
+});
