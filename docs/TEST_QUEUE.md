@@ -62,6 +62,19 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | If profanity appears outside the certified cell or on unearned/forged input, STOP and set `ATLAS_COACH_PROFANITY` off (or `ownerPrefs.profanity_enabled=false`) — that is a trust regression; file the finding and fix the gate/suppressor before re-enabling. If mode/register misread the moment, tune `selectCoachMode`/the grant, not the model. |
 
+### LT-009 — Challenge voice live behavior (Soul Plan PR-B5a sandbag challenge) — ✅ PASS (agent live test 2026-07-10)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-009 |
+| **Related PR / feature** | Soul Plan PR-B5a sandbag challenge (#954, on the #953 chat coach-mode foundation) — the chat voice words `coach_mode: 'challenge'` for `memory_patterns.consistent_underperformance`: state the pattern + numbers, ask one question, hold the line on pushback, no register/profanity escalation. **Gate:** LT-007 (current-session truth) recorded PASS, which authorizes live promotion. |
+| **Shell / app version expected** | Server build with #954 deployed (verified live 2026-07-10 against `https://atlas-workout-updater.onrender.com`; Gemini configured, `gemini-2.5-flash-lite`). |
+| **Steps** | Agent-performed live API validation (owner full-auto authorization — "make the test and do the testing yourself"), using a REAL qualifying lift (no manufactured history). 1. Confirm a lift genuinely triggers `consistent_underperformance` (Bench Press — 5 of the last 5 sessions' top-set e1RM ≥5% below benchmark). 2. Ask the coach a direct question and a general check-in; confirm challenge is worded. 3. Push back once ("you're overthinking it, bench feels fine") and confirm the position holds. 4. Send a tiredness message and confirm recovery precedence beats challenge. |
+| **Expected result** | Challenge mode selected; the pattern + supporting numbers named; exactly one question asked; no lecturing; the same evidence-backed position held after one pushback; not harsh; no profanity; no implied write; safety/recovery precedence intact. |
+| **Screenshot** | — (API validation; replies captured below) |
+| **Owner result** | **PASS** (agent live test, 2026-07-10; owner may spot-check). 9/9 criteria met against production real data: (1) **challenge selected + (2) names pattern & numbers** — "Bench Press has come in under target in 5 of the last 5 sessions." (3) **one question** — "What's going on there — the load feels off, recovery, or just not feeling it lately?" (4) **no lecture** — one observation + one question. (5) **holds the line** — after "you're overthinking it, bench feels fine," it restated the identical evidence, did not cave. (6) **not harsh** + (7) **no profanity** — measured, on-their-side tone (`ATLAS_COACH_PROFANITY` off). (8) **no implied write** — no save/log claim. (9) **recovery precedence** — a tiredness message routed to `source:engine` recovery routing ("your logs actually look recovered… keep it easy"), NOT challenge. |
+| **Follow-up if FAIL** | If challenge lectures, invents a pattern, escalates register/uses profanity, caves on pushback, or overrides safety/recovery, STOP and fix the prompt block / precedence, not the model. Unblocks: `detectDiscouragement`→reassure may now be proposed as its own separate PR. |
+
 ### LT-006 — completion-flow: screenshot → preview + plan-complete stops nagging (G3+FB)
 
 | Field | Value |
