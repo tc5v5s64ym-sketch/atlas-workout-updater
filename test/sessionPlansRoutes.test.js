@@ -86,6 +86,12 @@ test('accept: an item without a pi_ plan_item_id or without planned_lift_code �
   assert.equal(captureCalls.length, 0);
 });
 
+test('accept: a whitespaced planned_lift_code → 400 (matches the builder canonical-code rule, not a 200 error)', async () => {
+  const { status } = await post('/api/session-plans/accept', { ...BASE, items: [{ ...ACCEPT_ITEM, planned_lift_code: 'BEN 01' }] });
+  assert.equal(status, 400);
+  assert.equal(captureCalls.length, 0);
+});
+
 // ── outcome ─────────────────────────────────────────────────────────────────--
 
 test('outcome: a valid completed request forwards the item and returns the envelope', async () => {
@@ -105,6 +111,12 @@ test('outcome: an unknown outcome → 400', async () => {
 test('outcome: substituted without performed_lift_code → 400', async () => {
   const { status } = await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN01', outcome: 'substituted' } });
   assert.equal(status, 400);
+});
+
+test('outcome: a whitespaced planned_/performed_lift_code → 400', async () => {
+  assert.equal((await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN 01', outcome: 'completed' } })).status, 400);
+  assert.equal((await post('/api/session-plans/outcome', { ...BASE, item: { plan_item_id: PI, planned_lift_code: 'BEN01', outcome: 'substituted', performed_lift_code: 'DB P01' } })).status, 400);
+  assert.equal(captureCalls.length, 0);
 });
 
 test('outcome: missing item → 400', async () => {

@@ -26,6 +26,11 @@ const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEve
 // the deeper canonical-lift-code contract.
 const PV_SHAPE = /^pv_.+/;
 const PI_SHAPE = /^pi_.+/;
+// A canonical lift code is a non-empty token with no whitespace — mirrors the
+// builder's sessionPlanEvents._requireLiftCode so a whitespaced code is rejected
+// at the route (400) instead of throwing in the builder and surfacing as a 200
+// {status:'error'} envelope (PR-965 review).
+const LIFT_CODE_SHAPE = /^\S+$/;
 
 function _str(v) { return v == null ? '' : String(v).trim(); }
 
@@ -58,7 +63,7 @@ module.exports = function registerSessionPlanRoutes() {
     for (const it of items) {
       const item = it && typeof it === 'object' ? it : {};
       if (!PI_SHAPE.test(_str(item.plan_item_id))) return standardError(req, res, 'each item requires an opaque plan_item_id (pi_…)', null, 400);
-      if (!_str(item.planned_lift_code)) return standardError(req, res, 'each item requires a planned_lift_code', null, 400);
+      if (!LIFT_CODE_SHAPE.test(_str(item.planned_lift_code))) return standardError(req, res, 'each item requires a canonical planned_lift_code (non-empty, no spaces)', null, 400);
     }
     const result = await capture.captureAccept(session, items);
     return standardSuccess(req, res, 'Session_Plans accept', { session_plans: result });
@@ -74,11 +79,11 @@ module.exports = function registerSessionPlanRoutes() {
     const item = body.item && typeof body.item === 'object' ? body.item : null;
     if (!item) return standardError(req, res, 'item is required', null, 400);
     if (!PI_SHAPE.test(_str(item.plan_item_id))) return standardError(req, res, 'item.plan_item_id must be an opaque token (pi_…)', null, 400);
-    if (!_str(item.planned_lift_code)) return standardError(req, res, 'item.planned_lift_code is required', null, 400);
+    if (!LIFT_CODE_SHAPE.test(_str(item.planned_lift_code))) return standardError(req, res, 'item.planned_lift_code must be a canonical lift code (non-empty, no spaces)', null, 400);
     const outcome = _str(item.outcome);
     if (!ITEM_OUTCOMES.includes(outcome)) return standardError(req, res, `item.outcome must be one of ${ITEM_OUTCOMES.join('|')}`, null, 400);
-    if (outcome === 'substituted' && !_str(item.performed_lift_code)) {
-      return standardError(req, res, 'performed_lift_code is required when outcome is substituted', null, 400);
+    if (outcome === 'substituted' && !LIFT_CODE_SHAPE.test(_str(item.performed_lift_code))) {
+      return standardError(req, res, 'a substituted outcome requires a canonical performed_lift_code (non-empty, no spaces)', null, 400);
     }
     const result = await capture.captureOutcome(session, item);
     return standardSuccess(req, res, 'Session_Plans outcome', { session_plans: result });
