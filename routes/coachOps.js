@@ -29,6 +29,9 @@ const coachPolish = require('../services/coachPolish');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso } = require('../services/analytics');
 const { enrichCoachFacts } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
+const { selectCoachMode } = require('../services/coachMode');
+const { grantRegister } = require('../services/registerPermissions');
+const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
 const { getProfileGoal } = require('../services/profileGoal');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('../services/coachVoiceRenderer');
@@ -412,11 +415,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // reach the coach. No liftCode → no rows in hand → null (a missing story is
     // honest; we never add a read for it — docs/READ_BUDGET.md discipline).
     let athleteIdentity = null;
+    // PR-B4 (slice 1) — celebration scarcity is derived from the SAME allLog the
+    // enrichment path fetches (zero additional Sheets reads); null when there is no
+    // liftCode (no rows in hand — the mode falls back to its scarcity-clear default,
+    // which only ever downgrades celebrate→praise, never up).
+    let scarcity = null;
     if (rawFacts.liftCode) {
       try {
         const allLog = await getSheetRows(logSheetName);
         facts = enrichCoachFacts(rawFacts, allLog);
         athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
+        scarcity = computeCelebrationScarcity(allLog, { asOf: todayIso() });
       } catch (_) {
         // Keep client facts as-is if Sheets read or enrichment fails.
       }
@@ -476,6 +485,31 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // the prompt forbids commanding a deload / inventing numbers. ALWAYS overwrite
     // (engine value or null) so a client-supplied advisory can never reach the coach.
     facts = { ...facts, recovery_advisory: isSetLike ? (computed.recovery_advisory || null) : null };
+
+    // PR-B4 (slice 1) — coaching MODE + granted REGISTER for the set/block voice.
+    // The engine names the moment (selectCoachMode) from facts it already computed
+    // (note tier/trigger for a block, plus the rec verdicts/substitution), scarcity
+    // gates whether a new-ground moment may celebrate, and grantRegister derives the
+    // volume + casual/humor licenses. ALWAYS overwritten (engine-only) so a client
+    // can't set its own register. Additive this slice: the sanitizer forwards
+    // coach_mode + { intensity, casual_ok, humor_ok } (profanity_ok withheld until
+    // its suppressor lands), and the prompt does not yet instruct their use — so
+    // there is no behavior change, only new engine facts on the payload.
+    if (isSetLike) {
+      const rec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
+      const scarcityClear = scarcity ? scarcity.scarcityClear !== false : true;
+      const mode = selectCoachMode({
+        note_trigger: noteMeta.note_trigger,
+        note_tier: noteMeta.note_tier,
+        effort_verdict: rec.effort_verdict,
+        progression_verdict: rec.progression_verdict,
+        substitution: facts.substitution,
+      }, { scarcityClear }).mode;
+      const register = grantRegister({ mode, scarcity: { scarcityClear } });
+      facts = { ...facts, coach_mode: mode, register };
+    } else {
+      facts = { ...facts, coach_mode: null, register: null };
+    }
 
     try {
       const message = kind === 'plan'
