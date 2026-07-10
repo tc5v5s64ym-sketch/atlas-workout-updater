@@ -1060,6 +1060,14 @@ Five simulated conversational sessions against the LIVE deployed app (read-only,
 
 ---
 
+## Soul Plan PR-B1 — mode gaps the coaching-mode enum makes visible (2026-07-10)
+
+`services/coachMode.js` (PR-B1, pure/unwired) names every coaching moment; mapping the EXISTING triggers exposed these gaps and recorded readings:
+
+- **`[correctness]` chat drift has no engine trigger** — nothing deterministic can currently select `challenge` from conversation drift (only the `coachMemory` consistent-underperformance pattern reaches it). → PR-B5a builds the drift signal (already sequenced; do not build early).
+- **`[correctness]` discouragement has no engine trigger** — `reassure` is reachable only from the layoff-return state; discouragement language in chat has no deterministic tripwire. → PR-B5b (sequenced).
+- **Recorded readings (PM authority, documented in the module header; revisit in PR-B4 wiring review if wrong):** (1) a routine info-level `hold`/`load` rule decision does NOT map to `refuse` (mirrors `hasActionableRuleDecision` — info-level progression calls never break silence); `reject` at any severity, or `hold` at warning/error, refuses. (2) `PAIN_INJURY` maps to `safety` alongside `FORM_SAFETY` (pain is the highest safety class everywhere else). (3) `UNEXPECTED_EXCELLENCE` maps to `note`, not `praise` — praise stays reserved for an earned `beat`; if the owner wants positive-deviation praise, that is a one-line remap in PR-B4. (4) `new_ground` with a spent scarcity budget downgrades `celebrate` → `praise` (the PR-B3 fixture's expected downgrade lives here, not in B2).
+
 ## Coach voice architecture — findings from PR-A1 review (2026-07-09)
 
 Five items filed per `docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md` §6 and `docs/SOUL_PLAN_V1.md` PR-A1 scope. Do not act on these out of sequence — the Soul Plan dependency chain governs.

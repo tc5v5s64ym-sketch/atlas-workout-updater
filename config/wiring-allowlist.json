@@ -1,5 +1,5 @@
 {
-  "_comment": "Wired-or-deleted allowlist (Remediation PR-13). scripts/check-wired-modules.js enforces it; test/wiredModules.test.js runs it in CI. A services/*.js unreachable from production must be WIRED, DELETED, or listed here. Two categories: `modules` = staged for imminent wiring (each REQUIRES `expires` YYYY-MM-DD + `roadmap`; an expired entry FAILS CI so staging can never be permanent; keep small — target <= 8); `testOnly` = production-unreachable BY DESIGN because it is test/CI tooling (needs `reason`, never expires).",
+  "_comment": "Wired-or-deleted allowlist (Remediation PR-13). scripts/check-wired-modules.js enforces it; test/wiredModules.test.js runs it in CI. A services/*.js unreachable from production must be WIRED, DELETED, or listed here. Two categories: `modules` = staged for imminent wiring (each REQUIRES `expires` YYYY-MM-DD + `roadmap`; an expired entry FAILS CI so staging can never be permanent; keep small — target <= 11 during the Soul Plan B1–B3 staging window, dropping back to 8 when PR-B4 wires those modules); `testOnly` = production-unreachable BY DESIGN because it is test/CI tooling (needs `reason`, never expires).",
   "modules": [
     {
       "file": "services/objectiveScorer.js",
@@ -40,6 +40,11 @@
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
       "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md PR 17 + docs/COACHING_ENGINE_ARCHITECTURE.md 'Goal & population policy' layer — pending wiring alongside goalTemplateModule."
+    },
+    {
+      "file": "services/coachMode.js",
+      "expires": "2026-10-31",
+      "roadmap": "docs/SOUL_PLAN_V1.md PR-B1 — coaching-mode enum, pure by design until PR-B4 (the mode/register wiring PR) imports its frozen enum into the sanitizer whitelist (stimulusGovernor lockstep pattern) and wires selectCoachMode into the live voice paths."
     }
   ],
   "testOnly": [
