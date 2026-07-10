@@ -41,7 +41,7 @@ import { runAcceptance } from './planAcceptance.js';
 // fires it non-blocking from the explicit skip/substitution handlers.
 import { runOutcome } from './planOutcome.js';
 
-const ATLAS_SHELL_BUILD = 'v123';
+const ATLAS_SHELL_BUILD = 'v124';
 
 
 
@@ -2124,6 +2124,19 @@ function renderActiveSessionBanner() {
     nextBtn.addEventListener('click', advancePlannedSession);
     row.appendChild(nextBtn);
   }
+  // PR-G2: the explicit "Done with this exercise" button — the ONLY authoritative
+  // `completed` boundary. Shown for the CURRENT accepted item once there is evidence
+  // of a performed set, and only until it is completed (no re-complete). The evidence
+  // gates visibility; the CLICK is the authoritative event.
+  const activePlan = getActivePlannedSession();
+  if (activePlan && activePlan.accepted === true && current.plan_item_id) {
+    const item = (activePlan.items || []).find(it => it && it.plan_item_id === current.plan_item_id);
+    if (item && item.outcome !== 'completed' && currentItemHasPerformedSet(current)) {
+      const doneBtn = el('button', { type: 'button', class: 'secondary start-done-btn', text: 'Done with this exercise' });
+      doneBtn.addEventListener('click', () => { if (doneBtn.disabled) return; doneBtn.disabled = true; completeCurrentPlanItem(); });
+      row.appendChild(doneBtn);
+    }
+  }
   const endBtn = el('button', { type: 'button', class: 'secondary', text: 'End session' });
   endBtn.addEventListener('click', endPlannedSession);
   row.appendChild(endBtn);
@@ -2137,6 +2150,37 @@ function renderActiveSessionBanner() {
   // session pin re-derives from the same canonical state at each of those
   // moments (composer-first Phase A).
   renderSessionPin();
+}
+
+// PR-G2 — the ONLY authoritative `completed` boundary: the athlete explicitly taps
+// "Done with this exercise" on the current-exercise banner. Logging a set, "Next",
+// and chat text NEVER emit completed. Emits `completed` for the current item's exact
+// plan_item_id, marks it done LOCALLY (so it can't be completed again), persists the
+// snapshot (no re-complete after a reload), and advances normally — regardless of the
+// sidecar. Guarded against double-taps + re-completion. `completed` means the athlete
+// SAYS they are finished with this planned item; it does NOT claim every prescribed
+// set was performed or saved.
+function completeCurrentPlanItem() {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return;
+  const current = plan.exercises[plan.index];
+  if (!current || !current.plan_item_id) return;
+  const item = (plan.items || []).find(it => it && it.plan_item_id === current.plan_item_id);
+  if (!item || item.outcome === 'completed') return; // no re-complete / double-tap guard
+  item.outcome = 'completed';                        // local completion state (prevents re-complete)
+  saveSessionSnapshot();                             // survive reload — no re-complete after a resume
+  emitPlanItemOutcome({ plan_item_id: item.plan_item_id, outcome: 'completed' }); // non-blocking sidecar
+  advancePlannedSession();                           // advance normally, regardless of the sidecar
+}
+
+// Evidence gate for the "Done" button: at least one captured/performed set for the
+// CURRENT item (its planned lift is in the derived completion buffer). The button is
+// ENABLED on this evidence, but the CLICK — not the evidence — is the authoritative
+// completed event (a logged set never auto-completes the item).
+function currentItemHasPerformedSet(current) {
+  const key = (current && (current.canonicalName || current.name) || '').toLowerCase();
+  if (!key) return false;
+  return (getSessionCompleted() || []).some(c => String(c).toLowerCase() === key);
 }
 
 // B2 canonical state — the plan-card banner renders its "current step" from

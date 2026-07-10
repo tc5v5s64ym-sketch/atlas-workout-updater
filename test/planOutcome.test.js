@@ -64,8 +64,17 @@ test('buildOutcomePayload fails closed: unaccepted plan / missing plan_version /
   assert.equal(mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_zzz', outcome: 'skipped' }), null, 'unknown id never falls back to lift-code/name');
 });
 
-test('buildOutcomePayload: completed is OUT OF SCOPE this slice → null', () => {
-  assert.equal(mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'completed' }), null);
+test('buildOutcomePayload: completed → identity + planned metadata, no performed code (PR-G2)', () => {
+  const p = mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'completed' });
+  assert.equal(p.item.outcome, 'completed');
+  assert.equal(p.item.plan_item_id, 'pi_a');
+  assert.equal(p.item.planned_lift_code, 'BEN01');
+  assert.ok(!('performed_lift_code' in p.item), 'completed carries no performed code');
+});
+
+test('buildOutcomePayload: an unknown outcome is still rejected', () => {
+  assert.equal(mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'done' }), null);
+  assert.equal(mod.buildOutcomePayload(PLAN, { plan_item_id: 'pi_a', outcome: 'planned' }), null);
 });
 
 // ── orchestration ─────────────────────────────────────────────────────────────

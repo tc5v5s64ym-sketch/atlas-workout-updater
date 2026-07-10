@@ -1,11 +1,12 @@
-// ── Explicit item-outcome capture (PR-G1) — skipped / substituted ─────────────
+// ── Explicit item-outcome capture (PR-G1/G2) — skipped / substituted / completed ─
 //
 // Pure, DOM-free, network-free helpers + a DI orchestrator for capturing an
 // EXPLICIT per-item outcome on an ACCEPTED plan (docs/SESSION_PLANS_CAPTURE_SPEC.md
-// §4.2). PR-G1 ships only the two genuinely-explicit outcomes — `skipped` (a typed
-// "skip X" or "Next" on a not-yet-logged current slot) and `substituted` (a typed /
-// declared swap). `completed` is PR-G2 (its own explicit "Done with this exercise"
-// button); NO inference from logged sets anywhere here.
+// §4.2). Three genuinely-explicit outcomes: `skipped` (a typed "skip X" or "Next" on
+// a not-yet-logged current slot) and `substituted` (a typed / declared swap) — PR-G1;
+// and `completed` — PR-G2, emitted ONLY by the explicit "Done with this exercise"
+// button (never by logging a set, "Next", or chat text). NO inference from logged
+// sets anywhere here.
 //
 // Identity is taken DIRECTLY from the immutable accepted `items[]` by `plan_item_id`
 // — the caller reads the id off the tagged execution slot (planAcceptance.js tags
@@ -45,7 +46,9 @@ export function buildOutcomePayload(activePlan, { plan_item_id, outcome, perform
   const session_date = _str(plan.session_date);
   if (!session_id || !plan_version) return null;
   const oc = _str(outcome);
-  if (oc !== 'skipped' && oc !== 'substituted') return null; // PR-G1 scope
+  // skipped/substituted (PR-G1) + completed (PR-G2, the explicit "Done with this
+  // exercise" boundary). `completed` carries NO performed code (like skipped).
+  if (oc !== 'skipped' && oc !== 'substituted' && oc !== 'completed') return null;
   // Identity by plan_item_id ONLY — fail closed if the accepted item is unknown.
   const item = resolveItemForOutcome(plan, plan_item_id);
   if (!item) return null;
