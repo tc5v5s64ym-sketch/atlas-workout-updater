@@ -31,6 +31,7 @@ const { enrichCoachFacts, confirmTodayNewGround } = require('../services/liveInt
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { selectCoachMode } = require('../services/coachMode');
 const { deriveChatCoachMode } = require('../services/chatCoachMode');
+const { detectDiscouragement } = require('../services/discouragementSignal');
 const { grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
@@ -586,7 +587,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   // recommended focus, stalled lifts, and under-coverage gaps. Bounded here and
   // bounded again in coach.sanitizeChatContext. The lifter's current preview rows
   // (if any) ride along from the client so "is this set good?" can be answered.
-  function buildChatContext(logRows, effortRows, clientContext, coachingNotes, constraints) {
+  function buildChatContext(logRows, effortRows, clientContext, coachingNotes, constraints, modeOpts = {}) {
     const intents = scoreIntents(logRows, effortRows);
     const recent = buildRecentSessions(logRows, effortRows, { limit: 5 });
     const stalls = detectStalls(logRows);
@@ -687,16 +688,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // fresh here — never read from clientContext — so it is engine-only; bounded
       // again by coach.sanitizeChatContext's explicit whitelist.
       athlete_identity: buildAthleteIdentity(logRows, { asOf: todayIso() }),
-      // B5 foundation — the engine-decided coaching MODE for the chat voice, derived
-      // (deriveChatCoachMode) from the SAME snapshot facts just assembled above; no
-      // new detection, no extra reads. Today only `memory_patterns` → `challenge`;
-      // else `silent`. Additive/plumbing like the set-reaction path (PR-B4 slice 1):
-      // the chat prompt does not yet instruct its use, so there is no behavior change
-      // — this establishes the seam B5 Part 2 attaches challenge/reassure to. Register
-      // is intentionally NOT granted here (that is B4-4); the sanitizer floors it to
-      // null. The route resolves the higher-precedence tiredness/recovery moment
-      // before the LLM, so this mode only ever rides the non-tired turn.
-      coach_mode: deriveChatCoachMode({ memory_patterns })
+      // B5 — the engine-decided coaching MODE for the chat voice, derived
+      // (deriveChatCoachMode) from the snapshot facts assembled above plus the
+      // message-derived discouragement signal (B5b Part 2). `memory_patterns` →
+      // `challenge`; an explicit discouragement message → `reassure` (challenge still
+      // outranks it); else `silent`. Register is intentionally NOT granted here (that
+      // is B4-4); the sanitizer floors it to null. The route resolves the
+      // higher-precedence tiredness/recovery moment before the LLM, so this mode only
+      // ever rides the non-tired turn — recovery/safety are never softened into
+      // reassurance.
+      coach_mode: deriveChatCoachMode({ memory_patterns }, { discouraged: modeOpts.discouraged === true })
     };
   }
 
@@ -888,7 +889,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           ? { date: row[0] || null, kind: row[1] || null, target: row[2] || null, rule: row[3] || null, note: row[4] || null }
           : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
         .filter(c => c.kind && c.target && c.rule);
-      const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints);
+      // B5b Part 2 — explicit discouragement/frustration in THIS message routes the
+      // chat coach mode to `reassure`. Message-derived (detectDiscouragement), never
+      // inferred; pure tiredness never fires it (that stays the recovery read below,
+      // which also short-circuits before the LLM — so recovery outranks reassure).
+      const discouraged = detectDiscouragement(message, {}).discouraged;
+      const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged });
       // Slice 3 — recovery routing owns a tired lifter's reply, grounded in the real
       // recovery state (weekly-load fatigue, days since last session, fatigued
       // patterns). Deterministic + read-only; the LLM is bypassed so it can't hype.

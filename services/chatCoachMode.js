@@ -33,13 +33,19 @@ const { selectCoachMode } = require('./coachMode');
 // Map the chat snapshot onto selectCoachMode's input shape. Only the fields the
 // chat path genuinely computes are forwarded — nothing is invented, and an absent
 // field is simply not passed (selectCoachMode floors every missing trigger).
-function deriveChatCoachMode(context) {
+function deriveChatCoachMode(context, opts = {}) {
   const c = context && typeof context === 'object' ? context : {};
+  const o = opts && typeof opts === 'object' ? opts : {};
   const facts = {
-    // The one live mode trigger the chat context carries today (challenge on a
-    // recurring consistent_underperformance pattern). Same shape selectCoachMode
-    // reads: memory_patterns[*].patterns[*].type.
+    // Challenge on a recurring consistent_underperformance pattern (data-derived).
+    // Same shape selectCoachMode reads: memory_patterns[*].patterns[*].type.
     memory_patterns: Array.isArray(c.memory_patterns) ? c.memory_patterns : [],
+    // Reassure on an EXPLICIT discouragement/frustration message (B5b Part 2). The
+    // signal is message-derived (services/discouragementSignal.detectDiscouragement),
+    // computed + passed by the chat route — never inferred here. `challenge` still
+    // outranks `reassure` (B1 precedence), and the route resolves tiredness/recovery
+    // before the LLM so recovery beats reassure.
+    discouraged: o.discouraged === true,
   };
   return selectCoachMode(facts, {}).mode;
 }

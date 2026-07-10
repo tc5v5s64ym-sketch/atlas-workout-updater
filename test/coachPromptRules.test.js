@@ -261,3 +261,29 @@ test('set-reaction prompt: thin-history rule placed after calibration_status rul
   const calibStatusIdx = prompt.indexOf('calibration_status');
   assert.ok(calibStatusIdx < thinHistoryIdx, 'thin-history rule must follow the calibration_status rule');
 });
+
+// ── PR-B5b Part 2: the chat REASSURE-mode prompt block ────────────────────────
+
+test('chat prompt: carries a REASSURE MODE block gated on coach_mode', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('REASSURE MODE'), 'chat prompt must carry a reassure-mode block');
+  assert.ok(chat.includes('Reassure ONLY when'), 'reassure must be gated to coach_mode reassure');
+});
+
+test('chat prompt: reassure zooms out ONLY with facts present and gives ONE next move', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('ZOOM OUT using ONLY facts actually present'));
+  assert.ok(chat.includes('ONE concrete next move'));
+});
+
+test('chat prompt: reassure — thin history says less, never invents progress, no filler', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('THIN HISTORY = SAY LESS, NOT WARMER'));
+  assert.ok(chat.includes('never invent progress'));
+  assert.ok(chat.includes('believe in yourself'), 'must ban the "believe in yourself" filler');
+});
+
+test('chat prompt: reassure defers to pain/safety/recovery', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('that takes precedence'), 'pain/injury/fatigue outranks reassurance');
+});

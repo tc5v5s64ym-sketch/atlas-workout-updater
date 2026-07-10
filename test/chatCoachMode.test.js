@@ -64,3 +64,13 @@ test('foundation reaches the coach: the derived mode round-trips through sanitiz
   // A silent mode also survives the round-trip (it is a real frozen mode, not a drop).
   assert.equal(sanitizeChatContext({ coach_mode: deriveChatCoachMode({}) }).coach_mode, 'silent');
 });
+
+test('reassure: an explicit discouragement signal routes the chat mode to reassure (B5b Part 2)', () => {
+  assert.equal(deriveChatCoachMode({}, { discouraged: true }), 'reassure');
+  // challenge still outranks reassure when a memory pattern is also present (B1 precedence)
+  assert.equal(deriveChatCoachMode(UNDERPERF, { discouraged: true }), 'challenge');
+  // no discouragement, no pattern → silent; opts optional (back-compat)
+  assert.equal(deriveChatCoachMode({}, {}), 'silent');
+  assert.equal(deriveChatCoachMode({}), 'silent');
+  assert.equal(deriveChatCoachMode({}, { discouraged: false }), 'silent');
+});

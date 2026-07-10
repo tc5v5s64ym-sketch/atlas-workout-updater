@@ -1788,6 +1788,44 @@ test('B5 foundation: coach/chat wires an engine coach_mode into the chat context
   }
 });
 
+test('B5b Part 2: coach/chat routes an explicit discouragement message to reassure mode', async () => {
+  // An explicit discouragement/frustration message → coach_mode 'reassure' in the
+  // context handed to the coach (detectDiscouragement wired into the chat mode).
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "honestly I feel like I'm going backwards and I'm so frustrated with my progress" })
+    });
+    assert.equal(response.status, 200);
+    const ctx = fakeCoachState.lastChatContext;
+    assert.ok(ctx, 'buildChatContext output must reach the coach');
+    assert.equal(ctx.coach_mode, 'reassure', 'explicit discouragement → reassure');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('B5b Part 2: a tiredness message still routes to recovery, NOT reassure (precedence held)', async () => {
+  // Pure tiredness never triggers discouragement, and the route resolves it via the
+  // recovery read before the LLM — so it never reaches reassure mode.
+  fakeCoachState.configured = true;
+  fakeCoachState.lastChatContext = null;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: "I'm completely wiped out and exhausted today" })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'engine', 'tiredness → deterministic recovery routing, not the LLM/reassure path');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.lastChatContext = null;
+  }
+});
+
 test('LT-007: coach/chat — session_tally per_set weights reach the coach context intact', async () => {
   // LT-007 check 2: "what weights did I just use on bench?" must be answerable
   // from session_tally.exercises[0].per_set — buildChatContext must forward

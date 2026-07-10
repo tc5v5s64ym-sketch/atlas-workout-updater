@@ -47,11 +47,6 @@
       "roadmap": "docs/SOUL_PLAN_V1.md PR-B5a Part 1 — pure drift-signal module (skipped-pattern streak / plan deviation / sandbag persistence); Part 2 wires detectDrift into selectCoachMode's challenge trigger + the persona challenge block, removing this entry."
     },
     {
-      "file": "services/discouragementSignal.js",
-      "expires": "2026-10-31",
-      "roadmap": "docs/SOUL_PLAN_V1.md PR-B5b Part 1 — pure discouragement-signal module (frustration / negative_self_talk / stall_frustration); Part 2 wires detectDiscouragement into selectCoachMode's reassure trigger + the deterministic zoom-out evidence pack + the persona reassure block, removing this entry."
-    },
-    {
       "file": "services/sessionPlanEvents.js",
       "expires": "2026-10-31",
       "roadmap": "Decision Desk #952 (Option A) Session_Plans persistence PR-A — pure event-row builders + idempotency (schema contract only, no wiring). PR-B (idempotent writer) imports these; PR-C wires the live capture at accepted-plan/closeout boundaries, removing this entry."

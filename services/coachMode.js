@@ -108,7 +108,14 @@ function selectCoachMode(facts, opts = {}) {
     return pick('challenge', { note_trigger: f.note_trigger });
   }
 
-  // 5. reassure — returning after time away.
+  // 5. reassure — an explicit discouragement/frustration message (B5b), or returning
+  //    after time away. Recovery/tiredness and safety outrank reassure: the chat
+  //    route resolves a tiredness message before the LLM, and safety/refuse/correct/
+  //    challenge all sit above this in precedence, so a genuinely challenge-worthy or
+  //    unsafe moment is never softened into reassurance.
+  if (f.discouraged === true) {
+    return pick('reassure', { discouraged: true });
+  }
   if (f.layoff && typeof f.layoff === 'object' && f.layoff.returning_from_layoff === true) {
     return pick('reassure', { returning_from_layoff: true });
   }
