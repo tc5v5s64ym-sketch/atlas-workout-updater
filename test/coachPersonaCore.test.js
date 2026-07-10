@@ -109,3 +109,40 @@ test('persona core golden: the block carries the numbers IRON RULE and the never
   assert.match(PERSONA_CORE, /Never invent or change numbers/i, 'core must forbid inventing numbers');
   assert.match(PERSONA_CORE, /never write to any database or sheet/i, 'core must carry never-writes');
 });
+
+// ── (PR-B4 slice 2) register-interpretation block ─────────────────────────────
+
+const REGISTER_HEADER = "REGISTER — how loud you may be is the engine's call, never yours";
+
+test('register block: the core describes routine/elevated/max and the casual/humor licenses', () => {
+  assert.ok(PERSONA_CORE.includes(REGISTER_HEADER), 'core must carry the register-interpretation block');
+  for (const level of ['routine', 'elevated', 'max']) {
+    assert.ok(PERSONA_CORE.includes(`"${level}"`), `register block must describe intensity "${level}"`);
+  }
+  assert.match(PERSONA_CORE, /"casual_ok"/, 'register block must describe casual_ok');
+  assert.match(PERSONA_CORE, /"humor_ok"/, 'register block must describe humor_ok');
+});
+
+test('register block: the engine grants the level; the model never chooses its own volume', () => {
+  assert.match(PERSONA_CORE, /NEVER choose your own volume, and never upgrade it/,
+    'the model must be told it never picks its own intensity');
+  assert.match(PERSONA_CORE, /When "register" is absent, treat it as routine/,
+    'absent register defaults to routine');
+  assert.match(PERSONA_CORE, /Register sets TONE only\. A higher intensity never overrides a grounding rule/,
+    'register must be subordinate to the grounding rules (no invented numbers even at max)');
+});
+
+test('register block: profanity is NOT described in this slice (it lands with its suppressor in B4-3)', () => {
+  assert.doesNotMatch(PERSONA_CORE, /profanit|swear|curse|\bfuck|\bshit/i,
+    'the persona core must NOT mention profanity until B4-3 wires it with its deterministic suppressor');
+});
+
+test('register block reaches every voice via the core, exactly once', () => {
+  for (const [name, build] of BUILDERS) {
+    const prompt = build();
+    const first = prompt.indexOf(REGISTER_HEADER);
+    assert.ok(first >= 0, `${name} must carry the register block via the core`);
+    assert.equal(prompt.indexOf(REGISTER_HEADER, first + 1), -1,
+      `${name} must carry the register block exactly once`);
+  }
+});
