@@ -22,6 +22,7 @@
  */
 
 const { resolveWorkingWeight, computeBenchmark } = require('./exerciseBenchmark');
+const { normalizeLogRow, progressionBand, progressionVerdict } = require('./analytics');
 const { detectTrend } = require('./trendDetector');
 const { computeReadiness } = require('./readinessSignal');
 const { computeExpectedPerformance } = require('./expectedPerformance');
@@ -136,4 +137,51 @@ function enrichCoachFacts(facts, allLog) {
   return { ...facts, rec, deviation, evidence_context };
 }
 
-module.exports = { enrichCoachFacts };
+// PR-B4 slice 3 — engine-confirmed new-ground gate for the profanity permission.
+//
+// The coaching MODE (services/coachMode.js) is derived from `rec.progression_verdict`
+// / `rec.effort_verdict`, which are CLIENT-INFLUENCED (enrichCoachFacts preserves the
+// client's `rec`). A client could forge `progression_verdict.level:'new_ground'` →
+// `celebrate` → `max` → the certified profanity cell. So the forwarded profanity
+// permission must NOT be gated on the client-derivable mode alone.
+//
+// confirmTodayNewGround recomputes TODAY's progression verdict SERVER-SIDE from the
+// log — mirroring analyzeLift's just-logged branch (today's top working weight vs the
+// band over all prior rows for the lift, services/analytics.js). The route gates the
+// profanity permission on this signal.
+//
+// HONEST SCOPE (raised by the #948 review): the band is server-computed from allLog,
+// but `todayTop` comes from `facts.todaySets` — the just-logged set, which is NOT in
+// the sheet yet and is therefore inherently CLIENT-ASSERTED. So this gate raises the
+// bar (a forger must now claim a plausible PR weight, not merely flip a verdict flag)
+// but does NOT fully close client trust: a client that claims a believable new-ground
+// weight can still reach the cell. That residual is bounded here — an ABSURD forged
+// weight (e.g. 99999) is rejected by the plausibility cap below — and is low-impact
+// (single-owner, read-only endpoint, profanity staged OFF, worst case one swear in the
+// owner's own reply). The layer-3 suppressor is the other net. Residual filed in
+// BACKLOG. A full close would require reacting only to a WRITTEN set. Pure — no I/O.
+const MAX_PLAUSIBLE_PR_FACTOR = 1.5; // a real new-ground PR is incremental, not ≫ the prior ceiling
+function confirmTodayNewGround(facts, allLog) {
+  if (!facts || typeof facts !== 'object' || !Array.isArray(allLog)) return false;
+  const liftCode = typeof facts.liftCode === 'string' ? facts.liftCode.trim().toUpperCase() : '';
+  if (!liftCode) return false;
+  const todaySets = Array.isArray(facts.todaySets) ? facts.todaySets : [];
+  const todayTop = todaySets.reduce((m, s) => {
+    const w = Number(s && s.weight);
+    return Number.isFinite(w) && w > m ? w : m;
+  }, 0);
+  if (!(todayTop > 0)) return false;
+  const rows = allLog.map(normalizeLogRow).filter(r => r && r.lift_code === liftCode);
+  if (!rows.length) return false;
+  // today's set is not in the sheet yet → band is built from all prior rows.
+  const band = progressionBand(rows);
+  const verdict = progressionVerdict(todayTop, band);
+  if (!verdict || verdict.level !== 'new_ground') return false;
+  // Plausibility cap — reject an implausibly large "PR" (a forged / fat-fingered
+  // weight far above the prior ceiling). A genuine new ground is an increment.
+  const ceiling = band && Number.isFinite(band.ceiling) ? band.ceiling : null;
+  if (ceiling == null || todayTop > ceiling * MAX_PLAUSIBLE_PR_FACTOR) return false;
+  return true;
+}
+
+module.exports = { enrichCoachFacts, confirmTodayNewGround };

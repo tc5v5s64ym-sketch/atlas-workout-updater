@@ -191,13 +191,13 @@ function sanitizeFacts(facts) {
     // computed on the route (engine-only overwrite) — a client-shaped object still
     // only survives through this whitelist.
     athlete_identity: sanitizeAthleteIdentity(f.athlete_identity),
-    // PR-B4 (slice 1) — the engine's coaching MODE (services/coachMode.js) and
-    // the granted REGISTER (services/registerPermissions.js): how the coach may
-    // sound this moment. Server-computed from already-whitelisted facts and
-    // ALWAYS overwritten on the route, so a client can't set its own volume.
-    // `profanity_ok` is DELIBERATELY not forwarded in this slice — a profanity
-    // permission never reaches the model without its deterministic suppressor,
-    // which lands together in a later slice.
+    // PR-B4 — the engine's coaching MODE (services/coachMode.js) and the granted
+    // REGISTER (services/registerPermissions.js): how the coach may sound this
+    // moment. Server-computed from already-whitelisted facts and ALWAYS overwritten
+    // on the route, so a client can't set its own volume. As of slice 3
+    // `profanity_ok` IS forwarded — it now ships with its deterministic suppressor
+    // (finalizeCoachVoice) and an engine-confirmed-new_ground route gate, so the
+    // permission never reaches the model without its guard.
     coach_mode: sanitizeCoachMode(f.coach_mode),
     register: sanitizeRegister(f.register)
   };
@@ -210,15 +210,72 @@ function sanitizeCoachMode(v) {
   return s && COACH_MODES.includes(s) ? s : null;
 }
 
-// PR-B4 (slice 1): whitelist the granted register — intensity (from the frozen
-// registerPermissions.INTENSITIES vocabulary) plus the casual/humor licenses.
-// `profanity_ok` is intentionally omitted here (see the note in sanitizeFacts):
-// the permission ships with its suppressor in a later slice, never before it.
+// PR-B4: whitelist the granted register — intensity (from the frozen
+// registerPermissions.INTENSITIES vocabulary), the casual/humor licenses, and
+// (slice 3) the profanity permission. `profanity_ok` only survives as an explicit
+// boolean true; the route computes it under the full gate chain (grantRegister's
+// certified cell × env activation × engine-confirmed new_ground) and the
+// deterministic suppressor (findRegisterViolations) is the final net, so the
+// permission is never described to the model without its guard.
 function sanitizeRegister(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const intensity = INTENSITIES.includes(v.intensity) ? v.intensity : null;
   if (!intensity) return null;
-  return { intensity, casual_ok: v.casual_ok === true, humor_ok: v.humor_ok === true };
+  return {
+    intensity,
+    casual_ok: v.casual_ok === true,
+    humor_ok: v.humor_ok === true,
+    profanity_ok: v.profanity_ok === true,
+  };
+}
+
+// PR-B4 slice 3 — the deterministic register-violation suppressor. Mirrors
+// findForbiddenContradictions (services/coachVoiceRenderer.js): scan the candidate
+// LLM prose against the granted register and return the violations, so the route
+// can suppress prose that outruns its grant (fall back to the deterministic line),
+// exactly like a reason-code contradiction. Two violation classes:
+//   - profanity in the prose when profanity_ok is not granted;
+//   - celebration / PR vocabulary when the mode is not celebrate or praise.
+// Case-insensitive, word-boundary anchored. Never throws.
+// Genuine profanity only (the D1 ceiling). Deliberately EXCLUDES the mild words
+// that double as normal coaching prose — "hell of a set", "damn good", "that was
+// crap" — which are casual register (governed by casual_ok), not the swearing D1
+// gates. Suppressing those would strip natural buddy-direct lines to the
+// deterministic fallback for no trust benefit (review note, #948). "goddamn"
+// stays (clearly profane) even though bare "damn" does not.
+const PROFANITY_TOKENS = [
+  /\bfuck\w*/i, /\bshit\w*/i, /\basshole[s]?\b/i, /\bbitch\w*/i,
+  /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick\s?heads?\b/i,
+];
+const CELEBRATION_VOCAB = [
+  /\bpersonal best\b/i, /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
+  /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
+];
+// ctx.profanity_only (bool): when true, run ONLY the profanity check and skip the
+// celebration/PR-vocabulary check. Used by the plan / "why today" voice, which is
+// NOT a set-reaction moment — it may legitimately reference a real personal best in
+// its rationale, so the earned-moment vocab gate (a set-reaction concern) must not
+// suppress it. The profanity backstop still applies to every voice.
+function findRegisterViolations(message, ctx) {
+  const text = typeof message === 'string' ? message : '';
+  if (!text.trim()) return [];
+  const c = ctx && typeof ctx === 'object' ? ctx : {};
+  const register = c.register && typeof c.register === 'object' ? c.register : null;
+  const mode = typeof c.mode === 'string' ? c.mode : null;
+  const out = [];
+  if (!(register && register.profanity_ok === true)) {
+    for (const re of PROFANITY_TOKENS) {
+      const m = text.match(re);
+      if (m) { out.push({ code: 'profanity_without_permission', phrase: m[0] }); break; }
+    }
+  }
+  if (!c.profanity_only && mode !== 'celebrate' && mode !== 'praise') {
+    for (const re of CELEBRATION_VOCAB) {
+      const m = text.match(re);
+      if (m) { out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: m[0] }); break; }
+    }
+  }
+  return out;
 }
 
 // PR-A7: whitelist the Athlete Identity Facts object. Every field is explicitly
@@ -1550,6 +1607,7 @@ module.exports = {
   sanitizeAthleteIdentity,
   sanitizeCoachMode,
   sanitizeRegister,
+  findRegisterViolations,
   sanitizeStimulusGrade,
   sanitizeNextMoveAdvisory,
   sanitizeRecoveryAdvisory,
