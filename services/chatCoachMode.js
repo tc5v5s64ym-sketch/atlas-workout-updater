@@ -42,9 +42,12 @@ function deriveChatCoachMode(context, opts = {}) {
     memory_patterns: Array.isArray(c.memory_patterns) ? c.memory_patterns : [],
     // Reassure on an EXPLICIT discouragement/frustration message (B5b Part 2). The
     // signal is message-derived (services/discouragementSignal.detectDiscouragement),
-    // computed + passed by the chat route — never inferred here. `challenge` still
-    // outranks `reassure` (B1 precedence), and the route resolves tiredness/recovery
-    // before the LLM so recovery beats reassure.
+    // computed + passed by the chat route — never inferred here. Owner Decision 1
+    // (LT-011): an explicit discouragement message now OUTRANKS a standing `challenge`
+    // pattern for THAT message only (selectCoachMode places it above challenge). It is
+    // message-scoped — the next ordinary turn (discouraged:false) challenges again —
+    // and the route still resolves tiredness/recovery before the LLM, so recovery and
+    // safety stay above reassure.
     discouraged: o.discouraged === true,
   };
   return selectCoachMode(facts, {}).mode;

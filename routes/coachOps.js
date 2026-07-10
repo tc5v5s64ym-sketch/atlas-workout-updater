@@ -765,6 +765,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const clientCtx = req.body && req.body.context;
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
+    // Message-scoped mode signals, computed up front (both are pure, message-only).
+    //   - `tired`: a tiredness/recovery expression — the route resolves it before the
+    //     LLM (recovery routing owns it), so recovery outranks reassure.
+    //   - `discouraged`: an EXPLICIT discouragement/frustration phrase this turn.
+    // Owner Decision 1 (LT-011): an explicit discouragement message must reach the
+    // reassure voice, not be swallowed by the deterministic lift-answer lanes below —
+    // so evaluate it before them. But recovery still wins: a message that is ALSO
+    // tired is NOT bypassed (recovery routing resolves it). Message-scoped only — the
+    // next ordinary turn recomputes and the standing challenge pattern fires again.
+    const tired = isTirednessExpression(message);
+    const discouraged = detectDiscouragement(message, {}).discouraged;
+    const reassureBypass = discouraged && !tired;
+
     // Phase C2 — intent-router SHADOW observation is NOT here anymore. This route
     // only ever saw the RESIDUE that fell through every deterministic composer lane
     // (and only when the SME didn't answer first), so the shadow log missed most
@@ -774,64 +787,71 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // lane sees all typed messages exactly once. Still fire-and-forget, still no-op
     // when the flag is off; the reply below is unchanged.
 
-    // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
-    // "How much?", "How many sets?") is answered deterministically from the CURRENT
-    // lift — whether or not Gemini is up — so the lifter gets the current-lift fact,
-    // not generic education. Ambiguous current lift → ask which one. No active lift
-    // context → returns null so the normal flow (SME education) still applies.
-    // Context-only (no Sheets/LLM): the live plan/preview already carries the target.
-    let bare = answerBareShorthand(message, clientCtx);
-    // Preview-of-unplanned-lift parity (#452 follow-up): when the current lift is in an
-    // active PREVIEW that isn't in current_plan, the preview row carries sets:null, so
-    // the context-only attempt above can't answer a bare "how many sets?" and would drop
-    // to the LLM. Engine-fill via recommendNextSet — the SAME resolveTarget the named-lift
-    // fallback (deterministicAnswer) uses — so the lifter gets the deterministic target,
-    // not an LLM guess. Gated to bare shorthand during an active session that the context
-    // couldn't answer, so the Sheets read is rare (not on every chat message).
-    if (!bare && isBareSessionShorthand(message) && hasActiveSessionContext(clientCtx)) {
-      const bareLog = await getSheetRows(logSheetName).catch(() => []);
-      bare = answerBareShorthand(message, clientCtx, (liftName) => recommendTargetForLift(liftName, bareLog));
-    }
-    if (bare) {
-      return standardSuccess(req, res, bare.kind === 'clarify'
-        ? 'Coach chat — clarify which lift'
-        : 'Coach chat — deterministic engine answer', {
-        message: bare.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
-      });
-    }
+    // The deterministic lift-answer lanes (bare shorthand → planned total → planned
+    // value) answer factual "what's my RIR/reps/total" questions before the LLM. They
+    // are SKIPPED for an explicit-discouragement message (Owner Decision 1): a phrase
+    // like "my bench reps are going nowhere" names a lift and asks a value, so a lane
+    // would otherwise swallow it as a terse fact instead of letting it reach the
+    // reassure voice. A tired message is NOT bypassed here — recovery still owns it.
+    if (!reassureBypass) {
+      // P0 follow-up (2026-06-21): BARE in-session shorthand ("RIR?", "Reps?",
+      // "How much?", "How many sets?") is answered deterministically from the CURRENT
+      // lift — whether or not Gemini is up — so the lifter gets the current-lift fact,
+      // not generic education. Ambiguous current lift → ask which one. No active lift
+      // context → returns null so the normal flow (SME education) still applies.
+      // Context-only (no Sheets/LLM): the live plan/preview already carries the target.
+      let bare = answerBareShorthand(message, clientCtx);
+      // Preview-of-unplanned-lift parity (#452 follow-up): when the current lift is in an
+      // active PREVIEW that isn't in current_plan, the preview row carries sets:null, so
+      // the context-only attempt above can't answer a bare "how many sets?" and would drop
+      // to the LLM. Engine-fill via recommendNextSet — the SAME resolveTarget the named-lift
+      // fallback (deterministicAnswer) uses — so the lifter gets the deterministic target,
+      // not an LLM guess. Gated to bare shorthand during an active session that the context
+      // couldn't answer, so the Sheets read is rare (not on every chat message).
+      if (!bare && isBareSessionShorthand(message) && hasActiveSessionContext(clientCtx)) {
+        const bareLog = await getSheetRows(logSheetName).catch(() => []);
+        bare = answerBareShorthand(message, clientCtx, (liftName) => recommendTargetForLift(liftName, bareLog));
+      }
+      if (bare) {
+        return standardSuccess(req, res, bare.kind === 'clarify'
+          ? 'Coach chat — clarify which lift'
+          : 'Coach chat — deterministic engine answer', {
+          message: bare.text, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+        });
+      }
 
-    // Plan-first answer (2026-06-21): when the lifter NAMES a lift that is in today's
-    // plan/preview and asks its prescribed value ("what's the RIR for bench?", "how
-    // many reps for bench?"), answer from the CURRENT PLAN — before Gemini, which
-    // would otherwise narrate from history. The current plan beats history and
-    // generic education for "today's" prescription. Deferred (null) for past-tense
-    // ("...last time?"), unnamed-lift ("what is RIR?"), or off-plan lifts, so
-    // education / history / clarification routing is untouched. Context-only: no
-    // Sheets, no LLM, no invented numbers.
-    // "Total?" (reps total) — answer the ENGINE-computed planned total (sets × reps),
-    // worded as planned, before Gemini. Otherwise the LLM multiplies the numbers
-    // itself and mis-tenses the result as completed work ("you've done 45 reps" for
-    // a lift not yet logged). Resolves the lift from the recent turns, so a bare
-    // "total?" follow-up works. Context-only: no Sheets, no LLM, no invented numbers.
-    const totalReps = answerTotalRepsQuestion(message, { history, clientContext: clientCtx });
-    if (totalReps) {
-      return standardSuccess(req, res, 'Coach chat — planned total answer', {
-        message: totalReps, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
-      });
-    }
+      // Plan-first answer (2026-06-21): when the lifter NAMES a lift that is in today's
+      // plan/preview and asks its prescribed value ("what's the RIR for bench?", "how
+      // many reps for bench?"), answer from the CURRENT PLAN — before Gemini, which
+      // would otherwise narrate from history. The current plan beats history and
+      // generic education for "today's" prescription. Deferred (null) for past-tense
+      // ("...last time?"), unnamed-lift ("what is RIR?"), or off-plan lifts, so
+      // education / history / clarification routing is untouched. Context-only: no
+      // Sheets, no LLM, no invented numbers.
+      // "Total?" (reps total) — answer the ENGINE-computed planned total (sets × reps),
+      // worded as planned, before Gemini. Otherwise the LLM multiplies the numbers
+      // itself and mis-tenses the result as completed work ("you've done 45 reps" for
+      // a lift not yet logged). Resolves the lift from the recent turns, so a bare
+      // "total?" follow-up works. Context-only: no Sheets, no LLM, no invented numbers.
+      const totalReps = answerTotalRepsQuestion(message, { history, clientContext: clientCtx });
+      if (totalReps) {
+        return standardSuccess(req, res, 'Coach chat — planned total answer', {
+          message: totalReps, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+        });
+      }
 
-    const planned = answerPlannedLiftQuestion(message, clientCtx);
-    if (planned) {
-      return standardSuccess(req, res, 'Coach chat — current plan answer', {
-        message: planned, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
-      });
+      const planned = answerPlannedLiftQuestion(message, clientCtx);
+      if (planned) {
+        return standardSuccess(req, res, 'Coach chat — current plan answer', {
+          message: planned, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine'
+        });
+      }
     }
 
     // Slice 3 — recovery routing: when the lifter SAYS they're tired/cooked/drained,
     // the deterministic engine owns the reply and routes on the actual recovery state,
     // so the LLM never defaults to motivation hype. Grounded below (configured path)
-    // from computeFatigueStatus + readiness + days-since; here it only flags the intent.
-    const tired = isTirednessExpression(message);
+    // from computeFatigueStatus + readiness + days-since; `tired` was flagged up top.
 
     // Deterministic, LLM-free answer used whenever the Gemini coach is unavailable
     // (unconfigured / errored / timed out / empty) so the lifter is never dead-ended.
@@ -890,10 +910,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           : { date: row.date || null, kind: row.kind || null, target: row.target || null, rule: row.rule || null, note: row.note || null })
         .filter(c => c.kind && c.target && c.rule);
       // B5b Part 2 — explicit discouragement/frustration in THIS message routes the
-      // chat coach mode to `reassure`. Message-derived (detectDiscouragement), never
-      // inferred; pure tiredness never fires it (that stays the recovery read below,
-      // which also short-circuits before the LLM — so recovery outranks reassure).
-      const discouraged = detectDiscouragement(message, {}).discouraged;
+      // chat coach mode to `reassure` (computed up top as `discouraged`; the lift-answer
+      // lanes above are already bypassed for it). Pure tiredness never fires it — that
+      // stays the recovery read below, which short-circuits before the LLM, so recovery
+      // outranks reassure (Owner Decision 1: safety and recovery stay above reassure).
       const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged });
       // Slice 3 — recovery routing owns a tired lifter's reply, grounded in the real
       // recovery state (weekly-load fatigue, days since last session, fatigued

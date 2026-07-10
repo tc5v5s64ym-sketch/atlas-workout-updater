@@ -24,8 +24,15 @@
 //   - opts.scarcityClear                     (PR-B3 supplies it; defaults true)
 //
 // Precedence (highest first), pinned by table-driven tests:
-//   safety > refuse > correct > challenge > reassure > celebrate > praise
-//     > educate > note > nod > silent
+//   safety > refuse > correct > reassure(explicit discouragement) > challenge
+//     > reassure(layoff-return) > celebrate > praise > educate > note > nod > silent
+//
+// `reassure` has TWO triggers at DIFFERENT precedence (Owner Decision 1 / LT-011):
+// an EXPLICIT discouragement message this turn outranks a standing `challenge`
+// pattern (message-scoped, never clears the pattern; safety/refuse/correct and the
+// route-level recovery read still sit above it), while the softer layoff-return
+// reassure stays BELOW challenge. The single-word ladder above collapses these two
+// to "challenge > reassure" for the layoff case the ladder tests exercise.
 //
 // Mapping notes (documented deviations, smallest-derivable readings):
 //   - Both PAIN_INJURY and FORM_SAFETY note triggers map to `safety` — pain is
@@ -100,7 +107,22 @@ function selectCoachMode(facts, opts = {}) {
     return pick('correct', { note_trigger: f.note_trigger });
   }
 
-  // 4. challenge — a detected recurring underperformance pattern, or sandbagging.
+  // 4. reassure (explicit discouragement) — an EXPLICIT discouragement/frustration
+  //    message this turn (services/discouragementSignal.detectDiscouragement) selects
+  //    reassurance OVER a standing challenge pattern — Owner Decision 1 (LT-011):
+  //    "Explicit discouragement overrides a standing challenge pattern for that
+  //    message only. Safety and recovery remain higher precedence." Placement is
+  //    deliberate and narrow: only ABOVE challenge, still BELOW safety/refuse/correct
+  //    — and the chat route resolves tiredness/recovery before the LLM — so a genuinely
+  //    unsafe, rejected, or tired moment is never softened into reassurance. The signal
+  //    is message-scoped (recomputed per turn) and never clears the standing pattern,
+  //    so the next ordinary turn challenges again. The layoff-return reassure below is
+  //    UNCHANGED — it stays below challenge (only this explicit-message trigger moved).
+  if (f.discouraged === true) {
+    return pick('reassure', { discouraged: true });
+  }
+
+  // 5. challenge — a detected recurring underperformance pattern, or sandbagging.
   if (_hasMemoryPattern(f.memory_patterns, 'consistent_underperformance')) {
     return pick('challenge', { memory_pattern: 'consistent_underperformance' });
   }
@@ -108,14 +130,9 @@ function selectCoachMode(facts, opts = {}) {
     return pick('challenge', { note_trigger: f.note_trigger });
   }
 
-  // 5. reassure — an explicit discouragement/frustration message (B5b), or returning
-  //    after time away. Recovery/tiredness and safety outrank reassure: the chat
-  //    route resolves a tiredness message before the LLM, and safety/refuse/correct/
-  //    challenge all sit above this in precedence, so a genuinely challenge-worthy or
-  //    unsafe moment is never softened into reassurance.
-  if (f.discouraged === true) {
-    return pick('reassure', { discouraged: true });
-  }
+  // 6. reassure (returning after a layoff) — a softer, lower-precedence reassure than
+  //    an explicit discouragement message: a standing challenge pattern still outranks
+  //    it (only the explicit-message trigger above was promoted past challenge).
   if (f.layoff && typeof f.layoff === 'object' && f.layoff.returning_from_layoff === true) {
     return pick('reassure', { returning_from_layoff: true });
   }
