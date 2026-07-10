@@ -49,12 +49,21 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 | **Owner result** | PASS / FAIL — |
 | **Follow-up if FAIL** | — |
 
-### LT-008 — Coach register + mode live behavior; profanity never outside the certified cell (Soul Plan PR-B4)
+### LT-008 — Safe Full User Break Test (write-path input hardening)
 
 | Field | Value |
 |---|---|
 | **Test ID** | LT-008 |
-| **Related PR / feature** | Soul Plan PR-B4 (slices 1–3) — engine-granted coach mode + register (routine/elevated/max, casual/humor), profanity gated to the celebrate×max×scarcity-clear cell. **Gates the production profanity activation.** |
+| **Related PR / feature** | The Safe Full User Break Test — a dry-run-only (`/api/*`, zero real writes) adversarial sweep of the write path for impossible/hostile input. **Owner naming (2026-07-10): LT-008 is this test and is NOT reused for register/profanity — that validation is LT-010 below.** |
+| **Status** | ✅ SHIPPED / owner-approved — the sweep found and fixed the write path silently accepting impossible input (unparseable/calendar-impossible `date`, non-integer `reps`, unbounded `limit`, ambiguous `test_mode`, oversized name). Recorded in `BACKLOG.md` (WRITE-6 + "LT-008 write-path input hardening" + deliberate non-fixes F3/F6 + the F1 defense-in-depth follow-up). |
+| **Follow-up** | Optional belt-and-suspenders `date_clean` calendar check in `validateLogRowBounds` (BACKLOG "LT-008 F1 defense-in-depth", low priority). |
+
+### LT-010 — Coach register + mode live behavior; profanity never outside the certified cell (Soul Plan PR-B4)
+
+| Field | Value |
+|---|---|
+| **Test ID** | LT-010 |
+| **Related PR / feature** | Soul Plan PR-B4 (slices 1–3) — engine-granted coach mode + register (routine/elevated/max, casual/humor), profanity gated to the celebrate×max×scarcity-clear cell. **Gates the production profanity activation** (`ATLAS_COACH_PROFANITY`). *(Renumbered from LT-008 per owner naming correction 2026-07-10 — LT-008 is the Safe Full User Break Test.)* |
 | **Shell / app version expected** | Any build with PR-B4 slices 1–3 deployed. **Profanity is OFF until the owner sets `ATLAS_COACH_PROFANITY=on` on Render** — do step 3 only after flipping it. |
 | **Steps** | 1. **Routine set** — log an ordinary on-target set; confirm the coach stays level/matter-of-fact (routine), no manufactured excitement. 2. **Earned moment** — log a genuine new-ground PR set; confirm the reaction is warmer/bigger (max) but still cites only real numbers and doesn't over-run. Review the **flight recorder** to confirm `coach_mode`/`register` reflect the moment (celebrate/max on the PR, silent/routine on the ordinary set). 3. **Profanity (only after `ATLAS_COACH_PROFANITY=on`)** — over several sessions, confirm profanity appears at most on a genuine new-ground celebration, at most once per rolling 7 days, and NEVER in a safety/pain/correction/uncertainty moment or on a routine set. 4. **Forgery probe (optional)** — nothing you can type as an ordinary log should force profanity; a fabricated "PR" that the engine doesn't confirm as new-ground must not trigger it. |
 | **Expected result** | Mode/register track the real moment in the flight recorder; routine sets read routine; only genuine engine-confirmed new-ground gets max energy; with profanity enabled it stays inside the certified cell (rare, celebration-only, capped, never in safety/pain/correction) and no client input can force it. |
