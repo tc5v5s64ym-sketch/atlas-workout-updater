@@ -44,8 +44,12 @@ import { runOutcome } from './planOutcome.js';
 // the explicit Finish/End-session and Start-over/discard affordances (never inside
 // the implicit endPlannedSession cleanup paths).
 import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased — app.js already has a save-flow runCloseout()
+// PR-I5 — mid-plan completed-boundary eligibility (pure/DI). Selects the most recently
+// logged still-unresolved accepted item so "Done with <exercise>" stays reachable after
+// the cursor auto-advances past a just-logged item.
+import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v126';
+const ATLAS_SHELL_BUILD = 'v127';
 
 
 
@@ -2144,18 +2148,23 @@ function renderActiveSessionBanner() {
     nextBtn.addEventListener('click', advancePlannedSession);
     row.appendChild(nextBtn);
   }
-  // PR-G2: the explicit "Done with this exercise" button — the ONLY authoritative
-  // `completed` boundary. Shown for the CURRENT accepted item once there is evidence
-  // of a performed set, and only until it is completed (no re-complete). The evidence
-  // gates visibility; the CLICK is the authoritative event.
+  // PR-I5: the explicit completed boundary — "Done with <exercise>" for the MOST
+  // RECENTLY LOGGED accepted item that is still unresolved (outcome≠completed, has a
+  // performed set). The plan cursor auto-advances past a just-logged item, so gating on
+  // the CURRENT slot left the boundary unreachable mid-plan; target the last-logged item
+  // instead (owner-approved "target last-logged item"). The button carries that item's
+  // immutable plan_item_id — completion never re-resolves by name/lift-code/position, and
+  // a substituted slot displays the performed exercise while completing the original id.
+  // The evidence gates visibility; the CLICK is the authoritative event (logging a set
+  // and cursor movement never emit completed).
   const activePlan = getActivePlannedSession();
-  if (activePlan && activePlan.accepted === true && current.plan_item_id) {
-    const item = (activePlan.items || []).find(it => it && it.plan_item_id === current.plan_item_id);
-    if (item && item.outcome !== 'completed' && currentItemHasPerformedSet(current)) {
-      const doneBtn = el('button', { type: 'button', class: 'secondary start-done-btn', text: 'Done with this exercise' });
-      doneBtn.addEventListener('click', () => { if (doneBtn.disabled) return; doneBtn.disabled = true; completeCurrentPlanItem(); });
-      row.appendChild(doneBtn);
-    }
+  const doneTarget = activePlan && activePlan.accepted === true
+    ? mostRecentCompletablePlanItem(activePlan, getSessionCompleted())
+    : null;
+  if (doneTarget) {
+    const doneBtn = el('button', { type: 'button', class: 'secondary start-done-btn', text: `Done with ${doneTarget.name}` });
+    doneBtn.addEventListener('click', () => { if (doneBtn.disabled) return; doneBtn.disabled = true; completePlanItemById(doneTarget.plan_item_id); });
+    row.appendChild(doneBtn);
   }
   const endBtn = el('button', { type: 'button', class: 'secondary', text: 'End session' });
   // PR-H: an explicit "End session" is a `finalized` closeout (emit BEFORE the plan
@@ -2175,35 +2184,25 @@ function renderActiveSessionBanner() {
   renderSessionPin();
 }
 
-// PR-G2 — the ONLY authoritative `completed` boundary: the athlete explicitly taps
-// "Done with this exercise" on the current-exercise banner. Logging a set, "Next",
-// and chat text NEVER emit completed. Emits `completed` for the current item's exact
-// plan_item_id, marks it done LOCALLY (so it can't be completed again), persists the
-// snapshot (no re-complete after a reload), and advances normally — regardless of the
-// sidecar. Guarded against double-taps + re-completion. `completed` means the athlete
-// SAYS they are finished with this planned item; it does NOT claim every prescribed
-// set was performed or saved.
-function completeCurrentPlanItem() {
+// PR-I5 — the ONLY authoritative `completed` emitter: the athlete explicitly taps
+// "Done with <exercise>". Logging a set, cursor movement ("Next" / auto-advance), and
+// chat text NEVER emit completed. Completes a SPECIFIC accepted item resolved strictly
+// by its immutable plan_item_id (never by name / lift-code / array position), marks it
+// done LOCALLY (so it can't be completed again), persists the snapshot (no re-complete
+// after a reload), fires the non-blocking sidecar, and re-renders so the NEXT most-recent
+// eligible item surfaces. It deliberately does NOT move the plan cursor — automatic
+// advancement (logging / "Next") is unchanged. Guarded against double-taps + re-completion.
+// `completed` means the athlete SAYS they are finished with this planned item; it does
+// NOT claim every prescribed set was performed or saved.
+function completePlanItemById(planItemId) {
   const plan = getActivePlannedSession();
-  if (!plan || plan.accepted !== true) return;
-  const current = plan.exercises[plan.index];
-  if (!current || !current.plan_item_id) return;
-  const item = (plan.items || []).find(it => it && it.plan_item_id === current.plan_item_id);
+  if (!plan || plan.accepted !== true || !planItemId) return;
+  const item = (plan.items || []).find(it => it && it.plan_item_id === planItemId);
   if (!item || item.outcome === 'completed') return; // no re-complete / double-tap guard
   item.outcome = 'completed';                        // local completion state (prevents re-complete)
   saveSessionSnapshot();                             // survive reload — no re-complete after a resume
   emitPlanItemOutcome({ plan_item_id: item.plan_item_id, outcome: 'completed' }); // non-blocking sidecar
-  advancePlannedSession();                           // advance normally, regardless of the sidecar
-}
-
-// Evidence gate for the "Done" button: at least one captured/performed set for the
-// CURRENT item (its planned lift is in the derived completion buffer). The button is
-// ENABLED on this evidence, but the CLICK — not the evidence — is the authoritative
-// completed event (a logged set never auto-completes the item).
-function currentItemHasPerformedSet(current) {
-  const key = (current && (current.canonicalName || current.name) || '').toLowerCase();
-  if (!key) return false;
-  return (getSessionCompleted() || []).some(c => String(c).toLowerCase() === key);
+  renderActiveSessionBanner();                       // surface the next eligible item; cursor unchanged
 }
 
 // B2 canonical state — the plan-card banner renders its "current step" from
