@@ -16,6 +16,11 @@ const coachBrain = require('./coachBrain');
 // iron rules (numbers, no-filler, no-hype, plain-text, never-writes) apply
 // uniformly across all five voices — see docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md.
 const { buildPersonaCore } = require('./coachPersonaCore');
+// PR-B4 — frozen mode + register vocabularies, imported (not re-declared) so the
+// coach_mode / register whitelists can never drift from the engines that emit them
+// (the same lockstep pattern as the stimulusGovernor enums below).
+const { COACH_MODES } = require('./coachMode');
+const { INTENSITIES } = require('./registerPermissions');
 // Stimulus Governor vocabularies (PR 481) — imported (not re-declared) so the
 // stimulus_grade whitelist stays in lockstep with the engine's controlled enums.
 const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusGovernorRules');
@@ -185,8 +190,35 @@ function sanitizeFacts(facts) {
     // model may CITE these facts to ground the arc; it never invents one. Server-
     // computed on the route (engine-only overwrite) — a client-shaped object still
     // only survives through this whitelist.
-    athlete_identity: sanitizeAthleteIdentity(f.athlete_identity)
+    athlete_identity: sanitizeAthleteIdentity(f.athlete_identity),
+    // PR-B4 (slice 1) — the engine's coaching MODE (services/coachMode.js) and
+    // the granted REGISTER (services/registerPermissions.js): how the coach may
+    // sound this moment. Server-computed from already-whitelisted facts and
+    // ALWAYS overwritten on the route, so a client can't set its own volume.
+    // `profanity_ok` is DELIBERATELY not forwarded in this slice — a profanity
+    // permission never reaches the model without its deterministic suppressor,
+    // which lands together in a later slice.
+    coach_mode: sanitizeCoachMode(f.coach_mode),
+    register: sanitizeRegister(f.register)
   };
+}
+
+// PR-B4: whitelist the coaching mode — only a value from the frozen
+// coachMode.COACH_MODES vocabulary survives; anything else → null.
+function sanitizeCoachMode(v) {
+  const s = strOrNull(v);
+  return s && COACH_MODES.includes(s) ? s : null;
+}
+
+// PR-B4 (slice 1): whitelist the granted register — intensity (from the frozen
+// registerPermissions.INTENSITIES vocabulary) plus the casual/humor licenses.
+// `profanity_ok` is intentionally omitted here (see the note in sanitizeFacts):
+// the permission ships with its suppressor in a later slice, never before it.
+function sanitizeRegister(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const intensity = INTENSITIES.includes(v.intensity) ? v.intensity : null;
+  if (!intensity) return null;
+  return { intensity, casual_ok: v.casual_ok === true, humor_ok: v.humor_ok === true };
 }
 
 // PR-A7: whitelist the Athlete Identity Facts object. Every field is explicitly
@@ -1082,7 +1114,12 @@ function sanitizeChatContext(context) {
     // PR-A7 — the engine's longitudinal athlete story (services/athleteIdentity.js),
     // computed server-side in buildChatContext from the log rows the route already
     // fetched. Same explicit whitelist as the set-reaction facts.
-    athlete_identity: sanitizeAthleteIdentity(c.athlete_identity)
+    athlete_identity: sanitizeAthleteIdentity(c.athlete_identity),
+    // PR-B4 (slice 1) — the coaching mode + granted register for the chat voice.
+    // Same whitelist as the set-reaction facts; profanity_ok withheld until its
+    // suppressor lands. Null when the route hasn't computed them yet (additive).
+    coach_mode: sanitizeCoachMode(c.coach_mode),
+    register: sanitizeRegister(c.register)
   };
 }
 
@@ -1511,6 +1548,8 @@ module.exports = {
   buildCoachUserPrompt,
   sanitizeFacts,
   sanitizeAthleteIdentity,
+  sanitizeCoachMode,
+  sanitizeRegister,
   sanitizeStimulusGrade,
   sanitizeNextMoveAdvisory,
   sanitizeRecoveryAdvisory,
