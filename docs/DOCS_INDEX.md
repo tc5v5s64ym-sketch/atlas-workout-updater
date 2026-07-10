@@ -53,6 +53,12 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 - `docs/ATLAS_VOICE_RATIFICATION_V1.md` — **Active** — the owner voice/personality ratification: the persona core text (§1), the register decision menu D1–D8 (§2), and the Set C golden corpus (§3). **RATIFIED** — owner sign-off committed 2026-07-09 (v1.4); §1–§3 and D1–D8 are the owner-approved source of truth. Consumed by `docs/SOUL_PLAN_V1.md` PRs A2 / A3 / B2 / B6 / B7 / B8a (decisions recorded in `BACKLOG.md`).
 - `docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md` — **Active** — the pre-Soul-Plan architecture review committed by PR-A1. Documents the three-layer trust/personality/user-state analysis with exact `file:line` citations; identifies the two personas (`:48` wired/wrong vs `:1258` unwired/correct), five prompt builders with duplicated iron rules, and the missing `athlete_identity` forwarding. Foundation for all Part A and Part B Soul Plan PRs; do not re-litigate inside those PRs.
 
+## Proposals / intake material (NOT an execution queue)
+
+Owner-supplied proposal packets, filed through `docs/GOVERNANCE.md` into `BACKLOG.md`. These are **intake material only** — they never select or sequence PRs; the disposition of every proposal lives in `BACKLOG.md`, and where a packet conflicts with repo governance, repo governance wins. Do not treat a packet as a roadmap.
+
+- `docs/proposals/ATLAS_V1_PROPOSAL_PACKET.md` — **Intake material** (v1.1). Two proposals: **Persona Harness Lite** (extend the existing simulation / Flight-Recorder-replay test layer with named synthetic-lifter packs — default disposition is a testing-layer `BACKLOG.md` entry, not active-roadmap work) and the **V1 Proving Run** (a "5 consecutive clean live gym sessions" definition-of-done gate — genuinely new, its adoption owner-reserved, its LT-### mechanics reusing `docs/TEST_QUEUE.md`). Filed 2026-07-09; dispositions in `BACKLOG.md` → "ATLAS v1 proposal packet — intake". Supersedes the never-committed `ATLAS_MASTER_PLAN_V1.md`.
+
 ## Conversation-first coach direction (captured; surface adoption owner-gated)
 
 The newest, most direction-setting docs — where the coach is going and how it should behave. The **engine** work they imply (One-Brain) is active; adopting the conversation-first **Vision** and demoting existing surfaces is **owner-reserved**.
