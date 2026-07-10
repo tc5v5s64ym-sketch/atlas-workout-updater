@@ -35,8 +35,13 @@
 // classifier.
 
 // Explicit frustration about progress / a lift being stuck.
+// "stuck" excludes the POSITIVE adherence senses ("stuck to my program", "stuck
+// with it", "stuck it out", "stuck around") via a lookahead — those read as
+// encouraged, not discouraged (review #950). "stuck in a rut" is caught by its own
+// pattern below; a bare "stuck in traffic" then correctly does not fire.
 const FRUSTRATION = [
-  /\b(stuck|stalled|plateaued|plateauing|plateaus?)\b/,
+  /\bstuck\b(?!\s+(?:to|with|it|around|in)\b)/,
+  /\b(stalled|plateaued|plateauing|plateaus?)\b/,
   /\b(going|getting) nowhere\b/,
   /\bnot getting anywhere\b/,
   /\bspinning my wheels\b/,

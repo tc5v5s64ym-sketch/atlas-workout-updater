@@ -70,6 +70,16 @@ test('near-miss: pure tiredness is NOT discouragement (routes to the recovery re
   }
 });
 
+test('guard: positive adherence "stuck to my plan" / "stuck with it" is NOT discouragement (review #950)', () => {
+  for (const msg of ['stuck to my program this week', 'stuck with it even when it was hard', 'stuck it out through the whole session', 'stuck around after to stretch']) {
+    assert.equal(detectDiscouragement(msg, {}).discouraged, false, msg);
+  }
+  // But a lift being stuck still fires, and "stuck in a rut" (its own pattern) fires.
+  assert.equal(detectDiscouragement('bench is stuck', {}).discouraged, true);
+  assert.equal(detectDiscouragement('stuck on deadlift for a month', {}).discouraged, true);
+  assert.equal(detectDiscouragement("I'm stuck in a rut with squats", {}).discouraged, true);
+});
+
 // ── Negation + question guards ────────────────────────────────────────────────
 
 test('guard: negated discouragement never fires', () => {
