@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v129';
+const ATLAS_SHELL_BUILD = 'v130';
 
 
 
@@ -1848,6 +1848,10 @@ function tryApplyPlanMutation(text) {
   if (!PM) return false;
   const intent = PM.classifyMutationIntent(text);
   if (!intent) return false;                  // classify FIRST — never materialize on non-mutations
+  // An IMPLICIT substitution (engine picks the sub) needs the async recommender —
+  // tryApplyImplicitSubstitution owns it. This deterministic sync path handles skip
+  // and explicit (named/positional) replace only.
+  if (intent.action === 'substitute') return false;
   if (!ensureActivePlannedSession()) return false; // no plan at all (freestyle) → fall through
   // Resolve the (possibly compound, e.g. "deadlifts/rdls") target to PENDING plan
   // slots via the canonical session — singular-aware (matches "Romanian Deadlift")
@@ -1915,6 +1919,58 @@ function tryApplyPlanMutation(text) {
     ? `Swapped ${targetNames[0]} → ${resolved.name}.${extraSkipped.length ? ` Skipped ${extraSkipped.join(', ')}.` : ''}`
     : `Skipped ${extraSkipped.join(', ')}.`;
   announcePlanMutation(summary, curName() || (swapped ? resolved.name : null));
+  return true;
+}
+
+// An IMPLICIT substitution — the athlete declined the current/named lift and asked
+// for "something else" WITHOUT naming it (classifier action 'substitute', production
+// bug 2026-07-11). Resolve the target slot, ask the DETERMINISTIC recommender
+// (services/substitutionRecommender via the read-only /api/suggest-substitute) for a
+// valid substitute, and replace the slot IN PLACE with the SAME executor the explicit
+// swap uses — so the substitute becomes the active exercise and the remaining plan
+// order is preserved. Falls through (false) when there is no plan, no matching slot,
+// or no known substitute; the coach then handles it. Async because the recommender is
+// server-side (its quality/pattern chain is not in the browser bundle).
+async function tryApplyImplicitSubstitution(text) {
+  const PM = (typeof window !== 'undefined' && window.planMutationIntent) || null;
+  if (!PM) return false;
+  const intent = PM.classifyMutationIntent(text);
+  if (!intent || intent.action !== 'substitute') return false;
+  if (!ensureActivePlannedSession()) return false;
+  const canon = getCanonicalSession();
+  const planEntries = canon && Array.isArray(canon.exercises) && canon.exercises.length
+    ? canon.exercises
+    : getActivePlannedSession().exercises.map(e => ({ name: e.canonicalName || e.name, liftCode: e.liftCode || '', status: 'pending' }));
+  // Positional ("give me something else") → the current pending slot; else resolve the
+  // named target ("squats" → Back Squat) to a pending slot. Never re-opens finished work.
+  const targetNames = intent.positional
+    ? [firstUnloggedPlannedLift()].filter(Boolean)
+    : PM.resolvePlanTargets(intent.target, planEntries);
+  if (!targetNames.length) return false; // no pending slot to act on → let the coach handle it
+  const targetName = targetNames[0];
+  // The deterministic substitute (no LLM, no invented number). `intent:'substitute'`
+  // tells the read-only endpoint the client already classified a swap request, so it
+  // recommends without needing a constraint keyword ("busy"/"taken").
+  let rec = null;
+  try {
+    const res = await api('/api/suggest-substitute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, current_exercise: targetName, intent: 'substitute' })
+    });
+    rec = res && res.data && res.data.recommendation;
+  } catch { return false; }
+  if (!rec || !rec.recommendation) return false; // no known substitute → fall through to the coach
+  // Resolve the substitute's catalog identity for its lift code (same tiers the named
+  // swap uses); keep the recommender's name if the catalog doesn't know it.
+  const resolvedSub = resolveCatalogExercise(rec.recommendation);
+  const subName = (resolvedSub && resolvedSub.matched && resolvedSub.name) || rec.recommendation;
+  const subCode = (resolvedSub && resolvedSub.liftCode) || '';
+  const swapped = applySessionSubstitution(targetName, subName, subCode, rec.next_target || null);
+  if (!swapped) return false; // e.g. the recommender returned the same lift → nothing changed
+  // Re-point to the ACTUAL current lift after the in-place swap (now the substitute).
+  const cur = firstUnloggedPlannedLift();
+  announcePlanMutation(`Swapped ${targetName} → ${subName}.`, cur || subName);
   return true;
 }
 
@@ -5576,6 +5632,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       // the canonical session deterministically — before the suggest/coach routes,
       // so the change lands in app state, not just chat prose.
       if (tryApplyPlanMutation(pendingChatText)) {
+        activeExercise = null;
+        return;
+      }
+      // An implicit substitution ("I don't want to do squats, give me something else")
+      // — the athlete declined a lift and asked for an unnamed replacement. Resolve a
+      // deterministic substitute and swap it in place, before the suggest/coach routes.
+      if (await tryApplyImplicitSubstitution(pendingChatText)) {
         activeExercise = null;
         return;
       }

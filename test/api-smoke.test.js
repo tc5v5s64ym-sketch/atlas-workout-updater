@@ -6175,6 +6175,29 @@ test('api smoke: suggest-substitute — missing current_exercise → null', asyn
   assert.equal(body.data.recommendation, null);
 });
 
+test('api smoke: suggest-substitute — explicit intent:substitute bypasses the constraint gate (implicit-substitution bug fix)', async () => {
+  // "I don't want to do squats, give me something else" carries no constraint keyword,
+  // so the client's deterministic classifier passes intent:'substitute' to authorize
+  // the deterministic recommendation directly.
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'I don\'t want to do squats, give me something else', current_exercise: 'Back Squat', intent: 'substitute' })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'intent:substitute must produce a recommendation without a constraint keyword');
+  assert.equal(body.data.recommendation.recommendation, 'Leg Press');
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'still read-only');
+});
+
+test('api smoke: suggest-substitute — a non-constraint message WITHOUT the intent signal is still null (gate unchanged)', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'give me something else', current_exercise: 'Back Squat' })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.recommendation, null, 'without intent:substitute the original constraint gate holds');
+});
+
 test('api smoke: suggest-substitute never writes to any sheet', async () => {
   const before = fakeSheetsState.appendCalls.length;
   await requestJson('/api/suggest-substitute', {
