@@ -232,3 +232,32 @@ give the next action if one is needed; numbers (`extra`, `prescribed_sets`,
 `logged_sets`) pass through verbatim from the engine; no invented fatigue/effort
 claims; no praise for normal compliance; the model never decides whether extra work
 happened — it only words `detectExtraWork`'s output.
+
+---
+
+## Set C — the buddy-register golden corpus (pointer)
+
+Set C (sixteen scenarios, ordinary set → genuine celebration) was ratified by the
+owner on **2026-07-09 (v1.4)** and lives in
+[`docs/ATLAS_VOICE_RATIFICATION_V1.md` §3](./ATLAS_VOICE_RATIFICATION_V1.md) — that
+section is the **single source of truth** for the Set C wording and the expected
+`coach_mode` / register per scenario. It is **not duplicated here** on purpose: one
+authored copy, no drift.
+
+Set C is now encoded as machine-readable regression fixtures and a deterministic
+harness (Soul Plan **PR-B7**):
+
+- **`test/fixtures/voiceCorpusSetC.js`** — the sixteen scenarios (plus the
+  deterministic alternates §3 spells out) as structured data: input facts, expected
+  `coach_mode`, expected register grant, citable numbers, required/forbidden facts
+  and characteristics, and the verbatim ✅/❌ exemplar lines.
+- **`test/voiceCorpusHarness.test.js`** — drives the real deterministic modules
+  (`selectCoachMode`, `grantRegister`, `computeCelebrationScarcity`, the `new_ground`
+  gate, `findRegisterViolations`, the persona core) through every fixture, locking
+  the mode / register / scarcity / grounding behavior the owner approved.
+- **`scripts/voice-validation-live.js`** — an **advisory** sampler (never a CI gate)
+  that scores live or exemplar wording against the voice rubric for owner review.
+
+Where a §3 header's prose register label drifted from the ratified B2 calibration
+enum it cites (C2/C5/C11/C12/C14), the harness locks the **enum** (the authority §3
+names) and the reconciliation is filed in `BACKLOG.md` for owner review.
