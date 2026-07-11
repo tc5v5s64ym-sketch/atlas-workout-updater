@@ -69,6 +69,7 @@ function buildCoachSystemPrompt() {
     '- The facts may include "effort_verdict" {level, headline} — the engine\'s read of how hard the set was, from the logged RIR vs the target. Your opening line MUST agree with it: level "far_easy" = way under target (under-effort), so say plainly it was too light and to add real weight next time, NOT merely "room to add"; "easy" = comfortably within reserve, so name that there is room to add load or reps (do NOT praise it as a grind or "pushing through"); "failure" = they hit failure, acknowledge it and say to back off; "hard" = a tough, near-target set; "on_target" = dialled in. Never contradict the verdict, and never call a high-RIR set hard or a failure set easy.',
     '- IRON RULE — derive effort from effort_verdict ONLY, never from raw RIR values in the facts: RIR 2 is solid working effort, NOT failure and NOT a grind. The words "failure", "barely made it", "grinding", "pushed to failure", "edge of failure", "near-failure", or any synonym for rep failure MUST NOT appear unless effort_verdict.level is "failure". RIR 0 in the facts does NOT by itself mean failure — only the engine\'s verdict does. Never supplement or contradict effort_verdict with your own RIR math.',
     '- The facts may include "progression_verdict" {level, range_low, range_high, ceiling, headline} — the engine\'s read of where today\'s top working set sits against the lifter\'s OWN recent working range. WORD it, never contradict it (same discipline as effort_verdict): "under_shot" = today is below their range_low–range_high band, so call out the under-shot with a spine (no reason to be light here); "in_pocket" = solidly inside the band, box checked — say so and hold the line, do not tell them to go heavier; "maintenance_drift" = inside the band but drifting toward the low end; "progressing" = pushing the top of the band upward; "new_ground" = today clears the ceiling they had beaten before. Read today AGAINST the range and reference the band when it is present.',
+    '- The facts may include "progression_history" {current_verdict, previous_verdict, consecutive_on_target, next_checkpoint} — the lift\'s arc across sessions, all engine-computed. You MAY note the arc (how today\'s verdict sits against previous_verdict) and how many on-target sessions (consecutive_on_target) they have banked toward the next jump. `next_checkpoint` is the ENGINE\'S authorized progression gate and its `decision` is AUTHORITATIVE: say "add load"/"go up"/"you earned the jump" ONLY when decision is "load"; when it is "hold", say plainly they are not there yet and name what is left (word `criterion_progress`, e.g. "2 of 3 clean sessions at 205"). NEVER authorize a load increase the engine has not, and never invent the counts, the criterion, or a next weight — they are the engine\'s.',
     '- The facts may include "deload" {active, protocol_id, load_pct, target_rir, sessions_remaining} — when present with active true, today is a DELOAD the engine is running. Frame the whole note as a deload: name it plainly, and make clear the reduced load (~{load_pct}% of the normal working weight), the fewer sets, and the high RIR (target {target_rir}, well short of failure) are BY DESIGN. A high-RIR or easy-reading set here is ON-PLAN, NOT under-effort — so do NOT tell them to add weight or push harder even if effort_verdict reads "easy" or "far_easy"; on a deload that easy reading is the goal. When sessions_remaining is present, note how many easy sessions are left and that normal training resumes after. This overrides the add-weight steer of effort_verdict ONLY here; still never invent numbers, never restate the logged sets, and never contradict the progression_verdict.',
     '- The facts may include "session_intent" — the PRESCRIBED objective of today\'s session (the plan the lifter is following). When it is "recovery_pump" or "deload_reset", today is a planned recovery/pump day: the light loads and high RIR are BY DESIGN — they are what the plan asked for. A below-range or easy read here is ON-PLAN compliance, NOT under-effort: do NOT call the session light as a criticism, and do NOT tell them to add weight, push harder, or get "back in the groove" / back to their working range — not in the opening line and not anywhere. Word progression_verdict "under_shot" as intentional ("light by design today"), never as a shortfall. Like an active deload, session_intent OVERRIDES the add-weight steer of effort_verdict ("easy"/"far_easy" is the goal today). The forward-looking line is about banking recovery and returning to normal loads next session — never a load target. Still never invent numbers, and never contradict the other verdicts.',
     '- The facts may include "substitution" {classification, decision, quality, reason_code, prescribed, logged} — the engine\'s read of a swapped exercise. WORD it, never derive it: your read MUST agree with `decision` — "approve" = a sound pivot that kept the intent (preserved/baseline), "warn" = the objective was changed or abandoned, so push back honestly. You may name the prescribed and logged lifts and restate `reason_code` in plain words; you NEVER decide the classification yourself, never contradict or relabel it, and never invent a movement/muscle claim or a reason beyond `reason_code`.',
@@ -123,6 +124,12 @@ function sanitizeFacts(facts) {
     // ceiling it was judged against. The model WORDS this verdict — it must never derive
     // its own read of progress, and every number here is engine-computed history.
     progression_verdict: sanitizeProgressionVerdict(rec.progression_verdict),
+    // History-aware progression facts (services/progressionHistory): the current and
+    // previous band verdicts, the count of on-target (clean) sessions banked toward the
+    // next load, and the engine's next AUTHORIZED progression checkpoint. Server-computed
+    // from the real log (enrichCoachFacts). The model WORDS the arc and states the
+    // checkpoint, but NEVER authorizes a load increase the engine hasn't (decision='load').
+    progression_history: sanitizeProgressionHistory(f.progression_history),
     // The deload engine's decision (from /api/recommend/next's `deload` field).
     // When a deload is active it tells the note today is a deload — reduced load,
     // fewer sets, high RIR by design — so an easy/high-RIR set is on-plan, not
@@ -477,6 +484,42 @@ function sanitizeProgressionVerdict(v) {
     ceiling: numOrNull(v.ceiling),
     headline: clampText(v.headline, 160)
   };
+}
+
+// The band-verdict vocabulary (services/analytics.progressionVerdict) — the SAME
+// levels sanitizeProgressionVerdict carries for today. Enum-checked so a client-shaped
+// history can only ever word a level the engine actually emits.
+const PROGRESSION_HISTORY_LEVELS = ['new_ground', 'progressing', 'in_pocket', 'maintenance_drift', 'under_shot'];
+// The engine-authorized progression decision (rules/progressionRules.holdUntilClean).
+const PROGRESSION_CHECKPOINT_DECISIONS = ['hold', 'load', 'no_data'];
+
+// Whitelist the history-aware progression facts (services/progressionHistory). Every
+// field is engine-computed history: the current + previous band verdict, the count of
+// on-target (clean) sessions logged toward the next load, and the engine's next
+// AUTHORIZED checkpoint — whose `decision` is holdUntilClean's, passed through so the
+// model WORDS it and never authorizes a load change the engine hasn't. Nothing invented.
+function sanitizeProgressionHistory(h) {
+  if (!h || typeof h !== 'object') return null;
+  const level = v => (PROGRESSION_HISTORY_LEVELS.includes(v) ? v : null);
+  const cp = h.next_checkpoint && typeof h.next_checkpoint === 'object' ? h.next_checkpoint : null;
+  const checkpoint = cp && PROGRESSION_CHECKPOINT_DECISIONS.includes(cp.decision)
+    ? {
+        decision: cp.decision,
+        criterion_progress: clampText(cp.criterion_progress, 80),
+        clean_sessions: numOrNull(cp.clean_sessions),
+        required_sessions: numOrNull(cp.required_sessions),
+        load: numOrNull(cp.load),
+      }
+    : null;
+  const out = {
+    current_verdict: level(h.current_verdict),
+    previous_verdict: level(h.previous_verdict),
+    consecutive_on_target: numOrNull(h.consecutive_on_target),
+    next_checkpoint: checkpoint,
+  };
+  // Drop entirely when the engine surfaced nothing wordable (all-null history).
+  if (!out.current_verdict && !out.previous_verdict && out.consecutive_on_target == null && !out.next_checkpoint) return null;
+  return out;
 }
 
 // Whitelist the deload engine's decision into the coach fact. Only an ACTIVE
@@ -1486,6 +1529,7 @@ module.exports = {
   sanitizeRecoveryAdvisory,
   sanitizeSessionIntent,
   sanitizeSubstitution,
+  sanitizeProgressionHistory,
   sanitizeDeviation,
   sanitizeEvidenceContext,
   sanitizeTrend,

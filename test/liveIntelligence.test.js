@@ -44,6 +44,27 @@ test('enrichCoachFacts: rec.working_weight set after enrichment', () => {
   assert.notEqual(result.rec.working_weight, undefined, 'working_weight must be set');
 });
 
+test('enrichCoachFacts: attaches progression_history computed server-side (matches buildProgressionHistory)', () => {
+  const { buildProgressionHistory } = require('../services/progressionHistory');
+  const { normalizeLogRow } = require('../services/analytics');
+  const liftCode = 'BPR01';
+  // Two clean sessions at 205 after climbing 185 → 195 → 205.
+  const rows = [
+    row('2026-04-01', 'S1', 'Bench Press', liftCode, 185, 6, 2),
+    row('2026-04-08', 'S2', 'Bench Press', liftCode, 195, 6, 2),
+    row('2026-04-15', 'S3', 'Bench Press', liftCode, 205, 6, 2),
+    row('2026-04-22', 'S4', 'Bench Press', liftCode, 205, 6, 2),
+  ];
+  const result = enrichCoachFacts({ liftCode, todaySets: [] }, rows);
+  assert.ok(result.progression_history, 'progression_history must be attached');
+  // It is computed from the SAME lift-restricted, normalized log — no client influence.
+  const expected = buildProgressionHistory(rows.map(normalizeLogRow), liftCode);
+  assert.deepEqual(result.progression_history, expected);
+  // Sanity: the engine checkpoint rode through.
+  assert.equal(result.progression_history.next_checkpoint.decision, 'hold');
+  assert.equal(result.progression_history.consecutive_on_target, 2);
+});
+
 test('enrichCoachFacts: rec.trend set after enrichment', () => {
   const liftCode = 'BPR01';
   const rows = [
