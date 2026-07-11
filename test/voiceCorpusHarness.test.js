@@ -38,7 +38,6 @@ const {
   buildChatSystemPrompt,
   buildPlanSystemPrompt,
   buildCompileSystemPrompt,
-  buildVerdictReactionSystemPrompt,
 } = require('../services/coach');
 const { PERSONA_CORE } = require('../services/coachPersonaCore');
 const det = require('./helpers/voiceViolationDetectors');
@@ -271,7 +270,6 @@ const PROMPT_SURFACES = [
   ['chat', buildChatSystemPrompt],
   ['plan', buildPlanSystemPrompt],
   ['compile', buildCompileSystemPrompt],
-  ['verdict-reaction', buildVerdictReactionSystemPrompt],
 ];
 
 for (const [name, build] of PROMPT_SURFACES) {

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, isValidPlanEditSchema, buildCompileSystemPrompt, compileSessionFromHistory, buildVerdictReactionSystemPrompt, sanitizeReactionContext } = require('../services/coach');
+const { buildCoachSystemPrompt, buildCoachUserPrompt, sanitizeFacts, sanitizeStimulusGrade, sanitizeNextMoveAdvisory, sanitizeRecoveryAdvisory, sanitizeSubstitution, sanitizeEvidenceContext, sanitizeTrend, sanitizeReadinessSignal, coachModel, buildPlanSystemPrompt, sanitizePlanFacts, buildPlanUserPrompt, buildChatSystemPrompt, sanitizeChatContext, sanitizeChatHistory, sanitizeConstraint, parseEditFromReply, parseNoteFromReply, parseReplyWithProposals, isValidEditSchema, isValidPlanEditSchema, buildCompileSystemPrompt, compileSessionFromHistory } = require('../services/coach');
 const { TRAINING_PRINCIPLES, ANSWER_MODES, isColdStart, buildPrinciplesFragment, buildColdStartFragment, buildDataInformedFragment } = require('../services/coachBrain');
 
 test('coach system prompt carries the hard guardrails', () => {
@@ -1287,13 +1287,12 @@ test('sanitizeSubstitution carries a bounded quality tier and drops invalid ones
   assert.equal(sanitizeSubstitution({ classification: 'preserved', decision: 'approve' }).quality, null);
 });
 
-test('reaction + verdict prompts gate the swap-quality voice on the engine tier (no "counts" without quality)', () => {
-  for (const prompt of [buildCoachSystemPrompt(), buildVerdictReactionSystemPrompt()]) {
-    assert.match(prompt, /quality/i, 'must reference the substitution quality tier');
-    assert.match(prompt, /poor/i, 'must handle a poor swap');
-    assert.match(prompt, /never call a swap good|never .*counts|unless quality is/i,
-      'must forbid asserting a good swap / "counts" unless the engine tier says so');
-  }
+test('the set-reaction prompt gates the swap-quality voice on the engine tier (no "counts" without quality)', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /quality/i, 'must reference the substitution quality tier');
+  assert.match(prompt, /poor/i, 'must handle a poor swap');
+  assert.match(prompt, /never call a swap good|never .*counts|unless quality is/i,
+    'must forbid asserting a good swap / "counts" unless the engine tier says so');
 });
 
 test('sanitizeSubstitution rejects a client-injected classification outside the engine vocabulary', () => {
@@ -1405,31 +1404,6 @@ test('sanitizeFacts forwards the engine substitution verdict and cannot be overr
 
   // Absent → null.
   assert.equal(sanitizeFacts({}).substitution, null);
-});
-
-test('sanitizeReactionContext forwards the substitution verdict under the same whitelist', () => {
-  const ctx = sanitizeReactionContext({
-    exercise: 'Leg Extension',
-    substitution: {
-      classification: 'changed',
-      decision: 'warn',
-      reason_code: 'wrong_muscle',
-      prescribed: { name: 'Leg Curl' },
-      logged: { name: 'Leg Extension' },
-      evidence: []
-    }
-  });
-  assert.equal(ctx.substitution.classification, 'changed');
-  assert.equal(ctx.substitution.decision, 'warn');
-  assert.equal(ctx.substitution.reason_code, 'wrong_muscle');
-});
-
-test('verdict-reaction prompt binds the swap commentary to the engine substitution decision', () => {
-  const prompt = buildVerdictReactionSystemPrompt();
-  assert.match(prompt, /substitution/i, 'must reference the substitution fact');
-  assert.match(prompt, /MUST agree with `decision`/i, 'voice must agree with the engine decision');
-  assert.match(prompt, /NEVER decide the classification yourself/i, 'voice must not decide the classification');
-  assert.match(prompt, /never name a reason the engine did not give/i, 'voice must not invent reasons');
 });
 
 test('coach system prompt binds the substitution beat to the engine decision', () => {

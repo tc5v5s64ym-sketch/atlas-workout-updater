@@ -22,14 +22,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  isVerdictWorthReacting,
-  hasActionableRuleDecision,
-  shouldReactToVerdict,
-  sanitizeVerdictFacts,
   sanitizeChatContext,
   buildCoachSystemPrompt,
   buildChatSystemPrompt,
-  buildVerdictReactionSystemPrompt,
 } = require('../services/coach');
 const { classifyNoteTier, TIERS, TRIGGERS } = require('../services/coachNoteTier');
 const { assembleBatchNoteFacts } = require('../services/batchNoteFacts');
@@ -42,35 +37,11 @@ const { computeCloseout } = require('../services/sessionCloseout');
 // where the prompt is the gate).
 const CELEBRATION_RE = /personal best|new pr\b|new record|crushed it|crushing it|beast mode|congrats|congratulations|🎉|💪/i;
 
-// ── 1. Verdict-reaction gate (services/coach.js) ──────────────────────────────
-
-test('AC8(c) verdict gate: no reaction without a real verdict from a logged set', () => {
-  assert.equal(shouldReactToVerdict(), false, 'no input → silence');
-  assert.equal(shouldReactToVerdict({}), false, 'empty input → silence');
-  assert.equal(shouldReactToVerdict({ verdict: null, ruleDecisions: [] }), false);
-  assert.equal(isVerdictWorthReacting(null), false);
-  assert.equal(isVerdictWorthReacting({ outcome: 'met' }), false, 'a routine met set stays quiet');
-  assert.equal(isVerdictWorthReacting({ outcome: 'celebrate' }), false, 'unknown outcomes never react');
-  assert.equal(hasActionableRuleDecision([]), false);
-  assert.equal(hasActionableRuleDecision([{ severity: 'info', decision: 'load' }]), false,
-    'a routine info-level progression call does not break silence');
-});
-
-test('AC8(c) verdict gate: a fabricated/clarification-shaped verdict is dropped by sanitization', () => {
-  // needs_clarification / unresolved results never produce a verdict object with a
-  // known outcome — and anything outside the frozen vocabulary sanitizes to null,
-  // so generateVerdictReaction returns null before any prompt is built.
-  assert.equal(sanitizeVerdictFacts({ outcome: 'needs_clarification' }), null);
-  assert.equal(sanitizeVerdictFacts({ outcome: 'question' }), null);
-  assert.equal(sanitizeVerdictFacts({ outcome: '' }), null);
-  assert.equal(sanitizeVerdictFacts('beat'), null, 'non-object input is dropped');
-  // Control: the earned case still stands.
-  const beat = sanitizeVerdictFacts({ outcome: 'beat', why: 'beat target reps' });
-  assert.equal(beat.outcome, 'beat');
-  assert.equal(shouldReactToVerdict({ verdict: beat, ruleDecisions: [] }), true);
-});
-
-// ── 2. Note-tier gates (coachNoteTier + batchNoteFacts) ───────────────────────
+// ── 1. Note-tier gates (coachNoteTier + batchNoteFacts) ───────────────────────
+//
+// (The former verdict-reaction gate checks were retired with the unwired
+// verdict-reaction voice in Soul Plan PR-A6 — that voice no longer exists to gate.
+// The live celebration gates below own the AC8(c) guarantee for the surfaced voice.)
 
 test('AC8(c) note tier: PR/praise tiers fire ONLY on engine-computed signals', () => {
   // PR language requires the engine's new_ground — a best_weight or hype flag
@@ -95,7 +66,7 @@ test('AC8(c) note tier: a block with no logged sets can never produce a note', (
   assert.equal(assembleBatchNoteFacts(null), null);
 });
 
-// ── 3. Deterministic renderers ────────────────────────────────────────────────
+// ── 2. Deterministic renderers ────────────────────────────────────────────────
 
 test('AC8(c) renderer: no praise line without an engine verdict; hype stripped on HOLD signals', () => {
   const neutral = renderSetVoice({});
@@ -118,7 +89,7 @@ test('AC8(c) renderer: the LLM-down fallback renderer owns zero celebration voca
     'deterministicCoachRenderer must carry no PR/celebration copy — its most positive copy is the earned progress handoff');
 });
 
-// ── 4. Client copy gates (src/app/coach-conversation.js, source pins) ─────────
+// ── 3. Client copy gates (src/app/coach-conversation.js, source pins) ─────────
 
 const clientSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'coach-conversation.js'), 'utf8');
 
@@ -148,19 +119,13 @@ test('AC8(c) client: persistence praise ("Saved") appears only in the review-sav
     'the saved confirmation lives in the review-card saved renderer, gated on a real write');
 });
 
-// ── 5. LLM prompt gates (reasserted alongside — the two existing iron gates) ──
+// ── 4. LLM prompt gates (reasserted alongside — the surfaced iron gates) ──────
 
 test('AC8(c) prompts: PR language requires new_ground (set-reaction iron rule reasserted)', () => {
   const prompt = buildCoachSystemPrompt();
   assert.ok(prompt.includes('ONLY allowed when `progression_verdict.level` is exactly `new_ground`'));
   assert.ok(prompt.includes('does NOT authorize PR language'),
     'a best_weight value alone must not authorize PR language');
-});
-
-test('AC8(c) prompts: celebration requires an earned beat (verdict-reaction rule reasserted)', () => {
-  const prompt = buildVerdictReactionSystemPrompt();
-  assert.match(prompt, /Celebrate ONLY when it is earned/i);
-  assert.match(prompt, /overrides any "beat" or celebration/i, 'pain overrides any celebration');
 });
 
 test('AC8(c) prompts: completion praise requires plan_state.isComplete (chat COMPLETION-CLAIM reasserted)', () => {
@@ -173,7 +138,7 @@ test('AC8(c) prompts: completion praise requires plan_state.isComplete (chat COM
     'conversation-only sets must never be described as persisted');
 });
 
-// ── 6. Empty session_tally: nothing logged → no tally fact to praise from ─────
+// ── 5. Empty session_tally: nothing logged → no tally fact to praise from ─────
 
 test('AC8(c) tally: an empty session_tally sanitizes to null, so in-session praise has no data', () => {
   assert.equal(sanitizeChatContext({ session_tally: { exercises: [] } }).session_tally, null);
@@ -186,7 +151,7 @@ test('AC8(c) tally: an empty session_tally sanitizes to null, so in-session prai
   assert.equal(real.session_tally.exercises[0].exercise, 'Bench Press');
 });
 
-// ── 7. Closeout engine: completeness cannot be claimed early ──────────────────
+// ── 6. Closeout engine: completeness cannot be claimed early ──────────────────
 
 test('AC8(c) closeout: computeCloseout returns null unless every planned exercise is logged', () => {
   assert.equal(computeCloseout(['Bench Press', 'Seated Row'], ['Bench Press']), null,

@@ -10,8 +10,6 @@
 //   - success (text returned), non-OK status, empty-output → the three
 //     callGeminiContents outcomes
 //   - the unconfigured guard (no GEMINI_API_KEY) throws before any fetch
-//   - generateVerdictReaction's shouldReactToVerdict gate (null, no call) vs a
-//     reacting verdict
 //
 // Tests assert CURRENT behaviour; coach.js is unchanged.
 
@@ -86,23 +84,6 @@ test('generateChatReply rejects an empty message before any network call', async
   setFetch(() => okResponse('unused'));
   await assert.rejects(() => coach.generateChatReply({ message: '   ' }), /chat message is required/);
   assert.equal(fetchCalls.length, 0);
-});
-
-// ---------------------------------------------------------------------------
-// generateVerdictReaction — the shouldReactToVerdict gate
-// ---------------------------------------------------------------------------
-test('generateVerdictReaction returns null (no Gemini call) when nothing is worth reacting to', async () => {
-  setFetch(() => okResponse('should not be used'));
-  const r = await coach.generateVerdictReaction({ outcome: 'met' }, { ruleDecisions: [] });
-  assert.equal(r, null);
-  assert.equal(fetchCalls.length, 0, 'a quiet met set must not call the model');
-});
-
-test('generateVerdictReaction calls Gemini and returns prose for a "beat" verdict', async () => {
-  setFetch(() => okResponse('Big day — bank it and move on.'));
-  const r = await coach.generateVerdictReaction({ outcome: 'beat' }, { ruleDecisions: [] });
-  assert.equal(r, 'Big day — bank it and move on.');
-  assert.equal(fetchCalls.length, 1);
 });
 
 // ---------------------------------------------------------------------------

@@ -39,9 +39,9 @@
 //     the highest-precedence safety class everywhere else in the engine.
 //   - `refuse` = a rule decision of `reject` (any severity), or a `hold` that
 //     carries warning/error severity. A routine info-level `hold`/`load` is a
-//     quiet progression call and does NOT refuse — mirroring
-//     hasActionableRuleDecision (services/coach.js), where info-level
-//     progression decisions never break silence.
+//     quiet progression call and does NOT refuse — mirroring the note-tier
+//     silence gate (services/coachNoteTier.js), where info-level progression
+//     decisions never break silence.
 //   - `new_ground` celebrates only when scarcity is clear (PR-B3); when the
 //     celebration budget is spent it downgrades to `praise` — big reactions
 //     stay rare because rarity is the feature.
