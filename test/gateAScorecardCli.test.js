@@ -17,7 +17,10 @@ function dataRow(o = {}) {
     o.cls ?? 'athlete_ui', o.elig ?? 'TRUE', o.origin ?? 'athlete_ui',
   ];
 }
-const PROD = { id: '1XQaKGJL5uoE3yFw4Z0wiSfAlc-JnufS2Z7psODuDcA0', isSandboxSheet: false };
+// Placeholder only — the real production workbook ID is never committed (it lives
+// in the GOOGLE_SHEETS_ID env var). The test reads config.id/isSandboxSheet, never a
+// live ID, so an obvious placeholder mirrors the SANDBOX fixture convention.
+const PROD = { id: 'prod-sheet-id', isSandboxSheet: false };
 const SANDBOX = { id: 'sandbox-sheet-id', isSandboxSheet: true };
 
 test('runs read-only: reads exactly one tab, writes nothing, scores eligible rows', async () => {
