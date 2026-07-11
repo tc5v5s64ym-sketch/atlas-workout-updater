@@ -64,9 +64,20 @@ const NEGATIVE_SELF_TALK = [
   /\bfeel like (?:i'?m |i am )?(?:going backwards?|failing|falling behind|a failure)\b/,
 ];
 
-// Negation before a discouragement term flips the meaning — allow up to two words
-// between the negator and the phrase ("bench is not really stuck").
-const NEGATED = /\b(not|never|no longer|isn'?t|aren'?t|ain'?t|don'?t|doesn'?t|didn'?t|wasn'?t|hardly|barely)\s+(\w+\s+){0,2}(stuck|stalled|plateaued|frustrat\w*|backwards?|worse|weak|useless|nowhere|failing)\b/;
+// Negation before a discouragement term flips the meaning ("bench is not really
+// stuck"). PHRASE-SCOPED (review #950): a negator neutralizes only a phrase within a
+// short preceding window (negator + up to two words), NOT the whole message — so a
+// negated clause ("I'm not stuck on squat") never suppresses a genuine discouragement
+// in another clause ("bench has me spinning my wheels"). Anchored at `$` so it tests
+// only the text immediately before a candidate match.
+const NEG_BEFORE = /\b(?:not|never|no longer|isn'?t|aren'?t|ain'?t|don'?t|doesn'?t|didn'?t|wasn'?t|weren'?t|hardly|barely)\s+(?:\w+\s+){0,2}$/;
+
+// Is the phrase starting at `index` negated by a negator in its immediate lead-in?
+// Looks back a bounded window (enough for "no longer" + two words); a slice that cuts
+// mid-word simply won't \b-anchor a negator, which fails closed (treats as un-negated).
+function _isNegatedAt(text, index) {
+  return NEG_BEFORE.test(text.slice(Math.max(0, index - 40), index));
+}
 
 // A genuine analytical question → for the coach, not a frustration report. Narrow
 // on purpose: a trailing "?" OR an unambiguous analytical opener. NOT bare "what"
@@ -80,10 +91,17 @@ function _isAnalyticalQuestion(t) {
   return false;
 }
 
-function _firstMatch(text, patterns) {
+// The first match of any pattern whose position is NOT negated in its lead-in. A
+// negated phrase is skipped and scanning continues, so an un-negated discouragement
+// later in the message still fires (phrase-scoped negation).
+function _firstUnnegatedMatch(text, patterns) {
   for (const re of patterns) {
-    const m = text.match(re);
-    if (m) return m[0];
+    const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+    let m;
+    while ((m = g.exec(text)) !== null) {
+      if (!_isNegatedAt(text, m.index)) return m[0];
+      if (g.lastIndex === m.index) g.lastIndex++; // never spin on a zero-width match
+    }
   }
   return null;
 }
@@ -93,10 +111,11 @@ function detectDiscouragement(messageText, context) {
   const none = { discouraged: false, kind: null, matched: null };
   if (!t) return none;
   if (_isAnalyticalQuestion(t)) return none;
-  if (NEGATED.test(t)) return none;
 
-  const selfTalk = _firstMatch(t, NEGATIVE_SELF_TALK);
-  const frustration = _firstMatch(t, FRUSTRATION);
+  // Phrase-scoped negation: each candidate is kept only if its own lead-in is not
+  // negated, so a negated clause no longer suppresses the whole message (review #950).
+  const selfTalk = _firstUnnegatedMatch(t, NEGATIVE_SELF_TALK);
+  const frustration = _firstUnnegatedMatch(t, FRUSTRATION);
   const matched = selfTalk || frustration;
   if (!matched) {
     // No explicit discouragement phrase. Pure tiredness is handled elsewhere; we

@@ -93,6 +93,36 @@ test('guard: negated discouragement never fires', () => {
   }
 });
 
+test('negation is PHRASE-scoped: a negated clause does not suppress a genuine discouragement in another clause (review #950)', () => {
+  // FIX: whole-string negation used to swallow the whole message when ANY negated
+  // discouragement term appeared, missing a real frustration in a later clause.
+  const firing = [
+    // negated "stuck" on squat, but genuine "spinning my wheels" on bench
+    { msg: "I'm not stuck on squat, but bench has me spinning my wheels", kind: 'frustration', matched: 'spinning my wheels' },
+    // negated "weak", but genuine "stuck" frustration on bench
+    { msg: "I'm not weak, I'm just stuck on bench", kind: 'frustration' },
+    // negated "frustrated", but genuine self-talk "going backwards"
+    { msg: "not frustrated exactly, but I feel like I'm going backwards", kind: 'negative_self_talk' },
+    // the canonical BACKLOG example (task #8): "don't ... weak" negated, "stuck" genuine
+    { msg: "I don't feel weak but bench is stuck", kind: 'frustration', matched: 'stuck' },
+  ];
+  for (const { msg, kind, matched } of firing) {
+    const out = detectDiscouragement(msg, {});
+    assert.equal(out.discouraged, true, msg);
+    assert.equal(out.kind, kind, msg);
+    if (matched) assert.equal(out.matched, matched, msg);
+  }
+  // PRESERVE: a negation on the ONLY discouragement phrase still fully suppresses,
+  // even when a non-discouragement clause follows.
+  for (const msg of [
+    "bench isn't stuck anymore, finally moving",
+    "not frustrated at all, feeling strong today",
+    "I'm not going backwards, best week in a while",
+  ]) {
+    assert.equal(detectDiscouragement(msg, {}).discouraged, false, msg);
+  }
+});
+
 test('guard: an analytical leading question does not fire (it is for the coach)', () => {
   for (const msg of ['why is my bench stuck?', 'how do I get past this plateau', 'what should I do about being stuck']) {
     assert.equal(detectDiscouragement(msg, {}).discouraged, false, msg);
