@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas — Workout Sheet (pull-down)</title>
+<!-- Reference mockup only (never wired to the backend). Fonts degrade to system
+     stacks when the CDN is unreachable — layout is designed to survive that. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ===== Atlas design tokens (design/README.md) ===== */
+  :root{
+    --bg:#0A0B0E; --surface:#131419; --surface-2:#1B1D23;
+    --border:rgba(244,243,239,.09); --border-strong:rgba(244,243,239,.16);
+    --ink:#F3F2ED; --muted:#9A9A93; --faint:#63635C;
+    --ember:#E8772E; --ember-soft:rgba(232,119,46,.14); --ok:#34C77B;
+    --display:'Space Grotesk','Futura','Avenir Next',system-ui,sans-serif;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
+    --body:'Inter',-apple-system,system-ui,sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--body);background:#1B1D23;min-height:100vh;display:flex;
+    align-items:center;justify-content:center;padding:32px 16px;color:var(--ink);
+    -webkit-font-smoothing:antialiased}
+  .phone{width:390px;height:844px;background:var(--bg);border-radius:46px;border:1px solid #2a2a2e;
+    box-shadow:0 40px 90px -20px rgba(0,0,0,.8),0 0 0 10px #0a0a0b;
+    position:relative;overflow:hidden;display:flex;flex-direction:column}
+  .statusbar{height:54px;flex:0 0 auto;display:flex;align-items:flex-end;justify-content:space-between;
+    padding:0 30px 6px;font-size:15px;font-weight:500}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-size:13px}
+  .batt{border:1.4px solid var(--ink);border-radius:4px;padding:1px 3px;font-size:10px;font-weight:600}
+
+  .app{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+
+  /* ===== Chat shell (the whole product surface) ===== */
+  .topbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:10px 22px 8px}
+  .menu{display:flex;flex-direction:column;gap:4px;cursor:pointer;padding:6px}
+  .menu span{width:20px;height:1.6px;background:var(--ink);border-radius:2px}
+  .wordmark{font-family:var(--display);font-size:15px;letter-spacing:8px;padding-left:8px}
+  .avatar{width:34px;height:34px;border-radius:50%;border:1px solid var(--border-strong);
+    display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;position:relative}
+  .avatar .dot{position:absolute;top:0;right:0;width:8px;height:8px;border-radius:50%;
+    background:var(--ok);border:1.5px solid var(--bg)}
+  .loadline{height:1.5px;background:linear-gradient(90deg,var(--ember) 0%,rgba(232,119,46,0) 78%);
+    margin:0 22px;opacity:.9}
+
+  /* Session pin — the one persistent in-workout strip; also the pull handle. */
+  .pin{flex:0 0 auto;margin:10px 18px 0;padding:11px 16px 13px;background:var(--surface);
+    border:1px solid var(--border);border-radius:16px;cursor:grab;touch-action:none;user-select:none;
+    -webkit-user-select:none;position:relative}
+  .pin:active{cursor:grabbing}
+  .pin-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .pin-lift{font-family:var(--display);font-size:15px;letter-spacing:.02em}
+  .pin-meta{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .pin-meta b{color:var(--ember);font-weight:600}
+  .pin-hint{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:9px;
+    color:var(--faint);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .pin-hint .chev{display:inline-block;animation:nudge 2.6s ease-in-out infinite;font-size:12px}
+  @keyframes nudge{0%,100%{transform:translateY(0)}50%{transform:translateY(3px)}}
+
+  /* Thread */
+  .thread{flex:1;overflow-y:auto;padding:16px 18px 8px;display:flex;flex-direction:column;gap:12px}
+  .bubble{max-width:82%;padding:11px 15px;border-radius:18px;font-size:14.5px;line-height:1.45}
+  .bubble.user{align-self:flex-end;background:var(--surface-2);border:1px solid var(--border);
+    border-bottom-right-radius:6px;font-family:var(--mono);font-size:13.5px}
+  .bubble.atlas{align-self:flex-start;background:transparent;border:1px solid var(--border);
+    border-bottom-left-radius:6px;color:var(--ink)}
+  .bubble .num{font-family:var(--mono)}
+  .bubble .rir{color:var(--ember);font-family:var(--mono);font-weight:600}
+
+  /* Composer */
+  .composer{flex:0 0 auto;margin:8px 18px 14px;background:var(--surface);border:1px solid var(--border);
+    border-radius:24px;padding:14px 14px 10px}
+  .ph{color:var(--faint);font-size:15px;padding:2px 6px 16px;display:flex;align-items:center}
+  .caret{display:inline-block;width:2px;height:17px;background:var(--ember);margin-left:2px;animation:blink 1.1s step-end infinite}
+  @keyframes blink{50%{opacity:0}}
+  .composer-row{display:flex;align-items:center;justify-content:space-between}
+  .cbtn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--border);color:var(--muted);font-size:19px;cursor:pointer}
+  .cbtn.send{background:var(--surface-2);color:var(--ink);border-color:var(--border-strong)}
+  .home-ind{flex:0 0 auto;display:flex;justify-content:center;padding-bottom:9px}
+  .home-ind i{width:134px;height:5px;border-radius:5px;background:#4a4a4e}
+
+  /* ===== Dim layer between chat and sheet ===== */
+  .dim{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none;z-index:5}
+  .dim.live{pointer-events:auto}
+
+  /* ===== The Workout Sheet ===== */
+  .sheet{position:absolute;left:0;right:0;top:0;z-index:6;height:92%;
+    background:var(--surface);border:1px solid var(--border-strong);border-top:none;
+    border-radius:0 0 28px 28px;box-shadow:0 30px 60px -12px rgba(0,0,0,.75);
+    transform:translateY(-100%);display:flex;flex-direction:column;touch-action:none}
+  .sheet.settle{transition:transform .34s cubic-bezier(.22,.9,.3,1)}
+  .sheet-head{flex:0 0 auto;padding:16px 22px 10px;display:flex;align-items:baseline;justify-content:space-between}
+  .sheet-title{font-family:var(--display);font-size:17px;letter-spacing:.14em}
+  .sheet-title em{font-style:normal;color:var(--ember)}
+  .sheet-prog{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .sheet-load{height:1.5px;margin:0 22px 6px;background:var(--border);position:relative;overflow:hidden;border-radius:2px}
+  .sheet-load i{position:absolute;inset:0;width:33%;background:var(--ember)}
+
+  .plan{flex:1;overflow-y:auto;padding:10px 16px 14px;display:flex;flex-direction:column;gap:9px}
+  .card{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:12px 14px;
+    display:flex;align-items:center;gap:12px;position:relative;user-select:none;-webkit-user-select:none}
+  .card .st{width:26px;height:26px;flex:0 0 auto;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;font-size:12px;font-family:var(--mono)}
+  .card.done .st{color:var(--ok);border:1px solid rgba(52,199,123,.4)}
+  .card.now .st{color:var(--ember);border:1px solid var(--ember)}
+  .card.todo .st{color:var(--faint);border:1px solid var(--border)}
+  .card .tx{flex:1;min-width:0}
+  .card .nm{font-size:14.5px;font-weight:500;letter-spacing:.01em}
+  .card .dt{font-family:var(--mono);font-size:11.5px;color:var(--muted);margin-top:3px}
+  .card .dt .rir{color:var(--ember);font-weight:600}
+  .card.done .nm{color:var(--muted);text-decoration:line-through;text-decoration-color:var(--faint);text-decoration-thickness:1px}
+  .card.now{border-color:rgba(232,119,46,.5);background:linear-gradient(0deg,var(--ember-soft),transparent 55%)}
+  .card.now::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:2px;background:var(--ember);border-radius:2px}
+  .grip{flex:0 0 auto;width:40px;height:40px;margin:-7px -8px -7px 0;display:flex;align-items:center;
+    justify-content:center;color:var(--faint);cursor:grab;touch-action:none;font-size:15px;letter-spacing:1px}
+  .grip:active{cursor:grabbing}
+  .card.lift{z-index:3;border-color:var(--border-strong);background:var(--surface-2);
+    box-shadow:0 14px 30px -8px rgba(0,0,0,.7);transform:scale(1.02)}
+  .card.shift{transition:transform .22s cubic-bezier(.22,.9,.3,1)}
+  .plan-note{flex:0 0 auto;text-align:center;font-size:11px;color:var(--faint);padding:2px 22px 10px}
+  .plan-note b{color:var(--muted);font-weight:500}
+
+  /* Grabber to re-drag / close the settled sheet */
+  .grabber{flex:0 0 auto;padding:8px 0 12px;display:flex;justify-content:center;cursor:grab;touch-action:none}
+  .grabber i{width:56px;height:5px;border-radius:5px;background:var(--border-strong)}
+
+  /* Toast */
+  .toast{position:absolute;left:50%;bottom:96px;transform:translate(-50%,16px);z-index:9;
+    background:var(--surface-2);border:1px solid var(--border-strong);border-radius:100px;
+    padding:9px 18px;font-size:12.5px;color:var(--ink);opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .25s;white-space:nowrap}
+  .toast.on{opacity:1;transform:translate(-50%,0)}
+  .toast b{color:var(--ember);font-weight:600}
+
+  @media (prefers-reduced-motion:reduce){
+    .pin-hint .chev,.caret{animation:none}
+    .sheet.settle,.card.shift,.toast{transition:none}
+  }
+  @media (max-width:430px){
+    body{padding:0;background:var(--bg)}
+    .phone{width:100%;height:100vh;height:100dvh;border-radius:0;border:none;box-shadow:none}
+    .home-ind{display:none}
+  }
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="statusbar">
+      <div>18:07</div>
+      <div class="right"><span>&#128246;</span><span class="batt">61</span></div>
+    </div>
+
+    <div class="app" id="app">
+      <div class="topbar">
+        <div class="menu" aria-label="Menu"><span></span><span></span><span></span></div>
+        <div class="wordmark">ATLAS</div>
+        <div class="avatar">D<span class="dot"></span></div>
+      </div>
+      <div class="loadline"></div>
+
+      <!-- Session pin = the pull handle for the Workout Sheet -->
+      <div class="pin" id="pin" role="button" aria-label="Pull down for today's workout">
+        <div class="pin-row">
+          <span class="pin-lift">Incline DB Press</span>
+          <span class="pin-meta">set <b>2</b>/3 &middot; next <b>70&times;8</b></span>
+        </div>
+        <div class="pin-hint"><span class="chev">&#8595;</span> pull down &middot; today's workout</div>
+      </div>
+
+      <div class="thread">
+        <div class="bubble user">bench 225 5/2</div>
+        <div class="bubble atlas">Bench is done — <span class="num">225&times;5</span> at <span class="rir">RIR 2</span> to finish, your best top set this block. Incline dumbbell press next: <span class="num">70&times;8</span>, two in reserve.</div>
+        <div class="bubble user">incline 70 8/2</div>
+        <div class="bubble atlas">Clean. <span class="num">70&times;8</span> at <span class="rir">RIR 2</span> — set 1 in the book. Same weight for set 2 when you're ready.</div>
+      </div>
+
+      <div class="composer">
+        <div class="ph">Log a set or ask anything<span class="caret"></span></div>
+        <div class="composer-row">
+          <div class="cbtn">+</div>
+          <div class="cbtn send">&#8593;</div>
+        </div>
+      </div>
+
+      <!-- Dim layer -->
+      <div class="dim" id="dim"></div>
+
+      <!-- ===== Workout Sheet ===== -->
+      <section class="sheet" id="sheet" aria-label="Today's workout">
+        <div class="sheet-head">
+          <span class="sheet-title">TODAY &middot; <em>PUSH</em></span>
+          <span class="sheet-prog" id="prog">2 of 6 &middot; 5 sets in</span>
+        </div>
+        <div class="sheet-load"><i id="progbar"></i></div>
+
+        <div class="plan" id="plan">
+          <div class="card done">
+            <span class="st">&#10003;</span>
+            <span class="tx"><span class="nm">Bench Press</span>
+              <span class="dt">4 sets &middot; top 225&times;5 <span class="rir">@2</span></span></span>
+          </div>
+          <div class="card now">
+            <span class="st">&#9679;</span>
+            <span class="tx"><span class="nm">Incline DB Press</span>
+              <span class="dt">set 2/3 &middot; next 70&times;8 <span class="rir">@2</span></span></span>
+          </div>
+          <div class="card todo" data-drag>
+            <span class="st">3</span>
+            <span class="tx"><span class="nm">Overhead Press</span>
+              <span class="dt">3 sets &middot; last 115&times;6 <span class="rir">@2</span></span></span>
+            <span class="grip" aria-label="Drag to reorder">&#8801;</span>
+          </div>
+          <div class="card todo" data-drag>
+            <span class="st">4</span>
+            <span class="tx"><span class="nm">Cable Fly</span>
+              <span class="dt">3 sets &middot; last 42.5&times;12 <span class="rir">@1</span></span></span>
+            <span class="grip" aria-label="Drag to reorder">&#8801;</span>
+          </div>
+          <div class="card todo" data-drag>
+            <span class="st">5</span>
+            <span class="tx"><span class="nm">Lateral Raise</span>
+              <span class="dt">3 sets &middot; last 25&times;14 <span class="rir">@1</span></span></span>
+            <span class="grip" aria-label="Drag to reorder">&#8801;</span>
+          </div>
+          <div class="card todo" data-drag>
+            <span class="st">6</span>
+            <span class="tx"><span class="nm">Triceps Pushdown</span>
+              <span class="dt">3 sets &middot; last 60&times;12 <span class="rir">@1</span></span></span>
+            <span class="grip" aria-label="Drag to reorder">&#8801;</span>
+          </div>
+        </div>
+
+        <div class="plan-note">drag <b>&#8801;</b> to reorder &middot; plan change only — <b>nothing is written to Sheets</b></div>
+        <div class="grabber" id="grabber"><i></i></div>
+      </section>
+
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <div class="home-ind"><i></i></div>
+  </div>
+
+<script>
+(function(){
+  'use strict';
+  var app = document.getElementById('app');
+  var sheet = document.getElementById('sheet');
+  var dim = document.getElementById('dim');
+  var pin = document.getElementById('pin');
+  var grabber = document.getElementById('grabber');
+  var plan = document.getElementById('plan');
+  var toast = document.getElementById('toast');
+
+  /* ================= Sheet pull physics ================= */
+  var pos = 0;            // visible px of the sheet
+  var cardDragging = false;
+
+  function detents(){
+    var h = app.clientHeight;
+    return { closed:0, center:Math.round(h*0.58), full:Math.round(h*0.92) };
+  }
+  function render(){
+    sheet.style.transform = 'translateY(' + (pos - sheet.offsetHeight) + 'px)';
+    var d = detents();
+    var o = Math.min(pos/d.full, 1) * 0.55;
+    dim.style.opacity = o;
+    dim.classList.toggle('live', pos > 4);
+  }
+  function settleTo(target){
+    sheet.classList.add('settle');
+    pos = target;
+    render();
+    setTimeout(function(){ sheet.classList.remove('settle'); }, 380);
+  }
+
+  var pull = null; // {startY, startPos, lastY, lastT, v}
+  function pullStart(e){
+    if (cardDragging) return;
+    pull = { startY:e.clientY, startPos:pos, lastY:e.clientY, lastT:performance.now(), v:0 };
+    sheet.classList.remove('settle');
+    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function pullMove(e){
+    if (!pull) return;
+    var now = performance.now();
+    var dt = Math.max(now - pull.lastT, 1);
+    pull.v = (e.clientY - pull.lastY) / dt;          // px/ms, + = downward
+    pull.lastY = e.clientY; pull.lastT = now;
+    var d = detents();
+    var raw = pull.startPos + (e.clientY - pull.startY);
+    if (raw < 0) raw = 0;
+    if (raw > d.full) raw = d.full + (raw - d.full) * 0.25;   // rubber band
+    pos = raw;
+    render();
+  }
+  function pullEnd(){
+    if (!pull) return;
+    var d = detents(), v = pull.v; pull = null;
+    var stops = [d.closed, d.center, d.full];
+    var target;
+    if (Math.abs(v) > 0.45){                          // flick: next stop in flick direction
+      target = v > 0
+        ? (stops.filter(function(s){ return s > pos - 1; })[0] != null
+            ? stops.filter(function(s){ return s > pos - 1; })[0] : d.full)
+        : (stops.filter(function(s){ return s < pos + 1; }).pop() != null
+            ? stops.filter(function(s){ return s < pos + 1; }).pop() : d.closed);
+    } else {                                          // nearest stop
+      target = stops.reduce(function(a,b){ return Math.abs(b-pos) < Math.abs(a-pos) ? b : a; });
+    }
+    settleTo(target);
+  }
+  [pin, grabber].forEach(function(zone){
+    zone.addEventListener('pointerdown', pullStart);
+    zone.addEventListener('pointermove', pullMove);
+    zone.addEventListener('pointerup', pullEnd);
+    zone.addEventListener('pointercancel', pullEnd);
+  });
+  dim.addEventListener('click', function(){ settleTo(0); });
+  render();
+
+  /* ================= Drag-to-reorder (pending cards only) ================= */
+  var drag = null; // {card, startY, h, cards, from, to}
+  function pendingCards(){
+    return Array.prototype.slice.call(plan.querySelectorAll('.card[data-drag]'));
+  }
+  plan.addEventListener('pointerdown', function(e){
+    var grip = e.target.closest('.grip');
+    if (!grip) return;
+    var card = grip.closest('.card[data-drag]');
+    if (!card) return;
+    e.preventDefault();
+    cardDragging = true;
+    var cards = pendingCards();
+    var h = card.offsetHeight + 9;                    // row height + gap
+    drag = { card:card, startY:e.clientY, h:h, cards:cards,
+             from:cards.indexOf(card), to:cards.indexOf(card) };
+    card.classList.add('lift');
+    cards.forEach(function(c){ if (c !== card) c.classList.add('shift'); });
+    grip.setPointerCapture && grip.setPointerCapture(e.pointerId);
+  });
+  plan.addEventListener('pointermove', function(e){
+    if (!drag) return;
+    var dy = e.clientY - drag.startY;
+    drag.card.style.transform = 'translateY(' + dy + 'px) scale(1.02)';
+    var offset = Math.round(dy / drag.h);
+    var to = Math.min(Math.max(drag.from + offset, 0), drag.cards.length - 1);
+    if (to !== drag.to){
+      drag.to = to;
+      drag.cards.forEach(function(c, i){
+        if (c === drag.card) return;
+        var shifted = 0;
+        if (drag.from < to && i > drag.from && i <= to) shifted = -drag.h;
+        if (drag.from > to && i >= to && i < drag.from) shifted = drag.h;
+        c.style.transform = shifted ? 'translateY(' + shifted + 'px)' : '';
+      });
+    }
+  });
+  function dropCard(){
+    if (!drag) return;
+    var d = drag; drag = null; cardDragging = false;
+    d.cards.forEach(function(c){ c.classList.remove('shift','lift'); c.style.transform = ''; });
+    if (d.to !== d.from){
+      var ref = d.cards[d.to];
+      if (d.to > d.from) ref.after(d.card); else ref.before(d.card);
+      renumber();
+      var nm = d.card.querySelector('.nm').textContent;
+      showToast('<b>' + nm + '</b> moved to slot ' + (d.to + 3) + ' — plan updated');
+    }
+  }
+  plan.addEventListener('pointerup', dropCard);
+  plan.addEventListener('pointercancel', dropCard);
+
+  function renumber(){
+    pendingCards().forEach(function(c, i){
+      c.querySelector('.st').textContent = i + 3;     // slots 1–2 are done/current
+    });
+  }
+  var toastTimer;
+  function showToast(html){
+    toast.innerHTML = html;
+    toast.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toast.classList.remove('on'); }, 2200);
+  }
+})();
+</script>
+</body>
+</html>
