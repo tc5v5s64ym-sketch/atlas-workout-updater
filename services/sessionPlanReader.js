@@ -153,11 +153,20 @@ function foldSessionPlans(rows) {
 // abandoned have final outcomes) — pass { closedOnly:false } to include open ones.
 // Empty-plan sessions are dropped (detectDrift ignores them anyway). Newest LAST:
 // preserves the fold's chronological (append) order.
+//
+// `opts.finalizedOnly:true` is the DRIFT-SPECIFIC projection (Soul Plan PR-B5a Part
+// 2a): only authoritative *closed* training history feeds a (challenge) signal, so an
+// ABANDONED session — the athlete explicitly bailed — is NOT drift and must be
+// excluded, as are open/error sessions. This is an explicit, additive option; the
+// default behavior (closedOnly, which still includes abandoned) is unchanged.
 function toPlannedVsCompleted(folded, opts = {}) {
+  const finalizedOnly = !!(opts && opts.finalizedOnly === true);
   const closedOnly = !(opts && opts.closedOnly === false);
   return (Array.isArray(folded) ? folded : [])
     .filter(s => s && s.status !== 'error')
-    .filter(s => (closedOnly ? (s.status === 'finalized' || s.status === 'abandoned') : true))
+    .filter(s => finalizedOnly
+      ? s.status === 'finalized'
+      : (closedOnly ? (s.status === 'finalized' || s.status === 'abandoned') : true))
     .filter(s => Array.isArray(s.planned) && s.planned.length > 0)
     .map(s => ({ date: s.date, planned: s.planned.slice(), completed: s.completed.slice() }));
 }
@@ -166,4 +175,12 @@ function readPlannedVsCompleted(rows, opts = {}) {
   return toPlannedVsCompleted(foldSessionPlans(rows), opts);
 }
 
-module.exports = { foldSessionPlans, toPlannedVsCompleted, readPlannedVsCompleted };
+// Drift-specific reader: FINALIZED-ONLY planned-vs-completed history (the only
+// authoritative closed training history a drift/challenge signal may consider).
+// Abandoned / open / error sessions are excluded. Thin (< the detector's floor)
+// history simply yields few rows — the detector, not the reader, enforces the floor.
+function readFinalizedPlannedVsCompleted(rows) {
+  return toPlannedVsCompleted(foldSessionPlans(rows), { finalizedOnly: true });
+}
+
+module.exports = { foldSessionPlans, toPlannedVsCompleted, readPlannedVsCompleted, readFinalizedPlannedVsCompleted };

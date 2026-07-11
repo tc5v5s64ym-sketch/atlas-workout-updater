@@ -166,3 +166,70 @@ test('totality: garbage/empty input → [] and never throws', () => {
     assert.deepEqual(readPlannedVsCompleted(g), []);
   }
 });
+
+// ── PR-B5a Part 2a: FINALIZED-ONLY drift projection ───────────────────────────
+// The drift/challenge signal may consider only authoritative CLOSED (finalized)
+// training history. Abandoned/open/error sessions are excluded so a bailed or
+// in-progress session can never manufacture a pattern streak or deviation.
+
+const { readFinalizedPlannedVsCompleted } = require('../services/sessionPlanReader');
+
+test('PR-B5a-2a: the proven 7-row finalized canary folds to ROW01 completed, LEX01→LEP01 substituted, OHP01 skipped, finalized', () => {
+  const canarySession = { session_id: '20260710-PM-01', session_date: '2026-07-10', plan_version: 'pv_3b2774fb' };
+  const canaryItems = [
+    { plan_item_id: 'pi_a', planned_order: 1, planned_lift_code: 'ROW01', movement_pattern: 'horizontal_pull' },
+    { plan_item_id: 'pi_b', planned_order: 2, planned_lift_code: 'LEX01', movement_pattern: 'knee_extension' },
+    { plan_item_id: 'pi_c', planned_order: 3, planned_lift_code: 'OHP01', movement_pattern: 'vertical_push' },
+  ];
+  const rows = [
+    ...buildPlanAcceptedEvents(canarySession, canaryItems, { recordedAt: 'r0' }),                                     // 3 plan_accepted
+    buildItemOutcomeEvent(canarySession, { ...canaryItems[0], outcome: 'completed' }, { recordedAt: 'r1' }),          // ROW01 completed
+    buildItemOutcomeEvent(canarySession, { ...canaryItems[1], outcome: 'substituted', performed_lift_code: 'LEP01' }, { recordedAt: 'r2' }), // LEX01→LEP01
+    buildItemOutcomeEvent(canarySession, { ...canaryItems[2], outcome: 'skipped' }, { recordedAt: 'r3' }),            // OHP01 skipped
+    buildSessionCloseoutEvent(canarySession, 'finalized', { recordedAt: 'rz' }),                                      // finalized
+  ];
+  assert.equal(rows.length, 7, 'the canary is exactly 7 rows');
+
+  const folded = foldSessionPlans(rows);
+  assert.equal(folded.length, 1);
+  const s = folded[0];
+  assert.equal(s.status, 'finalized');
+  const byId = Object.fromEntries(s.items.map(it => [it.plan_item_id, it]));
+  assert.equal(byId.pi_a.outcome, 'completed');
+  assert.equal(byId.pi_b.outcome, 'substituted');
+  assert.equal(byId.pi_b.performed_lift_code, 'LEP01');
+  assert.equal(byId.pi_c.outcome, 'skipped');
+
+  const drift = readFinalizedPlannedVsCompleted(rows);
+  assert.equal(drift.length, 1);
+  assert.deepEqual(drift[0].planned, ['ROW01', 'LEX01', 'OHP01']);
+  // completed = performed lifts: ROW01 (completed→planned code) + LEP01 (substituted→performed code); OHP01 skipped contributes nothing.
+  assert.deepEqual(drift[0].completed, ['ROW01', 'LEP01']);
+});
+
+test('PR-B5a-2a: an abandoned session is EXCLUDED from finalized drift history (finalized kept)', () => {
+  const fin = sessionRows(S({ session_id: 'FIN', session_date: '2026-07-02' }), { i1: 'completed', i2: 'completed' }, 'finalized');
+  const aband = sessionRows(S({ session_id: 'ABANDON', session_date: '2026-07-03' }), { i1: 'skipped' }, 'abandoned');
+  const drift = readFinalizedPlannedVsCompleted([...fin, ...aband]);
+  assert.equal(drift.length, 1, 'only the finalized session survives');
+  // sanity: the generic (default) reader still INCLUDES the abandoned session (unchanged behavior)
+  assert.equal(readPlannedVsCompleted([...fin, ...aband]).length, 2);
+});
+
+test('PR-B5a-2a: open and error sessions are excluded from finalized drift history', () => {
+  const fin = sessionRows(S({ session_id: 'FIN', session_date: '2026-07-02' }), { i1: 'completed', i2: 'completed' }, 'finalized');
+  const open = sessionRows(S({ session_id: 'OPEN', session_date: '2026-07-04' }), { i1: 'completed' } /* no closeout → open */);
+  // an error session: a plan_accepted row truncated below the 13-col contract
+  const errRow = buildPlanAcceptedEvents(S({ session_id: 'ERR', session_date: '2026-07-05' }), [items[0]], { recordedAt: 'e0' })[0].slice(0, 5);
+  const drift = readFinalizedPlannedVsCompleted([...fin, ...open, errRow]);
+  assert.equal(drift.length, 1, 'only the finalized session survives (open + error dropped)');
+});
+
+test('PR-B5a-2a: identical replay rows deduplicate (no double-count)', () => {
+  const fin = sessionRows(S({ session_id: 'FIN', session_date: '2026-07-02' }), { i1: 'completed', i2: 'skipped' }, 'finalized');
+  const replayed = [...fin, ...fin]; // exact duplicate idempotency_key rows collapse
+  const drift = readFinalizedPlannedVsCompleted(replayed);
+  assert.equal(drift.length, 1);
+  assert.deepEqual(drift[0].planned, ['BEN01', 'SQ01']);
+  assert.deepEqual(drift[0].completed, ['BEN01']); // i2 skipped contributes nothing
+});
