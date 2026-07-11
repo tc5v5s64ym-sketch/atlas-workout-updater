@@ -161,6 +161,30 @@ test('classifyRequestSignals: the x-atlas-simulation flag always wins → synthe
   assert.equal(ok.evidence_eligible, true);
 });
 
+test('classifyRequestSignals: test_mode:true → synthetic even with athlete_ui in production (rule 1 on the wired path)', () => {
+  const r = classifyRequestSignals({ originHeader: 'athlete_ui', productionRuntime: true, testMode: true });
+  assert.equal(r.evidence_class, 'synthetic');
+  assert.equal(r.evidence_eligible, false);
+});
+
+test('evidenceForRequest: a test_mode flag on the request (query or body) forces synthetic (rule 1 wired)', () => {
+  const prevEnv = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    // test_mode outranks everything — synthetic regardless of the sandbox-sheet read.
+    const qReq = { get: (h) => ({ 'x-atlas-request-origin': 'athlete_ui' })[h], query: { test_mode: 'true' } };
+    assert.equal(evidenceForRequest(qReq).evidence_class, 'synthetic', 'query test_mode → synthetic');
+    const bReq = { get: (h) => ({ 'x-atlas-request-origin': 'athlete_ui' })[h], body: { test_mode: true } };
+    assert.equal(evidenceForRequest(bReq).evidence_class, 'synthetic', 'body test_mode → synthetic');
+    // control: same shape without test_mode is NOT forced synthetic by rule 1
+    const clean = { get: (h) => ({ 'x-atlas-request-origin': 'athlete_ui' })[h], query: {} };
+    assert.ok(['athlete_ui', 'synthetic', 'unknown'].includes(evidenceForRequest(clean).evidence_class));
+    assert.notEqual(evidenceForRequest(clean).request_origin, 'test_mode', 'no test_mode → not classified via rule 1');
+  } finally {
+    if (prevEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prevEnv;
+  }
+});
+
 test('evidenceForRequest: reads headers + is TOTAL (never throws) and fails closed', () => {
   const prevEnv = process.env.NODE_ENV;
   try {

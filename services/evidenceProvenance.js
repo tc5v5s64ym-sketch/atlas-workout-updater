@@ -186,10 +186,17 @@ function evidenceForRequest(req, { bodyOrigin } = {}) {
     try { isSandboxSheet = require('../sheets').getSafeSpreadsheetConfig().isSandboxSheet === true; }
     catch (_) { /* best-effort: if the sheet config can't be read, fall back to NODE_ENV alone */ }
     const originHeader = (typeof bodyOrigin === 'string' && bodyOrigin) ? bodyOrigin : get('x-atlas-request-origin');
+    // test_mode is the write-path's live-vs-dry-run flag (CLAUDE.md). The shadowed
+    // routes don't normally carry it, but if a request DOES (query or body), honor
+    // rule 1 on the live path — a test_mode:true request is synthetic even if it
+    // also claims athlete_ui, closing the contract-vs-wiring gap.
+    const q = req && req.query && typeof req.query === 'object' ? req.query.test_mode : undefined;
+    const b = req && req.body && typeof req.body === 'object' ? req.body.test_mode : undefined;
     return classifyRequestSignals({
       originHeader,
       simulationHeader: get('x-atlas-simulation'),
       productionRuntime: isProductionRuntime({ nodeEnv: process.env.NODE_ENV, isSandboxSheet }),
+      testMode: _truthyFlag(q) || _truthyFlag(b),
     });
   } catch (_) {
     // Fail closed on any unexpected error — unknown, ineligible, no raw content.
