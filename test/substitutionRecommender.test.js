@@ -281,3 +281,42 @@ describe('recommendSubstitute — context-aware (opts.avoid)', () => {
     assert.strictEqual(recommendSubstitute('Jammer Press', { avoid: ['Bench Press'] }), null);
   });
 });
+
+// ─── quad knee-isolation gap (production 2026-07-11) ──────────────────────────
+// "Swap leg extensions out for something else" with Leg Extension the only pending
+// slot produced NO substitution: recommendSubstitute('Leg Extension') returned null
+// (no catalog entry), so the client's deterministic implicit-substitution path fell
+// through to the LLM, which then falsely claimed "Plan updated" while Leg Extension
+// remained. Leg Extension (quad knee-isolation) now maps to quad-region squat-pattern
+// movements — the honest best, since no same-pattern quad isolation scores excellent.
+describe('recommendSubstitute — Leg Extension (quad knee-isolation)', () => {
+  const QUAD_SUBS = ['Leg Press', 'Hack Squat', 'Goblet Squat'];
+
+  it('Leg Extension → a valid acceptable substitute (was null → no substitution)', () => {
+    const r = recommendSubstitute('Leg Extension');
+    assert.ok(r, 'Leg Extension must have a substitute so the swap can be applied');
+    assert.equal(r.quality, 'acceptable');
+    assert.ok(r.reason && r.reason.length > 0, 'reason is a non-empty string');
+    assert.ok(QUAD_SUBS.includes(r.recommendation), `expected a quad squat-pattern sub, got ${r.recommendation}`);
+  });
+
+  it('never recommends the hamstring antagonist (Leg Curl is poor, different muscle)', () => {
+    // Leg Curl is knee_isolation too but trains the OPPOSITE muscle — the quality
+    // scorer grades it 'poor', so it must never surface as a Leg Extension substitute.
+    const r = recommendSubstitute('Leg Extension');
+    assert.ok(r);
+    assert.notEqual(r.recommendation.toLowerCase(), 'leg curl');
+  });
+
+  it('context-aware: avoids a redundant next-slot pick and returns the next valid sub', () => {
+    const r = recommendSubstitute('Leg Extension', { avoid: ['Leg Press'] });
+    assert.ok(r, 'still returns a valid substitute when the first pick is redundant');
+    assert.notEqual(r.recommendation, 'Leg Press', 'the redundant pick is skipped');
+    assert.ok(QUAD_SUBS.includes(r.recommendation));
+  });
+
+  it('case-insensitive + object input reach the same entry', () => {
+    assert.ok(recommendSubstitute('leg extension'));
+    assert.ok(recommendSubstitute({ name: 'Leg Extension' }));
+  });
+});
