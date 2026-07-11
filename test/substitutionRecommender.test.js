@@ -247,3 +247,37 @@ describe('recommendSubstitute — existing infrastructure untouched', () => {
     assert.strictEqual(r.quality, 'excellent');
   });
 });
+
+// ─── context-aware substitution (live evidence 2026-07-11) ────────────────────
+// Back Squat auto-replaced with Leg Press while the very next slot was Single-Leg
+// Seated Leg Press. With the remaining plan supplied via opts.avoid, the recommender
+// must skip the redundant Leg Press and pick a valid non-redundant substitute.
+describe('recommendSubstitute — context-aware (opts.avoid)', () => {
+  it('default (no context) is unchanged: Back Squat → Leg Press', () => {
+    assert.strictEqual(recommendSubstitute('Back Squat').recommendation, 'Leg Press');
+    assert.strictEqual(recommendSubstitute('Back Squat', {}).recommendation, 'Leg Press');
+  });
+
+  it('avoids the next-slot redundancy: Back Squat with Single-Leg Seated Leg Press next → NOT Leg Press', () => {
+    const r = recommendSubstitute('Back Squat', { avoid: ['Single-Leg Seated Leg Press', 'Seated Row'] });
+    assert.ok(r, 'still returns a valid substitute');
+    assert.notStrictEqual(r.recommendation, 'Leg Press', 'the redundant leg-press family is skipped');
+    assert.strictEqual(r.recommendation, 'Goblet Squat', 'picks the valid non-redundant squat-pattern sub');
+    assert.ok(['excellent', 'acceptable'].includes(r.quality));
+  });
+
+  it('avoid that matches nothing leaves the default pick intact', () => {
+    assert.strictEqual(recommendSubstitute('Back Squat', { avoid: ['Seated Row', 'Bench Press'] }).recommendation, 'Leg Press');
+  });
+
+  it('when EVERY acceptable candidate is redundant, still returns the best (never regresses to a skip)', () => {
+    // Deadlift candidates are RDL (excellent) + Good Morning; both hinge-family. Avoid both.
+    const r = recommendSubstitute('Deadlift', { avoid: ['Romanian Deadlift', 'Good Morning'] });
+    assert.ok(r, 'a valid-but-redundant substitute beats no substitute');
+    assert.strictEqual(r.recommendation, 'Romanian Deadlift', 'falls back to the best acceptable candidate');
+  });
+
+  it('unknown prescribed → null regardless of context', () => {
+    assert.strictEqual(recommendSubstitute('Jammer Press', { avoid: ['Bench Press'] }), null);
+  });
+});

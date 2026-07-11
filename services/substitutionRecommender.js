@@ -15,6 +15,7 @@
 //       reason: 'Maintains the hip hinge pattern and training stimulus.' }
 
 const { scoreSubstitutionQuality } = require('./substitutionQuality');
+const { isRedundantWithAny } = require('./substitutionRedundancy');
 
 // Human-readable labels for the 14-pattern vocabulary.
 const PATTERN_LABEL = {
@@ -93,13 +94,20 @@ function buildReason(scoreResult) {
  * Recommend the best known substitute for a prescribed exercise.
  *
  * @param {string|{name:string}} prescribed - The exercise that cannot be performed.
+ * @param {{ avoid?: string[] }} [opts] - CONTEXT: exercise names already in the
+ *        remaining workout (esp. the next planned slot). An acceptable candidate that
+ *        is redundant with any of them (same exercise / alias / unilateral-bilateral
+ *        variant / same movement family — services/substitutionRedundancy) is skipped
+ *        in favor of a valid non-redundant one. When every acceptable candidate is
+ *        redundant, the best is still returned (a valid-but-redundant sub beats none).
+ *        Omitting opts preserves the original context-free selection exactly.
  * @returns {{
  *   recommendation: string,
  *   quality:        'excellent'|'acceptable',
  *   reason:         string
  * }|null}  null when no acceptable substitute is known.
  */
-function recommendSubstitute(prescribed) {
+function recommendSubstitute(prescribed, opts = {}) {
   const name = prescribed && typeof prescribed === 'string'
     ? prescribed
     : (prescribed && prescribed.name) || '';
@@ -109,24 +117,30 @@ function recommendSubstitute(prescribed) {
   const candidates = SUBSTITUTE_CATALOG[name.toLowerCase().trim()];
   if (!candidates || !candidates.length) return null;
 
-  let best     = null;
-  let bestRank = MIN_QUALITY_RANK - 1;
+  const avoid = opts && Array.isArray(opts.avoid) ? opts.avoid.filter(Boolean) : [];
 
+  // Score every acceptable+ candidate, flagging redundancy with the remaining plan.
+  // List order is the preference tiebreaker (first listed wins among equal quality),
+  // exactly as before.
+  const scored = [];
   for (const candidate of candidates) {
-    const scored = scoreSubstitutionQuality(name, candidate);
-    const rank   = QUALITY_RANK[scored.quality] ?? -1;
-    if (rank > bestRank) {
-      bestRank = rank;
-      best     = {
-        recommendation: candidate,
-        quality:        scored.quality,
-        reason:         buildReason(scored),
-      };
-    }
-    if (bestRank >= QUALITY_RANK['excellent']) break;
+    const s = scoreSubstitutionQuality(name, candidate);
+    const rank = QUALITY_RANK[s.quality] ?? -1;
+    if (rank < MIN_QUALITY_RANK) continue;
+    scored.push({ candidate, rank, quality: s.quality, reason: buildReason(s), redundant: avoid.length ? isRedundantWithAny(candidate, avoid) : false });
+  }
+  if (!scored.length) return null;
+
+  // Prefer non-redundant acceptable candidates; if all are redundant, keep them all
+  // (never regress to a skip). Then pick the highest quality, list order breaking ties.
+  const pool = scored.some(c => !c.redundant) ? scored.filter(c => !c.redundant) : scored;
+  let best = null;
+  for (const c of pool) {
+    if (!best || c.rank > best.rank) best = c;   // strict > → list order breaks ties
+    if (best.rank >= QUALITY_RANK['excellent']) break;
   }
 
-  return best;
+  return { recommendation: best.candidate, quality: best.quality, reason: best.reason };
 }
 
 module.exports = { recommendSubstitute, SUBSTITUTE_CATALOG };

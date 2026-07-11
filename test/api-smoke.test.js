@@ -6198,6 +6198,29 @@ test('api smoke: suggest-substitute — a non-constraint message WITHOUT the int
   assert.equal(body.data.recommendation, null, 'without intent:substitute the original constraint gate holds');
 });
 
+test('api smoke: suggest-substitute — context-aware, avoids a substitute redundant with the next planned slot', async () => {
+  // Live bug: Back Squat auto-replaced with Leg Press while Single-Leg Seated Leg Press
+  // was the very next slot. With remaining_plan supplied, the redundant Leg Press is skipped.
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ current_exercise: 'Back Squat', intent: 'substitute', message: 'give me something else', remaining_plan: ['Single-Leg Seated Leg Press', 'Seated Row'] })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'a valid substitute is still returned');
+  assert.notEqual(body.data.recommendation.recommendation, 'Leg Press', 'the redundant leg-press family is avoided');
+  assert.equal(body.data.recommendation.recommendation, 'Goblet Squat', 'picks a valid non-redundant squat-pattern sub');
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'still read-only');
+});
+
+test('api smoke: suggest-substitute — empty/absent remaining_plan keeps the default pick', async () => {
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ current_exercise: 'Back Squat', intent: 'substitute', message: 'x', remaining_plan: [] })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.recommendation.recommendation, 'Leg Press', 'no plan context → original deterministic pick');
+});
+
 test('api smoke: suggest-substitute never writes to any sheet', async () => {
   const before = fakeSheetsState.appendCalls.length;
   await requestJson('/api/suggest-substitute', {

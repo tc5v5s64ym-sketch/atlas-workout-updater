@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased â
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v130';
+const ATLAS_SHELL_BUILD = 'v131';
 
 
 
@@ -1948,6 +1948,14 @@ async function tryApplyImplicitSubstitution(text) {
     : PM.resolvePlanTargets(intent.target, planEntries);
   if (!targetNames.length) return false; // no pending slot to act on â†’ let the coach handle it
   const targetName = targetNames[0];
+  // CONTEXT: the exercises still ahead in the plan (the next slot first) so the engine
+  // avoids a substitute that duplicates them back-to-back (the live redundancy: Leg
+  // Press picked while Single-Leg Seated Leg Press was next). Order-agnostic downstream.
+  const planExs = (getActivePlannedSession() && getActivePlannedSession().exercises) || [];
+  const targetIdx = planExs.findIndex(e => (e.canonicalName || e.name || '').toLowerCase() === targetName.toLowerCase());
+  const remainingPlan = (targetIdx >= 0 ? planExs.slice(targetIdx + 1) : planExs)
+    .map(e => e.canonicalName || e.name)
+    .filter(n => n && n.toLowerCase() !== targetName.toLowerCase());
   // The deterministic substitute (no LLM, no invented number). `intent:'substitute'`
   // tells the read-only endpoint the client already classified a swap request, so it
   // recommends without needing a constraint keyword ("busy"/"taken").
@@ -1956,7 +1964,7 @@ async function tryApplyImplicitSubstitution(text) {
     const res = await api('/api/suggest-substitute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, current_exercise: targetName, intent: 'substitute' })
+      body: JSON.stringify({ message: text, current_exercise: targetName, intent: 'substitute', remaining_plan: remainingPlan })
     });
     rec = res && res.data && res.data.recommendation;
   } catch { return false; }

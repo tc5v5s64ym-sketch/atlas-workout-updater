@@ -855,7 +855,7 @@ app.get('/api/pending-exercises', (req, res) => {
 // Body: { message: string, current_exercise: string }
 // Response: { recommendation: { recommendation, quality, reason, next_target } | null }
 app.post('/api/suggest-substitute', async (req, res) => {
-  const { message, current_exercise: currentExercise, intent } = req.body || {};
+  const { message, current_exercise: currentExercise, intent, remaining_plan: remainingPlan } = req.body || {};
   // The client's deterministic classifier may signal an EXPLICIT substitution request
   // ("I don't want to do squats, give me something else") that carries no constraint
   // keyword — `intent:'substitute'` authorizes the recommendation directly. Absent it,
@@ -867,7 +867,11 @@ app.post('/api/suggest-substitute', async (req, res) => {
   if (!explicitSubstitute && !isConstraintMessage(message)) {
     return standardSuccess(req, res, 'Not a constraint message', { recommendation: null });
   }
-  const rec = recommendSubstitute(currentExercise);
+  // CONTEXT-AWARE: the client passes the remaining planned exercises (esp. the next
+  // slot) so the recommender skips a substitute that would be redundant back-to-back
+  // (same exercise / alias / unilateral-bilateral variant / same movement family).
+  const avoid = Array.isArray(remainingPlan) ? remainingPlan.filter(x => typeof x === 'string' && x.trim()).slice(0, 30) : [];
+  const rec = recommendSubstitute(currentExercise, { avoid });
   if (!rec) {
     return standardSuccess(req, res, 'No substitute found', { recommendation: null });
   }

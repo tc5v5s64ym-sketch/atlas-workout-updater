@@ -191,3 +191,35 @@ test('E2E control: the sync mutation path DEFERS an implicit substitution (retur
   assert.equal(h.tryApplyPlanMutation("I don't want to do squats, give me something else."), false);
   assert.deepEqual(h.getExercises(), ['Romanian Deadlift', 'Back Squat', 'Single-Leg Seated Leg Press', 'Seated Row'], 'sync path leaves it for the async handler');
 });
+
+// ── Context-aware substitution (live evidence 2026-07-11) ────────────────────
+// The implicit substitution must send the remaining plan so the engine avoids a
+// substitute that is redundant with the next slot (Single-Leg Seated Leg Press),
+// and apply the returned NON-redundant pick (Goblet Squat) in place.
+const GOBLET_REC = { recommendation: 'Goblet Squat', quality: 'acceptable', reason: 'Preserves the squat pattern with a lighter compound alternative.', next_target: null };
+
+test('E2E context-aware: sends remaining_plan (next slot first) and applies the non-redundant substitute in place', async () => {
+  const apiState = { recommendation: GOBLET_REC, calls: [] };
+  const h = loadHarness(apiState);
+  h.setActivePlannedSession(fourExercisePlan());
+
+  const handled = await h.tryApplyImplicitSubstitution("I don't want to do squats, give me something else.");
+
+  assert.equal(handled, true);
+  // The client forwarded the remaining workout (the next slot included) as context.
+  assert.equal(apiState.calls.length, 1);
+  assert.deepEqual(apiState.calls[0].body.remaining_plan, ['Single-Leg Seated Leg Press', 'Seated Row'],
+    'remaining plan (after Back Squat) is sent so the engine can avoid redundancy');
+  assert.equal(apiState.calls[0].body.current_exercise, 'Back Squat');
+  // The non-redundant deterministic pick replaces Back Squat in place, becomes active,
+  // and the "…Leg Press" neighbor is untouched (not duplicated).
+  const names = h.getExercises();
+  assert.deepEqual(names, ['Romanian Deadlift', 'Goblet Squat', 'Single-Leg Seated Leg Press', 'Seated Row']);
+  assert.ok(!names.includes('Back Squat'), 'Back Squat replaced, not skipped');
+  assert.ok(!names.includes('Leg Press'), 'the redundant leg-press family is not what got inserted');
+  assert.equal(h.getCurrent(), 'Goblet Squat', 'the non-redundant substitute is active');
+  assert.ok(
+    h.getEvents().some(e => e.type === 'atlas:plan-mutated' && /Swapped Back Squat → Goblet Squat/.test(e.detail.summary)),
+    'the swap names the actual (non-redundant) replacement'
+  );
+});
