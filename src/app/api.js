@@ -30,7 +30,12 @@ export async function api(path, options = {}) {
   // affects request/response semantics or the write path.
   const flightHeaders = (typeof window !== 'undefined' && window.atlasFlightRecorder && typeof window.atlasFlightRecorder.requestHeaders === 'function')
     ? window.atlasFlightRecorder.requestHeaders() : {};
-  const headers = { 'x-atlas-api-key': getApiKey(), ...flightHeaders, ...(options.headers || {}) };
+  // PR-GATEA1 — the positive, UNCONDITIONAL provenance marker: every real athlete-UI
+  // request through this single wrapper carries it, so the server can classify shadow
+  // events as genuine athlete_ui vs synthetic/unknown (GATE A evidence eligibility).
+  // Telemetry only — it never affects request/response semantics or the write path,
+  // and the server still fails closed on non-production runtime / test / sim traffic.
+  const headers = { 'x-atlas-api-key': getApiKey(), 'x-atlas-request-origin': 'athlete_ui', ...flightHeaders, ...(options.headers || {}) };
   const method = options.method || 'GET';
   const startedAt = Date.now();
   let res = null;

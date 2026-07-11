@@ -39,6 +39,13 @@ Promotion requires meaningful real-world usage. Synthetic traffic, replayed fixt
 - **Minimum: 50 real recommendation events** (recorded orchestrations at the live coach-engine gates, produced by genuine usage).
 - **Preferred: 100 or more.**
 
+**What a "real event" is — deterministic provenance (PR-GATEA1).** A recorded orchestration counts toward the 50-event floor **only** when its `Brain_Shadow` row is `evidence_eligible = TRUE` **and** `evidence_class = athlete_ui` — i.e. it was positively identified as genuine athlete-UI activity in production. Every other row is recorded for engineering evidence but **never counts**:
+
+- `evidence_class = synthetic` — `test_mode`, or a known automated source (CI / Playwright / simulation / canary / smoke / probe / a non-production runtime). Marked by the source or by the runtime; always ineligible.
+- `evidence_class = unknown` — an untagged direct API call, missing/malformed provenance, or **any old row written before PR-GATEA1** (the three provenance columns are absent → reads back as `unknown`). Fail-closed; always ineligible.
+
+Classification is deterministic — derived solely from the request's provenance signals (`x-atlas-request-origin`, the simulation marker, `test_mode`, and the production runtime), **never inferred from traffic volume or timestamp patterns** — and is telemetry-only: it never changes a served coaching response. The classifier and its rules live in `services/evidenceProvenance.js`. Because the pre-PR-GATEA1 window mixed genuine and synthetic traffic without this provenance, that window is archived as engineering evidence and **does not count**; the floor is counted from a fresh window collected after the provenance fields deploy (see the PR-GATEA1 owner runbook, `docs/verification/GATEA1_WINDOW_RESET_RUNBOOK.md`).
+
 **Sample variety matters more than raw count.** Fifty refreshes of the same lift on the same day are one data point wearing fifty hats. A valid window should span:
 
 - multiple distinct training sessions (different days, different readiness states),

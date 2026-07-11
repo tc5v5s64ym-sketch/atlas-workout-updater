@@ -54,6 +54,8 @@ const { planStateFromContext, buildSessionCloseAnswer } = require('../services/s
 const { generateLiftCode, buildExerciseCatalogMap, normalizeExerciseKey, closestExerciseMatches } = require('../services/exerciseEnrichment');
 const { getShadowLog, observeChatMessage } = require('../services/intentShadow');
 const { getBrainShadowLog } = require('../services/brainShadow');
+// PR-GATEA1 — evidence provenance for the Intent_Shadow diagnostics row.
+const { evidenceForRequest } = require('../services/evidenceProvenance');
 const { getFlightRecorderLog, isFlightRecorderEnabled, recordClientBatch } = require('../services/flightRecorder');
 const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('../services/bugReport');
 const { readCurrentDeloadState } = require('../services/deloadState');
@@ -1070,10 +1072,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   router.post('/api/debug/intent-observe', (req, res) => {
     const message = req.body && typeof req.body.message === 'string' ? req.body.message : '';
     const appVersion = req.body && typeof req.body.app_version === 'string' ? req.body.app_version : '';
+    // PR-GATEA1 — the composer marks its intent-observe POST body with
+    // request_origin:'athlete_ui' (this POST bypasses the api.js header seam).
+    // Classify from that body marker + the sim header + runtime; fail closed.
+    const bodyOrigin = req.body && typeof req.body.request_origin === 'string' ? req.body.request_origin : undefined;
+    const evidence = evidenceForRequest(req, { bodyOrigin });
     // route/source label the Intent_Shadow diagnostics row; the classifier's own
     // source stays 'chat'. Fire-and-forget inside observeChatMessage — no-op when
     // the flag is off / message is blank.
-    observeChatMessage(message, { route: 'composer', source: 'chat', appVersion });
+    observeChatMessage(message, { route: 'composer', source: 'chat', appVersion, evidence });
     return standardSuccess(req, res, 'observed', { observed: Boolean(message.trim()) });
   });
 

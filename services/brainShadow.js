@@ -32,6 +32,8 @@
 // reset on deploy/restart, the right lifetime for a calibration log). The optional
 // Brain_Shadow tab is the only durable, aggregatable copy for offline owner review.
 
+const { normalizeEvidenceClass, normalizeRequestOrigin, EVIDENCE_CLASSES } = require('./evidenceProvenance');
+
 const RING_MAX = 50;
 
 // Dedicated diagnostics tab (optional, declared in config/sheetContract.js). NOT a
@@ -39,7 +41,11 @@ const RING_MAX = 50;
 // appended best-effort. Columns (append order):
 //   captured_at | route | lift_code | mode | ok | reason | decision_type |
 //   status | confidence_tier | skipped_json | comparable | diverged |
-//   weight_delta | reps_delta | ms | app_version
+//   weight_delta | reps_delta | ms | app_version |
+//   evidence_class | evidence_eligible | request_origin   ← PR-GATEA1 (appended)
+// The three GATE-A provenance columns are appended to the END; the 16 existing
+// columns are never reordered or reinterpreted. Old 16-column rows read back as
+// evidence_class=unknown / evidence_eligible=FALSE (see services/evidenceProvenance.js).
 const SHADOW_TAB = 'Brain_Shadow';
 
 let _ring = [];      // newest first
@@ -48,6 +54,23 @@ let _append = null;  // injectable Sheets appendRows; lazy-required otherwise
 function _isObj(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 function _round(n) { return Math.round(n * 100) / 100; }
 function _isMode(m) { return m === 'hybrid' || m === 'brian'; }
+
+// PR-GATEA1 — the evidence-provenance fields for one orchestration. The route
+// classifies the request (services/evidenceProvenance.evidenceForRequest) and
+// passes the verdict as `params.evidence`; here it is re-normalized and FAILS
+// CLOSED: a missing / malformed / inconsistent verdict → unknown, ineligible.
+// evidence_eligible is recomputed from the class so an injected `eligible:true`
+// on a non-athlete_ui class is never trusted. request_origin is bounded to a safe
+// token (no raw content can reach the row). Telemetry only — never a served field.
+function _evidence(params) {
+  const ev = _isObj(params && params.evidence) ? params.evidence : {};
+  const evidence_class = normalizeEvidenceClass(ev.evidence_class);
+  return {
+    evidence_class,
+    evidence_eligible: evidence_class === EVIDENCE_CLASSES.ATHLETE_UI,
+    request_origin: normalizeRequestOrigin(ev.request_origin),
+  };
+}
 
 function isBrainShadowEnabled() {
   return _isMode(process.env.ATLAS_COACH_ENGINE);
@@ -127,6 +150,10 @@ function _persistRow(entry, appVersion) {
         d.reps_delta != null ? d.reps_delta : '',
         entry.ms != null ? entry.ms : '',
         appVersion || '',
+        // PR-GATEA1 provenance — appended to the END; existing columns untouched.
+        entry.evidence_class || EVIDENCE_CLASSES.UNKNOWN,
+        entry.evidence_eligible === true ? 'TRUE' : 'FALSE',
+        entry.request_origin || '',
       ];
       return append(SHADOW_TAB, [row]);
     })
@@ -194,6 +221,7 @@ function observeBrainOrchestration(params) {
       skipped: Array.isArray(provenance.skipped) ? provenance.skipped.slice() : [],
       divergence: _divergence(legacy, brianTargets),
       ms: typeof p.ms === 'number' ? p.ms : null,
+      ..._evidence(p),
     };
     return _record(entry, p.appVersion);
   } catch (_) {
@@ -225,6 +253,7 @@ function observeBrainFailure(params) {
       skipped: [],
       divergence: _divergence(null, null),
       ms: typeof p.ms === 'number' ? p.ms : null,
+      ..._evidence(p),
     };
     return _record(entry, p.appVersion);
   } catch (_) {

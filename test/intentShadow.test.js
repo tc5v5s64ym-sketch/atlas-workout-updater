@@ -121,7 +121,7 @@ test('shadow: long messages are preview-capped in the log', async () => {
 // --- Intent_Shadow Sheet persistence (owner direction 2026-07-03: "review the
 //     shadow" without debug JSON — a durable diagnostics tab, best-effort) ---
 
-test('persist: a SUCCESSFUL classification appends one 13-column row to Intent_Shadow', async () => {
+test('persist: a SUCCESSFUL classification appends one 16-column row; the original 13 columns keep their order', async () => {
   await withFlag('shadow', async () => {
     const appended = [];
     shadow._resetForTesting({
@@ -133,7 +133,8 @@ test('persist: a SUCCESSFUL classification appends one 13-column row to Intent_S
     assert.equal(appended.length, 1, 'exactly one append attempted');
     assert.equal(appended[0].tab, shadow.SHADOW_TAB, 'appends to the Intent_Shadow tab (never Log_Cleaned/Effort)');
     const row = appended[0].rows[0];
-    assert.equal(row.length, 13, 'the diagnostics row has all 13 columns');
+    assert.equal(row.length, 16, 'row grew 13 → 16 (PR-GATEA1 appended three provenance columns)');
+    // The original 13 columns are unchanged, in place:
     assert.equal(row[1], 'push day please', 'message_preview');
     assert.equal(row[2], 'generate_workout', 'intent_type');
     assert.equal(row[3], 0.9, 'confidence');
@@ -146,6 +147,10 @@ test('persist: a SUCCESSFUL classification appends one 13-column row to Intent_S
     assert.equal(row[10], 'v105', 'app_version stamped from the client');
     assert.equal(row[11], '', 'review_status blank (owner fills on review)');
     assert.equal(row[12], '', 'review_notes blank');
+    // PR-GATEA1 provenance appended at the end; no evidence supplied here → fail closed.
+    assert.equal(row[13], 'unknown', 'evidence_class defaults to unknown when the route supplied no verdict');
+    assert.equal(row[14], 'FALSE', 'evidence_eligible');
+    assert.equal(row[15], '', 'request_origin');
   });
 });
 
@@ -230,7 +235,10 @@ test('shadow wiring: POST /api/debug/intent-observe forwards the message to obse
   const src = _coachOpsSrc();
   const routeIdx = src.indexOf("router.post('/api/debug/intent-observe'");
   assert.ok(routeIdx > -1, 'the observe endpoint must exist');
-  const block = src.slice(routeIdx, routeIdx + 600);
+  // Scope the block to exactly this handler (up to the next route) so it stays
+  // robust as additive fields — e.g. PR-GATEA1 provenance — grow the handler body.
+  const nextRouteIdx = src.indexOf('router.', routeIdx + 20);
+  const block = src.slice(routeIdx, nextRouteIdx > -1 ? nextRouteIdx : routeIdx + 900);
   assert.match(block, /observeChatMessage\(message,/, 'forwards the posted message (+ diagnostics meta) to the shadow observer');
   // Observe-only: it must never await the classification, touch Sheets, or reply
   // with anything but an ack.
@@ -244,7 +252,7 @@ test('shadow wiring: the composer submit chokepoint fires observeComposerText BE
   // The helper posts fire-and-forget to the observe endpoint and swallows errors.
   const helperStart = app.indexOf('function observeComposerText(');
   assert.ok(helperStart > -1, 'observeComposerText helper must exist');
-  const helper = app.slice(helperStart, helperStart + 1100);
+  const helper = app.slice(helperStart, helperStart + 1400);
   assert.match(helper, /\/api\/debug\/intent-observe/, 'posts to the observe endpoint');
   assert.match(helper, /\.catch\(/, 'errors are swallowed — observation never surfaces to the lifter');
   assert.ok(!/await\s+api\(/.test(helper), 'the observe POST is fire-and-forget (never awaited)');
