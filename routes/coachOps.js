@@ -29,6 +29,7 @@ const coachPolish = require('../services/coachPolish');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso } = require('../services/analytics');
 const { enrichCoachFacts, confirmTodayNewGround } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
+const { readAthleteGoals } = require('../services/athleteGoals');
 const { selectCoachMode } = require('../services/coachMode');
 const { deriveChatCoachMode } = require('../services/chatCoachMode');
 const { detectDiscouragement } = require('../services/discouragementSignal');
@@ -689,6 +690,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // fresh here — never read from clientContext — so it is engine-only; bounded
       // again by coach.sanitizeChatContext's explicit whitelist.
       athlete_identity: buildAthleteIdentity(logRows, { asOf: todayIso() }),
+      // PR-B8a — structured goals (what the lifter is training TOWARD), read from the
+      // SAME Constraints rows the route already fetched. Goal-kind rows carry no
+      // `rule`, so they were filtered out of `constraints` above — hence the raw rows.
+      // Engine-only (never from clientContext); zero additional Sheets read; bounded
+      // again by coach.sanitizeChatContext. `[]` when the lifter has seeded no goals.
+      athlete_goals: readAthleteGoals(modeOpts.constraintRows),
       // B5 — the engine-decided coaching MODE for the chat voice, derived
       // (deriveChatCoachMode) from the snapshot facts assembled above plus the
       // message-derived discouragement signal (B5b Part 2). `memory_patterns` →
@@ -915,7 +922,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // lanes above are already bypassed for it). Pure tiredness never fires it — that
       // stays the recovery read below, which short-circuits before the LLM, so recovery
       // outranks reassure (Owner Decision 1: safety and recovery stay above reassure).
-      const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged });
+      const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged, constraintRows });
       // ── Soul Plan PR-B5a Part 2a — DARK drift shadow (ATLAS_DRIFT_SHADOW, default
       // OFF). Fire-and-forget: reads FINALIZED-ONLY Session_Plans history (TTL-cached,
       // so never an uncached per-message read) + runs the pure detectDrift, and emits a

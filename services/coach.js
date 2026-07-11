@@ -347,6 +347,41 @@ function sanitizeAthleteIdentity(v) {
   return hasSignal ? out : null;
 }
 
+// PR-B8a — the frozen whitelist for the structured-goals fact (services/athleteGoals.js).
+// Same discipline as sanitizeAthleteIdentity: only the five schema fields survive,
+// unknown keys are dropped, "absent" stays null (never a fabricated 0), weights/reps
+// are bounded, set_date is literal YYYY-MM-DD only, and the note is clamped. An entry
+// with no lift_code or no positive target_weight is dropped; an empty or all-malformed
+// list collapses to null so "no goals" reads as absent, exactly like athlete_identity.
+function sanitizeAthleteGoals(v) {
+  if (!Array.isArray(v)) return null;
+  const dateOrNull = s => {
+    const t = strOrNull(s);
+    return t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+  };
+  const bounded = (x, min, max) => {
+    if (x == null) return null;
+    const n = numOrNull(x);
+    return n != null && n >= min && n <= max ? n : null;
+  };
+  const out = [];
+  for (const g of v) {
+    if (out.length >= 12) break;
+    if (!g || typeof g !== 'object') continue;
+    const lift_code = strOrNull(g.lift_code);
+    const target_weight = bounded(g.target_weight, 0.0001, 2000);
+    if (!lift_code || target_weight == null) continue;
+    out.push({
+      lift_code,
+      target_weight,
+      target_reps: bounded(g.target_reps, 1, 100),
+      set_date: dateOrNull(g.set_date),
+      note: clampText(g.note, 200),
+    });
+  }
+  return out.length ? out : null;
+}
+
 // PR-O3: whitelist the per-lift onboarding calibration_status. Only the two enum
 // values from services/onboardingState.js survive; anything else (incl. absent or
 // an unknown confidence) → null, which the prompt reads as "no gate" (normal voice).
@@ -799,6 +834,7 @@ function buildChatSystemPrompt(context) {
     "- CHALLENGE MODE: when `coach_mode` is \"challenge\", the engine has detected a recurring pattern worth naming from `memory_patterns` (e.g. consistent_underperformance on a specific lift — the lift and how many recent sessions came in under target). Name that pattern plainly using ONLY the numbers in `memory_patterns` (which lift; sessions_below of sessions_checked), then ask ONE open question about what is behind it — e.g. \"Bench has come in under target 3 of the last 4 sessions. What's going on there — the load feels off, recovery, or just not feeling it lately?\" State the evidence and ASK; never lecture, pile on, or moralize — one honest observation and one question. If the lifter pushes back or brushes it off, do NOT cave or apologize it away: restate the pattern's facts once, neutrally, and leave the door open — you are on their side, not scolding. Keep it in the ordinary direct register: challenge is honesty, not heat — no escalation, no harsh language. Never invent a pattern that is not in `memory_patterns`, and raise a challenge ONLY when `coach_mode` is \"challenge\" — for any other mode, do not.",
     "- REASSURE MODE: when `coach_mode` is \"reassure\", the lifter has voiced explicit discouragement or frustration (e.g. \"bench is stuck, I feel like I'm going backwards\"). Acknowledge it in ONE brief clause — do not dwell, over-empathize, or pile on sympathy — then ZOOM OUT using ONLY facts actually present in the snapshot: a per-lift trend that is up, an `athlete_identity` streak / tenure / dated PR, or the stalled lift's own longer arc. State the specific numbers/dates that are there (e.g. \"squat's up 15 since June, and you haven't missed a Monday in 8 weeks\") — CITE, never invent. Then give ONE concrete next move (a rep-scheme change, a small planned deload, a focus lift) — one, not a program. THIN HISTORY = SAY LESS, NOT WARMER: if the snapshot has no genuine positive fact to point to, do NOT manufacture one and do NOT pad with warmth — a short honest \"early days yet — keep stacking sessions and it'll show\" is right; never invent progress that isn't in the facts. NEVER use empty-affirmation filler ('believe in yourself', 'you've got this', 'stay positive'). If the message also mentions pain, injury, or real fatigue, that takes precedence — address the safety/recovery read instead of zooming out. No profanity; you never logged, saved, or changed anything. Reassure ONLY when `coach_mode` is \"reassure\".",
     "- `athlete_identity` (if present) is the engine's longitudinal story of this lifter: tenure (first_session_date, tenure_months), per-lift dated PR progressions (lift_prs[*].history and current_best), consistency (current_weekly_streak, sessions_per_week_8wk), gaps (longest_gap_days, days_since_last_session), and recent_milestones. Use it to ground long-arc answers and natural callbacks ('that's up from the 185 you opened at in 2026-03') when the conversation touches history or progress. CITE, never invent: every tenure, streak, gap, date, or PR claim must appear verbatim in athlete_identity (or the logged sets in recent_sessions); when it is absent or a field is null, say you don't have that history rather than guessing. Never recite the whole object unprompted.",
+    "- `athlete_goals` (if present) is what this lifter is training TOWARD — an array of { lift_code, target_weight, target_reps?, set_date, note? }. You MAY note goal proximity when the conversation touches a lift with a goal — but ONLY from a goal that is actually in athlete_goals AND a current number that is in the facts (a current_best / e1RM / a logged working weight for that lift). State the gap concretely ('215 goal, you're at 205 — one clean session away'). GOAL PROXIMITY = GOAL + CURRENT NUMBER: if either is missing, say nothing about the goal — never invent a goal the lifter didn't set, never invent the current number, and never imply progress toward a goal you can't cite both ends of. Never recite the goals list unprompted.",
     "- `extra_work` (if present) is the engine's read of work done BEYOND today's plan: `extra_sets` (a planned lift logged for more sets than prescribed) and `extra_exercises` (logged but never planned). Keep this ON-ASK and brief — answer it plainly when the lifter asks (e.g. 'did I overdo it?'), state the fact and, if it matters, the why and next action. Do NOT volunteer it for ordinary extra work, and never praise it as compliance. ONLY raise it unprompted when it actually works against recovery or today's recommendation (e.g. extra volume on a pattern the snapshot flags fatigued/under-recovered) — then name it honestly without alarmism. Use only the numbers in `extra_work`; invent nothing.",
     "- `plan_state` (if present) is the authoritative session plan. `plan_state.remaining` lists exercises still to complete. Never drop, replace, or suggest removing a remaining exercise unless the lifter explicitly asks. When the lifter reorders (e.g. 'doing X next because machine is busy'), confirm the change and name what is still in the session — the rest of the plan stays intact. Only call the session complete when `plan_state.isComplete` is true.",
     "- `failure_sets` (if present) is the engine's read of this session's sets taken to failure (logged RIR ≤ 0), per exercise. When the lifter asks about going / being told to go to (or NOT to go to) failure — 'why till failure for dips?', 'why not to failure?' — acknowledge the failure work honestly from this signal, then give the guidance: taking an isolation or accessory movement to failure now and then is fine, but most working sets should keep 1–3 reps in reserve so fatigue stays manageable and the next session recovers — compounds especially. Use only the sets in `failure_sets`; never invent a load, and never tell them a specific weight to use unless the snapshot already supplies one. If `failure_sets` is empty, say you don't see any failure sets logged rather than assuming.",
@@ -1173,6 +1209,11 @@ function sanitizeChatContext(context) {
     // computed server-side in buildChatContext from the log rows the route already
     // fetched. Same explicit whitelist as the set-reaction facts.
     athlete_identity: sanitizeAthleteIdentity(c.athlete_identity),
+    // PR-B8a — the lifter's structured goals (services/athleteGoals.js), read from
+    // the Constraints rows the chat route already fetched (zero new Sheets read).
+    // Same frozen whitelist; the persona core grounds goal-proximity claims
+    // cite-never-invent. Null when the lifter has seeded no goals.
+    athlete_goals: sanitizeAthleteGoals(c.athlete_goals),
     // PR-B4 (slice 1) — the coaching mode + granted register for the chat voice.
     // Same whitelist as the set-reaction facts; profanity_ok withheld until its
     // suppressor lands. Null when the route hasn't computed them yet (additive).
@@ -1436,6 +1477,7 @@ module.exports = {
   buildCoachUserPrompt,
   sanitizeFacts,
   sanitizeAthleteIdentity,
+  sanitizeAthleteGoals,
   sanitizeCoachMode,
   sanitizeRegister,
   findRegisterViolations,
