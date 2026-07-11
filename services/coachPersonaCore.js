@@ -27,9 +27,10 @@
 // a signal rule.
 //
 // The identity wording is the owner-ratified logbook-keeper voice
-// (docs/ATLAS_VOICE_RATIFICATION_V1.md §1a) — the same voice that until PR-A2
-// lived only in the unwired buildVerdictReactionSystemPrompt. The earlier wired
-// "sharp, encouraging strength coach" placeholder is superseded.
+// (docs/ATLAS_VOICE_RATIFICATION_V1.md §1a). Before PR-A2 this voice lived only
+// in a second, unwired set-reaction builder while the surfaced voice was a
+// "sharp, encouraging strength coach" placeholder; PR-A2 made the logbook-keeper
+// the one identity, and PR-A6 retired that unwired duplicate builder entirely.
 //
 // OWNER READ: the persona text below is flagged for the owner in the PR body
 // (Soul Plan PR-A2 gate) — it is the voice every coach surface now speaks in.

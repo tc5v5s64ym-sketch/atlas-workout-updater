@@ -97,12 +97,16 @@ test('the unit guard is wired on the display voices and NOT on the compile path'
   const bodyOf = (name) => {
     const start = src.indexOf(`async function ${name}(`);
     assert.ok(start !== -1, `${name} must exist`);
-    // Slice to the next top-level "async function " (good enough to scope the body).
-    const next = src.indexOf('\nasync function ', start + 1);
+    // Scope the body: stop at the next top-level "async function " or — for the
+    // last function in the file — at the module.exports block, so the export list
+    // (which names stripFabricatedUnits) is never mistaken for a call site.
+    const bounds = [src.indexOf('\nasync function ', start + 1), src.indexOf('\nmodule.exports', start + 1)]
+      .filter(i => i !== -1);
+    const next = bounds.length ? Math.min(...bounds) : -1;
     return src.slice(start, next === -1 ? undefined : next);
   };
   // Display voices apply the guard…
-  for (const voice of ['generateCoachMessage', 'generatePlanMessage', 'generateChatReply', 'generateVerdictReaction']) {
+  for (const voice of ['generateCoachMessage', 'generatePlanMessage', 'generateChatReply']) {
     assert.match(bodyOf(voice), /stripFabricatedUnits\(/, `${voice} must apply the unit guard`);
   }
   // …the compile path (feeds preview→approve→write) must NOT.

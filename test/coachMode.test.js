@@ -89,8 +89,9 @@ test('celebrate requires scarcity clear; a spent budget downgrades to praise', (
 // ── Rule-decision nuance: routine info-level hold/load never refuses ──────────
 
 test('a routine info-level hold/load is a quiet progression call, not a refusal', () => {
-  // Mirrors hasActionableRuleDecision (services/coach.js): info-level progression
-  // decisions never break silence — so they must not manufacture a refuse mode.
+  // Mirrors the note-tier silence gate (services/coachNoteTier.js): info-level
+  // progression decisions never break silence — so they must not manufacture a
+  // refuse mode.
   assert.equal(selectCoachMode({ rule_decisions: [{ decision: 'hold', severity: 'info' }] }).mode, 'silent');
   assert.equal(selectCoachMode({ rule_decisions: [{ decision: 'load', severity: 'info' }] }).mode, 'silent');
   // A hold that carries real severity DOES refuse.
@@ -111,8 +112,8 @@ test('correct fires on fell_short, far_easy, warn-grade substitution, and regres
 // ── The crown jewel + totality ────────────────────────────────────────────────
 
 test('crown jewel: a clean met set with no rule raised is SILENT', () => {
-  // Cross-reference: isVerdictWorthReacting({outcome:'met'}) === false — the
-  // verdict-reaction gate keeps met quiet; the mode enum must agree.
+  // A clean met set is the quiet default across the engine — the note-tier gate
+  // maps it to ack_only (silent); the mode enum must agree.
   const out = selectCoachMode({
     verdict: { outcome: 'met' },
     effort_verdict: { level: 'on_target' },

@@ -24,7 +24,6 @@ const {
   buildPlanSystemPrompt,
   buildChatSystemPrompt,
   buildCompileSystemPrompt,
-  buildVerdictReactionSystemPrompt,
 } = require('../services/coach');
 const { PERSONA_CORE } = require('../services/coachPersonaCore');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
@@ -129,7 +128,6 @@ test('persona core carries the ATHLETE HISTORY iron rule (cited, never invented)
 const BUILDERS = [
   ['set-reaction', () => buildCoachSystemPrompt()],
   ['chat', () => buildChatSystemPrompt()],
-  ['verdict-reaction', () => buildVerdictReactionSystemPrompt()],
   ['plan', () => buildPlanSystemPrompt()],
   ['compile', () => buildCompileSystemPrompt()],
 ];

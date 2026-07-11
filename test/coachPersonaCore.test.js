@@ -8,15 +8,13 @@ const {
   buildPlanSystemPrompt,
   buildChatSystemPrompt,
   buildCompileSystemPrompt,
-  buildVerdictReactionSystemPrompt,
 } = require('../services/coach');
 const { PERSONA_CORE, buildPersonaCore } = require('../services/coachPersonaCore');
 
-// The five prompt builders, by the name PR-A2 uses for them.
+// The four prompt builders, by the name PR-A2 uses for them.
 const BUILDERS = [
   ['set-reaction', () => buildCoachSystemPrompt()],
   ['chat', () => buildChatSystemPrompt()],
-  ['verdict-reaction', () => buildVerdictReactionSystemPrompt()],
   ['plan', () => buildPlanSystemPrompt()],
   ['compile', () => buildCompileSystemPrompt()],
 ];
