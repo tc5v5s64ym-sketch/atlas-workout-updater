@@ -1330,8 +1330,10 @@ import * as sessionQuestion from './sessionQuestion.js';
       substitution: suggestMatch ? undefined : primarySub
     });
     const note = reaction.note;
-    // Routine (ack_only) blocks are receipt-only — `note` is null and nothing is
-    // typed; only the deterministic readback card above remains.
+    // Every block yields a coaching note — a routine (ack_only) block returns a BRIEF
+    // deterministic acknowledgement (templatedAckLine), not silence — so the concise
+    // reaction is typed under the readback card. `if (note)` still guards the rare path
+    // where a note is genuinely absent (e.g. no LLM key AND no deterministic opener).
     if (note) {
       await typeOut(body, note);
       chatTurns.push({ role: 'atlas', text: note });
@@ -1359,7 +1361,8 @@ import * as sessionQuestion from './sessionQuestion.js';
       bubble.appendChild(eff);
     }
 
-    // Routine (ack_only) blocks are receipt-only — suppress the "Next time:" box too.
+    // A routine (ack_only) block stays minimal — the brief ack note is the whole
+    // reaction; suppress the "Next time:" box (and the effort line above) too.
     if (!reaction.ack_only && rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
     }
