@@ -39,7 +39,11 @@ const IN_WORKOUT_ROUTES = new Set(['/api/recommend/next']);
 const ENGINE_ERROR_REASONS = new Set(['orchestrator_error', 'assembly_error']);
 
 function _isTrueCell(v) { return String(v == null ? '' : v).trim().toLowerCase() === 'true'; }
-function _num(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+// A blank/whitespace cell means "not compared" (null), NOT 0 — the recorder writes
+// an empty cell for the uncompared side of a one-sided comparable row and for a
+// missing latency (services/brainShadow.js). Number('') is 0, so guard it explicitly
+// to keep the scorecard fail-CLOSED (never a spurious 0-delta perfect match).
+function _num(v) { if (v == null || String(v).trim() === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
 function _str(v) { return typeof v === 'string' ? v.trim() : (v == null ? '' : String(v).trim()); }
 
 // A default region resolver — HONEST by design: it returns 'unknown' rather than

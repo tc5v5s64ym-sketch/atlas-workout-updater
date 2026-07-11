@@ -164,6 +164,20 @@ test('tolerance region split: 5<Δ≤10 with an undeterminable region is flagged
   assert.notEqual(sc.progression.tolerance_result, 'PASS', 'ambiguous region tolerance is not an automatic PASS');
 });
 
+test('one-sided comparable row: a blank delta/ms cell reads as "not compared" (null), never a spurious 0', () => {
+  // brainShadow writes a blank cell for the uncompared side of a one-sided
+  // comparable row and for a missing latency (services/brainShadow.js:149-151).
+  // That blank must read as "not compared" (null), NOT a 0-delta perfect match —
+  // else it pads the rep-tolerance denominator and the latency list with passing
+  // zeros, drifting fail-OPEN in a fail-closed tool.
+  const rows = [row({ weight_delta: 4, ms: '' })]; // comparable on WEIGHT only; reps + ms blank
+  const p = computeScorecard(rows, OPTS).progression;
+  assert.equal(p.comparable_events, 1, 'a weight-only row is still comparable');
+  assert.equal(p.rep_tolerance.result, 'n/a', 'a blank reps_delta is not a 0-rep in-tolerance sample');
+  assert.equal(p.latency.count, 0, 'a blank ms cell is not a 0ms latency sample');
+  assert.equal(p.latency.min, null);
+});
+
 // ── Engine health blockers ───────────────────────────────────────────────────
 
 test('an orchestrator/assembly error among eligible rows is an automatic blocker; ok:false reasons reported', () => {
