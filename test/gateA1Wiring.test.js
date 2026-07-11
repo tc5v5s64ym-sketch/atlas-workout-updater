@@ -15,20 +15,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-test('client: the api() wrapper attaches x-atlas-request-origin: athlete_ui UNCONDITIONALLY (not recorder-gated)', () => {
+test('client: the api() wrapper attaches x-atlas-request-origin (athlete_ui, or playwright under automation)', () => {
   const api = read('src/app/api.js');
-  assert.match(api, /'x-atlas-request-origin':\s*'athlete_ui'/, 'the positive UI marker is present');
+  // The marker is computed from navigator.webdriver: automation → synthetic, else athlete_ui.
+  assert.match(api, /navigator\.webdriver\s*===\s*true\s*\)\s*\?\s*'playwright'\s*:\s*'athlete_ui'/,
+    'automation (WebDriver) sends a synthetic marker, never athlete_ui');
+  assert.match(api, /'x-atlas-request-origin':\s*uiOrigin/, 'the computed marker rides the header');
   // It must sit in the base header object, before the (recorder-gated) flightHeaders spread.
   const headerLine = api.split('\n').find(l => l.includes("'x-atlas-request-origin'"));
   assert.ok(/'x-atlas-api-key'/.test(headerLine), 'rides the always-present base headers, so it is unconditional');
 });
 
-test('client: the composer intent-observe POST body carries request_origin: athlete_ui (it bypasses api())', () => {
+test('client: the composer intent-observe POST body carries the webdriver-aware request_origin (bypasses api())', () => {
   const app = read('src/app/app.js');
   const idx = app.indexOf("fetch('/api/debug/intent-observe'");
   assert.ok(idx > -1, 'the intent-observe POST exists');
-  const block = app.slice(idx, idx + 800);
-  assert.match(block, /request_origin:\s*'athlete_ui'/, 'the marker rides the body since this POST bypasses the api.js header seam');
+  const block = app.slice(idx, idx + 900);
+  assert.match(block, /navigator\.webdriver\s*===\s*true\s*\)\s*\?\s*'playwright'\s*:\s*'athlete_ui'/,
+    'the body marker is also automation-aware since this POST bypasses the api.js header seam');
 });
 
 test('server: every coach-engine shadow call site classifies the request via evidenceForRequest(req)', () => {

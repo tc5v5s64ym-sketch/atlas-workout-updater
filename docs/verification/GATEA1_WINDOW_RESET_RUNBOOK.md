@@ -11,7 +11,8 @@
 - New `services/evidenceProvenance.js` — the deterministic classifier + fail-closed rules.
 - `Brain_Shadow` rows gained three appended columns (16 → 19): `evidence_class`, `evidence_eligible`, `request_origin`.
 - `Intent_Shadow` rows gained the same three appended columns (13 → 16), after the two review columns.
-- The real UI marks its requests (`x-atlas-request-origin: athlete_ui`, unconditional in `src/app/api.js`; on the intent-observe POST body). Smoke traffic marks itself `smoke`; the sim harness's existing `x-atlas-simulation` header is reused; a non-production runtime is synthetic by construction.
+- The real UI marks its requests (`x-atlas-request-origin: athlete_ui` in `src/app/api.js` + the intent-observe POST body) — **unless** the client is under browser automation (`navigator.webdriver`), in which case it sends `playwright` (synthetic). Smoke traffic marks itself `smoke`; the sim harness's existing `x-atlas-simulation` header is reused.
+- The server does **not** trust the marker alone: `athlete_ui` is eligible only when the request also carries browser-enforced same-origin fetch provenance (`Sec-Fetch-Site: same-origin` + a host-matched `Origin`/`Referer`) **and** a known production, non-sandbox runtime **and** no test/sim marker. A direct API call or script with only the header → `unknown`. This is honest first-party UI provenance, not authentication.
 - Old rows (written before this deploy) have no provenance columns and read back as `evidence_class = unknown` → never eligible.
 
 **A row counts toward the GATE-A 50-event floor only when `evidence_eligible = TRUE` and `evidence_class = athlete_ui`.**
@@ -21,7 +22,7 @@
 ## Steps
 
 ### 1. Deploy the new provenance fields
-Merge PR-GATEA1 and let Render deploy `main`. Confirm the running shell is **v128** (Settings → "Running shell: v128"). No env-var change is required for classification itself; provenance is computed on every hybrid/brian orchestration and every intent-observe.
+Merge PR-GATEA1 and let Render deploy `main`. Confirm the running shell is **v129** (Settings → "Running shell: v129"). No env-var change is required for classification itself; provenance is computed on every hybrid/brian orchestration and every intent-observe.
 
 > Note: `ATLAS_BRAIN_SHADOW_PERSIST=1` and `ATLAS_INTENT_ROUTER=shadow` must already be on for durable rows to be written at all (unchanged by this PR). If they are on (they are, per the live window), no change is needed.
 
@@ -44,7 +45,10 @@ The existing rows must remain readable as engineering evidence but must never co
 From now on, every orchestration is classified. Train normally. Per `docs/ONE_BRAIN_PROMOTION_CRITERIA.md` §3, the window needs **≥50 eligible (`athlete_ui`) events with variety** — multiple sessions, upper + lower lifts, in-workout and planning-time, the scenario spread. Only `evidence_eligible = TRUE` rows count; probes/sims/smoke/canary rows will accumulate as `synthetic`/`unknown` and are ignored.
 
 ### 5. Verify one genuine app action records `athlete_ui` / eligible
-From the **real app** (not a script, not a direct API call), trigger a coach-engine recommendation — e.g. open a session so `/api/plan/today` runs, or ask for a lift recommendation. Then open `Brain_Shadow`: the new row must show `evidence_class = athlete_ui` and `evidence_eligible = TRUE`, `request_origin = athlete_ui`. (For Intent_Shadow, type a message in the composer and check its row.) If it shows `unknown`, the request did not carry the `x-atlas-request-origin` marker — confirm the shell is v128 and the browser fetched the new bundle (hard-refresh / reinstall the PWA).
+From the **real app in a real browser** (not a script, not a direct API call, not an automated browser), trigger a coach-engine recommendation — e.g. open a session so `/api/plan/today` runs, or ask for a lift recommendation. Then open `Brain_Shadow`: the new row must show `evidence_class = athlete_ui`, `evidence_eligible = TRUE`, `request_origin = athlete_ui`. (For Intent_Shadow, type a message in the composer and check its row.) Troubleshooting if it does **not**:
+- **shows `unknown`** — the request lacked the marker or the browser provenance. Confirm the shell is **v129** and the browser fetched the new bundle (hard-refresh / reinstall the PWA); a very old browser that omits `Sec-Fetch-Site` will read `unknown` by design (fail-closed).
+- **shows `synthetic` with `request_origin = non_production_runtime`** — `NODE_ENV` is not `production` on Render; set it so genuine traffic can be eligible (otherwise the floor can never fill).
+- **shows `synthetic` with `request_origin = playwright`** — the client reports `navigator.webdriver` (an automated browser); use a normal browser session.
 
 ### 6. Verify one test-mode / synthetic request records `synthetic` / ineligible
 Run the production smoke script (`node scripts/smoke-test-render.js`, or a canary) against production. Its `/api/recommend/next/*` rows must show `evidence_class = synthetic`, `evidence_eligible = FALSE`, `request_origin = smoke` (a sim-harness run shows `request_origin = sim`). This proves synthetic traffic is excluded from the floor.

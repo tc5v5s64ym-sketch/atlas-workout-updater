@@ -252,7 +252,10 @@ test('shadow wiring: the composer submit chokepoint fires observeComposerText BE
   // The helper posts fire-and-forget to the observe endpoint and swallows errors.
   const helperStart = app.indexOf('function observeComposerText(');
   assert.ok(helperStart > -1, 'observeComposerText helper must exist');
-  const helper = app.slice(helperStart, helperStart + 1400);
+  // Scope to the helper's own body (up to the submit handler that follows) so this
+  // stays robust as additive fields grow the fetch body.
+  const helperEnd = app.indexOf("document.getElementById('logger-form')", helperStart);
+  const helper = app.slice(helperStart, helperEnd > -1 ? helperEnd : helperStart + 1700);
   assert.match(helper, /\/api\/debug\/intent-observe/, 'posts to the observe endpoint');
   assert.match(helper, /\.catch\(/, 'errors are swallowed — observation never surfaces to the lifter');
   assert.ok(!/await\s+api\(/.test(helper), 'the observe POST is fire-and-forget (never awaited)');

@@ -19,10 +19,13 @@ const {
   isProductionRuntime,
   classifyRequestSignals,
   evidenceForRequest,
+  isFirstPartyBrowser,
 } = require('../services/evidenceProvenance');
 
-// A genuine athlete request: production runtime + the UI origin marker + not test.
-const ATHLETE = { testMode: false, requestOrigin: 'athlete_ui', productionRuntime: true };
+// A genuine athlete request: production runtime + the UI origin marker + not test +
+// VERIFIED first-party browser provenance (same-origin fetch metadata). The marker
+// alone is a client CLAIM — eligibility now requires the browser signal to agree.
+const ATHLETE = { testMode: false, requestOrigin: 'athlete_ui', productionRuntime: true, firstPartyBrowser: true };
 
 test('frozen class vocabulary', () => {
   assert.deepEqual(
@@ -38,6 +41,39 @@ test('genuine non-test athlete UI request in production → athlete_ui, eligible
   const r = classifyEvidence(ATHLETE);
   assert.equal(r.evidence_class, 'athlete_ui');
   assert.equal(r.evidence_eligible, true);
+});
+
+// ── First-party browser provenance: the marker alone is only a CLAIM ──────────
+
+test('athlete_ui marker WITHOUT verified first-party browser provenance → unknown, ineligible', () => {
+  // A direct API call or a script that merely sets x-atlas-request-origin: athlete_ui
+  // (production, not test/sim) must NOT count — it only recorded what the caller claimed.
+  const r = classifyEvidence({ testMode: false, requestOrigin: 'athlete_ui', productionRuntime: true, firstPartyBrowser: false });
+  assert.equal(r.evidence_class, 'unknown');
+  assert.equal(r.evidence_eligible, false);
+  // missing (undefined) browser provenance also fails closed
+  const missing = classifyEvidence({ requestOrigin: 'athlete_ui', productionRuntime: true });
+  assert.equal(missing.evidence_class, 'unknown');
+});
+
+test('isFirstPartyBrowser: requires same-origin Sec-Fetch-Site and host-consistent Origin/Referer', () => {
+  const host = 'atlas.example.com';
+  // genuine same-origin browser fetch: sec-fetch-site same-origin, referer host matches, no Origin (GET)
+  assert.equal(isFirstPartyBrowser({ secFetchSite: 'same-origin', refererHost: host, requestHost: host }), true);
+  // POST with matching Origin too
+  assert.equal(isFirstPartyBrowser({ secFetchSite: 'same-origin', originHost: host, refererHost: host, requestHost: host }), true);
+  // cross-site fetch metadata → not first-party
+  assert.equal(isFirstPartyBrowser({ secFetchSite: 'cross-site', refererHost: host, requestHost: host }), false);
+  assert.equal(isFirstPartyBrowser({ secFetchSite: 'same-site', requestHost: host }), false);
+  // missing sec-fetch-site (a script / non-browser) → fail closed
+  assert.equal(isFirstPartyBrowser({ refererHost: host, requestHost: host }), false);
+  assert.equal(isFirstPartyBrowser({}), false);
+  // host mismatch on a present Origin/Referer → contradictory → fail closed
+  assert.equal(isFirstPartyBrowser({ secFetchSite: 'same-origin', originHost: 'evil.example.com', requestHost: host }), false);
+  assert.equal(isFirstPartyBrowser({ secFetchSite: 'same-origin', refererHost: 'evil.example.com', requestHost: host }), false);
+  // malformed input → fail closed, never throws
+  assert.doesNotThrow(() => isFirstPartyBrowser(null));
+  assert.equal(isFirstPartyBrowser(null), false);
 });
 
 // ── Rule 2: test_mode:true is ALWAYS synthetic/ineligible (highest precedence) ──
@@ -155,8 +191,8 @@ test('classifyRequestSignals: the x-atlas-simulation flag always wins → synthe
   const r = classifyRequestSignals({ originHeader: 'athlete_ui', simulationHeader: '1', productionRuntime: true });
   assert.equal(r.evidence_class, 'synthetic');
   assert.equal(r.request_origin, 'sim');
-  // a genuine athlete request with no sim flag, in production
-  const ok = classifyRequestSignals({ originHeader: 'athlete_ui', simulationHeader: undefined, productionRuntime: true });
+  // a genuine athlete request with no sim flag, in production, with verified browser provenance
+  const ok = classifyRequestSignals({ originHeader: 'athlete_ui', simulationHeader: undefined, productionRuntime: true, firstPartyBrowser: true });
   assert.equal(ok.evidence_class, 'athlete_ui');
   assert.equal(ok.evidence_eligible, true);
 });
@@ -165,6 +201,93 @@ test('classifyRequestSignals: test_mode:true → synthetic even with athlete_ui 
   const r = classifyRequestSignals({ originHeader: 'athlete_ui', productionRuntime: true, testMode: true });
   assert.equal(r.evidence_class, 'synthetic');
   assert.equal(r.evidence_eligible, false);
+});
+
+// ── evidenceForRequest: full first-party browser provenance (the owner's cases) ──
+
+// A minimal Express-like request with case-insensitive header access.
+function mkReq(headers = {}, extra = {}) {
+  const h = {};
+  for (const k of Object.keys(headers)) h[k.toLowerCase()] = headers[k];
+  return { get: (name) => h[String(name).toLowerCase()], headers: h, query: extra.query, body: extra.body };
+}
+const HOST = 'atlas.example.com';
+const SAME_ORIGIN = { 'host': HOST, 'sec-fetch-site': 'same-origin', 'referer': `https://${HOST}/app/`, 'x-atlas-request-origin': 'athlete_ui' };
+
+test('evidenceForRequest: production same-origin REAL-BROWSER request + athlete_ui → athlete_ui, eligible', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    const r = evidenceForRequest(mkReq(SAME_ORIGIN));
+    assert.equal(r.evidence_class, 'athlete_ui');
+    assert.equal(r.evidence_eligible, true);
+    assert.equal(r.request_origin, 'athlete_ui');
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
+});
+
+test('evidenceForRequest: production athlete_ui with NO browser provenance (script/direct API spoof) → unknown/ineligible', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    // only the marker + api key — no Sec-Fetch-Site, no Referer (a curl/node caller)
+    const r = evidenceForRequest(mkReq({ 'host': HOST, 'x-atlas-request-origin': 'athlete_ui' }));
+    assert.equal(r.evidence_class, 'unknown', 'a bare header claim is not first-party');
+    assert.equal(r.evidence_eligible, false);
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
+});
+
+test('evidenceForRequest: production CROSS-SITE request with athlete_ui → unknown/ineligible', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    const r = evidenceForRequest(mkReq({ ...SAME_ORIGIN, 'sec-fetch-site': 'cross-site', 'referer': 'https://evil.example.com/' }));
+    assert.equal(r.evidence_class, 'unknown');
+    assert.equal(r.evidence_eligible, false);
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
+});
+
+test('evidenceForRequest: production Origin/Referer host MISMATCH (spoofed marker) → unknown/ineligible', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    const r = evidenceForRequest(mkReq({ ...SAME_ORIGIN, 'origin': 'https://evil.example.com' }));
+    assert.equal(r.evidence_class, 'unknown', 'a present Origin whose host ≠ request host is contradictory → fail closed');
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
+});
+
+test('evidenceForRequest: a navigator.webdriver client sends origin "playwright" → synthetic/ineligible', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    // the frontend seam replaces athlete_ui with a synthetic marker under automation
+    const r = evidenceForRequest(mkReq({ ...SAME_ORIGIN, 'x-atlas-request-origin': 'playwright' }));
+    assert.equal(r.evidence_class, 'synthetic');
+    assert.equal(r.evidence_eligible, false);
+    assert.equal(r.request_origin, 'playwright');
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
+});
+
+test('evidenceForRequest: synthetic markers + test_mode still outrank a perfect same-origin browser request', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    assert.equal(evidenceForRequest(mkReq({ ...SAME_ORIGIN, 'x-atlas-simulation': '1' })).evidence_class, 'synthetic', 'sim wins');
+    assert.equal(evidenceForRequest(mkReq({ ...SAME_ORIGIN }, { query: { test_mode: 'true' } })).evidence_class, 'synthetic', 'test_mode wins');
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
+});
+
+test('evidenceForRequest: malformed browser headers fail closed and never throw; no raw header value is persisted', () => {
+  const prev = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = 'production';
+    const junk = mkReq({ 'host': HOST, 'sec-fetch-site': { nope: 1 }, 'origin': 'not a url', 'referer': 12345, 'x-atlas-request-origin': 'athlete_ui' });
+    let r;
+    assert.doesNotThrow(() => { r = evidenceForRequest(junk); });
+    assert.equal(r.evidence_class, 'unknown', 'malformed provenance → fail closed');
+    // request_origin is a bounded token — never a host, URL, or raw header value
+    assert.ok(['athlete_ui', 'other', 'missing', 'sim', 'smoke'].includes(r.request_origin), `bounded token, got ${r.request_origin}`);
+    assert.ok(!/example\.com|https?:|not a url/.test(String(r.request_origin)), 'no raw header content in request_origin');
+  } finally { if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev; }
 });
 
 test('evidenceForRequest: a test_mode flag on the request (query or body) forces synthetic (rule 1 wired)', () => {

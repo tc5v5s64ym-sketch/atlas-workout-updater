@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased â
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v128';
+const ATLAS_SHELL_BUILD = 'v129';
 
 
 
@@ -5370,8 +5370,14 @@ function observeComposerText(text) {
       // build, so the owner can tell which build produced an observation.
       // request_origin marks this as genuine athlete-UI activity for GATE A evidence
       // provenance (PR-GATEA1) â€” this POST bypasses the api.js header seam, so the
-      // marker rides the body; the server still fails closed on non-prod/test/sim.
-      body: JSON.stringify({ message, app_version: ATLAS_SHELL_BUILD, request_origin: 'athlete_ui' })
+      // marker rides the body. Under browser automation send a synthetic marker
+      // instead; the server still verifies same-origin browser provenance + fails
+      // closed on non-prod/test/sim.
+      body: JSON.stringify({
+        message,
+        app_version: ATLAS_SHELL_BUILD,
+        request_origin: (typeof navigator !== 'undefined' && navigator.webdriver === true) ? 'playwright' : 'athlete_ui'
+      })
     }).catch(() => { /* observation must never surface to the lifter */ });
   } catch { /* nor throw into the submit path */ }
 }

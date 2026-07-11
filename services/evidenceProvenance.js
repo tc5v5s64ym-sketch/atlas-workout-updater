@@ -82,8 +82,11 @@ function _verdict(evidence_class, request_origin) {
 //   3. known non-production runtime→ synthetic (local/CI/Playwright servers, even if the
 //                                     request claims athlete_ui — an E2E run driving the
 //                                     real UI must never count)
-//   4. athlete_ui + known prod     → athlete_ui, ELIGIBLE (the only eligible path)
-//   5. everything else             → unknown (untagged API / missing / malformed /
+//   4. athlete_ui + known prod + VERIFIED first-party browser provenance
+//                                  → athlete_ui, ELIGIBLE (the only eligible path;
+//                                    the marker alone is a client claim, not proof)
+//   5. everything else             → unknown (untagged API / a bare marker with no
+//                                     browser provenance / missing / malformed /
 //                                     indeterminate runtime) — fail closed
 function classifyEvidence(input) {
   const src = (input && typeof input === 'object') ? input : {};
@@ -99,12 +102,16 @@ function classifyEvidence(input) {
   // athlete_ui claim so a real-UI-driven E2E run can never count.
   if (src.productionRuntime === false) return _verdict(EVIDENCE_CLASSES.SYNTHETIC, _safeOrigin(origin, 'non_production_runtime'));
 
-  // Rule 4 — positively identified genuine athlete UI, in KNOWN production, not test.
-  if (src.productionRuntime === true && origin === ATHLETE_UI_ORIGIN) {
+  // Rule 4 — positively identified genuine athlete UI: the first-party marker in
+  // KNOWN production, not test, AND with VERIFIED first-party browser provenance
+  // (src.firstPartyBrowser). The marker alone is only a client CLAIM — a script or a
+  // direct API call can set it — so eligibility requires the browser signal to agree.
+  if (src.productionRuntime === true && origin === ATHLETE_UI_ORIGIN && src.firstPartyBrowser === true) {
     return _verdict(EVIDENCE_CLASSES.ATHLETE_UI, ATHLETE_UI_ORIGIN);
   }
 
-  // Rule 5 — untagged / unrecognized / missing / malformed / indeterminate → fail closed.
+  // Rule 5 — untagged / unrecognized / missing / malformed / indeterminate, OR an
+  // athlete_ui claim without verified first-party browser provenance → fail closed.
   // An unrecognized origin is recorded as the fixed token 'other' (never the raw
   // header text), so no arbitrary content can reach the row.
   return _verdict(EVIDENCE_CLASSES.UNKNOWN, origin ? _safeOrigin(origin, 'other') : 'missing');
@@ -150,6 +157,44 @@ function _truthyFlag(v) {
   return false;
 }
 
+// Extract a bare hostname from an Origin/Referer URL or a Host header. Returns a
+// bounded lowercase hostname (letters/digits/dots/hyphens) or '' — NEVER the full
+// URL, path, port, or any other raw header content. Used only for an in-memory
+// same-host comparison; nothing derived here is persisted.
+function _hostOf(value) {
+  if (typeof value !== 'string' || !value) return '';
+  const v = value.trim();
+  if (/^https?:\/\//i.test(v)) {
+    try { return new URL(v).hostname.toLowerCase(); } catch (_) { return ''; }
+  }
+  const hostPart = v.split('/')[0].split(':')[0].trim().toLowerCase();
+  return /^[a-z0-9.-]+$/.test(hostPart) ? hostPart : '';
+}
+
+// Deterministic FIRST-PARTY browser provenance — honest exclusion of known automated
+// and direct-API traffic, NOT cryptographic user attestation. True only when the
+// request carries browser-enforced same-origin fetch metadata (`Sec-Fetch-Site:
+// same-origin`, which page JavaScript cannot set — a fetch/XHR from a script omits
+// it, and a cross-site request reads `cross-site`) AND any PRESENT Origin/Referer
+// host matches the request host. Missing, cross-site, contradictory, or malformed
+// provenance → false (fail closed). A determined non-browser client can still forge
+// these headers; this raises the bar past scripts, direct API calls, cross-site
+// callers, and (via the client webdriver marker) browser automation — it is not an
+// identity system.
+function isFirstPartyBrowser(sig) {
+  const s = (sig && typeof sig === 'object') ? sig : {};
+  const site = typeof s.secFetchSite === 'string' ? s.secFetchSite.trim().toLowerCase() : '';
+  if (site !== 'same-origin') return false;
+  const host = typeof s.requestHost === 'string' ? s.requestHost.trim().toLowerCase() : '';
+  const oh = typeof s.originHost === 'string' ? s.originHost.trim().toLowerCase() : '';
+  const rh = typeof s.refererHost === 'string' ? s.refererHost.trim().toLowerCase() : '';
+  // A present Origin/Referer host must agree with the request host; if we cannot
+  // establish the request host to compare against, fail closed.
+  if (oh && (!host || oh !== host)) return false;
+  if (rh && (!host || rh !== host)) return false;
+  return true;
+}
+
 // Known production ONLY when NODE_ENV is 'production' AND the workbook is not the
 // sandbox sheet. A definite boolean — a sandbox/staging deploy or any non-prod
 // NODE_ENV is not production athlete traffic.
@@ -160,13 +205,14 @@ function isProductionRuntime({ nodeEnv, isSandboxSheet } = {}) {
 // Fold the raw request signals into a classifier verdict. A truthy simulation
 // marker (x-atlas-simulation, the existing sim-harness/isolation header) always
 // wins → synthetic. Pure; testable with plain values.
-function classifyRequestSignals({ originHeader, simulationHeader, productionRuntime, testMode } = {}) {
+function classifyRequestSignals({ originHeader, simulationHeader, productionRuntime, testMode, firstPartyBrowser } = {}) {
   const simulated = _truthyFlag(simulationHeader);
   const requestOrigin = simulated ? 'sim' : (typeof originHeader === 'string' ? originHeader : null);
   return classifyEvidence({
     testMode: testMode === true,
     requestOrigin,
     productionRuntime: productionRuntime === true,
+    firstPartyBrowser: firstPartyBrowser === true,
   });
 }
 
@@ -192,11 +238,22 @@ function evidenceForRequest(req, { bodyOrigin } = {}) {
     // also claims athlete_ui, closing the contract-vs-wiring gap.
     const q = req && req.query && typeof req.query === 'object' ? req.query.test_mode : undefined;
     const b = req && req.body && typeof req.body === 'object' ? req.body.test_mode : undefined;
+    // First-party browser provenance from browser-enforced fetch metadata + a
+    // same-host Origin/Referer check. Only bounded hostnames/booleans are derived;
+    // no raw Origin/Referer/Host/UA/URL is kept or passed onward.
+    const requestHost = _hostOf(get('x-forwarded-host') || get('host'));
+    const firstPartyBrowser = isFirstPartyBrowser({
+      secFetchSite: get('sec-fetch-site'),
+      originHost: _hostOf(get('origin')),
+      refererHost: _hostOf(get('referer') || get('referrer')),
+      requestHost,
+    });
     return classifyRequestSignals({
       originHeader,
       simulationHeader: get('x-atlas-simulation'),
       productionRuntime: isProductionRuntime({ nodeEnv: process.env.NODE_ENV, isSandboxSheet }),
       testMode: _truthyFlag(q) || _truthyFlag(b),
+      firstPartyBrowser,
     });
   } catch (_) {
     // Fail closed on any unexpected error — unknown, ineligible, no raw content.
@@ -213,6 +270,7 @@ module.exports = {
   normalizeRequestOrigin,
   isEvidenceEligible,
   isProductionRuntime,
+  isFirstPartyBrowser,
   classifyRequestSignals,
   evidenceForRequest,
 };
