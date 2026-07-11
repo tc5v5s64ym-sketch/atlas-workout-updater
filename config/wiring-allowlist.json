@@ -40,16 +40,6 @@
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
       "roadmap": "docs/COACH_INTELLIGENCE_ROADMAP.md PR 17 + docs/COACHING_ENGINE_ARCHITECTURE.md 'Goal & population policy' layer — pending wiring alongside goalTemplateModule."
-    },
-    {
-      "file": "services/driftSignal.js",
-      "expires": "2026-10-31",
-      "roadmap": "docs/SOUL_PLAN_V1.md PR-B5a Part 1 — pure drift-signal module (skipped-pattern streak / plan deviation / sandbag persistence); Part 2 wires detectDrift into selectCoachMode's challenge trigger + the persona challenge block, removing this entry."
-    },
-    {
-      "file": "services/sessionPlanReader.js",
-      "expires": "2026-10-31",
-      "roadmap": "Decision Desk #952 (Option A) Session_Plans persistence PR-C — pure reader/fold (folds event rows into detectDrift's plannedVsCompleted shape; completion from item outcomes; fail-closed). The live capture read + drift wiring slice consumes this at the Session_Plans read boundary, removing this entry."
     }
   ],
   "testOnly": [

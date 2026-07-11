@@ -97,10 +97,14 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   await expect(done).toHaveText('Done with Seated Row');
   await done.click();
 
-  // 3) substitute Leg Extension → Leg Press.
+  // 3) substitute Leg Extension → Leg Press — wait for the substituted outcome before
+  //    the next command (each mutation is a fire-and-forget sidecar; sequencing the
+  //    waits keeps the flow deterministic on slower/mobile timing).
   await submit(page, 'swap leg extension for leg press');
-  // 4) skip Overhead Press.
+  await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/outcome' && p.body?.item?.outcome === 'substituted').length).toBeGreaterThan(0);
+  // 4) skip Overhead Press — wait for the skipped outcome.
   await submit(page, 'skip overhead press');
+  await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/outcome' && p.body?.item?.outcome === 'skipped').length).toBeGreaterThan(0);
 
   // 5) End session (finalized closeout) via the banner (stays expanded).
   await expect(page.locator('#active-session-banner')).toBeVisible();

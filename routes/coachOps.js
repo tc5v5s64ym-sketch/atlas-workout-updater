@@ -56,6 +56,7 @@ const { getBrainShadowLog } = require('../services/brainShadow');
 const { getFlightRecorderLog, isFlightRecorderEnabled, recordClientBatch } = require('../services/flightRecorder');
 const { BUG_REPORT_TAB, BUG_REPORT_COLUMNS, buildBugReportRow } = require('../services/bugReport');
 const { readCurrentDeloadState } = require('../services/deloadState');
+const driftShadow = require('../services/driftShadow');
 const { beginDeload, recordDeloadSession, resolvePostDeload } = require('../services/deloadEngine');
 const { selectProtocol } = require('../services/deloadProtocols');
 const { buildSheetContractStatus } = require('../config/sheetContract');
@@ -915,6 +916,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // stays the recovery read below, which short-circuits before the LLM, so recovery
       // outranks reassure (Owner Decision 1: safety and recovery stay above reassure).
       const context = buildChatContext(allLog, allEffort, clientCtx, coachingNotes, constraints, { discouraged });
+      // ── Soul Plan PR-B5a Part 2a — DARK drift shadow (ATLAS_DRIFT_SHADOW, default
+      // OFF). Fire-and-forget: reads FINALIZED-ONLY Session_Plans history (TTL-cached,
+      // so never an uncached per-message read) + runs the pure detectDrift, and emits a
+      // structured diagnostic to the shadow observation surface. NOTHING here reaches
+      // the athlete — the drift result is NEVER passed to the LLM, never changes
+      // coach_mode/challenge/copy, and the reply never awaits or depends on it. logRows
+      // + memory_patterns are REUSED from the reads above (no extra read for them). OFF
+      // ⇒ inert: no Session_Plans read at all.
+      driftShadow.observeDrift({ logRows: allLog, memoryPatterns: context.memory_patterns, asOf: new Date().toISOString().slice(0, 10) });
       // Slice 3 — recovery routing owns a tired lifter's reply, grounded in the real
       // recovery state (weekly-load fatigue, days since last session, fatigued
       // patterns). Deterministic + read-only; the LLM is bypassed so it can't hype.
