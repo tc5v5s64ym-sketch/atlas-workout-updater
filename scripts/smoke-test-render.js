@@ -25,7 +25,10 @@ async function requestJson(path, options = {}) {
   const url = `${baseUrl}${path}`;
   const res = await fetch(url, {
     ...options,
-    headers: { 'x-atlas-api-key': apiKey, ...(options.headers || {}) }
+    // PR-GATEA1 — production smoke traffic marks itself synthetic so its coach-engine
+    // shadow rows classify as `synthetic` (never counted toward the GATE A floor),
+    // rather than falling to the fail-closed `unknown` bucket.
+    headers: { 'x-atlas-api-key': apiKey, 'x-atlas-request-origin': 'smoke', ...(options.headers || {}) }
   });
   const text = await res.text();
   let json;

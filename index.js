@@ -50,6 +50,10 @@ const { planBrianOverride, applyBrianOverride, planBrianPickOverride, applyBrian
 const { foldJustLoggedSet } = require('./services/ephemeralSetFold');
 const { summarizeBrianDecision, summarizeLegacyRecommendation } = require('./services/coachDecisionSummary');
 const { observeBrainOrchestration, observeBrainFailure } = require('./services/brainShadow');
+// PR-GATEA1 — evidence provenance: classify each shadow event as athlete_ui /
+// synthetic / unknown so a fresh GATE-A window can count only genuine athlete
+// traffic. Telemetry only; evidenceForRequest is TOTAL (never throws).
+const { evidenceForRequest } = require('./services/evidenceProvenance');
 const { computeReadiness } = require('./services/readinessSignal');
 const { applyBarbellLoadabilityToExercises, applyBarbellLoadability } = require('./services/barbellLoadabilitySurface');
 const {
@@ -1256,6 +1260,7 @@ app.get('/api/plan/today', async (req, res) => {
               observeBrainOrchestration({
                 route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode,
                 decision: brian, validation, legacy: legacySummary, ms,
+                evidence: evidenceForRequest(req),
               });
             } catch (_) { /* brain-shadow must never affect the response */ }
             if (brian && validation.valid) {
@@ -1276,7 +1281,7 @@ app.get('/api/plan/today', async (req, res) => {
             // The Brain CRASHED for this lift — record the failure the empty catch
             // used to swallow, then fall back to legacy exactly as before.
             try {
-              observeBrainFailure({ route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode, reason: 'orchestrator_error' });
+              observeBrainFailure({ route: '/api/plan/today', liftCode: rec.liftCode, mode: coachEngineMode, reason: 'orchestrator_error', evidence: evidenceForRequest(req) });
             } catch (_) { /* brain-shadow must never affect the response */ }
             if (coachEngineMode === 'brian') {
               rec.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
@@ -1288,7 +1293,7 @@ app.get('/api/plan/today', async (req, res) => {
         // is visible, then leave every entry at its legacy value, exactly as if the
         // flag were unset.
         try {
-          observeBrainFailure({ route: '/api/plan/today', mode: coachEngineMode, reason: 'assembly_error' });
+          observeBrainFailure({ route: '/api/plan/today', mode: coachEngineMode, reason: 'assembly_error', evidence: evidenceForRequest(req) });
         } catch (_) { /* brain-shadow must never affect the response */ }
       }
     }
@@ -1355,7 +1360,7 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
         try {
           observeBrainOrchestration({
             route: '/api/plan/intent-recommendation', mode: coachEngineMode,
-            decision: brian, validation, legacy: legacySummary, ms,
+            decision: brian, validation, legacy: legacySummary, ms, evidence: evidenceForRequest(req),
           });
         } catch (_) { /* brain-shadow must never affect the response */ }
         if (brian && validation.valid) {
@@ -1375,7 +1380,7 @@ app.get('/api/plan/intent-recommendation', async (req, res) => {
         // The Brain CRASHED — record the failure the empty catch used to swallow,
         // then fall back to legacy exactly as before.
         try {
-          observeBrainFailure({ route: '/api/plan/intent-recommendation', mode: coachEngineMode, reason: 'orchestrator_error' });
+          observeBrainFailure({ route: '/api/plan/intent-recommendation', mode: coachEngineMode, reason: 'orchestrator_error', evidence: evidenceForRequest(req) });
         } catch (_) { /* brain-shadow must never affect the response */ }
         if (coachEngineMode === 'brian') {
           result.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };
@@ -1564,7 +1569,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
         try {
           observeBrainOrchestration({
             route: '/api/recommend/next', liftCode, mode: coachEngineMode,
-            decision: brian, validation, legacy: legacySummary, ms,
+            decision: brian, validation, legacy: legacySummary, ms, evidence: evidenceForRequest(req),
           });
         } catch (_) { /* brain-shadow must never affect the response */ }
         if (brian && validation.valid) {
@@ -1585,7 +1590,7 @@ app.get('/api/recommend/next/:liftCode', async (req, res) => {
         // Must never affect the response beyond the brian-mode metadata — hybrid's
         // shadow attach is simply omitted; brian mode falls back.
         try {
-          observeBrainFailure({ route: '/api/recommend/next', liftCode, mode: coachEngineMode, reason: 'orchestrator_error' });
+          observeBrainFailure({ route: '/api/recommend/next', liftCode, mode: coachEngineMode, reason: 'orchestrator_error', evidence: evidenceForRequest(req) });
         } catch (_) { /* brain-shadow must never affect the response */ }
         if (coachEngineMode === 'brian') {
           recommendation.engine_source = { mode: 'brian', driven_by: 'legacy', reason: 'orchestrator_error' };

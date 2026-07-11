@@ -30,7 +30,15 @@ export async function api(path, options = {}) {
   // affects request/response semantics or the write path.
   const flightHeaders = (typeof window !== 'undefined' && window.atlasFlightRecorder && typeof window.atlasFlightRecorder.requestHeaders === 'function')
     ? window.atlasFlightRecorder.requestHeaders() : {};
-  const headers = { 'x-atlas-api-key': getApiKey(), ...flightHeaders, ...(options.headers || {}) };
+  // PR-GATEA1 — first-party UI provenance marker (GATE A evidence eligibility).
+  // Under browser automation (Playwright/WebDriver) send a bounded SYNTHETIC marker,
+  // never athlete_ui, so an automated run driving the real UI is excluded up front.
+  // The marker is only a client claim — the server ALSO verifies same-origin browser
+  // fetch metadata (Sec-Fetch-Site + host-matched Origin/Referer) and fails closed on
+  // a non-production runtime / test / sim / direct-API request. Telemetry only; never
+  // affects request/response semantics or the write path.
+  const uiOrigin = (typeof navigator !== 'undefined' && navigator.webdriver === true) ? 'playwright' : 'athlete_ui';
+  const headers = { 'x-atlas-api-key': getApiKey(), 'x-atlas-request-origin': uiOrigin, ...flightHeaders, ...(options.headers || {}) };
   const method = options.method || 'GET';
   const startedAt = Date.now();
   let res = null;

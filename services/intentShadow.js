@@ -21,6 +21,7 @@
 // lifetime for a calibration log).
 
 const { classifyIntent } = require('./intentRouter');
+const { normalizeEvidenceClass, normalizeRequestOrigin, EVIDENCE_CLASSES } = require('./evidenceProvenance');
 
 const RING_MAX = 50;
 const PREVIEW_CHARS = 80;
@@ -31,7 +32,11 @@ const PREVIEW_CHARS = 80;
 // (append order):
 //   captured_at | message_preview | intent_type | confidence |
 //   constraint_keys_json | dropped_keys_json | ok | latency_ms |
-//   source | route | app_version | review_status | review_notes
+//   source | route | app_version | review_status | review_notes |
+//   evidence_class | evidence_eligible | request_origin   ← PR-GATEA1 (appended)
+// The three GATE-A provenance columns are appended to the END; the 13 existing
+// columns are never reordered or reinterpreted. Old 13-column rows read back as
+// evidence_class=unknown / evidence_eligible=FALSE (see services/evidenceProvenance.js).
 const SHADOW_TAB = 'Intent_Shadow';
 
 let _ring = [];                 // newest first
@@ -66,6 +71,11 @@ function _persistRow(entry, meta) {
   Promise.resolve()
     .then(() => {
       const append = _append || require('../sheets').appendRows;
+      // PR-GATEA1 — provenance verdict (from the observe route) re-normalized here,
+      // failing closed: missing/malformed → unknown, ineligible; request_origin
+      // bounded to a safe token. Telemetry only; never a served field.
+      const ev = (meta.evidence && typeof meta.evidence === 'object') ? meta.evidence : {};
+      const evidence_class = normalizeEvidenceClass(ev.evidence_class);
       const row = [
         entry.at || '',
         entry.message_preview || '',
@@ -79,7 +89,11 @@ function _persistRow(entry, meta) {
         meta.route || 'composer',
         meta.appVersion || '',
         '',   // review_status — filled by the owner/agent during review
-        ''     // review_notes
+        '',    // review_notes
+        // PR-GATEA1 provenance — appended to the END; existing columns untouched.
+        evidence_class || EVIDENCE_CLASSES.UNKNOWN,
+        evidence_class === EVIDENCE_CLASSES.ATHLETE_UI ? 'TRUE' : 'FALSE',
+        normalizeRequestOrigin(ev.request_origin) || '',
       ];
       return append(SHADOW_TAB, [row]);
     })
