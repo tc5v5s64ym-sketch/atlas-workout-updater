@@ -55,6 +55,14 @@ const RAW_CATALOG = {
   'Squat':              ['Leg Press', 'Goblet Squat'],
   'Leg Press':          ['Back Squat', 'Goblet Squat'],
   'Goblet Squat':       ['Leg Press', 'Back Squat'],
+  // Quad knee-isolation (Leg Extension) had no substitute, so an explicit
+  // "swap leg extensions out for something else" fell through to the LLM (which
+  // then falsely claimed "Plan updated" without swapping). No same-pattern quad
+  // isolation scores excellent (Leg Curl is the hamstring antagonist → poor), so
+  // the honest best are quad-region squat-pattern movements (same_region,
+  // acceptable). Leg Curl (hamstring) is a DIFFERENT-muscle knee isolation and is
+  // correctly excluded by the quality scorer.
+  'Leg Extension':      ['Leg Press', 'Hack Squat', 'Goblet Squat'],
   'Bench Press':        ['Incline Press', 'Dips', 'Chest Fly'],
   'Incline Press':      ['Bench Press', 'Dips'],
   'Overhead Press':     ['Bench Press', 'Dips'],

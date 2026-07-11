@@ -6221,6 +6221,23 @@ test('api smoke: suggest-substitute — empty/absent remaining_plan keeps the de
   assert.equal(body.data.recommendation.recommendation, 'Leg Press', 'no plan context → original deterministic pick');
 });
 
+test('api smoke: suggest-substitute — Leg Extension (only pending slot) → a valid substitute (production 2026-07-11)', async () => {
+  // "Swap leg extensions out for something else" resolved Leg Extension but the
+  // recommender returned null (no catalog entry), so the deterministic implicit-
+  // substitution path fell through to the LLM, which falsely said "Plan updated"
+  // while Leg Extension remained. The live path must now return a valid substitute.
+  const { response, body } = await requestJson('/api/suggest-substitute', {
+    method: 'POST',
+    body: JSON.stringify({ current_exercise: 'Leg Extension', intent: 'substitute', message: 'swap leg extensions out for something else', remaining_plan: [] })
+  });
+  assert.equal(response.status, 200);
+  assert.ok(body.data.recommendation, 'Leg Extension must produce a recommendation so the swap can be applied');
+  assert.ok(['Leg Press', 'Hack Squat', 'Goblet Squat'].includes(body.data.recommendation.recommendation),
+    `expected a quad squat-pattern sub, got ${body.data.recommendation.recommendation}`);
+  assert.notEqual(body.data.recommendation.recommendation, 'Leg Extension', 'never the same lift');
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'still read-only');
+});
+
 test('api smoke: suggest-substitute never writes to any sheet', async () => {
   const before = fakeSheetsState.appendCalls.length;
   await requestJson('/api/suggest-substitute', {
