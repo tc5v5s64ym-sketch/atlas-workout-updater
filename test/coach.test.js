@@ -147,6 +147,10 @@ test('coach system prompt words progression_history but never authorizes a load 
   assert.match(prompt, /decision is "?load"?/i, 'load language is gated on the engine decision being "load"');
   assert.match(prompt, /NEVER authorize a load increase the engine has not/i,
     'the prompt must forbid the model from authorizing a load change the engine has not');
+  // consecutive_on_target is holdUntilClean's clean-session COUNT at the load (not a
+  // strict tail streak), so the model must not assert the sessions were back-to-back.
+  assert.match(prompt, /back-to-back|in a row/i,
+    'the prompt must stop the model asserting the on-target count was consecutive/"in a row"');
 });
 
 test('coach system prompt binds the opener to the effort verdict and grounds history', () => {
