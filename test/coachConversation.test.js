@@ -420,6 +420,40 @@ test('tier-aware brevity: short trims supplements, never the recovery read', () 
     'the recovery read is safety-class and must NOT be gated on brief');
 });
 
+// --- ack_only = brief acknowledgement, NOT silence (every logged lift is coached) ---
+
+test('templatedAckLine: a routine (ack_only) lift gets a concise deterministic acknowledgement, never empty', async () => {
+  const t = await import('../src/app/coachVoiceTemplates.js');
+  const line = t.templatedAckLine();
+  assert.equal(typeof line, 'string');
+  assert.ok(line.trim().length > 0, 'a routine set must still get a note — ack_only is not silence');
+  assert.ok(line.length <= 60, 'the acknowledgement stays concise');
+  assert.doesNotMatch(line, /\d/, 'the numbers live on the readback card, never in the ack line');
+});
+
+test('templatedAckLine: name-free so the multi-lift caller can attribute it without doubling the lift name', async () => {
+  const t = await import('../src/app/coachVoiceTemplates.js');
+  const line = t.templatedAckLine('Bench Press');
+  // The additional-lift path prefixes `${ex.exercise}: ${note}`, so the ack itself must
+  // not embed the exercise name (else "Bench Press: Bench Press — logged").
+  assert.doesNotMatch(line, /bench/i, 'the ack line carries no exercise name');
+});
+
+test('getInWorkoutNote: an ack_only block returns a brief ack note (not silence), keeping the box/effort suppressed', () => {
+  const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = cc.slice(cc.indexOf('async function getInWorkoutNote'), cc.indexOf('async function getLlmCoachingMessage'));
+  const branchStart = fn.indexOf("data.note_tier === 'ack_only'");
+  assert.ok(branchStart !== -1, 'the ack_only branch must exist');
+  const branch = fn.slice(branchStart, branchStart + 260);
+  // The note is now a deterministic acknowledgement — NOT null (which rendered nothing).
+  assert.match(branch, /note:\s*coachVoiceTemplates\.templatedAckLine\(/,
+    'ack_only must return a brief templated acknowledgement, not silence');
+  assert.doesNotMatch(branch, /\bnote:\s*null/, 'ack_only must no longer return note: null (that was the silence bug)');
+  // The routine block stays minimal: still flagged ack_only (Next box + effort line suppressed).
+  assert.match(branch, /ack_only:\s*true/, 'the block is still tagged ack_only so the Next box + effort line stay suppressed');
+  assert.match(branch, /effort_note:\s*null/, 'a routine block carries no separate effort line');
+});
+
 // --- Composer-first Phase A: the coach speaks first (deterministic opening line) ---
 
 test('opening: greeting renders synchronously and issues no fetch', () => {

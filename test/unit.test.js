@@ -1403,17 +1403,19 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
-test('routine silence: the in-session reaction is tier-gated (kind:block) and silent on ack_only', () => {
+test('routine ack: the in-session reaction is tier-gated (kind:block) and a BRIEF acknowledgement (not silence) on ack_only', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
   // (routes through the deterministic coachNoteTier gate).
   assert.match(ccSource, /body: JSON\.stringify\(\{ facts, kind: 'block' \}\)/,
     'the in-session reaction must route through the block tier gate');
-  // getInWorkoutNote short-circuits to a silent, flagged result on ack_only.
+  // getInWorkoutNote now returns a brief deterministic acknowledgement on ack_only —
+  // every logged lift gets ONE concise coaching reaction; ack_only is NOT silence.
   assert.match(ccSource, /data\.note_tier === 'ack_only'/);
-  assert.match(ccSource, /return \{ note: null, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
-    'ack_only yields a null note flagged for the caller');
-  // handleSetLogged suppresses the prose AND both "Next time:" boxes on ack_only.
+  assert.match(ccSource, /return \{ note: coachVoiceTemplates\.templatedAckLine\([^)]*\), effort_note: null, reroute: null, voice: null, ack_only: true \}/,
+    'ack_only yields a brief templated acknowledgement (not a null note), still flagged for the caller');
+  // The block stays MINIMAL: still flagged ack_only, so handleSetLogged suppresses both
+  // "Next time:" boxes and the separate effort line — only the concise ack note renders.
   assert.match(ccSource, /!reaction\.ack_only && rec && rec\.recommendation/,
     'the primary Next box must be gated on ack_only');
   assert.match(ccSource, /!exReaction\.ack_only && exRec && exRec\.recommendation/,

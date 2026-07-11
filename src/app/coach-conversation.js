@@ -975,12 +975,16 @@ import * as sessionQuestion from './sessionQuestion.js';
   // their own short line so the engine's read is never lost to an LLM outage.
   async function getInWorkoutNote(facts) {
     const data = await getLlmCoachingMessage(facts).catch(() => null);
-    // Routine/on-plan blocks are receipt-only: when the engine tiers the block
-    // ack_only, render NOTHING — no prose, no effort line, no Next box (the caller
-    // honors `ack_only`). Gated on an actual server classification; a coach/network
-    // outage (data null) falls through to the deterministic opener below unchanged.
+    // Routine/on-plan blocks still get ONE concise coaching reaction — ack_only means a
+    // BRIEF acknowledgement, not silence: every logged lift is coached. The line is the
+    // deterministic templatedAckLine (the server already skipped Gemini for a routine
+    // block, so this survives an LLM outage). The block stays MINIMAL — `ack_only:true`
+    // keeps the caller suppressing the "Next time:" box and the separate effort line —
+    // the acknowledgement replaces the old silent `note: null`. Gated on an actual
+    // server classification; a coach/network outage (data null) falls through to the
+    // deterministic opener below unchanged.
     if (data && data.note_tier === 'ack_only') {
-      return { note: null, effort_note: null, reroute: null, voice: null, ack_only: true };
+      return { note: coachVoiceTemplates.templatedAckLine(facts.exerciseName), effort_note: null, reroute: null, voice: null, ack_only: true };
     }
     const llm = data && typeof data.message === 'string' ? data.message : null;
     const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
@@ -1326,8 +1330,10 @@ import * as sessionQuestion from './sessionQuestion.js';
       substitution: suggestMatch ? undefined : primarySub
     });
     const note = reaction.note;
-    // Routine (ack_only) blocks are receipt-only — `note` is null and nothing is
-    // typed; only the deterministic readback card above remains.
+    // Every block yields a coaching note — a routine (ack_only) block returns a BRIEF
+    // deterministic acknowledgement (templatedAckLine), not silence — so the concise
+    // reaction is typed under the readback card. `if (note)` still guards the rare path
+    // where a note is genuinely absent (e.g. no LLM key AND no deterministic opener).
     if (note) {
       await typeOut(body, note);
       chatTurns.push({ role: 'atlas', text: note });
@@ -1355,7 +1361,8 @@ import * as sessionQuestion from './sessionQuestion.js';
       bubble.appendChild(eff);
     }
 
-    // Routine (ack_only) blocks are receipt-only — suppress the "Next time:" box too.
+    // A routine (ack_only) block stays minimal — the brief ack note is the whole
+    // reaction; suppress the "Next time:" box (and the effort line above) too.
     if (!reaction.ack_only && rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
     }

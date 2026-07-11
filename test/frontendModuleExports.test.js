@@ -31,6 +31,7 @@ const EXPECTED = {
     'liftLabel', 'templatedSubstitutionLine', 'formatSubstituteCoachLine',
     'templatedNextMoveAdvisoryLine', 'templatedRecoveryAdvisoryLine',
     'governorOverridesProgressionInvite', 'templatedGovernorHoldLine', 'isBriefTier',
+    'templatedAckLine',
   ],
   hybridCompare: [
     'STORAGE_KEY', 'MAX_STORED_ENTRIES', 'PREFERENCES', 'shouldShowCompareCard',
