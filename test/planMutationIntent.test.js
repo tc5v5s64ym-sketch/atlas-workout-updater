@@ -361,3 +361,65 @@ test('PR-I2: decline lane stays conservative — no broad sentiment, no double-n
     assert.equal(classifyMutationIntent(text), null, `should be null: "${text}"`);
   }
 });
+
+// ── Production bug (2026-07-11): decline + replacement request → IMPLICIT SUBSTITUTION.
+// Active exercise Back Squat; athlete typed "I don't want to do squats, give me
+// something else." The decline lane greedily captured "squats, give me something else"
+// and emitted { action: 'skip' }, so Atlas SKIPPED Back Squat instead of substituting
+// it. A decline (or explicit swap) that asks for an UNNAMED replacement must classify
+// as an implicit substitution (engine picks the sub) and must NEVER create a literal
+// "something else" exercise. A plain decline with no replacement request stays a skip.
+test('production bug: decline + "give me something else" → implicit substitution, not skip', () => {
+  const r = classifyMutationIntent("I don't want to do squats, give me something else.");
+  assert.equal(r && r.action, 'substitute', 'implicit substitution, not skip');
+  assert.equal(r.implicit, true);
+  assert.equal(r.target, 'squats');
+  assert.ok(!r.substitute || !/something/.test(String(r.substitute)), 'no literal "something else" substitute');
+});
+
+test('decline + replacement-request variants all classify as implicit substitution', () => {
+  for (const text of [
+    "I don't want to do squats, give me something different",
+    "I don't want to do squats, give me another exercise",
+    "I don't want to do squats, give me an alternative",
+    "I don't want to do squats, what else can I do",
+    "i don't want to do squats give me something else",     // no comma
+  ]) {
+    const r = classifyMutationIntent(text);
+    assert.equal(r && r.action, 'substitute', `substitute: ${text}`);
+    assert.equal(r.implicit, true, `implicit: ${text}`);
+    assert.equal(r.target, 'squats', `target squats: ${text}`);
+  }
+});
+
+test('explicit "replace X with something else" is implicit substitution, never a literal "something else" slot', () => {
+  const r = classifyMutationIntent('Replace back squats with something else');
+  assert.equal(r && r.action, 'substitute');
+  assert.equal(r.implicit, true);
+  assert.equal(r.target, 'back squats');
+  assert.ok(!r.substitute || !/something/.test(String(r.substitute)), 'no phantom "something else"');
+  // destination-only vague swap → positional implicit substitution (current slot)
+  const p = classifyMutationIntent('swap to something else');
+  assert.equal(p && p.action, 'substitute');
+  assert.equal(p.positional, true);
+});
+
+test('control: explicit NAMED substitution is unchanged (a real substitute stays a replace)', () => {
+  const r = classifyMutationIntent('Swap back squats for leg press');
+  assert.equal(r && r.action, 'replace');
+  assert.equal(r.target, 'back squats');
+  assert.equal(r.substitute, 'leg press');
+});
+
+test('control: true skip and bare/plain decline still skip (unchanged)', () => {
+  const skip = classifyMutationIntent('Skip back squats');
+  assert.equal(skip && skip.action, 'skip');
+  assert.equal(skip.target, 'back squats');
+  // PR-I2 governed decline with no replacement request stays a skip — case 5 unchanged.
+  const today = classifyMutationIntent("I don't want to do squats today");
+  assert.equal(today && today.action, 'skip');
+  assert.equal(today.target, 'squats');
+  const bare = classifyMutationIntent("I don't want to do squats");
+  assert.equal(bare && bare.action, 'skip');
+  assert.equal(bare.target, 'squats');
+});

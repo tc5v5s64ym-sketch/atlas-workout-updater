@@ -136,7 +136,55 @@ const _exports = (function () {
     return POSITIONAL_RE.test(cleanName(phrase));
   }
 
+  // A vague "give me an unspecified replacement" noun phrase — NOT a real exercise
+  // name. The athlete is asking the ENGINE to pick the substitute, so this must never
+  // become a literal "something else" slot; it flips a swap/decline to an IMPLICIT
+  // substitution (production bug 2026-07-11: "…give me something else" skipped Back
+  // Squat; "replace X with something else" would have created a phantom exercise).
+  const VAGUE_SUB_RE = /^(?:something\s+(?:else|different)|another\s+(?:exercise|movement|lift|one)|an?\s+alternative|a\s+different\s+(?:exercise|movement|lift|one)|anything\s+else)$/;
+  function isVagueReplacement(phrase) {
+    const p = String(phrase == null ? '' : phrase).toLowerCase().trim().replace(/[.?!,;:]+$/, '').trim();
+    return VAGUE_SUB_RE.test(p);
+  }
+
+  // A trailing "give me something else"-style REQUEST clause: an optional request verb
+  // + a vague-replacement noun phrase, or "what else can I do". Anchored at $, so it
+  // only strips when the phrase ENDS with a replacement request (a real trailing
+  // exercise name is never a vague NP, so it is never stripped).
+  const REPLACEMENT_REQUEST_TAIL = /[\s,;]*(?:\b(?:and|so|but|then)\b\s*)?(?:(?:can|could)\s+(?:you|i)\s+|please\s+)?(?:give\s+me|gimme|get\s+me|grab\s+me|show\s+me|find\s+me|suggest|recommend|pick(?:\s+me)?|i\s+(?:want|need)|i'?d\s+(?:like|prefer)|let'?s\s+(?:do|try))?\s*(?:something\s+(?:else|different)|another\s+(?:exercise|movement|lift|one)|an?\s+alternative|a\s+different\s+(?:exercise|movement|lift|one)|anything\s+else)\s*$/;
+  const WHAT_ELSE_TAIL = /[\s,;]*(?:\b(?:and|so|but|then)\b\s*)?what\s+else\s+can\s+i\s+do\b.*$/;
+
+  // Split a trailing replacement REQUEST off a decline phrase → the bare target, or
+  // null when no request is present. "squats, give me something else" → "squats";
+  // "squats today" → null (a plain decline, whose skip behavior is unchanged).
+  function stripReplacementRequest(phrase) {
+    const p = String(phrase == null ? '' : phrase).toLowerCase().replace(/[.?!]+$/, '').trim();
+    if (!REPLACEMENT_REQUEST_TAIL.test(p) && !WHAT_ELSE_TAIL.test(p)) return null;
+    return p.replace(WHAT_ELSE_TAIL, '').replace(REPLACEMENT_REQUEST_TAIL, '').replace(/[\s,;]+$/, '').trim();
+  }
+
+  // An IMPLICIT substitution: the athlete wants the current/named lift swapped but
+  // named NO substitute — the deterministic engine (services/substitutionRecommender)
+  // picks it. Same target discipline as declineSkip (no positional-as-name, no vague
+  // pronoun, no mutation-verb capture); a positional/current target is preserved.
+  function implicitSubstitute(target) {
+    const t = cleanName(target);
+    if (isPositional(t)) return { action: 'substitute', target: POSITIONAL, positional: true, implicit: true };
+    if (VAGUE_TARGET.test(t)) return null;
+    if (/^(?:skip|drop|cut|ditch|remove|delete|swap|switch|sub(?:stitute)?|replace)\b/.test(t)) return null;
+    if (!looksLikeExercise(t)) return null;
+    return { action: 'substitute', target: t, implicit: true };
+  }
+
   function replace(target, substitute) {
+    // A vague substitute ("replace X with something else") is an IMPLICIT substitution
+    // on the named/current target — never a literal "something else" slot.
+    if (isVagueReplacement(substitute)) {
+      const tv = cleanName(target);
+      if (isPositional(tv)) return { action: 'substitute', target: POSITIONAL, positional: true, implicit: true };
+      if (!looksLikeExercise(tv)) return null;
+      return { action: 'substitute', target: tv, implicit: true };
+    }
     const sub = cleanName(substitute);
     if (!looksLikeExercise(sub)) return null;
     const t = cleanName(target);
@@ -149,6 +197,8 @@ const _exports = (function () {
   // Destination-only swap ("swap to/for X", "sub in X", "replace with X") — no source
   // named, so it substitutes X into the current/next slot (positional).
   function replaceInto(substitute) {
+    // "swap to something else" — a vague destination is an implicit substitution.
+    if (isVagueReplacement(substitute)) return { action: 'substitute', target: POSITIONAL, positional: true, implicit: true };
     const sub = cleanName(substitute);
     if (!looksLikeExercise(sub)) return null;
     return { action: 'replace', target: POSITIONAL, substitute: sub, positional: true };
@@ -275,6 +325,10 @@ const _exports = (function () {
     // the final gate.
     m = t.match(/^i\s*(?:'?d)?\s+(?:really\s+|honestly\s+)?(?:don'?t\s+want\s+to|do\s+not\s+want\s+to|don'?t\s+wanna|dont\s+wanna|would\s+rather\s+not|rather\s+not|prefer\s+not\s+to)\s+(?:do\s+|doing\s+|perform\s+)?(.+)$/);
     if (m) {
+      // A decline that ALSO asks for a replacement ("…squats, give me something else")
+      // is an IMPLICIT substitution, not a skip — strip the request, keep the target.
+      const stripped = stripReplacementRequest(m[1]);
+      if (stripped != null) { const sub = implicitSubstitute(stripped); if (sub) return sub; }
       const inner = declineSkip(m[1]);
       if (inner) return inner;
     }
@@ -283,6 +337,8 @@ const _exports = (function () {
     // would capture "to do X" here, defeating the positional/vague gate).
     m = t.match(/^i\s+(?:really\s+|honestly\s+)?(?:don'?t\s+want|do\s+not\s+want|don'?t\s+wanna|dont\s+wanna)(?!\s+to\b)\s+(.+)$/);
     if (m) {
+      const stripped = stripReplacementRequest(m[1]);
+      if (stripped != null) { const sub = implicitSubstitute(stripped); if (sub) return sub; }
       const inner = declineSkip(m[1]);
       if (inner) return inner;
     }
