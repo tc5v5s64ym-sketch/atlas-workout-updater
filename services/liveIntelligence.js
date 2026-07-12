@@ -27,6 +27,7 @@ const { detectTrend } = require('./trendDetector');
 const { computeReadiness } = require('./readinessSignal');
 const { computeExpectedPerformance } = require('./expectedPerformance');
 const { classifyDeviation } = require('./performanceDeviation');
+const { buildProgressionHistory } = require('./progressionHistory');
 const { normalizeExerciseKey, canonicalLiftCodeFor } = require('./exerciseEnrichment');
 
 // 12-column Log_Cleaned indices used for cross-lift contamination guarding.
@@ -134,7 +135,12 @@ function enrichCoachFacts(facts, allLog) {
   const existingRec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
   const rec = { ...existingRec, working_weight, trend, readiness_signal };
 
-  return { ...facts, rec, deviation, evidence_context };
+  // History-aware progression facts — computed SERVER-SIDE from the same lift-restricted
+  // log (no client influence), reusing the existing progression rules only. Best-effort:
+  // all-null when there isn't enough history (sanitizeFacts drops an empty history).
+  const progression_history = buildProgressionHistory(cleanLog.map(normalizeLogRow), liftCode);
+
+  return { ...facts, rec, deviation, evidence_context, progression_history };
 }
 
 // PR-B4 slice 3 — engine-confirmed new-ground gate for the profanity permission.

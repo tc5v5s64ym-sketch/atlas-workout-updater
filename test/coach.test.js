@@ -99,6 +99,60 @@ test('sanitizeFacts leaves the verdict null when the engine gives none', () => {
   assert.equal(bad.effort_verdict, null);
 });
 
+// ── history-aware progression facts (progression_history) ────────────────────
+
+test('sanitizeFacts forwards a valid progression_history verbatim (engine-computed history)', () => {
+  const clean = sanitizeFacts({
+    exerciseName: 'Back Squat',
+    progression_history: {
+      current_verdict: 'in_pocket',
+      previous_verdict: 'new_ground',
+      consecutive_on_target: 2,
+      next_checkpoint: { decision: 'hold', criterion_progress: '2 of 3 clean sessions at 205', clean_sessions: 2, required_sessions: 3, load: 205 },
+    },
+  });
+  assert.deepEqual(clean.progression_history, {
+    current_verdict: 'in_pocket',
+    previous_verdict: 'new_ground',
+    consecutive_on_target: 2,
+    next_checkpoint: { decision: 'hold', criterion_progress: '2 of 3 clean sessions at 205', clean_sessions: 2, required_sessions: 3, load: 205 },
+  });
+});
+
+test('sanitizeFacts enum-checks progression_history — bad level / decision are dropped, never forwarded', () => {
+  // A hallucinated verdict level and a hallucinated checkpoint decision are rejected;
+  // a checkpoint whose decision is out-of-vocabulary is nulled (never a load command).
+  const clean = sanitizeFacts({
+    progression_history: {
+      current_verdict: 'crushing_it',                 // not a band level → null
+      previous_verdict: 'in_pocket',
+      consecutive_on_target: 1,
+      next_checkpoint: { decision: 'force_load', criterion_progress: 'x', load: 999 }, // bad decision → null
+    },
+  });
+  assert.equal(clean.progression_history.current_verdict, null);
+  assert.equal(clean.progression_history.previous_verdict, 'in_pocket');
+  assert.equal(clean.progression_history.next_checkpoint, null, 'an out-of-vocabulary decision must not reach the model');
+});
+
+test('sanitizeFacts leaves progression_history null when the engine surfaced nothing', () => {
+  assert.equal(sanitizeFacts({ exerciseName: 'Squat' }).progression_history, null);
+  assert.equal(sanitizeFacts({ progression_history: {} }).progression_history, null);
+});
+
+test('coach system prompt words progression_history but never authorizes a load change', () => {
+  const prompt = buildCoachSystemPrompt();
+  assert.match(prompt, /progression_history/, 'the prompt must tell the model how to word the history facts');
+  assert.match(prompt, /next_checkpoint/, 'the prompt names the engine checkpoint');
+  assert.match(prompt, /decision is "?load"?/i, 'load language is gated on the engine decision being "load"');
+  assert.match(prompt, /NEVER authorize a load increase the engine has not/i,
+    'the prompt must forbid the model from authorizing a load change the engine has not');
+  // consecutive_on_target is holdUntilClean's clean-session COUNT at the load (not a
+  // strict tail streak), so the model must not assert the sessions were back-to-back.
+  assert.match(prompt, /back-to-back|in a row/i,
+    'the prompt must stop the model asserting the on-target count was consecutive/"in a row"');
+});
+
 test('coach system prompt binds the opener to the effort verdict and grounds history', () => {
   const prompt = buildCoachSystemPrompt();
   assert.match(prompt, /effort_verdict/, 'must reference the verdict the engine provides');
