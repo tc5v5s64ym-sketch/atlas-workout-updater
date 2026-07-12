@@ -220,6 +220,24 @@ test('wrong-target guard: the completed-evidence cleanup follows the same exact-
     'the exact removal clears only its own completed evidence — the single-leg log evidence survives');
 });
 
+test('wrong-target guard: a slot exact-matched via canonicalName clears its name-keyed evidence too', () => {
+  // Review note on #994: evidence entries are stored under the slot's `name`
+  // (resolveCompletedIdentity returns match.name), so an exact removal via the
+  // slot's canonicalName must clear that name-keyed evidence — no stale done-mark.
+  const { applyProposedPlanEdit, getActivePlannedSession, setActivePlannedSession, getSessionCompleted, setSessionCompleted } = loadApplyPlanEdit();
+  setActivePlannedSession({ label: 'Push day', intentId: null, index: 0, exercises: [
+    { name: 'Dips (Weighted)', canonicalName: 'Weighted Dip' },
+    { name: 'Bench Press', canonicalName: 'Bench Press' },
+  ] });
+  setSessionCompleted(['dips (weighted)', 'bench press']);
+  const out = applyProposedPlanEdit({ action: 'remove_exercises', exercises: [{ name: 'Weighted Dip' }] });
+  assert.ok(out && out.applied, 'remove applied');
+  assert.deepEqual(getActivePlannedSession().exercises.map(e => e.name), ['Bench Press'],
+    'the slot exact-matched via canonicalName is removed');
+  assert.deepEqual(getSessionCompleted(), ['bench press'],
+    'its name-keyed completed evidence is cleared with it — Bench Press evidence untouched');
+});
+
 test('wrong-target guard: a wanted name with NO exact match keeps the substring fallback', () => {
   const { applyProposedPlanEdit, getActivePlannedSession, setActivePlannedSession } = loadApplyPlanEdit();
   setActivePlannedSession(legDayPlan());

@@ -2514,6 +2514,21 @@ function applyProposedPlanEdit(edit) {
     // named ("Leg Press" removing "Single-Leg Seated Leg Press"). A name with no
     // exact slot keeps the substring behavior (an LLM-echoed alias still resolves).
     const exactByName = new Map(wanted.map(name => [name, slots.some(ex => planEditNameEquals(ex, name))]));
+    // The identity keys (name + canonicalName, lowercased) of every slot an exact
+    // wanted name removes — the evidence cleanup below clears by THESE, so a slot
+    // exact-matched via its canonicalName still gets its `name`-keyed completed
+    // evidence cleared (review note on #994: the two sweeps stay symmetric).
+    const exactIdentities = new Map(wanted.filter(name => exactByName.get(name)).map(name => {
+      const ids = new Set();
+      for (const ex of slots) {
+        if (!planEditNameEquals(ex, name)) continue;
+        for (const n of [ex.name, ex.canonicalName]) {
+          const k = String(n || '').toLowerCase().trim();
+          if (k) ids.add(k);
+        }
+      }
+      return [name, ids];
+    }));
     const before = slots.length;
     getActivePlannedSession().exercises = slots.filter(ex =>
       !wanted.some(name => exactByName.get(name) ? planEditNameEquals(ex, name) : matchesPlanEditName(ex, name))
@@ -2521,13 +2536,14 @@ function applyProposedPlanEdit(edit) {
     const removed = getActivePlannedSession().exercises.length !== before;
     if (removed) {
       // The completed-evidence cleanup follows the SAME per-name precedence, so an
-      // exact removal never clears the logged evidence of a similarly-named lift.
+      // exact removal never clears the logged evidence of a similarly-named lift —
+      // but DOES clear every identity of the slot(s) it actually removed.
       setSessionCompleted(getSessionCompleted().filter(done =>
         !wanted.some(name => {
           const key = String(name || '').toLowerCase().trim();
           const d = String(done || '').toLowerCase();
           if (!key) return false;
-          if (exactByName.get(name)) return d === key;
+          if (exactByName.get(name)) return d === key || exactIdentities.get(name).has(d);
           return d === key || d.includes(key) || key.includes(d);
         })
       ));
