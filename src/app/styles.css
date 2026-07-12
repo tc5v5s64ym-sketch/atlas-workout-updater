@@ -2635,6 +2635,35 @@ summary:focus-visible,
 
 .ws-note { flex: 0 0 auto; text-align: center; font-size: 0.66rem; color: var(--faint); padding: 2px 22px 8px; }
 .ws-note b { color: var(--muted); font-weight: 500; }
+
+/* PR-2 reorder affordances — PENDING (.todo) cards only. The ▲/▼ controls are the
+   always-available non-drag fallback; the ≡ grip starts a pointer drag. */
+.ws-card { transition: transform 0.14s ease, box-shadow 0.18s ease, border-color 0.15s ease; }
+.ws-move { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; }
+.ws-mv {
+  appearance: none; -webkit-appearance: none; background: transparent; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 6px; width: 26px; height: 18px; line-height: 1; padding: 0;
+  font-size: 0.58rem; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.ws-mv:hover { color: var(--ink); border-color: var(--border-strong, rgba(244, 243, 239, 0.24)); }
+.ws-mv:active { color: var(--ember, #E8772E); border-color: var(--ember, #E8772E); }
+.ws-grip {
+  flex: 0 0 auto; width: 34px; min-height: 44px; align-self: stretch; display: flex;
+  align-items: center; justify-content: center; color: var(--faint); font-size: 1.05rem;
+  cursor: grab; touch-action: none; border-radius: 8px;
+}
+.ws-grip:active { cursor: grabbing; color: var(--ember, #E8772E); }
+.ws-card.ws-dragging { opacity: 0.92; border-color: var(--ember, #E8772E); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42); transform: scale(1.02); z-index: 2; }
+.ws-card.ws-drop-target { border-color: var(--ember, #E8772E); background: var(--ember-soft, rgba(232, 119, 46, 0.14)); }
+.ws-toast {
+  position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%) translateY(8px);
+  background: var(--surface, #131419); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 14px; font-size: 0.72rem; color: var(--ink); font-family: var(--mono);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4); opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease; z-index: 3; white-space: nowrap;
+}
+.ws-toast.live { opacity: 1; transform: translateX(-50%) translateY(0); }
+
 .ws-grabber { flex: 0 0 auto; padding: 6px 0 12px; display: flex; justify-content: center; cursor: grab; touch-action: none; }
 .ws-grabber i { width: 56px; height: 5px; border-radius: 5px; background: var(--border-strong, rgba(244, 243, 239, 0.16)); }
 
@@ -2650,4 +2679,7 @@ summary:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .workout-sheet.ws-settle { transition: none; }
   .ws-pin-chev { animation: none; }
+  /* Reorder still works; just no spring/scale/fade — the drop commits instantly. */
+  .ws-card, .ws-toast { transition: none; }
+  .ws-card.ws-dragging { transform: none; }
 }

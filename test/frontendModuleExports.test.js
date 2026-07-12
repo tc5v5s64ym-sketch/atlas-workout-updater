@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
 const EXPECTED = {
   activeSession: [
     'STATUS', 'createActiveSession', 'replaceExercise', 'skipExercise', 'markCompleted',
-    'correctIdentity', 'insertExercise', 'currentExercise', 'nextUp', 'remaining',
+    'correctIdentity', 'insertExercise', 'reorderExercise', 'currentExercise', 'nextUp', 'remaining',
     'completedExercises', 'isComplete', 'hasLoggedWork', 'reconcileSubstitutedRemaining',
     'entryMatches', 'findMatchIndex', 'toEntry',
   ],

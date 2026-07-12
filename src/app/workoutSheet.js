@@ -3,13 +3,19 @@
  * PR-1 (display-only): the pull gesture, three detents (closed / center ~58% /
  * full ~92%), snap physics (nearest / flick), rubber-band overpull, a dim layer
  * (tap or flick-up to close), and a READ-ONLY card list (done / current / pending)
- * rendered from the EXISTING canonical ActiveSession selectors. No reorder, no plan
- * mutation, no Sheets / write / engine / GATE-A calls — it renders state, never computes.
+ * rendered from the EXISTING canonical ActiveSession selectors.
+ *
+ * PR-2 (drag-to-reorder): PENDING cards carry a ≡ grip (pointer drag) and ▲/▼ controls
+ * (the non-drag / reduced-motion fallback). Both dispatch the ONE deterministic plan
+ * mutation — window.reorderPlannedExercise (app.js) — so the sheet still holds ZERO plan
+ * logic: it computes only WHICH slots move. done/current slots are pinned (not draggable,
+ * no controls). Still no Sheets / write / write_id / engine / GATE-A calls — a reorder is
+ * an in-memory plan change, never a data write.
  *
  * Its own module, like drawer.js. app.js only mounts it (the sheet DOM in index.html
  * + the session pin as the pull handle) and exposes the read-only selectors it reads
- * (getActivePlannedSession / remainingPlannedExercises / getSessionLog). Scoped to
- * workout mode: no active plan → the pin is hidden → there is nothing to pull.
+ * (getActivePlannedSession / remainingPlannedExercises / getSessionLog) plus the single
+ * reorder wrapper. Scoped to workout mode: no active plan → the pin is hidden → no sheet.
  *
  * CSP-safe: every transform/opacity is a CSSOM write (el.style.transform = …), never
  * an inline style="" attribute — the same pattern drawer.js uses. Reduced-motion safe:
@@ -257,14 +263,113 @@ export function cardDetailText(card) {
     for (const c of cards) {
       const cls = c.status === 'done' ? 'done' : (c.status === 'current' ? 'now' : 'todo');
       const card = el('div', `ws-card ${cls}`);
+      card.dataset.slot = String(c.slot);      // 1-based; slot−1 = index in the live plan
+      card.dataset.status = c.status;
       const st = el('span', 'ws-st', c.status === 'done' ? '✓' : (c.status === 'current' ? '●' : String(c.slot)));
       const tx = el('span', 'ws-tx');
       tx.appendChild(el('span', 'ws-nm', c.name));
       tx.appendChild(el('span', 'ws-dt', cardDetailText(c)));
       card.appendChild(st);
       card.appendChild(tx);
+      // Only PENDING cards reorder (done/current are pinned). Each carries a ≡ drag
+      // handle AND up/down controls — the non-drag fallback that always works (keyboard
+      // / reduced-motion). Both dispatch the SAME canonical mutation; the sheet holds
+      // zero plan logic. data-slot lets the delegated handlers resolve the live index.
+      if (c.status === 'pending') {
+        const ctrls = el('span', 'ws-move');
+        const up = el('button', 'ws-mv ws-up', '▲');
+        up.type = 'button'; up.setAttribute('aria-label', `Move ${c.name} earlier`);
+        const down = el('button', 'ws-mv ws-down', '▼');
+        down.type = 'button'; down.setAttribute('aria-label', `Move ${c.name} later`);
+        ctrls.appendChild(up); ctrls.appendChild(down);
+        const grip = el('span', 'ws-grip', '≡');
+        grip.setAttribute('aria-hidden', 'true');
+        card.appendChild(ctrls);
+        card.appendChild(grip);
+      }
       planEl.appendChild(card);
     }
+  }
+
+  // ── drag-to-reorder (PENDING cards only; dispatches the canonical mutation) ──
+  // The ≡ grip starts a pointer drag; the ▲/▼ controls are the non-drag fallback.
+  // BOTH call window.reorderPlannedExercise(fromIndex, toIndex) — the ONE deterministic
+  // plan mutation (app.js). The sheet computes only WHICH slots move, never the plan.
+  // Listeners are delegated on planEl (which persists across renderCards rebuilds).
+  const todoCards = () => Array.prototype.slice.call(planEl.querySelectorAll('.ws-card.todo'));
+  const slotOf = c => (c && c.dataset ? Number(c.dataset.slot) : NaN);   // 1-based
+  const nameOf = c => { const n = c && c.querySelector('.ws-nm'); return n ? n.textContent : ''; };
+
+  function applyReorder(fromSlot, toSlot, movedName) {
+    const fn = g().reorderPlannedExercise;
+    if (typeof fn !== 'function') return false;
+    const changed = fn(fromSlot - 1, toSlot - 1);   // slots are 1-based; the wrapper takes indices
+    if (changed) showToast(movedName);              // the wrapper fires atlas:plan-mutated → sync() re-renders
+    return changed;
+  }
+
+  // ▲/▼ fallback: move a pending card onto its previous / next PENDING neighbour.
+  planEl.addEventListener('click', e => {
+    const btn = e.target && e.target.closest && e.target.closest('.ws-up, .ws-down');
+    if (!btn) return;
+    const card = btn.closest('.ws-card');
+    const list = todoCards();
+    const i = list.indexOf(card);
+    if (i === -1) return;
+    const neighbour = btn.classList.contains('ws-up') ? list[i - 1] : list[i + 1];
+    if (!neighbour) return;   // already at the edge of the pending run → no move
+    applyReorder(slotOf(card), slotOf(neighbour), nameOf(card));
+  });
+
+  // ≡ grip: a pointer drag. Track the pending card under the finger; drop dispatches.
+  let drag = null;   // { card, slot, name, targetSlot }
+  function dropTargetAt(clientY, sourceCard) {
+    let best = null;
+    for (const card of todoCards()) {
+      if (card === sourceCard) continue;
+      const r = card.getBoundingClientRect();
+      if (clientY >= r.top && clientY <= r.bottom) return card;   // directly over a card
+      const d = Math.min(Math.abs(clientY - r.top), Math.abs(clientY - r.bottom));
+      if (!best || d < best.d) best = { card, d };
+    }
+    return best ? best.card : null;                                // else the nearest edge
+  }
+  planEl.addEventListener('pointerdown', e => {
+    const grip = e.target && e.target.closest && e.target.closest('.ws-grip');
+    if (!grip) return;
+    const card = grip.closest('.ws-card');
+    if (!card) return;
+    e.preventDefault(); e.stopPropagation();
+    drag = { card, slot: slotOf(card), name: nameOf(card), targetSlot: null };
+    card.classList.add('ws-dragging');
+    try { grip.setPointerCapture(e.pointerId); } catch (_) { /* non-fatal */ }
+  });
+  planEl.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const target = dropTargetAt(e.clientY, drag.card);
+    planEl.querySelectorAll('.ws-drop-target').forEach(n => n.classList.remove('ws-drop-target'));
+    if (target) { target.classList.add('ws-drop-target'); drag.targetSlot = slotOf(target); }
+    else drag.targetSlot = null;
+  });
+  function endDrag() {
+    if (!drag) return;
+    const d = drag; drag = null;
+    d.card.classList.remove('ws-dragging');
+    planEl.querySelectorAll('.ws-drop-target').forEach(n => n.classList.remove('ws-drop-target'));
+    if (d.targetSlot != null && d.targetSlot !== d.slot) applyReorder(d.slot, d.targetSlot, d.name);
+  }
+  planEl.addEventListener('pointerup', endDrag);
+  planEl.addEventListener('pointercancel', endDrag);
+
+  // ── toast (lightweight confirmation; reduced-motion just skips the fade) ──────
+  let toastTimer = 0;
+  function showToast(name) {
+    let t = sheet.querySelector('.ws-toast');
+    if (!t) { t = el('div', 'ws-toast'); t.setAttribute('role', 'status'); sheet.appendChild(t); }
+    t.textContent = `${name || 'Exercise'} moved · plan updated`;
+    t.classList.add('live');
+    if (toastTimer) window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => { t.classList.remove('live'); }, 1600);
   }
 
   // ── pin pull-affordance hint (self-owned; survives pin re-renders) ───────────
