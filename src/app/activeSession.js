@@ -239,6 +239,42 @@ const _exports = (function () {
     return { ...session, exercises };
   }
 
+  /**
+   * reorderExercise(session, ref, toIndex) → session
+   * Move a PENDING, non-current exercise to a new position AMONG the pending
+   * exercises — the direct-manipulation equivalent of "do this one later/sooner".
+   * `toIndex` is the destination index within the PENDING entries (0 = the current
+   * exercise's slot). PINNED, never moved: completed/skipped slots keep their exact
+   * position, and the CURRENT exercise (the first pending entry) stays first — so a
+   * pending item can only be reordered into the pending region AFTER the current
+   * (moving the lift you are mid-way through is a composer conversation, not a drag).
+   * Only the pending entries are permuted; every pinned entry keeps its absolute slot.
+   * No-op when ref isn't a movable pending slot, ref IS the current, toIndex is not a
+   * finite number, or the position is unchanged. Pure — returns a NEW session. (PR-2.)
+   */
+  function reorderExercise(session, ref, toIndex) {
+    if (!session || !Array.isArray(session.exercises)) return session;
+    if (!Number.isFinite(Number(toIndex))) return session;
+    const exercises = cloneExercises(session.exercises);
+    const srcIdx = findMatchIndex(exercises, ref, true); // pending-only: never move finished work
+    if (srcIdx === -1) return session;
+    // The absolute positions of the pending entries, in order (pending[0] = current).
+    const pending = [];
+    for (let i = 0; i < exercises.length; i++) {
+      if (exercises[i].status === STATUS.PENDING) pending.push(i);
+    }
+    const srcPos = pending.indexOf(srcIdx);
+    if (srcPos <= 0) return session; // not pending, or it IS the current (pinned) → no move
+    let destPos = Math.max(1, Math.min(Math.trunc(Number(toIndex)), pending.length - 1));
+    if (destPos === srcPos) return session; // unchanged
+    // Permute the pending ENTRIES; the pinned entries (done/skipped/current) stay put.
+    const pendingEntries = pending.map(i => exercises[i]);
+    const [moved] = pendingEntries.splice(srcPos, 1);
+    pendingEntries.splice(destPos, 0, moved);
+    pending.forEach((i, k) => { exercises[i] = pendingEntries[k]; });
+    return { ...session, exercises };
+  }
+
   // ── Selectors (every consumer derives from these — no parallel state) ───────
 
   // The current exercise = the first PENDING entry, in order. Composer prefill and
@@ -339,6 +375,7 @@ const _exports = (function () {
     markCompleted,
     correctIdentity,
     insertExercise,
+    reorderExercise,
     currentExercise,
     nextUp,
     remaining,
@@ -363,6 +400,7 @@ export const {
   markCompleted,
   correctIdentity,
   insertExercise,
+  reorderExercise,
   currentExercise,
   nextUp,
   remaining,

@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v132';
+const ATLAS_SHELL_BUILD = 'v133';
 
 
 
@@ -1625,6 +1625,59 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
   // planned_lift_code (resolved server-side by plan_item_id) and records the actual
   // performed_lift_code. Fails closed if the slot had no identity (unaccepted plan).
   if (originalItemId) emitPlanItemOutcome({ plan_item_id: originalItemId, outcome: 'substituted', performed_lift_code: subLiftCode });
+  return true;
+}
+
+// PR-2 (Workout Sheet drag-to-reorder): move a PENDING plan slot to a new position in
+// the LIVE plan. The visible order lives in ONE place — activePlannedSession.exercises —
+// which getCanonicalSession() / plannedExerciseOrder() / remainingPlannedExercises() all
+// derive from, so permuting it here is the WHOLE mutation (no dual-write, no cursor
+// drift). This is the deterministic engine behind the sheet's drag: it mirrors
+// activeSession.reorderExercise's rule — completed slots and the CURRENT lift (the first
+// unlogged one) are PINNED; only the pending region AFTER the current is permuted.
+//
+// It is a PLAN MUTATION, not a data write: no write_id, no Sheets call, no proof fields,
+// and NO Session_Plans outcome — a reorder has no outcome vocabulary (the item is neither
+// completed, skipped, nor substituted), so unlike skip/substitute it emits nothing to the
+// capture lane. fromIndex/toIndex are positions in activePlannedSession.exercises (the
+// sheet card's slot number − 1). Returns true only when the order actually changed.
+function reorderPlannedExercise(fromIndex, toIndex) {
+  const plan = getActivePlannedSession();
+  if (!plan || !Array.isArray(plan.exercises)) return false;
+  const exs = plan.exercises;
+  const from = Math.trunc(Number(fromIndex));
+  const to = Math.trunc(Number(toIndex));
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return false;
+  if (from < 0 || from >= exs.length || to < 0 || to >= exs.length) return false;
+  // The pending region: plan slots not yet logged, in order (pending[0] = the current
+  // lift). Completed slots are pinned in place; a skipped slot never exists here (skip
+  // splices it out). Completion identity matches remainingPlannedExercises exactly.
+  const completed = new Set(getSessionCompleted().map(c => String(c).toLowerCase()));
+  const isPending = e => {
+    const n = String((e && (e.canonicalName || e.name)) || '').toLowerCase();
+    return n && !completed.has(n);
+  };
+  const pending = [];
+  for (let i = 0; i < exs.length; i++) if (isPending(exs[i])) pending.push(i);
+  const srcPos = pending.indexOf(from);
+  const destPos = pending.indexOf(to);
+  if (srcPos <= 0) return false;          // the source must be a pending, NON-current slot
+  if (destPos < 1) return false;          // never land on/ahead of the current (or a pinned slot)
+  if (srcPos === destPos) return false;   // unchanged
+  const pendingEntries = pending.map(i => exs[i]);
+  const [moved] = pendingEntries.splice(srcPos, 1);
+  pendingEntries.splice(destPos, 0, moved);
+  pending.forEach((i, k) => { exs[i] = pendingEntries[k]; });
+  // The current lift never moved (pending[0] is pinned), so keep the cursor on it — the
+  // banner/composer keep following the same in-progress lift.
+  plan.index = pending.length ? pending[0] : Math.max(0, Math.min(Number(plan.index) || 0, exs.length - 1));
+  renderActiveSessionBanner();
+  if (typeof renderSessionPin === 'function') renderSessionPin();
+  // Propagate through the ONE canonical event so the pin and the sheet re-render — but
+  // with an EMPTY detail: a reorder must not narrate a coach bubble or re-point the
+  // composer (the coach handler skips both on empty summary/current). The sheet shows
+  // its own lightweight toast.
+  document.dispatchEvent(new CustomEvent('atlas:plan-mutated', { detail: { summary: '', current: null, reorder: true } }));
   return true;
 }
 
@@ -6871,6 +6924,12 @@ window.remainingPlannedExercises = remainingPlannedExercises;
 // module (workoutSheet.js) mounts + wires itself to #session-pin; app.js only exposes
 // this read-only selector (the plan/remaining selectors above are already exposed).
 window.getSessionLog = getSessionLog;
+// Workout Sheet (PR-2) dispatches the drag-to-reorder plan mutation through this one
+// deterministic wrapper (the sheet contains ZERO plan logic). getCanonicalSession is
+// exposed READ-ONLY so the equivalence test can prove the drag path yields the same
+// ActiveSession state as invoking activeSession.reorderExercise directly.
+window.reorderPlannedExercise = reorderPlannedExercise;
+window.getCanonicalSession = getCanonicalSession;
 
 /* ===== Init ===== */
 

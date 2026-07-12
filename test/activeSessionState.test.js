@@ -265,6 +265,70 @@ test('insertExercise: insert → markCompleted records an off-plan exercise as i
   assert.ok(done && done.status === 'completed' && done.source === 'inserted', 'off-plan log is inserted+completed');
 });
 
+// ── reorderExercise (PR-2 drag-to-reorder engine) ─────────────────────────────
+// The pure mutation the Workout Sheet's drag dispatches. Moves a PENDING, non-current
+// exercise among the pending region; completed/skipped slots and the current lift are
+// PINNED. `toIndex` is the destination index among the PENDING entries (0 = current).
+
+test('reorderExercise: moves a pending lift to a later pending slot (current pinned first)', () => {
+  const { createActiveSession, reorderExercise, remaining } = AS_NS;
+  let s = createActiveSession({ exercises: ['Bench', 'Incline', 'OHP', 'Fly'] });
+  // pending = [Bench(cur,0), Incline(1), OHP(2), Fly(3)]. Move Incline → pending index 3.
+  s = reorderExercise(s, 'Incline', 3);
+  assert.deepEqual(remaining(s).map(e => e.name), ['Bench', 'OHP', 'Fly', 'Incline'],
+    'Incline moved to the end; Bench (current) stays first');
+});
+
+test('reorderExercise: moves a pending lift earlier (but never ahead of the current)', () => {
+  const { createActiveSession, reorderExercise, remaining } = AS_NS;
+  let s = createActiveSession({ exercises: ['Bench', 'Incline', 'OHP', 'Fly'] });
+  s = reorderExercise(s, 'Fly', 1);           // Fly → the slot right after the current
+  assert.deepEqual(remaining(s).map(e => e.name), ['Bench', 'Fly', 'Incline', 'OHP']);
+});
+
+test('reorderExercise: the current lift is pinned — it never moves and nothing jumps ahead of it', () => {
+  const { createActiveSession, reorderExercise, currentExercise } = AS_NS;
+  let s = createActiveSession({ exercises: ['Bench', 'Incline', 'OHP'] });
+  assert.equal(reorderExercise(s, 'Bench', 2), s, 'moving the current is a no-op');
+  // Even asking to move a pending lift to index 0 (the current slot) clamps to 1.
+  const moved = reorderExercise(s, 'OHP', 0);
+  assert.equal(currentExercise(moved).name, 'Bench', 'the current is unchanged');
+  assert.deepEqual(moved.exercises.map(e => e.name), ['Bench', 'OHP', 'Incline']);
+});
+
+test('reorderExercise: completed/skipped slots keep their absolute position (only pending permute)', () => {
+  const { createActiveSession, markCompleted, skipExercise, reorderExercise } = AS_NS;
+  let s = createActiveSession({ exercises: ['Bench', 'Incline', 'OHP', 'Fly', 'Curl'] });
+  s = markCompleted(s, 'Bench');              // done at index 0
+  s = skipExercise(s, 'OHP');                 // skipped at index 2
+  // pending now = [Incline(cur,1), Fly(3), Curl(4)]. Move Curl → pending index 1.
+  s = reorderExercise(s, 'Curl', 1);
+  assert.deepEqual(s.exercises.map(e => `${e.name}:${e.status}`),
+    ['Bench:completed', 'Incline:pending', 'OHP:skipped', 'Curl:pending', 'Fly:pending'],
+    'Bench (done) and OHP (skipped) stay pinned; only Fly/Curl reorder');
+});
+
+test('reorderExercise: is pure and no-ops on unknown / non-finite / unchanged / ambiguous input', () => {
+  const { createActiveSession, reorderExercise } = AS_NS;
+  const s = createActiveSession({ exercises: ['Bench', 'Incline', 'OHP'] });
+  assert.equal(reorderExercise(s, 'Deadlift', 1), s, 'unknown ref → no-op');
+  assert.equal(reorderExercise(s, 'Incline', 'x'), s, 'non-finite toIndex → no-op');
+  assert.equal(reorderExercise(s, 'Incline', 1), s, 'already at that slot → same session');
+  const rowS = createActiveSession({ exercises: ['Seated Row', 'Barbell Row', 'OHP'] });
+  assert.equal(reorderExercise(rowS, 'Row', 2), rowS, 'ambiguous loose name → no guess, no-op');
+  // Purity: the original is untouched.
+  const s2 = reorderExercise(s, 'OHP', 1);
+  assert.deepEqual(s.exercises.map(e => e.name), ['Bench', 'Incline', 'OHP'], 'input session unchanged');
+  assert.notEqual(s2, s);
+});
+
+test('reorderExercise: out-of-range toIndex clamps into the movable pending range', () => {
+  const { createActiveSession, reorderExercise, remaining } = AS_NS;
+  let s = createActiveSession({ exercises: ['Bench', 'Incline', 'OHP', 'Fly'] });
+  s = reorderExercise(s, 'Incline', 99);      // clamp to the last pending slot
+  assert.deepEqual(remaining(s).map(e => e.name), ['Bench', 'OHP', 'Fly', 'Incline']);
+});
+
 // ── Wiring guards (PR-565 review notes, hardened for the live mutation path) ───
 
 test('guard: replaceExercise never re-opens a completed or skipped slot', () => {
