@@ -110,6 +110,68 @@ test('last-wins: a later item_outcome overrides an earlier one for the same item
   assert.equal(f.items.find(i => i.plan_item_id === 'i1').outcome, 'skipped');
 });
 
+// ── substituted → completed composition (the owner-approved Done boundary) ─────
+// PR #974 made "Done with this exercise" reachable for a substituted slot (it
+// completes the ORIGINAL plan_item_id), so `substituted` followed by `completed`
+// on one item is a normal athlete flow: swap the lift, log it, tap Done. The fold
+// must keep the deviation visible — an explicit Done finishes the item, it does
+// NOT un-substitute it. `completed` still lists the lift actually PERFORMED.
+
+test('substituted then Done: completed carries the PERFORMED code — Done never erases the substitution', () => {
+  const rows = buildPlanAcceptedEvents(S(), [items[1]], { recordedAt: 'r0' });          // SQ01 planned
+  rows.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'substituted', performed_lift_code: 'LP01' }, { recordedAt: 'r1' }));
+  rows.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'completed' }, { recordedAt: 'r2' })); // explicit "Done with this exercise"
+  rows.push(buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }));
+  const [f] = foldSessionPlans(rows);
+  const it = f.items.find(i => i.plan_item_id === 'i2');
+  assert.equal(it.outcome, 'completed', 'last-wins: the explicit Done is the final outcome');
+  assert.equal(it.performed_lift_code, 'LP01', 'the performed substitute survives the Done');
+  assert.deepEqual(f.planned, ['SQ01']);
+  assert.deepEqual(f.completed, ['LP01'], 'the athlete performed LP01, not the planned SQ01');
+});
+
+test('metamorphic: tapping Done after a substitution must not change the drift history', () => {
+  const base = buildPlanAcceptedEvents(S(), [items[1]], { recordedAt: 'r0' });
+  base.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'substituted', performed_lift_code: 'LP01' }, { recordedAt: 'r1' }));
+  const close = buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' });
+  const withoutDone = readPlannedVsCompleted([...base, close]);
+  const withDone = readPlannedVsCompleted([
+    ...base,
+    buildItemOutcomeEvent(S(), { ...items[1], outcome: 'completed' }, { recordedAt: 'r2' }),
+    close,
+  ]);
+  assert.deepEqual(withDone, withoutDone, 'the Done tap adds no history — the recorded deviation is identical');
+});
+
+test('completed with NO prior substitution is unchanged: planned code, no performed code', () => {
+  const rows = sessionRows(S(), { i1: 'completed' }, 'finalized');
+  const [f] = foldSessionPlans(rows);
+  const it = f.items.find(i => i.plan_item_id === 'i1');
+  assert.equal(it.performed_lift_code, null);
+  assert.deepEqual(f.completed, ['BEN01']);
+});
+
+test('skipped after substituted: nothing performed — completed empty, performed code cleared', () => {
+  const rows = buildPlanAcceptedEvents(S(), [items[1]], { recordedAt: 'r0' });
+  rows.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'substituted', performed_lift_code: 'LP01' }, { recordedAt: 'r1' }));
+  rows.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'skipped' }, { recordedAt: 'r2' })); // bailed on the substitute too
+  rows.push(buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }));
+  const [f] = foldSessionPlans(rows);
+  const it = f.items.find(i => i.plan_item_id === 'i2');
+  assert.equal(it.outcome, 'skipped');
+  assert.equal(it.performed_lift_code, null);
+  assert.deepEqual(f.completed, []);
+});
+
+test('completed then substituted (correction order): the later substitution wins with its performed code', () => {
+  const rows = buildPlanAcceptedEvents(S(), [items[1]], { recordedAt: 'r0' });
+  rows.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'completed' }, { recordedAt: 'r1' }));
+  rows.push(buildItemOutcomeEvent(S(), { ...items[1], outcome: 'substituted', performed_lift_code: 'LP01' }, { recordedAt: 'r2' }));
+  rows.push(buildSessionCloseoutEvent(S(), 'finalized', { recordedAt: 'rz' }));
+  const [f] = foldSessionPlans(rows);
+  assert.deepEqual(f.completed, ['LP01']);
+});
+
 // ── authoritative dedup (#958-review carry-over) ──────────────────────────────
 
 test('duplicate idempotency_key rows collapse — no double count', () => {
