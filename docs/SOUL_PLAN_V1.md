@@ -39,19 +39,20 @@ A single item may carry an evidence-gated or owner-gated tag *in addition to* be
 | **S2** | The athlete's whole story reaches the voice (PR-A7 athlete identity; PR-B8a structured goals) | ✅ recorded complete | `services/athleteIdentity.js` (PR-A7, `test/athleteIdentity*.test.js`); `services/athleteGoals.js` (PR-B8a #980); persona-core cite-never-invent rules 6–7. |
 | **S3** | Credibility floor: never celebrate an unlogged set (PR-A4 AC8-c); refuse-and-ask on an unresolved lift (PR-A3 → D7(a)) | ✅ recorded complete | AC8(c) celebration lock-in guard (referenced in the PR-A6 note); D7(a) `services/unresolvedLiftGate.js` (#957, Decision Desk #942). |
 | **S4** | Current-session truth proven live (LT-007 hard gate) | ✅ **PASS** (2026-07-09) | `docs/TEST_QUEUE.md` LT-007 (7/7), PR #933. *Evidence-gated — satisfied.* |
-| **S5** | Engine-granted voice wired: mode + register into the live voice (PR-B1/B2/B3 pure modules; PR-B4 wiring) | ◐ **PARTIAL — remaining required work** | Modules ✅ (`coachMode.js`, `registerPermissions.js`, `celebrationScarcity.js`). B4-1/B4-3 set/block path + profanity suppressor ✅ (`BACKLOG.md` "PR-B4 split"), **staged OFF** (`ATLAS_COACH_PROFANITY`). **Open:** the chat-path **register** half (B4-4 register), the deferred `selectCoachMode` input-set completion, and the **LT-010** live card. |
+| **S5** | Engine-granted voice wired: mode + register into the live voice (PR-B1/B2/B3 pure modules; PR-B4 wiring) | ◐ **PARTIAL — remaining required work** | Modules ✅ (`coachMode.js`, `registerPermissions.js`, `celebrationScarcity.js`). B4-1/B4-3 set/block path + profanity suppressor ✅ (`BACKLOG.md` "PR-B4 split"), profanity **staged OFF** (`ATLAS_COACH_PROFANITY`). **Required-open:** (a) the chat-path **register** wiring (B4-4 register), (b) completion of the `selectCoachMode` input set at the set-reaction call site, (c) **LT-010** routine-vs-earned mode/register validation **with profanity OFF**. **Profanity activation and its live validation are NOT part of S5** — they are optional, separately owner-gated work (see below) and never block Soul completion or the handoff. |
 | **S6** | Engine-triggered challenge is real and lives on the live path (PR-B5a sandbag challenge) | ✅ build + live PASS | #954 on the #953 chat coach-mode foundation; `docs/TEST_QUEUE.md` LT-009 **PASS** (2026-07-10). |
 | **S7** | Engine-triggered reassurance is real (PR-B5b) and its live behavior is confirmed | ◐ build ✅; **live re-run pending** | Wiring #961/#963; precedence fix (LT-011 owner Decision 1). **Open:** LT-011 live re-run after deploy. *Evidence-gated.* |
 
 **Remaining required exit criteria (open as of 2026-07-12):**
 
-1. **S5 — finish the engine-granted voice:** wire the chat-path register half (B4-4 register), complete the `selectCoachMode` input set at the set-reaction call site, and record **LT-010** (register/mode live behavior; profanity never outside the certified cell) as PASS. *(evidence-gated: LT-010; owner-gated: flipping `ATLAS_COACH_PROFANITY` on is the owner's, after the LT-010 flight-recorder review.)*
+1. **S5 — finish the engine-granted voice:** (a) wire the chat-path register (B4-4 register), (b) complete the `selectCoachMode` input set at the set-reaction call site, and (c) record **LT-010** — routine-vs-earned coach mode/register behavior, verified from flight-recorder evidence, **with profanity OFF** — as PASS. *(evidence-gated: LT-010's required, profanity-OFF portion.)* **Profanity is out of scope for S5:** its activation and live validation are optional, separately owner-gated (see "Optional work" and "Owner-gated decisions").
 2. **S7 — record LT-011** (reassure voice live behavior) as PASS after deploy.
 
 S1–S4 and S6 are recorded complete. **Two required criteria remain (S5, S7); Soul is therefore not complete.**
 
 ### Optional work (never blocks Soul completion)
 
+- **Profanity register activation + its live validation (separately owner-gated).** The `casual/humor` register and the profanity **suppressor** ship with S5 (staged OFF), but turning profanity **on** is optional and requires a **separate, explicit owner approval**: `ATLAS_COACH_PROFANITY` **remains OFF unless separately and explicitly approved.** Its live check is the **optional profanity portion of LT-010**, run only after that authorization. **This never blocks Soul completion or the Soul→Post-Soul handoff**, and an un-run profanity portion does not prevent LT-010 from passing its required (profanity-OFF) Soul gate.
 - **PR-B8b — Tone dial** (owner-facing calibration surface). The plan marks it "optional — build when B4 has lived a few weeks." Convenience for a single-user app.
 - De-templated `ack_only` variety and richer arc wording (`BACKLOG.md` coaching-reactions follow-ups) — owner-gated coach-wording polish, not a correctness gap.
 
@@ -62,14 +63,14 @@ S1–S4 and S6 are recorded complete. **Two required criteria remain (S5, S7); S
 
 ### Evidence-gated work
 
-- **LT-010** (register/profanity) and **LT-011** (reassure) — the two open Soul live cards (S5, S7).
-- **GATE A — One-Brain promotion observation window.** PR-GATEA1 (evidence provenance, #981) and PR-GATEA2 (read-only eligible-window scorecard, #982) shipped; the window was **reset** to a fresh provenance-tagged window (`docs/verification/GATEA1_WINDOW_RESET_RUNBOOK.md`, `docs/ONE_BRAIN_PROMOTION_CRITERIA.md` §3). The ≥50 real-event floor must re-accumulate before the owner review is possible.
+- **LT-010** (required: routine-vs-earned mode/register with profanity OFF; profanity portion optional) and **LT-011** (reassure) — the two open Soul live cards (S5, S7).
+- **GATE A — One-Brain promotion observation window.** PR-GATEA1 (evidence provenance, #981) and PR-GATEA2 (read-only eligible-window scorecard, #982) shipped. **The fresh eligible-event numerical floor is already met** — current production carries well over 50 eligible `athlete_ui` / `evidence_eligible=TRUE` rows, and the synthetic / `FALSE` / smoke-provenance proof exists. GATE A is **not complete**; the remaining gap is (1) **varied genuine activity across multiple real workouts and days** (the §3 variety bar, not raw count), (2) the **production scorecard**, (3) a **human safety/quality review**, and (4) the **explicit owner promotion decision** (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md` §5, §8). This is a **parallel, owner-reserved lane** that does not block Soul completion (owner decision 2026-07-12).
 
 ### Owner-gated decisions
 
 - **GATE A / PR-A5 — promote One-Brain to primary** (owner-reserved, `docs/OWNER_CHECKIN_RULES.md` criterion 2 / `docs/ONE_BRAIN_PROMOTION_CRITERIA.md`). Evidence-gated *and* owner-gated. The burn-in sign-off that gates PR-12B is downstream of it.
 - **PR-B6 — Coach Moments Engine lane** (gated on PR-A5 live + the §10 forks, which are ratified as D6). The lane opener is owner-reserved.
-- **Flipping `ATLAS_COACH_PROFANITY` on** after the LT-010 review (part of S5's owner-gated tail).
+- **Flipping `ATLAS_COACH_PROFANITY` on** — a **separate, explicit owner approval**, **not** part of S5. It remains OFF unless separately approved; its live check is the optional profanity portion of LT-010, run only after that authorization. Never a Soul-completion or handoff blocker.
 - Any change to coaching philosophy / voice — already ratified as D1–D8 in `docs/ATLAS_VOICE_RATIFICATION_V1.md`; not re-litigated.
 
 > **Parallel-clock note — the "one brain" question (OWNER-RESOLVED 2026-07-12).** The Soul Plan runs **two clocks in parallel**: the voice/soul build and the One-Brain promotion clock (GATE A → PR-A5 → burn-in → PR-12B). PR-B4+ is gated on **LT-007**, *not* on promotion; only PR-B6 (Moments) and PR-12B sit behind PR-A5.
