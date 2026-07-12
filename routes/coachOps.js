@@ -39,6 +39,7 @@ const { assessLayoff } = require('../services/layoffGuard');
 const { getProfileGoal } = require('../services/profileGoal');
 const { renderSetVoice, findForbiddenContradictions, renderSubstitutionVoice, findSubstitutionContradictions } = require('../services/coachVoiceRenderer');
 const { analyzeSetSequence, assessNextMoveConflict, suppressBumpForRecovery, holdStimulusForRecovery } = require('../services/setEffortSignals');
+const { effortVerdict } = require('../services/justLoggedAnchor');
 const { assessRecoveryDeload } = require('../services/recoveryDeloadSelection');
 const { profileForGoal, modalityCategoryFor } = require('../services/trainingIntelligenceAdapter');
 const { gradeStimulus } = require('../services/stimulusGovernor');
@@ -362,7 +363,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
   }
 
   router.post('/api/coach/message', async (req, res) => {
-    const rawFacts = req.body && req.body.facts;
+    let rawFacts = req.body && req.body.facts;
     if (!rawFacts || typeof rawFacts !== 'object') {
       return standardError(req, res, 'facts object is required', null, 400);
     }
@@ -371,6 +372,24 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // routine block short-circuits to acknowledgment-only below and never calls Gemini.
     const kind = req.body.kind === 'plan' ? 'plan' : (req.body.kind === 'block' ? 'block' : 'set');
     const isSetLike = kind === 'set' || kind === 'block';
+
+    // effort_verdict is ENGINE-RULE-BOUND on the set path (sibling of the engine-only
+    // athlete_identity / progression_history overwrites below): recompute it from the
+    // just-logged set the client sent — the LAST todaySets entry, the same set the
+    // engine anchors on (justLoggedAnchor.recommendFromJustLoggedSet) — against
+    // rec.target_rir, via the SAME pure rule (effortVerdict), and ALWAYS overwrite.
+    // A forged level ("failure" on an RIR-3 set) can never reach the prompt OR the
+    // deterministic set voice (computeSetEffortExtras reads this corrected object);
+    // an honest echo recomputes to the identical value; a set with no RIR carries no
+    // verdict (nothing to read). Zero extra Sheets reads — the rule needs only the
+    // claimed set + target already in the payload. Done UP FRONT so every consumer
+    // (voiceBase recVerdict, enrichment, sanitizeFacts) sees the engine value. Block
+    // notes carry their own per-block recs (see BACKLOG).
+    if (kind === 'set' && rawFacts.rec && typeof rawFacts.rec === 'object') {
+      const sets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
+      const last = sets.length ? sets[sets.length - 1] : null;
+      rawFacts = { ...rawFacts, rec: { ...rawFacts.rec, effort_verdict: effortVerdict(last && last.rir, rawFacts.rec.target_rir) } };
+    }
 
     // PR-3 block-note tier: engine-owned classification of the just-logged block via
     // the pure batchNoteFacts → coachNoteTier fold (over the block's own sets plus any
