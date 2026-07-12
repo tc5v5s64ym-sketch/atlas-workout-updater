@@ -182,6 +182,9 @@ test('read budget: both routes compute identity from ALREADY-FETCHED rows (zero 
 });
 
 test('engine-only: the set-reaction route ALWAYS overwrites athlete_identity onto the facts', () => {
-  assert.match(coachOpsSrc, /facts\s*=\s*\{\s*\.\.\.facts,\s*athlete_identity:\s*athleteIdentity\s*\}/,
+  // The unconditional overwrite may carry additional engine-only fields on the same
+  // line (e.g. progression_history) — assert athlete_identity is overwritten, tolerant
+  // of a trailing field.
+  assert.match(coachOpsSrc, /facts\s*=\s*\{\s*\.\.\.facts,\s*athlete_identity:\s*athleteIdentity\s*[,}]/,
     'a client-supplied athlete_identity must never survive — the route overwrites it unconditionally');
 });
