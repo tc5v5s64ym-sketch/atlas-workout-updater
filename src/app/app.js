@@ -2430,6 +2430,14 @@ function matchesPlanEditName(ex, wanted) {
   return names.some(n => n === key || n.includes(key) || key.includes(n));
 }
 
+// The strong form of matchesPlanEditName: the wanted name IS the slot's identity
+// (case-insensitive name or canonicalName), no substring fallback.
+function planEditNameEquals(ex, wanted) {
+  const key = String(wanted || '').toLowerCase().trim();
+  if (!key) return false;
+  return [ex && ex.name, ex && ex.canonicalName].some(n => String(n || '').toLowerCase().trim() === key);
+}
+
 function clampActivePlanIndex() {
   if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return;
   if (!getActivePlannedSession().exercises.length) {
@@ -2499,17 +2507,44 @@ function applyProposedPlanEdit(edit) {
   if (action === 'remove_exercises') {
     if (!getActivePlannedSession() || !Array.isArray(getActivePlannedSession().exercises)) return none;
     const wanted = exercises.map(ex => ex.name).filter(Boolean);
-    const before = getActivePlannedSession().exercises.length;
-    getActivePlannedSession().exercises = getActivePlannedSession().exercises.filter(ex =>
-      !wanted.some(name => matchesPlanEditName(ex, name))
+    const slots = getActivePlannedSession().exercises;
+    // Wrong-target guard (sibling of resolvePlanTargets, PR #993): a wanted name
+    // that matches some slot EXACTLY removes only exact matches — the bidirectional
+    // substring fallback must not also sweep a longer-named slot the athlete never
+    // named ("Leg Press" removing "Single-Leg Seated Leg Press"). A name with no
+    // exact slot keeps the substring behavior (an LLM-echoed alias still resolves).
+    const exactByName = new Map(wanted.map(name => [name, slots.some(ex => planEditNameEquals(ex, name))]));
+    // The identity keys (name + canonicalName, lowercased) of every slot an exact
+    // wanted name removes — the evidence cleanup below clears by THESE, so a slot
+    // exact-matched via its canonicalName still gets its `name`-keyed completed
+    // evidence cleared (review note on #994: the two sweeps stay symmetric).
+    const exactIdentities = new Map(wanted.filter(name => exactByName.get(name)).map(name => {
+      const ids = new Set();
+      for (const ex of slots) {
+        if (!planEditNameEquals(ex, name)) continue;
+        for (const n of [ex.name, ex.canonicalName]) {
+          const k = String(n || '').toLowerCase().trim();
+          if (k) ids.add(k);
+        }
+      }
+      return [name, ids];
+    }));
+    const before = slots.length;
+    getActivePlannedSession().exercises = slots.filter(ex =>
+      !wanted.some(name => exactByName.get(name) ? planEditNameEquals(ex, name) : matchesPlanEditName(ex, name))
     );
     const removed = getActivePlannedSession().exercises.length !== before;
     if (removed) {
+      // The completed-evidence cleanup follows the SAME per-name precedence, so an
+      // exact removal never clears the logged evidence of a similarly-named lift —
+      // but DOES clear every identity of the slot(s) it actually removed.
       setSessionCompleted(getSessionCompleted().filter(done =>
         !wanted.some(name => {
-          const key = String(name || '').toLowerCase();
+          const key = String(name || '').toLowerCase().trim();
           const d = String(done || '').toLowerCase();
-          return key && (d === key || d.includes(key) || key.includes(d));
+          if (!key) return false;
+          if (exactByName.get(name)) return d === key || exactIdentities.get(name).has(d);
+          return d === key || d.includes(key) || key.includes(d);
         })
       ));
       clampActivePlanIndex();
