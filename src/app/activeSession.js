@@ -251,6 +251,11 @@ const _exports = (function () {
    * Only the pending entries are permuted; every pinned entry keeps its absolute slot.
    * No-op when ref isn't a movable pending slot, ref IS the current, toIndex is not a
    * finite number, or the position is unchanged. Pure — returns a NEW session. (PR-2.)
+   *
+   * keep in sync with app.js reorderPlannedExercise — the LIVE twin that applies this same
+   * pending-only / current-pinned RULE to the rich activePlannedSession.exercises array
+   * (that twin takes ABSOLUTE indices; this engine's toIndex is pending-RELATIVE). The
+   * workout-sheet-reorder e2e proves the two agree on identical logical moves.
    */
   function reorderExercise(session, ref, toIndex) {
     if (!session || !Array.isArray(session.exercises)) return session;

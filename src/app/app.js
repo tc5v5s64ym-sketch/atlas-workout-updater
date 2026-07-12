@@ -1632,9 +1632,17 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
 // the LIVE plan. The visible order lives in ONE place — activePlannedSession.exercises —
 // which getCanonicalSession() / plannedExerciseOrder() / remainingPlannedExercises() all
 // derive from, so permuting it here is the WHOLE mutation (no dual-write, no cursor
-// drift). This is the deterministic engine behind the sheet's drag: it mirrors
-// activeSession.reorderExercise's rule — completed slots and the CURRENT lift (the first
-// unlogged one) are PINNED; only the pending region AFTER the current is permuted.
+// drift).
+//
+// keep in sync with activeSession.reorderExercise (src/app/activeSession.js) — the pure
+// engine over the CANONICAL model. Same RULE: completed slots and the CURRENT lift (the
+// first unlogged one) are PINNED; only the pending region AFTER the current is permuted.
+// Different SIGNATURE by design: the engine's toIndex is pending-RELATIVE (an index among
+// the pending entries), whereas this live twin takes ABSOLUTE indices into the rich
+// activePlannedSession.exercises (the sheet card's slot − 1) and resolves the pending run
+// itself. The two are proven to yield identical ActiveSession state by the
+// workout-sheet-reorder e2e (CASE D/E), which drives this wrapper and compares it against
+// activeSession.reorderExercise for the same logical move.
 //
 // It is a PLAN MUTATION, not a data write: no write_id, no Sheets call, no proof fields,
 // and NO Session_Plans outcome — a reorder has no outcome vocabulary (the item is neither
