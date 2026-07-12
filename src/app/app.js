@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased â
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v131';
+const ATLAS_SHELL_BUILD = 'v132';
 
 
 
@@ -6867,6 +6867,10 @@ window.atlasAcceptPlan = acceptDisplayedPlan;
 window.firstUnloggedPlannedLift = firstUnloggedPlannedLift;
 window.plannedExerciseOrder = plannedExerciseOrder;
 window.remainingPlannedExercises = remainingPlannedExercises;
+// Workout Sheet (PR-1) reads the logged sets to summarize done/current cards. Its own
+// module (workoutSheet.js) mounts + wires itself to #session-pin; app.js only exposes
+// this read-only selector (the plan/remaining selectors above are already exposed).
+window.getSessionLog = getSessionLog;
 
 /* ===== Init ===== */
 

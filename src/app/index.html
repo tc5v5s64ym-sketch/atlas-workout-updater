@@ -529,6 +529,22 @@
     </div>
   </div>
 
+  <!-- Workout Sheet — a pull-down, snap-in-place view of the current session.
+       Display-only (PR-1): filled + driven by src/app/workoutSheet.js from the
+       canonical ActiveSession selectors; the session pin (#session-pin) is the pull
+       handle. Read-only — the note says so; no write path, no Sheets call. -->
+  <div id="workout-sheet-dim" class="ws-dim" hidden></div>
+  <section id="workout-sheet" class="workout-sheet" aria-label="Today's workout" aria-hidden="true">
+    <div class="ws-head">
+      <span class="ws-title" id="ws-title">TODAY</span>
+      <span class="ws-prog" id="ws-prog"></span>
+    </div>
+    <div class="ws-load"><i id="ws-progbar"></i></div>
+    <div class="ws-plan" id="ws-plan"></div>
+    <div class="ws-note">plan view &middot; <b>nothing is written to Sheets</b></div>
+    <div class="ws-grabber" id="ws-grabber" role="button" tabindex="0" aria-label="Resize workout sheet"><i></i></div>
+  </section>
+
   <!-- Coach side panel — opened from #coach-menu-btn. Read-only: readiness
        ticker (from /api/plan/intent-recommendation), the Views list, and recent
        sessions. Every row clicks an existing .tab-btn, so the tab engine and the
