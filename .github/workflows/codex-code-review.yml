@@ -123,6 +123,15 @@ jobs:
             "$PR_BASE_REF" \
             "+refs/pull/$PR_NUMBER/head"
 
+      - name: Require OpenAI API key
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::OPENAI_API_KEY is unavailable. Add it as a repository Actions secret (not an Actions variable, Codespaces secret, Dependabot secret, or unreferenced environment secret), then rerun this workflow."
+            exit 1
+          fi
+
       # Keep Codex last in this job. The structured result is passed to a fresh
       # runner for validation and PR commenting.
       - name: Run read-only Codex review
