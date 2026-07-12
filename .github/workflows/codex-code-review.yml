@@ -125,10 +125,10 @@ jobs:
 
       - name: Require OpenAI API key
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPEN_API_KEY: ${{ secrets.OPEN_API_KEY }}
         run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "::error::OPENAI_API_KEY is unavailable. Add it as a repository Actions secret (not an Actions variable, Codespaces secret, Dependabot secret, or unreferenced environment secret), then rerun this workflow."
+          if [ -z "$OPEN_API_KEY" ]; then
+            echo "::error::OPEN_API_KEY is unavailable as a repository Actions secret."
             exit 1
           fi
 
@@ -138,7 +138,7 @@ jobs:
         id: codex
         uses: openai/codex-action@v1
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          openai-api-key: ${{ secrets.OPEN_API_KEY }}
           permission-profile: ":read-only"
           safety-strategy: drop-sudo
           model: gpt-5.5
