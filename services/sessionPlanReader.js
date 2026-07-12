@@ -17,7 +17,10 @@
 //   - COMPLETION IS DERIVED FROM ITEM OUTCOMES, never from closeout_status. `completed`
 //     lists the lift actually PERFORMED: the planned code for a `completed` item, the
 //     performed code for a `substituted` item; a `skipped` or still-`planned` item
-//     contributes nothing (it was planned-but-not-performed).
+//     contributes nothing (it was planned-but-not-performed). A `completed` that
+//     follows a `substituted` on the same item (the explicit "Done with this
+//     exercise" on a substituted slot, PR #974) keeps the performed code — the Done
+//     finishes the item without erasing the deviation.
 //   - Supports finalized / abandoned / partial / substituted / skipped / still-open.
 //   - FAIL CLOSED: a malformed event, or two rows sharing an idempotency_key with
 //     different content (a corruption the writer's guard prevents but a hand-edit
@@ -118,7 +121,12 @@ function foldSessionPlans(rows) {
       cur.movement_pattern = e.movement_pattern || null;
     } else { // item_outcome — last one in order wins
       cur.outcome = e.outcome;
-      cur.performed_lift_code = e.outcome === 'substituted' ? e.performed_lift_code : null;
+      // The performed code: set by a substitution, PRESERVED by a later `completed`
+      // (the explicit "Done with this exercise" on a substituted slot — PR #974 —
+      // finishes the item, it does not un-substitute it; erasing the code here made
+      // the deviation invisible to drift), cleared by a `skipped` (nothing performed).
+      if (e.outcome === 'substituted') cur.performed_lift_code = e.performed_lift_code;
+      else if (e.outcome === 'skipped') cur.performed_lift_code = null;
       if (e.planned_lift_code && !cur.planned_lift_code) cur.planned_lift_code = e.planned_lift_code;
       if (e.movement_pattern && !cur.movement_pattern) cur.movement_pattern = e.movement_pattern;
     }
@@ -134,7 +142,8 @@ function foldSessionPlans(rows) {
       : 'open';
     const planned = itemList.map(it => it.planned_lift_code).filter(Boolean);
     const completed = itemList
-      .map(it => it.outcome === 'completed' ? it.planned_lift_code : it.outcome === 'substituted' ? it.performed_lift_code : null)
+      .map(it => it.outcome === 'completed' ? (it.performed_lift_code || it.planned_lift_code)
+        : it.outcome === 'substituted' ? it.performed_lift_code : null)
       .filter(Boolean);
     folded.push({ session_id: sess.session_id, plan_version: sess.plan_version, date: sess.date, status, items: itemList, planned, completed });
   }
