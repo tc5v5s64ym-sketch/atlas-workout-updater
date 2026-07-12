@@ -93,7 +93,7 @@ function loadApplyPlanEdit() {
   `;
   return new Function(
     `${STORE_SHIM}\n${stubs}\n${norm}\n${editBlock}\n; ` +
-    'return { applyProposedPlanEdit, getActivePlannedSession, setActivePlannedSession };'
+    'return { applyProposedPlanEdit, getActivePlannedSession, setActivePlannedSession, getSessionCompleted, setSessionCompleted };'
   )();
 }
 
@@ -183,6 +183,55 @@ test('bug3: add_exercises returns only the added exercises, carrying prescriptio
   assert.equal(out.exercises[0].reps, 15);
   assert.equal(out.exercises[0].sets, 3);
   assert.equal(out.exercises[0].rir, 2);
+});
+
+/* ══════════ Wrong-target guard — remove_exercises (sibling of PR #993) ══════════ */
+// matchesPlanEditName falls back to bidirectional substring matching, and
+// remove_exercises filter-removes EVERY match. So "remove Leg Press" on a plan
+// holding both "Leg Press" and "Single-Leg Seated Leg Press" also swept out the
+// single-leg slot the athlete never named — and the completed-evidence cleanup
+// repeated the same substring sweep. An exact wanted name must remove only its
+// exact slot; a name with no exact match keeps the substring fallback.
+
+function legDayPlan() {
+  return { label: 'Leg day', intentId: null, index: 0, exercises: [
+    { name: 'Single-Leg Seated Leg Press', canonicalName: 'Single-Leg Seated Leg Press' },
+    { name: 'Leg Extension', canonicalName: 'Leg Extension' },
+    { name: 'Leg Press', canonicalName: 'Leg Press' },
+  ] };
+}
+
+test('wrong-target guard: remove_exercises with an EXACT name removes only that slot', () => {
+  const { applyProposedPlanEdit, getActivePlannedSession, setActivePlannedSession } = loadApplyPlanEdit();
+  setActivePlannedSession(legDayPlan());
+  const out = applyProposedPlanEdit({ action: 'remove_exercises', exercises: [{ name: 'Leg Press' }] });
+  assert.ok(out && out.applied, 'remove applied');
+  assert.deepEqual(getActivePlannedSession().exercises.map(e => e.name),
+    ['Single-Leg Seated Leg Press', 'Leg Extension'],
+    'only the exact "Leg Press" slot is removed; the un-named single-leg variant stays');
+});
+
+test('wrong-target guard: the completed-evidence cleanup follows the same exact-name precedence', () => {
+  const { applyProposedPlanEdit, setActivePlannedSession, getSessionCompleted, setSessionCompleted } = loadApplyPlanEdit();
+  setActivePlannedSession(legDayPlan());
+  setSessionCompleted(['single-leg seated leg press', 'leg press']);
+  applyProposedPlanEdit({ action: 'remove_exercises', exercises: [{ name: 'Leg Press' }] });
+  assert.deepEqual(getSessionCompleted(), ['single-leg seated leg press'],
+    'the exact removal clears only its own completed evidence — the single-leg log evidence survives');
+});
+
+test('wrong-target guard: a wanted name with NO exact match keeps the substring fallback', () => {
+  const { applyProposedPlanEdit, getActivePlannedSession, setActivePlannedSession } = loadApplyPlanEdit();
+  setActivePlannedSession(legDayPlan());
+  // "Seated Leg Press" matches no slot exactly → the pre-existing bidirectional
+  // substring behavior holds unchanged (it reaches the single-leg slot as a
+  // substring of its name, and "Leg Press" as a substring of the wanted name) —
+  // an LLM-echoed alias still resolves.
+  const out = applyProposedPlanEdit({ action: 'remove_exercises', exercises: [{ name: 'Seated Leg Press' }] });
+  assert.ok(out && out.applied);
+  assert.deepEqual(getActivePlannedSession().exercises.map(e => e.name),
+    ['Leg Extension'],
+    'no exact slot named "Seated Leg Press" → the substring fallback behaves exactly as before');
 });
 
 test('bug3: the chat plan-edit render uses the applied model, not a second re-mapping', () => {
