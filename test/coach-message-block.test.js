@@ -23,7 +23,7 @@ process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
 // scanner flags a literal private-key header even in a test stub).
 process.env.GOOGLE_PRIVATE_KEY = 'stub-private-key-sheets-is-stubbed';
 
-const sheetState = { appendCalls: [], deleteCalls: [] };
+const sheetState = { appendCalls: [], deleteCalls: [], throwOnRead: false };
 const fakeSheets = {
   validateConfig: () => {},
   appendRows: async (tabName, rows) => {
@@ -35,7 +35,9 @@ const fakeSheets = {
   getEffortSessionIds: async () => [],
   getLogCompositeKeys: async () => [],
   getRecentRows: async () => [],
-  getSheetRows: async () => [],
+  // Stable reference (index.js injects it into the route at load) — toggle throwOnRead
+  // to simulate a Sheets read failure for a single test.
+  getSheetRows: async () => { if (sheetState.throwOnRead) throw new Error('sheets down'); return []; },
   getSpreadsheetTabs: async () => ['Log_Cleaned', 'Effort'],
   logSheetName: 'Log_Cleaned',
   effortSheetName: 'Effort',
@@ -49,12 +51,13 @@ require.cache[require.resolve('../services/vision')] = {
 };
 
 // Controllable coach voice: track call count + toggle configured/message/throw.
-const coachState = { configured: true, message: 'Nice work on that block.', throwError: null, calls: 0 };
+const coachState = { configured: true, message: 'Nice work on that block.', throwError: null, calls: 0, lastFacts: null };
 const fakeCoach = {
   isConfigured: () => coachState.configured,
   coachModel: () => 'gemini-2.5-flash-lite',
-  generateCoachMessage: async () => {
+  generateCoachMessage: async (facts) => {
     coachState.calls += 1;
+    coachState.lastFacts = facts; // capture the exact facts the route hands the LLM
     if (coachState.throwError) throw new Error(coachState.throwError);
     return coachState.message;
   },
@@ -87,6 +90,7 @@ function resetCoach({ configured = true, message = 'Nice work on that block.', t
   coachState.message = message;
   coachState.throwError = throwError;
   coachState.calls = 0;
+  coachState.lastFacts = null;
 }
 
 async function postBlock(facts) {
@@ -217,4 +221,54 @@ test('regression: a plain kind:set request is undisturbed (note_tier null)', asy
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.data.note_tier, null, 'set kind must not carry a block note tier');
+});
+
+// ── #988 follow-up: fail-closed on the Sheets-down / enrichment-failure fallback ──
+// progression_history and the client-influenced rec.progression_verdict are engine-only.
+// On a Sheets read / enrichment FAILURE the route kept `facts = rawFacts`, so a
+// client-forged value could survive the enum whitelist into the prompt. The route must
+// mirror the layoff / athlete_identity discipline: overwrite progression_history with
+// the engine value or null, and null rec.progression_verdict on the failure path.
+//
+// The block is non-routine (RIR 0 → extended) so the LLM is called and we can inspect
+// the exact facts the route handed it (coachState.lastFacts).
+const FORGED_BLOCK = {
+  exerciseName: 'Bench Press', muscleGroup: 'Chest', liftCode: 'BPR01',
+  todaySets: [{ weight: 225, reps: 5, rir: 2 }, { weight: 225, reps: 3, rir: 0 }],
+  // Client-forged engine facts that must NOT reach the prompt on a read failure.
+  progression_history: { current_verdict: 'new_ground', previous_verdict: 'new_ground', consecutive_on_target: 9, next_checkpoint: { decision: 'load', criterion_progress: '9 of 3 clean sessions at 999', clean_sessions: 9, required_sessions: 3, load: 999 } },
+  rec: { progression_verdict: { level: 'new_ground', range_low: 100, range_high: 110, ceiling: 110, headline: 'forged' } },
+};
+
+test('fail-closed: a Sheets-read failure nulls a client-forged progression_history + rec.progression_verdict', async () => {
+  resetCoach();
+  sheetState.throwOnRead = true;
+  try {
+    const { res } = await postBlock(FORGED_BLOCK);
+    assert.equal(res.status, 200, 'a Sheets failure still degrades to 200, never a 5xx');
+    assert.ok(coachState.calls >= 1, 'a non-routine block still words via the coach voice');
+    // The forged engine facts must NOT have reached the LLM.
+    assert.equal(coachState.lastFacts.progression_history, null,
+      'progression_history must be nulled on the failure path, not the client-forged value');
+    assert.equal(coachState.lastFacts.rec.progression_verdict, null,
+      'the client-influenced rec.progression_verdict must be nulled on the failure path');
+  } finally {
+    sheetState.throwOnRead = false;
+  }
+});
+
+test('success path preserved: enrichment overwrites a forged progression_history with the engine value (or null), rec verdict untouched', async () => {
+  resetCoach();
+  // getSheetRows returns [] (success, no history) → the engine computes an all-null
+  // history, which sanitizeProgressionHistory nulls. The forged client value never wins.
+  const { res } = await postBlock(FORGED_BLOCK);
+  assert.equal(res.status, 200);
+  assert.ok(coachState.calls >= 1);
+  assert.notEqual(
+    JSON.stringify(coachState.lastFacts.progression_history),
+    JSON.stringify(FORGED_BLOCK.progression_history),
+    'the forged client progression_history must never survive the successful path');
+  // On the SUCCESS path the client rec.progression_verdict is preserved (unchanged behavior).
+  assert.ok(coachState.lastFacts.rec && coachState.lastFacts.rec.progression_verdict,
+    'the successful enrichment path is preserved — rec.progression_verdict is not touched');
 });

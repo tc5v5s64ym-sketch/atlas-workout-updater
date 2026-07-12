@@ -439,18 +439,35 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // recomputed server-side (never trusting the client's rec.progression_verdict).
     // Gates the profanity permission below so a forged verdict can't reach the cell.
     let engineNewGround = false;
+    // progression_history is engine-only (services/progressionHistory, via
+    // enrichCoachFacts). Captured from a SUCCESSFUL enrichment and ALWAYS overwritten
+    // below (engine value, or null when the Sheets read / enrichment fails) so a client
+    // can never inject a forged checkpoint that survives on the Sheets-down fallback.
+    let progressionHistory = null;
+    let enrichmentFailed = false;
     if (rawFacts.liftCode) {
       try {
         const allLog = await getSheetRows(logSheetName);
         facts = enrichCoachFacts(rawFacts, allLog);
+        progressionHistory = facts.progression_history || null;
         athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
         scarcity = computeCelebrationScarcity(allLog, { asOf: todayIso() });
         engineNewGround = confirmTodayNewGround(rawFacts, allLog);
       } catch (_) {
         // Keep client facts as-is if Sheets read or enrichment fails.
+        enrichmentFailed = true;
       }
     }
-    facts = { ...facts, athlete_identity: athleteIdentity };
+    // Fail closed on engine-only signals, mirroring the layoff / athlete_identity
+    // discipline: progression_history is the engine value or null in EVERY path, and on
+    // a genuine enrichment failure the client's unconfirmed rec.progression_verdict is
+    // also nulled (the server-side new_ground gate already failed closed:
+    // engineNewGround=false) so a forged verdict can't reach the prompt. The successful
+    // path is unchanged — progressionHistory holds the engine value and rec is untouched.
+    facts = { ...facts, athlete_identity: athleteIdentity, progression_history: progressionHistory };
+    if (enrichmentFailed && facts.rec && typeof facts.rec === 'object' && facts.rec.progression_verdict != null) {
+      facts = { ...facts, rec: { ...facts.rec, progression_verdict: null } };
+    }
 
     // Plan voice: derive the return-after-layoff signal from the log server-side so
     // a "volume pulled back" claim can only come from the engine, never the client.
