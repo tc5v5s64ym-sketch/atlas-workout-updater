@@ -5,6 +5,8 @@
 > **Source:** the owner-provided external "Atlas Post-Soul V1 Finishing Plan" (baseline verified 2026-07-09, drafted at **PR #946**). This file is the **reconciled** installation of that plan against current `main` (**PR #995**). Every proposed item below is re-classified — *shipped / superseded / partially complete / still current* — with the PR, file, test, or code that supports the classification. The original task queue is **not** installed unchanged.
 > **Model:** builder runs Opus 4.8 for all work (`CLAUDE.md` §"Model: Opus 4.8, always"). No model check-in.
 
+> **⚠ UNRESOLVED OWNER GATE — GATE A (One-Brain promotion).** This plan may be active while GATE A is still open. **GATE A → PR-A5 (promote One-Brain to primary) is an active parallel, evidence-gated, owner-reserved lane** (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`) that runs on its own observation window — reset to a fresh provenance-tagged window after PR-GATEA1 (`docs/verification/GATEA1_WINDOW_RESET_RUNBOOK.md`). **Owner decision (2026-07-12):** promotion is **not** a Soul-completion criterion and does **not** block this finishing plan — but any POST item (or downstream capability, e.g. PR-B6 Coach Moments, PR-12B legacy deletion) whose specification explicitly requires promotion **stays blocked until the owner promotes**. **Promotion never occurs automatically**, and neither Soul completion nor selecting this plan constitutes a promotion decision.
+
 ---
 
 ## 0. Why this document is reconciled, not transcribed
@@ -56,7 +58,7 @@ POST-01 (this plan's adoption) may be installed as *queued* governance now, but 
 |---|---|---|
 | 1 | Mandatory Soul Plan items complete | **NOT met.** Required Soul exit criteria remain open — see `docs/SOUL_PLAN_V1.md` → completion contract. |
 | 2 | Optional Soul items clearly marked optional/deferred | Addressed by the Soul completion contract added in this PR (PR-B8b optional; PR-12B / drift Part 2b deferred). |
-| 3 | Independent One-Brain burn-in / legacy-deletion clock documented and non-silent | **Documented.** GATE A (One-Brain promotion) runs on its own evidence clock; PR-GATEA1/GATEA2 shipped the provenance + scorecard, and the observation window was **reset** to a fresh provenance-tagged window (`docs/verification/GATEA1_WINDOW_RESET_RUNBOOK.md`). It is a **parallel clock**, per the Soul Plan's "two clocks" framing. See §Handoff for how it relates to Soul completion. |
+| 3 | Independent One-Brain burn-in / legacy-deletion clock documented and non-silent | **Documented.** GATE A (One-Brain promotion) runs on its own evidence clock; PR-GATEA1/GATEA2 shipped the provenance + scorecard, and the observation window was **reset** to a fresh provenance-tagged window (`docs/verification/GATEA1_WINDOW_RESET_RUNBOOK.md`). It is a **parallel clock**, per the Soul Plan's "two clocks" framing — **owner-confirmed 2026-07-12 as non-blocking** for Soul completion and this plan's activation (see the ⚠ GATE A banner + §Handoff). |
 | 4 | `main` is green | Assumed green at #995 (CI-gated merges). Re-verify at build time. |
 | 5 | No open Soul PR | Re-verify at build time (this PR is docs-only and does not itself start a Soul PR). |
 | 6 | Deployed app matches current `main` | Owner/deploy-verified live check required at build time. |
@@ -156,7 +158,7 @@ This plan is **queued behind Soul**. The rule (authoritative copy in `docs/SOUL_
 2. **Once every required Soul exit criterion is recorded complete**, the normal agent work-selection process (`CLAUDE.md` Backlog discipline → `docs/DECISION_KERNEL.md` document precedence → `docs/ACTIVE_ROADMAP.md`) must select **this document** as the next governed phase — **without requiring another owner prompt.**
 3. **"Automatic handoff" means document-driven work selection only.** It creates **no** trigger, reminder, scheduled job, check-in, watcher, or background task. An agent selects this plan because the governance documents point here when Soul is done — nothing fires on a clock.
 
-The One-Brain promotion clock (GATE A → PR-A5 → burn-in → PR-12B) is a **parallel clock** per the Soul Plan's own framing; whether its completion is a *blocking* Soul exit criterion is recorded in the Soul completion contract as an owner-gated question, not decided here.
+The One-Brain promotion clock (GATE A → PR-A5 → burn-in → PR-12B) is a **parallel clock**. **Owner decision (2026-07-12): One-Brain promotion is NOT a blocking Soul-completion criterion, and this finishing plan may activate while GATE A remains open** — but it carries GATE A visibly as an **unresolved owner gate** (see the ⚠ GATE A banner at the top). Selecting this plan is not a promotion decision; promotion never occurs automatically (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md` §8), and any POST item whose spec requires One-Brain promotion stays blocked until the owner promotes.
 
 ---
 
