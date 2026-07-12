@@ -20,5 +20,6 @@ import './flightRecorder.js';
 import './legacyBridge.js';
 import './nav.js';
 import './drawer.js';
+import './workoutSheet.js';
 import './chat.js';
 import './coach-conversation.js';

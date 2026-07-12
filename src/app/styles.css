@@ -2576,3 +2576,78 @@ summary:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ===== Workout Sheet (PR-1, display-only) =====================================
+   A pull-down, snap-in-place view of the current session, driven by
+   src/app/workoutSheet.js. Below the drawer (z 55/60), above the app content.
+   All transforms/opacity are CSSOM writes from the module (CSP-safe); the settle
+   spring is the only transition and it is disabled under reduced-motion. */
+.ws-dim {
+  position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none;
+  z-index: 38; will-change: opacity;
+}
+.ws-dim.live { pointer-events: auto; }
+.ws-dim[hidden] { display: none; }
+
+.workout-sheet {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 40; height: 92vh; height: 92dvh;
+  display: flex; flex-direction: column; touch-action: none; will-change: transform;
+  transform: translateY(-100%);
+  background: var(--surface, #131419);
+  border: 1px solid var(--border-strong, rgba(244, 243, 239, 0.16)); border-top: none;
+  border-radius: 0 0 28px 28px;
+  box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.75);
+}
+.workout-sheet.ws-settle { transition: transform 0.34s cubic-bezier(0.22, 0.9, 0.3, 1); }
+
+.ws-head {
+  flex: 0 0 auto; padding: 16px 22px 10px; display: flex; align-items: baseline;
+  justify-content: space-between; gap: 10px;
+}
+.ws-title { font-family: var(--mono); font-size: 0.95rem; letter-spacing: 0.14em; color: var(--ink); }
+.ws-title em { font-style: normal; color: var(--ember, #E8772E); }
+.ws-prog { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.ws-load { flex: 0 0 auto; height: 1.5px; margin: 0 22px 6px; background: var(--border); position: relative; overflow: hidden; border-radius: 2px; }
+.ws-load i { position: absolute; inset: 0; width: 0; background: var(--ember, #E8772E); }
+
+.ws-plan { flex: 1; overflow-y: auto; padding: 10px 16px 14px; display: flex; flex-direction: column; gap: 9px; }
+.ws-card {
+  background: var(--bg, #0A0B0E); border: 1px solid var(--border); border-radius: 14px;
+  padding: 12px 14px; display: flex; align-items: center; gap: 12px; position: relative;
+  user-select: none; -webkit-user-select: none;
+}
+.ws-st {
+  width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; font-size: 0.72rem; font-family: var(--mono);
+}
+.ws-card.done .ws-st { color: var(--ok, #34C77B); border: 1px solid rgba(52, 199, 123, 0.4); }
+.ws-card.now .ws-st { color: var(--ember, #E8772E); border: 1px solid var(--ember, #E8772E); }
+.ws-card.todo .ws-st { color: var(--faint); border: 1px solid var(--border); }
+.ws-tx { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ws-nm { font-size: 0.9rem; font-weight: 500; letter-spacing: 0.01em; color: var(--ink); }
+.ws-dt { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); margin-top: 3px; }
+.ws-card.done .ws-nm {
+  color: var(--muted); text-decoration: line-through;
+  text-decoration-color: var(--faint); text-decoration-thickness: 1px;
+}
+.ws-card.now { border-color: rgba(232, 119, 46, 0.5); background: linear-gradient(0deg, var(--ember-soft, rgba(232, 119, 46, 0.14)), transparent 55%); }
+.ws-card.now::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 2px; background: var(--ember, #E8772E); border-radius: 2px; }
+
+.ws-note { flex: 0 0 auto; text-align: center; font-size: 0.66rem; color: var(--faint); padding: 2px 22px 8px; }
+.ws-note b { color: var(--muted); font-weight: 500; }
+.ws-grabber { flex: 0 0 auto; padding: 6px 0 12px; display: flex; justify-content: center; cursor: grab; touch-action: none; }
+.ws-grabber i { width: 56px; height: 5px; border-radius: 5px; background: var(--border-strong, rgba(244, 243, 239, 0.16)); }
+
+/* Pin pull-affordance hint (injected by the module into #session-pin). */
+.ws-pin-hint {
+  flex: 1 0 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin-top: 6px; color: var(--faint); font-size: 0.62rem; letter-spacing: 0.08em;
+  text-transform: uppercase; font-family: var(--mono);
+}
+.ws-pin-chev { display: inline-block; animation: ws-nudge 2.6s ease-in-out infinite; }
+@keyframes ws-nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .workout-sheet.ws-settle { transition: none; }
+  .ws-pin-chev { animation: none; }
+}
