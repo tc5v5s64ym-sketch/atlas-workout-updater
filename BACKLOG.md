@@ -991,6 +991,12 @@ Follow-ups filed from the automated code review of PR #721 (static data + docs o
 
 ---
 
+## Goal management surface — deferred (owner idea 2026-07-12) `[design]`
+
+Not active; do not build without explicit owner promotion. The concrete filing of the PR-B8a "goal EDITING is a later surface" note, scoped after the owner's 2026-07-12 "I currently have no active goals — don't invent them" decision.
+
+- **Goal management surface — a Goals panel for create / edit / pause / remove, plus chat-detected goal suggestions that require an explicit Save / Edit / No confirmation card. Never create goals automatically.** The read/plumbing already exists (`services/athleteGoals.js` reader → `sanitizeAthleteGoals` whitelist → chat voice; empty state = `null` = no goal claims, verified). This item is the *write/edit* half: an owner-facing surface to set and manage goals, and a suggestion flow where Atlas may *detect* a goal from conversation ("I want to hit 225 bench") and *offer* it on an explicit confirmation card — but a goal only ever persists on an explicit owner Save/Edit, never silently. Storage stays the ratified D8 Constraints `goal`-row convention (no schema change) unless a new decision says otherwise. Any real persistence is a `Constraints` **write** → owner-approved, trust-loop-scoped. **Guardrails (hard):** never auto-create, auto-edit, or auto-resume a goal; no fabricated goals/deadlines; a declined suggestion writes nothing. Build only when the owner promotes it.
+
 ## Someday / future scope
 
 _Not active queue. Guiding principle: Atlas infers from data and behaviour; it does not interrogate the user._
