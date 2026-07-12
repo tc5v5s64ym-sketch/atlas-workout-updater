@@ -14,6 +14,74 @@
 
 ---
 
+## Soul completion & Post-Soul handoff contract
+
+> **Added 2026-07-12 (docs-only).** This section makes "when is Soul done, and what happens next" explicit and evidence-checkable. It is authoritative for Soul completion and for the handoff to `docs/POST_SOUL_V1_FINISHING_PLAN.md`.
+> **Soul is NOT declared complete by this section.** It records the *criteria* and the *current remaining* items from repository evidence. Marking Soul complete is a separate, later action taken only when every **required** criterion below is recorded done.
+
+### How to read this contract
+
+Each item is classified into exactly one category:
+
+- **Required exit criterion** — Soul is not complete until this is recorded done. These gate the handoff.
+- **Optional work** — improves Atlas but never blocks Soul completion.
+- **Intentionally deferred work** — consciously postponed; explicitly *not* required for Soul completion.
+- **Evidence-gated work** — cannot be declared done by building alone; needs live/observation evidence recorded (a `docs/TEST_QUEUE.md` LT-### card, or an observation window).
+- **Owner-gated decision** — an owner check-in under `docs/OWNER_CHECKIN_RULES.md`; an agent may not self-close it.
+
+A single item may carry an evidence-gated or owner-gated tag *in addition to* being required (e.g. a required criterion whose proof is a live card).
+
+### Required Soul exit criteria — and their current state (repository evidence, 2026-07-12)
+
+| # | Required criterion (the plan's finish: "one persona, the athlete's whole story, an engine-granted voice") | State | Evidence |
+|---|---|---|---|
+| **S1** | One persona, one voice path (PR-A2 persona core; PR-A6 retire the duplicate verdict-reaction voice) | ✅ recorded complete | `services/coachPersonaCore.js`; PR-A2 review-pass 2026-07-09 (`BACKLOG.md`); PR-A6 retirement (#978, `test/verdictReactionRetired.test.js`). |
+| **S2** | The athlete's whole story reaches the voice (PR-A7 athlete identity; PR-B8a structured goals) | ✅ recorded complete | `services/athleteIdentity.js` (PR-A7, `test/athleteIdentity*.test.js`); `services/athleteGoals.js` (PR-B8a #980); persona-core cite-never-invent rules 6–7. |
+| **S3** | Credibility floor: never celebrate an unlogged set (PR-A4 AC8-c); refuse-and-ask on an unresolved lift (PR-A3 → D7(a)) | ✅ recorded complete | AC8(c) celebration lock-in guard (referenced in the PR-A6 note); D7(a) `services/unresolvedLiftGate.js` (#957, Decision Desk #942). |
+| **S4** | Current-session truth proven live (LT-007 hard gate) | ✅ **PASS** (2026-07-09) | `docs/TEST_QUEUE.md` LT-007 (7/7), PR #933. *Evidence-gated — satisfied.* |
+| **S5** | Engine-granted voice wired: mode + register into the live voice (PR-B1/B2/B3 pure modules; PR-B4 wiring) | ◐ **PARTIAL — remaining required work** | Modules ✅ (`coachMode.js`, `registerPermissions.js`, `celebrationScarcity.js`). B4-1/B4-3 set/block path + profanity suppressor ✅ (`BACKLOG.md` "PR-B4 split"), **staged OFF** (`ATLAS_COACH_PROFANITY`). **Open:** the chat-path **register** half (B4-4 register), the deferred `selectCoachMode` input-set completion, and the **LT-010** live card. |
+| **S6** | Engine-triggered challenge is real and lives on the live path (PR-B5a sandbag challenge) | ✅ build + live PASS | #954 on the #953 chat coach-mode foundation; `docs/TEST_QUEUE.md` LT-009 **PASS** (2026-07-10). |
+| **S7** | Engine-triggered reassurance is real (PR-B5b) and its live behavior is confirmed | ◐ build ✅; **live re-run pending** | Wiring #961/#963; precedence fix (LT-011 owner Decision 1). **Open:** LT-011 live re-run after deploy. *Evidence-gated.* |
+
+**Remaining required exit criteria (open as of 2026-07-12):**
+
+1. **S5 — finish the engine-granted voice:** wire the chat-path register half (B4-4 register), complete the `selectCoachMode` input set at the set-reaction call site, and record **LT-010** (register/mode live behavior; profanity never outside the certified cell) as PASS. *(evidence-gated: LT-010; owner-gated: flipping `ATLAS_COACH_PROFANITY` on is the owner's, after the LT-010 flight-recorder review.)*
+2. **S7 — record LT-011** (reassure voice live behavior) as PASS after deploy.
+
+S1–S4 and S6 are recorded complete. **Two required criteria remain (S5, S7); Soul is therefore not complete.**
+
+### Optional work (never blocks Soul completion)
+
+- **PR-B8b — Tone dial** (owner-facing calibration surface). The plan marks it "optional — build when B4 has lived a few weeks." Convenience for a single-user app.
+- De-templated `ack_only` variety and richer arc wording (`BACKLOG.md` coaching-reactions follow-ups) — owner-gated coach-wording polish, not a correctness gap.
+
+### Intentionally deferred work (consciously not required for Soul completion)
+
+- **PR-B5a Part 2b — drift-driven user-facing challenge.** Part 1 (`services/driftSignal.js` #949) and Part 2a (live dark read + shadow computation, `services/driftShadow.js` #976, default OFF) shipped; the athlete-visible drift→challenge consumption waits on shadow observability + explicit authorization. Sandbag challenge (S6) already satisfies the challenge mode.
+- **PR-12B — delete the superseded legacy engine lanes.** Runs on its own clock after the One-Brain burn-in; the plan states it "blocks nothing in Part B."
+
+### Evidence-gated work
+
+- **LT-010** (register/profanity) and **LT-011** (reassure) — the two open Soul live cards (S5, S7).
+- **GATE A — One-Brain promotion observation window.** PR-GATEA1 (evidence provenance, #981) and PR-GATEA2 (read-only eligible-window scorecard, #982) shipped; the window was **reset** to a fresh provenance-tagged window (`docs/verification/GATEA1_WINDOW_RESET_RUNBOOK.md`, `docs/ONE_BRAIN_PROMOTION_CRITERIA.md` §3). The ≥50 real-event floor must re-accumulate before the owner review is possible.
+
+### Owner-gated decisions
+
+- **GATE A / PR-A5 — promote One-Brain to primary** (owner-reserved, `docs/OWNER_CHECKIN_RULES.md` criterion 2 / `docs/ONE_BRAIN_PROMOTION_CRITERIA.md`). Evidence-gated *and* owner-gated. The burn-in sign-off that gates PR-12B is downstream of it.
+- **PR-B6 — Coach Moments Engine lane** (gated on PR-A5 live + the §10 forks, which are ratified as D6). The lane opener is owner-reserved.
+- **Flipping `ATLAS_COACH_PROFANITY` on** after the LT-010 review (part of S5's owner-gated tail).
+- Any change to coaching philosophy / voice — already ratified as D1–D8 in `docs/ATLAS_VOICE_RATIFICATION_V1.md`; not re-litigated.
+
+> **Parallel-clock note (the "one brain" question).** The Soul Plan's own framing runs **two clocks in parallel**: the voice/soul build and the One-Brain promotion clock (GATE A → PR-A5 → burn-in → PR-12B). PR-B4+ is gated on **LT-007**, *not* on promotion; only PR-B6 (Moments) and PR-12B sit behind PR-A5. Whether **One-Brain promotion must land before Soul is *declared* complete** — versus Soul completing on the voice criteria (S1–S7) while promotion continues on its own owner/evidence clock — is a **genuine owner decision the existing governance does not settle** (promotion is owner-reserved with no calendar deadline, so making it a blocking Soul criterion could stall handoff indefinitely). This contract classifies promotion as **evidence-gated + owner-gated parallel work** and does **not** unilaterally make it a required Soul exit criterion. The owner should confirm which reading governs; until then, S1–S7 are the required set and the handoff waits on S5 + S7.
+
+### The handoff rule (Soul → Post-Soul)
+
+1. **While any required Soul exit criterion (S1–S7) remains open, Soul retains execution priority.** The active queue stays the required Soul work; an agent selecting the next task picks the open Soul criterion, not the finishing plan.
+2. **Once every required Soul exit criterion is recorded complete**, the normal agent work-selection process — `CLAUDE.md` Backlog discipline → `docs/DECISION_KERNEL.md` document precedence → `docs/ACTIVE_ROADMAP.md` — must select **`docs/POST_SOUL_V1_FINISHING_PLAN.md`** as the next governed phase, **without requiring another owner prompt.** The roadmap and docs index are already wired to point there (this PR).
+3. **"Automatic handoff" is document-driven work selection only.** It creates **no** trigger, reminder, scheduled job, check-in, watcher, or background task. An agent proceeds because the governance documents route it there when Soul is done — nothing fires on a clock. (The Post-Soul entry gate then applies its own current-state verification before any finishing build begins.)
+
+---
+
 ## PART A — GETTING TO SOUL-READY
 
 ### A-0 — OWNER ACTION — Start the evidence clock (~10 min, Render dashboard, not a PR)
