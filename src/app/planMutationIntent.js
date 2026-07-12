@@ -92,6 +92,7 @@ const _exports = (function () {
     const tokens = splitTargets(targetPhrase).map(singular).filter(Boolean);
     if (!tokens.length) return [];
     const names = [];
+    const exactNames = [];
     for (const e of entries) {
       const en = singular(e.name);
       const enWords = wordSet(e.name);
@@ -100,8 +101,10 @@ const _exports = (function () {
       // against the slot's lift code with its trailing serial dropped: RDL01→"rdl",
       // OHP01→"ohp". Guarded to ≥2 chars so a stub code never over-matches.
       const codeStem = String(e.liftCode || e.lift_code || '').toLowerCase().replace(/\d+$/, '');
+      let exactHit = false;
       const hit = tokens.some(tok => {
-        if (en === tok || en.includes(tok) || tok.includes(en)) return true;
+        if (en === tok) { exactHit = true; return true; }
+        if (en.includes(tok) || tok.includes(en)) return true;
         if (codeStem.length >= 2 && tok === codeStem) return true;
         // Token-subset tier (owner live find 2026-07-03: "single leg press"
         // must resolve "Single-Leg Seated Leg Press"): every word of the
@@ -110,7 +113,20 @@ const _exports = (function () {
         const tokWords = [...wordSet(tok)];
         return tokWords.length >= 2 && tokWords.every(w => enWords.has(w));
       });
-      if (hit && !names.includes(e.name)) names.push(e.name);
+      if (hit && !names.includes(e.name)) {
+        names.push(e.name);
+        if (exactHit) exactNames.push(e.name);
+      }
+    }
+    // Wrong-target guard: for a SINGLE-token target, an EXACT name match ranks
+    // ahead of fuzzy (substring/word-subset) matches. The live callers mutate
+    // targetNames[0], so plan order alone would let "skip leg press" act on a
+    // "Single-Leg Seated Leg Press" slot that happens to come earlier — a slot the
+    // athlete never named. Fuzzy matches still resolve, ranked after. COMPOUND
+    // targets keep plan order: the caller acts on every match, so there is no
+    // single wrong pick to guard, and the pinned compound resolutions are unchanged.
+    if (tokens.length === 1 && exactNames.length) {
+      return exactNames.concat(names.filter(n => !exactNames.includes(n)));
     }
     return names;
   }

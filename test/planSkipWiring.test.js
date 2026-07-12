@@ -103,6 +103,51 @@ test('ADD-2: the same skip carried behind a reason clause still removes the slot
   assert.ok(!h.getExercises().includes('Romanian Deadlift'), 'RDL slot removed despite the leading reason');
 });
 
+// Wrong-target guard — the plan realistically holds BOTH a "Leg Press" slot and a
+// "Single-Leg Seated Leg Press" slot (the exact pair the implicit-substitution
+// redundancy fix cites as co-occurring live). A mutation that NAMES "leg press"
+// must act on the exact slot, never the fuzzy single-leg variant that happens to
+// come first in plan order.
+function planWithLegPressVariants() {
+  return {
+    label: 'Leg day',
+    exercises: [
+      { name: 'Single-Leg Seated Leg Press', canonicalName: 'Single-Leg Seated Leg Press', liftCode: 'SLP01' },
+      { name: 'Leg Extension', canonicalName: 'Leg Extension', liftCode: 'LEX01' },
+      { name: 'Leg Press', canonicalName: 'Leg Press', liftCode: 'LEP01' },
+    ],
+    index: 0,
+  };
+}
+
+test('wrong-target guard: "skip leg press" removes the EXACT Leg Press slot, never the single-leg variant', () => {
+  const h = loadMutationHarness();
+  h.setActivePlannedSession(planWithLegPressVariants());
+
+  const result = h.tryApplyPlanMutation('skip leg press');
+
+  assert.equal(result, true, 'the named skip is handled deterministically');
+  assert.deepEqual(h.getExercises(), ['Single-Leg Seated Leg Press', 'Leg Extension'],
+    'the exact "Leg Press" slot is removed; the un-named variant is untouched');
+  assert.ok(
+    h.getEvents().some(e => e.type === 'atlas:plan-mutated' && /Skipped Leg Press\./.test(e.detail.summary)),
+    'the announced skip names the slot the athlete actually named'
+  );
+});
+
+test('wrong-target guard: "swap leg press for hack squat" replaces the EXACT slot, single-leg variant untouched', () => {
+  const h = loadMutationHarness();
+  h.setActivePlannedSession(planWithLegPressVariants());
+
+  const result = h.tryApplyPlanMutation('swap leg press for hack squat');
+
+  assert.equal(result, true, 'the named swap is handled deterministically');
+  const names = h.getExercises();
+  assert.ok(names.includes('Single-Leg Seated Leg Press'), 'the un-named variant is untouched');
+  assert.ok(!names.includes('Leg Press'), 'the named slot is swapped out');
+  assert.ok(names.some(n => /hack squat/i.test(n)), 'the substitute takes the named slot');
+});
+
 test('ADD-2: a non-plan "no X" (nothing in the plan matches) falls through, mutates nothing', () => {
   const h = loadMutationHarness();
   h.setActivePlannedSession(planWithRdl());

@@ -169,6 +169,32 @@ test('token-subset tier: every word must be present, and it needs two words', ()
   // unchanged here.)
 });
 
+test('wrong-target guard: an EXACT name match outranks a substring match (single-token target)', () => {
+  const plan = [
+    { name: 'Single-Leg Seated Leg Press', status: 'pending' },
+    { name: 'Leg Extension', status: 'pending' },
+    { name: 'Leg Press', status: 'pending' },
+  ];
+  // The athlete named "leg press" EXACTLY — that slot must rank first: the live
+  // caller (tryApplyPlanMutation / tryApplyImplicitSubstitution) mutates
+  // targetNames[0], so plan order alone would skip/swap the single-leg variant
+  // the athlete never named. The fuzzy match still resolves — ranked after.
+  assert.deepEqual(resolvePlanTargets('leg press', plan), ['Leg Press', 'Single-Leg Seated Leg Press']);
+  // Order-independent: the exact slot ranks first wherever it sits in the plan.
+  assert.deepEqual(resolvePlanTargets('leg press', plan.slice().reverse()), ['Leg Press', 'Single-Leg Seated Leg Press']);
+  // The singular tier still counts as exact ("deadlifts" names the "Deadlift" slot).
+  assert.deepEqual(
+    resolvePlanTargets('deadlifts', [{ name: 'Romanian Deadlift', status: 'pending' }, { name: 'Deadlift', status: 'pending' }]),
+    ['Deadlift', 'Romanian Deadlift']);
+  // NO exact match → plan order unchanged (the documented slice(0,1) compromise).
+  assert.deepEqual(resolvePlanTargets('press', [{ name: 'Bench Press' }, { name: 'Overhead Press' }]), ['Bench Press', 'Overhead Press']);
+  // COMPOUND targets keep plan order — the caller acts on ALL matches, so there
+  // is no single wrong pick to guard (and the pinned compound expectations hold).
+  assert.deepEqual(
+    resolvePlanTargets('deadlifts/rdls', [{ name: 'Romanian Deadlift' }, { name: 'Deadlift' }]),
+    ['Romanian Deadlift', 'Deadlift']);
+});
+
 test('a slash-set log is never read as a mutation', () => {
   assert.equal(classifyMutationIntent('skip 225 5/2'), null);
   assert.equal(classifyMutationIntent('back squat 225 5/2 5/2'), null);
