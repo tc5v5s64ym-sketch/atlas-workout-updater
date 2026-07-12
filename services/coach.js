@@ -1231,6 +1231,14 @@ function sanitizeChatContext(context) {
       } : { exercise: null, failure_count: null, sets: [] })).filter(g => g.exercise)
     : [];
 
+  // LT-011 (Owner Decision 1): the engine places `reassure` ABOVE `challenge`, so once
+  // reassure is decided for this message the challenge signal must not reach the model
+  // at all. Suppress memory_patterns in reassure mode — the deterministic half of the
+  // precedence — so an explicit-discouragement message can't be pulled into a challenge
+  // ("under target 5 of 5 — what's going on?") by the pattern data. Reassure zooms out
+  // on trends / athlete_identity / the stalled lift's own arc, never memory_patterns.
+  const coachMode = sanitizeCoachMode(c.coach_mode);
+
   return {
     recommended_label: strOrNull(c.recommended_label),
     recommended_focus: strOrNull(c.recommended_focus),
@@ -1238,7 +1246,7 @@ function sanitizeChatContext(context) {
     recent_sessions,
     stalls,
     muscle_gaps,
-    memory_patterns,
+    memory_patterns: coachMode === 'reassure' ? [] : memory_patterns,
     plan_state,
     current_preview,
     current_plan,
@@ -1260,7 +1268,7 @@ function sanitizeChatContext(context) {
     // PR-B4 (slice 1) — the coaching mode + granted register for the chat voice.
     // Same whitelist as the set-reaction facts; profanity_ok withheld until its
     // suppressor lands. Null when the route hasn't computed them yet (additive).
-    coach_mode: sanitizeCoachMode(c.coach_mode),
+    coach_mode: coachMode,
     register: sanitizeRegister(c.register)
   };
 }
