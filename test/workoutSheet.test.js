@@ -87,6 +87,14 @@ describe('workoutSheet pure helpers', () => {
     assert.match(WS.cardDetailText(bench), /1 set · top 225×5 @2/); // one bench set in the fixture
     assert.match(WS.cardDetailText(incline), /set 2\/3 · next 70×8 @2/); // one set logged → next is set 2
     assert.match(WS.cardDetailText(ohp), /3 sets · 115×6 @2/);
+    // Over-logged (more sets than prescribed) clamps the counter to the target — never "set 5/3".
+    const [over] = WS.buildSheetCards({
+      planned: [{ name: 'Incline DB Press', canonicalName: 'Incline DB Press', weight: 70, reps: 8, sets: 3, rir: 2 }],
+      remaining: ['Incline DB Press'],
+      log: [0, 1, 2, 3].map(() => ({ exercise: 'Incline DB Press', weight: 70, reps: 8, rir: 2 })), // 4 logged vs sets:3
+    });
+    assert.match(WS.cardDetailText(over), /set 3\/3 · next 70×8 @2/, 'counter clamps at the target, not set 5/3');
+
     // Never invents a number the inputs don't carry.
     for (const c of [bench, incline, ohp]) {
       for (const n of (WS.cardDetailText(c).match(/\d+(\.\d+)?/g) || [])) {

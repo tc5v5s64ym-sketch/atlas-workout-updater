@@ -114,7 +114,9 @@ export function cardDetailText(card) {
   if (card.status === 'current') {
     const done = card.logged ? card.logged.count : 0;
     const target = p.sets != null ? p.sets : null;
-    const counter = target != null ? `set ${done + 1}/${target}` : `${done} set${done === 1 ? '' : 's'} in`;
+    // Clamp the counter to the target so an over-logged lift (more sets than
+    // prescribed) never reads "set 5/3" — it caps at "set 3/3".
+    const counter = target != null ? `set ${Math.min(done + 1, target)}/${target}` : `${done} set${done === 1 ? '' : 's'} in`;
     const next = set(p.weight, p.reps);
     return next ? `${counter} · next ${next}${rir}` : counter;
   }
