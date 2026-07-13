@@ -5,7 +5,7 @@
 # Primary risk labels — exactly ONE per PR.
 - name: auto-safe
   color: "0e8a16"   # green
-  description: "Automation can take to merge-ready; no owner involvement needed."
+  description: "Automation may routine-merge after all gates pass; no owner involvement needed."
 - name: owner-live-test
   color: "fbca04"   # yellow
   description: "Live app test advised (advisory, not a halt); owner initiates it."

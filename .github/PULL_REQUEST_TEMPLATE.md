@@ -1,6 +1,7 @@
 <!--
 Atlas Merge Card — fill every field. Empty, stale, skipped, errored, unavailable,
-or incomplete required signals are failures. Dale is the only merge authority.
+or incomplete required signals are failures. Routine PRs are merge-authorized
+only after every gate passes; owner-reserved PRs stop for Dale.
 -->
 
 ## 🟦 Atlas Merge Card
@@ -13,15 +14,17 @@ or incomplete required signals are failures. Dale is the only merge authority.
 | **Files / categories touched**    | <!-- e.g. docs-only · governance -->                                               |
 | **Tests / checks**                | <!-- command/check + result; not-run = FAIL when required -->                      |
 | **Native Codex GitHub Review**    | <!-- exact head SHA + findings resolved / 👍 / errored(=FAIL) / not-run(=FAIL) --> |
-| **ChatGPT Atlas Contract Review** | <!-- READY FOR DALE MERGE / NON-BLOCKING / BLOCKING / not-run(=FAIL) -->           |
-| **Owner action required**         | <!-- No · or Yes + reserved criterion -->                                          |
+| **ChatGPT Atlas Contract Review** | <!-- risk-triggered: READY FOR DALE MERGE / NON-BLOCKING / BLOCKING / not required for routine --> |
+| **Owner action required**         | <!-- No (routine) · or Yes + reserved criterion -->                                |
 | **Live test script**              | <!-- steps for Dale if needed, else n/a -->                                        |
-| **Merge recommendation**          | <!-- READY FOR DALE MERGE / fix-then-review / hold-for-Dale -->                    |
+| **Merge authority**               | <!-- Codex may routine-merge / fix-then-review / hold-for-Dale -->                 |
 
 <!--
 Current-head rule: after the final push, comment `@codex review`. Any later push
 makes that native review stale. Native Codex review and ChatGPT Atlas Contract
-Review are distinct; both are required. No agent may merge.
+Review are distinct; ChatGPT review is risk-triggered. Never merge when required
+checks or current-head native review are missing, stale, skipped, errored, failed,
+or incomplete.
 -->
 
 ---
@@ -46,7 +49,8 @@ Review are distinct; both are required. No agent may merge.
 - [ ] No approval-gate / trust-contract change (or explicitly scoped and approved)
 - [ ] No roadmap/vision reorder (or explicitly scoped and approved)
 - [ ] One concern only; no future roadmap work bundled
-- [ ] Dale remains the sole merge authority; auto-merge is off
+- [ ] Routine merge authority applies only if every gate passes; owner-reserved
+      changes stop for Dale
 
 ### Tests run
 

@@ -3,8 +3,9 @@
 > **Status:** Active. Companion to `docs/AUTOMATION_PROTOCOL.md` and
 > `docs/AGENT_WORKFLOW.md`.
 
-Codex is the implementation agent. ChatGPT is the product decision desk and
-external Atlas Contract Review. Dale is the only merge authority.
+Codex is the implementation agent and routine merge operator. ChatGPT is the
+product decision desk and risk-triggered external Atlas Contract Review. Dale is
+the merge authority for owner-reserved PRs.
 
 ## Consult first; escalate only when reserved
 
@@ -95,8 +96,20 @@ ChatGPT or native Codex review approval never authorizes a production write.
 
 ## Merge boundary
 
-Only Dale may merge. `READY FOR DALE MERGE` means the mandatory native Codex
-GitHub Review, external ChatGPT Atlas Contract Review, required checks, scope,
-risk, and merge card are complete. It is not delegated merge permission.
+Codex may merge routine PRs only after the active merge-authority gate passes:
+authorized one-concern scope, all required GitHub checks green, exact-current-head
+native Codex GitHub Review after the final push, no P0/P1 or unresolved
+actionable review thread, complete risk/scope/branch/merge-card evidence,
+current and mergeable branch, and no owner-reserved decision.
 
-Codex must never merge, enable auto-merge, or instruct a workflow/bot to merge.
+Codex must never merge when a required check or exact-head native review is
+missing, stale, skipped, errored, failed, or incomplete. For routine PRs, prefer
+GitHub auto-merge when available; otherwise Codex may merge directly with the
+exact reviewed head SHA and then continue the next approved concern from fresh
+main.
+
+Dale remains required for owner-only or gym evidence; new product direction,
+coaching philosophy, or scope; schema, migrations, deletion, credentials,
+security-sensitive infrastructure, or production-data risk;
+application/runtime/provider/model changes; One-Brain or other promotion
+decisions; genuine unresolved governance conflicts; and explicit owner holds.

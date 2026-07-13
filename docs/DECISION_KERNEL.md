@@ -115,7 +115,7 @@ Those five are also the boundary where the owner or a decision desk may be invol
 
 ## Operational completeness
 
-With this kernel in place, the active decision machinery — derivable implementation authority, four owner-reserved categories, ChatGPT Atlas Decision Desk, separate native Codex and Atlas Contract Review lanes, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine execution. Dale remains the only merge authority.
+With this kernel in place, the active decision machinery — derivable implementation authority, owner-reserved categories, ChatGPT Atlas Decision Desk, mandatory native Codex review, risk-triggered Atlas Contract Review, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine execution. Codex may merge routine PRs after every gate passes; Dale remains the merge authority for owner-reserved PRs.
 
 **Future process changes require evidence of an actual bottleneck** — a concrete, observed friction in the loop, not a hypothetical refinement. Absent that evidence, default effort returns to **building Atlas** (the product), not refining the workflow.
 

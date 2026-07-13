@@ -41,10 +41,10 @@ jobs:
               'e.g. docs-only',
               'low / medium / high -->',
               'command/check + result; not-run',
-              'READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
-              'or Yes + reserved criterion',
+              'risk-triggered: READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
+              'No (routine) · or Yes + reserved criterion',
               'steps for Dale if needed',
-              'READY FOR DALE MERGE / fix-then-review / hold-for-Dale -->',
+              'Codex may routine-merge / fix-then-review / hold-for-Dale -->',
               // prose
               'One sentence: the single concern',
               'STILL BROKEN / ALREADY FIXED',

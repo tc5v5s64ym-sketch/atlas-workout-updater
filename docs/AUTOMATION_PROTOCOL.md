@@ -4,13 +4,13 @@
 > `docs/AGENT_WORKFLOW.md`, `docs/OWNER_CHECKIN_RULES.md`, and
 > `docs/RISK_LABELS.md`.
 
-This protocol defines positive evidence, review separation, and merge readiness.
+This protocol defines positive evidence, review separation, and merge authority.
 It changes no Atlas application behavior, runtime model, prompt, schema, approval
 gate, or write path.
 
 ## 1. Roles
 
-### Codex — implementation agent
+### Codex — implementation agent and routine merge operator
 
 - Implements one approved concern per PR after the Current-State Verification
   Gate.
@@ -18,7 +18,10 @@ gate, or write path.
 - Tests, classifies risk, opens the PR, completes the merge card, and fixes only
   in-scope blockers.
 - Requests exact-head native review with `@codex review` after the final push.
-- Does not merge and does not enable auto-merge.
+- Merges only routine PRs after every gate in section 4 passes. Prefer GitHub
+  auto-merge when available; otherwise merge directly with the exact reviewed
+  head SHA.
+- Stops for Dale on owner-reserved PRs.
 
 No builder model is mandatory. Builder-model selection is not a governance or
 merge gate. Atlas application/runtime/provider/model changes remain separately
@@ -31,10 +34,13 @@ owner-reserved.
   trust-loop safety, secrets, and live-path test coverage.
 - A stale, missing, skipped, errored, or incomplete review is a failure.
 
-### ChatGPT — product decision desk and Atlas Contract Review
+### ChatGPT — product decision desk and risk-triggered Atlas Contract Review
 
 - Reviews roadmap fit, product intent, one-concern scope, Atlas trust, live-path
-  fit, write/schema risk, and accidental future work.
+  fit, write/schema risk, and accidental future work when a PR is
+  owner-reserved, high-risk, phase-transitioning, roadmap/vision/coaching or
+  trust-contract related, write/schema/security/runtime-model/promotion/
+  destructive, or genuinely ambiguous.
 - Returns `BLOCKING`, `NON-BLOCKING`, or `READY FOR DALE MERGE`.
 - Answers genuinely non-derivable product/scope/trust decisions with Dale.
 - Does not replace native Codex GitHub Review.
@@ -47,12 +53,15 @@ owner-reserved.
   status check.
 - A workflow conclusion is evidence; an agent's claim is not.
 
-### Dale — sole merge authority
+### Dale — owner-reserved merge authority
 
 - Owns product direction, owner-reserved decisions, promotion, production-data
-  authorization, and the final merge decision.
-- Is the only person who may merge. No agent, workflow, bot, queue, or auto-merge
-  setting has delegated merge authority.
+  authorization, and owner-reserved merge decisions.
+- Is required for owner-only or gym evidence; new product direction, coaching
+  philosophy, or scope; schema, migrations, deletion, credentials,
+  security-sensitive infrastructure, or production-data risk;
+  application/runtime/provider/model changes; One-Brain or other promotion
+  decisions; unresolved governance conflicts; and explicit owner holds.
 
 ## 2. Pass/fail principle
 
@@ -63,20 +72,20 @@ Positive evidence is required for every signal. Silence, an old-head review, a
 cancelled job, a self-reported test result, or the absence of a finding is not a
 substitute.
 
-| Signal                        | Pass requirement                                                                                                                     |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                          |
-| Native Codex GitHub Review    | completed review for the exact current head after a final-push `@codex review` request; all actionable review conversations resolved |
-| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict                                                                            |
-| Risk classification           | exactly one primary risk label                                                                                                       |
-| Merge card                    | present and fully completed                                                                                                          |
+| Signal                        | Pass requirement                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                             |
+| Native Codex GitHub Review    | completed review for the exact current head after a final-push `@codex review` request; all actionable review conversations resolved    |
+| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict when risk-triggered; not required for routine PRs settled by active governance |
+| Risk classification           | exactly one primary risk label                                                                                                          |
+| Merge card                    | present and fully completed                                                                                                             |
 
 Any new push invalidates the prior native review and requires a new
 `@codex review` request.
 
 ## 3. Review lanes are separate
 
-The two mandatory reviews answer different questions:
+The review lanes answer different questions:
 
 | Lane                          | Primary question                                                                  | Authority                                            |
 | ----------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
@@ -85,28 +94,37 @@ The two mandatory reviews answer different questions:
 
 Neither lane may impersonate or satisfy the other. The implementing Codex
 session's own review notes do not count as native GitHub review. Native review's
-clean result does not count as Atlas Contract Review.
+clean result does not count as Atlas Contract Review. Native Codex GitHub Review
+is mandatory for every PR. ChatGPT Atlas Contract Review is mandatory only when
+the risk triggers it.
 
-## 4. Merge readiness
+## 4. Merge authority
 
-A PR is `READY FOR DALE MERGE` only when all of the following hold:
+A routine PR may be merged by Codex only when all of the following hold:
 
 1. Every applicable required GitHub check passed.
 2. Native Codex GitHub Review passed for the exact current head after the final
    push's `@codex review` request.
-3. ChatGPT Atlas Contract Review is `NON-BLOCKING` or
-   `READY FOR DALE MERGE`.
-4. No P0/P1 finding or unresolved invariant, trust-loop, schema, security, or
+3. No P0/P1 finding or unresolved invariant, trust-loop, schema, security, or
    write-safety violation remains.
-5. One primary risk label is applied.
-6. The merge card and Vision Alignment Check are complete.
-7. The branch is one concern, fresh from `main`, and contains no unrelated or
+4. One primary risk label is applied.
+5. The merge card and Vision Alignment Check are complete.
+6. The branch is one concern, current with `main`, mergeable, and contains no unrelated or
    prior-session commits.
-8. The PR matches the active roadmap or an explicit owner instruction.
-9. Every owner-reserved decision is resolved.
+7. The PR matches the active roadmap or an explicit owner instruction.
+8. No owner-reserved decision is involved.
 
-This state is a recommendation and handoff. It never authorizes an agent or
-automation to merge. Dale alone merges.
+Never merge when a required check or exact-head native review is missing, stale,
+skipped, errored, failed, or incomplete.
+
+When all routine gates pass, Codex must prefer GitHub auto-merge when available.
+If auto-merge is unavailable, Codex may merge directly with the exact reviewed
+head SHA. After a routine merge, Codex verifies main, confirms deployment when
+applicable using read-only evidence, creates a fresh branch, and continues the
+next approved concern.
+
+Owner-reserved PRs stop for Dale after the non-owner gates pass. ChatGPT Atlas
+Contract Review remains mandatory for those PRs.
 
 ### Severity ladder
 
@@ -126,16 +144,19 @@ fork goes to ChatGPT's Atlas Decision Desk.
 
 Dale is required for:
 
-1. a live test only Dale can perform;
+1. owner-only or gym evidence;
 2. product vision, coaching philosophy, new product scope, or application/runtime
-   model changes;
+   provider/model changes;
 3. destructive or irreversible operations, including schema, migrations,
-   deletion, credentials, or security-sensitive infrastructure; and
-4. a genuine unresolvable conflict between governing principles.
+   deletion, credentials, security-sensitive infrastructure, or production-data
+   risk;
+4. One-Brain or other promotion decisions;
+5. a genuine unresolvable conflict between governing principles; and
+6. any explicit owner hold.
 
 No decision lane authorizes a real production write, weakens the
 preview-to-approve-to-write trust loop, changes proof-field semantics, amends an
-invariant/constitution, or grants merge authority.
+invariant/constitution, or grants owner-reserved merge authority.
 
 ## 6. Safety and scope remain unchanged
 

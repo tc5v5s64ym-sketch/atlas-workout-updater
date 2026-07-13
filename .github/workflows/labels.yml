@@ -36,7 +36,7 @@ jobs:
             const { owner, repo } = context.repo;
             // Mirrors .github/labels.yml — keep in sync.
             const labels = [
-              { name: 'auto-safe',       color: '0e8a16', description: 'Automation can take to merge-ready; no owner involvement needed.' },
+              { name: 'auto-safe',       color: '0e8a16', description: 'Automation may routine-merge after all gates pass; no owner involvement needed.' },
               { name: 'owner-live-test', color: 'fbca04', description: 'Live app test advised (advisory, not a halt); owner initiates it.' },
               { name: 'owner-decision',  color: 'd93f0b', description: 'Product/trust/roadmap/model judgment only the owner can make.' },
               { name: 'blocked',         color: 'b60205', description: 'Required signal failed/errored/skipped or contract violation open.' },
