@@ -128,24 +128,47 @@ jobs:
             const headSha = process.env.HEAD_SHA;
             const isCodex = (login) => /^chatgpt-codex-connector(?:\[bot\])?$/.test(login || '');
 
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner,
-              repo,
-              pull_number: pullNumber,
-              per_page: 100,
-            });
+            let threadCursor = null;
+            const reviewThreads = [];
+            do {
+              const data = await github.graphql(
+                `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100, after: $cursor) {
+                        nodes {
+                          isResolved
+                          comments(first: 100) {
+                            nodes {
+                              author { login }
+                              pullRequestReview { commit { oid } }
+                            }
+                          }
+                        }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }`,
+                { owner, repo, number: pullNumber, cursor: threadCursor }
+              );
+              const connection = data.repository.pullRequest.reviewThreads;
+              reviewThreads.push(...connection.nodes);
+              threadCursor = connection.pageInfo.hasNextPage
+                ? connection.pageInfo.endCursor
+                : null;
+            } while (threadCursor);
 
-            const currentCodexReviews = reviews.filter((review) =>
-              isCodex(review.user?.login)
-              && review.commit_id === headSha
-              && review.state !== 'DISMISSED'
+            const unresolvedCurrentCodexThreads = reviewThreads.filter((thread) =>
+              !thread.isResolved
+              && thread.comments.nodes.some((comment) =>
+                isCodex(comment.author?.login)
+                && comment.pullRequestReview?.commit?.oid === headSha
+              )
             );
 
-            // Native Codex posts a standard review only when it finds a P0/P1.
-            // Any current-head Codex review therefore blocks until a corrected
-            // commit receives a fresh clean review.
-            if (currentCodexReviews.length > 0) {
-              core.setFailed('Native Codex posted P0/P1 findings on the current commit. Resolve them, push a correction, and request a fresh review.');
+            if (unresolvedCurrentCodexThreads.length > 0) {
+              core.setFailed(`Native Codex has ${unresolvedCurrentCodexThreads.length} unresolved P0/P1 finding(s) on the current commit.`);
               return;
             }
 
