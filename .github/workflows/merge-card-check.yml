@@ -78,8 +78,8 @@ jobs:
               if (!/(https:\/\/github\.com\/\S+\/pull\/\d+#\S+|discussion_r\d+|issuecomment-\d+|pullrequestreview-\d+|review id[:# ]+\d+|comment id[:# ]+\d+)/i.test(nativeCodexReview)) {
                 problems.push('Native Codex GitHub Review must link or point to the native review result.');
               }
-              if (!/P0\/P1/i.test(nativeCodexReview)) {
-                problems.push('Native Codex GitHub Review must state that no unresolved current-head P0/P1 thread remains.');
+              if (!/\bno unresolved current-head P0\/P1\b/i.test(nativeCodexReview)) {
+                problems.push('Native Codex GitHub Review must affirm "no unresolved current-head P0/P1".');
               }
             }
 
