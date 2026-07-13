@@ -21,6 +21,7 @@ const { buildPersonaCore } = require('./coachPersonaCore');
 // (the same lockstep pattern as the stimulusGovernor enums below).
 const { COACH_MODES } = require('./coachMode');
 const { INTENSITIES } = require('./registerPermissions');
+const { normalizeExerciseKey, canonicalLiftCodeFor } = require('./exerciseEnrichment');
 // Stimulus Governor vocabularies (PR 481) — imported (not re-declared) so the
 // stimulus_grade whitelist stays in lockstep with the engine's controlled enums.
 const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusGovernorRules');
@@ -253,8 +254,18 @@ const PROFANITY_TOKENS = [
   /\bfuck\w*/i, /\bshit\w*/i, /\basshole[s]?\b/i, /\bbitch\w*/i,
   /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick\s?heads?\b/i,
 ];
+const PERSONAL_BEST_REFERENCE = /\bpersonal best\b/i;
+const PERSONAL_BEST_FACT_REFERENCES = [
+  /^\s*your\s+personal best\s+(?:on|for)\s+([^\r\n]{1,80}?)\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+  /^\s*your\s+([^\r\n]{1,80}?)\s+personal best\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+];
+const exerciseTokenKey = value => normalizeExerciseKey(value)
+  .split(/\s+/)
+  .filter(Boolean)
+  .sort()
+  .join(' ');
 const CELEBRATION_VOCAB = [
-  /\bpersonal best\b/i, /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
+  /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
   /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
 ];
 // ctx.profanity_only (bool): when true, run ONLY the profanity check and skip the
@@ -276,6 +287,44 @@ function findRegisterViolations(message, ctx) {
     }
   }
   if (!c.profanity_only && mode !== 'celebrate' && mode !== 'praise') {
+    // Free-form chat may answer a factual history question such as "what is my
+    // personal best?" without manufacturing a new earned moment. Only that neutral
+    // noun phrase is exempted; new-PR/new-record/crushed-it claims remain gated.
+    const personalBest = text.match(PERSONAL_BEST_REFERENCE);
+    if (personalBest) {
+      const factMatch = PERSONAL_BEST_FACT_REFERENCES
+        .map(re => text.match(re))
+        .find(Boolean);
+      const personalBestFacts = Array.isArray(c.personal_best_facts)
+        ? c.personal_best_facts.filter(f => f && typeof f === 'object')
+        : [];
+      let isEngineOwnedFact = false;
+      if (factMatch && personalBestFacts.length > 0) {
+        const claimedExercise = factMatch[1].trim().toLowerCase().replace(/\s+/g, ' ');
+        const claimedExerciseKey = normalizeExerciseKey(claimedExercise);
+        const claimedExerciseTokenKey = exerciseTokenKey(claimedExercise);
+        const claimedLiftCode = canonicalLiftCodeFor(claimedExercise);
+        const claimedWeight = Number(factMatch[2]);
+        const claimedReps = factMatch[3] == null ? null : Number(factMatch[3]);
+        const matching = personalBestFacts.filter(f => {
+          const exercise = typeof f.exercise === 'string'
+            ? f.exercise.trim().toLowerCase().replace(/\s+/g, ' ')
+            : '';
+          const exerciseMatches = normalizeExerciseKey(exercise) === claimedExerciseKey
+            || (claimedExerciseTokenKey && exerciseTokenKey(exercise) === claimedExerciseTokenKey)
+            || (claimedLiftCode && canonicalLiftCodeFor(exercise) === claimedLiftCode);
+          return exerciseMatches
+            && Number(f.weight) === claimedWeight
+            && (claimedReps == null || Number(f.reps) === claimedReps);
+        });
+        isEngineOwnedFact = matching.length === 1;
+      }
+      const isBoundedFactReference = c.allow_personal_best_reference === true
+        && isEngineOwnedFact;
+      if (!isBoundedFactReference) {
+        out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: personalBest[0] });
+      }
+    }
     for (const re of CELEBRATION_VOCAB) {
       const m = text.match(re);
       if (m) { out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: m[0] }); break; }
