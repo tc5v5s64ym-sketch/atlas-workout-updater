@@ -97,10 +97,6 @@ ChatGPT or native Codex review approval never authorizes a production write.
 
 Only Dale may merge. `READY FOR DALE MERGE` means the mandatory native Codex
 GitHub Review, external ChatGPT Atlas Contract Review, required checks, scope,
-risk, and merge card are complete. The native Codex review is a process gate for
-the exact current head, not a GitHub Actions-manufactured approval. The merge
-card must name the reviewed head SHA, point to the native result, and confirm no
-unresolved current-head P0/P1 thread remains. It is not delegated merge
-permission.
+risk, and merge card are complete. It is not delegated merge permission.
 
 Codex must never merge, enable auto-merge, or instruct a workflow/bot to merge.

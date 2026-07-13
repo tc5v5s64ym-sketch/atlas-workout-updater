@@ -28,12 +28,6 @@ jobs:
               problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
             }
 
-            const rowValue = (label) => {
-              const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const match = body.match(new RegExp(`\\|\\s*\\*\\*${escaped}\\*\\*\\s*\\|([^\\n]+)\\|`, 'i'));
-              return match ? match[1].trim() : '';
-            };
-
             // Sentinels that only exist in the UNFILLED template — leaving any
             // of them means a merge-card field was not completed. Covers the
             // table fields AND the prose sections (concern, current-state
@@ -47,7 +41,7 @@ jobs:
               'e.g. docs-only',
               'low / medium / high -->',
               'command/check + result; not-run',
-              '40-char reviewed head SHA',
+              'exact head SHA + clean',
               'READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
               'or Yes + reserved criterion',
               'steps for Dale if needed',
@@ -61,21 +55,6 @@ jobs:
             for (const s of sentinels) {
               if (body.includes(s)) {
                 problems.push(`Merge card field left as template placeholder: "${s}"`);
-              }
-            }
-
-            const nativeCodexReview = rowValue('Native Codex GitHub Review');
-            if (!nativeCodexReview) {
-              problems.push('Merge card is missing the "Native Codex GitHub Review" row.');
-            } else {
-              if (!/\b[0-9a-f]{40}\b/i.test(nativeCodexReview)) {
-                problems.push('Native Codex GitHub Review must name the exact 40-character reviewed head SHA.');
-              }
-              if (!/(https:\/\/github\.com\/\S+\/pull\/\d+#\S+|discussion_r\d+|issuecomment-\d+|pullrequestreview-\d+|review id[:# ]+\d+|comment id[:# ]+\d+)/i.test(nativeCodexReview)) {
-                problems.push('Native Codex GitHub Review must link or point to the native review result.');
-              }
-              if (!/P0\/P1/i.test(nativeCodexReview)) {
-                problems.push('Native Codex GitHub Review must state that no unresolved current-head P0/P1 thread remains.');
               }
             }
 

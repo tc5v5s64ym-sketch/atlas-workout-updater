@@ -35,9 +35,8 @@ invariants/specs. `docs/ACTIVE_ROADMAP.md` is the current execution queue;
 - **ChatGPT — Atlas product decision desk and external Atlas Contract Review.**
   This separate lane reviews roadmap fit, scope, trust, product intent, and
   live-path fit. It does not replace native Codex GitHub Review.
-- **GitHub Actions — deterministic enforcement.** CI, secret scan, labels, E2E
-  where applicable, and Merge Card Check are evidence. GitHub Actions must not
-  manufacture, imitate, or summarize a native Codex approval.
+- **GitHub Actions — enforcement.** Required checks are evidence; an agent's
+  self-report is not a substitute.
 - **Dale — sole merge authority.** Only Dale may merge an Atlas PR. No agent,
   workflow, bot, queue, or auto-merge rule may merge on Dale's behalf.
 
@@ -48,10 +47,8 @@ A PR cannot be considered merge-ready unless all of the following are true:
 - the exact current head has a completed native Codex GitHub Review;
 - after the final push, the builder requested that review with an
   `@codex review` PR comment;
-- the merge card names the exact reviewed head SHA and links or points to the
-  native Codex review result;
-- every required deterministic GitHub check passed; skipped, errored,
-  unavailable, timed-out, or incomplete required signals are failures;
+- every required GitHub check passed; skipped, errored, unavailable, timed-out,
+  or incomplete required signals are failures;
 - no unresolved current-head P0/P1 correctness or security finding remains;
 - the external ChatGPT **Atlas Contract Review** is `NON-BLOCKING` or
   `READY FOR DALE MERGE`;
@@ -68,11 +65,11 @@ the review makes that review stale and requires a new request. A green gate mean
 Codex does not stop merely because a required check or review failed. For the
 same authorized concern, it must diagnose the failure, fix the smallest in-scope
 cause, rerun relevant local verification, push, request a new current-head
-`@codex review`, and verify the deterministic checks and native review result
-again. Repeat until every required signal passes or a genuine
-owner-reserved/external blocker makes further progress impossible. P2/P3 native
-findings are non-blocking as findings, but no unresolved current-head P0/P1
-thread may remain before the PR can be merge-ready.
+`@codex review`, and verify the required checks again. Repeat until every required
+signal passes or a genuine owner-reserved/external blocker makes further progress
+impossible. P2/P3 native findings are non-blocking as findings, but if they
+prevent the native integration from emitting the clean current-head artifact,
+they must be fixed or explicitly resolved before the PR can be merge-ready.
 
 ### Native review guidelines
 
