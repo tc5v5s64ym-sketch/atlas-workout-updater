@@ -22,6 +22,7 @@ jobs:
         with:
           script: |
             const body = (context.payload.pull_request && context.payload.pull_request.body) || '';
+            const expectedHeadSha = context.payload.pull_request && context.payload.pull_request.head.sha;
             const problems = [];
 
             if (!/Atlas Merge Card/i.test(body)) {
@@ -68,8 +69,11 @@ jobs:
             if (!nativeCodexReview) {
               problems.push('Merge card is missing the "Native Codex GitHub Review" row.');
             } else {
-              if (!/\b[0-9a-f]{40}\b/i.test(nativeCodexReview)) {
+              const reviewedSha = nativeCodexReview.match(/\b[0-9a-f]{40}\b/i)?.[0];
+              if (!reviewedSha) {
                 problems.push('Native Codex GitHub Review must name the exact 40-character reviewed head SHA.');
+              } else if (expectedHeadSha && reviewedSha.toLowerCase() !== expectedHeadSha.toLowerCase()) {
+                problems.push('Native Codex GitHub Review SHA must match the current PR head SHA.');
               }
               if (!/(https:\/\/github\.com\/\S+\/pull\/\d+#\S+|discussion_r\d+|issuecomment-\d+|pullrequestreview-\d+|review id[:# ]+\d+|comment id[:# ]+\d+)/i.test(nativeCodexReview)) {
                 problems.push('Native Codex GitHub Review must link or point to the native review result.');

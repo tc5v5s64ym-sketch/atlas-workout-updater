@@ -80,3 +80,21 @@ test("governance does not parse native Codex bot wording as an approval contract
     }
   }
 });
+
+test("merge-card check requires native review SHA to match the current PR head", () => {
+  const text = fs.readFileSync(
+    path.join(repoRoot, ".github", "workflows", "merge-card-check.yml"),
+    "utf8",
+  );
+
+  assert.match(
+    text,
+    /pull_request\.head\.sha/,
+    "merge-card check must read the current PR head SHA",
+  );
+  assert.match(
+    text,
+    /reviewedSha\.toLowerCase\(\) !== expectedHeadSha\.toLowerCase\(\)/,
+    "merge-card check must reject stale native review SHAs",
+  );
+});
