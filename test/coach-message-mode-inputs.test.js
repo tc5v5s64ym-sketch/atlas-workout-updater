@@ -55,6 +55,7 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const realCoachMode = require('../services/coachMode');
+const { todayIso } = require('../services/analytics');
 const modeState = { lastInput: null };
 require.cache[require.resolve('../services/coachMode')] = {
   id: require.resolve('../services/coachMode'),
@@ -88,6 +89,12 @@ function logRow({ date = '2026-07-12', session = 's1', exercise = 'Bench Press',
   row[8] = String(reps);
   row[9] = String(rir);
   return row;
+}
+
+function isoDaysAgo(days) {
+  const date = new Date(`${todayIso()}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString().slice(0, 10);
 }
 
 function datedSessions(count, options = {}) {
@@ -152,7 +159,7 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     // most recent session create a false history safety correction.
     sheetState.rows = [
       logRow({ date: '2026-01-01', session: 'target-prior', exercise: 'Bench Press', lift: 'COL01', weight: 225, reps: 5, rir: 2 }),
-      logRow({ date: '2026-07-12', session: 'foreign-prior', exercise: 'Leg Extension', lift: 'COL01', weight: 60, reps: 12, rir: 2 }),
+      logRow({ date: isoDaysAgo(1), session: 'foreign-prior', exercise: 'Leg Extension', lift: 'COL01', weight: 60, reps: 12, rir: 2 }),
     ];
     out = await postMessage('set', {
       liftCode: 'COL01', exerciseName: 'Bench Press',
@@ -192,7 +199,7 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
 
     // Only the existing server-side new-ground confirmation can grant MAX.
     sheetState.rows = Array.from({ length: 5 }, (_, i) => logRow({
-      date: `2026-07-${String(i + 8).padStart(2, '0')}`,
+      date: isoDaysAgo(5 - i),
       session: `pr${i + 1}`, lift: 'PR001', weight: 200, reps: 5, rir: 2,
     }));
     out = await postMessage('set', {
@@ -208,10 +215,10 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     // as safety and memory. A foreign same-code ceiling cannot suppress a real PR.
     sheetState.rows = [
       ...Array.from({ length: 5 }, (_, i) => logRow({
-        date: `2026-07-${String(i + 1).padStart(2, '0')}`,
+        date: isoDaysAgo(6 - i),
         session: `target-pr${i + 1}`, exercise: 'Bench Press', lift: 'PRCOL', weight: 200, reps: 5, rir: 2,
       })),
-      logRow({ date: '2026-07-12', session: 'foreign-ceiling', exercise: 'Leg Extension', lift: 'PRCOL', weight: 300, reps: 12, rir: 2 }),
+      logRow({ date: isoDaysAgo(1), session: 'foreign-ceiling', exercise: 'Leg Extension', lift: 'PRCOL', weight: 300, reps: 12, rir: 2 }),
     ];
     out = await postMessage('set', {
       liftCode: 'PRCOL', exerciseName: 'Bench Press',
