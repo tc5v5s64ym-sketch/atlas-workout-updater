@@ -42,7 +42,7 @@
   description: "Legacy label for pre-cutover Codex Decision Desk requests."
 - name: atlas-decision-desk
   color: "8a63d2"   # violet (same family as codex-decision)
-  description: "An owner-gated/ambiguous implementation decision routed to the Atlas Decision Desk (issue)."
+  description: "Evidence packet awaiting external ChatGPT Atlas Decision Desk review; no automated responder."
 - name: needs-pm-decision
   color: "fef2c0"   # pale yellow
-  description: "Awaiting the Atlas Decision Desk verdict (APPROVED / REJECTED / SPLIT / ESCALATE-TO-OWNER)."
+  description: "Awaiting a ChatGPT/Dale verdict (APPROVED / REJECTED / SPLIT / ESCALATE-TO-DALE)."

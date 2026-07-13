@@ -37,8 +37,8 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 | Label | Meaning / when applied |
 |---|---|
 | **`codex-decision`** | Legacy label retained for existing issues/PRs that carried a Claude-era Codex Decision Request. New decisions route to ChatGPT's Atlas Decision Desk (`docs/DECISION_ROUTING.md`) using `atlas-decision-desk` / `needs-pm-decision`. Not a risk classification. |
-| **`atlas-decision-desk`** | Applied (via the "🧭 Atlas Decision Desk" issue template) to an owner-gated/ambiguous **implementation** decision routed to the Atlas Decision Desk for a PM verdict (`docs/DECISION_ROUTING.md` "The Atlas Decision Desk"). Triggers `.github/workflows/atlas-decision-desk.yml`. |
-| **`needs-pm-decision`** | On an Atlas Decision Desk issue, marks it **awaiting** the verdict; the desk removes it once it posts `APPROVED` / `REJECTED` / `SPLIT` / `ESCALATE-TO-OWNER`. |
+| **`atlas-decision-desk`** | Applied by the issue template to an evidence packet awaiting external ChatGPT Atlas Decision Desk review. It does not trigger an automated responder. |
+| **`needs-pm-decision`** | Marks an Atlas Decision Desk issue as awaiting a ChatGPT/Dale verdict: `APPROVED`, `REJECTED`, `SPLIT`, or `ESCALATE-TO-DALE`. Removed manually when the decision is recorded. |
 
 A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR could be `write-path` + `approval-path` + `trust-sensitive`, with primary `owner-decision`). Category labels make the surface area visible at a glance; the primary label decides who must act.
 
