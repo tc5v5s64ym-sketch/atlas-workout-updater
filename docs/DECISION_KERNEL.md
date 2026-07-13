@@ -1,8 +1,8 @@
 # Atlas Decision Kernel
 
-> **Status:** Active. The operational distillation read FIRST for routine autonomous decisions, so the full Vision / Roadmap / Architecture do not have to be re-read on every PR. Sources distilled: `docs/ATLAS_PRODUCT_VISION.md`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md` (`docs/export/atlas-architecture.html`), `CLAUDE.md`, `docs/CONSTITUTION.md`, `docs/INVARIANTS.md`.
+> **Status:** Active. The operational distillation read FIRST for routine decisions, so the full Vision / Roadmap / Architecture do not have to be re-read on every PR. Sources distilled: `docs/ATLAS_PRODUCT_VISION.md`, `docs/ROADMAP.md`, `docs/ARCHITECTURE.md` (`docs/export/atlas-architecture.html`), `AGENTS.md`, `docs/CONSTITUTION.md`, `docs/INVARIANTS.md`.
 >
-> **This kernel is a convenience, not an authority.** It never overrides `CLAUDE.md`, `docs/INVARIANTS.md`, or `docs/CONSTITUTION.md`. If the kernel and a source ever disagree, the source wins — and the kernel is wrong and must be fixed.
+> **This kernel is a convenience, not an authority.** It never overrides `AGENTS.md`, `docs/INVARIANTS.md`, or `docs/CONSTITUTION.md`. If the kernel and a source ever disagree, the source wins — and the kernel is wrong and must be fixed.
 
 The kernel holds only the **durable principles** needed to make routine autonomous decisions without re-reading the full north-star documents. It is deliberately short. When a decision needs more than this, see **"When the kernel is not enough"** at the bottom.
 
@@ -49,11 +49,11 @@ These are the operating rules. Each routine decision should be checkable against
 
 ### Routine execution (the common case)
 
-1. **`CLAUDE.md`** — the operating brief and absolute safety rules.
+1. **`AGENTS.md`** — the canonical operating brief and absolute safety rules.
 2. **`docs/ACTIVE_ROADMAP.md`** — the live queue / current critical path.
 3. **`docs/DECISION_KERNEL.md`** — this file: the durable principles for routine decisions.
 
-**If `docs/ACTIVE_ROADMAP.md` contains eligible work** → continue roadmap execution. **Do not consult `BACKLOG.md` for work *selection*** while the roadmap has eligible items. (This is about *what to build next*, not whether to open the file: `CLAUDE.md` Backlog discipline still requires reading `BACKLOG.md` at the start of a session for awareness and appending any discovered work in the same PR — always read it, just don't pick the next task from it while the roadmap has eligible items.)
+**If `docs/ACTIVE_ROADMAP.md` contains eligible work** → continue roadmap execution. **Do not consult `BACKLOG.md` for work *selection*** while the roadmap has eligible items. (This is about *what to build next*, not whether to open the file: `AGENTS.md` still requires reading `BACKLOG.md` at the start of implementation work for awareness.)
 
 **If the roadmap is exhausted** (every step complete) →
 
@@ -77,8 +77,8 @@ If an item fails any criterion, it is not eligible — narrow it, file the block
 
 Maps the surface of a change to who must act (the primary risk label records this on the merge card — `docs/RISK_LABELS.md`):
 
-- **Tier 1 — autonomous.** Derivable, no reserved-category trigger; all signals green. Builder decides, merges, continues. (`auto-safe`.)
-- **Tier 2 — Codex-review gated.** A genuinely non-derivable, non-reserved fork: route to the Codex / Atlas Decision Desk for a verdict, then proceed (`docs/DECISION_ROUTING.md`). Does not reach the owner.
+- **Tier 1 — implementation-authorized.** Derivable, no reserved-category trigger; Codex may implement and prepare the PR for Dale. (`auto-safe`.)
+- **Tier 2 — ChatGPT decision-desk gated.** A genuinely non-derivable, non-reserved product/scope/trust fork: route to ChatGPT's Atlas Decision Desk (`docs/DECISION_ROUTING.md`).
 - **Tier 3 — owner approval.** One of the **four reserved categories** (Escalation Policy v3, `docs/OWNER_CHECKIN_RULES.md`): (1) a live test only the owner can perform; (2) a change to product vision, coaching philosophy, or new product scope (incl. app/runtime model selection); (3) destructive or irreversible operations (schema, migrations, deletion, credentials, security-sensitive infra); (4) a genuine, unresolvable principle conflict. Stop and escalate. (`owner-live-test` / `owner-decision`.) **Coach wording / rendering / frontend / UX is NOT Tier 3 when derivable** — it is Tier 1 PM authority.
 
 ### Decision Kernel response format
@@ -115,7 +115,7 @@ Those five are also the boundary where the owner or a decision desk may be invol
 
 ## Operational completeness
 
-With this kernel in place, **Atlas automation is considered operationally complete.** The decision machinery — PM authority, the four reserved categories (Escalation Policy v3, `docs/OWNER_CHECKIN_RULES.md`), the Codex and Atlas Decision Desks, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine autonomous execution.
+With this kernel in place, the active decision machinery — derivable implementation authority, four owner-reserved categories, ChatGPT Atlas Decision Desk, separate native Codex and Atlas Contract Review lanes, risk classification, the merge card, Vision-first selection, and this kernel — is sufficient for routine execution. Dale remains the only merge authority.
 
 **Future process changes require evidence of an actual bottleneck** — a concrete, observed friction in the loop, not a hypothetical refinement. Absent that evidence, default effort returns to **building Atlas** (the product), not refining the workflow.
 

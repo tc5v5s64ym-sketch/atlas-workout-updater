@@ -39,7 +39,7 @@
 # Workflow labels.
 - name: codex-decision
   color: "8a63d2"   # violet
-  description: "A decision panel routed to the Codex Decision Desk to answer."
+  description: "Legacy label for pre-cutover Codex Decision Desk requests."
 - name: atlas-decision-desk
   color: "8a63d2"   # violet (same family as codex-decision)
   description: "An owner-gated/ambiguous implementation decision routed to the Atlas Decision Desk (issue)."

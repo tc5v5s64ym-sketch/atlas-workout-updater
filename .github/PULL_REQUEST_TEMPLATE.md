@@ -1,53 +1,53 @@
 <!--
-Atlas Merge Card — keep it to one screen.
-Fill every field. An empty field is treated as a FAILURE (see docs/AUTOMATION_PROTOCOL.md §2).
-A green card requires positive evidence that each signal ran and passed — not the absence of a failure.
-Full rules: docs/AUTOMATION_PROTOCOL.md · docs/OWNER_CHECKIN_RULES.md · docs/RISK_LABELS.md
+Atlas Merge Card — fill every field. Empty, stale, skipped, errored, unavailable,
+or incomplete required signals are failures. Dale is the only merge authority.
 -->
 
 ## 🟦 Atlas Merge Card
 
-| Field | Value |
-|---|---|
-| **PR** | #<!-- number, filled after open --> |
-| **Title** | <!-- one line --> |
-| **Risk level** | <!-- low / medium / high --> |
-| **Files / categories touched** | <!-- e.g. docs-only · infrastructure · services/analytics.js (engine) --> |
-| **Tests** | <!-- pass / fail / not-run — not-run = FAIL --> |
-| **Codex status** | <!-- READY FOR OWNER MERGE / NON-BLOCKING / BLOCKING / not-run(=FAIL) --> |
-| **Claude status** | <!-- review passed / changes-requested / errored(=FAIL) / not-run(=FAIL) --> |
-| **Owner action required** | <!-- No · or Yes + which check-in criterion 2–8 from OWNER_CHECKIN_RULES.md — criterion 1 (live test) is NEVER "Yes": live tests are post-merge, not pre-merge gates --> |
-| **Live test script** | <!-- steps for the owner after deployment if owner-live-test, else "n/a" --> |
-| **Merge recommendation** | <!-- merge-ready / fix-then-merge / hold-for-owner — owner-live-test never produces hold-for-owner --> |
+| Field                             | Value                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------- |
+| **PR**                            | #<!-- number, filled after open -->                                                   |
+| **Title**                         | <!-- one line -->                                                                     |
+| **Risk level**                    | <!-- low / medium / high -->                                                          |
+| **Files / categories touched**    | <!-- e.g. docs-only · governance -->                                                  |
+| **Tests / checks**                | <!-- command/check + result; not-run = FAIL when required -->                         |
+| **Native Codex GitHub Review**    | <!-- exact head SHA + clean / changes-requested / errored(=FAIL) / not-run(=FAIL) --> |
+| **ChatGPT Atlas Contract Review** | <!-- READY FOR DALE MERGE / NON-BLOCKING / BLOCKING / not-run(=FAIL) -->              |
+| **Owner action required**         | <!-- No · or Yes + reserved criterion -->                                             |
+| **Live test script**              | <!-- steps for Dale if needed, else n/a -->                                           |
+| **Merge recommendation**          | <!-- READY FOR DALE MERGE / fix-then-review / hold-for-Dale -->                       |
 
 <!--
-Reminder: skipped / errored / unavailable / incomplete review = FAILURE, not a pass.
-merge-ready requires: tests pass · required reviews pass · no P0/P1 · no unresolved contract
-violation · risk classification done · this card complete.
+Current-head rule: after the final push, comment `@codex review`. Any later push
+makes that native review stale. Native Codex review and ChatGPT Atlas Contract
+Review are distinct; both are required. No agent may merge.
 -->
 
 ---
 
 ### Concern (one per PR)
 
-<!-- One sentence: the single concern this PR addresses. If it grew to two, split it. -->
+<!-- One sentence: the single concern this PR addresses. If it grew, split it. -->
 
 ### Current-state verdict
 
 <!-- STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED / FIXED BUT UNTESTED / STALE-SUPERSEDED / NEEDS OWNER APP-TEST -->
 
-### Model
+### Vision alignment
 
-Opus 4.8 (builder runs on Opus for all work — owner standing instruction). Risk level: see merge card.
+<!-- Principle advanced · smallest safe step · invariant protected · user-facing trust change yes/no -->
 
 ### Trust / scope safety
 
-- [ ] No write-path change (or write-path change is explicitly scoped + owner-flagged)
-- [ ] No Sheet schema change (12-col Log_Cleaned / 9-col Effort / 5-col Constraints / 7-col Deload_State)
-- [ ] No approval gate / coach / trust-contract behavior change (or owner-flagged)
-- [ ] No roadmap/vision reorder (or owner-flagged)
-- [ ] Discovered future work filed in `BACKLOG.md` in this PR
+- [ ] No product behavior change (or explicitly scoped and approved)
+- [ ] No write-path change (or explicitly scoped and approved)
+- [ ] No Sheet schema change (12-col Log_Cleaned / 9-col Effort / 5-col Constraints / 7-col Deload_State / 13-col Session_Plans)
+- [ ] No approval-gate / trust-contract change (or explicitly scoped and approved)
+- [ ] No roadmap/vision reorder (or explicitly scoped and approved)
+- [ ] One concern only; no future roadmap work bundled
+- [ ] Dale remains the sole merge authority; auto-merge is off
 
 ### Tests run
 
-<!-- command + result, e.g. `npm test` → pass; live path or closest integration path covered -->
+<!-- command/check + result; include live path or closest integration evidence -->

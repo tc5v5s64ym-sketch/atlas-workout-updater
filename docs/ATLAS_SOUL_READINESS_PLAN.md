@@ -3,7 +3,7 @@
 
 > **Status:** Owner planning document, drafted from a full repo review at commit `2539d23` (PR #930).
 > **Scope:** (1) an honest snapshot of where Atlas is today, (2) Part A — the PR queue that gets us to the point where personality/voice/soul work *makes sense*, (3) Part B — the personality/voice/soul build itself, at PR level.
-> **Model convention:** per `CLAUDE.md` owner standing instruction, the builder runs **Opus 4.8 for all work**. Risk tags (`[trust-critical]` etc.) are retained as review-intensity hints. Every build PR still gets a fresh Claude Code session and a hold point where the agent states its model and waits.
+> **Model convention:** no builder model is mandatory. Risk tags (`[trust-critical]` etc.) are review-intensity hints. Active implementation follows `AGENTS.md`; model choice is not a hold point or merge gate.
 
 ---
 

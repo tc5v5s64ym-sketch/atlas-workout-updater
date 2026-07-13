@@ -12,7 +12,7 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 
 | Label | Meaning | When applied |
 |---|---|---|
-| **`auto-safe`** | Automation can take this all the way to merge-ready with no owner involvement. | No owner check-in criterion is met; no P0/P1; tests + reviews green. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. |
+| **`auto-safe`** | Codex can take this all the way to `READY FOR DALE MERGE` without an owner decision. | No owner check-in criterion is met; no P0/P1; tests + both reviews green. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. Dale still merges. |
 | **`owner-live-test`** | A live app test would be valuable. **Advisory, not a halt** — the owner initiates app tests; the builder flags this and keeps going. | Owner check-in criterion 1 (live app testing) — UI/interaction change, hold point, anything only confirmable on the real app/sheet. Requires a live test script in the merge card. Does not block the loop; the owner calls the hold. |
 | **`owner-decision`** | A product/trust/roadmap judgment only the owner can make. | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, app/runtime-model change, or "cannot determine safety"). |
 | **`blocked`** | Not eligible to proceed — a required signal failed, errored, was skipped, or a contract violation is unresolved. | Any failed/errored/skipped required check or review (see `AUTOMATION_PROTOCOL.md` §2), or an open P0/P1 / contract violation. |
@@ -36,7 +36,7 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 
 | Label | Meaning / when applied |
 |---|---|
-| **`codex-decision`** | Applied to a PR/issue carrying a **Codex Decision Request** — a decision panel routed to the Codex Decision Desk to answer (`docs/DECISION_ROUTING.md`). Applied by the decision-desk flow, not a risk classification. |
+| **`codex-decision`** | Legacy label retained for existing issues/PRs that carried a Claude-era Codex Decision Request. New decisions route to ChatGPT's Atlas Decision Desk (`docs/DECISION_ROUTING.md`) using `atlas-decision-desk` / `needs-pm-decision`. Not a risk classification. |
 | **`atlas-decision-desk`** | Applied (via the "🧭 Atlas Decision Desk" issue template) to an owner-gated/ambiguous **implementation** decision routed to the Atlas Decision Desk for a PM verdict (`docs/DECISION_ROUTING.md` "The Atlas Decision Desk"). Triggers `.github/workflows/atlas-decision-desk.yml`. |
 | **`needs-pm-decision`** | On an Atlas Decision Desk issue, marks it **awaiting** the verdict; the desk removes it once it posts `APPROVED` / `REJECTED` / `SPLIT` / `ESCALATE-TO-OWNER`. |
 
