@@ -141,6 +141,7 @@ jobs:
                           comments(first: 100) {
                             nodes {
                               author { login }
+                              body
                               pullRequestReview { commit { oid } }
                             }
                           }
@@ -164,6 +165,12 @@ jobs:
               && thread.comments.nodes.some((comment) =>
                 isCodex(comment.author?.login)
                 && comment.pullRequestReview?.commit?.oid === headSha
+                && (() => {
+                  const match = String(comment.body || '').match(/!\[P([0-3]) Badge\]/);
+                  // Unknown Codex formats fail closed. Only an explicit P2/P3
+                  // badge is non-blocking under the Atlas review contract.
+                  return !match || match[1] === '0' || match[1] === '1';
+                })()
               )
             );
 
