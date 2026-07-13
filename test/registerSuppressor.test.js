@@ -211,6 +211,6 @@ test('route: profanity is env-gated off by default AND gated on the engine\'s ow
     'profanity must be env-gated (default off)');
   assert.match(coachOpsSrc, /if \(register\.profanity_ok && !engineNewGround\) register\.profanity_ok = false/,
     'a forged client verdict must be blocked by the engine-confirmed-new_ground gate');
-  assert.match(coachOpsSrc, /engineNewGround = confirmTodayNewGround\(rawFacts, allLog\)/,
-    'the engine gate must recompute new_ground server-side');
+  assert.match(coachOpsSrc, /engineNewGround = confirmTodayNewGround\(rawFacts, engineLiftLogRows\)/,
+    'the engine gate must recompute new_ground from collision-cleaned server history');
 });
