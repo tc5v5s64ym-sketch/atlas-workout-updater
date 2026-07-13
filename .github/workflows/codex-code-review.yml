@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
+      issues: write
       pull-requests: read
     steps:
       - name: Enforce current-head native Codex review
@@ -149,7 +149,6 @@ jobs:
               return;
             }
 
-            const marker = `Codex-Review-Head: ${headSha}`;
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
               repo,
@@ -157,10 +156,37 @@ jobs:
               per_page: 100,
             });
 
+            // GitHub Actions creates this marker only after headSha is the live
+            // PR head. A PR author cannot edit a github-actions[bot] comment,
+            // so it is the immutable link between the pushed commit and the
+            // later native Codex request.
+            const markerBody = `<!-- atlas-codex-review-marker:${headSha} -->`;
+            const markers = comments.filter((comment) =>
+              comment.user?.login === 'github-actions[bot]'
+              && comment.body === markerBody
+            );
+
+            if (markers.length === 0) {
+              const marker = await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pullNumber,
+                body: markerBody,
+              });
+              core.setFailed(
+                `Initialized immutable Codex review marker ${marker.data.id} for ${headSha}. `
+                + `Request native review with "@codex review" and "Codex-Review-Marker: ${marker.data.id}", then rerun this check.`
+              );
+              return;
+            }
+
+            const marker = markers.at(-1);
+            const requestMarker = `Codex-Review-Marker: ${marker.id}`;
             const requests = comments.filter((comment) =>
               typeof comment.body === 'string'
               && comment.body.includes('@codex review')
-              && comment.body.includes(marker)
+              && comment.body.includes(requestMarker)
+              && comment.created_at >= marker.created_at
             );
 
             for (const request of requests.reverse()) {
@@ -196,5 +222,5 @@ jobs:
 
             core.setFailed(
               `No completed clean native Codex review exists for ${headSha}. `
-              + `Request one with a PR comment containing "@codex review" and "${marker}", then rerun this check.`
+              + `Request one with a PR comment containing "@codex review" and "${requestMarker}", then rerun this check.`
             );
