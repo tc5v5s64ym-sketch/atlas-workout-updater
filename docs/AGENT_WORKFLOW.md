@@ -57,15 +57,16 @@ owner-reserved; stop and report it.
 ### Native Codex GitHub Review
 
 - Is the mandatory correctness/security review lane.
-- Reviews the exact current head for P0/P1 correctness, security, invariant,
+- Reviews the exact current head for correctness, security, invariant,
   schema, write-safety, trust-loop, and live-path test regressions.
 - Is read-only and independent of the implementing Codex session.
 
 ### GitHub and GitHub Actions
 
 - GitHub is the PR handoff bus.
-- Required checks enforce tests, lint, secret scan, E2E where applicable,
-  merge-card completeness, and current-head native Codex review.
+- Required checks enforce normal deterministic CI: tests, lint, secret scan,
+  E2E where applicable, and merge-card completeness. Native Codex GitHub Review
+  is a separate GitHub review lane, not a custom status check.
 - A skipped, errored, unavailable, timed-out, or incomplete required check is a
   failure, not a pass.
 
@@ -81,8 +82,9 @@ owner-reserved; stop and report it.
 8. Obtain the external ChatGPT Atlas Contract Review.
 9. Address only in-scope blocking findings; file authorized future work without
    expanding the PR.
-10. After the final push, comment `@codex review` and wait for the exact-head
-    native Codex result and required checks.
+10. After the final push, comment `@codex review`, wait for the exact-head native
+    Codex result, resolve every actionable review conversation, and confirm the
+    normal required checks.
 11. When every merge-readiness gate is satisfied, report `READY FOR DALE MERGE`
     and stop. Dale alone decides whether and when to merge.
 
@@ -91,14 +93,13 @@ request `@codex review` again, and re-check the exact head.
 
 ### Required-check failure loop
 
-A failed required check or review sends the same PR back through diagnosis,
-smallest in-scope correction, verification, push, and current-head review. Codex
-continues that loop until all required checks pass; it does not stop after merely
-reporting the failure. A P2/P3 native finding remains non-blocking by severity,
-but must still be fixed or explicitly resolved when its presence prevents the
-native integration from producing the clean artifact required by the gate. Stop
-only for a genuine owner-reserved decision, an external blocker Codex cannot
-change, or an explicit owner instruction to stop.
+A failed required CI check or actionable review finding sends the same PR back
+through diagnosis, smallest in-scope correction, verification, push, and
+current-head review. Codex continues that loop until normal required checks pass
+and all actionable review conversations are resolved; it does not stop after
+merely reporting the failure. Stop only for a genuine owner-reserved decision,
+an external blocker Codex cannot change, or an explicit owner instruction to
+stop.
 
 ## Current-State Verification Gate
 
@@ -171,7 +172,8 @@ A PR may be described as `READY FOR DALE MERGE` only when:
 - every required GitHub check passed;
 - the exact current head has a completed native Codex GitHub Review requested
   after the final push with `@codex review`;
-- no current-head P0/P1 or unresolved contract violation remains;
+- every actionable review conversation and unresolved contract violation is
+  resolved;
 - ChatGPT Atlas Contract Review is `NON-BLOCKING` or
   `READY FOR DALE MERGE`;
 - the PR matches the active roadmap or explicit owner scope;

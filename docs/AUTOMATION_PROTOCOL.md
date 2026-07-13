@@ -39,10 +39,12 @@ owner-reserved.
 - Answers genuinely non-derivable product/scope/trust decisions with Dale.
 - Does not replace native Codex GitHub Review.
 
-### GitHub Actions — enforcement
+### GitHub Actions — deterministic CI
 
 - Runs required tests, lint, secret scan, E2E where applicable, merge-card
-  validation, and the current-head native Codex review gate.
+  validation, and other normal deterministic checks.
+- Does not parse, publish, or enforce native Codex review results as a GitHub
+  status check.
 - A workflow conclusion is evidence; an agent's claim is not.
 
 ### Dale — sole merge authority
@@ -61,13 +63,13 @@ Positive evidence is required for every signal. Silence, an old-head review, a
 cancelled job, a self-reported test result, or the absence of a finding is not a
 substitute.
 
-| Signal                        | Pass requirement                                                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                           |
-| Native Codex GitHub Review    | completed clean review for the exact current head after a final-push `@codex review` request; no unresolved current-head P0/P1 thread |
-| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict                                                                             |
-| Risk classification           | exactly one primary risk label                                                                                                        |
-| Merge card                    | present and fully completed                                                                                                           |
+| Signal                        | Pass requirement                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                          |
+| Native Codex GitHub Review    | completed review for the exact current head after a final-push `@codex review` request; all actionable review conversations resolved |
+| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict                                                                            |
+| Risk classification           | exactly one primary risk label                                                                                                       |
+| Merge card                    | present and fully completed                                                                                                          |
 
 Any new push invalidates the prior native review and requires a new
 `@codex review` request.
@@ -78,7 +80,7 @@ The two mandatory reviews answer different questions:
 
 | Lane                          | Primary question                                                                  | Authority                                            |
 | ----------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Native Codex GitHub Review    | Is this exact head correct and secure?                                            | GitHub review + required current-head check          |
+| Native Codex GitHub Review    | Is this exact head correct and secure?                                            | native GitHub findings or a 👍 result                |
 | ChatGPT Atlas Contract Review | Is this the right Atlas change, at the right scope, preserving roadmap and trust? | external product/contract verdict recorded in the PR |
 
 Neither lane may impersonate or satisfy the other. The implementing Codex

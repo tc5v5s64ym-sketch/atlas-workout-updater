@@ -41,7 +41,6 @@ jobs:
               'e.g. docs-only',
               'low / medium / high -->',
               'command/check + result; not-run',
-              'exact head SHA + clean',
               'READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
               'or Yes + reserved criterion',
               'steps for Dale if needed',
