@@ -164,6 +164,14 @@ jobs:
             );
 
             for (const request of requests.reverse()) {
+              // A GitHub issue comment is mutable. Accept it as a commit-bound
+              // request only when it has never been edited; otherwise an old
+              // clean reaction could be relabeled with a newer head SHA.
+              if (!request.created_at || request.updated_at !== request.created_at) {
+                core.warning(`Ignoring edited Codex review request comment ${request.id}.`);
+                continue;
+              }
+
               const reactions = await github.paginate(
                 github.rest.reactions.listForIssueComment,
                 {
@@ -175,7 +183,9 @@ jobs:
               );
 
               const clean = reactions.some((reaction) =>
-                reaction.content === '+1' && isCodex(reaction.user?.login)
+                reaction.content === '+1'
+                && isCodex(reaction.user?.login)
+                && reaction.created_at >= request.created_at
               );
 
               if (clean) {
