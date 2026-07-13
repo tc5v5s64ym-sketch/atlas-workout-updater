@@ -26,8 +26,6 @@ For native Codex pull-request review:
   evidence, and promotion decisions still require Dale.
 
 For review-required PRs, the builder must request a current-head native review
-after the final push and after the `Codex review` workflow creates its immutable
-GitHub marker. The request comment must contain both `@codex review` and the
-exact `Codex-Review-Marker: <comment id>` reported by the workflow. The
-mandatory check must fail closed until that exact pushed commit receives a clean
-native result.
+after the final push with an `@codex review` PR comment. The mandatory check
+must fail closed until native Codex posts an immutable no-major-issues result
+that names that exact commit and no unresolved current-head P0/P1 thread exists.

@@ -1,11 +1,9 @@
 name: Codex Code Review
 
 # Mandatory Atlas correctness review using Codex's native GitHub integration.
-# This workflow never calls the metered OpenAI API. Codex itself posts either:
-# - a standard review containing P0/P1 findings; or
-# - a pull-request thumbs-up after a commit-bound @codex review request when clean.
-#
-# The final check fails closed until one of those current-head artifacts exists.
+# This workflow never calls the metered OpenAI API. Codex posts unresolved P0/P1
+# findings as review threads or an immutable no-major-issues comment naming the
+# reviewed commit. The final check fails closed without a current-head result.
 
 on:
   pull_request:
@@ -96,8 +94,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
+      issues: read
+      pull-requests: read
     steps:
       - name: Enforce current-head native Codex review
         uses: actions/github-script@v7
@@ -186,71 +184,20 @@ jobs:
               per_page: 100,
             });
 
-            // GitHub Actions creates this marker only after headSha is the live
-            // PR head. A PR author cannot edit a github-actions[bot] comment,
-            // so it is the immutable link between the pushed commit and the
-            // later native Codex request.
-            const markerBody = `<!-- atlas-codex-review-marker:${headSha} -->`;
-            const markers = comments.filter((comment) =>
-              comment.user?.login === 'github-actions[bot]'
-              && comment.body === markerBody
+            const reviewedCommit = `**Reviewed commit:** \`${headSha.slice(0, 10)}\``;
+            const cleanReview = comments.some((comment) =>
+              isCodex(comment.user?.login)
+              && typeof comment.body === 'string'
+              && comment.body.includes("Codex Review: Didn't find any major issues.")
+              && comment.body.includes(reviewedCommit)
             );
 
-            if (markers.length === 0) {
-              const marker = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: pullNumber,
-                body: markerBody,
-              });
-              core.setFailed(
-                `Initialized immutable Codex review marker ${marker.data.id} for ${headSha}. `
-                + `Request native review with "@codex review" and "Codex-Review-Marker: ${marker.data.id}", then rerun this check.`
-              );
+            if (cleanReview) {
+              core.notice(`Native Codex approved current commit ${headSha}.`);
               return;
-            }
-
-            const marker = markers.at(-1);
-            const requestMarker = `Codex-Review-Marker: ${marker.id}`;
-            const requests = comments.filter((comment) =>
-              typeof comment.body === 'string'
-              && comment.body.includes('@codex review')
-              && comment.body.includes(requestMarker)
-              && comment.created_at >= marker.created_at
-            );
-
-            for (const request of requests.reverse()) {
-              // A GitHub issue comment is mutable. Accept it as a commit-bound
-              // request only when it has never been edited; otherwise an old
-              // clean reaction could be relabeled with a newer head SHA.
-              if (!request.created_at || request.updated_at !== request.created_at) {
-                core.warning(`Ignoring edited Codex review request comment ${request.id}.`);
-                continue;
-              }
-
-              const reactions = await github.paginate(
-                github.rest.reactions.listForIssue,
-                {
-                  owner,
-                  repo,
-                  issue_number: pullNumber,
-                  per_page: 100,
-                }
-              );
-
-              const clean = reactions.some((reaction) =>
-                reaction.content === '+1'
-                && isCodex(reaction.user?.login)
-                && reaction.created_at >= request.created_at
-              );
-
-              if (clean) {
-                core.notice(`Native Codex approved current commit ${headSha}.`);
-                return;
-              }
             }
 
             core.setFailed(
               `No completed clean native Codex review exists for ${headSha}. `
-              + `Request one with a PR comment containing "@codex review" and "${requestMarker}", then rerun this check.`
+              + 'Request one with a PR comment containing "@codex review", then rerun this check.'
             );
