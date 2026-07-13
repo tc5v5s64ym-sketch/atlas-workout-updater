@@ -26,7 +26,7 @@ const {
 const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
 const coachPolish = require('../services/coachPolish');
-const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso } = require('../services/analytics');
+const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso, normalizeLogRow } = require('../services/analytics');
 const { enrichCoachFacts, confirmTodayNewGround } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { readAthleteGoals } = require('../services/athleteGoals');
@@ -396,6 +396,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // caller-supplied rec/flags). Returned to the client to gate rendering; it is
     // NEVER forwarded to the model (not in sanitizeFacts' whitelist).
     const noteMeta = { note_tier: null, note_trigger: null, note_reason_code: null };
+    const modeNoteMeta = { note_tier: null, note_trigger: null };
     if (kind === 'block') {
       const assembled = assembleBatchNoteFacts(
         { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, targetRir: rawFacts.targetRir, sets: rawFacts.todaySets },
@@ -405,6 +406,18 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       noteMeta.note_tier = t ? t.tier : 'ack_only';
       noteMeta.note_trigger = t ? t.trigger : null;
       noteMeta.note_reason_code = t ? t.reason_code : null;
+
+      // Mode/register authority gets a separate deterministic fold over the set
+      // measurements only. The legacy response tier above intentionally retains
+      // its existing caller-shaped inputs, but those flags/verdicts cannot grant
+      // a mode or register permission.
+      const modeAssembled = assembleBatchNoteFacts(
+        { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, sets: rawFacts.todaySets },
+        {}
+      );
+      const mt = modeAssembled && modeAssembled.tier ? modeAssembled.tier : null;
+      modeNoteMeta.note_tier = mt ? mt.tier : 'ack_only';
+      modeNoteMeta.note_trigger = mt ? mt.trigger : null;
     }
 
     // Engine-backed extras are deterministic and Gemini-independent — compute them
@@ -463,10 +476,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // below (engine value, or null when the Sheets read / enrichment fails) so a client
     // can never inject a forged checkpoint that survives on the Sheets-down fallback.
     let progressionHistory = null;
+    // Retain the successful enrichment read for the remaining engine-only mode
+    // inputs below. null means no trustworthy read was available; [] is a real,
+    // successful empty read. This never adds another Sheets call.
+    let engineLogRows = null;
     let enrichmentFailed = false;
     if (rawFacts.liftCode) {
       try {
         const allLog = await getSheetRows(logSheetName);
+        engineLogRows = allLog;
         facts = enrichCoachFacts(rawFacts, allLog);
         progressionHistory = facts.progression_history || null;
         athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
@@ -542,39 +560,82 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // (engine value or null) so a client-supplied advisory can never reach the coach.
     facts = { ...facts, recovery_advisory: isSetLike ? (computed.recovery_advisory || null) : null };
 
-    // PR-B4 (slice 1) — coaching MODE + granted REGISTER for the set/block voice.
-    // The engine names the moment (selectCoachMode) from facts it already computed
-    // (note tier/trigger for a block, plus the rec verdicts/substitution), scarcity
-    // gates whether a new-ground moment may celebrate, and grantRegister derives the
-    // volume + casual/humor licenses. ALWAYS overwritten (engine-only) so a client
-    // can't set its own register. Additive this slice: the sanitizer forwards
-    // coach_mode + { intensity, casual_ok, humor_ok } (profanity_ok withheld until
-    // its suppressor lands), and the prompt does not yet instruct their use — so
-    // there is no behavior change, only new engine facts on the payload.
-    //
-    // ⚠️ B4-3 TRUST GATE (must fix before profanity_ok is ever forwarded):
-    // `rec.progression_verdict` / `rec.effort_verdict` are CLIENT-INFLUENCED —
-    // enrichCoachFacts (services/liveIntelligence.js) preserves the client's `rec`
-    // and only overwrites working_weight/trend/readiness_signal, so a client could
-    // POST progression_verdict.level:'new_ground' → celebrate → max. Scarcity is
-    // server-computed (not forgeable), but on a scarcity-clear lift the forged
-    // verdict is the last lever to the certified profanity cell. Harmless HERE
-    // (profanity dropped, prompt unchanged), but B4-3 MUST gate the forwarded
-    // profanity permission on an ENGINE-recomputed verdict, never this client-
-    // derivable mode (recompute the verdicts server-side before mode selection, or
-    // gate the register on an engine-only signal). Also complete the selectCoachMode
-    // input set then (rule_decisions/verdict/memory_patterns/layoff) so a `reject`
-    // rule reaches its conservative `refuse` floor. Filed in BACKLOG (B4-3).
+    // S5 — coaching MODE + granted REGISTER for the set/block voice. Every selector
+    // input is built here from existing pure engines. Client-shaped rule decisions,
+    // verdicts, memory, layoff, substitution decisions, effort verdicts, and
+    // progression verdicts are never consulted for mode/register. The successful
+    // enrichment read is reused for history-backed inputs (zero extra Sheets reads),
+    // and a missing/bad read floors those inputs to []/null.
     let registerCtx = null;
     if (isSetLike) {
-      const rec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
+      const sets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
+      // /api/coach/message receives an echoed recommendation, not an authoritative
+      // recommendation identity. There is no server-owned target_rir at this boundary,
+      // so target-dependent effort/expectation verdicts fail quiet for MODE instead of
+      // trusting the echo or silently substituting the wrong training-goal target.
+      // The separately recomputed set effort fact remains available to the prompt; it
+      // cannot grant mode/register permissions.
+      const modeEffortVerdict = null;
+      const verdict = null;
+
+      let ruleDecisions = [];
+      let memoryPatterns = [];
+      let layoff = null;
+      let historyRows = [];
+      try {
+        historyRows = Array.isArray(engineLogRows) ? engineLogRows.map(normalizeLogRow) : [];
+      } catch (_) {
+        historyRows = [];
+      }
+      try {
+        const { evaluateSessionSafety } = require('../rules/safetyRules');
+        const currentRows = sets.map((set, index) => normalizeLogRow({
+          ...(set && typeof set === 'object' ? set : {}),
+          session_id: rawFacts.sessionId || rawFacts.session_id || 'coach-message-current',
+          lift_code: rawFacts.liftCode || '',
+          canonical_exercise: rawFacts.exerciseName || '',
+          muscle_group: rawFacts.muscleGroup || '',
+          set_number: index + 1,
+          // Structured client safety claims are not selector authority. The rule
+          // reads only the logged set measurements here; note-tier safety remains
+          // on its existing deterministic path above.
+          notes: '',
+        }));
+        ruleDecisions = evaluateSessionSafety(currentRows, '', historyRows);
+      } catch (_) {
+        ruleDecisions = [];
+      }
+      try {
+        if (Array.isArray(engineLogRows) && rawFacts.liftCode) {
+          const { detectPatterns } = require('../services/coachMemory');
+          const { buildSubstitutionHistory } = require('../services/substitutionHistory');
+          const liftCode = String(rawFacts.liftCode).trim().toUpperCase();
+          const substitutionHistory = buildSubstitutionHistory(engineLogRows)
+            .filter(event => String(event.liftCode || '').trim().toUpperCase() === liftCode);
+          const detected = detectPatterns(liftCode, engineLogRows, { substitutionHistory });
+          if (detected.patterns.length) memoryPatterns = [{ liftCode, patterns: detected.patterns }];
+          layoff = assessLayoff(engineLogRows);
+        }
+      } catch (_) {
+        // Total/fail-quiet contract: malformed history or a failed read cannot
+        // elevate the voice. An unrelated memory failure must not erase a safety
+        // decision already computed from the current set.
+        memoryPatterns = [];
+        layoff = null;
+      }
+
+      const progressionVerdict = engineNewGround ? { level: 'new_ground' } : null;
       const scarcityClear = scarcity ? scarcity.scarcityClear !== false : true;
       const mode = selectCoachMode({
-        note_trigger: noteMeta.note_trigger,
-        note_tier: noteMeta.note_tier,
-        effort_verdict: rec.effort_verdict,
-        progression_verdict: rec.progression_verdict,
-        substitution: facts.substitution,
+        note_trigger: modeNoteMeta.note_trigger,
+        note_tier: modeNoteMeta.note_tier,
+        rule_decisions: ruleDecisions,
+        verdict,
+        effort_verdict: modeEffortVerdict,
+        progression_verdict: progressionVerdict,
+        substitution: null,
+        memory_patterns: memoryPatterns,
+        layoff,
       }, { scarcityClear }).mode;
       // Profanity is OFF in production by default — activated only by the owner
       // setting ATLAS_COACH_PROFANITY=on on Render (after reviewing mode/register in
