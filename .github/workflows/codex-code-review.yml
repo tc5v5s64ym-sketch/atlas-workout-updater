@@ -3,7 +3,7 @@ name: Codex Code Review
 # Mandatory Atlas correctness review using Codex's native GitHub integration.
 # This workflow never calls the metered OpenAI API. Codex itself posts either:
 # - a standard review containing P0/P1 findings; or
-# - a thumbs-up reaction on a commit-bound @codex review request when clean.
+# - a pull-request thumbs-up after a commit-bound @codex review request when clean.
 #
 # The final check fails closed until one of those current-head artifacts exists.
 
@@ -229,11 +229,11 @@ jobs:
               }
 
               const reactions = await github.paginate(
-                github.rest.reactions.listForIssueComment,
+                github.rest.reactions.listForIssue,
                 {
                   owner,
                   repo,
-                  comment_id: request.id,
+                  issue_number: pullNumber,
                   per_page: 100,
                 }
               );
