@@ -10,12 +10,12 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 
 ## Primary risk labels (exactly one per PR)
 
-| Label | Meaning | When applied |
-|---|---|---|
-| **`auto-safe`** | Codex can take this all the way to `READY FOR DALE MERGE` without an owner decision. | No owner check-in criterion is met; no P0/P1; tests + both reviews green. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. Dale still merges. |
+| Label                 | Meaning                                                                                                                              | When applied                                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`auto-safe`**       | Codex can take this all the way to `READY FOR DALE MERGE` without an owner decision.                                                 | No owner check-in criterion is met; no P0/P1; tests + both reviews green. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. Dale still merges.                                                                         |
 | **`owner-live-test`** | A live app test would be valuable. **Advisory, not a halt** — the owner initiates app tests; the builder flags this and keeps going. | Owner check-in criterion 1 (live app testing) — UI/interaction change, hold point, anything only confirmable on the real app/sheet. Requires a live test script in the merge card. Does not block the loop; the owner calls the hold. |
-| **`owner-decision`** | A product/trust/roadmap judgment only the owner can make. | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, app/runtime-model change, or "cannot determine safety"). |
-| **`blocked`** | Not eligible to proceed — a required signal failed, errored, was skipped, or a contract violation is unresolved. | Any failed/errored/skipped required check or review (see `AUTOMATION_PROTOCOL.md` §2), or an open P0/P1 / contract violation. |
+| **`owner-decision`**  | A product/trust/roadmap judgment only the owner can make.                                                                            | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, app/runtime-model change, or "cannot determine safety").                                                                               |
+| **`blocked`**         | Not eligible to proceed — a required signal failed, errored, was skipped, or a contract violation is unresolved.                     | Any failed/errored/skipped required deterministic check, missing/stale/blocked review process gate (see `AUTOMATION_PROTOCOL.md` §2), or an open P0/P1 / contract violation.                                                          |
 
 > `blocked` overrides the others: if a required signal failed or is missing, the PR is `blocked` regardless of what else is true.
 
@@ -23,22 +23,22 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 
 ## Category labels (zero or more, describe what's touched)
 
-| Label | Meaning / when applied |
-|---|---|
-| **`trust-sensitive`** | Touches the Atlas trust contract or an `docs/INVARIANTS.md` rule (no blind writes, engine-owns-numbers, owner approves, phantom-set suppression). Implies owner involvement. |
-| **`write-path`** | Touches how rows are written to Sheets, `test_mode`/live-write decision, row enrichment/append, or proof fields. `index.js` log/write path, `services/sheets.js` append. Owner-gated. |
-| **`approval-path`** | Touches the preview → approve → write trust loop (`src/app/app.js`). Owner-gated. |
-| **`coach-behavior`** | Touches what the coach says or how it decides to speak (`services/coach.js`, `services/vision.js`, prompts, sanitizers). Owner-gated. |
-| **`parser-behavior`** | Touches `services/workoutTextParser.js` (slash-notation, set extraction, intent). Correctness-sensitive. |
-| **`infrastructure`** | CI/workflows, templates, labels, scripts, automation, repo config. No production application behavior change. |
+| Label                 | Meaning / when applied                                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`trust-sensitive`** | Touches the Atlas trust contract or an `docs/INVARIANTS.md` rule (no blind writes, engine-owns-numbers, owner approves, phantom-set suppression). Implies owner involvement.          |
+| **`write-path`**      | Touches how rows are written to Sheets, `test_mode`/live-write decision, row enrichment/append, or proof fields. `index.js` log/write path, `services/sheets.js` append. Owner-gated. |
+| **`approval-path`**   | Touches the preview → approve → write trust loop (`src/app/app.js`). Owner-gated.                                                                                                     |
+| **`coach-behavior`**  | Touches what the coach says or how it decides to speak (`services/coach.js`, `services/vision.js`, prompts, sanitizers). Owner-gated.                                                 |
+| **`parser-behavior`** | Touches `services/workoutTextParser.js` (slash-notation, set extraction, intent). Correctness-sensitive.                                                                              |
+| **`infrastructure`**  | CI/workflows, templates, labels, scripts, automation, repo config. No production application behavior change.                                                                         |
 
 ### Workflow label
 
-| Label | Meaning / when applied |
-|---|---|
-| **`codex-decision`** | Legacy label retained for existing issues/PRs that carried a Claude-era Codex Decision Request. New decisions route to ChatGPT's Atlas Decision Desk (`docs/DECISION_ROUTING.md`) using `atlas-decision-desk` / `needs-pm-decision`. Not a risk classification. |
-| **`atlas-decision-desk`** | Applied by the issue template to an evidence packet awaiting external ChatGPT Atlas Decision Desk review. It does not trigger an automated responder. |
-| **`needs-pm-decision`** | Marks an Atlas Decision Desk issue as awaiting a ChatGPT/Dale verdict: `APPROVED`, `REJECTED`, `SPLIT`, or `ESCALATE-TO-DALE`. Removed manually when the decision is recorded. |
+| Label                     | Meaning / when applied                                                                                                                                                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`codex-decision`**      | Legacy label retained for existing issues/PRs that carried a Claude-era Codex Decision Request. New decisions route to ChatGPT's Atlas Decision Desk (`docs/DECISION_ROUTING.md`) using `atlas-decision-desk` / `needs-pm-decision`. Not a risk classification. |
+| **`atlas-decision-desk`** | Applied by the issue template to an evidence packet awaiting external ChatGPT Atlas Decision Desk review. It does not trigger an automated responder.                                                                                                           |
+| **`needs-pm-decision`**   | Marks an Atlas Decision Desk issue as awaiting a ChatGPT/Dale verdict: `APPROVED`, `REJECTED`, `SPLIT`, or `ESCALATE-TO-DALE`. Removed manually when the decision is recorded.                                                                                  |
 
 A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR could be `write-path` + `approval-path` + `trust-sensitive`, with primary `owner-decision`). Category labels make the surface area visible at a glance; the primary label decides who must act.
 
@@ -51,7 +51,7 @@ A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR
    - Any criterion 1 met → primary `owner-live-test`.
    - Any criterion 2–8 met → primary `owner-decision`.
    - None met, all signals green → primary `auto-safe`.
-3. If any required check/review failed, errored, was skipped, or a P0/P1 / contract violation is open → primary `blocked` (overrides step 2).
+3. If any required deterministic check or review process gate failed, errored, was skipped/stale/missing, or a P0/P1 / contract violation is open → primary `blocked` (overrides step 2).
 4. Record the primary label and reason on the merge card (`owner action required` field).
 
 ---

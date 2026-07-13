@@ -39,11 +39,13 @@ owner-reserved.
 - Answers genuinely non-derivable product/scope/trust decisions with Dale.
 - Does not replace native Codex GitHub Review.
 
-### GitHub Actions — enforcement
+### GitHub Actions — deterministic enforcement
 
-- Runs required tests, lint, secret scan, E2E where applicable, merge-card
-  validation, and the current-head native Codex review gate.
+- Runs required tests, lint, secret scan, E2E where applicable, and merge-card
+  validation.
 - A workflow conclusion is evidence; an agent's claim is not.
+- Must not manufacture, imitate, or summarize native Codex approval. `Codex review`
+  is not a GitHub required status check in Atlas governance.
 
 ### Dale — sole merge authority
 
@@ -61,13 +63,13 @@ Positive evidence is required for every signal. Silence, an old-head review, a
 cancelled job, a self-reported test result, or the absence of a finding is not a
 substitute.
 
-| Signal                        | Pass requirement                                                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                           |
-| Native Codex GitHub Review    | completed clean review for the exact current head after a final-push `@codex review` request; no unresolved current-head P0/P1 thread |
-| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict                                                                             |
-| Risk classification           | exactly one primary risk label                                                                                                        |
-| Merge card                    | present and fully completed                                                                                                           |
+| Signal                        | Pass requirement                                                                                                                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                                                                                                                          |
+| Native Codex GitHub Review    | process gate: completed clean review for the exact current head after a final-push `@codex review` request; merge card names the reviewed head SHA and links or points to the native result; no unresolved current-head P0/P1 thread |
+| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict                                                                                                                                                                            |
+| Risk classification           | exactly one primary risk label                                                                                                                                                                                                       |
+| Merge card                    | present and fully completed                                                                                                                                                                                                          |
 
 Any new push invalidates the prior native review and requires a new
 `@codex review` request.
@@ -76,10 +78,10 @@ Any new push invalidates the prior native review and requires a new
 
 The two mandatory reviews answer different questions:
 
-| Lane                          | Primary question                                                                  | Authority                                            |
-| ----------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Native Codex GitHub Review    | Is this exact head correct and secure?                                            | GitHub review + required current-head check          |
-| ChatGPT Atlas Contract Review | Is this the right Atlas change, at the right scope, preserving roadmap and trust? | external product/contract verdict recorded in the PR |
+| Lane                          | Primary question                                                                  | Authority                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Native Codex GitHub Review    | Is this exact head correct and secure?                                            | Native GitHub review process gate recorded in the merge card |
+| ChatGPT Atlas Contract Review | Is this the right Atlas change, at the right scope, preserving roadmap and trust? | external product/contract verdict recorded in the PR         |
 
 Neither lane may impersonate or satisfy the other. The implementing Codex
 session's own review notes do not count as native GitHub review. Native review's
@@ -91,7 +93,8 @@ A PR is `READY FOR DALE MERGE` only when all of the following hold:
 
 1. Every applicable required GitHub check passed.
 2. Native Codex GitHub Review passed for the exact current head after the final
-   push's `@codex review` request.
+   push's `@codex review` request, and the merge card names the exact reviewed
+   head SHA plus the native review result link or pointer.
 3. ChatGPT Atlas Contract Review is `NON-BLOCKING` or
    `READY FOR DALE MERGE`.
 4. No P0/P1 finding or unresolved invariant, trust-loop, schema, security, or

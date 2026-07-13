@@ -5,23 +5,25 @@ or incomplete required signals are failures. Dale is the only merge authority.
 
 ## 🟦 Atlas Merge Card
 
-| Field                             | Value                                                                                 |
-| --------------------------------- | ------------------------------------------------------------------------------------- |
-| **PR**                            | #<!-- number, filled after open -->                                                   |
-| **Title**                         | <!-- one line -->                                                                     |
-| **Risk level**                    | <!-- low / medium / high -->                                                          |
-| **Files / categories touched**    | <!-- e.g. docs-only · governance -->                                                  |
-| **Tests / checks**                | <!-- command/check + result; not-run = FAIL when required -->                         |
-| **Native Codex GitHub Review**    | <!-- exact head SHA + clean / changes-requested / errored(=FAIL) / not-run(=FAIL) --> |
-| **ChatGPT Atlas Contract Review** | <!-- READY FOR DALE MERGE / NON-BLOCKING / BLOCKING / not-run(=FAIL) -->              |
-| **Owner action required**         | <!-- No · or Yes + reserved criterion -->                                             |
-| **Live test script**              | <!-- steps for Dale if needed, else n/a -->                                           |
-| **Merge recommendation**          | <!-- READY FOR DALE MERGE / fix-then-review / hold-for-Dale -->                       |
+| Field                             | Value                                                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **PR**                            | #<!-- number, filled after open -->                                                                                                   |
+| **Title**                         | <!-- one line -->                                                                                                                     |
+| **Risk level**                    | <!-- low / medium / high -->                                                                                                          |
+| **Files / categories touched**    | <!-- e.g. docs-only · governance -->                                                                                                  |
+| **Tests / checks**                | <!-- command/check + result; not-run = FAIL when required -->                                                                         |
+| **Native Codex GitHub Review**    | <!-- 40-char reviewed head SHA + native review URL/comment pointer + no unresolved current-head P0/P1; not-run/stale/errored=FAIL --> |
+| **ChatGPT Atlas Contract Review** | <!-- READY FOR DALE MERGE / NON-BLOCKING / BLOCKING / not-run(=FAIL) -->                                                              |
+| **Owner action required**         | <!-- No · or Yes + reserved criterion -->                                                                                             |
+| **Live test script**              | <!-- steps for Dale if needed, else n/a -->                                                                                           |
+| **Merge recommendation**          | <!-- READY FOR DALE MERGE / fix-then-review / hold-for-Dale -->                                                                       |
 
 <!--
 Current-head rule: after the final push, comment `@codex review`. Any later push
 makes that native review stale. Native Codex review and ChatGPT Atlas Contract
-Review are distinct; both are required. No agent may merge.
+Review are distinct; both are required. `Codex review` is not a required GitHub
+status check, and GitHub Actions must not manufacture or imitate native Codex
+approval. No agent may merge.
 -->
 
 ---
