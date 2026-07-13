@@ -590,7 +590,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       try {
         const { evaluateSessionSafety } = require('../rules/safetyRules');
         const currentRows = sets.map((set, index) => normalizeLogRow({
-          ...(set && typeof set === 'object' ? set : {}),
+          ...(Array.isArray(set)
+            ? { weight: set[0], reps: set[1], rir: set[2] }
+            : (set && typeof set === 'object' ? set : {})),
           session_id: rawFacts.sessionId || rawFacts.session_id || 'coach-message-current',
           lift_code: rawFacts.liftCode || '',
           canonical_exercise: rawFacts.exerciseName || '',
@@ -653,7 +655,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // over grantRegister's cell + the finalizeCoachVoice suppressor.
       if (register.profanity_ok && !engineNewGround) register.profanity_ok = false;
       registerCtx = { mode, register };
-      facts = { ...facts, coach_mode: mode, register };
+      // Forward the same engine evidence that selected challenge so the voice can
+      // name the grounded pattern instead of receiving an unsupported elevated mode.
+      facts = { ...facts, coach_mode: mode, register, memory_patterns: memoryPatterns };
     } else {
       facts = { ...facts, coach_mode: null, register: null };
       // Plan / non-set voices carry no register grant, but the suppressor should

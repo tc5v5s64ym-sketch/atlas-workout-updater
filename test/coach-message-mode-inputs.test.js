@@ -40,14 +40,15 @@ require.cache[require.resolve('../services/vision')] = {
   id: require.resolve('../services/vision'), filename: require.resolve('../services/vision'), loaded: true, exports: fakeVision,
 };
 
+const realCoach = require('../services/coach');
 const coachState = { lastFacts: null };
 const fakeCoach = {
   isConfigured: () => true,
   coachModel: () => 'gemini-2.5-flash-lite',
-  generateCoachMessage: async (facts) => { coachState.lastFacts = facts; return 'Engine-grounded note.'; },
+  generateCoachMessage: async (facts) => { coachState.lastFacts = realCoach.sanitizeFacts(facts); return 'Engine-grounded note.'; },
   generatePlanMessage: async () => null,
   generateChatReply: async () => ({ reply: null }),
-  sanitizeFacts: f => f,
+  sanitizeFacts: realCoach.sanitizeFacts,
 };
 require.cache[require.resolve('../services/coach')] = {
   id: require.resolve('../services/coach'), filename: require.resolve('../services/coach'), loaded: true, exports: fakeCoach,
@@ -167,6 +168,8 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
       todaySets: [{ weight: 185, reps: 3, rir: 2 }], rec: { target_rir: 2 },
     });
     assert.ok(out.modeInput.memory_patterns[0].patterns.some(p => p.type === 'consistent_underperformance'));
+    assert.ok(out.facts.memory_patterns[0].patterns.some(p => p.type === 'consistent_underperformance'),
+      'challenge evidence must survive the real set-message sanitizer');
     assert.equal(out.facts.coach_mode, 'challenge');
     assert.equal(out.facts.register.intensity, 'elevated');
 
@@ -223,6 +226,18 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.equal(out.facts.register.intensity, 'routine');
     assert.equal(out.facts.register.profanity_ok, false);
     sheetState.readError = null;
+
+    // Compact [weight,reps,rir] sets are a supported route shape and must retain
+    // their measurements when the safety engine normalizes them.
+    sheetState.rows = [];
+    out = await postMessage('set', {
+      liftCode: 'ARRAY01', exerciseName: 'Bench Press',
+      todaySets: [[225, 5, 0]],
+    });
+    assert.ok(out.modeInput.rule_decisions.some(d => d.rule_id === 'rir_caution'));
+    assert.ok(out.modeInput.rule_decisions.some(d => d.rule_id === 'junk_rep_guard'));
+    assert.equal(out.facts.coach_mode, 'correct');
+    assert.equal(out.facts.register.intensity, 'routine');
 
     // Legacy block note metadata may still control whether the response is brief
     // or extended, but caller-supplied note signals are never mode/register

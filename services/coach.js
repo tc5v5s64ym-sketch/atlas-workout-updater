@@ -94,6 +94,31 @@ function buildCoachSystemPrompt() {
 // Forward ONLY known fields to the model — never arbitrary client-supplied
 // text. This both keeps the prompt grounded and avoids passing unexpected
 // content to the LLM.
+function sanitizeMemoryPatterns(value) {
+  return Array.isArray(value)
+    ? value.slice(0, 5).map(item => {
+        if (!item || typeof item !== 'object') return null;
+        const liftCode = strOrNull(item.liftCode);
+        if (!liftCode) return null;
+        const patterns = Array.isArray(item.patterns)
+          ? item.patterns.slice(0, 4).map(p => {
+              if (!p || typeof p !== 'object') return null;
+              const type = strOrNull(p.type);
+              const d = p.details && typeof p.details === 'object' ? p.details : {};
+              if (type === 'consistent_underperformance') {
+                return { type, details: { sessions_below: numOrNull(d.sessions_below), sessions_checked: numOrNull(d.sessions_checked) } };
+              }
+              if (type === 'repeated_substitution') {
+                return { type, details: { original: strOrNull(d.original), substitute: strOrNull(d.substitute), count: numOrNull(d.count) } };
+              }
+              return null;
+            }).filter(Boolean)
+          : [];
+        return patterns.length ? { liftCode, patterns } : null;
+      }).filter(Boolean)
+    : [];
+}
+
 function sanitizeFacts(facts) {
   const f = facts && typeof facts === 'object' ? facts : {};
   const toSet = s => (s && typeof s === 'object' ? {
@@ -198,6 +223,10 @@ function sanitizeFacts(facts) {
     // computed on the route (engine-only overwrite) — a client-shaped object still
     // only survives through this whitelist.
     athlete_identity: sanitizeAthleteIdentity(f.athlete_identity),
+    // Engine-detected recurring evidence that may select challenge mode. The
+    // route overwrites this from authoritative history; this whitelist keeps the
+    // model's evidence bounded to the same known pattern shapes used by chat.
+    memory_patterns: sanitizeMemoryPatterns(f.memory_patterns),
     // PR-B4 — the engine's coaching MODE (services/coachMode.js) and the granted
     // REGISTER (services/registerPermissions.js): how the coach may sound this
     // moment. Server-computed from already-whitelisted facts and ALWAYS overwritten
