@@ -89,6 +89,17 @@ owner-reserved; stop and report it.
 Any new push invalidates the prior native review. Re-run tests as appropriate,
 request `@codex review` again, and re-check the exact head.
 
+### Required-check failure loop
+
+A failed required check or review sends the same PR back through diagnosis,
+smallest in-scope correction, verification, push, and current-head review. Codex
+continues that loop until all required checks pass; it does not stop after merely
+reporting the failure. A P2/P3 native finding remains non-blocking by severity,
+but must still be fixed or explicitly resolved when its presence prevents the
+native integration from producing the clean artifact required by the gate. Stop
+only for a genuine owner-reserved decision, an external blocker Codex cannot
+change, or an explicit owner instruction to stop.
+
 ## Current-State Verification Gate
 
 Before implementation, verify whether the reported failure still exists in

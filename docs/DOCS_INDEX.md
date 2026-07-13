@@ -37,7 +37,7 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 - `docs/ENGINE_RECONCILIATION_NOTES.md` — active reference for the observation window: the two places legacy and the Brain use different accounting (volume credit models; deload decider vs advisory), which model is canonical today, and how to attribute shadow divergence as accounting-vs-judgment before scoring it against the promotion criteria.
 - `docs/DECISION_ROUTING.md` — the external ChatGPT Atlas Decision Desk and Atlas Contract Review; no automated Claude responder or background trigger.
 - `docs/RISK_LABELS.md` — risk classification labels and when each applies (manifest: `.github/labels.yml`).
-- `docs/AUTOMATION_AUDIT.md` — snapshot of existing automation, gaps, and next automation PRs.
+- `docs/AUTOMATION_AUDIT.md` — **Historical snapshot** of the pre-Codex-cutover automation framework. Its Claude workflow inventory and proposed automation gaps are not active authority.
 - `.github/PULL_REQUEST_TEMPLATE.md` — the one-screen merge card every PR must produce.
 
 ## Active roadmap / queue

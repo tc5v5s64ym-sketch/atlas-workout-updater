@@ -60,6 +60,17 @@ A PR cannot be considered merge-ready unless all of the following are true:
 the review makes that review stale and requires a new request. A green gate means
 "ready for Dale to decide," never "approved for an agent to merge."
 
+### Failure-recovery loop
+
+Codex does not stop merely because a required check or review failed. For the
+same authorized concern, it must diagnose the failure, fix the smallest in-scope
+cause, rerun relevant local verification, push, request a new current-head
+`@codex review`, and verify the required checks again. Repeat until every required
+signal passes or a genuine owner-reserved/external blocker makes further progress
+impossible. P2/P3 native findings are non-blocking as findings, but if they
+prevent the native integration from emitting the clean current-head artifact,
+they must be fixed or explicitly resolved before the PR can be merge-ready.
+
 ### Native review guidelines
 
 When operating as native Codex GitHub Review:
