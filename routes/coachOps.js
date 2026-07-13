@@ -27,7 +27,7 @@ const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
 const coachPolish = require('../services/coachPolish');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso, normalizeLogRow } = require('../services/analytics');
-const { enrichCoachFacts, confirmTodayNewGround } = require('../services/liveIntelligence');
+const { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { readAthleteGoals } = require('../services/athleteGoals');
 const { selectCoachMode } = require('../services/coachMode');
@@ -480,11 +480,16 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // inputs below. null means no trustworthy read was available; [] is a real,
     // successful empty read. This never adds another Sheets call.
     let engineLogRows = null;
+    let engineLiftLogRows = null;
     let enrichmentFailed = false;
     if (rawFacts.liftCode) {
       try {
         const allLog = await getSheetRows(logSheetName);
         engineLogRows = allLog;
+        // Reuse the enrichment guard so generated/catalog lift-code collisions
+        // cannot leak a foreign exercise into per-lift safety or memory inputs.
+        // Keep the raw successful read separately for global layoff assessment.
+        engineLiftLogRows = cleanLogForLift(allLog, rawFacts.liftCode, rawFacts.exerciseName);
         facts = enrichCoachFacts(rawFacts, allLog);
         progressionHistory = facts.progression_history || null;
         athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
@@ -583,7 +588,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       let layoff = null;
       let historyRows = [];
       try {
-        historyRows = Array.isArray(engineLogRows) ? engineLogRows.map(normalizeLogRow) : [];
+        historyRows = Array.isArray(engineLiftLogRows) ? engineLiftLogRows.map(normalizeLogRow) : [];
       } catch (_) {
         historyRows = [];
       }
@@ -598,23 +603,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           canonical_exercise: rawFacts.exerciseName || '',
           muscle_group: rawFacts.muscleGroup || '',
           set_number: index + 1,
-          // Structured client safety claims are not selector authority. The rule
-          // reads only the logged set measurements here; note-tier safety remains
-          // on its existing deterministic path above.
-          notes: '',
+          // Structured client rule decisions are not selector authority. The
+          // deterministic pain rule still receives the note attached to the
+          // just-logged set, alongside its weight/reps/RIR measurements.
+          notes: Array.isArray(set) ? '' : (set && typeof set === 'object' ? set.notes : ''),
         }));
         ruleDecisions = evaluateSessionSafety(currentRows, '', historyRows);
       } catch (_) {
         ruleDecisions = [];
       }
       try {
-        if (Array.isArray(engineLogRows) && rawFacts.liftCode) {
+        if (Array.isArray(engineLiftLogRows) && rawFacts.liftCode) {
           const { detectPatterns } = require('../services/coachMemory');
           const { buildSubstitutionHistory } = require('../services/substitutionHistory');
           const liftCode = String(rawFacts.liftCode).trim().toUpperCase();
-          const substitutionHistory = buildSubstitutionHistory(engineLogRows)
+          const substitutionHistory = buildSubstitutionHistory(engineLiftLogRows)
             .filter(event => String(event.liftCode || '').trim().toUpperCase() === liftCode);
-          const detected = detectPatterns(liftCode, engineLogRows, { substitutionHistory });
+          const detected = detectPatterns(liftCode, engineLiftLogRows, { substitutionHistory });
           if (detected.patterns.length) memoryPatterns = [{ liftCode, patterns: detected.patterns }];
           layoff = assessLayoff(engineLogRows);
         }

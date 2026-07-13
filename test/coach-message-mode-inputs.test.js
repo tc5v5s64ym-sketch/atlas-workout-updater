@@ -148,6 +148,23 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.equal(out.facts.coach_mode, 'correct');
     assert.equal(out.facts.register.intensity, 'routine');
 
+    // A generated/catalog lift-code collision must not let a foreign exercise's
+    // most recent session create a false history safety correction.
+    sheetState.rows = [
+      logRow({ date: '2026-01-01', session: 'target-prior', exercise: 'Bench Press', lift: 'COL01', weight: 225, reps: 5, rir: 2 }),
+      logRow({ date: '2026-07-12', session: 'foreign-prior', exercise: 'Leg Extension', lift: 'COL01', weight: 60, reps: 12, rir: 2 }),
+    ];
+    out = await postMessage('set', {
+      liftCode: 'COL01', exerciseName: 'Bench Press',
+      todaySets: [{ weight: 225, reps: 5, rir: 2 }],
+    });
+    assert.ok(!out.modeInput.rule_decisions.some(d => d.rule_id === 'e1rm_jump'),
+      'foreign same-code history must be removed by the shared lift-cleaning fold');
+    assert.equal(out.modeInput.layoff.returning_from_layoff, false,
+      'global layoff must retain the recent foreign-exercise session');
+    assert.equal(out.facts.coach_mode, 'silent');
+    assert.equal(out.facts.register.intensity, 'routine');
+
     // A real global training gap comes from the server-side log read.
     sheetState.rows = [logRow({ date: '2025-01-01', session: 'old', lift: 'LAY01' })];
     out = await postMessage('set', {
@@ -222,6 +239,18 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.deepEqual(out.modeInput.memory_patterns, []);
     assert.equal(out.modeInput.layoff, null);
     assert.equal(out.modeInput.progression_verdict, null);
+    assert.equal(out.facts.coach_mode, 'correct');
+    assert.equal(out.facts.register.intensity, 'routine');
+
+    // A legitimate note attached to the just-logged set remains an input to the
+    // deterministic pain rule even though caller-supplied rule decisions do not.
+    sheetState.rows = [];
+    out = await postMessage('set', {
+      liftCode: 'PAIN01', exerciseName: 'Bench Press',
+      todaySets: [{ weight: 225, reps: 5, rir: 2, notes: 'sharp shoulder pain on the rep' }],
+      rule_decisions: [],
+    });
+    assert.ok(out.modeInput.rule_decisions.some(d => d.rule_id === 'pain_flag'));
     assert.equal(out.facts.coach_mode, 'correct');
     assert.equal(out.facts.register.intensity, 'routine');
     assert.equal(out.facts.register.profanity_ok, false);

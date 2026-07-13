@@ -190,4 +190,4 @@ function confirmTodayNewGround(facts, allLog) {
   return true;
 }
 
-module.exports = { enrichCoachFacts, confirmTodayNewGround };
+module.exports = { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift };
