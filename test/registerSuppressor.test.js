@@ -104,6 +104,7 @@ test('suppressor: chat may cite a personal best fact but may not invent a new ea
   for (const unearned of [
     'That was your personal best!',
     'You just hit a personal best.',
+    'Your personal best is 225.',
     'You just set it — your personal best is 225.',
     'Your personal best is 225, and you achieved it today.',
     'Your personal best on bench is 225 — and you just hit it.',

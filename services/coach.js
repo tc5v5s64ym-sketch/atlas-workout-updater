@@ -256,7 +256,7 @@ const PROFANITY_TOKENS = [
 ];
 const PERSONAL_BEST_REFERENCE = /\bpersonal best\b/i;
 const PERSONAL_BEST_FACT_REFERENCES = [
-  /^\s*your\s+personal best(?:\s+(?:on|for)\s+([a-z0-9][a-z0-9 '\-]{0,40}))?\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+  /^\s*your\s+personal best\s+(?:on|for)\s+([a-z0-9][a-z0-9 '\-]{0,40})\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
   /^\s*your\s+([a-z0-9][a-z0-9 '\-]{0,40})\s+personal best\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
 ];
 const CELEBRATION_VOCAB = [
@@ -295,7 +295,7 @@ function findRegisterViolations(message, ctx) {
         : [];
       let isEngineOwnedFact = false;
       if (factMatch && personalBestFacts.length > 0) {
-        const claimedExercise = factMatch[1] ? factMatch[1].trim().toLowerCase().replace(/\s+/g, ' ') : null;
+        const claimedExercise = factMatch[1].trim().toLowerCase().replace(/\s+/g, ' ');
         const claimedExerciseKey = normalizeExerciseKey(claimedExercise);
         const claimedLiftCode = canonicalLiftCodeFor(claimedExercise);
         const claimedWeight = Number(factMatch[2]);
@@ -304,8 +304,7 @@ function findRegisterViolations(message, ctx) {
           const exercise = typeof f.exercise === 'string'
             ? f.exercise.trim().toLowerCase().replace(/\s+/g, ' ')
             : '';
-          const exerciseMatches = !claimedExercise
-            || normalizeExerciseKey(exercise) === claimedExerciseKey
+          const exerciseMatches = normalizeExerciseKey(exercise) === claimedExerciseKey
             || (claimedLiftCode && canonicalLiftCodeFor(exercise) === claimedLiftCode);
           return exerciseMatches
             && Number(f.weight) === claimedWeight
