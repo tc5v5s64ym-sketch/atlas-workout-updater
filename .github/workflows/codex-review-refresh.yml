@@ -1,8 +1,9 @@
 name: Codex Review Result Refresh
 
 # Native Codex review results arrive after the required pull-request gate has
-# already run. Keep these event handlers separate so they can refresh the exact
-# head check without publishing a skipped required job on review events.
+# already run. Keep these event handlers separate so they can refresh the
+# required check on the current PR merge commit without publishing a skipped
+# required job on review events.
 
 on:
   pull_request_review:
@@ -29,7 +30,7 @@ jobs:
       issues: read
       pull-requests: read
     steps:
-      - name: Refresh exact-head Codex review check
+      - name: Refresh required Codex review check
         uses: actions/github-script@v7
         with:
           script: |
@@ -48,6 +49,7 @@ jobs:
               pull_number: pullNumber,
             });
             const headSha = pull.head.sha;
+            const requiredCheckSha = pull.merge_commit_sha || headSha;
             const trusted = pull.head.repo.full_name.toLowerCase()
               === `${owner}/${repo}`.toLowerCase();
             const isCodex = (login) =>
@@ -131,10 +133,10 @@ jobs:
               owner,
               repo,
               name: 'Codex review',
-              head_sha: headSha,
+              head_sha: requiredCheckSha,
               status: 'completed',
               conclusion,
               output: { title, summary },
             });
 
-            core.info(`${title}: ${summary}`);
+            core.info(`${title}: ${summary} Published on ${requiredCheckSha}.`);
