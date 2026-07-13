@@ -314,6 +314,7 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
       exerciseName: 'Bench Press', muscleGroup: 'Chest', liftCode: 'REC01',
       intentId: 'recovery_pump',
       todaySets: [[135, 12, 6]],
+      asked_why: true,
     });
     assert.equal(out.modeInput.note_trigger, null);
     assert.equal(out.modeInput.note_tier, 'ack_only');

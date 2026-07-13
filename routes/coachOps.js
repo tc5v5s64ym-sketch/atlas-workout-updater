@@ -417,7 +417,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (kind === 'block') {
       const assembled = assembleBatchNoteFacts(
         { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, targetRir: rawFacts.targetRir, sets: rawFacts.todaySets },
-        { rec: rawFacts.rec, substitution: rawFacts.substitution, injury: rawFacts.injury, unexpected_excellence: rawFacts.unexpected_excellence, regression: rawFacts.regression, recovery_active: rawFacts.recovery_active, confidence: rawFacts.confidence, asked_why: rawFacts.asked_why }
+        { rec: rawFacts.rec, substitution: rawFacts.substitution, injury: rawFacts.injury, unexpected_excellence: rawFacts.unexpected_excellence, regression: rawFacts.regression, recovery_active: computed.recovery_active, confidence: rawFacts.confidence, asked_why: rawFacts.asked_why }
       );
       const t = assembled && assembled.tier ? assembled.tier : null;
       noteMeta.note_tier = t ? t.tier : 'ack_only';

@@ -120,6 +120,24 @@ test('routine block → ack_only, no prose, and the LLM is never called', async 
   assert.equal(coachState.calls, 0, 'a routine block must not call the LLM');
 });
 
+test('recovery/deload block → high RIR stays ack_only and never calls the LLM', async () => {
+  const cases = [
+    { intentId: 'recovery_pump', todaySets: [[135, 12, 6]] },
+    { rec: { deload: { in_deload: true } }, todaySets: [{ weight: 135, reps: 12, rir: 6 }] },
+  ];
+  for (const recovery of cases) {
+    resetCoach();
+    const { res, body } = await postBlock({
+      exerciseName: 'Bench Press', muscleGroup: 'Chest', ...recovery,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(body.data.note_tier, 'ack_only');
+    assert.equal(body.data.note_trigger, null);
+    assert.equal(body.data.message, null);
+    assert.equal(coachState.calls, 0, 'expected recovery work must not invoke the LLM');
+  }
+});
+
 test('interesting block → extended tier and a note (deterministic line when prose is engine-owned)', async () => {
   resetCoach();
   const { res, body } = await postBlock(REDLINE_BLOCK);
