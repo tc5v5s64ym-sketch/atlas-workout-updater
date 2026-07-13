@@ -8,15 +8,10 @@ name: Codex Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  pull_request_review:
-    types: [submitted]
-  issue_comment:
-    types: [created]
 
 jobs:
   review_policy:
     name: Codex review policy
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,7 +49,7 @@ jobs:
   codex_gate:
     name: Codex review
     needs: review_policy
-    if: always() && github.event_name == 'pull_request'
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -165,131 +160,3 @@ jobs:
               `No completed clean native Codex review exists for ${headSha}. `
               + 'Request one with a PR comment containing "@codex review", then rerun this check.'
             );
-
-  refresh_codex_gate:
-    name: Refresh Codex review result
-    if: >-
-      (github.event_name == 'pull_request_review' &&
-       (github.event.review.user.login == 'chatgpt-codex-connector' ||
-        github.event.review.user.login == 'chatgpt-codex-connector[bot]')) ||
-      (github.event_name == 'issue_comment' &&
-       github.event.issue.pull_request &&
-       (github.event.comment.user.login == 'chatgpt-codex-connector' ||
-        github.event.comment.user.login == 'chatgpt-codex-connector[bot]') &&
-       contains(github.event.comment.body, 'Codex Review: Didn''t find any major issues.'))
-    runs-on: ubuntu-latest
-    permissions:
-      checks: write
-      contents: read
-      issues: read
-      pull-requests: read
-    steps:
-      - name: Refresh exact-head Codex review check
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const pullNumber = context.payload.pull_request?.number
-              || context.payload.issue?.number;
-
-            if (!pullNumber) {
-              core.setFailed('Could not resolve the pull request number from the review event.');
-              return;
-            }
-
-            const { data: pull } = await github.rest.pulls.get({
-              owner,
-              repo,
-              pull_number: pullNumber,
-            });
-            const headSha = pull.head.sha;
-            const trusted = pull.head.repo.full_name.toLowerCase()
-              === `${owner}/${repo}`.toLowerCase();
-            const isCodex = (login) =>
-              /^chatgpt-codex-connector(?:\[bot\])?$/.test(login || '');
-
-            let conclusion = 'failure';
-            let title = 'Codex review is not clean';
-            let summary = 'The current head does not yet have a clean native Codex review.';
-
-            if (!trusted) {
-              summary = 'Codex review is restricted to trusted same-repository pull requests.';
-            } else {
-              let threadCursor = null;
-              const reviewThreads = [];
-              do {
-                const data = await github.graphql(
-                  `query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
-                    repository(owner: $owner, name: $repo) {
-                      pullRequest(number: $number) {
-                        reviewThreads(first: 100, after: $cursor) {
-                          nodes {
-                            isResolved
-                            comments(first: 100) {
-                              nodes {
-                                author { login }
-                                body
-                                pullRequestReview { commit { oid } }
-                              }
-                            }
-                          }
-                          pageInfo { hasNextPage endCursor }
-                        }
-                      }
-                    }
-                  }`,
-                  { owner, repo, number: pullNumber, cursor: threadCursor }
-                );
-                const connection = data.repository.pullRequest.reviewThreads;
-                reviewThreads.push(...connection.nodes);
-                threadCursor = connection.pageInfo.hasNextPage
-                  ? connection.pageInfo.endCursor
-                  : null;
-              } while (threadCursor);
-
-              const unresolvedBlocking = reviewThreads.filter((thread) =>
-                !thread.isResolved
-                && thread.comments.nodes.some((comment) =>
-                  isCodex(comment.author?.login)
-                  && comment.pullRequestReview?.commit?.oid === headSha
-                  && (() => {
-                    const match = String(comment.body || '').match(/!\[P([0-3]) Badge\]/);
-                    return !match || match[1] === '0' || match[1] === '1';
-                  })()
-                )
-              );
-
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner,
-                repo,
-                issue_number: pullNumber,
-                per_page: 100,
-              });
-              const reviewedCommit = `**Reviewed commit:** \`${headSha.slice(0, 10)}\``;
-              const cleanReview = comments.some((comment) =>
-                isCodex(comment.user?.login)
-                && typeof comment.body === 'string'
-                && comment.body.includes("Codex Review: Didn't find any major issues.")
-                && comment.body.includes(reviewedCommit)
-              );
-
-              if (unresolvedBlocking.length > 0) {
-                summary = `Native Codex has ${unresolvedBlocking.length} unresolved P0/P1 finding(s) on ${headSha}.`;
-              } else if (cleanReview) {
-                conclusion = 'success';
-                title = 'Codex review passed';
-                summary = `Native Codex approved current head ${headSha}.`;
-              }
-            }
-
-            await github.rest.checks.create({
-              owner,
-              repo,
-              name: 'Codex review',
-              head_sha: headSha,
-              status: 'completed',
-              conclusion,
-              output: { title, summary },
-            });
-
-            core.info(`${title}: ${summary}`);
