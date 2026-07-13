@@ -82,6 +82,7 @@ test('suppressor: chat may cite a personal best fact but may not invent a new ea
     'Your Bench Press personal best is 225 × 5.',
     'Your personal best on bench is 225 × 5.',
     'Your personal best on Dips (Weighted) is 50 x 11.',
+    'Your personal best on weighted dips is 50 x 11.',
   ]) {
     assert.deepEqual(
       findRegisterViolations(groundedVariant, chatCtx),

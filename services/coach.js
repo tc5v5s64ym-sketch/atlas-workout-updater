@@ -259,6 +259,11 @@ const PERSONAL_BEST_FACT_REFERENCES = [
   /^\s*your\s+personal best\s+(?:on|for)\s+([^\r\n]{1,80}?)\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
   /^\s*your\s+([^\r\n]{1,80}?)\s+personal best\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
 ];
+const exerciseTokenKey = value => normalizeExerciseKey(value)
+  .split(/\s+/)
+  .filter(Boolean)
+  .sort()
+  .join(' ');
 const CELEBRATION_VOCAB = [
   /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
   /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
@@ -297,6 +302,7 @@ function findRegisterViolations(message, ctx) {
       if (factMatch && personalBestFacts.length > 0) {
         const claimedExercise = factMatch[1].trim().toLowerCase().replace(/\s+/g, ' ');
         const claimedExerciseKey = normalizeExerciseKey(claimedExercise);
+        const claimedExerciseTokenKey = exerciseTokenKey(claimedExercise);
         const claimedLiftCode = canonicalLiftCodeFor(claimedExercise);
         const claimedWeight = Number(factMatch[2]);
         const claimedReps = factMatch[3] == null ? null : Number(factMatch[3]);
@@ -305,6 +311,7 @@ function findRegisterViolations(message, ctx) {
             ? f.exercise.trim().toLowerCase().replace(/\s+/g, ' ')
             : '';
           const exerciseMatches = normalizeExerciseKey(exercise) === claimedExerciseKey
+            || (claimedExerciseTokenKey && exerciseTokenKey(exercise) === claimedExerciseTokenKey)
             || (claimedLiftCode && canonicalLiftCodeFor(exercise) === claimedLiftCode);
           return exerciseMatches
             && Number(f.weight) === claimedWeight
