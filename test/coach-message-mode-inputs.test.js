@@ -55,6 +55,7 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const realCoachMode = require('../services/coachMode');
+const { todayIso } = require('../services/analytics');
 const modeState = { lastInput: null };
 require.cache[require.resolve('../services/coachMode')] = {
   id: require.resolve('../services/coachMode'),
@@ -88,6 +89,12 @@ function logRow({ date = '2026-07-12', session = 's1', exercise = 'Bench Press',
   row[8] = String(reps);
   row[9] = String(rir);
   return row;
+}
+
+function isoDaysAgo(days) {
+  const date = new Date(`${todayIso()}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - days);
+  return date.toISOString().slice(0, 10);
 }
 
 function datedSessions(count, options = {}) {
@@ -152,7 +159,7 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     // most recent session create a false history safety correction.
     sheetState.rows = [
       logRow({ date: '2026-01-01', session: 'target-prior', exercise: 'Bench Press', lift: 'COL01', weight: 225, reps: 5, rir: 2 }),
-      logRow({ date: '2026-07-12', session: 'foreign-prior', exercise: 'Leg Extension', lift: 'COL01', weight: 60, reps: 12, rir: 2 }),
+      logRow({ date: isoDaysAgo(1), session: 'foreign-prior', exercise: 'Leg Extension', lift: 'COL01', weight: 60, reps: 12, rir: 2 }),
     ];
     out = await postMessage('set', {
       liftCode: 'COL01', exerciseName: 'Bench Press',
@@ -192,7 +199,7 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
 
     // Only the existing server-side new-ground confirmation can grant MAX.
     sheetState.rows = Array.from({ length: 5 }, (_, i) => logRow({
-      date: `2026-07-${String(i + 8).padStart(2, '0')}`,
+      date: isoDaysAgo(5 - i),
       session: `pr${i + 1}`, lift: 'PR001', weight: 200, reps: 5, rir: 2,
     }));
     out = await postMessage('set', {
@@ -202,6 +209,24 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.equal(out.modeInput.progression_verdict.level, 'new_ground');
     assert.equal(out.facts.coach_mode, 'celebrate');
     assert.equal(out.facts.register.intensity, 'max');
+    assert.equal(out.facts.register.profanity_ok, false, 'profanity remains OFF');
+
+    // New-ground confirmation must use the same collision-cleaned per-lift history
+    // as safety and memory. A foreign same-code ceiling cannot suppress a real PR.
+    sheetState.rows = [
+      ...Array.from({ length: 5 }, (_, i) => logRow({
+        date: isoDaysAgo(6 - i),
+        session: `target-pr${i + 1}`, exercise: 'Bench Press', lift: 'PRCOL', weight: 200, reps: 5, rir: 2,
+      })),
+      logRow({ date: isoDaysAgo(1), session: 'foreign-ceiling', exercise: 'Leg Extension', lift: 'PRCOL', weight: 300, reps: 12, rir: 2 }),
+    ];
+    out = await postMessage('set', {
+      liftCode: 'PRCOL', exerciseName: 'Bench Press',
+      todaySets: [{ weight: 205, reps: 5, rir: 2 }],
+    });
+    assert.equal(out.modeInput.progression_verdict.level, 'new_ground');
+    assert.equal(out.facts.coach_mode, 'praise', 'raw global scarcity still sees the recent foreign PR event');
+    assert.equal(out.facts.register.intensity, 'elevated');
     assert.equal(out.facts.register.profanity_ok, false, 'profanity remains OFF');
 
     // Every selector-shaped client field is ignored; missing history fails quiet.
@@ -284,6 +309,22 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.equal(out.modeInput.note_tier, 'ack_only');
     assert.deepEqual(out.modeInput.rule_decisions, []);
     assert.equal(out.modeInput.progression_verdict, null);
+    assert.equal(out.facts.coach_mode, 'silent');
+    assert.equal(out.facts.register.intensity, 'routine');
+    assert.equal(out.facts.register.profanity_ok, false);
+
+    // A deliberate recovery/deload block keeps the same deterministic recovery
+    // suppression as the existing effort voice. High RIR is expected here and must
+    // not manufacture challenge_sandbag or elevate the selector register.
+    sheetState.rows = [];
+    out = await postMessage('block', {
+      exerciseName: 'Bench Press', muscleGroup: 'Chest', liftCode: 'REC01',
+      intentId: 'recovery_pump',
+      todaySets: [[135, 12, 6]],
+      asked_why: true,
+    });
+    assert.equal(out.modeInput.note_trigger, null);
+    assert.equal(out.modeInput.note_tier, 'ack_only');
     assert.equal(out.facts.coach_mode, 'silent');
     assert.equal(out.facts.register.intensity, 'routine');
     assert.equal(out.facts.register.profanity_ok, false);
