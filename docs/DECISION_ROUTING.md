@@ -8,7 +8,7 @@
 Codex resolves implementation decisions already determined by Atlas governance.
 A genuinely non-derivable product, roadmap, scope, trust, or live-path-fit fork
 goes to ChatGPT's external Atlas Decision Desk. Dale receives only owner-reserved
-questions and remains the only merge authority.
+questions and remains the owner-reserved merge authority.
 
 The decision desk is a human-in-the-loop ChatGPT review lane. No GitHub Action,
 Claude workflow, bot, scheduled job, trigger, reminder, or background task
@@ -53,7 +53,8 @@ narrows the work; it never invents a consequential default.
 
 ## Atlas Contract Review
 
-After Codex opens a PR, ChatGPT separately reviews the Atlas contract:
+After Codex opens a risk-triggered PR, ChatGPT separately reviews the Atlas
+contract:
 
 - roadmap and product fit;
 - one-concern scope and accidental future work;
@@ -63,8 +64,12 @@ After Codex opens a PR, ChatGPT separately reviews the Atlas contract:
 - live-path or closest-integration test fit.
 
 The verdict is `BLOCKING`, `NON-BLOCKING`, or `READY FOR DALE MERGE`. This lane
-does not replace native Codex GitHub correctness/security review. Both are
-required before merge readiness.
+does not replace native Codex GitHub correctness/security review. ChatGPT Atlas
+Contract Review is mandatory for owner-decision, high-risk, phase-transition,
+roadmap, vision, coaching-philosophy, trust-contract, write/schema,
+security/credentials, runtime-model, promotion, destructive, or genuinely
+ambiguous changes. It is not a mandatory routine-PR gate when the change is fully
+settled by existing governance and the active roadmap.
 
 ## Owner-reserved decisions
 
@@ -77,7 +82,8 @@ Route to Dale when the question involves:
 4. a genuine unresolved conflict between governing principles.
 
 Decision routing never authorizes a production write, weakens no-write proof,
-changes the approval gate, or grants merge authority. Dale alone merges.
+changes the approval gate, or grants owner-reserved merge authority. Routine
+merge authority remains governed by `docs/AUTOMATION_PROTOCOL.md`.
 
 ## Issue-based intake
 

@@ -57,7 +57,7 @@ Build order:
 
 - Tiny PRs.
 - One concern per PR.
-- Codex implements and opens one PR at a time, completes both review lanes and required checks, then stops at `READY FOR DALE MERGE`. Dale alone merges. Do not start a later concern on the open PR branch.
+- Codex implements and opens one PR at a time, completes required checks and exact-head native review, obtains ChatGPT Atlas Contract Review when risk-triggered, then merges routine PRs after every gate passes or stops for Dale on owner-reserved PRs. Do not start a later concern on the open PR branch.
 - Deterministic engine first, AI voice second.
 - Do not touch write paths unless the PR explicitly says so.
 - Do not change Sheet schema unless explicitly approved.
@@ -562,4 +562,4 @@ Steps 372-377 were sequenced from the June 2026 app-test failures (six findings,
 
 ## New chat / agent instruction
 
-Read this file before changing roadmap direction. Execute only the next approved step. Codex implements, obtains both required review lanes, and stops at `READY FOR DALE MERGE`; Dale alone merges. Changing roadmap *direction* (Vision/Dream/Constitution, or promoting owner-gated scope) remains an owner decision.
+Read this file before changing roadmap direction. Execute only the next approved step. Codex implements, obtains required checks and exact-head native review, obtains ChatGPT Atlas Contract Review when risk-triggered, then merges routine PRs after every gate passes or stops for Dale on owner-reserved PRs. Changing roadmap *direction* (Vision/Dream/Constitution, or promoting owner-gated scope) remains an owner decision.

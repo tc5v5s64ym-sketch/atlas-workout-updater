@@ -26,24 +26,32 @@ invariants/specs. `docs/ACTIVE_ROADMAP.md` is the current execution queue;
 
 ## Roles and merge authority
 
-- **Codex — implementation agent.** Verify current state, implement one approved
-  concern, test it, open the PR, address in-scope findings, and keep the branch
-  current. Codex never merges.
+- **Codex — implementation agent and routine merge operator.** Verify current
+  state, implement one approved concern, test it, open the PR, address in-scope
+  findings, keep the branch current, and merge only routine PRs after every
+  required gate below passes.
 - **Native Codex GitHub Review — mandatory correctness/security review.** This
   lane reviews the exact PR head for correctness, regressions, security,
   invariants, write safety, and test coverage.
-- **ChatGPT — Atlas product decision desk and external Atlas Contract Review.**
-  This separate lane reviews roadmap fit, scope, trust, product intent, and
-  live-path fit. It does not replace native Codex GitHub Review.
+- **ChatGPT — Atlas product decision desk and risk-triggered Atlas Contract
+  Review.** This separate lane reviews roadmap fit, scope, trust, product
+  intent, and live-path fit when a change is owner-reserved, high-risk,
+  phase-transitioning, roadmap/vision/coaching/trust-contract related,
+  write/schema/security/runtime-model/promotion/destructive, or genuinely
+  ambiguous. It does not replace native Codex GitHub Review.
 - **GitHub Actions — deterministic CI.** Required checks cover normal CI and
   merge-card completeness; they do not manufacture or enforce a Codex review
   status. An agent's self-report is not a substitute for either CI or review.
-- **Dale — sole merge authority.** Only Dale may merge an Atlas PR. No agent,
-  workflow, bot, queue, or auto-merge rule may merge on Dale's behalf.
+- **Dale — owner-reserved merge authority.** Dale remains required for
+  owner-only or gym evidence; new product direction, coaching philosophy, or
+  scope; schema, migrations, deletion, credentials, security-sensitive
+  infrastructure, or production-data risk; application/runtime/provider/model
+  changes; One-Brain or other promotion decisions; unresolved governance
+  conflicts; and any explicit owner hold.
 
 ## Review and merge-readiness contract
 
-A PR cannot be considered merge-ready unless all of the following are true:
+A PR may be merged by Codex only when all of the following are true:
 
 - the exact current head has a completed native Codex GitHub Review;
 - after the final push, the builder requested that review with an
@@ -51,16 +59,25 @@ A PR cannot be considered merge-ready unless all of the following are true:
 - every required GitHub check passed; skipped, errored, unavailable, timed-out,
   or incomplete required signals are failures;
 - every actionable current-head review conversation is resolved;
-- the external ChatGPT **Atlas Contract Review** is `NON-BLOCKING` or
-  `READY FOR DALE MERGE`;
+- no P0/P1 finding remains and no actionable review thread remains unresolved;
+- the PR implements one concern already authorized by the active roadmap or an
+  explicit owner goal;
 - one-concern scope, branch hygiene, risk classification, and the merge card are
   complete; and
 - no owner-reserved decision remains unresolved.
 
 `@codex review` is a current-head review request, not a one-time PR ritual. Any
 push after the review makes that review stale and requires a new request. A
-native result means "ready for Dale to decide," never "approved for an agent to
-merge."
+stale, missing, skipped, errored, or incomplete review is a failure.
+
+When all routine gates pass, Codex must prefer GitHub auto-merge when it is
+available. If auto-merge is unavailable, Codex may merge directly with the exact
+reviewed head SHA. Codex must not stop merely to report that a routine PR is
+merge-ready.
+
+Owner-reserved PRs stop for Dale after all non-owner gates pass. For those PRs,
+the completed evidence means "ready for Dale to decide," not delegated merge
+permission.
 
 ### Failure-recovery loop
 
@@ -96,8 +113,12 @@ When operating as native Codex GitHub Review:
 - Stage only intended files; never bundle unrelated local work.
 - File discoveries in `BACKLOG.md` only when the current authorized PR is the
   correct carrier. A review note is never authority to open an adjacent PR.
-- Codex may open or update PRs, but must stop at the handoff to Dale. Never
-  enable auto-merge and never merge the PR.
+- Codex may open, update, and merge routine PRs after every required gate passes.
+  Prefer GitHub auto-merge when available; otherwise merge directly with the
+  exact reviewed head SHA. Owner-reserved PRs still stop at Dale.
+- After a routine merge, verify `origin/main`, confirm deployment when
+  applicable using read-only evidence, create a fresh branch from main, and
+  continue the next approved concern. Do not continue on the merged PR branch.
 
 ## Current-State Verification Gate
 
@@ -222,5 +243,6 @@ are not implied by this governance cutover.
   unless Dale explicitly requests them.
 
 Atlas governance takes precedence over optional tooling or skill workflows.
-Tooling may improve planning, review, testing, and publication, but may never
-weaken these safety rules, expand scope, or override Dale's sole merge authority.
+Tooling may improve planning, review, testing, publication, and routine merging,
+but may never weaken these safety rules, expand scope, or override
+owner-reserved merge authority.
