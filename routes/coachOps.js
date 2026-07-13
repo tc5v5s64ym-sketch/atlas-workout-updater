@@ -152,12 +152,38 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     };
   }
 
+  function deriveRecoveryContext(rawFacts) {
+    const rec = rawFacts && rawFacts.rec && typeof rawFacts.rec === 'object' ? rawFacts.rec : {};
+    const deloadActive = rec.deload && rec.deload.in_deload === true;
+    const recoveryIntentActive = ['recovery_pump', 'deload_reset'].includes(String(rawFacts && rawFacts.intentId || ''));
+    let advisory = null;
+    if (!deloadActive) {
+      try {
+        const sel = assessRecoveryDeload(deriveRecoverySignals(rec, profileForGoal(getProfileGoal())));
+        if (sel && (sel.decision === 'deload' || sel.decision === 'recovery_reload')) {
+          advisory = {
+            decision: sel.decision,
+            recovery_state: sel.recovery_state,
+            converged_signals: sel.converged_signals,
+            rationale: sel.rationale,
+            deload_style: sel.deload_style,
+          };
+        }
+      } catch (_) { /* best-effort — a recovery read must never block the reaction */ }
+    }
+    return { active: deloadActive || advisory !== null || recoveryIntentActive, advisory };
+  }
+
   function computeSetEffortExtras(rawFacts) {
     // voiceBase is the deterministic Coach Voice Renderer output WITHOUT the prose
     // contradiction check (candidateProse is finalized per response path below). null
     // when there is no weighted/RIR signal to read.
-    const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null };
+    const out = { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, recovery_active: false };
     try {
+      // Derive this before inspecting set shape so the selector-only block fold
+      // preserves recovery intent even for supported compact [weight,reps,rir] sets.
+      const recovery = deriveRecoveryContext(rawFacts);
+      out.recovery_active = recovery.active;
       const todaySets = Array.isArray(rawFacts.todaySets) ? rawFacts.todaySets : [];
       // Only analyze the current weighted/RIR workflow: at least one set must carry
       // a finite weight or RIR. Empty/cardio-shaped input is left alone.
@@ -177,21 +203,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // surface ONLY 'deload' / 'recovery_reload'; stay silent for normal /
       // micro_adjustment (too weak) and taper / complete_rest (no live signal), and
       // when a deload is ALREADY active (the existing `deload` fact owns that voice).
-      const deloadActive = rec.deload && rec.deload.in_deload === true;
-      if (!deloadActive) {
-        try {
-          const sel = assessRecoveryDeload(deriveRecoverySignals(rec, profileForGoal(getProfileGoal())));
-          if (sel && (sel.decision === 'deload' || sel.decision === 'recovery_reload')) {
-            out.recovery_advisory = {
-              decision: sel.decision,
-              recovery_state: sel.recovery_state,
-              converged_signals: sel.converged_signals,
-              rationale: sel.rationale,
-              deload_style: sel.deload_style,
-            };
-          }
-        } catch (_) { /* best-effort — a recovery read must never block the reaction */ }
-      }
+      out.recovery_advisory = recovery.advisory;
       // BUG-20260629-034034: a recovery/deload prescription must never tell the lifter
       // to add load. Neutralize the under-dose 'bump' verdict when a recovery objective
       // is active — this gates BOTH deterministic voices below (effort_note + voiceBase)
@@ -203,8 +215,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // signal hasn't fired still emitted "Too much left in the tank. Bump coming." The
       // session's prescribed intent IS a recovery objective — honor it directly so the
       // add-load nudge is suppressed regardless of the re-derived signal.
-      const recoveryIntentActive = ['recovery_pump', 'deload_reset'].includes(String(rawFacts.intentId || ''));
-      const recoveryActive = deloadActive || out.recovery_advisory !== null || recoveryIntentActive;
+      const recoveryActive = recovery.active;
       analysis = suppressBumpForRecovery(analysis, recoveryActive);
 
       // Profile-aware Stimulus Governor grade (PR 484 wiring slice 2 — read-only fact).
@@ -397,6 +408,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // NEVER forwarded to the model (not in sanitizeFacts' whitelist).
     const noteMeta = { note_tier: null, note_trigger: null, note_reason_code: null };
     const modeNoteMeta = { note_tier: null, note_trigger: null };
+    // Compute the shared recovery/deload state before the selector-only block fold.
+    // This is the same deterministic guard used by the existing effort voice; it can
+    // only suppress a challenge and cannot grant an elevated mode/register.
+    const computed = isSetLike
+      ? computeSetEffortExtras(rawFacts)
+      : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, recovery_active: false };
     if (kind === 'block') {
       const assembled = assembleBatchNoteFacts(
         { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, targetRir: rawFacts.targetRir, sets: rawFacts.todaySets },
@@ -413,7 +430,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // a mode or register permission.
       const modeAssembled = assembleBatchNoteFacts(
         { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, sets: rawFacts.todaySets },
-        {}
+        { recovery_active: computed.recovery_active }
       );
       const mt = modeAssembled && modeAssembled.tier ? modeAssembled.tier : null;
       modeNoteMeta.note_tier = mt ? mt.tier : 'ack_only';
@@ -424,9 +441,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // up front so they ride along on every response path below (incl. LLM-down).
     // voiceBase is the deterministic Coach Voice Renderer read; finalizeSetVoice
     // applies the prose contradiction check per path and rides `voice` along too.
-    const computed = isSetLike
-      ? computeSetEffortExtras(rawFacts)
-      : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null };
     const effortExtras = { effort_note: computed.effort_note, reroute: computed.reroute, set_grade: computed.set_grade, next_move_advisory: computed.next_move_advisory, recovery_advisory: computed.recovery_advisory };
     const voiceBase = computed.voiceBase;
     // Substitution-pivot voice (slice 2). Read straight from the client-provided swap;
@@ -494,7 +508,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         progressionHistory = facts.progression_history || null;
         athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
         scarcity = computeCelebrationScarcity(allLog, { asOf: todayIso() });
-        engineNewGround = confirmTodayNewGround(rawFacts, allLog);
+        engineNewGround = confirmTodayNewGround(rawFacts, engineLiftLogRows);
       } catch (_) {
         // Keep client facts as-is if Sheets read or enrichment fails.
         enrichmentFailed = true;

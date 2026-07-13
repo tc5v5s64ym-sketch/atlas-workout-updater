@@ -204,6 +204,24 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.equal(out.facts.register.intensity, 'max');
     assert.equal(out.facts.register.profanity_ok, false, 'profanity remains OFF');
 
+    // New-ground confirmation must use the same collision-cleaned per-lift history
+    // as safety and memory. A foreign same-code ceiling cannot suppress a real PR.
+    sheetState.rows = [
+      ...Array.from({ length: 5 }, (_, i) => logRow({
+        date: `2026-07-${String(i + 1).padStart(2, '0')}`,
+        session: `target-pr${i + 1}`, exercise: 'Bench Press', lift: 'PRCOL', weight: 200, reps: 5, rir: 2,
+      })),
+      logRow({ date: '2026-07-12', session: 'foreign-ceiling', exercise: 'Leg Extension', lift: 'PRCOL', weight: 300, reps: 12, rir: 2 }),
+    ];
+    out = await postMessage('set', {
+      liftCode: 'PRCOL', exerciseName: 'Bench Press',
+      todaySets: [{ weight: 205, reps: 5, rir: 2 }],
+    });
+    assert.equal(out.modeInput.progression_verdict.level, 'new_ground');
+    assert.equal(out.facts.coach_mode, 'praise', 'raw global scarcity still sees the recent foreign PR event');
+    assert.equal(out.facts.register.intensity, 'elevated');
+    assert.equal(out.facts.register.profanity_ok, false, 'profanity remains OFF');
+
     // Every selector-shaped client field is ignored; missing history fails quiet.
     sheetState.rows = [];
     out = await postMessage('set', {
@@ -284,6 +302,21 @@ test('S5 set mode inputs are complete, engine-owned, and fail closed through the
     assert.equal(out.modeInput.note_tier, 'ack_only');
     assert.deepEqual(out.modeInput.rule_decisions, []);
     assert.equal(out.modeInput.progression_verdict, null);
+    assert.equal(out.facts.coach_mode, 'silent');
+    assert.equal(out.facts.register.intensity, 'routine');
+    assert.equal(out.facts.register.profanity_ok, false);
+
+    // A deliberate recovery/deload block keeps the same deterministic recovery
+    // suppression as the existing effort voice. High RIR is expected here and must
+    // not manufacture challenge_sandbag or elevate the selector register.
+    sheetState.rows = [];
+    out = await postMessage('block', {
+      exerciseName: 'Bench Press', muscleGroup: 'Chest', liftCode: 'REC01',
+      intentId: 'recovery_pump',
+      todaySets: [[135, 12, 6]],
+    });
+    assert.equal(out.modeInput.note_trigger, null);
+    assert.equal(out.modeInput.note_tier, 'ack_only');
     assert.equal(out.facts.coach_mode, 'silent');
     assert.equal(out.facts.register.intensity, 'routine');
     assert.equal(out.facts.register.profanity_ok, false);
