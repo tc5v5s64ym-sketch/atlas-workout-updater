@@ -21,6 +21,7 @@ const { buildPersonaCore } = require('./coachPersonaCore');
 // (the same lockstep pattern as the stimulusGovernor enums below).
 const { COACH_MODES } = require('./coachMode');
 const { INTENSITIES } = require('./registerPermissions');
+const { normalizeExerciseKey, canonicalLiftCodeFor } = require('./exerciseEnrichment');
 // Stimulus Governor vocabularies (PR 481) — imported (not re-declared) so the
 // stimulus_grade whitelist stays in lockstep with the engine's controlled enums.
 const { PROFILES, PROGRESSION_VERDICTS, FATIGUE_SIGNALS } = require('./stimulusGovernorRules');
@@ -254,7 +255,10 @@ const PROFANITY_TOKENS = [
   /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick\s?heads?\b/i,
 ];
 const PERSONAL_BEST_REFERENCE = /\bpersonal best\b/i;
-const PERSONAL_BEST_FACT_REFERENCE = /^\s*your\s+personal best(?:\s+(?:on|for)\s+([a-z0-9][a-z0-9 '\-]{0,40}))?\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i;
+const PERSONAL_BEST_FACT_REFERENCES = [
+  /^\s*your\s+personal best(?:\s+(?:on|for)\s+([a-z0-9][a-z0-9 '\-]{0,40}))?\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+  /^\s*your\s+([a-z0-9][a-z0-9 '\-]{0,40})\s+personal best\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+];
 const CELEBRATION_VOCAB = [
   /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
   /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
@@ -283,24 +287,31 @@ function findRegisterViolations(message, ctx) {
     // noun phrase is exempted; new-PR/new-record/crushed-it claims remain gated.
     const personalBest = text.match(PERSONAL_BEST_REFERENCE);
     if (personalBest) {
-      const factMatch = text.match(PERSONAL_BEST_FACT_REFERENCE);
+      const factMatch = PERSONAL_BEST_FACT_REFERENCES
+        .map(re => text.match(re))
+        .find(Boolean);
       const personalBestFacts = Array.isArray(c.personal_best_facts)
         ? c.personal_best_facts.filter(f => f && typeof f === 'object')
         : [];
       let isEngineOwnedFact = false;
       if (factMatch && personalBestFacts.length > 0) {
         const claimedExercise = factMatch[1] ? factMatch[1].trim().toLowerCase().replace(/\s+/g, ' ') : null;
+        const claimedExerciseKey = normalizeExerciseKey(claimedExercise);
+        const claimedLiftCode = canonicalLiftCodeFor(claimedExercise);
         const claimedWeight = Number(factMatch[2]);
         const claimedReps = factMatch[3] == null ? null : Number(factMatch[3]);
         const matching = personalBestFacts.filter(f => {
           const exercise = typeof f.exercise === 'string'
             ? f.exercise.trim().toLowerCase().replace(/\s+/g, ' ')
             : '';
-          return (!claimedExercise || exercise === claimedExercise)
+          const exerciseMatches = !claimedExercise
+            || normalizeExerciseKey(exercise) === claimedExerciseKey
+            || (claimedLiftCode && canonicalLiftCodeFor(exercise) === claimedLiftCode);
+          return exerciseMatches
             && Number(f.weight) === claimedWeight
             && (claimedReps == null || Number(f.reps) === claimedReps);
         });
-        isEngineOwnedFact = claimedExercise ? matching.length >= 1 : matching.length === 1;
+        isEngineOwnedFact = matching.length === 1;
       }
       const isBoundedFactReference = c.allow_personal_best_reference === true
         && isEngineOwnedFact;

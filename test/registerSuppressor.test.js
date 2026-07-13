@@ -75,6 +75,16 @@ test('suppressor: chat may cite a personal best fact but may not invent a new ea
     [],
     'an exact engine-owned historical fact remains answerable in free-form chat'
   );
+  for (const groundedVariant of [
+    'Your Bench Press personal best is 225 × 5.',
+    'Your personal best on bench is 225 × 5.',
+  ]) {
+    assert.deepEqual(
+      findRegisterViolations(groundedVariant, chatCtx),
+      [],
+      `natural wording and a deterministic lift alias must preserve the engine-owned fact: ${groundedVariant}`
+    );
+  }
   for (const invented of [
     'Your personal best on Bench Press is 405 x 5.',
     'Your personal best on Back Squat is 225 x 5.',
