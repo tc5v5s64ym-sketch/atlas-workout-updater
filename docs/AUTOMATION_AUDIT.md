@@ -1,8 +1,8 @@
 # Atlas Automation Audit
 
-> **Status:** Active reference. Snapshot of the automation that exists today, what it covers, and the gaps that warrant future automation PRs. Pairs with `docs/AUTOMATION_PROTOCOL.md`.
+> **Status:** Historical snapshot of the pre-Codex-cutover automation framework. Not active authority. Current roles, checks, review lanes, and merge rules live in `AGENTS.md`, `docs/AUTOMATION_PROTOCOL.md`, and `docs/AGENT_WORKFLOW.md`.
 
-This audit was taken while establishing the automation framework. It reuses existing mechanisms wherever possible and only names new automation as **future** PRs — none of those are implemented here.
+This audit was taken while establishing the earlier Claude-era automation framework. Its workflow inventory and future-PR recommendations are preserved as history and are not current-state claims. PR #1000 replaced mandatory Claude review with native Codex GitHub Review; the active-governance cutover retired the Claude-backed decision desks.
 
 ---
 

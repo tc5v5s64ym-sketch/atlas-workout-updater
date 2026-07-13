@@ -46,9 +46,9 @@ jobs:
               { name: 'coach-behavior',  color: '1d76db', description: 'Touches what the coach says or how it decides to speak.' },
               { name: 'parser-behavior', color: '0052cc', description: 'Touches the slash-notation / set-extraction parser.' },
               { name: 'infrastructure',  color: 'c5def5', description: 'CI/workflows/templates/labels/scripts; no app behavior change.' },
-              { name: 'codex-decision',  color: '8a63d2', description: 'A decision panel routed to the Codex Decision Desk to answer.' },
-              { name: 'atlas-decision-desk', color: '8a63d2', description: 'An owner-gated/ambiguous implementation decision routed to the Atlas Decision Desk (issue).' },
-              { name: 'needs-pm-decision',   color: 'fef2c0', description: 'Awaiting the Atlas Decision Desk verdict (APPROVED / REJECTED / SPLIT / ESCALATE-TO-OWNER).' },
+              { name: 'codex-decision',  color: '8a63d2', description: 'Legacy label for pre-cutover Codex Decision Desk requests.' },
+              { name: 'atlas-decision-desk', color: '8a63d2', description: 'Evidence packet awaiting external ChatGPT Atlas Decision Desk review; no automated responder.' },
+              { name: 'needs-pm-decision',   color: 'fef2c0', description: 'Awaiting a ChatGPT/Dale verdict (APPROVED / REJECTED / SPLIT / ESCALATE-TO-DALE).' },
             ];
             for (const l of labels) {
               try {

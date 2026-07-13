@@ -4,7 +4,7 @@
 
 > 🗂️ **Completed & cancelled items have moved to [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md)** (2026-06-29, refreshed 2026-07-08 PR-21). This file now tracks only **open / in-progress / deferred** work. Shipped (✅) items remain here when they still carry an open follow-up/deferred sub-note — that sub-note is the actual open work; the surrounding "what shipped" prose is kept alongside it rather than split out, since separating them safely needs editorial judgment a mechanical pass can't do (see the `[housekeeping]` backlog line below).
 
-Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./FIX_PLAN.md), the still-live findings in [`AUDIT.md`](./AUDIT.md) (the 2026-06-14 read-only code audit), and owner decisions. See the "Backlog discipline" section in [`CLAUDE.md`](./CLAUDE.md) for how to keep this current.
+Seeded from the open GitHub issues, the not-yet-done items in [`FIX_PLAN.md`](./FIX_PLAN.md), the still-live findings in [`AUDIT.md`](./AUDIT.md) (the 2026-06-14 read-only code audit), and owner decisions. See the "Backlog and roadmap discipline" section in [`AGENTS.md`](./AGENTS.md) for how to keep this current.
 
 ### Deferred item tags
 
@@ -15,7 +15,7 @@ Each deferred item should carry one of these tags so future agents know the *ris
 - `[polish]` — wording, ordering, or UX quality. No behavior change.
 - `[housekeeping]` — dead code, duplicate logic, test gaps, doc cleanup.
 
-> **Model:** the builder runs on **Opus 4.8 for all work** (owner standing instruction — see `CLAUDE.md`). The per-item "Sonnet 4.6 / Opus 4.8" suggestions still scattered through older items below are **superseded** — read them as risk hints only, not model selection.
+> **Implementation model:** no builder model is mandatory. Model suggestions retained in older item records are historical risk/context notes only, never an active model or merge gate.
 
 ---
 

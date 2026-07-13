@@ -40,16 +40,16 @@ jobs:
               'one line -->',
               'e.g. docs-only',
               'low / medium / high -->',
-              'pass / fail / not-run',
-              'READY FOR OWNER MERGE / NON-BLOCKING / BLOCKING',
-              'review passed / changes-requested',
-              'which check-in criterion 1',
-              'steps for the owner if owner-live-test',
-              'merge-ready / fix-then-merge / hold-for-owner -->',
+              'command/check + result; not-run',
+              'READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
+              'or Yes + reserved criterion',
+              'steps for Dale if needed',
+              'READY FOR DALE MERGE / fix-then-review / hold-for-Dale -->',
               // prose
               'One sentence: the single concern',
               'STILL BROKEN / ALREADY FIXED',
-              'command + result',
+              'Principle advanced',
+              'command/check + result',
             ];
             for (const s of sentinels) {
               if (body.includes(s)) {

@@ -2,7 +2,7 @@
 
 This file is the **owner-only** queue for live tests that cannot be automated — tests that require a real device, a real gym session, real credentials, or first-use confirmation of a gate that only fires once.
 
-Each card is filed by Claude Code (or CODEX Review) when a feature ships but needs a live human confirmation before it is considered fully closed. The owner marks PASS or FAIL and notes any follow-up.
+Each card is filed by Codex or native Codex GitHub Review when a feature ships but needs a live human confirmation before it is considered fully closed. The owner marks PASS or FAIL and notes any follow-up.
 
 ---
 
@@ -23,18 +23,12 @@ Each card is filed by Claude Code (or CODEX Review) when a feature ships but nee
 
 ## Pending
 
-### LT-001 — Decision Desk author-association gate
+### Retired: LT-001 — Decision Desk author-association gate
 
-| Field | Value |
-|---|---|
-| **Test ID** | LT-001 |
-| **Related PR / feature** | Decision Desk author-association gate (`.github/workflows/codex-decision-desk.yml`) |
-| **Shell / app version expected** | Any version with the Codex Decision Desk workflow active |
-| **Steps** | 1. Open (or create) a PR that contains a `## 🧭 Codex Decision Request` comment posted by the Claude Code builder identity. 2. Observe whether the `codex-decision-desk` workflow triggers and responds. 3. Note the `author_association` value logged in the workflow run (visible in Actions → the triggered run). |
-| **Expected result** | The gate correctly allows the builder identity (`OWNER`, `MEMBER`, or `COLLABORATOR` association) and the desk fires and returns a verdict. If the builder posts as `NONE`/`CONTRIBUTOR`, the desk is silently inert (fail-closed, never an implicit "yes") — in that case the fix is a precise login allowlist (do NOT loosen to `NONE` broadly). |
-| **Screenshot** | — |
-| **Owner result** | PASS / FAIL — |
-| **Follow-up if FAIL** | If gate silently inert: add the builder bot's exact GitHub login to the `if` condition allowlist in the workflow. File a PR (workflow-only change, `[infrastructure]`). |
+Retired by the Claude-to-Codex governance cutover (PR #1001). The deleted
+`.github/workflows/codex-decision-desk.yml` has no replacement automated
+responder; decision requests now go to the external ChatGPT Atlas Decision Desk
+and Dale. Do not run this as a live test or recreate the workflow.
 
 ### LT-002 — build_strength full-profile default
 

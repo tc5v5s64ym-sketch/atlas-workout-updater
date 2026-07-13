@@ -57,7 +57,7 @@ Build order:
 
 - Tiny PRs.
 - One concern per PR.
-- Automation-first: do **not** stop after every PR. Proceed through the Autonomous Build Loop and **merge merge-ready PRs** (Claude holds full merge authority), continuing to the next approved task; stop only when an owner check-in criterion is met (`docs/OWNER_CHECKIN_RULES.md`) or the owner interjects. (Hold points below are **owner-initiated**, not automatic — `docs/AGENT_WORKFLOW.md` "Hold points".) The earlier "stop after every PR for owner review" rule is the legacy human-driven cadence and is superseded.
+- Codex implements and opens one PR at a time, completes both review lanes and required checks, then stops at `READY FOR DALE MERGE`. Dale alone merges. Do not start a later concern on the open PR branch.
 - Deterministic engine first, AI voice second.
 - Do not touch write paths unless the PR explicitly says so.
 - Do not change Sheet schema unless explicitly approved.
@@ -515,7 +515,7 @@ Promoted by owner decision (2026-06-22) as the build series implementing the Tra
 
 **Status:** approved; pre-coding report delivered. **Owner confirmation required before editing production files** (owner standing instruction for this slice — no production edits until confirmed).
 
-**Type:** Behavior-changing coach/session logic. **Trust-sensitive.** **Risk level:** Medium-high. **Recommended model:** Opus 4.8.
+**Type:** Behavior-changing coach/session logic. **Trust-sensitive.** **Risk level:** Medium-high.
 
 **Scope guardrails (explicit):**
 - **Current weighted/RIR workflow only** — the resistance grammar Atlas already parses.
@@ -562,4 +562,4 @@ Steps 372-377 were sequenced from the June 2026 app-test failures (six findings,
 
 ## New chat / agent instruction
 
-Read this file before changing roadmap direction. Execute the next approved step. Under the automation-first workflow (`docs/AUTOMATION_PROTOCOL.md`), proceed through the Autonomous Build Loop and merge merge-ready PRs without stopping — pausing only when an owner check-in criterion applies (`docs/OWNER_CHECKIN_RULES.md`). When this queue empties, refill it from `BACKLOG.md` per the Roadmap Refill Loop (`docs/AGENT_WORKFLOW.md`) rather than idling. Changing roadmap *direction* (Vision/Dream/Constitution, or promoting owner-gated scope) remains an owner decision.
+Read this file before changing roadmap direction. Execute only the next approved step. Codex implements, obtains both required review lanes, and stops at `READY FOR DALE MERGE`; Dale alone merges. Changing roadmap *direction* (Vision/Dream/Constitution, or promoting owner-gated scope) remains an owner decision.

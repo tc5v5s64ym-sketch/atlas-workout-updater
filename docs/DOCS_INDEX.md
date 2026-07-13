@@ -17,9 +17,10 @@ These two are **partners, not competitors**: `BACKLOG.md` is the full open/defer
 ## Agent entry points
 
 - `docs/GOVERNANCE.md` — **read first**. Defines how Dream, Vision, Constitution, Roadmap, and Backlog relate and where to file new ideas.
-- `CLAUDE.md` — operating brief for Claude Code and other AI agents. Includes the **gstack Workflow** section — command reference table, Atlas-specific usage guidance, and PR reporting format for all gstack skills used during development.
-- `CODEX.md` — operating brief for Codex/coding agents.
-- `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Claude Code + CODEX Review + GitHub workflow.
+- `AGENTS.md` — **canonical implementation-agent entry point**. Defines Codex implementation, native Codex GitHub Review, ChatGPT Atlas Contract Review, safety rules, and Dale's sole merge authority.
+- `CLAUDE.md` — compatibility pointer only; no active Claude-specific authority.
+- `CODEX.md` — compatibility pointer to `AGENTS.md` and the implementation-vs-native-review context split.
+- `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Codex + native review + GitHub workflow.
 - `docs/ACTIVE_ROADMAP.md` — current queue; read before selecting the next PR.
 - `BACKLOG.md` — open/deferred work and owner decisions.
 
@@ -30,19 +31,19 @@ Agents should not start from old plan docs.
 The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 
 - `docs/DECISION_KERNEL.md` — the operational distillation of Vision / Roadmap / Architecture / Constitution / Invariants: the durable principles + document precedence read FIRST for routine autonomous decisions (so the full north-star docs are not re-read every PR).
-- `docs/AUTOMATION_PROTOCOL.md` — the automation contract: roles (Claude builder, Codex contract guard, GitHub Actions enforcement, owner exception-handler), the skipped/errored/incomplete-review-is-a-failure principle, and merge eligibility.
-- `docs/OWNER_CHECKIN_RULES.md` — the decision criteria and who answers each (Codex by default; owner only on escalation); everything else proceeds automatically.
+- `docs/AUTOMATION_PROTOCOL.md` — the automation contract: Codex implementation, separate native correctness/security and ChatGPT contract-review lanes, positive-evidence gates, and Dale-only merge authority.
+- `docs/OWNER_CHECKIN_RULES.md` — owner-reserved decisions, the unchanged production-verification amendment, and absolute data safety.
 - `docs/ONE_BRAIN_PROMOTION_CRITERIA.md` — owner/governance: how any Brain (Brian v1 and every future version) earns promotion from hybrid shadow to primary coach — observation window, evidence sources, acceptance checklist, automatic blockers, owner review, rollback. Promotion is owner-reserved (`OWNER_CHECKIN_RULES.md` criterion 2); this defines the evidence standard for it.
 - `docs/ENGINE_RECONCILIATION_NOTES.md` — active reference for the observation window: the two places legacy and the Brain use different accounting (volume credit models; deload decider vs advisory), which model is canonical today, and how to attribute shadow divergence as accounting-vs-judgment before scoring it against the promotion criteria.
-- `docs/DECISION_ROUTING.md` — the Codex Decision Desk: Claude's decision panels route to Codex (not the owner), answered in GitHub via the existing Claude subscription token (no new paid API).
+- `docs/DECISION_ROUTING.md` — the external ChatGPT Atlas Decision Desk and Atlas Contract Review; no automated Claude responder or background trigger.
 - `docs/RISK_LABELS.md` — risk classification labels and when each applies (manifest: `.github/labels.yml`).
-- `docs/AUTOMATION_AUDIT.md` — snapshot of existing automation, gaps, and next automation PRs.
+- `docs/AUTOMATION_AUDIT.md` — **Historical snapshot** of the pre-Codex-cutover automation framework. Its Claude workflow inventory and proposed automation gaps are not active authority.
 - `.github/PULL_REQUEST_TEMPLATE.md` — the one-screen merge card every PR must produce.
 
 ## Active roadmap / queue
 
 - `docs/ACTIVE_ROADMAP.md` — the detailed active queue. **Freshness note:** the June-2026 trust-first refill (Steps 379–385) it details has **shipped**; its "Active queue" section now carries a banner pointing to the live sequence — the **One-Brain coaching engine** in `BACKLOG.md` → "One-Brain Coaching Engine" and the hybrid observation window (`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`).
-- `docs/REMEDIATION_PLAN_V2.md` — **Active** (v2.2, 2026-07-08): remediation is **closed** — PR-21 (governance diet), PR-22 (frontend de-dup), and PR-23 (Flight-Recorder replay harness) are all ✅ shipped. **Now/next, unambiguous:** PR-24 (state-store completion) is **✅ session-state scope complete**, done in tiny slices — slice 1 (`sharedState.js` fold-in + delete) ✅, slice 2 (`coachDiscussionSinceLog` → store) ✅, and slice 3 (recap/skip/substitution) ✅ shipped as lock-in tests (the gate found them already store-derived — no shadow to migrate); the write-path client-state `let`s stay owner-gated (trust-loop client half). PR-18's replay-coverage gate is met (not the same as scheduled — it's a separate future PR); PR-19 dormant; PR-20 cut; GATE A / PR-12A/B moved to the product track.
+- `docs/REMEDIATION_PLAN_V2.md` — **Historical closed plan** (v2.2, 2026-07-08): remediation is **closed** — PR-21 (governance diet), PR-22 (frontend de-dup), and PR-23 (Flight-Recorder replay harness) are all ✅ shipped. PR-24's session-state scope is complete; PR-18 remains separately filed, PR-19 is dormant, PR-20 was cut, and GATE A / PR-12A/B moved to the product track. Its Claude-era execution prompts and model notes are history, not active authority.
 - `docs/REMEDIATION_REVIEW_2026-07-08.md` — **Reference** — independent engineering assessment of the remediation trajectory (owner-requested, at commit `04597c6`): health score, risk analysis, Top-10 ranked next initiatives, and the M-CONSOLIDATE milestone that drove the plan's v2.2 re-scope.
 - `docs/COMPOSER_FIRST_MIGRATION.md` — design + phase plan for the composer-first surface migration (owner-adopted 2026-07-02; Phases A, B, C1–C2 shadow, and D fully shipped). Reference for how the current surface came to be; the remaining C3 routing promotion is evidence-gated in `BACKLOG.md`.
 - `docs/COACHING_ENGINE_ARCHITECTURE.md` — the canonical One-Brain blueprint the current build follows (also under "Product and architecture reference").
