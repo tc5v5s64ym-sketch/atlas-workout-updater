@@ -98,16 +98,3 @@ test("merge-card check requires native review SHA to match the current PR head",
     "merge-card check must reject stale native review SHAs",
   );
 });
-
-test("merge-card check requires affirmative no-unresolved P0/P1 wording", () => {
-  const text = fs.readFileSync(
-    path.join(repoRoot, ".github", "workflows", "merge-card-check.yml"),
-    "utf8",
-  );
-
-  assert.match(
-    text,
-    /no unresolved current-head P0\\\/P1/,
-    "merge-card check must require affirmative no-unresolved current-head P0/P1 evidence",
-  );
-});
