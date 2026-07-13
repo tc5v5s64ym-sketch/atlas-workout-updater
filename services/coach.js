@@ -253,8 +253,10 @@ const PROFANITY_TOKENS = [
   /\bfuck\w*/i, /\bshit\w*/i, /\basshole[s]?\b/i, /\bbitch\w*/i,
   /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick\s?heads?\b/i,
 ];
+const PERSONAL_BEST_REFERENCE = /\bpersonal best\b/i;
+const PERSONAL_BEST_FACT_REFERENCE = /^\s*your\s+personal best(?:\s+(?:on|for)\s+[a-z0-9][a-z0-9 '\-]{0,40})?\s+(?:is|was|stands at)\s+\d+(?:\.\d+)?(?:\s*(?:lb|lbs|kg))?(?:\s*[x×]\s*\d+)?\.?\s*$/i;
 const CELEBRATION_VOCAB = [
-  /\bpersonal best\b/i, /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
+  /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
   /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
 ];
 // ctx.profanity_only (bool): when true, run ONLY the profanity check and skip the
@@ -276,6 +278,17 @@ function findRegisterViolations(message, ctx) {
     }
   }
   if (!c.profanity_only && mode !== 'celebrate' && mode !== 'praise') {
+    // Free-form chat may answer a factual history question such as "what is my
+    // personal best?" without manufacturing a new earned moment. Only that neutral
+    // noun phrase is exempted; new-PR/new-record/crushed-it claims remain gated.
+    const personalBest = text.match(PERSONAL_BEST_REFERENCE);
+    if (personalBest) {
+      const isBoundedFactReference = c.allow_personal_best_reference === true
+        && PERSONAL_BEST_FACT_REFERENCE.test(text);
+      if (!isBoundedFactReference) {
+        out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: personalBest[0] });
+      }
+    }
     for (const re of CELEBRATION_VOCAB) {
       const m = text.match(re);
       if (m) { out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: m[0] }); break; }

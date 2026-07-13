@@ -699,6 +699,19 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const { detectFailureSets, sessionSetsFromContext } = require('../services/failureSets');
     const failure_sets = detectFailureSets(sessionSetsFromContext(cc));
 
+    const coach_mode = deriveChatCoachMode(
+      { memory_patterns },
+      { discouraged: modeOpts.discouraged === true }
+    );
+    // S5 / B4-4: the chat voice receives the same engine-owned register contract
+    // as set reactions. Free-form chat has no earned new-ground event of its own,
+    // so profanity stays explicitly OFF regardless of client context or runtime
+    // activation. The client never participates in this grant.
+    const register = grantRegister({
+      mode: coach_mode,
+      ownerPrefs: { profanity_enabled: false }
+    });
+
     return {
       recommended_label: read.recommended_label || null,
       recommended_focus: read.recommended_reason || null,
@@ -737,13 +750,14 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // B5 — the engine-decided coaching MODE for the chat voice, derived
       // (deriveChatCoachMode) from the snapshot facts assembled above plus the
       // message-derived discouragement signal (B5b Part 2). `memory_patterns` →
-      // `challenge`; an explicit discouragement message → `reassure` (challenge still
-      // outranks it); else `silent`. Register is intentionally NOT granted here (that
-      // is B4-4); the sanitizer floors it to null. The route resolves the
+      // `challenge`; an explicit discouragement message → `reassure`; else `silent`.
+      // B4-4 derives the matching register server-side with profanity forced OFF.
+      // The route resolves the
       // higher-precedence tiredness/recovery moment before the LLM, so this mode only
       // ever rides the non-tired turn — recovery/safety are never softened into
       // reassurance.
-      coach_mode: deriveChatCoachMode({ memory_patterns }, { discouraged: modeOpts.discouraged === true })
+      coach_mode,
+      register
     };
   }
 
@@ -990,13 +1004,27 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const { reply, propose_edit, propose_note, propose_constraint, propose_plan_edit } =
         await coach.generateChatReply({ message, context, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
       const hasReply = Boolean(reply && String(reply).trim());
+      // Enforce the engine mode/register on free-form chat. A neutral "personal
+      // best" history reference remains legal, but new-PR/new-record/crushed-it
+      // language and profanity still require the matching earned grant. Violating
+      // prose is dropped while any structured proposal survives.
+      const registerViolations = hasReply
+        ? (typeof coach.findRegisterViolations === 'function'
+          ? coach.findRegisterViolations(reply, {
+          mode: context.coach_mode,
+          register: context.register,
+          allow_personal_best_reference: true
+          })
+          : ['register_guard_unavailable'])
+        : [];
+      const hasSafeReply = hasReply && registerViolations.length === 0;
       // Return the Gemini result when it has usable prose OR carries a structured
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no
       // proposal) falls through to the deterministic engine fallback below.
-      if (hasReply || propose_edit || propose_note || propose_constraint || propose_plan_edit) {
+      if (hasSafeReply || propose_edit || propose_note || propose_constraint || propose_plan_edit) {
         return standardSuccess(req, res, 'Coach chat reply', {
-          message: hasReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, propose_plan_edit: propose_plan_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
+          message: hasSafeReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, propose_plan_edit: propose_plan_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.

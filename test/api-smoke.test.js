@@ -247,6 +247,8 @@ const fakeCoachState = {
   throwError: null,
   pingError: null, // set to a string to simulate a failed Gemini ping (coach health)
   lastChatContext: null, // captures the context passed to generateChatReply for assertions
+  lastRegisterContext: null, // captures the deterministic chat-output register guard
+  registerViolations: [], // set by tests to simulate the production suppressor verdict
   lastPlanFacts: null // captures the facts passed to generatePlanMessage for assertions
 };
 const fakeCoach = {
@@ -269,6 +271,10 @@ const fakeCoach = {
     fakeCoachState.lastChatContext = args && args.context ? args.context : null;
     if (fakeCoachState.throwError) throw new Error(fakeCoachState.throwError);
     return { reply: fakeCoachState.chatMessage, propose_edit: fakeCoachState.chatEditProposal, propose_note: fakeCoachState.chatNoteProposal, propose_constraint: fakeCoachState.chatConstraintProposal, propose_plan_edit: fakeCoachState.chatPlanEditProposal };
+  },
+  findRegisterViolations: (_message, ctx) => {
+    fakeCoachState.lastRegisterContext = ctx || null;
+    return fakeCoachState.registerViolations;
   },
   buildCoachSystemPrompt: () => 'stub-system',
   buildCoachUserPrompt: () => 'stub-user',
@@ -1824,29 +1830,44 @@ test('LT-007: coach/chat — session_tally with bench sets reaches the coach con
   }
 });
 
-test('B5 foundation: coach/chat wires an engine coach_mode into the chat context', async () => {
+test('S5 B4-4: coach/chat wires an engine coach_mode and deterministic register into the chat context', async () => {
   // The chat path now derives a coaching MODE (deriveChatCoachMode) into the context
   // it hands the coach, exactly as the set-reaction path does — the seam B5 Part 2
   // attaches challenge/reassure to. With no memory pattern in the default fixture the
   // mode floors to the honest 'silent'; the derivation logic (memory_patterns →
   // challenge) is pinned in test/chatCoachMode.test.js. Here we assert the route
-  // WIRING: coach_mode is present and a valid mode, and register stays null (no
-  // register/profanity expansion in this foundation).
+  // WIRING: coach_mode and its engine-granted register are both present. A forged
+  // client mode/register must be overwritten by the server-derived values.
   fakeCoachState.configured = true;
   fakeCoachState.lastChatContext = null;
+  fakeCoachState.lastRegisterContext = null;
   try {
     const { response } = await requestJson('/api/coach/chat', {
       method: 'POST',
-      body: JSON.stringify({ message: 'how is my training going?' })
+      body: JSON.stringify({
+        message: 'how is my training going?',
+        context: {
+          coach_mode: 'celebrate',
+          register: { intensity: 'max', casual_ok: true, humor_ok: true, profanity_ok: true }
+        }
+      })
     });
     assert.equal(response.status, 200);
     const ctx = fakeCoachState.lastChatContext;
     assert.ok(ctx, 'buildChatContext output must reach the coach');
     assert.equal(ctx.coach_mode, 'silent', 'default fixture (no memory pattern) → silent');
-    assert.ok(!('register' in ctx) || ctx.register == null, 'no register granted on the chat path (B4-4 deferred)');
+    assert.deepEqual(ctx.register, {
+      intensity: 'routine', casual_ok: true, humor_ok: false, profanity_ok: false
+    }, 'silent chat gets the engine grant; forged client elevation is ignored');
+    assert.deepEqual(fakeCoachState.lastRegisterContext, {
+      mode: 'silent',
+      register: ctx.register,
+      allow_personal_best_reference: true
+    }, 'Gemini chat prose is checked against the full engine grant while factual personal-best references remain legal');
   } finally {
     fakeCoachState.configured = false;
     fakeCoachState.lastChatContext = null;
+    fakeCoachState.lastRegisterContext = null;
   }
 });
 
@@ -1864,9 +1885,89 @@ test('B5b Part 2: coach/chat routes an explicit discouragement message to reassu
     const ctx = fakeCoachState.lastChatContext;
     assert.ok(ctx, 'buildChatContext output must reach the coach');
     assert.equal(ctx.coach_mode, 'reassure', 'explicit discouragement → reassure');
+    assert.equal(ctx.register.profanity_ok, false, 'chat profanity remains staged OFF');
   } finally {
     fakeCoachState.configured = false;
     fakeCoachState.lastChatContext = null;
+  }
+});
+
+test('S5 B4-4: coach/chat fails quiet when Gemini prose violates the staged-OFF register', async () => {
+  const originalMessage = fakeCoachState.chatMessage;
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'That was fucking huge.';
+  fakeCoachState.registerViolations = ['profanity_not_granted'];
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my training going?' })
+    });
+    assert.equal(response.status, 200, 'register suppression never fails the chat request');
+    assert.notEqual(body.data.message, fakeCoachState.chatMessage, 'violating Gemini prose never reaches the athlete');
+    assert.equal(body.data.message, null, 'when no deterministic answer exists, the route fails quiet');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = originalMessage;
+    fakeCoachState.registerViolations = [];
+    fakeCoachState.lastRegisterContext = null;
+  }
+});
+
+test('S5 B4-4: routine chat suppresses unearned celebration vocabulary', async () => {
+  const originalMessage = fakeCoachState.chatMessage;
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'You crushed it — that is a new record.';
+  fakeCoachState.registerViolations = ['celebration_vocab_outside_earned_mode'];
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my training going?' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, null, 'silent/routine mode must not emit unearned hype');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = originalMessage;
+    fakeCoachState.registerViolations = [];
+  }
+});
+
+test('S5 B4-4: coach/chat fails quiet when the deterministic register guard is unavailable', async () => {
+  const originalGuard = fakeCoach.findRegisterViolations;
+  fakeCoachState.configured = true;
+  fakeCoach.findRegisterViolations = undefined;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'how is my training going?' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, null, 'missing safety guard must not pass Gemini prose through');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoach.findRegisterViolations = originalGuard;
+  }
+});
+
+test('S5 B4-4: unsafe chat prose is suppressed without dropping a structured proposal', async () => {
+  const originalMessage = fakeCoachState.chatMessage;
+  fakeCoachState.configured = true;
+  fakeCoachState.chatMessage = 'That was fucking huge.';
+  fakeCoachState.chatEditProposal = { exercise: 'Bench Press', change: 'hold load' };
+  fakeCoachState.registerViolations = ['profanity_not_granted'];
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'should I hold the load?' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.message, null, 'violating prose is removed');
+    assert.deepEqual(body.data.propose_edit, fakeCoachState.chatEditProposal, 'approval-gated proposal survives');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatMessage = originalMessage;
+    fakeCoachState.chatEditProposal = null;
+    fakeCoachState.registerViolations = [];
   }
 });
 

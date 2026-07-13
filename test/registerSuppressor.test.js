@@ -63,6 +63,37 @@ test('suppressor: celebration/PR vocabulary is a violation outside celebrate/pra
     .filter(v => v.code === 'celebration_vocab_outside_earned_mode').length, 0, 'PR language in praise is fine');
 });
 
+test('suppressor: chat may cite a personal best fact but may not invent a new earned event', () => {
+  const chatCtx = {
+    mode: 'silent',
+    register: { profanity_ok: false },
+    allow_personal_best_reference: true,
+  };
+  assert.deepEqual(
+    findRegisterViolations('Your personal best on bench is 225.', chatCtx),
+    [],
+    'a factual historical reference remains answerable in free-form chat'
+  );
+  assert.ok(
+    findRegisterViolations('That is a new record — you crushed it.', chatCtx)
+      .some(v => v.code === 'celebration_vocab_outside_earned_mode'),
+    'new-event and hype language remains blocked outside an earned mode'
+  );
+  for (const unearned of [
+    'That was your personal best!',
+    'You just hit a personal best.',
+    'You just set it — your personal best is 225.',
+    'Your personal best is 225, and you achieved it today.',
+    'Your personal best on bench is 225 — and you just hit it.',
+  ]) {
+    assert.ok(
+      findRegisterViolations(unearned, chatCtx)
+        .some(v => v.code === 'celebration_vocab_outside_earned_mode'),
+      `current-event claim must remain blocked: ${unearned}`
+    );
+  }
+});
+
 test('suppressor: profanity_only (plan voice) strips profanity but allows a real PR reference', () => {
   // The plan "why today" voice may legitimately cite a personal best in its rationale.
   const planPr = 'Today pushes toward your personal best on bench.';
