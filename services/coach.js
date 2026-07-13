@@ -256,8 +256,8 @@ const PROFANITY_TOKENS = [
 ];
 const PERSONAL_BEST_REFERENCE = /\bpersonal best\b/i;
 const PERSONAL_BEST_FACT_REFERENCES = [
-  /^\s*your\s+personal best\s+(?:on|for)\s+([a-z0-9][a-z0-9 '\-]{0,40})\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
-  /^\s*your\s+([a-z0-9][a-z0-9 '\-]{0,40})\s+personal best\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+  /^\s*your\s+personal best\s+(?:on|for)\s+([^\r\n]{1,80}?)\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
+  /^\s*your\s+([^\r\n]{1,80}?)\s+personal best\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i,
 ];
 const CELEBRATION_VOCAB = [
   /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
