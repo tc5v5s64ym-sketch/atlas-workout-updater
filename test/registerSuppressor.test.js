@@ -68,12 +68,24 @@ test('suppressor: chat may cite a personal best fact but may not invent a new ea
     mode: 'silent',
     register: { profanity_ok: false },
     allow_personal_best_reference: true,
+    personal_best_facts: [{ exercise: 'Bench Press', weight: 225, reps: 5 }],
   };
   assert.deepEqual(
-    findRegisterViolations('Your personal best on bench is 225.', chatCtx),
+    findRegisterViolations('Your personal best on Bench Press is 225 x 5.', chatCtx),
     [],
-    'a factual historical reference remains answerable in free-form chat'
+    'an exact engine-owned historical fact remains answerable in free-form chat'
   );
+  for (const invented of [
+    'Your personal best on Bench Press is 405 x 5.',
+    'Your personal best on Back Squat is 225 x 5.',
+    'Your personal best on Bench Press is 225 x 8.',
+  ]) {
+    assert.ok(
+      findRegisterViolations(invented, chatCtx)
+        .some(v => v.code === 'celebration_vocab_outside_earned_mode'),
+      `non-engine personal-best fact must remain blocked: ${invented}`
+    );
+  }
   assert.ok(
     findRegisterViolations('That is a new record — you crushed it.', chatCtx)
       .some(v => v.code === 'celebration_vocab_outside_earned_mode'),

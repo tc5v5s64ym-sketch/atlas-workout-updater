@@ -254,7 +254,7 @@ const PROFANITY_TOKENS = [
   /\bbastard[s]?\b/i, /\bgoddamn\w*/i, /\bpiss\w*/i, /\bdick\s?heads?\b/i,
 ];
 const PERSONAL_BEST_REFERENCE = /\bpersonal best\b/i;
-const PERSONAL_BEST_FACT_REFERENCE = /^\s*your\s+personal best(?:\s+(?:on|for)\s+[a-z0-9][a-z0-9 '\-]{0,40})?\s+(?:is|was|stands at)\s+\d+(?:\.\d+)?(?:\s*(?:lb|lbs|kg))?(?:\s*[x×]\s*\d+)?\.?\s*$/i;
+const PERSONAL_BEST_FACT_REFERENCE = /^\s*your\s+personal best(?:\s+(?:on|for)\s+([a-z0-9][a-z0-9 '\-]{0,40}))?\s+(?:is|was|stands at)\s+(\d+(?:\.\d+)?)(?:\s*(?:lb|lbs))?(?:\s*[x×]\s*(\d+))?\.?\s*$/i;
 const CELEBRATION_VOCAB = [
   /\bnew\s+pr\b/i, /\bnew\s+record\b/i, /\bpr\s+today\b/i,
   /\bbroke\s+your\s+record\b/i, /\bcrushed it\b/i, /\bcrushing it\b/i,
@@ -283,8 +283,27 @@ function findRegisterViolations(message, ctx) {
     // noun phrase is exempted; new-PR/new-record/crushed-it claims remain gated.
     const personalBest = text.match(PERSONAL_BEST_REFERENCE);
     if (personalBest) {
+      const factMatch = text.match(PERSONAL_BEST_FACT_REFERENCE);
+      const personalBestFacts = Array.isArray(c.personal_best_facts)
+        ? c.personal_best_facts.filter(f => f && typeof f === 'object')
+        : [];
+      let isEngineOwnedFact = false;
+      if (factMatch && personalBestFacts.length > 0) {
+        const claimedExercise = factMatch[1] ? factMatch[1].trim().toLowerCase().replace(/\s+/g, ' ') : null;
+        const claimedWeight = Number(factMatch[2]);
+        const claimedReps = factMatch[3] == null ? null : Number(factMatch[3]);
+        const matching = personalBestFacts.filter(f => {
+          const exercise = typeof f.exercise === 'string'
+            ? f.exercise.trim().toLowerCase().replace(/\s+/g, ' ')
+            : '';
+          return (!claimedExercise || exercise === claimedExercise)
+            && Number(f.weight) === claimedWeight
+            && (claimedReps == null || Number(f.reps) === claimedReps);
+        });
+        isEngineOwnedFact = claimedExercise ? matching.length >= 1 : matching.length === 1;
+      }
       const isBoundedFactReference = c.allow_personal_best_reference === true
-        && PERSONAL_BEST_FACT_REFERENCE.test(text);
+        && isEngineOwnedFact;
       if (!isBoundedFactReference) {
         out.push({ code: 'celebration_vocab_outside_earned_mode', phrase: personalBest[0] });
       }

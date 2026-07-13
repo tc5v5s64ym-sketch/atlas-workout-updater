@@ -1004,16 +1004,27 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       const { reply, propose_edit, propose_note, propose_constraint, propose_plan_edit } =
         await coach.generateChatReply({ message, context, history }, { timeoutMs: COACH_CHAT_TIMEOUT_MS });
       const hasReply = Boolean(reply && String(reply).trim());
+      const personalBestFacts = Object.entries(
+        context.athlete_identity && context.athlete_identity.lift_prs
+          ? context.athlete_identity.lift_prs
+          : {}
+      ).map(([exercise, entry]) => ({
+        exercise,
+        weight: entry && entry.current_best ? entry.current_best.weight : null,
+        reps: entry && entry.current_best ? entry.current_best.reps : null
+      })).filter(f => typeof f.weight === 'number' && Number.isFinite(f.weight));
       // Enforce the engine mode/register on free-form chat. A neutral "personal
-      // best" history reference remains legal, but new-PR/new-record/crushed-it
-      // language and profanity still require the matching earned grant. Violating
-      // prose is dropped while any structured proposal survives.
+      // best" history reference remains legal only when its lift/load/reps exactly
+      // match the engine-owned athlete identity. New-PR/new-record/crushed-it
+      // language, invented facts, and profanity still require the matching earned
+      // grant. Violating prose is dropped while any structured proposal survives.
       const registerViolations = hasReply
         ? (typeof coach.findRegisterViolations === 'function'
           ? coach.findRegisterViolations(reply, {
-          mode: context.coach_mode,
-          register: context.register,
-          allow_personal_best_reference: true
+            mode: context.coach_mode,
+            register: context.register,
+            allow_personal_best_reference: true,
+            personal_best_facts: personalBestFacts
           })
           : ['register_guard_unavailable'])
         : [];

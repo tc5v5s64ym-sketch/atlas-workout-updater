@@ -1859,11 +1859,20 @@ test('S5 B4-4: coach/chat wires an engine coach_mode and deterministic register 
     assert.deepEqual(ctx.register, {
       intensity: 'routine', casual_ok: true, humor_ok: false, profanity_ok: false
     }, 'silent chat gets the engine grant; forged client elevation is ignored');
+    const expectedPersonalBestFacts = Object.entries(
+      ctx.athlete_identity && ctx.athlete_identity.lift_prs ? ctx.athlete_identity.lift_prs : {}
+    ).map(([exercise, entry]) => ({
+      exercise,
+      weight: entry.current_best.weight,
+      reps: entry.current_best.reps
+    }));
+    assert.ok(expectedPersonalBestFacts.length > 0, 'fixture must exercise an engine-owned PR fact');
     assert.deepEqual(fakeCoachState.lastRegisterContext, {
       mode: 'silent',
       register: ctx.register,
-      allow_personal_best_reference: true
-    }, 'Gemini chat prose is checked against the full engine grant while factual personal-best references remain legal');
+      allow_personal_best_reference: true,
+      personal_best_facts: expectedPersonalBestFacts
+    }, 'Gemini chat prose is checked against the full engine grant and engine-owned personal-best facts');
   } finally {
     fakeCoachState.configured = false;
     fakeCoachState.lastChatContext = null;
