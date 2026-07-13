@@ -41,53 +41,12 @@ jobs:
 
             const changed = files.map((file) => file.filename);
 
-            function normalize(path) {
-              return path.replace(/\\/g, '/');
-            }
-
-            function requiresCodex(path) {
-              const p = normalize(path);
-              const lower = p.toLowerCase();
-
-              if (lower.startsWith('.github/workflows/')) return true;
-              if (/(^|\/)(agents(?:\.override)?|claude|codex)\.md$/.test(lower)) return true;
-              if (/^docs\/(constitution|invariants|agent_workflow|automation_protocol|owner_checkin_rules)\.md$/.test(lower)) return true;
-              if (/(^|\/)(package|package-lock|npm-shrinkwrap|yarn\.lock|pnpm-lock\.yaml)$/.test(lower)) return true;
-              if (/(^|\/)(test|tests|__tests__)\//.test(lower) || /\.test\.[cm]?js$/.test(lower) || /\.spec\.[cm]?js$/.test(lower)) return true;
-              if (/(^|\/)(index|server|app)\.[cm]?js$/.test(lower)) return true;
-              if (/^(public|services|src|api|scripts|config)\//.test(lower)) return true;
-              if (/(schema|parser|preview|save|write|coach|bug_reports|security|secret|credential|auth|env)/i.test(p)) return true;
-
-              return false;
-            }
-
-            function safeToSkip(path) {
-              const p = normalize(path);
-              const lower = p.toLowerCase();
-
-              if (requiresCodex(p)) return false;
-              if (lower === 'backlog.md') return true;
-              if (lower.endsWith('.md') || lower.endsWith('.mdx') || lower.endsWith('.txt')) return true;
-              if (lower.startsWith('docs/') || lower.startsWith('documentation/')) return true;
-              if (lower === '.github/pull_request_template.md') return true;
-              if (lower.startsWith('.github/pull_request_template/')) return true;
-              if (lower.startsWith('.github/issue_template/')) return true;
-
-              return false;
-            }
-
-            const mustRun = changed.some(requiresCodex);
-            const allSafe = changed.length > 0 && changed.every(safeToSkip);
-            const shouldRun = mustRun || !allSafe;
             const trusted = pull.head.repo.full_name.toLowerCase() === `${owner}/${repo}`.toLowerCase();
 
             core.info(`Changed files:\n${changed.map((file) => `- ${file}`).join('\n')}`);
-            core.setOutput('should_run', shouldRun ? 'true' : 'false');
+            core.setOutput('should_run', 'true');
             core.setOutput('trusted', trusted ? 'true' : 'false');
 
-            if (!shouldRun) {
-              core.notice('Codex review skipped by the unchanged safe-file policy.');
-            }
             if (!trusted) {
               core.warning('Automated Atlas delivery is restricted to trusted same-repository pull requests.');
             }
@@ -122,7 +81,7 @@ jobs:
             }
 
             if (process.env.SHOULD_RUN !== 'true') {
-              core.notice('Codex review skipped by the unchanged safe-file policy.');
+              core.setFailed('Mandatory Codex review policy did not authorize the current head.');
               return;
             }
 
