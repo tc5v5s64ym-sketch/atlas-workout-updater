@@ -1,7 +1,8 @@
 <!--
 Atlas Merge Card — fill every field. Empty, stale, skipped, errored, unavailable,
 or incomplete required signals are failures. Routine PRs are merge-authorized
-only after every gate passes; owner-reserved PRs stop for Dale.
+only after every hard gate passes and the cold review clears; owner-reserved PRs
+stop for Dale.
 -->
 
 ## 🟦 Atlas Merge Card
@@ -13,18 +14,21 @@ only after every gate passes; owner-reserved PRs stop for Dale.
 | **Risk level**                    | <!-- low / medium / high -->                                                       |
 | **Files / categories touched**    | <!-- e.g. docs-only · governance -->                                               |
 | **Tests / checks**                | <!-- command/check + result; not-run = FAIL when required -->                      |
-| **Native Codex GitHub Review**    | <!-- exact head SHA + findings resolved / 👍 / errored(=FAIL) / not-run(=FAIL) --> |
+| **Cold review**                   | <!-- clean-context reviewer + exact head SHA + no P0/P1 / findings resolved; trivial-docs-only = n/a --> |
 | **ChatGPT Atlas Contract Review** | <!-- risk-triggered: READY FOR DALE MERGE / NON-BLOCKING / BLOCKING / not required for routine --> |
 | **Owner action required**         | <!-- No (routine) · or Yes + reserved criterion -->                                |
 | **Live test script**              | <!-- steps for Dale if needed, else n/a -->                                        |
-| **Merge authority**               | <!-- Codex may routine-merge / fix-then-review / hold-for-Dale -->                 |
+| **Merge authority**               | <!-- Claude may routine-merge / fix-then-review / hold-for-Dale -->                |
 
 <!--
-Current-head rule: after the final push, comment `@codex review`. Any later push
-makes that native review stale. Native Codex review and ChatGPT Atlas Contract
-Review are distinct; ChatGPT review is risk-triggered. Never merge when required
-checks or current-head native review are missing, stale, skipped, errored, failed,
-or incomplete.
+Cold-review rule: before any non-trivial PR merges, a fresh clean-context Claude
+reviewer reviews the exact final diff (base SHA, final head SHA, PR description,
+diff, changed tests, relevant governance, CI results). Any push after a blocking
+finding requires one fresh cold review of the new head. Native Codex GitHub Review
+is retired as a gate; a Codex auto-comment is advisory only. The cold review and
+the ChatGPT Atlas Contract Review are distinct; the ChatGPT review is
+risk-triggered. Never merge when required checks or the current-head cold review
+are missing, stale, skipped, errored, failed, or incomplete.
 -->
 
 ---

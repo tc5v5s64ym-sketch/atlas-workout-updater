@@ -1,8 +1,9 @@
 # Atlas Agent Workflow
 
-This document defines the active workflow between Dale, ChatGPT, Codex,
+This document defines the active workflow between Dale, ChatGPT, Claude,
 GitHub, and the repository's required checks. It changes no Atlas product,
-runtime, prompt, model, schema, or write-path behavior.
+runtime, prompt, model, schema, or write-path behavior. `CLAUDE.md` is the
+canonical brief.
 
 ## North-star and execution order
 
@@ -11,7 +12,7 @@ sequence, respect Architecture, and preserve the Constitution and Invariants.
 
 For routine implementation read, in order:
 
-1. `AGENTS.md`
+1. `CLAUDE.md`
 2. `docs/ACTIVE_ROADMAP.md`
 3. `docs/DECISION_KERNEL.md`
 4. `BACKLOG.md` for awareness and deferred work
@@ -44,34 +45,44 @@ owner-reserved; stop and report it.
   coaching-philosophy, trust-contract, write/schema, security/credentials,
   runtime-model, promotion, destructive, or genuinely ambiguous changes.
 - Returns `BLOCKING`, `NON-BLOCKING`, or `READY FOR DALE MERGE`.
-- Does not replace native Codex GitHub Review.
+- Does not replace the cold review.
 
-### Codex implementation agent
+### Claude implementation agent
 
 - Runs the Current-State Verification Gate before editing.
-- Implements one approved concern on a fresh `codex/*` or `agent/*` branch.
+- Implements one approved concern on a fresh `claude/*` or `agent/*` branch.
 - Runs tests/lint, opens the PR, completes the merge card, and addresses only
   in-scope blockers.
-- Requests current-head native review with `@codex review` after the final push.
+- Obtains the clean-context cold review of the exact final head before merging a
+  non-trivial PR.
 - Merges routine PRs only after every required merge-authority gate passes,
   preferring GitHub auto-merge when available and direct merge with the exact
   reviewed head SHA otherwise.
 - Stops for Dale on owner-reserved PRs and never starts adjacent work on the PR
   branch.
 
-### Native Codex GitHub Review
+### Cold review
 
-- Is the mandatory correctness/security review lane.
-- Reviews the exact current head for correctness, security, invariant,
-  schema, write-safety, trust-loop, and live-path test regressions.
-- Is read-only and independent of the implementing Codex session.
+- Is the required clean-context correctness/safety review lane for every
+  non-trivial PR.
+- Is performed by a fresh Claude session, a clean-context reviewer, an isolated
+  subagent, or gstack `/review` — never the builder session's own context.
+- Receives only the base SHA, the exact final head SHA, the PR description, the
+  exact diff, the changed tests, the relevant current governance/invariants, and
+  the CI results.
+- Reviews the exact current head for correctness, security, invariant, schema,
+  write-safety, trust-loop, and live-path test regressions.
+- Is read-only and does not modify the branch. `P0`/`P1` findings block; a push
+  after a blocking finding requires one fresh cold review of the new head.
 
 ### GitHub and GitHub Actions
 
 - GitHub is the PR handoff bus.
-- Required checks enforce normal deterministic CI: tests, lint, secret scan,
-  E2E where applicable, and merge-card completeness. Native Codex GitHub Review
-  is a separate GitHub review lane, not a custom status check.
+- Required checks enforce the deterministic hard gates: build where applicable,
+  tests, lint, wiring check, secret scan, applicable E2E, required
+  trust/write/schema tests, and merge-card completeness. Native Codex GitHub
+  Review is retired as a required gate; a Codex auto-comment is advisory only and
+  is never turned into a custom status check.
 - A skipped, errored, unavailable, timed-out, or incomplete required check is a
   failure, not a pass.
 
@@ -79,7 +90,7 @@ owner-reserved; stop and report it.
 
 1. Verify latest `origin/main`, named prerequisite PRs, and a clean worktree.
 2. Run the Current-State Verification Gate.
-3. Create a fresh `codex/<concern>` or `agent/<concern>` branch.
+3. Create a fresh `claude/<concern>` or `agent/<concern>` branch.
 4. Implement exactly one approved concern.
 5. Run relevant tests and lint; prove the live path or closest integration path.
 6. Inspect scope, diff, commits, secrets, and unrelated-file drift.
@@ -88,27 +99,28 @@ owner-reserved; stop and report it.
    routine PRs settled by active governance do not require this lane.
 9. Address only in-scope blocking findings; file authorized future work without
    expanding the PR.
-10. After the final push, comment `@codex review`, wait for the exact-head native
-    Codex result, resolve every actionable review conversation, and confirm the
-    normal required checks.
+10. For a non-trivial PR, obtain the clean-context cold review of the exact final
+    head, resolve every actionable review conversation, and confirm the normal
+    required checks. Trivial docs-only typo/status/index PRs may merge on
+    deterministic CI alone.
 11. When every merge-authority gate is satisfied, merge routine PRs and continue
     to post-merge verification. Owner-reserved PRs stop for Dale.
 12. After a routine merge, fetch and verify `origin/main`, confirm deployment
     when applicable using read-only evidence, create a fresh branch from main,
     and continue the next approved concern.
 
-Any new push invalidates the prior native review. Re-run tests as appropriate,
-request `@codex review` again, and re-check the exact head.
+Any new push after a blocking cold-review finding invalidates the prior cold
+review. Re-run tests as appropriate and obtain one fresh cold review of the new
+head.
 
 ### Required-check failure loop
 
 A failed required CI check or actionable review finding sends the same PR back
 through diagnosis, smallest in-scope correction, verification, push, and
-current-head review. Codex continues that loop until normal required checks pass
-and all actionable review conversations are resolved; it does not stop after
-merely reporting the failure. Stop only for a genuine owner-reserved decision,
-an external blocker Codex cannot change, or an explicit owner instruction to
-stop.
+re-review. Claude continues that loop until normal required checks pass and all
+actionable review conversations are resolved; it does not stop after merely
+reporting the failure. Stop only for a genuine owner-reserved decision, an
+external blocker Claude cannot change, or an explicit owner instruction to stop.
 
 ## Current-State Verification Gate
 
@@ -140,7 +152,7 @@ Before work:
 
 - fetch latest `origin/main`;
 - verify the worktree is clean;
-- create a fresh `codex/*` or `agent/*` branch from `origin/main`;
+- create a fresh `claude/*` or `agent/*` branch from `origin/main`;
 - verify the new branch begins zero commits ahead of `origin/main`.
 
 Before the PR:
@@ -157,7 +169,7 @@ it never continues on the merged feature branch.
 
 ## Decision routing
 
-Codex may make implementation decisions already settled by Atlas governance:
+Claude may make implementation decisions already settled by Atlas governance:
 root cause, smallest fix, PR sizing, test design, regression strategy, and
 principle-derivable wording/rendering. Document the reasoning and proceed.
 
@@ -176,22 +188,23 @@ or transfers merge authority.
 
 ## Merge authority gate
 
-A routine PR may be merged by Codex only when:
+A routine PR may be merged by Claude only when:
 
 - every required GitHub check passed;
-- the exact current head has a completed native Codex GitHub Review requested
-  after the final push with `@codex review`;
+- for a non-trivial PR, the exact current head has a completed clean-context cold
+  review with no `P0`/`P1` finding (trivial docs-only PRs merge on deterministic
+  CI alone);
 - no P0/P1 finding remains and every actionable review thread is resolved;
 - the PR matches the active roadmap or explicit owner scope;
 - branch hygiene, one-concern scope, risk label, Vision Alignment Check, and
   merge card are complete; and
 - no owner-reserved decision is involved.
 
-Never merge when a required check or exact-head native review is missing, stale,
-skipped, errored, failed, or incomplete.
+Never merge when a required check or the exact-head cold review is missing,
+stale, skipped, errored, failed, or incomplete.
 
 When all routine gates pass, prefer GitHub auto-merge. If auto-merge is
-unavailable, Codex may merge directly with the exact reviewed head SHA. Codex
+unavailable, Claude may merge directly with the exact reviewed head SHA. Claude
 must not stop merely to report that a routine PR is merge-ready.
 
 Owner-reserved PRs require Dale after the non-owner gates pass. Dale remains
@@ -214,7 +227,7 @@ integrity anomalies stop all writes and require Dale.
 
 ## Compact prompt mode
 
-Short owner prompts are valid only after reading `AGENTS.md`, `BACKLOG.md`,
+Short owner prompts are valid only after reading `CLAUDE.md`, `BACKLOG.md`,
 `docs/ACTIVE_ROADMAP.md`, `docs/DOCS_INDEX.md`, and this file. A model name is
 not required. Compact prompts never waive current-state verification, scope,
 tests, review lanes, safety, or owner-reserved merge authority.
@@ -229,13 +242,15 @@ owner-reserved merge hold.
 ## Non-negotiables
 
 - One PR equals one concern.
-- `codex/*` or `agent/*` branches only for new agent work.
+- `claude/*` or `agent/*` branches only for new agent work.
 - Tests prove the previous failure cannot recur through the live or closest
   integration path.
 - No write-path, schema, parser grammar, progression-math, approval-gate, or
   trust-contract change unless explicitly scoped and approved.
 - The deterministic engine decides; the application LLM explains.
-- Native Codex GitHub Review is mandatory for every PR; ChatGPT Atlas Contract
-  Review is risk-triggered and never substitutes for native review.
-- Codex may merge routine PRs after every gate passes; Dale is required for
+- The clean-context cold review is required for every non-trivial PR; ChatGPT
+  Atlas Contract Review is risk-triggered and never substitutes for the cold
+  review. Native Codex GitHub Review is retired as a gate; a Codex auto-comment
+  is advisory only.
+- Claude may merge routine PRs after every gate passes; Dale is required for
   owner-reserved PRs.

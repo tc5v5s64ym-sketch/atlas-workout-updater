@@ -31,7 +31,7 @@ The static assets are public, but every data request still requires the API key.
 
 ## Docs
 
-- Agent instructions: [CODEX.md](CODEX.md)
+- Agent instructions: [CLAUDE.md](CLAUDE.md)
 - Product vision: [docs/ATLAS_PRODUCT_VISION.md](docs/ATLAS_PRODUCT_VISION.md)
 - Atlas context: [docs/ATLAS_CONTEXT.md](docs/ATLAS_CONTEXT.md)
 - Safety rules: [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md)
@@ -56,7 +56,10 @@ The static assets are public, but every data request still requires the API key.
 
 ## For AI Agents
 
-Read [CODEX.md](CODEX.md) before changing code. It contains the permanent Atlas safety rules, sheet contract, no-write requirements, and PR workflow.
+Read [CLAUDE.md](CLAUDE.md) before changing code. It is the canonical
+implementation-agent brief: the permanent Atlas safety rules, sheet contract,
+no-write requirements, review/merge model, and PR workflow. `AGENTS.md` and
+`CODEX.md` are compatibility pointers to it.
 
 ## Local Environment
 

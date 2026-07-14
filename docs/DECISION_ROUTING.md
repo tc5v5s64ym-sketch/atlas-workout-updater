@@ -1,11 +1,11 @@
 # Atlas Decision Routing — ChatGPT Decision Desk
 
-> **Status:** Active. Read with `AGENTS.md`, `docs/DECISION_KERNEL.md`,
+> **Status:** Active. Read with `CLAUDE.md`, `docs/DECISION_KERNEL.md`,
 > `docs/OWNER_CHECKIN_RULES.md`, and `docs/AUTOMATION_PROTOCOL.md`.
 
 ## The rule
 
-Codex resolves implementation decisions already determined by Atlas governance.
+Claude resolves implementation decisions already determined by Atlas governance.
 A genuinely non-derivable product, roadmap, scope, trust, or live-path-fit fork
 goes to ChatGPT's external Atlas Decision Desk. Dale receives only owner-reserved
 questions and remains the owner-reserved merge authority.
@@ -16,16 +16,16 @@ stands in for it.
 
 ## First: determine whether a decision exists
 
-Before routing anything, consult `AGENTS.md`, `docs/DECISION_KERNEL.md`, the
+Before routing anything, consult `CLAUDE.md`, `docs/DECISION_KERNEL.md`, the
 active roadmap, Constitution, Invariants, and relevant accepted behavior.
 
-If those sources settle the answer, Codex records the rationale and proceeds
+If those sources settle the answer, Claude records the rationale and proceeds
 with the smallest safe implementation. This includes root cause, implementation
 selection, PR sizing, test design, regression strategy, and wording/rendering
 that only expresses already-authoritative facts.
 
 Do not create a panel for deterministic gates such as one-concern scope, current
-main, required checks, current-head review, no-write proof, or branch hygiene.
+main, required checks, cold review, no-write proof, or branch hygiene.
 
 ## ChatGPT Atlas Decision Desk
 
@@ -35,7 +35,7 @@ and that is not automatically destructive. Provide:
 - the decision and why it is needed now;
 - current-main evidence and root cause;
 - options and tradeoffs;
-- Codex's recommended option;
+- Claude's recommended option;
 - affected files/surfaces;
 - risk, live-testing needs, and relevant Vision/roadmap/architecture/invariants;
 - whether any write path, schema, approval gate, application model, production
@@ -48,12 +48,12 @@ ChatGPT returns one of:
 - `SPLIT: build as <PR plan>`
 - `ESCALATE-TO-DALE: <reserved reason>`
 
-A missing, ambiguous, or incomplete answer is not approval. Codex waits or
+A missing, ambiguous, or incomplete answer is not approval. Claude waits or
 narrows the work; it never invents a consequential default.
 
 ## Atlas Contract Review
 
-After Codex opens a risk-triggered PR, ChatGPT separately reviews the Atlas
+After Claude opens a risk-triggered PR, ChatGPT separately reviews the Atlas
 contract:
 
 - roadmap and product fit;
@@ -64,7 +64,7 @@ contract:
 - live-path or closest-integration test fit.
 
 The verdict is `BLOCKING`, `NON-BLOCKING`, or `READY FOR DALE MERGE`. This lane
-does not replace native Codex GitHub correctness/security review. ChatGPT Atlas
+does not replace the clean-context cold review. ChatGPT Atlas
 Contract Review is mandatory for owner-decision, high-risk, phase-transition,
 roadmap, vision, coaching-philosophy, trust-contract, write/schema,
 security/credentials, runtime-model, promotion, destructive, or genuinely

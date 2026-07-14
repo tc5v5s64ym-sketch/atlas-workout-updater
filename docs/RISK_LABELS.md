@@ -12,7 +12,7 @@ The canonical machine-readable list lives in `.github/labels.yml`.
 
 | Label | Meaning | When applied |
 |---|---|---|
-| **`auto-safe`** | Codex can take this all the way through routine merge authority without an owner decision. | No owner check-in criterion is met; no P0/P1; required checks green; exact-head native Codex review green; ChatGPT review not risk-triggered. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. Codex may merge after every gate passes. |
+| **`auto-safe`** | Claude can take this all the way through routine merge authority without an owner decision. | No owner check-in criterion is met; no P0/P1; required checks green; clean-context cold review green (non-trivial PRs); ChatGPT review not risk-triggered. Docs, infra, test-only, pure-engine-with-coverage, housekeeping. Claude may merge after every gate passes. |
 | **`owner-live-test`** | A live app test would be valuable. **Advisory, not a halt** — the owner initiates app tests; the builder flags this and keeps going. | Owner check-in criterion 1 (live app testing) — UI/interaction change, hold point, anything only confirmable on the real app/sheet. Requires a live test script in the merge card. Does not block the loop; the owner calls the hold. |
 | **`owner-decision`** | A product/trust/roadmap judgment only the owner can make. | Owner check-in criteria 2–8 (write-path, approval-gate, coach, trust-contract, roadmap/vision, app/runtime-model change, or "cannot determine safety"). |
 | **`blocked`** | Not eligible to proceed — a required signal failed, errored, was skipped, or a contract violation is unresolved. | Any failed/errored/skipped required check or review (see `AUTOMATION_PROTOCOL.md` §2), or an open P0/P1 / contract violation. |
@@ -54,8 +54,8 @@ A single PR can carry several category labels (e.g. a deload-lifecycle wiring PR
 3. If any required check/review failed, errored, was skipped, or a P0/P1 / contract violation is open → primary `blocked` (overrides step 2).
 4. Record the primary label and reason on the merge card (`owner action required` field).
 5. If the primary label is `auto-safe` and every merge-authority gate passes,
-   Codex may merge the routine PR. If the primary label is `owner-decision`,
-   `owner-live-test` with an explicit hold, or `blocked`, Codex stops for the
+   Claude may merge the routine PR. If the primary label is `owner-decision`,
+   `owner-live-test` with an explicit hold, or `blocked`, Claude stops for the
    required owner or failed-signal resolution.
 
 ---
