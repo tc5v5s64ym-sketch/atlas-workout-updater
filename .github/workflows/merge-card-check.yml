@@ -44,7 +44,7 @@ jobs:
               'risk-triggered: READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
               'No (routine) · or Yes + reserved criterion',
               'steps for Dale if needed',
-              'Codex may routine-merge / fix-then-review / hold-for-Dale -->',
+              'Claude may routine-merge / fix-then-review / hold-for-Dale -->',
               // prose
               'One sentence: the single concern',
               'STILL BROKEN / ALREADY FIXED',
