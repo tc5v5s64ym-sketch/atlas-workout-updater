@@ -27,7 +27,7 @@ const coach = require('../services/coach');
 const trainingSME = require('../services/trainingSME');
 const coachPolish = require('../services/coachPolish');
 const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, recommendNextSet, suggestDeloads, todayIso, normalizeLogRow } = require('../services/analytics');
-const { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift } = require('../services/liveIntelligence');
+const { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift, buildLiveSetContext, flightRecorderContext } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { readAthleteGoals } = require('../services/athleteGoals');
 const { selectCoachMode } = require('../services/coachMode');
@@ -317,6 +317,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         conflict,
         recVerdict: rec.effort_verdict || null,
         candidateProse: '',
+        liveSetContext: rawFacts.live_set_context || null,
       });
     } catch (_) {
       // Best-effort — a signal failure must never block the coach response.
@@ -402,6 +403,54 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       rawFacts = { ...rawFacts, rec: { ...rawFacts.rec, effort_verdict: effortVerdict(last && last.rir, rawFacts.rec.target_rir) } };
     }
 
+    // Server-side intelligence enrichment and authority boundary. PR/streak/progression
+    // claims come from the server's Log_Cleaned read, never from the client rec object.
+    // If history cannot be read, enrich against an empty history for set-like reactions
+    // so forged client progression claims are still stripped and the route degrades to
+    // a conservative live-set context.
+    let facts = rawFacts;
+    let athleteIdentity = null;
+    let scarcity = null;
+    let engineNewGround = false;
+    let progressionHistory = null;
+    let engineLogRows = null;
+    let engineLiftLogRows = null;
+    let enrichmentFailed = false;
+    if (rawFacts.liftCode) {
+      try {
+        const allLog = await getSheetRows(logSheetName);
+        engineLogRows = allLog;
+        engineLiftLogRows = cleanLogForLift(allLog, rawFacts.liftCode, rawFacts.exerciseName);
+        facts = enrichCoachFacts(rawFacts, allLog);
+        progressionHistory = facts.progression_history || null;
+        athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
+        scarcity = computeCelebrationScarcity(allLog, { asOf: todayIso() });
+        engineNewGround = confirmTodayNewGround(rawFacts, engineLiftLogRows);
+      } catch (_) {
+        enrichmentFailed = true;
+        if (isSetLike) {
+          const rec = rawFacts.rec && typeof rawFacts.rec === 'object' ? rawFacts.rec : {};
+          facts = {
+            ...rawFacts,
+            rec: { ...rec, progression_verdict: null },
+            live_set_context: buildLiveSetContext(rawFacts, []),
+          };
+        }
+      }
+    } else if (isSetLike) {
+      const rec = rawFacts.rec && typeof rawFacts.rec === 'object' ? rawFacts.rec : {};
+      facts = {
+        ...rawFacts,
+        rec: { ...rec, progression_verdict: null },
+        live_set_context: buildLiveSetContext(rawFacts, []),
+      };
+    }
+    facts = { ...facts, athlete_identity: athleteIdentity, progression_history: progressionHistory };
+    if (enrichmentFailed && facts.rec && typeof facts.rec === 'object' && facts.rec.progression_verdict != null) {
+      facts = { ...facts, rec: { ...facts.rec, progression_verdict: null } };
+    }
+    const flight_recorder_context = isSetLike ? flightRecorderContext(facts.live_set_context) : null;
+
     // PR-3 block-note tier: engine-owned classification of the just-logged block via
     // the pure batchNoteFacts → coachNoteTier fold (over the block's own sets plus any
     // caller-supplied rec/flags). Returned to the client to gate rendering; it is
@@ -412,12 +461,12 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // This is the same deterministic guard used by the existing effort voice; it can
     // only suppress a challenge and cannot grant an elevated mode/register.
     const computed = isSetLike
-      ? computeSetEffortExtras(rawFacts)
+      ? computeSetEffortExtras(facts)
       : { effort_note: null, reroute: null, voiceBase: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, recovery_active: false };
     if (kind === 'block') {
       const assembled = assembleBatchNoteFacts(
-        { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, targetRir: rawFacts.targetRir, sets: rawFacts.todaySets },
-        { rec: rawFacts.rec, substitution: rawFacts.substitution, injury: rawFacts.injury, unexpected_excellence: rawFacts.unexpected_excellence, regression: rawFacts.regression, recovery_active: computed.recovery_active, confidence: rawFacts.confidence, asked_why: rawFacts.asked_why }
+        { exerciseName: facts.exerciseName, muscleGroup: facts.muscleGroup, targetRir: facts.targetRir, sets: facts.todaySets },
+        { rec: facts.rec, substitution: facts.substitution, injury: facts.injury, unexpected_excellence: facts.unexpected_excellence, regression: facts.regression, recovery_active: computed.recovery_active, confidence: facts.confidence, asked_why: facts.asked_why }
       );
       const t = assembled && assembled.tier ? assembled.tier : null;
       noteMeta.note_tier = t ? t.tier : 'ack_only';
@@ -429,12 +478,18 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // its existing caller-shaped inputs, but those flags/verdicts cannot grant
       // a mode or register permission.
       const modeAssembled = assembleBatchNoteFacts(
-        { exerciseName: rawFacts.exerciseName, muscleGroup: rawFacts.muscleGroup, sets: rawFacts.todaySets },
+        { exerciseName: facts.exerciseName, muscleGroup: facts.muscleGroup, sets: facts.todaySets },
         { recovery_active: computed.recovery_active }
       );
       const mt = modeAssembled && modeAssembled.tier ? modeAssembled.tier : null;
       modeNoteMeta.note_tier = mt ? mt.tier : 'ack_only';
       modeNoteMeta.note_trigger = mt ? mt.trigger : null;
+      const liveRegister = facts.live_set_context && facts.live_set_context.register;
+      if (noteMeta.note_tier === 'ack_only' && (liveRegister === 'on_target_hold' || liveRegister === 'on_target_increase')) {
+        noteMeta.note_tier = 'short';
+        noteMeta.note_trigger = 'on_target_streak';
+        noteMeta.note_reason_code = liveRegister;
+      }
     }
 
     // Engine-backed extras are deterministic and Gemini-independent — compute them
@@ -446,8 +501,8 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // Substitution-pivot voice (slice 2). Read straight from the client-provided swap;
     // only the classification/quality/logged-name fields are consulted. Best-effort —
     // a bad shape just yields a neutral voice and changes nothing.
-    const subVoiceBase = (rawFacts.substitution && typeof rawFacts.substitution === 'object')
-      ? renderSubstitutionVoice({ substitution: rawFacts.substitution, candidateProse: '' })
+    const subVoiceBase = (facts.substitution && typeof facts.substitution === 'object')
+      ? renderSubstitutionVoice({ substitution: facts.substitution, candidateProse: '' })
       : null;
 
     // PR-3: a routine block (tier ack_only) is acknowledged by the client-side ✅
@@ -456,73 +511,21 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (kind === 'block' && noteMeta.note_tier === 'ack_only') {
       return standardSuccess(req, res, 'Routine block — acknowledgment only', {
         message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind, ...noteMeta,
-        effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null
+        effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
+      });
+    }
+    if (voiceBase && voiceBase.suppress_generic_prose && voiceBase.primary_line &&
+        (voiceBase.register === 'new_ground' || voiceBase.register === 'on_target_hold' || voiceBase.register === 'on_target_increase')) {
+      const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      return standardSuccess(req, res, 'Coach message', {
+        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine', kind, ...noteMeta, ...effortExtras, flight_recorder_context
       });
     }
     if (!coach.isConfigured()) {
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras
+        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context
       });
-    }
-
-    // Server-side intelligence enrichment: when a liftCode is present compute
-    // working_weight, trend, readiness_signal, deviation, and evidence_context
-    // from the lift's history. Failure is best-effort — never blocks the response.
-    let facts = rawFacts;
-    // PR-A7 — athlete identity is ENGINE-ONLY: computed below from the log rows the
-    // enrichment path already fetches (zero additional Sheets reads), and ALWAYS
-    // overwritten onto the facts so a client-supplied athlete_identity can never
-    // reach the coach. No liftCode → no rows in hand → null (a missing story is
-    // honest; we never add a read for it — docs/READ_BUDGET.md discipline).
-    let athleteIdentity = null;
-    // PR-B4 (slice 1) — celebration scarcity is derived from the SAME allLog the
-    // enrichment path fetches (zero additional Sheets reads); null when there is no
-    // liftCode (no rows in hand — the mode falls back to its scarcity-clear default,
-    // which only ever downgrades celebrate→praise, never up).
-    let scarcity = null;
-    // PR-B4 slice 3 — the engine's OWN read of whether today's set is new_ground,
-    // recomputed server-side (never trusting the client's rec.progression_verdict).
-    // Gates the profanity permission below so a forged verdict can't reach the cell.
-    let engineNewGround = false;
-    // progression_history is engine-only (services/progressionHistory, via
-    // enrichCoachFacts). Captured from a SUCCESSFUL enrichment and ALWAYS overwritten
-    // below (engine value, or null when the Sheets read / enrichment fails) so a client
-    // can never inject a forged checkpoint that survives on the Sheets-down fallback.
-    let progressionHistory = null;
-    // Retain the successful enrichment read for the remaining engine-only mode
-    // inputs below. null means no trustworthy read was available; [] is a real,
-    // successful empty read. This never adds another Sheets call.
-    let engineLogRows = null;
-    let engineLiftLogRows = null;
-    let enrichmentFailed = false;
-    if (rawFacts.liftCode) {
-      try {
-        const allLog = await getSheetRows(logSheetName);
-        engineLogRows = allLog;
-        // Reuse the enrichment guard so generated/catalog lift-code collisions
-        // cannot leak a foreign exercise into per-lift safety or memory inputs.
-        // Keep the raw successful read separately for global layoff assessment.
-        engineLiftLogRows = cleanLogForLift(allLog, rawFacts.liftCode, rawFacts.exerciseName);
-        facts = enrichCoachFacts(rawFacts, allLog);
-        progressionHistory = facts.progression_history || null;
-        athleteIdentity = buildAthleteIdentity(allLog, { asOf: todayIso() });
-        scarcity = computeCelebrationScarcity(allLog, { asOf: todayIso() });
-        engineNewGround = confirmTodayNewGround(rawFacts, engineLiftLogRows);
-      } catch (_) {
-        // Keep client facts as-is if Sheets read or enrichment fails.
-        enrichmentFailed = true;
-      }
-    }
-    // Fail closed on engine-only signals, mirroring the layoff / athlete_identity
-    // discipline: progression_history is the engine value or null in EVERY path, and on
-    // a genuine enrichment failure the client's unconfirmed rec.progression_verdict is
-    // also nulled (the server-side new_ground gate already failed closed:
-    // engineNewGround=false) so a forged verdict can't reach the prompt. The successful
-    // path is unchanged — progressionHistory holds the engine value and rec is untouched.
-    facts = { ...facts, athlete_identity: athleteIdentity, progression_history: progressionHistory };
-    if (enrichmentFailed && facts.rec && typeof facts.rec === 'object' && facts.rec.progression_verdict != null) {
-      facts = { ...facts, rec: { ...facts.rec, progression_verdict: null } };
     }
 
     // Plan voice: derive the return-after-layoff signal from the log server-side so
@@ -695,13 +698,13 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // when it contradicts (or would speak over) a non-neutral set-effort signal,
       // or when it outruns its granted register (slice 3).
       const fin = finalizeCoachVoice(message, voiceBase, subVoiceBase, registerCtx);
-      return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras });
+      return standardSuccess(req, res, 'Coach message', { message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), source: 'gemini', kind, ...noteMeta, ...effortExtras, flight_recorder_context });
     } catch (error) {
       // Degrade gracefully: tell the client to use its templated fallback rather
       // than surfacing an error in the chat.
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
       return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
-        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras
+        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context
       });
     }
   });

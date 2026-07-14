@@ -208,7 +208,7 @@ test('set path: an HONEST echoed verdict passes through unchanged (recompute agr
   assert.equal(v && v.level, 'failure', 'RIR 0 genuinely reads failure — the honest echo is preserved by recomputation');
 });
 
-test('PR (new working ground) via rec → extended / pr_milestone, LLM prose surfaces', async () => {
+test('client-only PR claim via rec has no authority without server-confirmed lift history', async () => {
   resetCoach({ message: 'New working best — clean bar speed.' });
   const facts = {
     exerciseName: 'Back Squat', muscleGroup: 'Legs',
@@ -217,9 +217,10 @@ test('PR (new working ground) via rec → extended / pr_milestone, LLM prose sur
   };
   const { res, body } = await postBlock(facts);
   assert.equal(res.status, 200);
-  assert.equal(body.data.note_tier, 'extended');
-  assert.equal(body.data.note_trigger, 'pr_milestone');
-  assert.equal(body.data.message, 'New working best — clean bar speed.');
+  assert.equal(body.data.note_tier, 'ack_only');
+  assert.equal(body.data.note_trigger, null);
+  assert.equal(body.data.message, null);
+  assert.equal(coachState.calls, 0, 'client-only PR claims must not reach the LLM path');
 });
 
 test('routine silence: an on-target / in-pocket block WITH a rec → ack_only, LLM not called', async () => {
@@ -331,7 +332,7 @@ test('fail-closed: a Sheets-read failure nulls a client-forged progression_histo
   }
 });
 
-test('success path preserved: enrichment overwrites a forged progression_history with the engine value (or null), rec verdict untouched', async () => {
+test('success path preserved: enrichment overwrites forged progression_history and rec.progression_verdict with engine values', async () => {
   resetCoach();
   // getSheetRows returns [] (success, no history) → the engine computes an all-null
   // history, which sanitizeProgressionHistory nulls. The forged client value never wins.
@@ -342,7 +343,7 @@ test('success path preserved: enrichment overwrites a forged progression_history
     JSON.stringify(coachState.lastFacts.progression_history),
     JSON.stringify(FORGED_BLOCK.progression_history),
     'the forged client progression_history must never survive the successful path');
-  // On the SUCCESS path the client rec.progression_verdict is preserved (unchanged behavior).
-  assert.ok(coachState.lastFacts.rec && coachState.lastFacts.rec.progression_verdict,
-    'the successful enrichment path is preserved — rec.progression_verdict is not touched');
+  // On the SUCCESS path the rec progression verdict is still engine-owned.
+  assert.equal(coachState.lastFacts.rec.progression_verdict, null,
+    'the successful enrichment path overwrites the forged rec.progression_verdict with the engine value or null');
 });
