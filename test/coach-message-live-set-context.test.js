@@ -410,6 +410,27 @@ test('Flight Recorder api_response: forged client mode/register/PR/streak/progre
   assert.doesNotMatch(JSON.stringify(decisionSummary), /99|increase_load|profanity_ok":true/);
 });
 
+test('Flight Recorder api_response: implausible forged PR weight cannot record new-ground context', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENFORGE',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    coach_mode: 'celebrate',
+    register: { intensity: 'max', casual_ok: true, humor_ok: true, profanity_ok: true },
+    todaySets: [{ weight: 999, reps: 6, rir: 2 }],
+    rec: { progression_verdict: { level: 'new_ground', ceiling: 1 } },
+  });
+
+  assert.equal(res.status, 200);
+  assert.notEqual(decisionSummary.coach_mode, 'celebrate');
+  assert.equal(decisionSummary.register.intensity, 'routine');
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
+  assert.equal(decisionSummary.live_set_context.verdict_level, null);
+  assert.equal(decisionSummary.live_set_context.next_action, 'hold');
+  assert.deepEqual(decisionSummary.current_result, { weight: 999, reps: 6, rir: 2 });
+  assert.deepEqual(decisionSummary.prior_ceiling, { weight: 225 });
+});
+
 test('Flight Recorder api_response: decision summary omits raw history, secrets, full payloads, and unrestricted text', { concurrency: false }, async () => {
   const { res, row, decisionSummary } = await postSetWithFlight({
     liftCode: 'BENPR',

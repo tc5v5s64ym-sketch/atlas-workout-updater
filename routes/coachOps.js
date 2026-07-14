@@ -368,7 +368,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     return out;
   }
 
-  function buildCoachMessageDecisionSummary({ kind, facts, flightRecorderContext, selectedCoachMode, selectedRegister, ruleDecisions, computed }) {
+  function buildCoachMessageDecisionSummary({ kind, facts, flightRecorderContext, selectedCoachMode, selectedRegister, ruleDecisions, computed, engineNewGround }) {
     const f = facts && typeof facts === 'object' ? facts : {};
     const liveSetContext = f.live_set_context && typeof f.live_set_context === 'object' ? f.live_set_context : {};
     const fullProgression = liveSetContext.progression_context && typeof liveSetContext.progression_context === 'object'
@@ -385,6 +385,10 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const recoveryAdvisory = recovery.recovery_advisory && typeof recovery.recovery_advisory === 'object'
       ? recovery.recovery_advisory
       : {};
+    const rawLiveRegister = enumOrNull(boundedFlightContext.register, LIVE_SET_REGISTERS);
+    const rawVerdictLevel = enumOrNull(boundedProgression.verdict_level, VERDICT_LEVELS);
+    const rawNextAction = enumOrNull(boundedProgression.next_action, LIVE_NEXT_ACTIONS);
+    const unconfirmedNewGround = rawLiveRegister === 'new_ground' && engineNewGround !== true;
     return {
       source: 'coach_message_route',
       kind: enumOrNull(kind, ['set', 'block', 'plan']) || null,
@@ -392,9 +396,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       coach_mode: mode,
       register: boundedRegisterGrant(selectedRegister),
       live_set_context: {
-        register: enumOrNull(boundedFlightContext.register, LIVE_SET_REGISTERS),
-        verdict_level: enumOrNull(boundedProgression.verdict_level, VERDICT_LEVELS),
-        next_action: enumOrNull(boundedProgression.next_action, LIVE_NEXT_ACTIONS),
+        register: unconfirmedNewGround ? 'conservative_hold' : rawLiveRegister,
+        verdict_level: unconfirmedNewGround && rawVerdictLevel === 'new_ground' ? null : rawVerdictLevel,
+        next_action: unconfirmedNewGround && rawNextAction === 'prove_again' ? 'hold' : rawNextAction,
         engine_checkpoint_decision: enumOrNull(fullProgression.engine_checkpoint_decision, CHECKPOINT_DECISIONS),
         comparable_on_target_streak: finiteOrNull(boundedProgression.comparable_on_target_streak),
         increase_threshold: finiteOrNull(boundedProgression.increase_threshold),
@@ -775,6 +779,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         selectedRegister: register,
         ruleDecisions,
         computed,
+        engineNewGround,
       });
     } else {
       facts = { ...facts, coach_mode: null, register: null };
