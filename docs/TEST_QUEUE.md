@@ -2,7 +2,7 @@
 
 This file is the **owner-only** queue for live tests that cannot be automated — tests that require a real device, a real gym session, real credentials, or first-use confirmation of a gate that only fires once.
 
-Each card is filed by Codex or native Codex GitHub Review when a feature ships but needs a live human confirmation before it is considered fully closed. The owner marks PASS or FAIL and notes any follow-up.
+Each card is filed by the implementation agent (Claude) or a reviewer when a feature ships but needs a live human confirmation before it is considered fully closed. The owner marks PASS or FAIL and notes any follow-up.
 
 ---
 
