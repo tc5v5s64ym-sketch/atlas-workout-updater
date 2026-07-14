@@ -289,19 +289,18 @@ function classifySeverity(analysis, recVerdict) {
 function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, candidateProse = '', liveSetContext = null } = {}) {
   const reason_codes = analysis && Array.isArray(analysis.reason_codes) ? analysis.reason_codes.slice() : [];
   const contextLine = liveContextLine(liveSetContext);
-  const severity = contextLine && liveSetContext && liveSetContext.register === 'new_ground'
+  const measuredSeverity = classifySeverity(analysis, recVerdict);
+  const contextAllowed = contextLine && !['block', 'caution', 'bump'].includes(measuredSeverity);
+  const severity = contextAllowed && liveSetContext && liveSetContext.register === 'new_ground'
     ? 'pr'
-    : classifySeverity(analysis, recVerdict);
+    : measuredSeverity;
   const observation = effortNote(analysis); // null on neutral, warmup-only, or on-target
   const secondary_line = rerouteNote(conflict) || null;
 
   let primary_line = null;
   let suppress_generic_prose = false;
 
-  if (contextLine) {
-    primary_line = contextLine;
-    suppress_generic_prose = true;
-  } else if (severity === 'block') {
+  if (severity === 'block') {
     // A heavy-compound redline / rep-drop. The engine's observation, plus an
     // explicit HOLD so the lifter doesn't read silence as "add weight".
     const base = observation || BLOCK_FALLBACK;
@@ -314,6 +313,9 @@ function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, c
   } else if (severity === 'bump') {
     // A working set left well above target — under-dosed; a bump is coming.
     primary_line = observation;
+    suppress_generic_prose = true;
+  } else if (contextAllowed) {
+    primary_line = contextLine;
     suppress_generic_prose = true;
   } else if (severity === 'on_target') {
     // Correct effort. In the weighted/RIR set-feedback lane the deterministic

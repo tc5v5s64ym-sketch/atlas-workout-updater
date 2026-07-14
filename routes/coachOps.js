@@ -514,13 +514,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
         effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
       });
     }
-    if (voiceBase && voiceBase.suppress_generic_prose && voiceBase.primary_line &&
-        (voiceBase.register === 'new_ground' || voiceBase.register === 'on_target_hold' || voiceBase.register === 'on_target_increase')) {
-      const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
-      return standardSuccess(req, res, 'Coach message', {
-        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: coach.isConfigured(), model: coach.coachModel(), source: 'engine', kind, ...noteMeta, ...effortExtras, flight_recorder_context
-      });
-    }
     if (!coach.isConfigured()) {
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {

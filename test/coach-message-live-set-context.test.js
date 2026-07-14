@@ -148,7 +148,7 @@ test('live set route: client-supplied target RIR cannot grant on-target hold or 
   assert.notEqual(body.data.flight_recorder_context.progression_context.target_rir, 4);
 });
 
-test('live set route: first server-targeted exposure holds and asks to prove it again', { concurrency: false }, async () => {
+test('live set route: first exposure without an authoritative target fails conservative', { concurrency: false }, async () => {
   const { res, body } = await postSet({
     liftCode: 'BENFIRST',
     exerciseName: 'Bench Press',
@@ -158,11 +158,12 @@ test('live set route: first server-targeted exposure holds and asks to prove it 
   });
 
   assert.equal(res.status, 200);
-  assert.equal(body.data.note_tier, 'short');
-  assert.equal(voiceLine(body), 'Right on target. Hold it next time and prove it again.');
+  assert.notEqual(body.data.flight_recorder_context.register, 'on_target_hold');
+  assert.equal(body.data.flight_recorder_context.register, 'conservative_hold');
+  assert.doesNotMatch(JSON.stringify(body.data), /Right on target|prove it again/i);
 });
 
-test('live set route: three comparable server-targeted sessions reaches the increase threshold', { concurrency: false }, async () => {
+test('live set route: three comparable sessions do not create an independent load bump', { concurrency: false }, async () => {
   const { res, body } = await postSet({
     liftCode: 'BENTHREE',
     exerciseName: 'Bench Press',
@@ -172,25 +173,26 @@ test('live set route: three comparable server-targeted sessions reaches the incr
   });
 
   assert.equal(res.status, 200);
-  assert.match(voiceLine(body), /three straight on target/i);
-  assert.match(voiceLine(body), /bump the load next session/i);
+  assert.doesNotMatch(JSON.stringify(body.data), /three straight on target|bump the load next session|increase_load/i);
+  assert.equal(body.data.flight_recorder_context.register, 'conservative_hold');
 });
 
-test('live set route: a comparable miss breaks the server-targeted increase streak', { concurrency: false }, async () => {
+test('live set route: a comparable miss still cannot be repaired by client-shaped target data', { concurrency: false }, async () => {
   const { res, body } = await postSet({
     liftCode: 'BENMISS',
     exerciseName: 'Bench Press',
     muscleGroup: 'Chest',
     intentId: 'build_strength',
     todaySets: [{ weight: 225, reps: 6, rir: 2 }],
+    rec: { target_rir: 2 },
   });
 
   assert.equal(res.status, 200);
-  assert.doesNotMatch(voiceLine(body), /three straight|bump the load/i);
-  assert.equal(voiceLine(body), 'Right on target. Hold it next time and prove it again.');
+  assert.doesNotMatch(JSON.stringify(body.data), /three straight|bump the load|Right on target/i);
+  assert.equal(body.data.flight_recorder_context.register, 'conservative_hold');
 });
 
-test('live set route: failed or thin server-targeted history degrades to a conservative short response', { concurrency: false }, async () => {
+test('live set route: thin history without an authoritative target stays conservative', { concurrency: false }, async () => {
   const { res, body } = await postSet({
     liftCode: 'BENTHIN',
     exerciseName: 'Bench Press',
@@ -200,8 +202,8 @@ test('live set route: failed or thin server-targeted history degrades to a conse
   });
 
   assert.equal(res.status, 200);
-  assert.equal(voiceLine(body), 'Right on target. Hold it next time and prove it again.');
-  assert.doesNotMatch(voiceLine(body), /New ground|three straight|bump the load/i);
+  assert.equal(body.data.flight_recorder_context.register, 'conservative_hold');
+  assert.doesNotMatch(JSON.stringify(body.data), /New ground|three straight|bump the load|Right on target/i);
 });
 
 test('live set route: recovery/deload context never emits on-target increase or bump-load language', { concurrency: false }, async () => {
@@ -216,8 +218,8 @@ test('live set route: recovery/deload context never emits on-target increase or 
 
   assert.equal(res.status, 200);
   assert.doesNotMatch(JSON.stringify(body.data), /three straight|bump the load|increase_load/i);
-  assert.equal(body.data.flight_recorder_context.register, 'on_target_hold');
-  assert.equal(body.data.flight_recorder_context.progression_context.next_action, 'prove_again');
+  assert.equal(body.data.flight_recorder_context.register, 'conservative_hold');
+  assert.notEqual(body.data.flight_recorder_context.progression_context.next_action, 'increase_load');
 });
 
 test('live set route: forged client PR and streak claims have no authority', { concurrency: false }, async () => {
@@ -251,8 +253,8 @@ test('live set route: Flight Recorder context carries mode/register without raw 
   assert.equal(res.status, 200);
   const ctx = body.data.flight_recorder_context;
   assert.equal(ctx.coach_mode, 'deterministic_live_set');
-  assert.equal(ctx.register, 'on_target_increase');
-  assert.equal(ctx.progression_context.comparable_on_target_streak, 3);
+  assert.equal(ctx.register, 'conservative_hold');
+  assert.equal(ctx.progression_context.comparable_on_target_streak, null);
   const serialized = JSON.stringify(ctx);
   assert.doesNotMatch(serialized, /todaySets|rawFacts|logRows|private|payload/i);
 });

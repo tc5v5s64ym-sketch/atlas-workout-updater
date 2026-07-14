@@ -52,6 +52,22 @@ test('redline_blocks_add_weight_language', () => {
   assert.ok(hits.some(h => /add/i.test(h.phrase)));
 });
 
+test('redline safety outranks live-set new-ground praise', () => {
+  const v = renderSetVoice({
+    analysis: benchRedline(),
+    liveSetContext: {
+      coach_mode: 'deterministic_live_set',
+      register: 'new_ground',
+      exercise: 'Bench Press',
+      progression_context: { top_weight: 245, top_reps: 6, top_rir: 0, prior_ceiling: 225 },
+    },
+  });
+
+  assert.equal(v.severity, 'block');
+  assert.match(v.primary_line, /pressing is yellow|hold/i);
+  assert.doesNotMatch(v.primary_line, /New ground|prior 225/i);
+});
+
 // 3 — a high-RIR working set is called out as under-dosed.
 test('high_rir_workset_gets_underdose_callout', () => {
   const v = renderSetVoice({ analysis: rowUnderdose() });
@@ -59,6 +75,22 @@ test('high_rir_workset_gets_underdose_callout', () => {
   assert.equal(v.suppress_generic_prose, true);
   assert.match(v.primary_line, /too much left in the tank|bump/i);
   assert.ok(v.reason_codes.includes('high_rir_workset_underdosed'));
+});
+
+test('underdose correction outranks live-set load-increase context', () => {
+  const v = renderSetVoice({
+    analysis: rowUnderdose(),
+    liveSetContext: {
+      coach_mode: 'deterministic_live_set',
+      register: 'on_target_increase',
+      exercise: 'Seated Row',
+      progression_context: { comparable_on_target_streak: 3, next_action: 'increase_load' },
+    },
+  });
+
+  assert.equal(v.severity, 'bump');
+  assert.match(v.primary_line, /too much left in the tank|bump/i);
+  assert.doesNotMatch(v.primary_line, /three straight|bump the load next session/i);
 });
 
 // 4 — a warmup/feeder set is NEVER scolded as sandbagging.
@@ -82,6 +114,22 @@ test('isolation_rir0_is_caution_only', () => {
   assert.match(v.primary_line, /isolation/i);
   assert.doesNotMatch(v.primary_line, /does not earn more weight|pressing is yellow|ceiling today|hold the load/i,
     'isolation caution must not borrow heavy-compound block language');
+});
+
+test('isolation caution outranks live-set on-target context', () => {
+  const v = renderSetVoice({
+    analysis: cableFlyRIR0(),
+    liveSetContext: {
+      coach_mode: 'deterministic_live_set',
+      register: 'on_target_hold',
+      exercise: 'Cable Fly',
+      progression_context: { next_action: 'prove_again' },
+    },
+  });
+
+  assert.equal(v.severity, 'caution');
+  assert.match(v.primary_line, /isolation/i);
+  assert.doesNotMatch(v.primary_line, /Right on target|prove it again/i);
 });
 
 // 6 — pressing-yellow reroute is a suggestion only; it never mutates the plan.

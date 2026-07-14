@@ -30,7 +30,6 @@ const { classifyDeviation } = require('./performanceDeviation');
 const { buildProgressionHistory } = require('./progressionHistory');
 const { normalizeExerciseKey, canonicalLiftCodeFor } = require('./exerciseEnrichment');
 const { isWarmupNote } = require('./warmupTag');
-const { recommendedTargetRir } = require('./liftRole');
 
 // 12-column Log_Cleaned indices used for cross-lift contamination guarding.
 const COL_EXERCISE  = 2; // raw logged name
@@ -126,12 +125,18 @@ function isRecoveryOrDeloadContext(facts) {
     || intent === 'deload_reset';
 }
 
-function serverTargetRirFor(facts) {
-  const f = facts && typeof facts === 'object' ? facts : {};
-  return numOrNull(recommendedTargetRir({
-    exercise: f.exerciseName || f.liftCode || '',
-    muscle_group: f.muscleGroup || '',
-  }, f.intentId));
+function checkpointFor(options) {
+  const ph = options && options.progressionHistory && typeof options.progressionHistory === 'object'
+    ? options.progressionHistory
+    : {};
+  const cp = ph.next_checkpoint && typeof ph.next_checkpoint === 'object' ? ph.next_checkpoint : {};
+  const decision = cp.decision === 'load' || cp.decision === 'hold' ? cp.decision : null;
+  return {
+    decision,
+    clean_sessions: cp.clean_sessions == null ? null : numOrNull(cp.clean_sessions),
+    required_sessions: cp.required_sessions == null ? null : numOrNull(cp.required_sessions),
+    criterion_progress: typeof cp.criterion_progress === 'string' ? cp.criterion_progress : null,
+  };
 }
 
 function buildLiveSetContext(facts, allLog, options = {}) {
@@ -140,6 +145,7 @@ function buildLiveSetContext(facts, allLog, options = {}) {
   const topSet = pickTopTodaySet(f.todaySets);
   const targetRir = targetRirFor(options);
   const recoveryActive = isRecoveryOrDeloadContext(f);
+  const checkpoint = checkpointFor(options);
   const baseProgression = {
     top_weight: topSet ? topSet.weight : null,
     top_reps: topSet ? topSet.reps : null,
@@ -148,7 +154,9 @@ function buildLiveSetContext(facts, allLog, options = {}) {
     prior_ceiling: null,
     verdict_level: null,
     comparable_on_target_streak: null,
-    increase_threshold: 3,
+    increase_threshold: checkpoint.required_sessions,
+    engine_checkpoint_decision: checkpoint.decision,
+    criterion_progress: checkpoint.criterion_progress,
     next_action: null,
   };
 
@@ -176,13 +184,16 @@ function buildLiveSetContext(facts, allLog, options = {}) {
     comparable_on_target_streak: currentOnTarget ? streak : null,
   };
 
-  if (verdict && verdict.level === 'new_ground') {
-    return out('new_ground', { ...progression, next_action: 'prove_again' }, verdict);
-  }
   if (currentOnTarget && recoveryActive) {
     return out('on_target_hold', { ...progression, next_action: 'prove_again' }, verdict);
   }
-  if (currentOnTarget && streak >= 3) {
+  if (recoveryActive) {
+    return out('conservative_hold', { ...progression, next_action: 'hold' }, verdict);
+  }
+  if (verdict && verdict.level === 'new_ground') {
+    return out('new_ground', { ...progression, next_action: 'prove_again' }, verdict);
+  }
+  if (currentOnTarget && checkpoint.decision === 'load') {
     return out('on_target_increase', { ...progression, next_action: 'increase_load' }, verdict);
   }
   if (currentOnTarget) {
@@ -311,8 +322,9 @@ function enrichCoachFacts(facts, allLog) {
   // Merge computed signals into rec, preserving any client-forwarded recommendation
   // fields (next_target, recommendation text, etc.) that the coach should see.
   const existingRec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
+  const progression_history = buildProgressionHistory(cleanLog.map(normalizeLogRow), liftCode);
   const live_set_context = buildLiveSetContext(facts, cleanLog, {
-    serverTargetRir: serverTargetRirFor(facts),
+    progressionHistory: progression_history,
   });
   const rec = {
     ...existingRec,
@@ -325,8 +337,6 @@ function enrichCoachFacts(facts, allLog) {
   // History-aware progression facts — computed SERVER-SIDE from the same lift-restricted
   // log (no client influence), reusing the existing progression rules only. Best-effort:
   // all-null when there isn't enough history (sanitizeFacts drops an empty history).
-  const progression_history = buildProgressionHistory(cleanLog.map(normalizeLogRow), liftCode);
-
   return { ...facts, rec, deviation, evidence_context, progression_history, live_set_context };
 }
 
