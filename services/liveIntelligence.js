@@ -30,6 +30,7 @@ const { classifyDeviation } = require('./performanceDeviation');
 const { buildProgressionHistory } = require('./progressionHistory');
 const { normalizeExerciseKey, canonicalLiftCodeFor } = require('./exerciseEnrichment');
 const { isWarmupNote } = require('./warmupTag');
+const { recommendedTargetRir } = require('./liftRole');
 
 // 12-column Log_Cleaned indices used for cross-lift contamination guarding.
 const COL_EXERCISE  = 2; // raw logged name
@@ -68,14 +69,9 @@ function pickTopTodaySet(todaySets) {
   }, null);
 }
 
-function targetRirFor(facts) {
-  const rec = facts && facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
-  const candidates = [facts && facts.targetRir, rec.target_rir, rec.targetRir, 2];
-  for (const value of candidates) {
-    const n = numOrNull(value);
-    if (n !== null) return n;
-  }
-  return 2;
+function targetRirFor(options) {
+  const n = numOrNull(options && options.serverTargetRir);
+  return n !== null ? n : null;
 }
 
 function isOnTargetSet(set, targetRir) {
@@ -121,11 +117,29 @@ function comparableOnTargetStreak(rows, topSet, targetRir) {
   return streak;
 }
 
-function buildLiveSetContext(facts, allLog) {
+function isRecoveryOrDeloadContext(facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const rec = f.rec && typeof f.rec === 'object' ? f.rec : {};
+  const intent = String(f.intentId || f.session_intent || '').trim();
+  return !!(rec.deload && rec.deload.in_deload === true)
+    || intent === 'recovery_pump'
+    || intent === 'deload_reset';
+}
+
+function serverTargetRirFor(facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  return numOrNull(recommendedTargetRir({
+    exercise: f.exerciseName || f.liftCode || '',
+    muscle_group: f.muscleGroup || '',
+  }, f.intentId));
+}
+
+function buildLiveSetContext(facts, allLog, options = {}) {
   const f = facts && typeof facts === 'object' ? facts : {};
   const liftCode = typeof f.liftCode === 'string' ? f.liftCode.trim().toUpperCase() : '';
   const topSet = pickTopTodaySet(f.todaySets);
-  const targetRir = targetRirFor(f);
+  const targetRir = targetRirFor(options);
+  const recoveryActive = isRecoveryOrDeloadContext(f);
   const baseProgression = {
     top_weight: topSet ? topSet.weight : null,
     top_reps: topSet ? topSet.reps : null,
@@ -164,6 +178,9 @@ function buildLiveSetContext(facts, allLog) {
 
   if (verdict && verdict.level === 'new_ground') {
     return out('new_ground', { ...progression, next_action: 'prove_again' }, verdict);
+  }
+  if (currentOnTarget && recoveryActive) {
+    return out('on_target_hold', { ...progression, next_action: 'prove_again' }, verdict);
   }
   if (currentOnTarget && streak >= 3) {
     return out('on_target_increase', { ...progression, next_action: 'increase_load' }, verdict);
@@ -294,7 +311,9 @@ function enrichCoachFacts(facts, allLog) {
   // Merge computed signals into rec, preserving any client-forwarded recommendation
   // fields (next_target, recommendation text, etc.) that the coach should see.
   const existingRec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
-  const live_set_context = buildLiveSetContext(facts, cleanLog);
+  const live_set_context = buildLiveSetContext(facts, cleanLog, {
+    serverTargetRir: serverTargetRirFor(facts),
+  });
   const rec = {
     ...existingRec,
     working_weight,

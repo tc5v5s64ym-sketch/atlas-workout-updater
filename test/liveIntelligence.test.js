@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { enrichCoachFacts } = require('../services/liveIntelligence');
+const { enrichCoachFacts, buildLiveSetContext } = require('../services/liveIntelligence');
 
 // 12-column Log_Cleaned row: date_clean | session_id | exercise | canonical_exercise |
 // muscle_group | lift_code | set_number | weight | reps | rir | notes | volume_calc
@@ -100,6 +100,42 @@ test('enrichCoachFacts: preserves client-forwarded rec fields', () => {
   const result = enrichCoachFacts(facts, rows);
   assert.equal(result.rec.recommendation, 'Keep it up!');
   assert.deepEqual(result.rec.next_target, { weight: 17.5, reps: 12, sets: 3 });
+});
+
+test('buildLiveSetContext: client-supplied target RIR cannot grant an on-target register', () => {
+  const liftCode = 'BPR01';
+  const rows = [
+    row('2026-04-01', 'S1', 'Bench Press', liftCode, 225, 6, 4),
+    row('2026-04-08', 'S2', 'Bench Press', liftCode, 225, 6, 4),
+  ];
+  const ctx = buildLiveSetContext({
+    liftCode,
+    exerciseName: 'Bench Press',
+    todaySets: [{ weight: 225, reps: 6, rir: 4 }],
+    rec: { target_rir: 4 },
+  }, rows);
+
+  assert.equal(ctx.register, 'conservative_hold');
+  assert.equal(ctx.progression_context.target_rir, null);
+  assert.equal(ctx.progression_context.comparable_on_target_streak, null);
+});
+
+test('buildLiveSetContext: recovery context downgrades a server-targeted increase to hold', () => {
+  const liftCode = 'BPR01';
+  const rows = [
+    row('2026-04-01', 'S1', 'Bench Press', liftCode, 225, 6, 2),
+    row('2026-04-08', 'S2', 'Bench Press', liftCode, 225, 6, 2),
+  ];
+  const ctx = buildLiveSetContext({
+    liftCode,
+    exerciseName: 'Bench Press',
+    intentId: 'recovery_pump',
+    todaySets: [{ weight: 225, reps: 6, rir: 2 }],
+  }, rows, { serverTargetRir: 2 });
+
+  assert.equal(ctx.register, 'on_target_hold');
+  assert.equal(ctx.progression_context.comparable_on_target_streak, 3);
+  assert.equal(ctx.progression_context.next_action, 'prove_again');
 });
 
 // ── deviation enrichment ───────────────────────────────────────────────────────
