@@ -232,6 +232,7 @@ app.use((req, res, next) => {
           flight_session_id: req.get('x-atlas-flight-session') || '',
           device_id: req.get('x-atlas-device-id') || '',
           app_version: gitVersion,
+          decision_summary: res.locals ? res.locals.flightRecorderDecisionSummary : null,
           is_simulation: isSimulation
         }, { sheetIsSandbox: getSafeSpreadsheetConfig(process.env.NODE_ENV).isSandboxSheet === true });
       } catch (_) { /* observe-only: telemetry must never surface to the served request */ }

@@ -30,10 +30,10 @@ const { scoreIntents, buildRecentSessions, detectStalls, computeFatigueStatus, r
 const { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift, buildLiveSetContext, flightRecorderContext } = require('../services/liveIntelligence');
 const { buildAthleteIdentity } = require('../services/athleteIdentity');
 const { readAthleteGoals } = require('../services/athleteGoals');
-const { selectCoachMode } = require('../services/coachMode');
+const { COACH_MODES, selectCoachMode } = require('../services/coachMode');
 const { deriveChatCoachMode } = require('../services/chatCoachMode');
 const { detectDiscouragement } = require('../services/discouragementSignal');
-const { grantRegister } = require('../services/registerPermissions');
+const { INTENSITIES, grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
 const { getProfileGoal } = require('../services/profileGoal');
@@ -323,6 +323,100 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Best-effort — a signal failure must never block the coach response.
     }
     return out;
+  }
+
+  const LIVE_SET_REGISTERS = Object.freeze(['new_ground', 'on_target_hold', 'on_target_increase', 'conservative_hold']);
+  const LIVE_NEXT_ACTIONS = Object.freeze(['hold', 'prove_again', 'increase_load']);
+  const CHECKPOINT_DECISIONS = Object.freeze(['load', 'hold']);
+  const VERDICT_LEVELS = Object.freeze(['new_ground', 'within_band', 'below_band', 'unknown']);
+  const RECOVERY_DECISIONS = Object.freeze(['deload', 'recovery_reload']);
+
+  function finiteOrNull(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function enumOrNull(value, allowed) {
+    return typeof value === 'string' && allowed.includes(value) ? value : null;
+  }
+
+  function boundedLiftCode(value) {
+    const s = typeof value === 'string' ? value.trim().toUpperCase() : '';
+    return /^[A-Z0-9_-]{1,40}$/.test(s) ? s : null;
+  }
+
+  function boundedRegisterGrant(register) {
+    const r = register && typeof register === 'object' ? register : {};
+    return {
+      intensity: enumOrNull(r.intensity, INTENSITIES) || 'routine',
+      casual_ok: r.casual_ok === true,
+      humor_ok: r.humor_ok === true,
+      profanity_ok: r.profanity_ok === true,
+    };
+  }
+
+  function boundedRuleIds(ruleDecisions) {
+    if (!Array.isArray(ruleDecisions)) return [];
+    const out = [];
+    for (const d of ruleDecisions) {
+      const id = d && typeof d === 'object' && typeof d.rule_id === 'string'
+        ? d.rule_id.trim()
+        : '';
+      if (/^[a-z0-9_-]{1,80}$/i.test(id) && !out.includes(id)) out.push(id);
+      if (out.length >= 5) break;
+    }
+    return out;
+  }
+
+  function buildCoachMessageDecisionSummary({ kind, facts, flightRecorderContext, selectedCoachMode, selectedRegister, ruleDecisions, computed }) {
+    const f = facts && typeof facts === 'object' ? facts : {};
+    const liveSetContext = f.live_set_context && typeof f.live_set_context === 'object' ? f.live_set_context : {};
+    const fullProgression = liveSetContext.progression_context && typeof liveSetContext.progression_context === 'object'
+      ? liveSetContext.progression_context
+      : {};
+    const boundedFlightContext = flightRecorderContext && typeof flightRecorderContext === 'object' ? flightRecorderContext : {};
+    const boundedProgression = boundedFlightContext.progression_context && typeof boundedFlightContext.progression_context === 'object'
+      ? boundedFlightContext.progression_context
+      : {};
+    const mode = enumOrNull(selectedCoachMode, COACH_MODES);
+    if (!mode) return null;
+    const safetyRuleIds = boundedRuleIds(ruleDecisions);
+    const recovery = computed && typeof computed === 'object' ? computed : {};
+    const recoveryAdvisory = recovery.recovery_advisory && typeof recovery.recovery_advisory === 'object'
+      ? recovery.recovery_advisory
+      : {};
+    return {
+      source: 'coach_message_route',
+      kind: enumOrNull(kind, ['set', 'block', 'plan']) || null,
+      lift_code: boundedLiftCode(f.liftCode),
+      coach_mode: mode,
+      register: boundedRegisterGrant(selectedRegister),
+      live_set_context: {
+        register: enumOrNull(boundedFlightContext.register, LIVE_SET_REGISTERS),
+        verdict_level: enumOrNull(boundedProgression.verdict_level, VERDICT_LEVELS),
+        next_action: enumOrNull(boundedProgression.next_action, LIVE_NEXT_ACTIONS),
+        engine_checkpoint_decision: enumOrNull(fullProgression.engine_checkpoint_decision, CHECKPOINT_DECISIONS),
+        comparable_on_target_streak: finiteOrNull(boundedProgression.comparable_on_target_streak),
+        increase_threshold: finiteOrNull(boundedProgression.increase_threshold),
+      },
+      current_result: {
+        weight: finiteOrNull(boundedProgression.top_weight),
+        reps: finiteOrNull(boundedProgression.top_reps),
+        rir: finiteOrNull(boundedProgression.top_rir),
+      },
+      prior_ceiling: {
+        weight: finiteOrNull(boundedProgression.prior_ceiling),
+      },
+      safety_precedence: {
+        active: safetyRuleIds.length > 0 && ['safety', 'refuse', 'correct'].includes(mode),
+        mode_selected: ['safety', 'refuse', 'correct'].includes(mode) ? mode : null,
+        rule_ids: safetyRuleIds,
+      },
+      recovery_precedence: {
+        active: recovery.recovery_active === true,
+        decision: enumOrNull(recoveryAdvisory.decision, RECOVERY_DECISIONS),
+      },
+    };
   }
 
   // Finalize the deterministic voice against the candidate prose for THIS response
@@ -673,6 +767,15 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Forward the same engine evidence that selected challenge so the voice can
       // name the grounded pattern instead of receiving an unsupported elevated mode.
       facts = { ...facts, coach_mode: mode, register, memory_patterns: memoryPatterns };
+      res.locals.flightRecorderDecisionSummary = buildCoachMessageDecisionSummary({
+        kind,
+        facts,
+        flightRecorderContext: flight_recorder_context,
+        selectedCoachMode: mode,
+        selectedRegister: register,
+        ruleDecisions,
+        computed,
+      });
     } else {
       facts = { ...facts, coach_mode: null, register: null };
       // Plan / non-set voices carry no register grant, but the suppressor should
