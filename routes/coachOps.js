@@ -603,22 +603,6 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       ? renderSubstitutionVoice({ substitution: facts.substitution, candidateProse: '' })
       : null;
 
-    // PR-3: a routine block (tier ack_only) is acknowledged by the client-side ✅
-    // receipt alone — return NO coaching prose and DO NOT call Gemini. Keeps routine
-    // blocks silent and the LLM off the path entirely for the common case.
-    if (kind === 'block' && noteMeta.note_tier === 'ack_only') {
-      return standardSuccess(req, res, 'Routine block — acknowledgment only', {
-        message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind, ...noteMeta,
-        effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
-      });
-    }
-    if (!coach.isConfigured()) {
-      const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
-      return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
-        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context
-      });
-    }
-
     // Plan voice: derive the return-after-layoff signal from the log server-side so
     // a "volume pulled back" claim can only come from the engine, never the client.
     // Always overwrite facts.layoff (engine value or null) so a client cannot inject
@@ -789,6 +773,23 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // skips the earned-moment celebration/PR-vocab check — the plan "why today"
       // voice may legitimately reference a real personal best in its rationale.
       registerCtx = { mode: null, register: { profanity_ok: false }, profanity_only: true };
+    }
+
+    // PR-3: a routine block (tier ack_only) is acknowledged by the client-side ✅
+    // receipt alone — return NO coaching prose and DO NOT call Gemini. Keeps routine
+    // blocks silent and the LLM off the path entirely for the common case. This must
+    // happen after mode/register selection so Flight Recorder can persist it.
+    if (kind === 'block' && noteMeta.note_tier === 'ack_only') {
+      return standardSuccess(req, res, 'Routine block — acknowledgment only', {
+        message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind, ...noteMeta,
+        effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
+      });
+    }
+    if (!coach.isConfigured()) {
+      const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
+        message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context
+      });
     }
 
     try {

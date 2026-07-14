@@ -126,7 +126,7 @@ function settle() {
   return new Promise(resolve => setImmediate(resolve));
 }
 
-async function postSetWithFlight(facts, { appendThrows = false } = {}) {
+async function postSetWithFlight(facts, { appendThrows = false, kind = 'set' } = {}) {
   const originalFlag = process.env.ATLAS_FLIGHT_RECORDER;
   const rows = [];
   process.env.ATLAS_FLIGHT_RECORDER = '1';
@@ -145,7 +145,7 @@ async function postSetWithFlight(facts, { appendThrows = false } = {}) {
         'x-atlas-flight-session': 'FR-TEST-LT010',
         'x-atlas-device-id': 'device-lt010',
       },
-      body: JSON.stringify({ kind: 'set', facts }),
+      body: JSON.stringify({ kind, facts }),
     });
     const body = await res.json();
     flightRecorder.flushFlightRecorder();
@@ -321,6 +321,26 @@ test('Flight Recorder api_response: routine set records selected mode/register w
   assert.equal(decisionSummary.lift_code, 'BENREC');
   assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
   assert.notEqual(decisionSummary.live_set_context.engine_checkpoint_decision, 'load');
+  assert.notEqual(decisionSummary.live_set_context.next_action, 'increase_load');
+});
+
+test('Flight Recorder api_response: routine block ack-only still records selected mode/register', { concurrency: false }, async () => {
+  const { res, body, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENREC',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    intentId: 'build_strength',
+    todaySets: [{ weight: 225, reps: 6, rir: 2 }],
+  }, { kind: 'block' });
+
+  assert.equal(res.status, 200);
+  assert.equal(body.data.message, null);
+  assert.equal(body.data.note_tier, 'ack_only');
+  assert.ok(decisionSummary, 'decision_summary_json must be populated before the ack-only return');
+  assert.equal(decisionSummary.kind, 'block');
+  assert.equal(decisionSummary.coach_mode, 'silent');
+  assert.equal(decisionSummary.register.intensity, 'routine');
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
   assert.notEqual(decisionSummary.live_set_context.next_action, 'increase_load');
 });
 
