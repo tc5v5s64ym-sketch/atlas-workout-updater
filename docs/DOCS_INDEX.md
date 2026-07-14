@@ -17,10 +17,10 @@ These two are **partners, not competitors**: `BACKLOG.md` is the full open/defer
 ## Agent entry points
 
 - `docs/GOVERNANCE.md` — **read first**. Defines how Dream, Vision, Constitution, Roadmap, and Backlog relate and where to file new ideas.
-- `AGENTS.md` — **canonical implementation-agent entry point**. Defines Codex implementation, native Codex GitHub Review, risk-triggered ChatGPT Atlas Contract Review, routine merge authority, safety rules, and Dale's owner-reserved merge authority.
-- `CLAUDE.md` — compatibility pointer only; no active Claude-specific authority.
-- `CODEX.md` — compatibility pointer to `AGENTS.md` and the implementation-vs-native-review context split.
-- `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Codex + native review + GitHub workflow.
+- `CLAUDE.md` — **canonical implementation-agent brief**. Defines Claude-led implementation, the deterministic hard gates + clean-context cold review, the risk-triggered ChatGPT Atlas Contract Review, routine merge authority, safety rules, and Dale's owner-reserved merge authority.
+- `AGENTS.md` — compatibility pointer to `CLAUDE.md`; no independent role, review, branch, or merge rules.
+- `CODEX.md` — compatibility pointer to `CLAUDE.md`; native Codex GitHub Review is retired (advisory only).
+- `docs/AGENT_WORKFLOW.md` — Dale + ChatGPT + Claude + GitHub workflow.
 - `docs/ACTIVE_ROADMAP.md` — current queue; read before selecting the next PR.
 - `BACKLOG.md` — open/deferred work and owner decisions.
 
@@ -31,7 +31,7 @@ Agents should not start from old plan docs.
 The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 
 - `docs/DECISION_KERNEL.md` — the operational distillation of Vision / Roadmap / Architecture / Constitution / Invariants: the durable principles + document precedence read FIRST for routine autonomous decisions (so the full north-star docs are not re-read every PR).
-- `docs/AUTOMATION_PROTOCOL.md` — the automation contract: Codex implementation, separate native correctness/security and risk-triggered ChatGPT contract-review lanes, positive-evidence gates, routine merge authority, and Dale owner-reserved holds.
+- `docs/AUTOMATION_PROTOCOL.md` — the automation contract: Claude implementation, the deterministic hard gates + clean-context cold review + risk-triggered ChatGPT contract-review lane, positive-evidence gates, routine merge authority, and Dale owner-reserved holds.
 - `docs/OWNER_CHECKIN_RULES.md` — owner-reserved decisions, the unchanged production-verification amendment, and absolute data safety.
 - `docs/ONE_BRAIN_PROMOTION_CRITERIA.md` — owner/governance: how any Brain (Brian v1 and every future version) earns promotion from hybrid shadow to primary coach — observation window, evidence sources, acceptance checklist, automatic blockers, owner review, rollback. Promotion is owner-reserved (`OWNER_CHECKIN_RULES.md` criterion 2); this defines the evidence standard for it.
 - `docs/ENGINE_RECONCILIATION_NOTES.md` — active reference for the observation window: the two places legacy and the Brain use different accounting (volume credit models; deload decider vs advisory), which model is canonical today, and how to attribute shadow divergence as accounting-vs-judgment before scoring it against the promotion criteria.
