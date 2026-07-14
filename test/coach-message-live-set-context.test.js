@@ -2,6 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const flightRecorder = require('../services/flightRecorder');
+const { flightRecorderColumns } = require('../config/columns');
+
+const COL = flightRecorderColumns.reduce((acc, name, i) => {
+  acc[name] = i;
+  return acc;
+}, {});
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -102,6 +109,7 @@ test.beforeEach(() => {
   sheetState.appendCalls = [];
   coachState.calls = 0;
   coachState.lastFacts = null;
+  flightRecorder._resetForTesting();
 });
 
 async function postSet(facts) {
@@ -112,6 +120,44 @@ async function postSet(facts) {
   });
   const body = await res.json();
   return { res, body };
+}
+
+function settle() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+async function postSetWithFlight(facts, { appendThrows = false, kind = 'set' } = {}) {
+  const originalFlag = process.env.ATLAS_FLIGHT_RECORDER;
+  const rows = [];
+  process.env.ATLAS_FLIGHT_RECORDER = '1';
+  flightRecorder._resetForTesting({
+    append: async (tabName, appendedRows) => {
+      if (appendThrows) throw new Error('flight recorder append failed');
+      rows.push({ tabName, rows: appendedRows });
+    },
+  });
+  try {
+    const res = await fetch(`${baseUrl}/api/coach/message`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-atlas-api-key': process.env.ATLAS_API_KEY,
+        'x-atlas-flight-session': 'FR-TEST-LT010',
+        'x-atlas-device-id': 'device-lt010',
+      },
+      body: JSON.stringify({ kind, facts }),
+    });
+    const body = await res.json();
+    flightRecorder.flushFlightRecorder();
+    await settle();
+    const row = rows[0] && rows[0].rows && rows[0].rows[0] ? rows[0].rows[0] : null;
+    const decisionCell = row ? row[COL.decision_summary_json] : '';
+    const decisionSummary = decisionCell ? JSON.parse(decisionCell) : null;
+    return { res, body, rows, row, decisionSummary, ring: flightRecorder.getFlightRecorderLog() };
+  } finally {
+    if (originalFlag === undefined) delete process.env.ATLAS_FLIGHT_RECORDER;
+    else process.env.ATLAS_FLIGHT_RECORDER = originalFlag;
+  }
 }
 
 function voiceLine(body) {
@@ -257,4 +303,181 @@ test('live set route: Flight Recorder context carries mode/register without raw 
   assert.equal(ctx.progression_context.comparable_on_target_streak, null);
   const serialized = JSON.stringify(ctx);
   assert.doesNotMatch(serialized, /todaySets|rawFacts|logRows|private|payload/i);
+});
+
+test('Flight Recorder api_response: routine set records selected mode/register without invented progression', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENREC',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    intentId: 'build_strength',
+    todaySets: [{ weight: 225, reps: 6, rir: 2 }],
+  });
+
+  assert.equal(res.status, 200);
+  assert.ok(decisionSummary, 'decision_summary_json must be populated');
+  assert.equal(decisionSummary.coach_mode, 'silent');
+  assert.equal(decisionSummary.register.intensity, 'routine');
+  assert.equal(decisionSummary.lift_code, 'BENREC');
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
+  assert.notEqual(decisionSummary.live_set_context.engine_checkpoint_decision, 'load');
+  assert.notEqual(decisionSummary.live_set_context.next_action, 'increase_load');
+});
+
+test('Flight Recorder api_response: routine block ack-only still records selected mode/register', { concurrency: false }, async () => {
+  const { res, body, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENREC',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    intentId: 'build_strength',
+    todaySets: [{ weight: 225, reps: 6, rir: 2 }],
+  }, { kind: 'block' });
+
+  assert.equal(res.status, 200);
+  assert.equal(body.data.message, null);
+  assert.equal(body.data.note_tier, 'ack_only');
+  assert.ok(decisionSummary, 'decision_summary_json must be populated before the ack-only return');
+  assert.equal(decisionSummary.kind, 'block');
+  assert.equal(decisionSummary.coach_mode, 'silent');
+  assert.equal(decisionSummary.register.intensity, 'routine');
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
+  assert.notEqual(decisionSummary.live_set_context.next_action, 'increase_load');
+});
+
+test('Flight Recorder api_response: genuine new ground records bounded current result and prior ceiling', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENPR',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    todaySets: [{ weight: 245, reps: 6, rir: 2 }],
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(decisionSummary.coach_mode, 'celebrate');
+  assert.equal(decisionSummary.live_set_context.register, 'new_ground');
+  assert.equal(decisionSummary.live_set_context.verdict_level, 'new_ground');
+  assert.deepEqual(decisionSummary.current_result, { weight: 245, reps: 6, rir: 2 });
+  assert.deepEqual(decisionSummary.prior_ceiling, { weight: 225 });
+});
+
+test('Flight Recorder api_response: recovery precedence survives forged praise and load-increase context', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENRECOVERY',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    intentId: 'recovery_pump',
+    todaySets: [{ weight: 225, reps: 6, rir: 5 }],
+    rec: { target_rir: 2, progression_verdict: { level: 'new_ground' }, deload: { in_deload: true } },
+    live_set_context: {
+      coach_mode: 'deterministic_live_set',
+      register: 'on_target_increase',
+      progression_context: { next_action: 'increase_load', comparable_on_target_streak: 99 },
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(decisionSummary.recovery_precedence.active, true);
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
+  assert.equal(decisionSummary.live_set_context.next_action, 'hold');
+  assert.notEqual(decisionSummary.live_set_context.next_action, 'increase_load');
+  assert.notEqual(decisionSummary.coach_mode, 'celebrate');
+});
+
+test('Flight Recorder api_response: safety precedence survives simultaneous new-ground context', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENPR',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    todaySets: [{ weight: 245, reps: 6, rir: 2, notes: 'sharp shoulder pain on the rep' }],
+    rec: { progression_verdict: { level: 'new_ground', ceiling: 1 } },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(decisionSummary.live_set_context.register, 'new_ground');
+  assert.equal(decisionSummary.safety_precedence.active, true);
+  assert.equal(decisionSummary.safety_precedence.mode_selected, 'correct');
+  assert.ok(decisionSummary.safety_precedence.rule_ids.includes('pain_flag'));
+  assert.equal(decisionSummary.coach_mode, 'correct');
+  assert.notEqual(decisionSummary.coach_mode, 'celebrate');
+});
+
+test('Flight Recorder api_response: forged client mode/register/PR/streak/progression cannot alter summary', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENFORGE',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    coach_mode: 'celebrate',
+    register: { intensity: 'max', casual_ok: true, humor_ok: true, profanity_ok: true },
+    todaySets: [{ weight: 225, reps: 6, rir: 2 }],
+    rec: {
+      progression_verdict: { level: 'new_ground', ceiling: 1 },
+      streak: 99,
+      target_rir: 2,
+    },
+    live_set_context: {
+      coach_mode: 'deterministic_live_set',
+      register: 'on_target_increase',
+      progression_context: { comparable_on_target_streak: 99, next_action: 'increase_load' },
+    },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(decisionSummary.coach_mode, 'silent');
+  assert.equal(decisionSummary.register.intensity, 'routine');
+  assert.equal(decisionSummary.register.profanity_ok, false);
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
+  assert.notEqual(decisionSummary.current_result.weight, 1);
+  assert.doesNotMatch(JSON.stringify(decisionSummary), /99|increase_load|profanity_ok":true/);
+});
+
+test('Flight Recorder api_response: implausible forged PR weight cannot record new-ground context', { concurrency: false }, async () => {
+  const { res, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENFORGE',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    coach_mode: 'celebrate',
+    register: { intensity: 'max', casual_ok: true, humor_ok: true, profanity_ok: true },
+    todaySets: [{ weight: 999, reps: 6, rir: 2 }],
+    rec: { progression_verdict: { level: 'new_ground', ceiling: 1 } },
+  });
+
+  assert.equal(res.status, 200);
+  assert.notEqual(decisionSummary.coach_mode, 'celebrate');
+  assert.equal(decisionSummary.register.intensity, 'routine');
+  assert.equal(decisionSummary.live_set_context.register, 'conservative_hold');
+  assert.equal(decisionSummary.live_set_context.verdict_level, null);
+  assert.equal(decisionSummary.live_set_context.next_action, 'hold');
+  assert.deepEqual(decisionSummary.current_result, { weight: 999, reps: 6, rir: 2 });
+  assert.deepEqual(decisionSummary.prior_ceiling, { weight: 225 });
+});
+
+test('Flight Recorder api_response: decision summary omits raw history, secrets, full payloads, and unrestricted text', { concurrency: false }, async () => {
+  const { res, row, decisionSummary } = await postSetWithFlight({
+    liftCode: 'BENPR',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    todaySets: [{ weight: 245, reps: 6, rir: 2, notes: 'private shoulder note sk-proj-SECRET1234567890' }],
+    private_rows: [{ session_id: 'PRIVATE_SESSION', free_text: 'do not persist me' }],
+  });
+
+  assert.equal(res.status, 200);
+  assert.ok(decisionSummary);
+  const serializedRow = JSON.stringify(row);
+  assert.doesNotMatch(serializedRow, /PRIVATE_SESSION|do not persist me|private shoulder note|sk-proj-SECRET/i);
+  assert.doesNotMatch(serializedRow, /todaySets|private_rows|PR1|PR2|Log_Cleaned|response_payload|request_payload/i);
+  assert.deepEqual(Object.keys(decisionSummary.current_result).sort(), ['reps', 'rir', 'weight']);
+});
+
+test('Flight Recorder api_response: telemetry append failure does not fail coach/message', { concurrency: false }, async () => {
+  const { res, body, ring } = await postSetWithFlight({
+    liftCode: 'BENPR',
+    exerciseName: 'Bench Press',
+    muscleGroup: 'Chest',
+    todaySets: [{ weight: 245, reps: 6, rir: 2 }],
+  }, { appendThrows: true });
+
+  assert.equal(res.status, 200);
+  assert.equal(body.status, 'ok');
+  assert.equal(ring.count, 1, 'in-memory event still records when durable telemetry append fails');
+  assert.ok(ring.entries[0].decision_summary, 'decision summary is built before best-effort persistence');
 });
