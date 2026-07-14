@@ -38,6 +38,52 @@ const ON_TARGET_PRAISE = 'Dialled in — that landed right on target.';
 const BLOCK_FALLBACK = 'That counted, but it does not earn more weight.';
 const HOLD_CLAUSE = 'Hold the load and clean up reps.';
 
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtSetForContext(ctx, fallbackExercise) {
+  const p = ctx && ctx.progression_context && typeof ctx.progression_context === 'object'
+    ? ctx.progression_context
+    : {};
+  const weight = num(p.top_weight);
+  const reps = num(p.top_reps);
+  const rir = p.top_rir == null ? null : num(p.top_rir);
+  const exercise = typeof fallbackExercise === 'string' && fallbackExercise.trim()
+    ? fallbackExercise.trim()
+    : 'That';
+  if (weight === null || reps === null) return null;
+  return `${exercise} ${weight}x${reps}${rir !== null ? ` at RIR ${rir}` : ''}`;
+}
+
+function liveContextLine(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null;
+  const register = typeof ctx.register === 'string' ? ctx.register : '';
+  const p = ctx.progression_context && typeof ctx.progression_context === 'object'
+    ? ctx.progression_context
+    : {};
+  if (register === 'new_ground') {
+    const set = fmtSetForContext(ctx, ctx.exercise);
+    const prior = num(p.prior_ceiling);
+    if (set && prior !== null) {
+      return `New ground: ${set} clears your prior ${prior}. Hold it next time and prove it again.`;
+    }
+    if (set) return `New ground: ${set}. Hold it next time and prove it again.`;
+    return 'New ground. Hold it next time and prove it again.';
+  }
+  if (register === 'on_target_increase') {
+    const streak = num(p.comparable_on_target_streak);
+    const words = { 3: 'three', 4: 'four', 5: 'five' };
+    const count = streak !== null ? (words[streak] || String(streak)) : 'three';
+    return `That's ${count} straight on target. You've owned it - bump the load next session.`;
+  }
+  if (register === 'on_target_hold') {
+    return 'Right on target. Hold it next time and prove it again.';
+  }
+  return null;
+}
+
 // ── Forbidden-contradiction phrase banks ──────────────────────────────────────
 // Phrases that contradict a deterministic signal. Matched case-insensitively
 // against the candidate generic/LLM prose; any hit means the prose is lying about
@@ -240,9 +286,14 @@ function classifySeverity(analysis, recVerdict) {
  * @param {string}      input.candidateProse- the generic/LLM prose to vet (may be '').
  * @returns {object} voice (see module header).
  */
-function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, candidateProse = '' } = {}) {
+function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, candidateProse = '', liveSetContext = null } = {}) {
   const reason_codes = analysis && Array.isArray(analysis.reason_codes) ? analysis.reason_codes.slice() : [];
-  const severity = classifySeverity(analysis, recVerdict);
+  const contextLine = liveContextLine(liveSetContext);
+  const measuredSeverity = classifySeverity(analysis, recVerdict);
+  const contextAllowed = contextLine && !['block', 'caution', 'bump'].includes(measuredSeverity);
+  const severity = contextAllowed && liveSetContext && liveSetContext.register === 'new_ground'
+    ? 'pr'
+    : measuredSeverity;
   const observation = effortNote(analysis); // null on neutral, warmup-only, or on-target
   const secondary_line = rerouteNote(conflict) || null;
 
@@ -262,6 +313,9 @@ function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, c
   } else if (severity === 'bump') {
     // A working set left well above target — under-dosed; a bump is coming.
     primary_line = observation;
+    suppress_generic_prose = true;
+  } else if (contextAllowed) {
+    primary_line = contextLine;
     suppress_generic_prose = true;
   } else if (severity === 'on_target') {
     // Correct effort. In the weighted/RIR set-feedback lane the deterministic
@@ -291,6 +345,9 @@ function renderSetVoice({ analysis = null, conflict = null, recVerdict = null, c
     reason_codes,
     suppress_generic_prose,
     contradictions,
+    coach_mode: liveSetContext && liveSetContext.coach_mode ? liveSetContext.coach_mode : null,
+    register: liveSetContext && liveSetContext.register ? liveSetContext.register : null,
+    progression_context: liveSetContext && liveSetContext.progression_context ? liveSetContext.progression_context : null,
   };
 }
 

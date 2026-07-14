@@ -29,11 +29,200 @@ const { computeExpectedPerformance } = require('./expectedPerformance');
 const { classifyDeviation } = require('./performanceDeviation');
 const { buildProgressionHistory } = require('./progressionHistory');
 const { normalizeExerciseKey, canonicalLiftCodeFor } = require('./exerciseEnrichment');
+const { isWarmupNote } = require('./warmupTag');
 
 // 12-column Log_Cleaned indices used for cross-lift contamination guarding.
 const COL_EXERCISE  = 2; // raw logged name
 const COL_CANONICAL = 3; // canonical_exercise
 const COL_LIFT      = 5; // lift_code
+
+function numOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isPositiveFinite(value) {
+  return Number.isFinite(value) && value > 0;
+}
+
+function sameNumber(a, b) {
+  const na = numOrNull(a);
+  const nb = numOrNull(b);
+  return na !== null && nb !== null && na === nb;
+}
+
+function pickTopTodaySet(todaySets) {
+  if (!Array.isArray(todaySets)) return null;
+  return todaySets.reduce((best, set) => {
+    if (!set || typeof set !== 'object') return best;
+    const weight = numOrNull(set.weight);
+    const reps = numOrNull(set.reps);
+    if (!isPositiveFinite(weight) || !isPositiveFinite(reps)) return best;
+    const rir = set.rir == null ? null : numOrNull(set.rir);
+    const current = { weight, reps, rir };
+    if (!best) return current;
+    if (weight !== best.weight) return weight > best.weight ? current : best;
+    const bestRir = best.rir === null ? Infinity : best.rir;
+    const currentRir = rir === null ? Infinity : rir;
+    return currentRir <= bestRir ? current : best;
+  }, null);
+}
+
+function targetRirFor(options) {
+  const n = numOrNull(options && options.serverTargetRir);
+  return n !== null ? n : null;
+}
+
+function isOnTargetSet(set, targetRir) {
+  if (!set || !isPositiveFinite(numOrNull(set.weight)) || !isPositiveFinite(numOrNull(set.reps))) return false;
+  const rir = numOrNull(set.rir);
+  return rir !== null && targetRir !== null && rir === targetRir;
+}
+
+function rowsForLift(allLog, liftCode, exerciseName) {
+  const cleanLog = cleanLogForLift(Array.isArray(allLog) ? allLog : [], liftCode, exerciseName);
+  const code = String(liftCode || '').trim().toUpperCase();
+  return cleanLog
+    .map(normalizeLogRow)
+    .filter(row => row.lift_code === code && !isWarmupNote(row.notes));
+}
+
+function comparableOnTargetStreak(rows, topSet, targetRir) {
+  if (!isOnTargetSet(topSet, targetRir)) return 0;
+  const bySession = new Map();
+  for (const row of rows) {
+    if (!row.session_id) continue;
+    if (!bySession.has(row.session_id)) bySession.set(row.session_id, []);
+    bySession.get(row.session_id).push(row);
+  }
+  const sessions = [...bySession.entries()]
+    .map(([sessionId, sessionRows]) => ({
+      sessionId,
+      rows: sessionRows,
+      sortKey: sessionRows.reduce((max, row) => {
+        const key = `${row.date_clean || ''}|${row.session_id || ''}|${Number(row.set_number) || 0}`;
+        return key > max ? key : max;
+      }, ''),
+    }))
+    .sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+
+  let streak = 1;
+  for (const session of sessions) {
+    const comparable = session.rows.filter(row => sameNumber(row.weight, topSet.weight) && sameNumber(row.reps, topSet.reps));
+    if (!comparable.length) continue;
+    if (comparable.some(row => isOnTargetSet(row, targetRir))) streak += 1;
+    else break;
+  }
+  return streak;
+}
+
+function isRecoveryOrDeloadContext(facts) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const rec = f.rec && typeof f.rec === 'object' ? f.rec : {};
+  const intent = String(f.intentId || f.session_intent || '').trim();
+  return !!(rec.deload && rec.deload.in_deload === true)
+    || intent === 'recovery_pump'
+    || intent === 'deload_reset';
+}
+
+function checkpointFor(options) {
+  const ph = options && options.progressionHistory && typeof options.progressionHistory === 'object'
+    ? options.progressionHistory
+    : {};
+  const cp = ph.next_checkpoint && typeof ph.next_checkpoint === 'object' ? ph.next_checkpoint : {};
+  const decision = cp.decision === 'load' || cp.decision === 'hold' ? cp.decision : null;
+  return {
+    decision,
+    clean_sessions: cp.clean_sessions == null ? null : numOrNull(cp.clean_sessions),
+    required_sessions: cp.required_sessions == null ? null : numOrNull(cp.required_sessions),
+    criterion_progress: typeof cp.criterion_progress === 'string' ? cp.criterion_progress : null,
+  };
+}
+
+function buildLiveSetContext(facts, allLog, options = {}) {
+  const f = facts && typeof facts === 'object' ? facts : {};
+  const liftCode = typeof f.liftCode === 'string' ? f.liftCode.trim().toUpperCase() : '';
+  const topSet = pickTopTodaySet(f.todaySets);
+  const targetRir = targetRirFor(options);
+  const recoveryActive = isRecoveryOrDeloadContext(f);
+  const checkpoint = checkpointFor(options);
+  const baseProgression = {
+    top_weight: topSet ? topSet.weight : null,
+    top_reps: topSet ? topSet.reps : null,
+    top_rir: topSet ? topSet.rir : null,
+    target_rir: targetRir,
+    prior_ceiling: null,
+    verdict_level: null,
+    comparable_on_target_streak: null,
+    increase_threshold: checkpoint.required_sessions,
+    engine_checkpoint_decision: checkpoint.decision,
+    criterion_progress: checkpoint.criterion_progress,
+    next_action: null,
+  };
+
+  const out = (register, progression, progression_verdict = null) => ({
+    coach_mode: 'deterministic_live_set',
+    register,
+    exercise: typeof f.exerciseName === 'string' ? f.exerciseName.trim() : null,
+    progression_context: progression,
+    progression_verdict,
+  });
+
+  if (!liftCode || !topSet) {
+    return out('conservative_hold', { ...baseProgression, next_action: 'hold' });
+  }
+
+  const rows = rowsForLift(allLog, liftCode, f.exerciseName);
+  const band = progressionBand(rows, null);
+  const verdict = band ? progressionVerdict(topSet.weight, band) : null;
+  const currentOnTarget = isOnTargetSet(topSet, targetRir);
+  const streak = currentOnTarget ? comparableOnTargetStreak(rows, topSet, targetRir) : 0;
+  const progression = {
+    ...baseProgression,
+    prior_ceiling: verdict ? verdict.ceiling : (band && Number.isFinite(Number(band.ceiling)) ? Number(band.ceiling) : null),
+    verdict_level: verdict ? verdict.level : null,
+    comparable_on_target_streak: currentOnTarget ? streak : null,
+  };
+
+  if (currentOnTarget && recoveryActive) {
+    return out('on_target_hold', { ...progression, next_action: 'prove_again' }, verdict);
+  }
+  if (recoveryActive) {
+    return out('conservative_hold', { ...progression, next_action: 'hold' }, verdict);
+  }
+  if (verdict && verdict.level === 'new_ground') {
+    return out('new_ground', { ...progression, next_action: 'prove_again' }, verdict);
+  }
+  if (currentOnTarget && checkpoint.decision === 'load') {
+    return out('on_target_increase', { ...progression, next_action: 'increase_load' }, verdict);
+  }
+  if (currentOnTarget) {
+    return out('on_target_hold', { ...progression, next_action: 'prove_again' }, verdict);
+  }
+  return out('conservative_hold', { ...progression, next_action: 'hold' }, verdict);
+}
+
+function flightRecorderContext(liveSetContext) {
+  const ctx = liveSetContext && typeof liveSetContext === 'object' ? liveSetContext : null;
+  const p = ctx && ctx.progression_context && typeof ctx.progression_context === 'object'
+    ? ctx.progression_context
+    : {};
+  return {
+    coach_mode: ctx ? ctx.coach_mode || 'deterministic_live_set' : 'deterministic_live_set',
+    register: ctx ? ctx.register || 'conservative_hold' : 'conservative_hold',
+    progression_context: {
+      verdict_level: p.verdict_level || null,
+      top_weight: numOrNull(p.top_weight),
+      top_reps: numOrNull(p.top_reps),
+      top_rir: p.top_rir == null ? null : numOrNull(p.top_rir),
+      target_rir: p.target_rir == null ? null : numOrNull(p.target_rir),
+      prior_ceiling: p.prior_ceiling == null ? null : numOrNull(p.prior_ceiling),
+      comparable_on_target_streak: p.comparable_on_target_streak == null ? null : numOrNull(p.comparable_on_target_streak),
+      increase_threshold: p.increase_threshold == null ? null : numOrNull(p.increase_threshold),
+      next_action: typeof p.next_action === 'string' ? p.next_action : null,
+    },
+  };
+}
 
 // Step 376 — guard against cross-lift history contamination.
 //
@@ -133,14 +322,22 @@ function enrichCoachFacts(facts, allLog) {
   // Merge computed signals into rec, preserving any client-forwarded recommendation
   // fields (next_target, recommendation text, etc.) that the coach should see.
   const existingRec = facts.rec && typeof facts.rec === 'object' ? facts.rec : {};
-  const rec = { ...existingRec, working_weight, trend, readiness_signal };
+  const progression_history = buildProgressionHistory(cleanLog.map(normalizeLogRow), liftCode);
+  const live_set_context = buildLiveSetContext(facts, cleanLog, {
+    progressionHistory: progression_history,
+  });
+  const rec = {
+    ...existingRec,
+    working_weight,
+    trend,
+    readiness_signal,
+    progression_verdict: live_set_context.progression_verdict || null,
+  };
 
   // History-aware progression facts — computed SERVER-SIDE from the same lift-restricted
   // log (no client influence), reusing the existing progression rules only. Best-effort:
   // all-null when there isn't enough history (sanitizeFacts drops an empty history).
-  const progression_history = buildProgressionHistory(cleanLog.map(normalizeLogRow), liftCode);
-
-  return { ...facts, rec, deviation, evidence_context, progression_history };
+  return { ...facts, rec, deviation, evidence_context, progression_history, live_set_context };
 }
 
 // PR-B4 slice 3 — engine-confirmed new-ground gate for the profanity permission.
@@ -190,4 +387,4 @@ function confirmTodayNewGround(facts, allLog) {
   return true;
 }
 
-module.exports = { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift };
+module.exports = { enrichCoachFacts, confirmTodayNewGround, cleanLogForLift, buildLiveSetContext, flightRecorderContext };
