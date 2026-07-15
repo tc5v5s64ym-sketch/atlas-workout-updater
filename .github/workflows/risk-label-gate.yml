@@ -4,24 +4,34 @@ name: Risk label gate
 # pass/fail table: "exactly one primary risk label"; docs/RISK_LABELS.md). The
 # auto-labeler (.github/workflows/labeler.yml) applies only CATEGORY labels and is
 # deliberately non-blocking; the PRIMARY risk label is a builder decision and was
-# unenforced until this gate. This job fails unless exactly one of the four
-# canonical primary labels — auto-safe / owner-live-test / owner-decision /
-# blocked — is present, and re-runs whenever labels change.
+# unenforced until this gate.
+#
+# The gate is a commit status named `risk-label/primary`, published on the PR
+# HEAD SHA via the API — NOT the job's own conclusion. Under pull_request_target
+# the job's GITHUB_SHA is the default-branch commit, so a job-conclusion check
+# would not attach to the PR head and branch protection could never enforce it;
+# publishing an explicit status to `head.sha` (the same mechanism the cold-review
+# gate uses) makes the required check land on the head. Green iff exactly one of
+# auto-safe / owner-live-test / owner-decision / blocked is present; it re-runs on
+# every label change.
 #
 # TRUST MODEL: like the cold-review gate, this runs via `pull_request_target` and
 # loads its decision logic ONLY from the protected default branch, so a PR that
 # edits scripts/risk-label-gate.js cannot make the gate evaluate its own
 # unreviewed logic. It reads the PR purely as data (label names via the API) and
-# never checks out or executes PR-head code. It holds no write permission — the
-# gate is the job's own conclusion. It fails closed if the logic is not yet on the
-# default branch (bootstrap). Auto-labeling stays non-blocking; this is the
-# separate blocking check.
+# never checks out or executes PR-head code. `statuses: write` is the only write
+# scope. It fails closed if the logic is not yet on the default branch (bootstrap).
+# Auto-labeling stays non-blocking; this is the separate blocking check.
+#
+# To bind it, add the `risk-label/primary` status check to the `main` required
+# status checks in branch protection (owner action).
 
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, labeled, unlabeled]
 
 permissions:
+  statuses: write
   contents: read
   pull-requests: read
 
@@ -39,37 +49,50 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Evaluate primary risk label
+      - name: Evaluate and publish primary-risk-label status
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
             const { owner, repo } = context.repo;
-            const prNumber = context.payload.pull_request.number;
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+            const headSha = pr.head.sha;
+            const CONTEXT = 'risk-label/primary';
+            const target_url = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const clip = (t) => { const v = String(t || ''); return v.length <= 140 ? v : `${v.slice(0, 139)}…`; };
 
             // Fail CLOSED: never fall back to PR-head code.
             const logicPath = path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/risk-label-gate.js');
             if (!fs.existsSync(logicPath)) {
-              core.setFailed('Risk-label gate logic is not on the default branch yet; failing closed until it lands.');
+              await github.rest.repos.createCommitStatus({
+                owner, repo, sha: headSha, state: 'failure', context: CONTEXT, target_url,
+                description: 'Risk-label gate logic is not on the default branch yet; failing closed until it lands.',
+              });
+              core.notice(`risk-label/primary @ ${headSha.slice(0, 12)}: bootstrap — logic not on default branch`);
               return;
             }
             const gate = require(logicPath);
 
             // Read the PR's labels fresh from the API (the event payload can lag
             // rapid label changes).
-            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-            const labelNames = (pr.labels || []).map((l) => l.name);
-
+            const { data: prData } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const labelNames = (prData.labels || []).map((l) => l.name);
             const result = gate.evaluatePrimaryRiskLabels(labelNames);
 
+            const description = clip(result.message.replace(/`/g, ''));
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha: headSha,
+              state: result.ok ? 'success' : 'failure',
+              context: CONTEXT,
+              description,
+              target_url,
+            });
+
+            core.notice(`risk-label/primary @ ${headSha.slice(0, 12)}: ${result.ok ? 'SUCCESS' : 'FAILURE'} — ${description}`);
             await core.summary
               .addHeading('Risk label gate', 3)
-              .addRaw(result.message)
+              .addRaw(`Status \`${CONTEXT}\` on \`${headSha.slice(0, 12)}\`: **${result.ok ? 'success' : 'failure'}**`)
+              .addRaw(`\n\n${description}`)
               .write();
-
-            if (!result.ok) {
-              core.setFailed(result.message);
-              return;
-            }
-            core.notice(result.message);
