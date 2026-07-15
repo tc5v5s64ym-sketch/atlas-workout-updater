@@ -54,4 +54,24 @@ function evaluatePrimaryRiskLabels(labelNames) {
   };
 }
 
-module.exports = { PRIMARY_RISK_LABELS, evaluatePrimaryRiskLabels };
+// Mirror of the workflow's final `if: always()` publisher fail-closed rule
+// (.github/workflows/risk-label-gate.yml). The last step ALWAYS publishes a
+// definitive success/failure to the exact head; any non-conclusive evaluation —
+// a checkout / API / module-load / evaluation error, or a run that never reached
+// the evaluate step — must publish FAILURE, never leave a prior green behind.
+// Kept here as a pure, tested function; the workflow inlines the same rule so the
+// safety net still runs when checkout failed and the module cannot be required.
+function resolveFinalStatus(evalState, evalDescription) {
+  if (evalState === "success" || evalState === "failure") {
+    return {
+      state: evalState,
+      description: String(evalDescription || "Risk-label gate result.").slice(0, 140),
+    };
+  }
+  return {
+    state: "failure",
+    description: "Risk-label gate could not complete (checkout/API/module/evaluation error); failing closed.",
+  };
+}
+
+module.exports = { PRIMARY_RISK_LABELS, evaluatePrimaryRiskLabels, resolveFinalStatus };

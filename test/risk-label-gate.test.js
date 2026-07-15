@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { PRIMARY_RISK_LABELS, evaluatePrimaryRiskLabels } = require('../scripts/risk-label-gate');
+const { PRIMARY_RISK_LABELS, evaluatePrimaryRiskLabels, resolveFinalStatus } = require('../scripts/risk-label-gate');
 
 test('the four canonical primary labels are the enforced set', () => {
   assert.deepEqual(PRIMARY_RISK_LABELS, ['auto-safe', 'owner-live-test', 'owner-decision', 'blocked']);
@@ -69,4 +69,45 @@ test('a category-only label that merely contains a primary name is not counted',
   const r = evaluatePrimaryRiskLabels(['auto-safe-ish', 'not-blocked']);
   assert.equal(r.ok, false);
   assert.deepEqual(r.present, []);
+});
+
+// --- Fail-closed final-status resolution (mirrors the workflow's if:always() publisher) ---
+
+test('resolveFinalStatus: a conclusive success passes through', () => {
+  const r = resolveFinalStatus('success', 'Exactly one primary risk label: auto-safe.');
+  assert.equal(r.state, 'success');
+  assert.match(r.description, /Exactly one/);
+});
+
+test('resolveFinalStatus: a conclusive failure passes through', () => {
+  const r = resolveFinalStatus('failure', 'No primary risk label.');
+  assert.equal(r.state, 'failure');
+  assert.match(r.description, /No primary risk label/);
+});
+
+test('resolveFinalStatus: a missing/empty state fails closed (evaluation never ran)', () => {
+  for (const missing of ['', undefined, null]) {
+    const r = resolveFinalStatus(missing, undefined);
+    assert.equal(r.state, 'failure', `state=${JSON.stringify(missing)} must fail closed`);
+    assert.match(r.description, /could not complete/i);
+  }
+});
+
+test('resolveFinalStatus: pending or any non-conclusive value fails closed', () => {
+  for (const bad of ['pending', 'error', 'garbage', 'SUCCESS']) {
+    const r = resolveFinalStatus(bad, 'whatever');
+    assert.equal(r.state, 'failure', `state=${bad} must fail closed`);
+  }
+});
+
+test('resolveFinalStatus: descriptions are clipped to the 140-char commit-status cap', () => {
+  const long = 'x'.repeat(300);
+  const r = resolveFinalStatus('success', long);
+  assert.ok(r.description.length <= 140, `too long: ${r.description.length}`);
+});
+
+test('resolveFinalStatus: a success with no description gets a safe default', () => {
+  const r = resolveFinalStatus('success', '');
+  assert.equal(r.state, 'success');
+  assert.ok(r.description.length > 0);
 });

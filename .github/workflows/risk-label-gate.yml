@@ -7,21 +7,30 @@ name: Risk label gate
 # unenforced until this gate.
 #
 # The gate is a commit status named `risk-label/primary`, published on the PR
-# HEAD SHA via the API — NOT the job's own conclusion. Under pull_request_target
-# the job's GITHUB_SHA is the default-branch commit, so a job-conclusion check
-# would not attach to the PR head and branch protection could never enforce it;
-# publishing an explicit status to `head.sha` (the same mechanism the cold-review
-# gate uses) makes the required check land on the head. Green iff exactly one of
-# auto-safe / owner-live-test / owner-decision / blocked is present; it re-runs on
-# every label change.
+# HEAD SHA via the API (NOT the job conclusion — under pull_request_target the
+# job's GITHUB_SHA is the default-branch commit, so a job-conclusion check would
+# not attach to the head that branch protection evaluates). Green iff exactly one
+# of auto-safe / owner-live-test / owner-decision / blocked is present.
 #
-# TRUST MODEL: like the cold-review gate, this runs via `pull_request_target` and
-# loads its decision logic ONLY from the protected default branch, so a PR that
-# edits scripts/risk-label-gate.js cannot make the gate evaluate its own
-# unreviewed logic. It reads the PR purely as data (label names via the API) and
-# never checks out or executes PR-head code. `statuses: write` is the only write
-# scope. It fails closed if the logic is not yet on the default branch (bootstrap).
-# Auto-labeling stays non-blocking; this is the separate blocking check.
+# FAIL-CLOSED, NEVER-STALE contract:
+#   - the head is marked `pending` immediately on every trigger, so any prior
+#     status (including a stale green) is replaced before evaluation;
+#   - a final `if: always()` step ALWAYS publishes a definitive success/failure
+#     to the exact head — a checkout / API / module / evaluation error (or a
+#     cancelled run) publishes FAILURE, so an error can never leave a green
+#     behind;
+#   - per-PR concurrency serializes runs so a newer label event publishes last
+#     and an older event cannot overwrite it. cancel-in-progress is FALSE on
+#     purpose: cancelling a run would still fire its if:always() publisher and
+#     could overwrite a newer result — serializing (superseded queued runs never
+#     start) avoids that race.
+#
+# TRUST MODEL: runs via `pull_request_target` and loads its decision logic ONLY
+# from the protected default branch, so a PR that edits scripts/risk-label-gate.js
+# cannot make the gate evaluate its own unreviewed logic. It reads the PR purely
+# as data (label names via the API) and never checks out or executes PR-head code.
+# `statuses: write` is the only write scope. Auto-labeling stays non-blocking;
+# this is the separate blocking check.
 #
 # To bind it, add the `risk-label/primary` status check to the `main` required
 # status checks in branch protection (owner action).
@@ -35,64 +44,88 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: risk-label-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   primary-risk-label:
     name: Exactly one primary risk label
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Load the gate logic from the DEFAULT (protected) branch only — never the
-      # PR head.
+      # 1) Mark the head pending immediately, replacing any prior status (incl. a
+      #    stale green from an earlier run/head) before we evaluate anything.
+      - name: Mark pending on the exact head
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            await github.rest.repos.createCommitStatus({
+              owner, repo,
+              sha: context.payload.pull_request.head.sha,
+              state: 'pending',
+              context: 'risk-label/primary',
+              description: 'Checking for exactly one primary risk label…',
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+            });
+
+      # 2) Trusted logic comes ONLY from the protected default branch.
       - name: Checkout trusted gate logic (default branch)
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Evaluate and publish primary-risk-label status
+      # 3) Evaluate the PR's labels as data. Sets outputs; does NOT publish.
+      - name: Evaluate primary risk label
+        id: evaluate
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
             const { owner, repo } = context.repo;
-            const pr = context.payload.pull_request;
-            const prNumber = pr.number;
-            const headSha = pr.head.sha;
-            const CONTEXT = 'risk-label/primary';
-            const target_url = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
-            const clip = (t) => { const v = String(t || ''); return v.length <= 140 ? v : `${v.slice(0, 139)}…`; };
-
-            // Fail CLOSED: never fall back to PR-head code.
             const logicPath = path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/risk-label-gate.js');
             if (!fs.existsSync(logicPath)) {
-              await github.rest.repos.createCommitStatus({
-                owner, repo, sha: headSha, state: 'failure', context: CONTEXT, target_url,
-                description: 'Risk-label gate logic is not on the default branch yet; failing closed until it lands.',
-              });
-              core.notice(`risk-label/primary @ ${headSha.slice(0, 12)}: bootstrap — logic not on default branch`);
+              core.setOutput('state', 'failure');
+              core.setOutput('description', 'Risk-label gate logic is not on the default branch yet; failing closed until it lands.');
               return;
             }
             const gate = require(logicPath);
-
-            // Read the PR's labels fresh from the API (the event payload can lag
-            // rapid label changes).
-            const { data: prData } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const { data: prData } = await github.rest.pulls.get({
+              owner, repo, pull_number: context.payload.pull_request.number,
+            });
             const labelNames = (prData.labels || []).map((l) => l.name);
             const result = gate.evaluatePrimaryRiskLabels(labelNames);
+            core.setOutput('state', result.ok ? 'success' : 'failure');
+            core.setOutput('description', result.message.replace(/`/g, ''));
 
-            const description = clip(result.message.replace(/`/g, ''));
+      # 4) ALWAYS publish a definitive status to the exact head. If evaluation did
+      #    not conclusively produce success/failure (checkout/API/module/evaluation
+      #    error, or a cancelled run), fail CLOSED. Inlined (module-free) so it runs
+      #    even when checkout failed; mirrors resolveFinalStatus in
+      #    scripts/risk-label-gate.js (unit-tested).
+      - name: Publish final status (fail closed)
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          EVAL_STATE: ${{ steps.evaluate.outputs.state }}
+          EVAL_DESCRIPTION: ${{ steps.evaluate.outputs.description }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            let state = process.env.EVAL_STATE;
+            let description = process.env.EVAL_DESCRIPTION;
+            if (state !== 'success' && state !== 'failure') {
+              state = 'failure';
+              description = 'Risk-label gate could not complete (checkout/API/module/evaluation error); failing closed.';
+            }
             await github.rest.repos.createCommitStatus({
-              owner, repo, sha: headSha,
-              state: result.ok ? 'success' : 'failure',
-              context: CONTEXT,
-              description,
-              target_url,
+              owner, repo,
+              sha: context.payload.pull_request.head.sha,
+              state,
+              context: 'risk-label/primary',
+              description: (description || 'Risk-label gate result.').slice(0, 140),
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
             });
-
-            core.notice(`risk-label/primary @ ${headSha.slice(0, 12)}: ${result.ok ? 'SUCCESS' : 'FAILURE'} — ${description}`);
-            await core.summary
-              .addHeading('Risk label gate', 3)
-              .addRaw(`Status \`${CONTEXT}\` on \`${headSha.slice(0, 12)}\`: **${result.ok ? 'success' : 'failure'}**`)
-              .addRaw(`\n\n${description}`)
-              .write();
