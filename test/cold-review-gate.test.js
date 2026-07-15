@@ -133,11 +133,25 @@ test('evaluateColdReview: PASS missing the reviewed-head line fails', () => {
   assert.match(r.description, /Reviewed head/i);
 });
 
-test('evaluateColdReview: N/A exemption passes', () => {
-  const na = comment({ body: 'Cold review: N/A (trivial docs-only)' });
+test('evaluateColdReview: a head-bound N/A exemption passes', () => {
+  const na = comment({ body: `Cold review: N/A (trivial docs-only)\nReviewed head: ${HEAD}` });
   const r = evaluateColdReview({ comments: [na], headSha: HEAD });
   assert.equal(r.state, 'success');
   assert.match(r.description, /N\/A/i);
+});
+
+test('evaluateColdReview: an N/A exemption without a reviewed head fails', () => {
+  const na = comment({ body: 'Cold review: N/A (trivial docs-only)' });
+  const r = evaluateColdReview({ comments: [na], headSha: HEAD });
+  assert.equal(r.state, 'failure');
+  assert.match(r.description, /Reviewed head/i);
+});
+
+test('evaluateColdReview: a stale N/A exemption (old head) fails after a new push', () => {
+  const na = comment({ body: 'Cold review: N/A (trivial docs-only)\nReviewed head: deadbeef1234567' });
+  const r = evaluateColdReview({ comments: [na], headSha: HEAD });
+  assert.equal(r.state, 'failure');
+  assert.match(r.description, /stale|exemption/i);
 });
 
 test('evaluateColdReview: a fresh stale review overrides an older passing one', () => {

@@ -40,15 +40,19 @@ P0/P1 findings: 0
 ### Trivial docs-only exemption
 
 Governance lets **trivial docs-only** typo/status/index PRs merge on
-deterministic CI alone. Record that exemption explicitly with:
+deterministic CI alone. Record that exemption explicitly, and — like a PASS — it
+must **cite the exact head** so a later non-trivial push invalidates it:
 
 ```
 Cold review: N/A (trivial docs-only)
+Reviewed head: <full-or-short head SHA>
 ```
 
 This is not automatic from file paths — non-trivial governance/roadmap docs
-still require a real cold review — so the exemption is a deliberate, auditable
-statement by a trusted reviewer.
+still require a real cold review — so the exemption is a deliberate, auditable,
+head-bound statement by a trusted reviewer. If any commit is pushed after the
+exemption, the status goes red until a fresh `N/A` (or a real review) is recorded
+for the new head.
 
 ## What turns the status red
 
@@ -80,6 +84,29 @@ Creating this workflow does **not** by itself block merges. To enforce the gate,
 add **`cold-review/exact-head`** to the required status checks for `main` in the
 repository's branch protection (owner/admin action). This is intentionally the
 only manual step and is owner-reserved.
+
+## Limitations — this is an attestation gate
+
+The gate mechanically enforces **freshness** (reviewed SHA == head), a **trusted
+author** (`OWNER`/`MEMBER`/`COLLABORATOR`), and a **self-reported** `P0/P1
+findings: 0`. It cannot, by itself, verify:
+
+- **Reviewer independence / clean context.** `CLAUDE.md` requires the cold review
+  to come from a fresh clean-context reviewer and forbids reviewing your own PR
+  "from inside the same session/context that built it." A trusted *builder*
+  identity could still post a `PASS` marker on its own PR — the gate would accept
+  it. Independence remains a governance obligation on the reviewer. A follow-up
+  (queued in `BACKLOG.md`) can add a reviewer-identity allowlist distinct from the
+  builder identity to harden this.
+- **Thread resolution.** `AUTOMATION_PROTOCOL.md` §2 also requires all actionable
+  review conversations resolved; the gate does not read thread state.
+
+It also assumes **same-repo PRs** (the Atlas norm — `claude/*` / `agent/*`
+branches): the status is published on the PR head SHA, which must exist in this
+repository.
+
+Treat the marker as a trusted reviewer's **attestation**, backed by these
+mechanical freshness/authorship checks — not as proof of the review's substance.
 
 ## Logic and tests
 

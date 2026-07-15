@@ -22,9 +22,12 @@
 //   P0/P1 findings: 0
 //
 // A trivial docs-only exemption (governance: such PRs may merge on deterministic
-// CI alone) is recorded the same way:
+// CI alone) is recorded the same way, and is ALSO bound to the exact head so a
+// new push invalidates it (a docs-only exemption must not survive later
+// non-trivial commits):
 //
 //   Cold review: N/A (trivial docs-only)
+//   Reviewed head: 0bdcf281
 //
 // Only comments whose author_association is OWNER / MEMBER / COLLABORATOR count,
 // so an arbitrary bot or outside commenter cannot fabricate a passing review.
@@ -120,10 +123,29 @@ function evaluateColdReview({ comments, headSha }) {
   const { marker } = selected;
 
   if (marker.verdict === "na") {
+    // The exemption is head-bound too: a docs-only "N/A" must cite the exact
+    // head and match it, so a later non-trivial push turns the gate red instead
+    // of coasting on a stale exemption.
+    if (!marker.reviewedSha) {
+      return {
+        state: "failure",
+        context: STATUS_CONTEXT,
+        description: clip('Cold review N/A exemption is missing "Reviewed head: <sha>". A docs-only exemption must cite the exact head.'),
+      };
+    }
+    if (!shaMatches(marker.reviewedSha, head)) {
+      return {
+        state: "failure",
+        context: STATUS_CONTEXT,
+        description: clip(
+          `Stale docs-only exemption: recorded ${marker.reviewedSha.slice(0, 12)}, head is now ${head.slice(0, 12)}. Re-record N/A for the new head.`
+        ),
+      };
+    }
     return {
       state: "success",
       context: STATUS_CONTEXT,
-      description: clip(`Cold review N/A${marker.reason ? ` ${marker.reason}` : ""} — recorded exempt (trivial docs-only).`),
+      description: clip(`Cold review N/A${marker.reason ? ` ${marker.reason}` : ""} for ${head.slice(0, 12)} — recorded exempt (trivial docs-only).`),
     };
   }
 
