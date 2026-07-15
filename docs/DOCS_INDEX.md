@@ -37,6 +37,7 @@ The automation-first contract. Read with `docs/AGENT_WORKFLOW.md`.
 - `docs/ENGINE_RECONCILIATION_NOTES.md` — active reference for the observation window: the two places legacy and the Brain use different accounting (volume credit models; deload decider vs advisory), which model is canonical today, and how to attribute shadow divergence as accounting-vs-judgment before scoring it against the promotion criteria.
 - `docs/DECISION_ROUTING.md` — the external ChatGPT Atlas Decision Desk and Atlas Contract Review; no automated Claude responder or background trigger.
 - `docs/RISK_LABELS.md` — risk classification labels and when each applies (manifest: `.github/labels.yml`).
+- `docs/COLD_REVIEW_GATE.md` — CI enforcement of the exact-head cold-review rule (`AUTOMATION_PROTOCOL.md` §2/§4): the `cold-review/exact-head` commit status, the trusted `Cold review: PASS / Reviewed head: <sha> / P0/P1 findings: 0` marker format, the trivial-docs-only `N/A` exemption, and the one owner step (mark the status required in branch protection). Mechanism only, no new policy. Workflow: `.github/workflows/cold-review-gate.yml`; logic/tests: `scripts/cold-review-gate.js` + `test/cold-review-gate.test.js`.
 - `docs/AUTOMATION_AUDIT.md` — **Historical snapshot** of the pre-Codex-cutover automation framework. Its Claude workflow inventory and proposed automation gaps are not active authority.
 - `.github/PULL_REQUEST_TEMPLATE.md` — the one-screen merge card every PR must produce.
 
