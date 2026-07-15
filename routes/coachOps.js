@@ -779,6 +779,22 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // receipt alone — return NO coaching prose and DO NOT call Gemini. Keeps routine
     // blocks silent and the LLM off the path entirely for the common case. This must
     // happen after mode/register selection so Flight Recorder can persist it.
+    //
+    // LT-010 fix: a SIGNAL-CARRYING block must not collapse to the silent ack. When the
+    // engine selected a correction/challenge/safety/refuse mode, the visible voice has to
+    // honor that decision (which Flight Recorder already records) instead of the generic
+    // acknowledgement. Bump the reported tier off ack_only so BOTH this gate AND the
+    // client (which also short-circuits on note_tier==='ack_only') render the mode-aware
+    // line. A genuinely routine block (reassure/neutral) keeps the brief ack; a deliberate
+    // recovery/deload block also stays quiet via its own suppression path — safety still
+    // surfaces here because it outranks recovery in the mode ladder.
+    const selectedBlockMode = facts && typeof facts === 'object' ? facts.coach_mode : null;
+    const signalCarryingBlock = ['correct', 'challenge', 'safety', 'refuse'].includes(selectedBlockMode);
+    if (kind === 'block' && noteMeta.note_tier === 'ack_only' && signalCarryingBlock) {
+      noteMeta.note_tier = 'short';
+      noteMeta.note_trigger = noteMeta.note_trigger || 'coach_mode';
+      noteMeta.note_reason_code = noteMeta.note_reason_code || selectedBlockMode;
+    }
     if (kind === 'block' && noteMeta.note_tier === 'ack_only') {
       return standardSuccess(req, res, 'Routine block — acknowledgment only', {
         message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind, ...noteMeta,
