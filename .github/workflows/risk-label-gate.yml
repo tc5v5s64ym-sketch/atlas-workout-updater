@@ -1,0 +1,75 @@
+name: Risk label gate
+
+# Enforces the primary-risk-label requirement (docs/AUTOMATION_PROTOCOL.md §2
+# pass/fail table: "exactly one primary risk label"; docs/RISK_LABELS.md). The
+# auto-labeler (.github/workflows/labeler.yml) applies only CATEGORY labels and is
+# deliberately non-blocking; the PRIMARY risk label is a builder decision and was
+# unenforced until this gate. This job fails unless exactly one of the four
+# canonical primary labels — auto-safe / owner-live-test / owner-decision /
+# blocked — is present, and re-runs whenever labels change.
+#
+# TRUST MODEL: like the cold-review gate, this runs via `pull_request_target` and
+# loads its decision logic ONLY from the protected default branch, so a PR that
+# edits scripts/risk-label-gate.js cannot make the gate evaluate its own
+# unreviewed logic. It reads the PR purely as data (label names via the API) and
+# never checks out or executes PR-head code. It holds no write permission — the
+# gate is the job's own conclusion. It fails closed if the logic is not yet on the
+# default branch (bootstrap). Auto-labeling stays non-blocking; this is the
+# separate blocking check.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  primary-risk-label:
+    name: Exactly one primary risk label
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Load the gate logic from the DEFAULT (protected) branch only — never the
+      # PR head.
+      - name: Checkout trusted gate logic (default branch)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Evaluate primary risk label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { owner, repo } = context.repo;
+            const prNumber = context.payload.pull_request.number;
+
+            // Fail CLOSED: never fall back to PR-head code.
+            const logicPath = path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/risk-label-gate.js');
+            if (!fs.existsSync(logicPath)) {
+              core.setFailed('Risk-label gate logic is not on the default branch yet; failing closed until it lands.');
+              return;
+            }
+            const gate = require(logicPath);
+
+            // Read the PR's labels fresh from the API (the event payload can lag
+            // rapid label changes).
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const labelNames = (pr.labels || []).map((l) => l.name);
+
+            const result = gate.evaluatePrimaryRiskLabels(labelNames);
+
+            await core.summary
+              .addHeading('Risk label gate', 3)
+              .addRaw(result.message)
+              .write();
+
+            if (!result.ok) {
+              core.setFailed(result.message);
+              return;
+            }
+            core.notice(result.message);
