@@ -21,19 +21,31 @@ function benchRow(date, sessionId, weight, reps, rir, notes = '', liftCode = 'BE
   return [date, sessionId, 'Bench Press', 'Bench Press', 'Chest', liftCode, '1', String(weight), String(reps), String(rir), notes];
 }
 
+// The coach's mode selection reads recency/scarcity/layoff windows against the REAL
+// clock (todayIso → computeCelebrationScarcity + assessLayoff). Hardcoded calendar
+// dates therefore drift: once "today" crosses ~7 days past the most recent session,
+// a returning-from-layoff read overrides celebrate/silent. Pin the fixture RELATIVE
+// to today at the offsets these expectations were authored against (older = 13 days
+// ago, recent = 6 days ago) so the windows are stable on any run date.
+function isoDaysAgo(n) {
+  return new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+const D_OLDER = isoDaysAgo(13);
+const D_RECENT = isoDaysAgo(6);
+
 const allLogRows = [
-  benchRow('2026-07-01', 'PR1', 225, 6, 2, '', 'BENPR'),
-  benchRow('2026-07-08', 'PR2', 225, 6, 2, '', 'BENPR'),
-  benchRow('2026-07-01', 'FIRST1', 225, 5, 2, '', 'BENFIRST'),
-  benchRow('2026-07-01', 'THREE1', 225, 6, 2, '', 'BENTHREE'),
-  benchRow('2026-07-08', 'THREE2', 225, 6, 2, '', 'BENTHREE'),
-  benchRow('2026-07-01', 'MISS1', 225, 6, 2, '', 'BENMISS'),
-  benchRow('2026-07-08', 'MISS2', 225, 6, 0, '', 'BENMISS'),
-  benchRow('2026-07-01', 'FORGE1', 225, 6, 2, '', 'BENFORGE'),
-  benchRow('2026-07-01', 'REC1', 225, 6, 2, '', 'BENREC'),
-  benchRow('2026-07-08', 'REC2', 225, 6, 2, '', 'BENREC'),
-  benchRow('2026-07-01', 'RECOVERY1', 225, 6, 5, '', 'BENRECOVERY'),
-  benchRow('2026-07-08', 'RECOVERY2', 225, 6, 5, '', 'BENRECOVERY'),
+  benchRow(D_OLDER, 'PR1', 225, 6, 2, '', 'BENPR'),
+  benchRow(D_RECENT, 'PR2', 225, 6, 2, '', 'BENPR'),
+  benchRow(D_OLDER, 'FIRST1', 225, 5, 2, '', 'BENFIRST'),
+  benchRow(D_OLDER, 'THREE1', 225, 6, 2, '', 'BENTHREE'),
+  benchRow(D_RECENT, 'THREE2', 225, 6, 2, '', 'BENTHREE'),
+  benchRow(D_OLDER, 'MISS1', 225, 6, 2, '', 'BENMISS'),
+  benchRow(D_RECENT, 'MISS2', 225, 6, 0, '', 'BENMISS'),
+  benchRow(D_OLDER, 'FORGE1', 225, 6, 2, '', 'BENFORGE'),
+  benchRow(D_OLDER, 'REC1', 225, 6, 2, '', 'BENREC'),
+  benchRow(D_RECENT, 'REC2', 225, 6, 2, '', 'BENREC'),
+  benchRow(D_OLDER, 'RECOVERY1', 225, 6, 5, '', 'BENRECOVERY'),
+  benchRow(D_RECENT, 'RECOVERY2', 225, 6, 5, '', 'BENRECOVERY'),
 ];
 
 const fakeSheets = {
