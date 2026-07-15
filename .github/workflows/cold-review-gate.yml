@@ -1,0 +1,99 @@
+name: Cold review gate
+
+# Enforces the EXACT-HEAD cold-review requirement (docs/AUTOMATION_PROTOCOL.md
+# §2/§4, CLAUDE.md cold-review model, docs/COLD_REVIEW_GATE.md): before any
+# non-trivial PR merges, a fresh clean-context reviewer must review the exact
+# current head with no unresolved P0/P1 finding. A review of an older head is
+# stale, and a stale/missing/incomplete cold review is a FAILURE, not a pass.
+#
+# The gate is a commit status named `cold-review/exact-head`, set on the PR head
+# SHA via the API (not the job's own conclusion) so a comment-triggered re-run
+# updates the same head:
+#   - green   when a trusted "Cold review: PASS / Reviewed head: <sha> /
+#             P0/P1 findings: 0" marker cites a SHA equal to the current head;
+#   - green   when a trusted "Cold review: N/A (trivial docs-only)" exemption is
+#             recorded (governance: trivial docs-only PRs merge on CI alone);
+#   - red     the moment a new commit is pushed (the prior review is stale),
+#             until the new head is reviewed; and red when no marker exists or
+#             any P0/P1 finding is unresolved.
+#
+# Only comments authored by OWNER / MEMBER / COLLABORATOR count (see
+# scripts/cold-review-gate.js), so an arbitrary bot comment cannot fabricate a
+# pass. To actually gate merges, add `cold-review/exact-head` to the branch
+# protection required status checks for `main` (owner action; see
+# docs/COLD_REVIEW_GATE.md).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  statuses: write
+  pull-requests: read
+  issues: read
+  contents: read
+
+jobs:
+  evaluate:
+    name: Exact-head cold review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # issue_comment fires for every issue; only act when the comment is on a PR.
+    if: ${{ github.event_name != 'issue_comment' || github.event.issue.pull_request }}
+    steps:
+      - name: Resolve PR head
+        id: resolve
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            let prNumber, headSha;
+            if (context.eventName === 'issue_comment') {
+              prNumber = context.payload.issue.number;
+              const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+              headSha = pr.head.sha;
+            } else {
+              prNumber = context.payload.pull_request.number;
+              headSha = context.payload.pull_request.head.sha;
+            }
+            core.setOutput('pr', String(prNumber));
+            core.setOutput('head_sha', headSha);
+
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.head_sha }}
+
+      - name: Evaluate and publish cold-review status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = require('path');
+            const gate = require(path.resolve(process.env.GITHUB_WORKSPACE, 'scripts/cold-review-gate.js'));
+            const { owner, repo } = context.repo;
+            const prNumber = Number('${{ steps.resolve.outputs.pr }}');
+            const headSha = '${{ steps.resolve.outputs.head_sha }}';
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: prNumber, per_page: 100,
+            });
+
+            const result = gate.evaluateColdReview({ comments, headSha });
+
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha: headSha,
+              state: result.state,
+              context: result.context,
+              description: result.description,
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+            });
+
+            const summary = `${result.state.toUpperCase()} — ${result.description}`;
+            core.notice(`cold-review/exact-head @ ${headSha.slice(0, 12)}: ${summary}`);
+            await core.summary
+              .addHeading('Cold review gate', 3)
+              .addRaw(`Status \`${result.context}\` on \`${headSha.slice(0, 12)}\`: **${result.state}**`)
+              .addRaw(`\n\n${result.description}`)
+              .write();
