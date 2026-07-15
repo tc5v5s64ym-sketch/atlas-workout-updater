@@ -27,33 +27,44 @@ workflow.
 
 ## Merge authority (owner ruling)
 
-Atlas runs an automation-first workflow. The governing owner ruling is:
+Atlas runs an automation-first workflow. The governing owner ruling (updated by
+Dale, 2026-07-15) is:
 
-> Effective immediately, Claude Code is the Atlas implementation agent with
-> routine merge authority under the automation-first workflow. Native Codex
-> GitHub Review is no longer a required gate. Deterministic GitHub CI checks
-> remain hard gates. Before any non-trivial PR merges, a fresh clean-context
-> Claude reviewer must review the exact final diff. ChatGPT remains the Atlas
-> Contract Review and decision-desk lane for owner-reserved, governance,
-> roadmap, phase-transition, trust, write, schema, security, runtime-model,
-> promotion, and genuinely ambiguous changes.
+> Claude Code is the Atlas implementation agent and holds **standing merge
+> authority**. Once the deterministic GitHub CI hard gates pass and any Codex
+> advisory findings are addressed, Claude **merges its own PRs** — there is no
+> owner merge step and no PR waits on Dale to click merge. Codex GitHub Review is
+> **advisory**, and Claude auto-fixes what it flags. ChatGPT remains available as
+> an **optional** Atlas Contract Review / decision desk for genuinely
+> owner-reserved product, trust, schema, security, or roadmap questions — it is
+> not a merge gate.
 
-This authority is risk-based. It never authorizes a real production write, a
-data migration, or an INVARIANT/Constitution amendment, and it never overrides
-the owner-reserved categories below. Dale can merge directly or revoke automated
-merge authority at any time.
+This authority is deliberately broad: **Claude decides and merges.** It is
+bounded only by the absolute **data-safety** rules — Claude never authorizes a
+real production Sheets write, a data migration/deletion, a credentials/security
+change, or an INVARIANT/Constitution amendment without explicit owner approval,
+because those touch Dale's real data irreversibly. That is a data-safety
+confirmation, **not** a merge bottleneck: it is about protecting real data, never
+about making Dale click merge on clean code. Dale can still merge anything himself
+or revoke this authority at any time.
+
+This ruling **supersedes** any conflicting merge-authority, cold-review, or
+"owner must merge / stop for Dale to merge" language elsewhere in the docs
+(`docs/AUTOMATION_PROTOCOL.md`, `docs/AGENT_WORKFLOW.md`,
+`docs/OWNER_CHECKIN_RULES.md`, `.github/PULL_REQUEST_TEMPLATE.md`, etc.); those
+are being reconciled to match (`BACKLOG.md`).
 
 ---
 
 ## Roles
 
-### Dale — owner and owner-reserved merge authority
+### Dale — owner
 
-- Owns product direction, owner-reserved decisions, production promotion, and
-  real-data authorization.
-- Is the only merge authority for owner-reserved PRs.
+- Owns product direction and real-data / production-write authorization.
 - May request live app or gym validation and is the only authority that can
   resume an explicit owner hold.
+- Can merge anything directly and can revoke Claude's merge authority at any
+  time, but is **never required to click merge** on a routine PR.
 
 ### ChatGPT — Atlas Contract Review and decision desk
 
@@ -68,19 +79,19 @@ merge authority at any time.
   genuinely ambiguous changes. Routine settled implementation PRs do not require
   this lane.
 
-### Claude — implementation agent, routine merge operator, and cold reviewer
+### Claude — implementation agent and merge operator
 
 - Runs the Current-State Verification Gate before editing.
 - Implements one approved concern on a fresh `claude/<concern>` or
   `agent/<concern>` branch, tests it, opens the PR, completes the merge card, and
   addresses only in-scope blockers.
-- Merges routine PRs after every hard gate passes and the cold review clears,
-  preferring GitHub auto-merge when available and direct merge with the exact
-  reviewed head SHA otherwise.
-- Stops for Dale on owner-reserved PRs and never starts adjacent work on the PR
-  branch.
-- Also performs the **cold review** below — but never on its own PR from inside
-  the same session/context that built it.
+- **Merges its own PRs** once the CI hard gates pass and Codex advisory findings
+  are addressed — preferring GitHub auto-merge, else a direct merge of the exact
+  head SHA. No owner merge step.
+- Gets explicit owner approval before a genuinely owner-reserved **data-safety**
+  item (real production write, data migration/deletion, credentials/security,
+  INVARIANT/Constitution amendment) — a data-safety confirmation, not a merge
+  hand-off — and never starts adjacent work on the PR branch.
 
 ---
 
@@ -101,32 +112,27 @@ not a pass. The hard gates are:
 - applicable E2E; and
 - required trust/write/schema tests.
 
-### Cold review (required before any non-trivial PR merges)
+### Review model (advisory, not a required human gate)
 
-Before any non-trivial PR merges, a fresh clean-context Claude reviewer must
-review the exact final diff. The cold review may be performed by a fresh Claude
-session, a clean-context reviewer, an isolated subagent, or gstack `/review`.
+Code review is provided by (a) the **Codex GitHub advisory review**, which
+comments on every PR and which Claude **auto-fixes** (fix confident/small/in-scope
+findings, ask the owner on genuinely ambiguous or architectural ones, skip false
+alarms), and (b) an **optional** independent clean-context review Claude may run
+for its own confidence on higher-risk changes. Neither is a required human
+sign-off, and neither blocks a merge once the CI hard gates have passed. There is
+**no cold-review marker requirement**.
 
-- The reviewer **must not** receive the builder conversation or implementation
-  reasoning. It receives only: the base SHA, the exact final head SHA, the PR
-  description, the exact diff, the changed tests, the relevant current
-  governance/invariants, and the CI results.
-- The cold review is **read-only** and does not modify the branch.
-- `P0`/`P1` findings block; the builder fixes them.
-- A push after a blocking finding requires **one fresh cold review of the new
-  head**.
-- Genuine `P2`/`P3` findings are recorded in `BACKLOG.md` when authorized and do
-  not force a fix/re-review treadmill.
-- No finding may be labeled `P2` merely to avoid blocking an actual invariant,
-  safety, trust, privacy, or acceptance failure.
+When Claude does run its own review and it surfaces a real `P0`/`P1`, Claude fixes
+it before merging (the same way it acts on a Codex flag); genuine `P2`/`P3` items
+go to `BACKLOG.md`.
 
-### Docs distinction
-
-- **Trivial docs-only** typo/status/index PRs may merge on deterministic CI
-  alone (no cold review required).
-- **Non-trivial** governance, roadmap, release, phase-transition, owner-policy,
-  trust-contract, and merge-authority documents still require cold review **plus**
-  ChatGPT Atlas Contract Review.
+> **Cold-review gate — being retired.** The `cold-review/exact-head` attestation
+> gate was removed as a governance requirement here. Its workflow stays in the
+> repo only until the owner removes `cold-review/exact-head` from the branch
+> protection required-status-checks — a repo-admin action Claude cannot perform.
+> Until then Claude records the pass marker itself (from its own passing review)
+> so merges are never blocked, and deletes the workflow once the required-check
+> rule is lifted.
 
 ### Native Codex GitHub Review is retired
 
@@ -138,28 +144,23 @@ fake status check.
 
 ### Merge-authority gate
 
-A routine PR may be merged by Claude only when all of the following hold:
+Claude merges a PR when all of the following hold:
 
 - every applicable required GitHub check passed (the hard gates above);
-- the cold review is complete for the exact current head with no `P0`/`P1`
-  finding, and every actionable review thread is resolved;
-- the ChatGPT Atlas Contract Review returned `NON-BLOCKING` or `READY FOR DALE
-  MERGE` **when it is risk-triggered** (not required for routine PRs settled by
-  active governance);
-- the PR implements one concern already authorized by the active roadmap or an
-  explicit owner goal;
-- one-concern scope, branch hygiene, risk classification, and the merge card are
+- Codex advisory findings are addressed (fixed, or judged non-issues);
+- the PR implements one concern authorized by the active roadmap or an explicit
+  owner goal;
+- one-concern scope, branch hygiene, the risk label, and the merge card are
   complete; and
-- no owner-reserved decision remains unresolved.
+- it is **not** a genuinely owner-reserved data-safety item (real production
+  write, migration/deletion, credentials/security, INVARIANT/Constitution
+  amendment) awaiting explicit owner approval.
 
-Never merge when a required check or the exact-head cold review is missing,
-stale, skipped, errored, failed, or incomplete. When all routine gates pass,
-prefer GitHub auto-merge; if it is unavailable, merge directly with the exact
-reviewed head SHA. Do not stop merely to report that a routine PR is
-merge-ready. After a routine merge, verify `origin/main`, confirm deployment
-when applicable using read-only evidence, create a fresh branch from main, and
-continue the next approved concern. Owner-reserved PRs stop for Dale after every
-non-owner gate passes.
+Never merge when a required check is missing, stale, skipped, errored, or failed.
+Prefer GitHub auto-merge; if it is unavailable, merge directly with the exact head
+SHA. **Do not stop merely to report that a PR is merge-ready — merge it.** After
+merging, verify `origin/main`, confirm deployment when applicable using read-only
+evidence, cut a fresh branch from main, and continue the next approved concern.
 
 ---
 
@@ -449,10 +450,12 @@ Every PR must follow these rules without exception:
   observation or follow-up idea becomes a backlog line in the next authorized
   PR, or a "want me to file this?" to the owner — it is never grounds to open a
   new unprompted PR.
-- **Stop for the owner only when a reserved category applies** (see the
-  escalation policy above). Otherwise, open the PR, run the hard gates and the
-  cold review, classify risk, complete the merge card, and merge merge-ready
-  routine PRs without blocking on the owner.
+- **Stop for the owner only when a data-safety reserved category applies** (real
+  production write, migration/deletion, credentials/security,
+  INVARIANT/Constitution amendment — see the escalation policy above). Otherwise,
+  open the PR, run the hard gates, address Codex advisory findings, apply the risk
+  label, complete the merge card, and **merge it yourself** without blocking on
+  the owner.
 
 ---
 
