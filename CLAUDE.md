@@ -199,6 +199,17 @@ preview→approve→write trust loop, and the proof fields are unchanged. PM
 authority never authorizes a real production write, a data migration, or an
 INVARIANT/Constitution amendment.
 
+**Live testing — agent self-serve (standing authorization, 2026-07-14).** When
+the owner asks to test the app, do not ask for URLs, keys, or sheet details —
+read `docs/AGENT_LIVE_TESTING.md` and the local `.env`, then run the test
+yourself. Tier 1 (read-only) and Tier 2 (`test_mode` dry-run) are pre-authorized;
+Tier 3 (real sheet writes) only on explicit per-test owner authorization. Always
+send a synthetic `x-atlas-request-origin`. This narrows the owner-reserved "live
+testing" category: agent-runnable live tests are agent-run by default; only tests
+genuinely requiring the owner's real device, real gym session, or first-use
+confirmation remain owner-only. GATE A eligible evidence remains owner-only by
+provenance design.
+
 ---
 
 ## Branch strategy
