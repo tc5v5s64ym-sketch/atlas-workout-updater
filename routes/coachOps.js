@@ -790,19 +790,32 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // surfaces here because it outranks recovery in the mode ladder.
     const selectedBlockMode = facts && typeof facts === 'object' ? facts.coach_mode : null;
     const signalCarryingBlock = ['correct', 'challenge', 'safety', 'refuse'].includes(selectedBlockMode);
+    let surfacedSignalBlock = false;
     if (kind === 'block' && noteMeta.note_tier === 'ack_only' && signalCarryingBlock) {
       noteMeta.note_tier = 'short';
       noteMeta.note_trigger = noteMeta.note_trigger || 'coach_mode';
       noteMeta.note_reason_code = noteMeta.note_reason_code || selectedBlockMode;
+      surfacedSignalBlock = true;
     }
+    const ackOnlyBlockResponse = () => standardSuccess(req, res, 'Routine block — acknowledgment only', {
+      message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind,
+      ...noteMeta, note_tier: 'ack_only', note_trigger: null, note_reason_code: null,
+      effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
+    });
+    // LT-010 degraded-path guard: a block surfaced ONLY because of its mode (bumped off
+    // ack_only) carries no set-effort signal — its coaching content comes solely from the
+    // LLM voice, which words the mode. On a fallback path (LLM unconfigured/errored) there
+    // is no mode-bearing line, and the deterministic set-effort voiceBase reflects the
+    // routine sets, not the correction/safety mode. Pre-fix, these blocks short-circuited
+    // to the silent ack and never rendered that voiceBase; keep that safe behavior on the
+    // degraded path rather than surface a generic/on-target opener that speaks over the
+    // signal. (In production the coach is configured, so the normal path words the mode.)
     if (kind === 'block' && noteMeta.note_tier === 'ack_only') {
-      return standardSuccess(req, res, 'Routine block — acknowledgment only', {
-        message: null, voice: null, sub_voice: null, configured: coach.isConfigured(), model: coach.coachModel(), kind, ...noteMeta,
-        effort_note: null, reroute: null, set_grade: null, next_move_advisory: null, recovery_advisory: null, flight_recorder_context
-      });
+      return ackOnlyBlockResponse();
     }
     if (!coach.isConfigured()) {
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      if (surfacedSignalBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach voice unavailable — use templated fallback', {
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: false, model: coach.coachModel(), ...noteMeta, ...effortExtras, flight_recorder_context
       });
@@ -821,6 +834,7 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
       // Degrade gracefully: tell the client to use its templated fallback rather
       // than surfacing an error in the chat.
       const fin = finalizeCoachVoice(null, voiceBase, subVoiceBase);
+      if (surfacedSignalBlock) return ackOnlyBlockResponse();
       return standardSuccess(req, res, 'Coach generation failed — use templated fallback', {
         message: fin.message, voice: fin.voice, sub_voice: fin.sub_voice, configured: true, model: coach.coachModel(), error: error.message, ...noteMeta, ...effortExtras, flight_recorder_context
       });

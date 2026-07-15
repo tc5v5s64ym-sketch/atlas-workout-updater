@@ -377,3 +377,26 @@ test('signal-carrying block: a correction-mode block that would tier ack_only is
   assert.ok(typeof body.data.message === 'string' && body.data.message.trim(),
     'a renderable mode-aware line is present instead of the generic acknowledgement');
 });
+
+// ── LT-010 degraded-path guard: the mode is only WORDED by the coach voice ──
+// A block surfaced only because of its mode carries no set-effort signal. When the
+// coach voice is unavailable there is no mode-bearing line to render, and the generic
+// opener would speak over the correction/safety signal with on-target copy. On that
+// degraded path the block must fall back to the SAFE neutral ack (the pre-fix
+// behavior), not a generic opener. In production the coach is configured, so the
+// normal path words the mode (previous test).
+test('signal-carrying block with the coach unavailable degrades to the safe ack, not a generic opener (LT-010)', async () => {
+  resetCoach({ configured: false });
+  const facts = {
+    exerciseName: 'Bicep Curl', muscleGroup: 'Arms', liftCode: 'BC01',
+    todaySets: [
+      { weight: 40, reps: 10, rir: 2, notes: 'slight shoulder pain on the last rep' },
+      { weight: 40, reps: 10, rir: 2 },
+    ],
+  };
+  const { res, body } = await postBlock(facts);
+  assert.equal(res.status, 200);
+  assert.equal(body.data.note_tier, 'ack_only', 'a mode-only block with no way to word the mode stays on the safe neutral ack');
+  assert.equal(body.data.message, null, 'no generic/on-target opener that could speak over the safety/correction signal');
+  assert.equal(coachState.calls, 0, 'an unavailable coach never calls the LLM');
+});
