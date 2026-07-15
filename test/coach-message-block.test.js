@@ -347,3 +347,56 @@ test('success path preserved: enrichment overwrites forged progression_history a
   assert.equal(coachState.lastFacts.rec.progression_verdict, null,
     'the successful enrichment path overwrites the forged rec.progression_verdict with the engine value or null');
 });
+
+// ── LT-010: a signal-carrying block must reflect its coach_mode, not the silent ack ──
+// The engine can select a correction/challenge/safety mode on a block whose set-outcome
+// note tier is ack_only. Before this fix the ack_only short-circuit silenced it (client
+// rendered the generic "On plan — logged."), so the recorder saw `correct` while the
+// visible voice did not. The gate now bumps a signal-carrying block off ack_only so both
+// server and client render the mode-aware line. (Placed last: this suite shares one app
+// instance + sheet stub, and an extra enrichment-heavy POST perturbs the ordering-
+// sensitive fail-closed test above.)
+test('signal-carrying block: a correction-mode block that would tier ack_only is surfaced, not silenced (LT-010)', async () => {
+  resetCoach();
+  // Two on-target working sets (routine tier → ack_only), but a pain word in the set
+  // note fires the pain_flag safety CAUTION → coach_mode 'correct'.
+  const facts = {
+    exerciseName: 'Bicep Curl', muscleGroup: 'Arms', liftCode: 'BC01',
+    todaySets: [
+      { weight: 40, reps: 10, rir: 2, notes: 'slight shoulder pain on the last rep' },
+      { weight: 40, reps: 10, rir: 2 },
+    ],
+  };
+  const { res, body } = await postBlock(facts);
+  assert.equal(res.status, 200);
+  assert.notEqual(body.data.note_tier, 'ack_only', 'a signal-carrying block must not collapse to the silent ack');
+  assert.equal(body.data.note_tier, 'short', 'it is surfaced concisely (headline only), not silenced');
+  assert.equal(coachState.lastFacts && coachState.lastFacts.coach_mode, 'correct',
+    'the engine-selected correction mode reached the voice');
+  assert.ok(coachState.calls >= 1, 'the selected coach mode is worded via the coach voice, not silently acked');
+  assert.ok(typeof body.data.message === 'string' && body.data.message.trim(),
+    'a renderable mode-aware line is present instead of the generic acknowledgement');
+});
+
+// ── LT-010 degraded-path guard: the mode is only WORDED by the coach voice ──
+// A block surfaced only because of its mode carries no set-effort signal. When the
+// coach voice is unavailable there is no mode-bearing line to render, and the generic
+// opener would speak over the correction/safety signal with on-target copy. On that
+// degraded path the block must fall back to the SAFE neutral ack (the pre-fix
+// behavior), not a generic opener. In production the coach is configured, so the
+// normal path words the mode (previous test).
+test('signal-carrying block with the coach unavailable degrades to the safe ack, not a generic opener (LT-010)', async () => {
+  resetCoach({ configured: false });
+  const facts = {
+    exerciseName: 'Bicep Curl', muscleGroup: 'Arms', liftCode: 'BC01',
+    todaySets: [
+      { weight: 40, reps: 10, rir: 2, notes: 'slight shoulder pain on the last rep' },
+      { weight: 40, reps: 10, rir: 2 },
+    ],
+  };
+  const { res, body } = await postBlock(facts);
+  assert.equal(res.status, 200);
+  assert.equal(body.data.note_tier, 'ack_only', 'a mode-only block with no way to word the mode stays on the safe neutral ack');
+  assert.equal(body.data.message, null, 'no generic/on-target opener that could speak over the safety/correction signal');
+  assert.equal(coachState.calls, 0, 'an unavailable coach never calls the LLM');
+});
