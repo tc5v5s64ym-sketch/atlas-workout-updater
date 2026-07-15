@@ -39,11 +39,26 @@ sessions — GATE A / proving-run evidence stays owner-only by provenance design
   screenshots, `scripts/live-retest.js` (read-only by contract),
   `scripts/smoke-test-render.js` in `read-only` / `dry-run-only` modes, and the
   offline suite (`npm test`).
-- **Tier 2 — dry-run writes (pre-authorized, run without asking):** any write
-  endpoint with `test_mode: true`. Every dry-run response must prove no-write:
-  `sheet_written:false` and `no_write_confirmed:true` (or legacy
+- **Tier 2 — dry-run writes (pre-authorized, run without asking):** a
+  `test_mode: true` dry-run **only against the write endpoints that honor
+  `test_mode`** — the workout-logging path: `POST /api/log-workout`,
+  `/api/complete-workout`, `/api/log-modality`, `/api/bodyweight`. These read
+  `test_mode` and return the no-write proof fields. Every dry-run response must
+  prove no-write: `sheet_written:false` and `no_write_confirmed:true` (or legacy
   `sheet_write:'skipped'`). If a dry-run ever reports a real write, STOP — that
   is a trust regression; file it immediately.
+  - **`test_mode` is NOT universal — it is a contract of the logging write path,
+    not every `writeCapable` route.** The system-state write endpoints —
+    `POST /api/coaching-notes`, `/api/constraints`, `/api/deload/*`,
+    `/api/session-plans/*` — do **not** read `test_mode`; a POST to any of them
+    appends/mutates the production sheet regardless of the flag. They are **not**
+    Tier 2 dry-runnable: treat any real POST to them as Tier 3 (real write)
+    needing explicit per-test owner authorization, and never send them
+    `test_mode:true` expecting a no-write.
+  - **Before dry-running any endpoint not named above, confirm its handler
+    honors `test_mode` first** (check `config/routes.js` plus the handler, or
+    confirm the response carries the no-write proof fields). If you cannot
+    confirm it is dry-run-aware, it is Tier 3, not Tier 2.
 - **Tier 3 — real writes (only when the owner's instruction for THIS test
   explicitly authorizes it):** a real write lands in the owner's production
   sheet. If authorized: tag written rows identifiably (e.g. an `AGENT-TEST`
