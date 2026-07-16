@@ -137,3 +137,32 @@ test('a middle-row edit is preserved by identity (set number), not by list posit
   await expect(cell(page, 2, '.set-reps')).toHaveValue('5'); // untouched
   await expect(cell(page, 3, '.set-reps')).toHaveValue('5'); // the new set
 });
+
+test('a renamed exercise (and its numeric edits) survive logging another set', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await logSet(page, 'bench 225 5/2 x3');
+  await endSession(page);
+  await expect(page.locator('#sets-table tbody tr')).toHaveCount(3);
+
+  // Rename set 1's EXERCISE and correct its weight. The gap keyed the buffer lookup on the
+  // already-edited name, so the row missed its entry and BOTH edits were dropped (this is the
+  // unknown-lift "check the name before saving" flow).
+  await expandEditor(page);
+  await cell(page, 0, '.set-exercise').fill('Incline Bench Press');
+  await cell(page, 0, '.set-weight').fill('230');
+
+  await logSet(page, 'bench 225 5/2 x1');
+  await endSession(page);
+  await expect(page.locator('#sets-table tbody tr')).toHaveCount(4);
+  await expandEditor(page);
+
+  await expect(cell(page, 0, '.set-exercise')).toHaveValue('Incline Bench Press'); // name preserved
+  await expect(cell(page, 0, '.set-weight')).toHaveValue('230');                   // and its numeric edit
+
+  await page.locator('.rv-save').click();
+  await expect.poll(() => capture.writeRequests.length).toBe(1);
+  expect(capture.writeRequests[0].log_rows[0].exercise).toBe('Incline Bench Press');
+  expect(capture.writeRequests[0].log_rows[0].weight).toBe('230');
+});

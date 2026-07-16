@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v138';
+const ATLAS_SHELL_BUILD = 'v139';
 
 
 
@@ -3465,10 +3465,13 @@ function addSetRow(values = {}) {
     row.remove();
     invalidatePreview();
   });
-  // F06 / CLIENT-2: flag a field the moment the lifter changes it, so a correction made in
-  // the preview can be folded back into the session buffer (reconcileSessionLogFromTable)
-  // before the table is rebuilt — otherwise logging another set reverts it to the parser value.
-  for (const cls of ['.set-weight', '.set-reps', '.set-rir', '.set-notes']) {
+  // F06 / CLIENT-2: remember the exercise name this row was BUILT with, so a rebuild can
+  // match it to its session-buffer entry even after the lifter renames the exercise (the
+  // buffer is still keyed by the original name). And flag any field the moment the lifter
+  // changes it, so the correction is folded back into the buffer before the table is rebuilt
+  // — otherwise logging another set reverts it to the parser value.
+  row.dataset.originExercise = String(values.exercise || '');
+  for (const cls of ['.set-exercise', '.set-weight', '.set-reps', '.set-rir', '.set-notes']) {
     const input = row.querySelector(cls);
     if (input) input.addEventListener('input', () => { input.dataset.userEdited = '1'; });
   }
@@ -4720,14 +4723,18 @@ function reconcileSessionLogFromTable() {
   const cursor = new Map();
   for (const tr of rows) {
     if (!tr || typeof tr.querySelector !== 'function') continue;
-    const key = String(tr.querySelector('.set-exercise')?.value || '').trim().toLowerCase();
+    // Match on the name the row was BUILT with (its buffer key), NOT the current input value
+    // — otherwise a renamed exercise misses its entry and every edit on that row is dropped.
+    const origin = (tr.dataset ? tr.dataset.originExercise : undefined) ?? tr.querySelector('.set-exercise')?.value;
+    const key = String(origin || '').trim().toLowerCase();
     const list = byExercise.get(key);
     if (!list) continue;
     const i = cursor.get(key) || 0;
     cursor.set(key, i + 1);
     const entry = list[i];
     if (!entry) continue;
-    for (const [cls, field] of [['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']]) {
+    // Exercise is preserved too (the unknown-lift "check the name" flow depends on it).
+    for (const [cls, field] of [['.set-exercise', 'exercise'], ['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']]) {
       const input = tr.querySelector(cls);
       if (input && input.dataset.userEdited === '1') entry[field] = input.value;
     }
