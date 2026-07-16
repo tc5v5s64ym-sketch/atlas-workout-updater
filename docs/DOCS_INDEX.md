@@ -105,8 +105,6 @@ The following filenames remain only because old docs, PRs, and issues link to th
 
 `docs/ATLAS_SOUL_READINESS_PLAN.md` was deleted because its useful content was fully reconciled and it had no independent durable authority.
 
-`docs/COLD_REVIEW_GATE.md` is a temporary branch-protection compatibility note, not policy. Delete it with its workflow/script/tests after `cold-review/exact-head` is removed from required checks.
-
 Git history is the archive. Do not resurrect retired prompts, sequencing, model advice, or workflow rules from history.
 
 ## Operations, release, and security

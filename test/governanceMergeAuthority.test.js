@@ -11,7 +11,7 @@ function read(relPath) {
 
 // Models the owner-ratified Atlas contract:
 // deterministic hard gates + advisory findings + risk-triggered ChatGPT review.
-// Cold review is optional confidence work, not a merge requirement.
+// Cold review is fully retired — never a merge requirement or a status gate.
 function evaluateMergeAuthority(pr) {
   const blockers = [];
   const chatgptRequired = Boolean(
@@ -112,11 +112,33 @@ test('failed CI and real unresolved findings block merge', async (t) => {
   }
 });
 
-test('cold-review metadata is not a merge input', () => {
-  const result = evaluateMergeAuthority({
-    ...GREEN_ROUTINE_PR,
-    coldReview: null,
-  });
+test('the retired cold-review gate is fully removed and no doc mandates a compatibility marker', () => {
+  // The workflow, script, doc, and pure-logic test are deleted (F04A).
+  for (const rel of [
+    '.github/workflows/cold-review-gate.yml',
+    'scripts/cold-review-gate.js',
+    'test/cold-review-gate.test.js',
+    'docs/COLD_REVIEW_GATE.md',
+  ]) {
+    assert.ok(!fs.existsSync(path.join(ROOT, rel)), `${rel} must be deleted — cold review is fully retired`);
+  }
+  // No active governance entrypoint may reference the retired status or tell an
+  // agent to publish a cold-review compatibility marker.
+  for (const rel of [
+    'CLAUDE.md',
+    'AGENTS.md',
+    'docs/AGENT_WORKFLOW.md',
+    'docs/AUTOMATION_PROTOCOL.md',
+    'docs/OWNER_CHECKIN_RULES.md',
+    '.github/PULL_REQUEST_TEMPLATE.md',
+    'docs/DOCS_INDEX.md',
+  ]) {
+    const body = read(rel);
+    assert.doesNotMatch(body, /cold-review\/exact-head/i, `${rel} must not reference the retired cold-review status`);
+    assert.doesNotMatch(body, /compatibility marker/i, `${rel} must not tell an agent to post a compatibility marker`);
+  }
+  // And it was never (and still is not) a merge input.
+  const result = evaluateMergeAuthority(GREEN_ROUTINE_PR);
   assert.equal(result.canMerge, true);
   assert.deepEqual(result.blockers, []);
 });
@@ -177,14 +199,6 @@ test('active governance makes Codex advisory and cold review optional', () => {
   assert.match(docs, /not a required status|not a required marker/i);
   assert.doesNotMatch(docs, /cold review is required/i);
   assert.doesNotMatch(docs, /Dale remains the merge authority for owner-reserved PRs/i);
-});
-
-test('legacy cold-review gate is explicitly temporary compatibility only', () => {
-  const legacyDoc = read('docs/COLD_REVIEW_GATE.md');
-  assert.match(legacyDoc, /retired as an Atlas governance requirement/i);
-  assert.match(legacyDoc, /temporarily/i);
-  assert.match(legacyDoc, /branch protection/i);
-  assert.match(legacyDoc, /delete together/i);
 });
 
 test('standing authority preserves data-safety owner gates', () => {

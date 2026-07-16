@@ -1,8 +1,8 @@
 <!--
 Atlas Merge Card — complete every field. Missing, stale, skipped, errored,
 unavailable, or incomplete required GitHub checks are failures. Codex comments
-are advisory; no cold-review marker or owner merge click is required for a
-routine authorized PR.
+are advisory; no separate review status, reviewer account, marker, or owner merge
+click is required for a routine authorized PR.
 -->
 
 ## 🟦 Atlas Merge Card
