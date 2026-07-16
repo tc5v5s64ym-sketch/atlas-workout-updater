@@ -68,7 +68,7 @@ Use these only when the active execution card touches their area:
 - `docs/SESSION_PLANS_CAPTURE_SPEC.md`
 - `docs/WORKOUT_SHEET_DESIGN.md`
 
-Planning/design specs do not become execution queues by existing. Their work must be selected by the canonical V1 plan or a later owner-approved replacement after V1 stabilization.
+Planning/design specs do not become execution queues merely by existing. Their work must be selected by the canonical V1 plan or a later owner-approved replacement after V1 stabilization.
 
 ## Research and audits
 
@@ -87,14 +87,25 @@ Examples:
 
 The following filenames remain only because old docs, PRs, and issues link to them. Their former plan bodies are gone and they redirect to the canonical plan:
 
+- `FIX_PLAN.md`
+- `COACH_PLAN.md`
+- `COACH_INTELLIGENCE_PLAN.md`
+- `ATLAS_PERFORMANCE_INTELLIGENCE_PLAN.md`
 - `docs/ACTIVE_ROADMAP.md`
 - `docs/SOUL_PLAN_V1.md`
 - `docs/POST_SOUL_V1_FINISHING_PLAN.md`
 - `docs/REMEDIATION_PLAN_V2.md`
 - `docs/ROADMAP.md`
 - `docs/PRODUCT_PLAN.md`
+- `docs/COACH_NEXT_LEVEL_BUILD_PLAN.md`
+- `docs/COACH_INTELLIGENCE_ROADMAP.md`
+- `docs/ATLAS_CONVERSATION_PROTOTYPE_V1_PLAN.md`
+- `docs/COMPOSER_FIRST_MIGRATION.md`
+- `docs/CODEX_SESSION_STARTER.md`
 
 `docs/ATLAS_SOUL_READINESS_PLAN.md` was deleted because its useful content was fully reconciled and it had no independent durable authority.
+
+`docs/COLD_REVIEW_GATE.md` is a temporary branch-protection compatibility note, not policy. Delete it with its workflow/script/tests after `cold-review/exact-head` is removed from required checks.
 
 Git history is the archive. Do not resurrect retired prompts, sequencing, model advice, or workflow rules from history.
 
