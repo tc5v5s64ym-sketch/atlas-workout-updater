@@ -61,6 +61,10 @@ const fakeSheetsState = {
   // When set to a tab name, appendRows throws for that tab AFTER recording the
   // call — simulates a partial-write failure between the two live appends.
   failAppendForTab: null,
+  // When set to a tab name, appendRows returns a MISMATCHED authoritative proof
+  // (updatedRows off by one) for that tab — exercises the F02/WRITE-1 write-proof
+  // verification gate (a success must never be emitted on inconsistent proof).
+  miswriteAppendForTab: null,
   // Rows returned by getSheetRows for Coaching_Notes. Tests may set this.
   coachingNotesRows: [],
   // Existing Effort session_ids returned by getEffortSessionIds. Tests set this
@@ -113,6 +117,10 @@ const fakeSheets = {
     }
     if (fakeSheetsState.failAppendForTab === tabName) {
       throw new Error(`Simulated append failure for "${tabName}"`);
+    }
+    if (fakeSheetsState.miswriteAppendForTab === tabName) {
+      // Authoritative append response disagrees with what was sent (one extra row).
+      return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length + 1 } } };
     }
     return { data: { updates: { updatedRange: `${tabName}!A100:K100`, updatedRows: rows.length } } };
   },
@@ -3642,6 +3650,159 @@ test('api smoke: complete-workout effort-only live write appends only Effort row
       assert.equal(fakeSheetsState.appendCalls[0].rows.length, 1);
     });
   } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// F02 / WRITE-1: a successful closeout must report the SAME exact authoritative
+// append proof (per-tab range + row count from the Sheets append response) that
+// Atlas's trusted /api/log-workout path returns — never a client-side pre-count.
+test('api smoke (F02/WRITE-1): complete-workout live write reports exact per-tab append proof', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'F02-PROOF-01');
+      form.append('date', '2026-06-12');
+      form.append('log_rows_json', JSON.stringify([
+        { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 },
+        { exercise: 'Bench Press', set_number: 2, weight: 185, reps: 5, rir: 2 }
+      ]));
+      form.append('write_id', 'f02-proof-live-01');
+      form.append('effort_json', JSON.stringify({
+        duration: '40', activeCalories: 400, totalCalories: 500,
+        averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+      }));
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.sheet_write, 'success');
+      assert.equal(data.log_rows_written, 2, 'authoritative log count comes from the append response');
+      assert.equal(data.logAppendedRange, 'Log_Cleaned!A100:K100', 'exact log appended range is reported');
+      assert.equal(data.effort_rows_written, 1, 'authoritative effort count comes from the append response');
+      assert.equal(data.effortAppendedRange, 'Effort!A100:K100', 'exact effort appended range is reported');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// F02 / WRITE-1: if the authoritative Sheets append proof is missing or inconsistent
+// (row count disagrees with what was sent), the closeout must NOT claim success — it
+// returns an explicit unverified state so a proof mismatch can never read as a save.
+test('api smoke (F02/WRITE-1): complete-workout fails closed on an inconsistent append proof (no false success)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.miswriteAppendForTab = 'Log_Cleaned';
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('session_id', 'F02-MISMATCH-01');
+      form.append('date', '2026-06-12');
+      form.append('log_rows_json', JSON.stringify([
+        { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }
+      ]));
+      form.append('write_id', 'f02-mismatch-live-01');
+      form.append('effort_json', JSON.stringify({
+        duration: '40', activeCalories: 400, totalCalories: 500,
+        averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+      }));
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const details = body.details;
+
+      assert.equal(response.status, 500, JSON.stringify(body));
+      assert.ok(details, 'unverified proof is surfaced in the error details');
+      assert.notEqual(details.sheet_write, 'success', 'must never claim success on unverified proof');
+      assert.equal(details.sheet_write, 'unverified');
+      assert.equal(details.proof_mismatch, true);
+      assert.equal(details.expected_log_rows, 1);
+    });
+  } finally {
+    fakeSheetsState.miswriteAppendForTab = null;
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+// F02 / WRITE-1: dry-run proof semantics are unchanged — a test_mode preview never
+// appends and never carries an authoritative range/count (no false write proof).
+test('api smoke (F02/WRITE-1): complete-workout dry-run carries no append proof and writes nothing', async () => {
+  const before = fakeSheetsState.appendCalls.length;
+  await withMutedConsoleLog(async () => {
+    const form = new FormData();
+    form.append('session_id', 'F02-DRYRUN-01');
+    form.append('date', '2026-06-12');
+    form.append('test_mode', 'true');
+    form.append('log_rows_json', JSON.stringify([
+      { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }
+    ]));
+    form.append('effort_json', JSON.stringify({
+      duration: '40', activeCalories: 400, totalCalories: 500,
+      averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+    }));
+
+    const { response, body } = await requestMultipart('/api/complete-workout', form);
+    const data = body.data.data;
+
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(data.sheet_written, false);
+    assert.equal(data.no_write_confirmed, true);
+    assert.equal(data.sheet_write, 'skipped');
+    assert.equal(data.log_rows_written, 0);
+    assert.equal(data.logAppendedRange, undefined, 'a dry run carries no append range');
+    assert.equal(data.effortAppendedRange, undefined, 'a dry run carries no effort range');
+    assert.equal(fakeSheetsState.appendCalls.length, before, 'a dry run appends nothing');
+  });
+});
+
+// F02 / WRITE-1 (Codex P1): an unverified proof must stay fail-closed on retry —
+// a retried write_id (e.g. the original 500 was lost) must never be replayed as a
+// skipped_duplicate save, and must never re-append.
+test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stays fail-closed (never a false save)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.miswriteAppendForTab = 'Log_Cleaned';
+  const wid = 'f02-unverified-retry-01';
+  const mkForm = () => {
+    const form = new FormData();
+    form.append('session_id', 'F02-RETRY-01');
+    form.append('date', '2026-06-12');
+    form.append('log_rows_json', JSON.stringify([
+      { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }
+    ]));
+    form.append('write_id', wid);
+    form.append('effort_json', JSON.stringify({
+      duration: '40', activeCalories: 400, totalCalories: 500,
+      averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+    }));
+    return form;
+  };
+  try {
+    await withMutedConsoleLog(async () => {
+      // First attempt: the append proof is inconsistent → unverified 500.
+      const first = await requestMultipart('/api/complete-workout', mkForm());
+      assert.equal(first.response.status, 500, JSON.stringify(first.body));
+      assert.equal(first.body.details.sheet_write, 'unverified');
+      const logAppendsAfterFirst = fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length;
+
+      // Retry the SAME write_id — the original 500 was lost. It must NOT replay as
+      // a save, and must NOT re-append the rows.
+      const retry = await requestMultipart('/api/complete-workout', mkForm());
+      assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
+      assert.equal(retry.body.details.sheet_write, 'unverified', 'retry stays unverified, not skipped_duplicate');
+      assert.notEqual(retry.body.details.sheet_write, 'skipped_duplicate');
+      assert.equal(retry.body.details.proof_mismatch, true);
+      assert.equal(
+        fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length,
+        logAppendsAfterFirst,
+        'a retry of an unverified write must not re-append log rows'
+      );
+    });
+  } finally {
+    fakeSheetsState.miswriteAppendForTab = null;
     fakeSheetsState.allowAppend = false;
   }
 });

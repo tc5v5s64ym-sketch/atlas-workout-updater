@@ -2178,7 +2178,10 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       }
     }
 
-    let logAppendCount = rowsToWrite.length;
+    let logRowsWritten = 0;
+    let effortRowsWritten = 0;
+    let logAppendedRange = null;
+    let effortAppendedRange = null;
     let effortWritten = false;
     if (!testMode) {
       // Live writes must carry a write_id so a lost-response retry is deduplicated
@@ -2213,6 +2216,20 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           original_effort_written: originalData.effort_written === true,
           original_completed_at: record.completed_at || null
         };
+        // F02 / WRITE-1: an original write whose Sheets append proof was never
+        // verified must NOT be replayed as a save on retry. The rows may be on the
+        // sheet, but the proof was inconsistent — so a retried write_id keeps
+        // failing closed with the unverified state instead of returning the
+        // skipped_duplicate success shape the client accepts as saved.
+        if (originalData.sheet_write === 'unverified' || originalData.proof_mismatch === true) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return standardError(
+            req, res,
+            'Duplicate write_id; the original complete-workout append proof was unverified and cannot be confirmed as saved.',
+            { ...duplicateData, sheet_write: 'unverified', proof_mismatch: true },
+            500
+          );
+        }
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         const dupMessage = record.status === 'completed'
           ? 'Duplicate write_id; original complete-workout was already processed.'
@@ -2242,13 +2259,17 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
       try {
         if (rowsToWrite.length > 0) {
-          await appendRows(logSheetName, rowsToWrite);
+          const logResponse = await appendRows(logSheetName, rowsToWrite);
+          logAppendedRange = logResponse?.data?.updates?.updatedRange || null;
+          logRowsWritten = Number(logResponse?.data?.updates?.updatedRows || 0);
           // Log rows have landed. From here a failure must never release the
           // write_id (a retry would re-append these rows) — mark the write
           // committed so the catch records a partial completion instead.
           writeCommitted = true;
         }
-        await appendRows(effortSheetName, [effortRow]);
+        const effortResponse = await appendRows(effortSheetName, [effortRow]);
+        effortAppendedRange = effortResponse?.data?.updates?.updatedRange || null;
+        effortRowsWritten = Number(effortResponse?.data?.updates?.updatedRows || 0);
         effortWritten = true;
         writeCommitted = true;
         invalidateSheetRowsCache();
@@ -2268,7 +2289,8 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
             idempotency_status: 'completed',
             sheet_write: 'partial',
             sheet_written: true,
-            log_rows_written: logAppendCount,
+            log_rows_written: logRowsWritten,
+            logAppendedRange,
             // Report what actually landed: normally false here (the effort append
             // is what threw), but use the flag so an unlikely throw from a later
             // step after a successful effort append can't understate the row.
@@ -2285,6 +2307,44 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         }
         if (idempotency.enabled) failWrite(idempotency.write_id, idempotency.token);
         return standardError(req, res, 'Failed to append workout data.', null, 500);
+      }
+
+      // F02 / WRITE-1: a success response must never claim a write the Sheets
+      // append response did not confirm. Verify the authoritative append proof
+      // (exact range + row count per tab). The rows have already landed here, so
+      // record the write committed (a retry must not re-append) and surface the
+      // anomaly instead of reporting 'success' — a proof mismatch freezes the
+      // save into an explicit unverified state rather than a false success.
+      const logProofOk = rowsToWrite.length === 0
+        ? true
+        : (!!logAppendedRange && logRowsWritten === rowsToWrite.length);
+      const effortProofOk = !!effortAppendedRange && effortRowsWritten === 1;
+      if (!logProofOk || !effortProofOk) {
+        const unverified = {
+          session_id: sessionId,
+          date: dateValue,
+          write_id: idempotency.write_id,
+          duplicate_write: false,
+          idempotency_status: 'completed',
+          sheet_write: 'unverified',
+          sheet_written: true,
+          log_rows_written: logRowsWritten,
+          logAppendedRange,
+          expected_log_rows: rowsToWrite.length,
+          effort_written: effortWritten,
+          effort_rows_written: effortRowsWritten,
+          effortAppendedRange,
+          proof_mismatch: true
+        };
+        if (idempotency.enabled) {
+          completeWrite(idempotency.write_id, idempotency.token, {
+            status: 'error',
+            message: 'complete-workout append proof missing or inconsistent',
+            data: unverified
+          });
+          liveWriteRecorded = true;
+        }
+        return standardError(req, res, 'Workout write could not be verified against the Sheets append proof.', unverified, 500);
       }
     }
 
@@ -2331,7 +2391,7 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         effort_only: effortOnly,
         sheet_written: !testMode && effortWritten,
         sheet_write: testMode ? 'skipped' : 'success',
-        log_rows_written: testMode ? 0 : logAppendCount,
+        log_rows_written: testMode ? 0 : logRowsWritten,
         effort_written: effortWritten,
         duplicate_check: {
           duplicate_session: duplicateSession,
@@ -2347,6 +2407,14 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     if (combinedWarnings.length > 0) responseBody.warnings = combinedWarnings;
     if (completeRuleFlags.length > 0) responseBody.data.rule_flags = completeRuleFlags;
+
+    // F02 / WRITE-1: report the authoritative per-tab append proof on the live
+    // write (dry runs never append, so they carry no range/count proof).
+    if (!testMode) {
+      responseBody.data.logAppendedRange = logAppendedRange;
+      responseBody.data.effortAppendedRange = effortAppendedRange;
+      responseBody.data.effort_rows_written = effortRowsWritten;
+    }
 
     if (testMode) {
       responseBody.test_mode = true;
