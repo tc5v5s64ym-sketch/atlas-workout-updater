@@ -21,8 +21,22 @@ test('api.js sends the session cookie and only sends the key header when a key e
   for (const fn of ['isConnected', 'refreshSessionStatus', 'sessionLogin', 'sessionLogout']) {
     assert.match(api, new RegExp(`export (async )?function ${fn}\\b`), `api.js must export ${fn}`);
   }
-  // isConnected treats an active session OR a stored key as connected.
-  assert.match(api, /return sessionActive \|\| Boolean\(getApiKey\(\)\)/);
+  // isConnected treats a live session, the PERSISTENT connected flag, OR a stored
+  // key as connected. The persistent flag is what survives a reopen (sessionActive
+  // resets to false on reload), so a cookie-only owner is not falsely prompted.
+  assert.match(api, /export const CONNECTED_FLAG = 'atlas_connected'/);
+  assert.match(api, /if \(sessionActive\) return true;/);
+  assert.match(api, /localStorage\.getItem\(CONNECTED_FLAG\) === '1'\) return true/);
+});
+
+test('the persistent connected flag is set on login/auth and cleared on logout/de-auth', () => {
+  const api = read('src/app/api.js');
+  // Login success and a confirmed-authenticated status set the flag (via markConnected).
+  assert.match(api, /function markConnected\(\)[\s\S]{0,120}setItem\(CONNECTED_FLAG, '1'\)/);
+  assert.match(api, /function markDisconnected\(\)[\s\S]{0,120}removeItem\(CONNECTED_FLAG\)/);
+  assert.match(api, /if \(res\.ok\) markConnected\(\)/, 'sessionLogin success marks connected');
+  assert.match(api, /if \(data\.authenticated\) \{\s*markConnected\(\)/, 'a confirmed-authenticated status marks connected');
+  assert.match(api, /markDisconnected\(\)/, 'logout / confirmed de-auth clears the flag');
 });
 
 test('the settings connect flow prefers a session and drops the raw key on success', () => {

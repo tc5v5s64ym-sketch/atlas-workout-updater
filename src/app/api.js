@@ -4,24 +4,45 @@ import { setAtlasLastError } from './store.js';
 import { BUG_REPORT_RECENT_API_LIMIT, atlasRecentApiRequests, recordAtlasError, snapshotBugBody } from './bugReport.js';
 
 export const API_KEY_STORAGE = 'atlas_api_key';
+// Durable, cross-reload marker: once the owner has connected on this device (a
+// session cookie was issued), this NON-SECRET flag persists in localStorage. It is
+// what makes isConnected() true *synchronously on reopen* — the cookie is HttpOnly
+// and the session-status round-trip is async (and can be slow/aborted), so a flag
+// that survives the reload is the only thing that keeps a cookie-only owner from
+// being falsely told "Set your API key" on the first render after a reopen. The
+// cookie still does the real, server-enforced auth on every API call.
+export const CONNECTED_FLAG = 'atlas_connected';
 
 // Durable owner session (F04C). When the server has ATLAS_SESSION_SECRET set, the
 // browser authenticates via a signed HttpOnly `atlas_session` cookie instead of a
 // raw key in localStorage. These module-level flags cache the last known session
-// state (refreshed via /api/session/status) so the many "am I connected?" gates
-// keep working after the raw key has been migrated out of localStorage.
+// state (refreshed via /api/session/status) within a single page load.
 let sessionActive = false;
 let sessionsEnabled = false;
+
+function markConnected() {
+  sessionActive = true;
+  try { localStorage.setItem(CONNECTED_FLAG, '1'); } catch (_) { /* storage disabled */ }
+}
+
+function markDisconnected() {
+  sessionActive = false;
+  try { localStorage.removeItem(CONNECTED_FLAG); } catch (_) { /* storage disabled */ }
+}
 
 export function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
 }
 
-// "Connected" = an active server session OR a legacy key still in localStorage.
-// This is the value the app's connection gates should consult so a cookie-only
-// (post-migration) owner is correctly treated as connected.
+// "Connected" = this device has a live session (in-page flag), has connected before
+// (persistent flag surviving reopens), OR still holds a legacy key. The persistent
+// flag is essential: sessionActive resets to false on every reload and is only
+// re-established after an async status check, so without the flag the connection
+// gates flash "not connected" on reopen for a cookie-only owner.
 export function isConnected() {
-  return sessionActive || Boolean(getApiKey());
+  if (sessionActive) return true;
+  try { if (localStorage.getItem(CONNECTED_FLAG) === '1') return true; } catch (_) { /* storage disabled */ }
+  return Boolean(getApiKey());
 }
 
 export function sessionsFeatureEnabled() {
@@ -43,7 +64,17 @@ export async function refreshSessionStatus() {
     const json = await res.json().catch(() => null);
     const data = (json && json.data) || {};
     sessionsEnabled = Boolean(data.sessions_enabled);
-    sessionActive = Boolean(data.authenticated);
+    // Only a CONFIRMED server verdict moves the persistent flag: authenticated →
+    // set; sessions enabled but explicitly not authenticated (real expiry/invalid
+    // cookie) → clear. A transient failure/timeout falls to catch and leaves the
+    // flag untouched, so a cold-start blip never logs the owner out.
+    if (data.authenticated) {
+      markConnected();
+    } else if (data.sessions_enabled) {
+      markDisconnected();
+    } else {
+      sessionActive = false;
+    }
     return data;
   } catch (_) {
     return null;
@@ -63,7 +94,7 @@ export async function sessionLogin(key) {
       body: JSON.stringify({ api_key: key })
     });
     const json = await res.json().catch(() => null);
-    if (res.ok) sessionActive = true;
+    if (res.ok) markConnected();
     return { ok: res.ok, status: res.status, json };
   } catch (err) {
     return { ok: false, status: 0, json: null, error: err };
@@ -75,7 +106,7 @@ export async function sessionLogout() {
   try {
     await fetch('/api/session/logout', { method: 'POST', credentials: 'same-origin' });
   } catch (_) { /* best-effort — the cookie clears on the server response */ }
-  sessionActive = false;
+  markDisconnected();
 }
 
 // Transport-level fetch failures surface as cryptic browser strings ("Load failed",
