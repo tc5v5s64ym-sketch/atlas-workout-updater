@@ -1,96 +1,79 @@
 # Agent Live Testing — self-serve playbook
 
-> **Status:** Active. Standing owner authorization. Companion to
-> `CLAUDE.md` (escalation policy), `docs/OWNER_CHECKIN_RULES.md`, and
-> `docs/MISSION_CONTROL.md`.
+> **Status:** Active standing owner authorization. Companion to `CLAUDE.md`, `docs/ATLAS_V1_EXECUTION_PLAN.md`, `docs/OWNER_CHECKIN_RULES.md`, and `docs/MISSION_CONTROL.md`.
 
-**Standing owner authorization (2026-07-14):** when the owner says "test the app
-for/against X" (in any wording), the agent designs and runs the test itself using
-this doc. Do not ask the owner for URLs, API keys, sheet IDs, or tab names —
-everything needed is here or in the local `.env`.
+When the owner says “test the app for/against X,” the agent designs and runs the smallest safe test itself. Do not ask Dale to repeat URLs, API keys, Sheet IDs, or tab names available in local `.env` and repository contracts.
 
 ## Targets
 
-- **Deployed app:** `ATLAS_BASE_URL` from `.env` (production on Render). Before
-  any test, `GET /version` and record the deployed build in the results.
-- **API key:** `ATLAS_API_KEY` from `.env`, sent as the `x-atlas-api-key` header.
-  Never print, echo, or commit it.
-- **Google Sheet (permanent data store):** `GOOGLE_SHEETS_ID` from `.env`. Tab
-  contract lives in `config/sheetContract.js`. Required tabs: Metadata,
-  Log_Cleaned, Exercise_Catalog, Effort, Logic, Session_Summary. Optional tabs
-  include Session_Plans, Modality_Log, Brain_Shadow, Intent_Shadow,
-  Flight_Recorder. Test/shadow evidence lands in Brain_Shadow and Intent_Shadow
-  (plus their `Archive_*` snapshots). **Log_Cleaned is the owner's real training
-  history — treat it as production data.**
+- **Deployed app:** `ATLAS_BASE_URL` from `.env`. Before any live test, `GET /version` and record the deployed build.
+- **API key:** `ATLAS_API_KEY` from `.env`, sent as `x-atlas-api-key`. Never print, echo, or commit it.
+- **Google Sheet:** `GOOGLE_SHEETS_ID` from `.env`. The authoritative tab contract is `config/sheetContract.js`. `Log_Cleaned` is Dale's real training history and must be treated as production data.
 
-## Mark every request synthetic
+## Mark every agent request synthetic
 
-Every agent request MUST send `x-atlas-request-origin` with a recognized
-synthetic token from `services/evidenceProvenance.js` — use `probe` for ad-hoc
-agent tests, `smoke` for the smoke script, `playwright` for browser runs. This
-classifies agent traffic `synthetic` so it can never count toward the GATE A
-promotion floor. **Agent testing never substitutes for the owner's real gym
-sessions — GATE A / proving-run evidence stays owner-only by provenance design.**
+Every agent request must send `x-atlas-request-origin` with a recognized synthetic token from `services/evidenceProvenance.js`: use `probe` for ad-hoc checks, `smoke` for smoke scripts, and `playwright` for browser runs.
+
+Synthetic agent traffic never counts toward GATE A, LT owner/gym evidence, or the five-session proving run.
 
 ## Test tiers
 
-- **Tier 1 — read-only (pre-authorized, run without asking):** GET endpoints,
-  `/version`, read-only `POST /api/coach/chat` probes, Playwright page loads and
-  screenshots, `scripts/live-retest.js` (read-only by contract),
-  `scripts/smoke-test-render.js` in `read-only` / `dry-run-only` modes, and the
-  offline suite (`npm test`).
-- **Tier 2 — dry-run writes (pre-authorized, run without asking):** a
-  `test_mode: true` dry-run **only against the write endpoints that honor
-  `test_mode`** — the workout-logging path: `POST /api/log-workout`,
-  `/api/complete-workout`, `/api/log-modality`, `/api/bodyweight`. These read
-  `test_mode` and return the no-write proof fields. Every dry-run response must
-  prove no-write: `sheet_written:false` and `no_write_confirmed:true` (or legacy
-  `sheet_write:'skipped'`). If a dry-run ever reports a real write, STOP — that
-  is a trust regression; file it immediately.
-  - **`test_mode` is NOT universal — it is a contract of the logging write path,
-    not every `writeCapable` route.** The system-state write endpoints —
-    `POST /api/coaching-notes`, `/api/constraints`, `/api/deload/*`,
-    `/api/session-plans/*` — do **not** read `test_mode`; a POST to any of them
-    appends/mutates the production sheet regardless of the flag. They are **not**
-    Tier 2 dry-runnable: treat any real POST to them as Tier 3 (real write)
-    needing explicit per-test owner authorization, and never send them
-    `test_mode:true` expecting a no-write.
-  - **Before dry-running any endpoint not named above, confirm its handler
-    honors `test_mode` first** (check `config/routes.js` plus the handler, or
-    confirm the response carries the no-write proof fields). If you cannot
-    confirm it is dry-run-aware, it is Tier 3, not Tier 2.
-- **Tier 3 — real writes (only when the owner's instruction for THIS test
-  explicitly authorizes it):** a real write lands in the owner's production
-  sheet. If authorized: tag written rows identifiably (e.g. an `AGENT-TEST`
-  marker in notes), record exactly what was written, and clean the rows up when
-  the test ends unless told to keep them. Never escalate to Tier 3 on your own —
-  almost everything is provable at Tier 1/2.
-- **Never, at any tier:** bypass or weaken the preview → approve → write trust
-  loop; change `test_mode` / proof-field semantics; write to Log_Cleaned outside
-  an explicitly authorized Tier 3 test.
+### Tier 1 — read-only, pre-authorized
 
-## How to run a test
+Run without asking:
 
-1. Read the owner's ask; choose the smallest tier that proves it.
-2. `GET /version`; confirm the expected build is live.
-3. Design probes — reuse existing machinery first: `npm test`,
-   `scripts/smoke-test-render.js`, `scripts/live-retest.js` + `tests/e2e/*.spec.js`,
-   `test/fixtures/replays`. Hand-roll fetch/curl probes only when nothing
-   existing fits.
-4. Run; capture request, response, and verdict per check.
-5. Report and file results (below).
+- GET endpoints and `/version`;
+- read-only `POST /api/coach/chat` probes;
+- Playwright page loads;
+- `scripts/live-retest.js` where its contract is read-only;
+- `scripts/smoke-test-render.js` in read-only/dry-run-only modes;
+- offline tests.
+
+### Tier 2 — `test_mode:true` dry-run, pre-authorized
+
+Only use against handlers positively confirmed to honor `test_mode`, including the workout logging paths currently designed for dry-run validation.
+
+Every dry-run response must prove no write with `sheet_written:false` and `no_write_confirmed:true` (or an explicitly supported legacy skipped proof). If a dry-run reports a real write, stop immediately and treat it as a trust regression.
+
+`test_mode` is not universal. System-state endpoints that do not inspect it are Tier 3 even if a caller sends the field. Check `config/routes.js`, the handler, and proof fields before assuming an endpoint is dry-run safe.
+
+### Tier 3 — real write, explicit per-test authorization only
+
+A real write to Dale's production Sheet requires explicit authorization for that test. When authorized:
+
+- use an unmistakable test marker;
+- record exact rows/ranges written;
+- verify the intended behavior;
+- clean up only through an approved application/admin path and only when the test authorization includes cleanup;
+- stop on any data-integrity anomaly.
+
+Never escalate to Tier 3 because Tier 1/2 is inconvenient.
+
+### Never
+
+- bypass or weaken preview → approve → write;
+- change `test_mode` or proof semantics during a test;
+- print secrets or private evidence;
+- manually edit Sheet rows;
+- fabricate owner activity, PRs, new-ground events, or GATE A provenance.
+
+## Test loop
+
+1. Read the canonical campaign card or owner's ask.
+2. Choose the smallest tier that can prove it.
+3. `GET /version` and confirm the expected build is live.
+4. Reuse existing tests, smoke scripts, replays, and Playwright before hand-rolling probes.
+5. Run and record request class, response evidence, and PASS/FAIL without secrets.
+6. File the result in the correct repository home.
 
 ## Where results go
 
-- Live validation that closes a feature/PR gate → file or update an LT-xxx card
-  in `docs/TEST_QUEUE.md` using the existing card format; mark it agent-run
-  (precedent: LT-009, LT-011).
-- Bugs found → file in `BACKLOG.md` per existing conventions. Do not reorder
-  BACKLOG.
-- Every run's report includes: deployed version tested, tier used, probes run,
-  PASS/FAIL per check, evidence snippets (never the API key).
+- Feature/campaign live evidence → `docs/TEST_QUEUE.md` LT card and the canonical plan card completion record.
+- Bugs and adjacent discoveries → `BACKLOG.md` without expanding or reordering the active campaign.
+- One-Brain evidence → the governed Brain Shadow/scorecard path in `docs/ONE_BRAIN_PROMOTION_CRITERIA.md`.
 
-## What this doc is not
+Every report includes deployed version, test tier, probes, PASS/FAIL, and bounded evidence.
 
-It claims no sequencing authority over `BACKLOG.md` or `ACTIVE_ROADMAP.md`. It is
-not a merge gate. It does not replace owner live gym sessions.
+## What this document is not
+
+This playbook supplies test authority and safety rules. It does not select work, authorize real writes, replace genuine owner gym evidence, or act as a merge gate. Sequencing belongs only to `docs/ATLAS_V1_EXECUTION_PLAN.md`.
