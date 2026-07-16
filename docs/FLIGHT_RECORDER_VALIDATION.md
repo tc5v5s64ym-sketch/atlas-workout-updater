@@ -98,3 +98,7 @@ Spot-check a row: `request_summary` should be a **shape summary** (top-level key
 ## After the run
 
 Report PASS/FAIL with any anomalies. Then the owner decides the next step (per the standing plan): (1) a brief production owner-debug enable, (2) fix issues found, (3) start FR5 `correlation_id`, or (4) start shadow-linkage enrichment. No further Flight Recorder development happens until then.
+
+## Quick check: is the recorder on?
+
+`npm run atlas:status` (or the public `GET /.well-known/atlas-status.json`) reports `flight_recorder_enabled` for the deployed build without opening the app — a fast way to confirm the flag state before or after a validation run. Contract: [`ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md).

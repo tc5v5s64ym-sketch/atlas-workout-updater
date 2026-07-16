@@ -30,6 +30,7 @@ Atlas is Dale's conversation-first personal strength coach and workout logger. I
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — current system boundaries.
 - [docs/AGENT_LIVE_TESTING.md](docs/AGENT_LIVE_TESTING.md) — safe live-test tiers.
 - [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md) — production checks.
+- [docs/ATLAS_OPERATIONS_CONTRACT.md](docs/ATLAS_OPERATIONS_CONTRACT.md) — Atlas Control Tower status: `npm run atlas:status` and the public `GET /.well-known/atlas-status.json`.
 - [docs/BACKUP_ROLLBACK.md](docs/BACKUP_ROLLBACK.md) — recovery.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — diagnosis.
 

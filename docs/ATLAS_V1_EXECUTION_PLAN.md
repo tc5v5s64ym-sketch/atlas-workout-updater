@@ -259,7 +259,7 @@ Delete the retired cold-review gate now that `cold-review/exact-head` is off `ma
 
 ### F04B — Atlas Control Tower / agent operations contract
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Objective**
 
@@ -275,7 +275,7 @@ One canonical, agent-first status contract so any agent (Claude/Codex/ChatGPT/fr
 
 **Owner gate:** Autonomous — no production write, schema, or credential change.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — new `services/atlasStatus.js` (bounded/redacted assembler + pure plan/test parsers, closed-whitelist `ALLOWED_KEYS`, honest overall-status logic), `scripts/atlas-status.js` (`npm run atlas:status [-- --json]`, deployed-fetch with offline local fallback), public read-only `GET /.well-known/atlas-status.json` in `index.js` (+ `config/routes.js` entry), canonical `docs/ATLAS_OPERATIONS_CONTRACT.md`, discoverability wired into CLAUDE.md/AGENTS.md/AGENT_LIVE_TESTING.md/FLIGHT_RECORDER_VALIDATION.md/DOCS_INDEX.md/README, and anti-forgetting + clean-checkout acceptance tests (`test/atlasStatus.test.js` + endpoint case in `test/api-smoke.test.js`). Synthetic-row count is reported `null`+unavailable rather than run as a live authenticated scan on the public endpoint; the existing `POST /api/admin/preview-test-rows` remains the path for a real count. Full suite 5465 pass.
 
 ### F04C — Durable owner session (remove repeated key entry)
 

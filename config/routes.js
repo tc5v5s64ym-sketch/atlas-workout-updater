@@ -3,6 +3,7 @@ const routeDefinitions = [
   { path: '/health', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
   { path: '/routes', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
   { path: '/version', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
+  { path: '/.well-known/atlas-status.json', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
   { path: '/app', methods: ['GET'], public: true, authRequired: false, readOnly: true, writeCapable: false },
   { path: '/api/history/recent', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
   { path: '/api/exercises/last-session', methods: ['GET'], public: false, authRequired: true, readOnly: true, writeCapable: false },
