@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v139';
+const ATLAS_SHELL_BUILD = 'v140';
 
 
 
@@ -3321,6 +3321,12 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
 
+// F07 / CLIENT-3: monotonic preview-request identity. Bumped at the start of every preview
+// submit; each async parse/dry-run response only updates preview state (the parsed rows and
+// pendingWrite) while its captured seq still matches the latest. A slow OLDER response whose
+// seq is stale is dropped, so it can never overwrite a NEWER request's preview or pending write.
+let previewRequestSeq = 0;
+
 // In-thread effort cards mirror the global approve button. When a preview is
 // replaced or invalidated, an older card no longer matches the live pendingWrite,
 // so its Save must be permanently neutralised — otherwise clicking a stale card
@@ -3911,6 +3917,10 @@ async function rowsFromWorkoutInput() {
   // F06/CLIENT-2: fold preview hand-edits into the buffer before this reparse wipes the table.
   reconcileSessionLogFromTable();
 
+  // F07/CLIENT-3: capture this parse's request identity. If a newer submit supersedes it while
+  // we await the backend, the stale rows are dropped instead of overwriting the table.
+  const parseSeq = previewRequestSeq;
+
   // Multi-exercise display-block paste — the live composer / app-export format:
   // bare exercise-name headers with per-line sets ("135lbs 10 · warm-up" warm-ups,
   // "245lbs 6/2" working sets), several exercises stacked. The proven single-line
@@ -3962,6 +3972,8 @@ async function rowsFromWorkoutInput() {
       ? await rowsFromUnresolvedPlannedLead(workoutText)
       : null;
     if (replanned && replanned.length) {
+      // F07 / CLIENT-3: this fallback also runs after an await — drop it if superseded.
+      if (parseSeq !== previewRequestSeq) return;
       populateSetRows(replanned);
       lastParserStatus = { source: 'backend-replanned' };
       activeExercise = replanned[0]?.exercise || null;
@@ -3981,6 +3993,7 @@ async function rowsFromWorkoutInput() {
     if (backendError.multipleExercises && /\n/.test(workoutText)) {
       const multi = parseWorkoutText(workoutText, { activeExercise: activeExercise || firstUnloggedPlannedLift() });
       if (!multi.errors.length && multi.rows.length) {
+        if (parseSeq !== previewRequestSeq) return; // F07/CLIENT-3: drop a superseded parse
         populateSetRows(multi.rows);
         lastParserStatus = { source: 'local-multiline' };
         activeExercise = multi.rows[0]?.exercise || null;
@@ -3997,6 +4010,7 @@ async function rowsFromWorkoutInput() {
     const localResult = parseWorkoutText(workoutText, { activeExercise: activeExercise || firstUnloggedPlannedLift() });
     if (localResult.errors.length > 0) throw new Error(localResult.errors.join(' | '));
     if (!localResult.rows.length) throw new Error('Workout text did not produce any set rows.');
+    if (parseSeq !== previewRequestSeq) return; // F07/CLIENT-3: drop a superseded parse
     populateSetRows(localResult.rows);
     lastParserStatus = { source: 'local' };
     parsedRowsEditor.hidden = true;
@@ -4004,6 +4018,10 @@ async function rowsFromWorkoutInput() {
     lastPrescribed = null;
     return;
   }
+
+  // F07 / CLIENT-3: a newer submit superseded this parse while the backend ran — drop the
+  // stale rows so they can't overwrite the newer request's table.
+  if (parseSeq !== previewRequestSeq) return;
 
   if (parsed.intent === 'delete_last_set') {
     deleteLastSetRow();
@@ -5215,6 +5233,11 @@ function buildVerdict(rec) {
 }
 
 function invalidatePreview() {
+  // F07 / CLIENT-3: invalidation supersedes any in-flight preview. Bump the request seq so a
+  // dry-run/parse that resolves AFTER a form edit / cancel / start-over is dropped by the guards
+  // — otherwise the stale response would re-create pendingWrite and re-enable Save for the very
+  // preview the edit was meant to invalidate.
+  previewRequestSeq++;
   pendingWrite = null;
   runEffortCardCleanups();
   lastParserStatus = null;
@@ -5726,6 +5749,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();
+  // F07 / CLIENT-3: invalidatePreview() just bumped the seq, making this submit the latest
+  // preview request. Its async responses only apply while previewRequestSeq still equals
+  // submitSeq — a later submit or a form edit (both bump the seq) supersedes this one.
+  const submitSeq = previewRequestSeq;
   // RC2: a FRESH submit starts with no date-source banner. The closeout branch below
   // re-sets it when a screenshot drives the save. Gating on sessionCompiledAwaitingPreview
   // preserves it across the closeout RE-ENTRY (which skips that branch but must still
@@ -6021,6 +6048,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const completeWorkoutSessionId = effortOnly ? explicitSessionId : sessionId;
 
   try {
+    // F07 / CLIENT-3: a newer preview submit superseded this one during the parse — abandon
+    // this stale request before issuing its dry-run so it can't overwrite the newer preview.
+    if (submitSeq !== previewRequestSeq) return;
     if (mode === 'screenshot' && file) {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
@@ -6039,6 +6069,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
+      // F07 / CLIENT-3: a newer submit superseded this one while its dry-run was in flight —
+      // drop the stale response BEFORE it stamps the shared #log-date / #log-session-id or
+      // rebuilds the pending write.
+      if (submitSeq !== previewRequestSeq) return;
       const resolvedData = result?.data?.data || {};
       const resolvedDate = resolvedData.date || date || getLocalDateString();
       const resolvedSessionId = resolvedData.session_id || sessionId || generateSessionId(resolvedDate);
@@ -6070,6 +6104,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasCompleteWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
+      // F07 / CLIENT-3: drop a superseded dry-run response BEFORE it stamps #log-session-id or
+      // rebuilds the pending write (see the screenshot branch above).
+      if (submitSeq !== previewRequestSeq) return;
       // Capture the server-resolved session_id (auto-incremented when we sent it blank) so
       // the live write reuses the SAME id the preview computed, and the field/summary show
       // the real …-02 instead of a forced …-01. Mirrors the screenshot branch above.
@@ -6121,6 +6158,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasLogWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
+      // F07 / CLIENT-3: drop a superseded dry-run response — a newer submit's preview wins.
+      if (submitSeq !== previewRequestSeq) return;
       pendingWrite = { mode: 'manual', payload, previewProof: previewProofFromResult(result, 'manual') };
       renderLogWorkoutPreview(result, effortRow);
     }

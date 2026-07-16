@@ -29,7 +29,7 @@ test('app.js WARMUP_LOG_NOTE is recognized by services/warmupTag.isWarmupNote', 
 test('rowsFromWorkoutInput wires the display-block pre-pass (detect + tag + kg gate)', () => {
   const fn = appSrc.slice(
     appSrc.indexOf('async function rowsFromWorkoutInput('),
-    appSrc.indexOf('async function rowsFromWorkoutInput(') + 2400
+    appSrc.indexOf('async function rowsFromWorkoutInput(') + 3000
   );
   assert.match(fn, /displayBlockNormalizer\.normalizeDisplayBlocks\(workoutText\)/, 'must detect a display block');
   assert.match(fn, /isDisplayBlock/, 'must gate on isDisplayBlock');
