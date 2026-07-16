@@ -143,7 +143,7 @@ Run F02 through F10 in order. Each card is one PR unless the Current-State Verif
 
 ### F02 — Closeout write-proof parity
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Finding:** `WRITE-1`
 
@@ -170,7 +170,7 @@ Red-first route/integration coverage for exact proof, partial append failure, em
 
 Code/tests are autonomous. Any real production canary write requires explicit authorization.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — `/api/complete-workout` now captures the `appendRows` response for both `Log_Cleaned` and `Effort`, reports the authoritative `logAppendedRange`/`effortAppendedRange` + `log_rows_written`/`effort_rows_written` (from `updates.updatedRange`/`updatedRows`, matching `/api/log-workout`), and a fail-closed gate returns an explicit `sheet_write:'unverified'` (never `success`) when a range is missing or a count disagrees with what was sent. Dry-run proof unchanged; no schema change. Red-first route/integration tests in `test/api-smoke.test.js` (exact-proof, inconsistent-proof fail-closed, dry-run no-proof); full suite green (5456).
 
 ### F03 — Interrupted-closeout idempotency
 
