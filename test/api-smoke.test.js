@@ -3799,6 +3799,215 @@ test('api smoke: complete-workout manual date overrides parsed screenshot date',
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+// ── F08 / CLIENT-4: one canonical session date across Log AND Effort rows ──────
+// A screenshot-imported closeout resolves ONE canonical session date. The Effort
+// row already uses it unconditionally, but the Log rows historically honoured a
+// per-row `date_clean` (the client's today auto-fill) first — so a prior-day
+// screenshot wrote the Effort row on the screenshot date while the Log rows kept
+// today. These prove Log and Effort share the single resolved date (dry-run
+// preview = what Approve writes). RED before the fix (log rows keep today).
+function assertSingleCanonicalDate(data, expectedDate, msgPrefix) {
+  assert.ok(Array.isArray(data.log_rows_preview) && data.log_rows_preview.length > 0,
+    `${msgPrefix}: preview must carry the non-empty Log rows`);
+  assert.equal(data.date, expectedDate, `${msgPrefix}: reported session date`);
+  assert.equal(data.effort_row[0], expectedDate, `${msgPrefix}: Effort row date`);
+  for (const row of data.log_rows_preview) {
+    assert.equal(row[0], expectedDate,
+      `${msgPrefix}: every Log row must carry the canonical session date, not the client per-row date`);
+  }
+  // The write-set (rows_to_write) the live save would append shares it too.
+  for (const row of data.rows_to_write) {
+    assert.equal(row[0], expectedDate, `${msgPrefix}: rows_to_write date`);
+  }
+}
+
+// Log rows carrying the CLIENT'S today auto-fill, to be overridden by the canonical date.
+function todayStampedBenchRows(today) {
+  return [
+    { date_clean: today, exercise: 'Bench Press', set_number: 1, weight: 225, reps: 5, rir: 2 },
+    { date_clean: today, exercise: 'Bench Press', set_number: 2, weight: 220, reps: 5, rir: 2 }
+  ];
+}
+
+test('api smoke: F08 complete-workout — a PRIOR-DAY screenshot dates BOTH Log and Effort rows (not just Effort)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString();
+  const screenshotDate = getLocalDateString(new Date(Date.now() - 3 * 86400000)); // 3 days back, in-window
+  assert.notEqual(screenshotDate, today);
+  fakeVisionParsedMetrics = {
+    date: screenshotDate, duration: '00:42:00', activeCalories: 410,
+    totalCalories: 520, averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date_source, 'screenshot');
+  assertSingleCanonicalDate(data, screenshotDate, 'prior-day screenshot');
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'dry-run never appends');
+});
+
+test('api smoke: F08 complete-workout — MONTH-boundary screenshot date carries to Log + Effort verbatim', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString();
+  const now = new Date();
+  // Last day of the previous month (≤31 days back → inside the plausibility window).
+  const monthBoundary = getLocalDateString(new Date(now.getFullYear(), now.getMonth(), 0));
+  fakeVisionParsedMetrics = {
+    date: monthBoundary, duration: '00:40:00', activeCalories: 400,
+    totalCalories: 500, averageHR: 150, peakHR: 170, workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date_source, 'screenshot');
+  assertSingleCanonicalDate(data, monthBoundary, 'month boundary');
+  assert.match(data.session_id, new RegExp(`^${monthBoundary.replace(/-/g, '')}-(AM|PM)-01$`));
+});
+
+test('api smoke: F08 complete-workout — YEAR-boundary (prior-year Dec 31) screenshot date carries to Log + Effort', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString();
+  const yearBoundary = `${new Date().getFullYear() - 1}-12-31`; // ≤366 days back → inside the window
+  fakeVisionParsedMetrics = {
+    date: yearBoundary, duration: '00:38:00', activeCalories: 390,
+    totalCalories: 480, averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date_source, 'screenshot');
+  assertSingleCanonicalDate(data, yearBoundary, 'year boundary');
+});
+
+test('api smoke: F08 complete-workout — timezone edge: the LOCAL today fallback dates BOTH Log and Effort (no UTC drift)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString(); // local, not UTC toISOString().slice(0,10)
+  fakeVisionParsedMetrics = {
+    date: null, duration: '00:41:00', activeCalories: 405,
+    totalCalories: 510, averageHR: 149, peakHR: 172, workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  // Log rows stamped with local today; no screenshot date → today_fallback for the effort.
+  form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(data.date_source, 'today_fallback');
+  // Both rows must equal the LOCAL date string (the canonical one), byte-for-byte.
+  assertSingleCanonicalDate(data, today, 'timezone-edge today fallback');
+});
+
+test('api smoke: F08 complete-workout — an INVALID/implausible screenshot date asks for correction (today-fallback) and never splits Log/Effort', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString();
+  // 500 days back → outside the 400-day plausibility window (e.g. a weekday-matched wrong year).
+  const implausible = getLocalDateString(new Date(Date.now() - 500 * 86400000));
+  fakeVisionParsedMetrics = {
+    date: implausible, duration: '00:39:00', activeCalories: 395,
+    totalCalories: 490, averageHR: 147, peakHR: 169, workoutType: 'Traditional Strength Training'
+  };
+  const form = new FormData();
+  form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+  form.append('test_mode', 'true');
+  form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+  const { response, body } = await requestMultipart('/api/complete-workout', form);
+  const data = body.data.data;
+  assert.equal(response.status, 200, JSON.stringify(body));
+  // Asks for correction: the rejected date is reported and the save falls back to today.
+  assert.equal(data.date_source, 'today_fallback', 'an out-of-window screenshot date is not trusted');
+  assert.equal(data.screenshot_date_rejected, implausible, 'the rejected date is surfaced for owner correction');
+  // The fallback date is still ONE canonical date across Log + Effort (no wrong date written anywhere).
+  assertSingleCanonicalDate(data, today, 'implausible screenshot rejected');
+});
+
+test('api smoke: F08 complete-workout — ordinary same-day MANUAL (non-screenshot) closeout is unchanged; a backdated manual date dates both rows', async () => {
+  // Same-day manual: no image, manual date = today → both rows on today (fix is a no-op here).
+  fakeSheetsState.appendCalls.length = 0;
+  const today = getLocalDateString();
+  {
+    const form = new FormData();
+    form.append('date', today);
+    form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+    form.append('effort_json', JSON.stringify({ duration: '40', activeCalories: 400, totalCalories: 500, averageHR: 150, peakHR: 170, workoutType: 'Traditional Strength Training' }));
+    form.append('test_mode', 'true');
+    const { response, body } = await requestMultipart('/api/complete-workout', form);
+    const data = body.data.data;
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(data.date_source, 'manual');
+    assertSingleCanonicalDate(data, today, 'same-day manual closeout');
+  }
+  // Backdated manual closeout: manual date wins and dates BOTH rows (log rows carry a stale today).
+  {
+    const form = new FormData();
+    form.append('date', '2026-06-11');
+    form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+    form.append('effort_json', JSON.stringify({ duration: '40', activeCalories: 400, totalCalories: 500, averageHR: 150, peakHR: 170, workoutType: 'Traditional Strength Training' }));
+    form.append('test_mode', 'true');
+    const { response, body } = await requestMultipart('/api/complete-workout', form);
+    const data = body.data.data;
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(data.date_source, 'manual');
+    assertSingleCanonicalDate(data, '2026-06-11', 'backdated manual closeout');
+  }
+  assert.deepEqual(fakeSheetsState.appendCalls, []);
+});
+
+test('api smoke: F08 complete-workout LIVE write — appended Log AND Effort rows share the canonical screenshot date', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  const today = getLocalDateString();
+  const screenshotDate = getLocalDateString(new Date(Date.now() - 5 * 86400000));
+  assert.notEqual(screenshotDate, today);
+  fakeVisionParsedMetrics = {
+    date: screenshotDate, duration: '00:42:00', activeCalories: 410,
+    totalCalories: 520, averageHR: 148, peakHR: 171, workoutType: 'Traditional Strength Training'
+  };
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('log_rows_json', JSON.stringify(todayStampedBenchRows(today)));
+      form.append('write_id', 'f08-canonical-date-live-01');
+      form.append('image', new Blob(['watch'], { type: 'image/png' }), 'watch.png');
+
+      const { response, body } = await requestMultipart('/api/complete-workout', form);
+      const data = body.data.data;
+      assert.equal(response.status, 200, JSON.stringify(body));
+      assert.equal(data.sheet_write, 'success');
+      assert.equal(data.date, screenshotDate);
+
+      const logAppend = fakeSheetsState.appendCalls.find(c => c.tabName === 'Log_Cleaned');
+      const effortAppend = fakeSheetsState.appendCalls.find(c => c.tabName === 'Effort');
+      assert.ok(logAppend && effortAppend, 'both Log_Cleaned and Effort were appended');
+      assert.ok(logAppend.rows.length >= 2, 'the two bench sets were written');
+      for (const row of logAppend.rows) {
+        assert.equal(row[0], screenshotDate, 'each WRITTEN Log row carries the canonical screenshot date, not today');
+      }
+      assert.equal(effortAppend.rows[0][0], screenshotDate, 'the WRITTEN Effort row carries the same canonical date');
+    });
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 test('api smoke: complete-workout effort-only live write appends only Effort rows', async () => {
   fakeSheetsState.appendCalls.length = 0;
   fakeSheetsState.allowAppend = true;

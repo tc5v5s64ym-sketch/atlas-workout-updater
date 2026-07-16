@@ -394,7 +394,7 @@ Autonomous if approval semantics remain unchanged.
 
 ### F08 — Canonical screenshot session date
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16, proven via red-first api-smoke integration tests on the real `/api/complete-workout` route). On the closeout path the Effort row always used the resolved canonical `dateValue`, but the Log rows honoured a client per-row `date_clean` first (`normalizeLogRowObject` precedence), so a prior-day screenshot (or a backdated manual entry) dated the Effort row on the screenshot date while the Log rows kept today's auto-fill. Fix: a pure `withCanonicalSessionDate(row, dateValue)` stamps the resolved session date onto every Log row before enrichment at the complete-workout call site — applied to the dry-run preview AND the live write, so the preview shows exactly what Approve writes. Only the rows being written now are stamped (no historical rewrite); date resolution/validation, the screenshot plausibility guard (out-of-window → today-fallback + `screenshot_date_rejected` asks for correction), the effort builder, the dedup keys, and the preview→approve→write trust loop are all unchanged. Server-only (`index.js` + tests; no `src/app` change → no SW/shell bump).
 
 **Finding:** `CLIENT-4`
 
@@ -421,7 +421,7 @@ Prior-day screenshot, month/year boundary, timezone edge, invalid date, manual n
 
 Autonomous within existing date semantics; no historical rewrite.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — server-only change in `index.js`: new pure `withCanonicalSessionDate(row, sessionDate)` (handles the client object shape and the Log_Cleaned array shape, date at index 0), applied at the `/api/complete-workout` enrich call so `parsedLogRows` are stamped with the resolved `dateValue` before `enrichAndFormatLogRows`. The Effort row already used `dateValue`; both now share one canonical date on preview and write. Tests: red-first `test/api-smoke.test.js` F08 block (7 real-route cases — prior-day screenshot, month boundary, prior-year Dec 31, timezone-edge local-today fallback, invalid/implausible screenshot rejected→today-fallback asks-for-correction, same-day + backdated manual closeout, and a LIVE-write case asserting the appended Log_Cleaned + Effort rows carry the same date); the 4 divergence cases fail before the fix (Effort = screenshot date, Log = today) and pass after. Full node suite 5526 pass; lint 0 errors. `BACKLOG.md` CLIENT-4 marked fixed. No shell/SW bump (no client asset changed).
 
 ### F09 — Current-state coach narration
 
