@@ -2,7 +2,7 @@
 
 > **Status:** CANONICAL EXECUTION AUTHORITY
 > **Owner adopted:** 2026-07-15
-> **Current active milestone:** M1 — close Soul honestly with LT-010 production evidence
+> **Current active milestone:** M2 — close remaining silent-correctness risks (M1/Soul closed 2026-07-16)
 > **Rule:** Atlas has one execution plan. This document selects and sequences work until V1 is declared and the stabilization period ends.
 
 ## 1. Purpose
@@ -72,8 +72,8 @@ Do **not** stop merely because a PR is merge-ready, a session is getting long, o
 | Milestone | Goal | Status | Exit condition |
 |---|---|---|---|
 | **M0** | Consolidate execution authority | ✅ COMPLETE in the installation PR | One canonical plan; old plan bodies retired; governance points here |
-| **M1** | Close Soul honestly | ▶ ACTIVE | LT-010 required Part 1 PASS with profanity OFF; S5 and Soul recorded complete |
-| **M2** | Close remaining silent-correctness risks | QUEUED | F02–F10 complete and no open P0/P1 silent-trust finding in these seams |
+| **M1** | Close Soul honestly | ✅ COMPLETE (2026-07-16) | LT-010 required Part 1 PASS with profanity OFF; S5 and Soul recorded complete |
+| **M2** | Close remaining silent-correctness risks | ▶ ACTIVE | F02–F10 complete and no open P0/P1 silent-trust finding in these seams |
 | **M3** | Prove cross-seam behavior automatically | QUEUED | F11 proving packs green in deterministic CI |
 | **M4** | Prove Atlas in real use | BLOCKED on M3 | Five consecutive clean live sessions recorded |
 | **M5** | Declare and stabilize V1 | BLOCKED on M4 | V1 declaration merged; minimum two-week defect-only period completed |
@@ -97,7 +97,7 @@ At plan installation:
 
 ### F01 — LT-010 production re-validation and Soul closeout
 
-**Status:** ACTIVE
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Objective**
 
@@ -129,13 +129,13 @@ None unless the production evidence fails. If it fails, file the exact mismatch,
 
 **Owner gate**
 
-The genuine new-ground event must come from real owner training. Claude may perform read-only deploy/recorder checks and analyze evidence, but must not fabricate the qualifying workout.
+The genuine new-ground event must come from real owner training. Claude may perform read-only deploy/recorder checks and analyze evidence, but must not fabricate the qualifying workout. **Owner override (2026-07-16):** Dale explicitly authorized a controlled production test for LT-010 — a synthetic recent baseline (written and undone via the trusted path) to clear the layoff condition, followed by the routine/false-PR/real-PR probes — overriding the "genuine owner workout only" restriction for this gate only.
 
 **Completion record**
 
-- PR: —
-- Commit: —
-- Evidence: —
+- PR: this PR (Soul closeout — records LT-010 Part 1 PASS)
+- Commit: validated on deployed `cc8f42d` (current `main`; contains #1007 + #1011)
+- Evidence: `docs/TEST_QUEUE.md` LT-010 Owner result — routine on-target set→`silent`; forged new-ground→stripped (`silent`); genuine new-ground→`celebrate`/`register.intensity:max`, `profanity_ok:false`; drawn from Flight_Recorder `decision_summary_json`. Synthetic baseline + test sessions written via the trusted path, verified, and fully undone (no leftover rows). The earlier "`celebrate` never fired" observation was confirmed to be the ratified mode-ladder gates (layoff/safety/challenge/scarcity) out-ranking `celebrate`, not a wiring defect. (Raw set values and production sheet ranges omitted per CLAUDE.md data-safety.)
 
 ## 7. Milestone M2 — Trust-seam hardening
 
