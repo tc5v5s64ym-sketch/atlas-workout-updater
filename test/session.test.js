@@ -70,12 +70,12 @@ test('parseCookies handles multiple pairs, spacing, and junk', () => {
   assert.equal(session.parseCookies(null).atlas_session, undefined);
 });
 
-test('buildSetCookie sets HttpOnly, Secure, SameSite=Strict, Path, and Max-Age', () => {
+test('buildSetCookie sets HttpOnly, Secure, SameSite=Lax, Path, and Max-Age', () => {
   const c = session.buildSetCookie('tok', { maxAgeMs: 120 * 86400000, secure: true });
   assert.match(c, /^atlas_session=tok/);
   assert.match(c, /HttpOnly/);
   assert.match(c, /Secure/);
-  assert.match(c, /SameSite=Strict/);
+  assert.match(c, /SameSite=Lax/);
   assert.match(c, /Path=\//);
   assert.match(c, /Max-Age=\d+/);
 });

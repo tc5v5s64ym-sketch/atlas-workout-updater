@@ -35,8 +35,11 @@ test('the persistent connected flag is set on login/auth and cleared on logout/d
   assert.match(api, /function markConnected\(\)[\s\S]{0,120}setItem\(CONNECTED_FLAG, '1'\)/);
   assert.match(api, /function markDisconnected\(\)[\s\S]{0,120}removeItem\(CONNECTED_FLAG\)/);
   assert.match(api, /if \(res\.ok\) markConnected\(\)/, 'sessionLogin success marks connected');
-  assert.match(api, /if \(data\.authenticated\) \{\s*markConnected\(\)/, 'a confirmed-authenticated status marks connected');
-  assert.match(api, /markDisconnected\(\)/, 'logout / confirmed de-auth clears the flag');
+  assert.match(api, /if \(data\.authenticated\) markConnected\(\)/, 'a confirmed-authenticated status marks connected');
+  assert.match(api, /markDisconnected\(\)/, 'logout clears the flag');
+  // A status check must NEVER clear the durable flag (a not-sent cookie on a
+  // Safari cold-reopen would otherwise falsely log the owner out).
+  assert.doesNotMatch(api, /else if \(data\.sessions_enabled\) \{?\s*markDisconnected/, 'refreshSessionStatus must not clear the flag on a not-authenticated status');
 });
 
 test('the settings connect flow prefers a session and drops the raw key on success', () => {

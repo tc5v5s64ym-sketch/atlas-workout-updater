@@ -126,12 +126,19 @@ function isSecureRequest(req) {
   return proto === 'https';
 }
 
+// SameSite=Lax (not Strict): Strict withholds the cookie on a session-restore /
+// cold-reopen top-level navigation (observed on iOS Safari — the durable session
+// looked "logged out" after close→reopen). Lax presents the cookie on same-site
+// top-level navigations, re-establishing the session, while still NOT sending it
+// on cross-site subresource requests or cross-site POST — so CSRF on the write
+// routes stays blocked, and the explicit same-origin Origin check below is kept as
+// defense-in-depth.
 function buildSetCookie(token, { maxAgeMs = DEFAULT_TTL_MS, secure = true } = {}) {
   const attrs = [
     `${COOKIE_NAME}=${token}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Strict',
+    'SameSite=Lax',
     `Max-Age=${Math.floor(maxAgeMs / 1000)}`
   ];
   if (secure) attrs.push('Secure');
@@ -139,7 +146,7 @@ function buildSetCookie(token, { maxAgeMs = DEFAULT_TTL_MS, secure = true } = {}
 }
 
 function buildClearCookie({ secure = true } = {}) {
-  const attrs = [`${COOKIE_NAME}=`, 'Path=/', 'HttpOnly', 'SameSite=Strict', 'Max-Age=0'];
+  const attrs = [`${COOKIE_NAME}=`, 'Path=/', 'HttpOnly', 'SameSite=Lax', 'Max-Age=0'];
   if (secure) attrs.push('Secure');
   return attrs.join('; ');
 }
