@@ -903,8 +903,12 @@ import * as sessionQuestion from './sessionQuestion.js';
     if (!handle) return;
     const { body } = handle;
 
+    // Server-authoritative: never pre-block on a synchronous guess. isConnected() is
+    // false only once the SERVER has confirmed this browser is unauthenticated (a real
+    // 401 / a sessions-enabled status saying so) — an optimistic 'unknown' still attempts
+    // the read below and lets the server's 401, not a client flag, drive the prompt.
     if (typeof isConnected === 'function' && !isConnected()) {
-      await typeOut(body, "Set your API key in Settings and I'll suggest today's session.");
+      await typeOut(body, "Connect Atlas in Settings and I'll suggest today's session.");
       return;
     }
     body.textContent = 'Reading your recent training…';
@@ -947,9 +951,18 @@ import * as sessionQuestion from './sessionQuestion.js';
           })
         : exercises;
       setWorkoutPlaceholder(buildWorkoutPlaceholder(pendingExercises.length ? pendingExercises : exercises));
-    } catch {
+    } catch (err) {
       body.textContent = '';
-      await typeOut(body, "I couldn't pull a suggestion just now — but start logging and I'll react as you go.");
+      if (err && err.status === 401) {
+        // The server actually rejected the request — the owner is not connected on this
+        // device. This is the ONLY path that prompts to connect (never a client flag).
+        await typeOut(body, "Connect Atlas in Settings and I'll suggest today's session.");
+      } else if (err && !err.status) {
+        // Transport failure / cold-start drop — a connection problem, NOT a missing key.
+        await typeOut(body, "The connection dropped — give the server a few seconds to wake up, then ask again.");
+      } else {
+        await typeOut(body, "I couldn't pull a suggestion just now — but start logging and I'll react as you go.");
+      }
     }
   }
 

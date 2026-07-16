@@ -10,7 +10,7 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { API_KEY_STORAGE, api, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
+import { API_KEY_STORAGE, api, authState, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v136';
+const ATLAS_SHELL_BUILD = 'v137';
 
 
 
@@ -209,6 +209,22 @@ document.getElementById('clear-key-btn').addEventListener('click', async () => {
   localStorage.removeItem(API_KEY_STORAGE);
   setStatus(document.getElementById('settings-status'), 'Disconnected on this device.', 'ok');
 });
+
+// Reflect the SERVER's auth verdict in Settings so it can never disagree with Coach or
+// the reads — all three derive from the one server-authoritative state. Only fills the
+// box when the server has actually decided ('authenticated' / 'unauthenticated'); on an
+// unsettled 'unknown' (status probe timed out) it stays blank so Settings never CLAIMS a
+// state the server didn't confirm. Won't clobber an explicit in-page connect/disconnect.
+function reflectSettingsAuth() {
+  const box = document.getElementById('settings-status');
+  if (!box || box.textContent) return;
+  const state = authState();
+  if (state === 'authenticated') {
+    setStatus(box, 'Atlas connected on this device.', 'ok');
+  } else if (state === 'unauthenticated') {
+    setStatus(box, 'Connect Atlas to sync your training on this device.', 'muted');
+  }
+}
 
 /* ===== Backend health / debug ===== */
 
@@ -756,16 +772,23 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
   }
 }
 
-async function loadDashboard() {
-  if (!isConnected()) {
-    const pickBox = document.getElementById('todays-pick');
-    if (pickBox) pickBox.innerHTML = '<span class="muted">Set your API key in Settings to see today\'s plan.</span>';
-    for (const id of ['progress-snapshot', 'intent-grid', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
-      const target = document.getElementById(id);
-      if (target) target.innerHTML = '<span class="muted">Set your API key in Settings to load data.</span>';
-    }
-    return;
+// Dashboard "not connected" placeholder — the connect prompt appears only when the
+// server has confirmed the negative (a real 401 / a sessions-enabled status saying so),
+// never from a synchronous client flag. Module-level so it's reusable and testable.
+function renderDashboardConnectPrompt() {
+  const pickBox = document.getElementById('todays-pick');
+  if (pickBox) pickBox.innerHTML = '<span class="muted">Connect Atlas in Settings to see today\'s plan.</span>';
+  for (const id of ['progress-snapshot', 'intent-grid', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
+    const target = document.getElementById(id);
+    if (target) target.innerHTML = '<span class="muted">Connect Atlas in Settings to load data.</span>';
   }
+}
+
+async function loadDashboard() {
+  // Fast path: the server has ALREADY confirmed this browser is unauthenticated, so
+  // prompt to connect without a doomed round-trip. Server-authoritative, not a
+  // synchronous flag — isConnected() is false only after a real 401 / negative status.
+  if (!isConnected()) { renderDashboardConnectPrompt(); return; }
 
   // Fire intent-recommendation + progress/summary first — they feed the above-fold region.
   const [intentResult, summaryResult] = await Promise.allSettled([
@@ -775,6 +798,13 @@ async function loadDashboard() {
 
   const intentData = intentResult.status === 'fulfilled' ? (intentResult.value.data || {}) : null;
   const summaryData = summaryResult.status === 'fulfilled' ? (summaryResult.value.data || {}) : null;
+
+  // A real 401 on the optimistic attempt is the authoritative not-connected signal
+  // (see renderDashboardConnectPrompt) — a transport failure is not, so it falls through.
+  if (!intentData && intentResult.reason && intentResult.reason.status === 401) {
+    renderDashboardConnectPrompt();
+    return;
+  }
 
   if (intentData) lastIntentData = intentData;
 
@@ -6879,8 +6909,8 @@ async function loadBwHistory() {
   const box = document.getElementById('bw-history');
   const hint = document.getElementById('bw-history-hint');
   if (!isConnected()) {
-    if (glance) glance.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
-    if (box) box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    if (glance) glance.innerHTML = '<span class="muted">Connect Atlas in Settings.</span>';
+    if (box) box.innerHTML = '<span class="muted">Connect Atlas in Settings.</span>';
     return;
   }
   try {
@@ -6901,9 +6931,14 @@ async function loadBwHistory() {
     }
     if (hint) hint.textContent = entries.length ? `${entries.length} entries` : '';
   } catch (err) {
+    // A real 401 → prompt to connect; a transport failure → the network line; else the
+    // server's own message. Never a "set your key" prompt on a connection blip.
+    const msg = err && err.status === 401
+      ? 'Connect Atlas in Settings.'
+      : (friendlyTransportMessage(err) || `Could not load: ${err.message}`);
     if (glance) {
       glance.textContent = '';
-      glance.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
+      glance.appendChild(el('span', { class: 'muted', text: msg }));
     }
   }
 }
@@ -6911,7 +6946,7 @@ async function loadBwHistory() {
 async function loadPendingExercises() {
   const box = document.getElementById('pending-exercises');
   if (!isConnected()) {
-    box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
+    box.innerHTML = '<span class="muted">Connect Atlas in Settings.</span>';
     return;
   }
   try {
@@ -6932,7 +6967,10 @@ async function loadPendingExercises() {
     box.appendChild(el('p', { class: 'muted', text: `${items.length} exercise(s) need catalog entries. Add them to Exercise_Catalog with the canonical name and a variant matching what you type.` }));
   } catch (err) {
     box.textContent = '';
-    box.appendChild(el('span', { class: 'muted', text: `Could not load: ${err.message}` }));
+    const msg = err && err.status === 401
+      ? 'Connect Atlas in Settings.'
+      : (friendlyTransportMessage(err) || `Could not load: ${err.message}`);
+    box.appendChild(el('span', { class: 'muted', text: msg }));
   }
 }
 
@@ -7036,6 +7074,9 @@ restoreSessionSnapshot();
       }
     }
   } catch (_) { /* never block the app on session bootstrap */ }
+  // Make Settings agree with the server verdict on reopen (never a second, independent
+  // client truth). Runs after the status probe / migration have settled the auth state.
+  reflectSettingsAuth();
   loadDashboard();
   loadCoachPlan();
   loadWeeklyCoach();

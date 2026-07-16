@@ -4,45 +4,43 @@ import { setAtlasLastError } from './store.js';
 import { BUG_REPORT_RECENT_API_LIMIT, atlasRecentApiRequests, recordAtlasError, snapshotBugBody } from './bugReport.js';
 
 export const API_KEY_STORAGE = 'atlas_api_key';
-// Durable, cross-reload marker: once the owner has connected on this device (a
-// session cookie was issued), this NON-SECRET flag persists in localStorage. It is
-// what makes isConnected() true *synchronously on reopen* — the cookie is HttpOnly
-// and the session-status round-trip is async (and can be slow/aborted), so a flag
-// that survives the reload is the only thing that keeps a cookie-only owner from
-// being falsely told "Set your API key" on the first render after a reopen. The
-// cookie still does the real, server-enforced auth on every API call.
-export const CONNECTED_FLAG = 'atlas_connected';
 
-// Durable owner session (F04C). When the server has ATLAS_SESSION_SECRET set, the
-// browser authenticates via a signed HttpOnly `atlas_session` cookie instead of a
-// raw key in localStorage. These module-level flags cache the last known session
-// state (refreshed via /api/session/status) within a single page load.
-let sessionActive = false;
+// Server-authoritative auth state (F04C redesign). The client MUST NOT guess whether
+// its HttpOnly `atlas_session` cookie is valid — only the server can. There is NO
+// persistent localStorage "connected" flag: a flag is a client-side guess, and a guess
+// is exactly what produced split-brain auth (Settings said connected while Coach said
+// "set your key"). This single module value is the one truth both Settings and every
+// protected read derive from, and it is written EXCLUSIVELY by real server responses:
+//   • a protected api() call returns 2xx, or login succeeds        → 'authenticated'
+//   • a protected api() call returns 401, logout, or a sessions-enabled
+//     /api/session/status reporting authenticated:false            → 'unauthenticated'
+//   • /api/session/status reporting authenticated:true             → 'authenticated'
+// A transport failure, timeout, or aborted status request NEVER changes it — a cookie
+// not sent on one navigation, or a cold-start drop, is not proof of anything. It stays
+// at its last server-confirmed value, or 'unknown' before any round-trip.
+let serverAuthState = 'unknown'; // 'unknown' | 'authenticated' | 'unauthenticated'
 let sessionsEnabled = false;
 
-function markConnected() {
-  sessionActive = true;
-  try { localStorage.setItem(CONNECTED_FLAG, '1'); } catch (_) { /* storage disabled */ }
-}
-
-function markDisconnected() {
-  sessionActive = false;
-  try { localStorage.removeItem(CONNECTED_FLAG); } catch (_) { /* storage disabled */ }
-}
+function setAuthenticated() { serverAuthState = 'authenticated'; }
+function setUnauthenticated() { serverAuthState = 'unauthenticated'; }
 
 export function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
 }
 
-// "Connected" = this device has a live session (in-page flag), has connected before
-// (persistent flag surviving reopens), OR still holds a legacy key. The persistent
-// flag is essential: sessionActive resets to false on every reload and is only
-// re-established after an async status check, so without the flag the connection
-// gates flash "not connected" on reopen for a cookie-only owner.
+// The raw server-confirmed verdict, for surfaces (Settings) that must reflect the
+// three states distinctly rather than collapse to a boolean.
+export function authState() { return serverAuthState; }
+
+// OPTIMISTIC connection gate. Returns false ONLY when the server has actually told us
+// this browser is unauthenticated (a real 401, or a sessions-enabled status reporting
+// authenticated:false). 'unknown' (startup, before any round-trip) and 'authenticated'
+// both return true, so a cookie-only owner is NEVER pre-blocked on a synchronous guess:
+// the protected request carries the cookie and the SERVER decides. Surfaces that render
+// a "Connect Atlas" prompt do so from an actual 401 on the attempt (or this gate once
+// the server has already confirmed the negative), never from a client flag.
 export function isConnected() {
-  if (sessionActive) return true;
-  try { if (localStorage.getItem(CONNECTED_FLAG) === '1') return true; } catch (_) { /* storage disabled */ }
-  return Boolean(getApiKey());
+  return serverAuthState !== 'unauthenticated';
 }
 
 export function sessionsFeatureEnabled() {
@@ -52,8 +50,9 @@ export function sessionsFeatureEnabled() {
 // Ask the server whether durable sessions are enabled and whether this browser is
 // currently authenticated by its cookie. Best-effort; never throws.
 export async function refreshSessionStatus() {
-  // Bounded so a slow/cold server can never block app startup — on timeout the
-  // caller proceeds and isConnected() falls back to the localStorage key.
+  // Bounded so a slow/cold server can never block app startup — on timeout the caller
+  // proceeds and isConnected() stays optimistic ('unknown'), so the first protected
+  // response settles the truth rather than a client guess.
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), 4000) : null;
   try {
@@ -64,24 +63,29 @@ export async function refreshSessionStatus() {
     const json = await res.json().catch(() => null);
     const data = (json && json.data) || {};
     sessionsEnabled = Boolean(data.sessions_enabled);
-    // A status check only ever CONFIRMS a session (authenticated → set the durable
-    // flag); it must NEVER clear it. A not-authenticated result here can mean the
-    // browser simply did not present the cookie on this particular request (e.g. a
-    // Safari cold-reopen navigation), and wiping the flag on that would falsely log
-    // the owner out. Only an explicit logout clears the flag. The cookie remains
-    // the real credential enforced by the server on every actual API call.
-    if (data.authenticated) markConnected();
-    else sessionActive = false;
+    if (data.authenticated) {
+      setAuthenticated();
+    } else if (data.sessions_enabled) {
+      // Sessions ARE enabled and the server says this browser's cookie is not valid —
+      // a real, server-confirmed negative (morally a 401 for the reads).
+      setUnauthenticated();
+    }
+    // else: sessions disabled (no secret provisioned) — auth is via the legacy key
+    // header. Leave the state optimistic and let a protected api() call carrying that
+    // header confirm it, rather than guessing from a local key string.
     return data;
   } catch (_) {
+    // Timeout / abort / transport: leave serverAuthState untouched. A network hiccup on
+    // the status probe must never flip the owner to "disconnected".
     return null;
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
-// Exchange the owner key for a session cookie. On success the raw key is NOT
-// persisted by the caller. Returns { ok, status, json }.
+// Exchange the owner key for a session cookie. Login success is itself a server
+// confirmation, so it marks us authenticated; a rejected key (401) marks us
+// unauthenticated. Returns { ok, status, json }.
 export async function sessionLogin(key) {
   try {
     const res = await fetch('/api/session/login', {
@@ -91,7 +95,8 @@ export async function sessionLogin(key) {
       body: JSON.stringify({ api_key: key })
     });
     const json = await res.json().catch(() => null);
-    if (res.ok) markConnected();
+    if (res.ok) setAuthenticated();
+    else if (res.status === 401) setUnauthenticated();
     return { ok: res.ok, status: res.status, json };
   } catch (err) {
     return { ok: false, status: 0, json: null, error: err };
@@ -103,7 +108,7 @@ export async function sessionLogout() {
   try {
     await fetch('/api/session/logout', { method: 'POST', credentials: 'same-origin' });
   } catch (_) { /* best-effort — the cookie clears on the server response */ }
-  markDisconnected();
+  setUnauthenticated();
 }
 
 // Transport-level fetch failures surface as cryptic browser strings ("Load failed",
@@ -156,8 +161,17 @@ export async function api(path, options = {}) {
       err.body = json;
       throw err;
     }
+    // A 2xx from a protected endpoint is the server confirming this browser is
+    // authenticated (its cookie or legacy key was accepted). This is the authoritative
+    // signal that keeps Settings and every read agreeing without a client-side flag.
+    setAuthenticated();
     return json;
   } catch (err) {
+    // A real 401 is the ONLY error that flips us to unauthenticated (→ surfaces show
+    // "Connect Atlas in Settings"). A transport failure / abort / any other status must
+    // NOT — leaving the last server-confirmed state means a cold-start drop never logs
+    // the owner out on a false negative.
+    if (err && err.status === 401) setUnauthenticated();
     const lastError = {
       message: err && err.message ? err.message : String(err),
       status: err && err.status,

@@ -1,6 +1,6 @@
 'use strict';
 // Atlas frontend — progressView module (PR-09b mechanical extraction from app.js).
-import { api, isConnected } from './api.js';
+import { api, friendlyTransportMessage, isConnected } from './api.js';
 import { formatSetLoad } from './app.js';
 import { el, renderTable, svgLineChart } from './dom.js';
 
@@ -171,7 +171,7 @@ export async function loadProgressLiftList() {
   if (drillCard) drillCard.hidden = true;
 
   if (!isConnected()) {
-    resultBox.innerHTML = '<span class="muted">Set your API key in Settings to see your lifts.</span>';
+    resultBox.innerHTML = '<span class="muted">Connect Atlas in Settings to see your lifts.</span>';
     return;
   }
 
@@ -203,7 +203,10 @@ export async function loadProgressLiftList() {
     renderTrends(trendsFrame);
   } catch (err) {
     resultBox.textContent = '';
-    resultBox.appendChild(el('span', { class: 'muted', text: `Could not load lifts: ${err.message}` }));
+    const msg = err && err.status === 401
+      ? 'Connect Atlas in Settings to see your lifts.'
+      : (friendlyTransportMessage(err) || `Could not load lifts: ${err.message}`);
+    resultBox.appendChild(el('span', { class: 'muted', text: msg }));
   }
 }
 
