@@ -332,7 +332,7 @@ Autonomous within the existing parser/trust contract. Any grammar-contract chang
 
 ### F06 — Preserve user-edited preview rows
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16, proven via red-first E2E; shell v138). Reproduced the CLIENT-2 defect through the real conversational flow: sets log into the `sessionLog` buffer, each closeout rebuilds the editable preview table from that buffer (`buildRowsFromSessionLog`), and logging another set reparses via `rowsFromWorkoutInput` → `populateSetRows`, which wiped the edited table while the buffer still held the original value — so the next closeout silently reverted the correction (edited 230 → parser 225, confirmed red). Fix folds hand-edits back into the buffer BEFORE any rebuild: fields are flagged `data-user-edited` on input, and `reconcileSessionLogFromTable()` maps each table row to its buffer entry by exercise + per-exercise occurrence (the same numbering `buildRowsFromSessionLog` uses) and overwrites only edited fields. The preview→approve→write trust loop is untouched (the write still reads the DOM via `collectLogRows`, and the DOM now rebuilds from the corrected buffer, so Save writes exactly the final preview).
 
 **Finding:** `CLIENT-2`
 
@@ -359,7 +359,7 @@ Edit-then-add-set, edit-then-remove, duplicate/similar exercise names, reload-sa
 
 No owner gate unless the preview→approve→write authority model must change. Preserve the existing trust loop.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — client-only change in `src/app/app.js` (new `reconcileSessionLogFromTable()` folds hand-edits into `sessionLog` before a rebuild — called at the top of `rowsFromWorkoutInput` before the reparse wipe and in `emitSetLogged` before its wipe; `addSetRow` flags fields `data-user-edited` on input; defensive so the eval/source harnesses stay green) and `src/app/coach-conversation.js` (a coach-accepted `update_set` marks the changed fields user-edited too). Shell bumped v137→v138 (SW cache + `ATLAS_SHELL_BUILD` + wiring/unit version pins). Tests: red-first `tests/e2e/preview-edit-preserve.spec.js` drives the real flow (log → done → edit → log → done) and proves the edited weight/reps survive and reach the write (edit 230 vs parser 225 — fails before, passes after), plus a middle-row/duplicate-name identity case. Full node suite 5519 pass; full E2E suite 65 pass; lint 0 errors. The preview→approve→write trust loop and write payload source (`collectLogRows`) are unchanged.
 
 ### F07 — Ignore stale dry-run/preview responses
 
