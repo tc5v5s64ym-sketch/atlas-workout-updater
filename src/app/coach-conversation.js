@@ -18,7 +18,7 @@
  * { note, effort_note, reroute } — `note` is the prose; `effort_note` and
  * `reroute` are the deterministic, engine-backed set-effort extras (PR 477).
  *
- * Reuses app.js globals (top-level fns): api, getApiKey, fetchReaction,
+ * Reuses app.js globals (top-level fns): api, isConnected, fetchReaction,
  * previewSetsForLift, normalizePlanExercise.
  * Reuses nav.js: window.atlasChipAnswerLast.
  */
@@ -833,7 +833,7 @@ import * as sessionQuestion from './sessionQuestion.js';
   }
 
   async function getLlmPlanMessage(data) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
     const facts = buildPlanFacts(data);
     if (!facts.label && !facts.why_today.length) return null; // nothing to explain (new user)
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
@@ -903,7 +903,7 @@ import * as sessionQuestion from './sessionQuestion.js';
     if (!handle) return;
     const { body } = handle;
 
-    if (typeof getApiKey === 'function' && !getApiKey()) {
+    if (typeof isConnected === 'function' && !isConnected()) {
       await typeOut(body, "Set your API key in Settings and I'll suggest today's session.");
       return;
     }
@@ -1050,7 +1050,7 @@ import * as sessionQuestion from './sessionQuestion.js';
   // Returns the full /api/coach/message data object ({ message, effort_note,
   // reroute }) or null — the caller pulls the prose and the engine extras from it.
   async function getLlmCoachingMessage(facts) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return null;
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return null;
     const timeout = new Promise(resolve => setTimeout(() => resolve(null), COACH_LLM_TIMEOUT_MS));
     const request = api('/api/coach/message', {
       method: 'POST',
@@ -1824,7 +1824,7 @@ import * as sessionQuestion from './sessionQuestion.js';
   // `message`, so the caller must not have appended it to chatTurns yet (else the
   // backend would see the current turn twice).
   async function getChatReply(message, history, context) {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null };
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return { message: null, propose_edit: null, propose_note: null, propose_plan_edit: null };
 
     // P0 — Active Session Context Integrity: during an active workout, short
     // workout-state questions ("RIR?", "reps?", "how much", "what next") must be

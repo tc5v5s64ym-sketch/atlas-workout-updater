@@ -19,6 +19,7 @@ const appPublicGlobals = {
   getActiveIntentId: 'readonly',
   getActivePlannedSession: 'readonly',
   getApiKey: 'readonly',
+  isConnected: 'readonly',
   getPlanTodayByName: 'readonly',
   getSessionCompleted: 'readonly',
   invalidatePreview: 'readonly',

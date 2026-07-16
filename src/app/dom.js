@@ -1,6 +1,6 @@
 'use strict';
 // Atlas frontend — dom module (PR-09b mechanical extraction from app.js).
-import { api, getApiKey } from './api.js';
+import { api, isConnected } from './api.js';
 
 export function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
@@ -168,7 +168,7 @@ export function svgBarChart(entries, { width = 420, barHeight = 20, gap = 6, col
 }
 
 export async function loadExerciseDatalist() {
-  if (!getApiKey()) return;
+  if (!isConnected()) return;
   try {
     const res = await api('/api/catalog/exercises');
     const exercises = (res.data?.exercises || []);

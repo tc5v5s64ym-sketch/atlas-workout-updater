@@ -59,3 +59,27 @@ test('the Settings UI connects/disconnects and does not advertise permanent key 
   assert.doesNotMatch(html, /stored only in this browser \(localStorage\) and sent as/);
   assert.match(html, /session cookie/i);
 });
+
+// F04C live-validation regression (reload/reopen showed "Set your API key" even
+// though the session cookie was valid): every client module that decides "is the
+// owner connected?" must consult isConnected() — a durable cookie OR a legacy key.
+// After the cookie migration getApiKey() is empty, so a `!getApiKey()` gate falsely
+// prompts for a key on a fully-authenticated session. This reproduces that failure.
+test('F04C live-fix: no client module gates connection on the raw key alone', () => {
+  const dir = path.join(ROOT, 'src', 'app');
+  const offenders = [];
+  for (const f of fs.readdirSync(dir).filter(name => name.endsWith('.js'))) {
+    const count = (fs.readFileSync(path.join(dir, f), 'utf8').match(/!\s*getApiKey\(\)/g) || []).length;
+    if (count) offenders.push(`${f}:${count}`);
+  }
+  assert.deepEqual(offenders, [], `these modules still gate on the raw key (empty after cookie migration → a false "Set your API key" prompt): ${offenders.join(', ')}`);
+});
+
+test('F04C live-fix: the coach/plan/progress/drawer gates consult isConnected', () => {
+  for (const rel of ['src/app/coach-conversation.js', 'src/app/progressView.js', 'src/app/dom.js', 'src/app/drawer.js']) {
+    assert.match(read(rel), /!isConnected\(\)/, `${rel} must gate connection on isConnected()`);
+  }
+  // isConnected is exposed as a global for the browser-global modules (drawer,
+  // coach-conversation) that reuse app.js globals rather than importing.
+  assert.match(read('src/app/app.js'), /window\.isConnected = isConnected/);
+});
