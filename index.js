@@ -2110,7 +2110,17 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
       sessionId = formFields.session_id;
     } else {
       const priorRecord = normalizeWriteId(writeId) ? peekWrite(writeId) : null;
-      const priorMintedSessionId = priorRecord && priorRecord.metadata && priorRecord.metadata.session_id;
+      // Only reuse the minted id for a NON-completed prior attempt (failed or a
+      // stale/in-progress reservation that beginWrite will downgrade) — that is the
+      // retry path that actually writes, where reuse keeps the dedupes effective. A
+      // COMPLETED record must instead fall through to beginWrite's idempotency
+      // replay (200 skipped_duplicate); reusing its id here would trip the
+      // duplicate-session hard-stop below and 409 a successful, already-saved
+      // workout on a lost-response retry.
+      const priorMintedSessionId = priorRecord
+        && priorRecord.status !== 'completed'
+        && priorRecord.metadata
+        && priorRecord.metadata.session_id;
       if (priorMintedSessionId) {
         sessionId = priorMintedSessionId;
         sessionIdReused = true;
