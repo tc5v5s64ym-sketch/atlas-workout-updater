@@ -89,6 +89,7 @@ const { recognizeModalityInput } = require('./services/multiModalityParser');
 const { toModalityLogRow } = require('./services/modalityLogRow');
 const { resolveExercise } = require('./services/exerciseResolver');
 const { applyUnresolvedLiftGate } = require('./services/unresolvedLiftGate');
+const { applyFullConsumptionGate } = require('./services/fullConsumptionGate');
 const registerReadRoutes = require('./routes/reads');
 const registerCoachOpsRoutes = require('./routes/coachOps');
 const registerSessionPlanRoutes = require('./routes/sessionPlans');
@@ -1929,6 +1930,12 @@ app.post('/api/parse-workout-text', (req, res) => {
     // field, schema, or the parser grammar (resolveExercise is injected so the
     // KB→parser decoupling holds and parser goldens stay untouched).
     responseBody.parsed = applyUnresolvedLiftGate(responseBody.parsed, resolveExercise);
+    // F05 full-consumption / ambiguous-@ gate (PARSE-4, PARSE-5): after the parser
+    // resolved the line, refuse-and-ask instead of silently dropping a mixed-notation
+    // set group or logging a 2 lb "@N" barbell. Read-only, needs the ORIGINAL text
+    // (parsed has already discarded the unconsumed tokens); only the dry-run parse
+    // shape changes — never a write, proof field, schema, or the parser grammar.
+    responseBody.parsed = applyFullConsumptionGate(responseBody.parsed, req.body && req.body.text);
     // Unify exercise identity: the parser's internal catalog is narrower than the
     // KB, so a real lift (e.g. Cable Fly) is flagged `unknown_exercise` even though
     // the KB recognizes it. Attach the KB identity so the client's "didn't catch
