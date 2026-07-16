@@ -1,0 +1,606 @@
+# Atlas V1 Execution Plan
+
+> **Status:** CANONICAL EXECUTION AUTHORITY
+> **Owner adopted:** 2026-07-15
+> **Current active milestone:** M1 — close Soul honestly with LT-010 production evidence
+> **Rule:** Atlas has one execution plan. This document selects and sequences work until V1 is declared and the stabilization period ends.
+
+## 1. Purpose
+
+This document replaces the former active-roadmap, Soul, Soul-readiness, Post-Soul, remediation, and historical product-plan queues as execution authority.
+
+Atlas is no longer choosing among overlapping plans. The governed path is:
+
+> **Close Soul → harden trust seams → prove the whole product → complete five clean live sessions → declare V1 → stabilize → simplify the UI from observed use.**
+
+The repository, not a Claude conversation, remembers campaign state. A fresh implementation session reads this file, selects the first eligible unfinished card, verifies current state, and continues from current `main`.
+
+## 2. Authority and document roles
+
+Read in this order for routine work:
+
+1. `CLAUDE.md` — operating, safety, branch, review, and merge rules.
+2. `docs/ATLAS_V1_EXECUTION_PLAN.md` — the sole work-selection and sequencing authority.
+3. `docs/DECISION_KERNEL.md` — durable product and trust principles.
+4. `BACKLOG.md` — intake/deferred ledger and supporting finding detail; **not a competing queue** while this plan has eligible work.
+5. Relevant specs, invariants, tests, and evidence ledgers.
+
+The following remain separate because they are not execution plans:
+
+- `docs/ATLAS_PRODUCT_VISION.md` — product north star.
+- `docs/CONSTITUTION.md` and `docs/INVARIANTS.md` — non-negotiable rules.
+- `docs/ARCHITECTURE.md` — current system boundaries.
+- `docs/TEST_QUEUE.md` — owner/live evidence ledger.
+- `docs/ONE_BRAIN_PROMOTION_CRITERIA.md` — reusable evidence standard for Brain promotion.
+- `docs/BUG_TRIAGE_LEDGER.md` — Bug_Reports done/open record.
+- Narrow design/spec/research docs — consulted only when the active card touches their surface.
+
+If another document appears to select or sequence work, this plan wins and the conflicting document must be corrected in the same focused governance PR.
+
+## 3. Execution contract
+
+Claude works this plan as a durable campaign controller.
+
+For every implementation card:
+
+1. Refresh and verify current `main` and deployed version where applicable.
+2. Run the Current-State Verification Gate and record exactly one verdict:
+   `STILL BROKEN`, `ALREADY FIXED`, `PARTIALLY FIXED`, `FIXED BUT UNTESTED`, `STALE / SUPERSEDED`, or `NEEDS OWNER APP-TEST`.
+3. If already fixed, do not manufacture code. Add the missing proof/status only.
+4. Create one fresh `claude/<concern>` or `agent/<concern>` branch from current `main`.
+5. Implement one concern only, with the smallest safe diff and live-path or closest-integration tests.
+6. Run deterministic GitHub hard gates; address Codex advisory findings that are real and in scope.
+7. Merge the exact passing head under Claude's standing authority unless a genuine owner-reserved data-safety category is involved.
+8. Update this card's status and merged PR/commit as part of the card's PR when practical; otherwise make the smallest immediate status-only follow-up.
+9. Refresh `main` and select the next eligible unfinished card.
+
+### Stop conditions
+
+Stop only for:
+
+- a real production write requiring explicit authorization;
+- schema, migration, deletion, credentials, or security-sensitive infrastructure;
+- a Constitution/Invariant amendment;
+- genuine owner-only gym/device evidence;
+- the explicit One-Brain promotion decision;
+- a truly non-derivable product conflict.
+
+Do **not** stop merely because a PR is merge-ready, a session is getting long, or the next card is in a different milestone. Repository state is the handoff.
+
+## 4. Campaign status
+
+| Milestone | Goal | Status | Exit condition |
+|---|---|---|---|
+| **M0** | Consolidate execution authority | ✅ COMPLETE in the installation PR | One canonical plan; old plan bodies retired; governance points here |
+| **M1** | Close Soul honestly | ▶ ACTIVE | LT-010 required Part 1 PASS with profanity OFF; S5 and Soul recorded complete |
+| **M2** | Close remaining silent-correctness risks | QUEUED | F02–F10 complete and no open P0/P1 silent-trust finding in these seams |
+| **M3** | Prove cross-seam behavior automatically | QUEUED | F11 proving packs green in deterministic CI |
+| **M4** | Prove Atlas in real use | BLOCKED on M3 | Five consecutive clean live sessions recorded |
+| **M5** | Declare and stabilize V1 | BLOCKED on M4 | V1 declaration merged; minimum two-week defect-only period completed |
+| **P-A** | One-Brain promotion evidence | PARALLEL / OWNER-RESERVED | Criteria met, human review complete, explicit owner decision recorded |
+| **M6** | UI simplification from evidence | FUTURE / BLOCKED on M5 | Separate owner-approved plan based on observed usage, not speculation |
+
+## 5. Current-state summary
+
+At plan installation:
+
+- The core Atlas experience exists: conversation-first logging, preview-before-write, Google Sheets as the permanent record, session state, recommendations, coaching voice, Flight Recorder, and shadow telemetry.
+- Soul criteria S1, S2, S3, S4, S6, and S7 are complete.
+- The remaining Soul gate is **S5 / LT-010 required Part 1**: production evidence that routine activity stays routine and genuine engine-confirmed new ground earns elevated/max voice, with `ATLAS_COACH_PROFANITY` OFF.
+- PR #1007 added bounded server-owned `decision_summary_json` to Flight Recorder for `/api/coach/message`.
+- PR #1011 fixed the visible set/block response so signal-carrying engine modes are not collapsed into the generic acknowledgment.
+- Therefore M1 begins as an **evidence/closeout task, not another Soul build**, unless the live re-validation proves a remaining defect.
+- One-Brain GATE A remains a parallel evidence clock and never promotes automatically.
+- Atlas stays Sheets-primary for V1. No Supabase/Postgres migration is part of this campaign.
+
+## 6. Milestone M1 — Close Soul
+
+### F01 — LT-010 production re-validation and Soul closeout
+
+**Status:** ACTIVE
+
+**Objective**
+
+Prove the final required Soul behavior on deployed current `main`, record the evidence, and close Soul without adding more personality work.
+
+**Current-state verification**
+
+1. Confirm `main` contains PR #1007 and PR #1011.
+2. Confirm the deployed `/version` matches current `main` or a commit containing both fixes.
+3. Confirm `ATLAS_COACH_PROFANITY` is OFF.
+4. Inspect `docs/TEST_QUEUE.md` LT-010 before running anything.
+
+**Required evidence — LT-010 Part 1 only**
+
+- **Routine case:** log an ordinary on-target set/block. Visible reply stays brief and matter-of-fact. Flight Recorder records routine/silent-or-neutral mode and routine register.
+- **Earned case:** during genuine owner training, log a real engine-confirmed new-ground set. Visible reply reflects the earned mode; Flight Recorder records the corresponding celebrate/elevated-or-max decision and bounded facts.
+- **Forgery/control:** a typed claim or client-shaped fake PR does not manufacture new-ground telemetry or elevated voice.
+- **Profanity:** remains OFF. The optional profanity experiment is not required and must not be run without a separate explicit owner decision.
+
+**Allowed implementation**
+
+None unless the production evidence fails. If it fails, file the exact mismatch, reproduce through the closest deterministic route test, and fix only that seam.
+
+**Acceptance criteria**
+
+- Required LT-010 Part 1 is marked PASS in `docs/TEST_QUEUE.md` with deployed commit, Flight Recorder session/reference, routine evidence, earned evidence, and owner verdict.
+- This plan records F01 complete and M1 complete.
+- No optional profanity activation, tone-dial work, drift challenge, Moments work, or new Soul feature is bundled.
+
+**Owner gate**
+
+The genuine new-ground event must come from real owner training. Claude may perform read-only deploy/recorder checks and analyze evidence, but must not fabricate the qualifying workout.
+
+**Completion record**
+
+- PR: —
+- Commit: —
+- Evidence: —
+
+## 7. Milestone M2 — Trust-seam hardening
+
+Run F02 through F10 in order. Each card is one PR unless the Current-State Verification Gate proves the concern already shipped or must be split for safety.
+
+### F02 — Closeout write-proof parity
+
+**Status:** QUEUED
+
+**Finding:** `WRITE-1`
+
+**Objective**
+
+Make `/api/complete-workout` return and verify the same exact append proof expected from Atlas's trusted write paths instead of discarding Sheets append responses.
+
+**Likely surfaces**
+
+`index.js` complete-workout route, Sheets append helpers, write-proof tests, Effort/Log closeout integration tests.
+
+**Acceptance criteria**
+
+- Every successful closeout write reports exact authoritative appended ranges/counts for each affected tab.
+- A success response cannot be emitted when proof is absent or inconsistent.
+- Dry-run proof semantics remain unchanged.
+- No schema change.
+
+**Required tests**
+
+Red-first route/integration coverage for exact proof, partial append failure, empty/malformed append response, and dry-run non-write behavior.
+
+**Owner gate**
+
+Code/tests are autonomous. Any real production canary write requires explicit authorization.
+
+**Completion record:** PR — · Commit —
+
+### F03 — Interrupted-closeout idempotency
+
+**Status:** QUEUED
+
+**Findings:** `WRITE-2`, `WRITE-3`
+
+**Objective**
+
+A closeout interrupted before the client receives success must be safe to retry: no duplicate write and no 24-hour wedge caused by a stale in-progress reservation.
+
+**Likely surfaces**
+
+Idempotency/reservation services, complete-workout orchestration, restart/retry integration tests.
+
+**Acceptance criteria**
+
+- Replay after a confirmed completed write returns the original result without appending again.
+- A stale/incomplete reservation is recoverable through deterministic reconciliation.
+- Concurrent retries produce at most one real append.
+- Failure states are explicit; no false save claim.
+
+**Required tests**
+
+Interrupted request, process-restart rehydration, concurrent retry, stale reservation, and completed replay.
+
+**Owner gate**
+
+No production write without authorization.
+
+**Completion record:** PR — · Commit —
+
+### F04 — Ambiguous Google Sheets append recovery
+
+**Status:** QUEUED
+
+**Finding:** `WRITE-5`
+
+**Objective**
+
+Prevent a retry after an ambiguous Sheets `values.append` failure (for example a 503 after the remote append may have succeeded) from duplicating rows.
+
+**Likely surfaces**
+
+`services/sheets.js`, idempotent write orchestration, append-response/read-back helpers, unit/integration fixtures.
+
+**Acceptance criteria**
+
+- Ambiguous append outcomes enter reconciliation, not blind retry.
+- Reconciliation can prove already-written vs not-written using deterministic identity/proof.
+- At-most-once behavior is pinned by tests.
+- Normal unambiguous failures remain retryable where safe.
+
+**Required tests**
+
+503-before-write, 503-after-write, timeout/unknown outcome, matching read-back, non-matching read-back.
+
+**Owner gate**
+
+No production fault injection or write canary without authorization.
+
+**Completion record:** PR — · Commit —
+
+### F05 — Parser full-consumption and `@N` ambiguity guard
+
+**Status:** QUEUED
+
+**Findings:** `PARSE-4`, `PARSE-5`
+
+**Objective**
+
+Atlas asks instead of silently accepting a partially consumed set expression or guessing whether `@N` means weight or RIR in the ambiguous low-number range.
+
+**Implementation direction**
+
+Use the route-orchestration refusal/clarification pattern established by `services/unresolvedLiftGate.js`. Do not add an over-broad parser-level refusal that rejects Exercise-KB-known lifts, and do not rewrite stable parser goldens unnecessarily.
+
+**Acceptance criteria**
+
+- Set-shaped tokens left unconsumed cause a bounded clarification response; no preview/write is produced.
+- Ambiguous `@N` inputs in the unsafe range ask for clarification.
+- Unambiguous weight, reps/RIR, and established slash notation remain unchanged.
+- `225 5/2` semantics remain fixed.
+
+**Required tests**
+
+Route-level ambiguity fixtures plus regression coverage for valid terse notation, aliases, multiple sets, and no invented rows.
+
+**Owner gate**
+
+Autonomous within the existing parser/trust contract. Any grammar-contract change beyond ambiguity refusal is owner-reserved.
+
+**Completion record:** PR — · Commit —
+
+### F06 — Preserve user-edited preview rows
+
+**Status:** QUEUED
+
+**Finding:** `CLIENT-2`
+
+**Objective**
+
+A user correction made in the preview remains authoritative when another set/message updates the pending workout before Save.
+
+**Likely surfaces**
+
+`src/app/app.js`, preview/pending-write state, row-identity helpers, frontend integration/E2E tests.
+
+**Acceptance criteria**
+
+- Edited row fields survive an incremental reparse/append of additional sets.
+- New engine rows are merged without overwriting user-owned edits.
+- Conflicting identity is handled explicitly rather than by position-only replacement.
+- Save writes exactly what the final preview displays.
+
+**Required tests**
+
+Edit-then-add-set, edit-then-remove, duplicate/similar exercise names, reload-safe state if applicable, final payload equality.
+
+**Owner gate**
+
+No owner gate unless the preview→approve→write authority model must change. Preserve the existing trust loop.
+
+**Completion record:** PR — · Commit —
+
+### F07 — Ignore stale dry-run/preview responses
+
+**Status:** QUEUED
+
+**Finding:** `CLIENT-3`
+
+**Objective**
+
+An older slow preview response must never overwrite a newer user request or newer pending write.
+
+**Likely surfaces**
+
+`src/app/app.js`, request/version identity, pending-write reducer/state, E2E race tests.
+
+**Acceptance criteria**
+
+- Every preview request has a monotonic/request identity.
+- Only the latest eligible response may update pending preview state.
+- Older success or error responses are ignored safely.
+- Approval binds to the currently visible preview identity.
+
+**Required tests**
+
+Out-of-order success/success, success/error, error/success, approve-after-race, and cancellation/reload where applicable.
+
+**Owner gate**
+
+Autonomous if approval semantics remain unchanged.
+
+**Completion record:** PR — · Commit —
+
+### F08 — Canonical screenshot session date
+
+**Status:** QUEUED
+
+**Finding:** `CLIENT-4`
+
+**Objective**
+
+A screenshot-imported closeout uses one canonical session date across Log and Effort rather than mixing today's date with the screenshot's date.
+
+**Likely surfaces**
+
+Screenshot parse/preview state, complete-workout payload construction, date validation, closeout integration tests.
+
+**Acceptance criteria**
+
+- One reviewed canonical session date is shown before approval.
+- Log and Effort rows use that same date.
+- Calendar-invalid or ambiguous dates ask for correction.
+- Ordinary same-day manual logging is unchanged.
+
+**Required tests**
+
+Prior-day screenshot, month/year boundary, timezone edge, invalid date, manual non-screenshot closeout.
+
+**Owner gate**
+
+Autonomous within existing date semantics; no historical rewrite.
+
+**Completion record:** PR — · Commit —
+
+### F09 — Current-state coach narration
+
+**Status:** QUEUED
+
+**Findings:** `SESS-1`, `SESS-3`
+
+**Objective**
+
+Coach narration always describes the current store-owned session after plan edits/reopen, and closeout narration can fire correctly after a session is reopened.
+
+**Likely surfaces**
+
+`src/app/coach-conversation.js`, store selectors, closeout announcement state, session-reopen tests.
+
+**Acceptance criteria**
+
+- Announced next/remaining work is derived from the canonical current store, not stale local reconstruction.
+- Reopening or mutating a completed plan resets the closeout-announced guard appropriately.
+- Coach text, pin, recap, and visible plan agree after reorder/skip/substitute/add/reopen.
+
+**Required tests**
+
+Plan mutation followed by narration, closeout→reopen→closeout, reload/resume, and no duplicate announcement without a state change.
+
+**Owner gate**
+
+Autonomous because the behavior is derivable from current-state truth.
+
+**Completion record:** PR — · Commit —
+
+### F10 — Authoritative planned-slot completion identity
+
+**Status:** QUEUED
+
+**Findings:** PR-24 slice-3 divergence, `SESS-4`, `SESS-5`, Workout Sheet duplicate-name identity
+
+**Binding owner decision**
+
+A recognized substituted exercise or variant satisfies the original planned slot everywhere: recap, next-up, pin, handoff, closeout, and Workout Sheet. Do not re-ask this product decision.
+
+**Objective**
+
+Create one canonical, ambiguity-safe planned-slot completion selector and route every consuming surface through it.
+
+**Likely surfaces**
+
+Canonical session selectors/store, completion identity resolution, substitution outcome folding, recap/remaining helpers, `src/app/workoutSheet.js`, closeout/handoff tests.
+
+**Acceptance criteria**
+
+- One logged substituted/recognized variant completes exactly the intended original `plan_item_id`.
+- Duplicate exercise names remain slot-distinct; one log cannot complete every same-named slot.
+- Exact identity outranks substring; ambiguous substring matches refuse/leave unresolved rather than guessing.
+- Recap, next-up, pin, handoff, closeout, and Workout Sheet return the same status from the same selector.
+- Existing Session_Plans `plan_item_id` semantics remain authoritative.
+
+**Required tests**
+
+Substituted variant, alias, duplicate planned names, substring collision, out-of-order completion, skip then log, reload/fold, and cross-surface parity.
+
+**Owner gate**
+
+The semantics are already owner-approved. Implementation is autonomous unless it requires a schema migration, which is not expected and must not be introduced casually.
+
+**Completion record:** PR — · Commit —
+
+## 8. Milestone M3 — Cross-seam proving packs
+
+### F11 — Deterministic V1 proving packs
+
+**Status:** QUEUED
+
+**Objective**
+
+Prove the repaired seams together using the existing simulation, Flight Recorder replay, and Playwright infrastructure. Do not create a fourth test framework.
+
+**Required packs**
+
+- **SIM-DALE:** normal owner-like three-day training language, substitutions, edits, closeout, and proof.
+- **TERSE:** compact gym notation and fragmented updates.
+- **RAMBLER:** long dictation, corrections, multiple intents, and late clarification.
+- **CHAOS extension:** every repaired F02–F10 historical failure replayed across its nearest real seam.
+
+**Acceptance criteria**
+
+- Tier-1 deterministic packs run in normal CI and are blocking.
+- LLM wording scans remain advisory/report-only; no nondeterministic model judge becomes a hard gate.
+- Every F02–F10 fix has at least one cross-seam fixture in addition to its focused regression.
+- Failures identify the exact stage and preserve replay artifacts without secrets or production data.
+
+**Likely surfaces**
+
+`scripts/sim/`, `test/fixtures/replays/`, Playwright suites, CI workflow/config only as necessary.
+
+**Owner gate**
+
+None for synthetic/dry-run packs. Real production writes remain prohibited without authorization.
+
+**Completion record:** PR — · Commit —
+
+## 9. Milestone M4 — Five-session V1 proving run
+
+Begins only after F11 is deployed. Feature development pauses. The run uses five owner-live cards created in `docs/TEST_QUEUE.md` when the run starts.
+
+### Clean-session definition
+
+A clean session has:
+
+- no fabricated, dropped, or misinterpreted set;
+- correct lift identity, weight, reps, RIR, units, and date;
+- no false save claim, duplicate write, or missing exact proof;
+- no stale preview or stale coach narration;
+- correct remaining/completed session state;
+- factual, calibrated naturally occurring coach reactions;
+- no white screen or broken transition;
+- owner review within 24 hours.
+
+A material defect resets the consecutive-clean count to zero. Evidence → replay → fix → deploy → restart. Three resets trigger a focused root-cause review before another attempt.
+
+### Session A — Normal workout + write proof
+
+Planned workout; edit at least one preview row; add more work; save; verify exact ranges/counts and bound Undo identity.
+
+### Session B — Screenshot closeout
+
+Import a screenshot with a real session date; verify Log and Effort date equality; save; verify proof; exercise safe Undo/resave if desired.
+
+### Session C — Substitution + plan mutation
+
+Substitute one exercise, reorder or skip another, add an off-plan exercise; verify recap/next-up/pin/handoff/closeout/Workout Sheet agree.
+
+### Session D — Interrupted + resumed
+
+Reload/resume; exercise retry-safe closeout state; intentionally race dry-run/preview responses; verify an older response cannot overwrite the latest.
+
+### Session E — Ambiguous + natural language
+
+Use terse notation, long dictation, and one intentionally ambiguous set format; Atlas must ask instead of guess, then complete normally.
+
+### Evidence per session
+
+Date/session ID · app version/deployed commit · scenario coverage · Flight Recorder reference · writes and exact proof ranges · observed coach behavior · defects · owner verdict · current clean count.
+
+## 10. Milestone M5 — V1 declaration and stabilization
+
+### F12 — Declare Atlas V1
+
+**Status:** BLOCKED on five clean sessions
+
+**Acceptance criteria**
+
+- F01–F11 complete.
+- No open P0/P1 finding can silently damage logging, preview approval, session truth, or write verification.
+- Full automated suite and proving packs green.
+- Five consecutive clean sessions recorded.
+- Release record captures deployed commit, evidence links, known non-blocking limitations, rollback point, and the owner declaration.
+
+**Completion record:** PR — · Commit —
+
+### Two-week defect-only stabilization
+
+For at least two weeks after F12:
+
+- use Atlas normally;
+- fix only demonstrated defects with a reproduction;
+- no new capability roadmap;
+- no database/storage migration;
+- no frontend-framework rewrite;
+- no public/multi-user expansion;
+- no voice re-ratification from one awkward sentence;
+- no speculative cleanup PRs.
+
+Exit review:
+
+- Did Atlas remain trustworthy?
+- Which surfaces were actually used or ignored?
+- What defects recurred?
+- Is the next work UI simplification, deeper personal coaching, or a separately authorized public-product phase?
+
+## 11. Parallel lane P-A — One-Brain promotion
+
+This lane accumulates evidence while M1–M5 proceed. It does not block Soul closeout, trust hardening, proving packs, or the V1 proving run unless a specific card explicitly depends on promotion.
+
+The authoritative evidence standard remains `docs/ONE_BRAIN_PROMOTION_CRITERIA.md`.
+
+Required before any promotion:
+
+- varied genuine athlete activity across multiple sessions/days/lifts;
+- production scorecard;
+- zero unsafe recommendations and zero unresolved orchestrator errors;
+- human safety/quality review of representative and divergent cases;
+- explicit owner decision per decision type.
+
+Crossing a numerical threshold never flips a flag automatically. Promotion, burn-in, and eventual legacy-lane deletion remain separate owner-governed work.
+
+## 12. Explicitly outside this campaign
+
+Do not add these while this plan is active unless Dale explicitly changes direction:
+
+- Supabase/Postgres/SQLite or any second permanent store;
+- multi-user/public-product architecture;
+- nutrition tracking;
+- broad wearable-vendor expansion;
+- native mobile app;
+- frontend-framework rewrite;
+- another agent/orchestrator platform;
+- new coaching-intelligence roadmap;
+- profanity activation;
+- speculative UI redesign;
+- broad cleanup unrelated to a demonstrated trust/product problem.
+
+## 13. UI work after stabilization
+
+The current UI is allowed to be imperfect during finishing. After M5, run a separate evidence-based simplification review using actual owner behavior:
+
+- what Dale uses every session;
+- what he never opens;
+- where the workout flow creates friction;
+- which controls belong in conversation, the Workout Sheet, or the drawer;
+- what can be removed rather than redesigned.
+
+No UI plan is pre-written here. The point is to finish and observe before decorating.
+
+## 14. Fresh-session launcher
+
+A new Claude Code session can begin with:
+
+> Read `CLAUDE.md` and `docs/ATLAS_V1_EXECUTION_PLAN.md`. Execute the first eligible unfinished card. Run the Current-State Verification Gate before editing, use one concern per PR, merge the exact passing head under standing authority, update the card's completion record, refresh `main`, and continue. Stop only for an explicit owner-reserved gate.
+
+Before implementation, report only:
+
+1. active milestone;
+2. next eligible card;
+3. current-state verdict;
+4. whether code is actually required;
+5. any genuine owner gate.
+
+## 15. Plan maintenance
+
+- This file is updated only for real campaign state, a proven stale premise, or a necessary split of one card into safer one-concern PRs.
+- Do not add a second roadmap, phase plan, campaign controller, fix-it document, or session-specific master prompt.
+- Narrow specs may be added when a card genuinely requires design, but the card remains the sequencing authority.
+- New discoveries go to `BACKLOG.md`; they enter this plan only through an explicit owner-approved campaign change.
+- Git history is the archive. Completed-plan prose does not need to remain in the live documentation tree.
+
+> **Finish. Prove. Declare. Then make it pretty.**
