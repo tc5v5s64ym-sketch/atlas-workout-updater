@@ -95,13 +95,22 @@ function loadFromDisk(now, ttlMs) {
         ...record,
         status: 'failed',
         token: null,
+        rehydrated: false,
         failed_at_ms: now,
         failed_at: new Date(now).toISOString()
       });
       continue;
     }
 
-    writeRecords.set(record.write_id, record);
+    // WRITE-3: tag a still-fresh in_progress record rehydrated from a prior process
+    // so beginWrite can downgrade it once it ages past the staleness window. The
+    // load-time downgrade above runs only once; an EARLY rehydration (record still
+    // within the window when the file was read) would otherwise keep the write_id
+    // wedged as a duplicate until the 24h TTL, because the downgrade never re-runs.
+    writeRecords.set(
+      record.write_id,
+      record.status === 'in_progress' ? { ...record, rehydrated: true } : record
+    );
   }
 }
 
@@ -146,7 +155,26 @@ function beginWrite(writeId, metadata = {}, options = {}) {
   ensureLoaded(now, ttlMs);
   pruneExpired(now, ttlMs);
 
-  const existing = writeRecords.get(normalizedWriteId);
+  let existing = writeRecords.get(normalizedWriteId);
+  // WRITE-3: an in_progress record rehydrated from a prior (crashed) process that
+  // has now aged past the staleness window is ABANDONED — downgrade it here too,
+  // not only at disk load. Without this, an early post-crash rehydration would keep
+  // the write_id wedged as a duplicate until the 24h TTL, because the load-time
+  // downgrade never re-runs in this process. Only rehydrated records are eligible:
+  // an in_process in_progress record may still be running, so it stays a duplicate.
+  if (existing && existing.status === 'in_progress' && existing.rehydrated === true
+      && (now - existing.created_at_ms) > STALE_IN_PROGRESS_MS) {
+    existing = {
+      ...existing,
+      status: 'failed',
+      token: null,
+      rehydrated: false,
+      failed_at_ms: now,
+      failed_at: new Date(now).toISOString()
+    };
+    writeRecords.set(normalizedWriteId, existing);
+    persist();
+  }
   // A 'failed' record is retryable: a prior attempt released without committing,
   // so fall through and start a clean attempt. Only 'in_progress' / 'completed'
   // records are genuine duplicates that must be refused or replayed.
@@ -232,6 +260,28 @@ function failWrite(writeId, token) {
   return true;
 }
 
+// WRITE-2: read-only lookup of the current record for a write_id. The
+// complete-workout route uses it to recover a SERVER-MINTED session id stamped on a
+// prior attempt so a retry reuses that id instead of minting a fresh one — a fresh
+// id would slip past the composite-key (Log) and duplicate-session (Effort) dedupes
+// and double-write the whole workout. Rehydrates from disk so a crashed prior
+// attempt is visible; never mutates the store (no prune, no downgrade).
+function peekWrite(writeId, options = {}) {
+  const normalizedWriteId = normalizeWriteId(writeId);
+  if (!normalizedWriteId) return null;
+  const now = options.now || Date.now();
+  const ttlMs = options.ttlMs || DEFAULT_TTL_MS;
+  ensureLoaded(now, ttlMs);
+  const existing = writeRecords.get(normalizedWriteId);
+  if (!existing) return null;
+  if (now - existing.created_at_ms > ttlMs) return null; // expired → treat as absent
+  return {
+    ...existing,
+    metadata: { ...existing.metadata },
+    ...(existing.response ? { response: { ...existing.response } } : {})
+  };
+}
+
 function resetIdempotencyStore() {
   writeRecords.clear();
   // State is authoritatively empty and the file is gone — mark loaded so a
@@ -249,6 +299,7 @@ function resetIdempotencyStore() {
 
 module.exports = {
   beginWrite,
+  peekWrite,
   completeWrite,
   failWrite,
   normalizeWriteId,

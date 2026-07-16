@@ -3807,6 +3807,46 @@ test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stay
   }
 });
 
+// F03 / WRITE-2: a retry with a SERVER-MINTED session id must REUSE the id stamped
+// on the prior (crashed) attempt so the composite-key (Log) + duplicate-session
+// (Effort) dedupes catch it — never re-mint a fresh id and double-write the workout.
+test('api smoke (F03/WRITE-2): a retried write_id reuses the server-minted session id and does not double-write', async () => {
+  const idem = require('../services/idempotency');
+  const W = 'f03-write2-retry-01';
+  const S1 = '20260612-AM-01';
+  // Simulate a crashed first attempt: a released (retryable) record that stamped the
+  // minted session id, with S1's Effort session already on the sheet.
+  idem.resetIdempotencyStore();
+  const begun = idem.beginWrite(W, { endpoint: '/api/complete-workout', session_id: S1 });
+  idem.failWrite(W, begun.token); // released → retryable; keeps metadata.session_id = S1
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.effortSessionIds = [S1];
+  try {
+    await withMutedConsoleLog(async () => {
+      const form = new FormData();
+      form.append('date', '2026-06-12');            // NO session_id — server-minted, as on attempt 1
+      form.append('log_rows_json', JSON.stringify([
+        { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }
+      ]));
+      form.append('write_id', W);
+      form.append('effort_json', JSON.stringify({
+        duration: '40', activeCalories: 400, totalCalories: 500,
+        averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+      }));
+
+      const { response } = await requestMultipart('/api/complete-workout', form);
+      // Reused S1 → duplicate-session hard stop → 409; the workout is NOT re-appended.
+      assert.equal(response.status, 409, 'a reused-minted-id retry is refused as a duplicate session');
+      assert.equal(fakeSheetsState.appendCalls.length, 0, 'a reused-minted-id retry must not re-append the workout');
+    });
+  } finally {
+    idem.resetIdempotencyStore();
+    fakeSheetsState.effortSessionIds = [];
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 // Multiple sessions per day: an effort-only upload with NO session_id must auto-increment
 // past an existing session the SAME day (e.g. a later run after the gym session was already
 // saved) instead of colliding on …-01. The server resolves the next free suffix via
