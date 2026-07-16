@@ -236,6 +236,67 @@ No production fault injection or write canary without authorization.
 
 _Note: the card's read-back-reconciliation framing is satisfied by the existing route-level composite-key/effort-session dedupe (the deterministic identity that proves already-written vs not-written); the smallest safe fix is to stop the in-request blind retry that bypassed it, rather than duplicate that reconciliation inside `appendRows`._
 
+### Owner-directed insertion (F04A–F04C)
+
+Dale inserted three narrow owner-directed concerns between F04 and F05 (2026-07-16). One focused PR each; existing cards are **not** renumbered; the canonical plan stays the sole queue (no competing plan). Resume F05 after F04C merges.
+
+### F04A — Retire the cold-review compatibility mechanism
+
+**Status:** ✅ COMPLETE (2026-07-16)
+
+**Objective**
+
+Delete the retired cold-review gate now that `cold-review/exact-head` is off `main`'s required checks.
+
+**Acceptance criteria**
+
+- `.github/workflows/cold-review-gate.yml`, `scripts/cold-review-gate.js`, `test/cold-review-gate.test.js`, `docs/COLD_REVIEW_GATE.md` deleted; no code can publish `cold-review/exact-head`.
+- No active document tells an agent to post a compatibility marker; all stale references removed/corrected.
+- Policy preserved: deterministic CI checks are hard gates; Codex review is advisory; no paid reviewer, reviewer account, marker, or replacement identity gate; the deleted workflow is not replaced by another review-status workflow.
+- Full deterministic suite passes.
+
+**Completion record:** PR — this PR · Commit — deleted the 4 files; corrected references in `.github/PULL_REQUEST_TEMPLATE.md`, `docs/OWNER_CHECKIN_RULES.md`, `docs/DOCS_INDEX.md`, `BACKLOG.md`, and rewrote the governance test's cold-review assertions into an anti-revival guard (files absent + no marker language in active docs).
+
+### F04B — Atlas Control Tower / agent operations contract
+
+**Status:** QUEUED
+
+**Objective**
+
+One canonical, agent-first status contract so any agent (Claude/Codex/ChatGPT/fresh) can answer "check Atlas / where are we / did the write+undo happen / is prod healthy" without Dale supplying spreadsheets, tabs, commands, session IDs, or doc paths.
+
+**Acceptance criteria**
+
+- Public **redacted** `GET /.well-known/atlas-status.json` — no Atlas browser API key required; bounded safe fields only (schema_version, generated_at, overall_status, deployed_commit, app_version, active_milestone/card, llm/sheets_connected, flight_recorder_enabled, latest_test/write/undo verdicts + freshness, synthetic_rows_remaining, owner_action_required/codes, source_freshness/unavailable_sources, status_reason_codes). Never exposes secrets, sheet IDs/ranges, workout/health data, Flight Recorder transcripts, emails, raw GitHub comments, or stack traces. Never fabricates health (missing/stale ⇒ unknown/degraded, never false green). Read-only (no write behavior).
+- `npm run atlas:status` and `-- --json` from repo root; combines existing readers (local/main commit, deployed `/version`, plan active card, health endpoints, Flight Recorder + `scripts/flight-review.js`, governed Sheet config, latest trusted test + write/verify/undo, leftover-synthetic detection). Human form short/decisive; JSON form is the authoritative machine schema, same as the endpoint where practical.
+- Discoverability wired into CLAUDE.md, AGENTS.md, `docs/AGENT_LIVE_TESTING.md`, `docs/FLIGHT_RECORDER_VALIDATION.md`, `docs/DOCS_INDEX.md`, README quick-start; one canonical `docs/ATLAS_OPERATIONS_CONTRACT.md` (schema/sources/freshness/redaction/fallback — not a work-selection plan).
+- Anti-forgetting tests: command exists; CLAUDE.md/AGENTS.md point to it; schema leaks no disallowed/private keys; stale/missing ⇒ not-healthy; human and JSON agree; source failures not swallowed; endpoint never gains write; endpoint needs no browser key; newest-test selection; completed vs merely-attempted write/undo not confused; clean-checkout acceptance proving a fresh agent following AGENTS.md finds the command without being told the Sheet ID / tab names.
+- No large dashboard, no Supabase/new DB/duplicate telemetry/second results ledger (a tiny optional Settings "Atlas Health" link only if essentially free).
+
+**Owner gate:** Autonomous — no production write, schema, or credential change.
+
+**Completion record:** PR — · Commit —
+
+### F04C — Durable owner session (remove repeated key entry)
+
+**Status:** QUEUED
+
+**Objective**
+
+Replace `atlas_api_key` in `localStorage` + per-call `x-atlas-api-key` with a long-lived server-managed owner session so Dale authenticates once per device and app-shell/service-worker refreshes don't erase it — without exposing workout APIs publicly.
+
+**Acceptance criteria**
+
+- Authenticate once per device via the existing owner credential → server issues a signed **HttpOnly, Secure, SameSite** session cookie (≈90–180 day lifetime, honest rotation/expiry); browser calls authenticate via the cookie; JS cannot read the session secret; raw credential removed from `localStorage` after migration.
+- Bounded legacy `x-atlas-api-key` acceptance during migration; a separate machine-auth route preserved for trusted local scripts (agents never scrape Dale's browser cookie); the public redacted Control Tower endpoint stays login-free; all workout reads/writes stay protected.
+- Settings shows "Atlas connected" (no permanent raw-key field); logout/reconnect under Advanced.
+- Tests: CSRF, origin, expiry, replay, cookie flags, logout, legacy migration, unauthorized-write.
+- No secret (OpenAI/owner credential) in Sheets, frontend bundles, repo files, status output, logs, Flight Recorder, or fixtures.
+
+**Owner gate:** A **new server-side session-signing secret** (Render env var) is owner-only. If required, stop and give Dale the exact variable name + steps — never a value. All other code/tests are autonomous.
+
+**Completion record:** PR — · Commit —
+
 ### F05 — Parser full-consumption and `@N` ambiguity guard
 
 **Status:** QUEUED

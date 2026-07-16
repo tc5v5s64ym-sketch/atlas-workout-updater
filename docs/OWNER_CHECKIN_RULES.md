@@ -53,7 +53,7 @@ Dale is not required for routine implementation, tests, derivable UI/wording, ad
 
 Claude merges an authorized routine PR after the deterministic hard gates pass, real in-scope advisory findings are addressed, scope/risk/merge-card evidence is complete, and no owner-reserved authorization remains.
 
-There is no required owner merge step and no required cold-review account or marker. Dale may still merge anything directly or revoke standing authority.
+There is no required owner merge step and no required separate-reviewer account, review status, or marker. Dale may still merge anything directly or revoke standing authority.
 
 ## This governance cleanup
 
