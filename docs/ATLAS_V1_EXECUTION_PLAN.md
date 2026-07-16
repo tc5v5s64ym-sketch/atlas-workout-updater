@@ -205,7 +205,7 @@ No production write without authorization.
 
 ### F04 — Ambiguous Google Sheets append recovery
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Finding:** `WRITE-5`
 
@@ -232,7 +232,9 @@ Prevent a retry after an ambiguous Sheets `values.append` failure (for example a
 
 No production fault injection or write canary without authorization.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — `sheets.js` `isTransientAppendError` no longer retries an **ambiguous 503** on `values.append` (the append may have committed before the backend failed to respond), matching its existing treatment of 500 / post-send timeout. Only unambiguous **pre-write rejections** (429 rate-limit, 403 quota) are retried in-request. Recovery for an ambiguous 503 defers to the upstream reconciliation: the `write_id` idempotency guard + composite-key (Log) / duplicate-session (Effort) dedupes — hardened for at-most-once by F02/F03 — so the client's retry re-appends only what is genuinely not yet written. Red-first tests pin 503-non-retryable + at-most-once (one attempt) and 429-still-retryable; the prior 503-retryable pin was flipped. No schema change. Full suite green (5462).
+
+_Note: the card's read-back-reconciliation framing is satisfied by the existing route-level composite-key/effort-session dedupe (the deterministic identity that proves already-written vs not-written); the smallest safe fix is to stop the in-request blind retry that bypassed it, rather than duplicate that reconciliation inside `appendRows`._
 
 ### F05 — Parser full-consumption and `@N` ambiguity guard
 

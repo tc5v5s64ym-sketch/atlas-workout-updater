@@ -368,17 +368,25 @@ test('localTodayIso falls back to UTC for an invalid timezone rather than throwi
   assert.match(localTodayIso('garbage', undefined), /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test('isTransientAppendError retries only request-rejected-before-write errors', () => {
+test('isTransientAppendError retries only pre-write rate-limit rejections (429 / 403 quota), never ambiguous 5xx (WRITE-5)', () => {
   // Safe to retry — Google rejected the request before touching the sheet.
   assert.equal(isTransientAppendError({ code: 429 }), true);
-  assert.equal(isTransientAppendError({ code: 503 }), true);
-  assert.equal(isTransientAppendError({ response: { status: 503 } }), true);
   // Real gaxios-7 GaxiosError shape: numeric HTTP status on .status/.response.status,
   // .code is the (here absent) transport cause. The fast-path must fire on .status.
-  assert.equal(isTransientAppendError({ status: 503, response: { status: 503 }, code: undefined }), true);
   assert.equal(isTransientAppendError({ status: 429, response: { status: 429 } }), true);
   assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'rateLimitExceeded' }] }), true);
   assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'userRateLimitExceeded' }] }), true);
+
+  // WRITE-5: a 503 is AMBIGUOUS — the append may have committed on Google's side
+  // before the backend failed to respond — so it must NOT be retried in-request
+  // (retrying would double-write). Like a 500 / post-send timeout, it propagates;
+  // recovery defers to the upstream write_id idempotency + composite-key dedupe
+  // (at-most-once). This deliberately flips the previous 503-retryable behavior.
+  assert.equal(isTransientAppendError({ code: 503 }), false);
+  assert.equal(isTransientAppendError({ response: { status: 503 } }), false);
+  assert.equal(isTransientAppendError({ status: 503, response: { status: 503 }, code: undefined }), false);
+  // A 503 whose reason is backendError/unavailable stays non-retryable (status wins).
+  assert.equal(isTransientAppendError({ code: 503, errors: [{ reason: 'backendError' }] }), false);
 
   // Must NOT retry — ambiguous (rows may already be written) or non-transient.
   assert.equal(isTransientAppendError({ code: 500 }), false); // could have written, then failed
@@ -390,6 +398,31 @@ test('isTransientAppendError retries only request-rejected-before-write errors',
   assert.equal(isTransientAppendError({ code: 403, errors: [{ reason: 'forbidden' }] }), false); // auth, not quota
   assert.equal(isTransientAppendError({ code: 400 }), false);
   assert.equal(isTransientAppendError(null), false);
+});
+
+test('WRITE-5: the append retry loop does not retry an ambiguous 503 (at-most-once), but still retries a 429', async () => {
+  // A 503 append propagates after exactly ONE attempt — retrying could double-write
+  // a row Google already committed. Recovery is the upstream write_id idempotency.
+  let calls503 = 0;
+  await assert.rejects(
+    () => retryWithBackoff(
+      async () => { calls503 += 1; const e = new Error('backend unavailable'); e.status = 503; throw e; },
+      { isRetryable: isTransientAppendError, sleep: async () => {} }
+    ),
+    /backend unavailable/
+  );
+  assert.equal(calls503, 1, 'a 503 append must not retry — the row may already be committed');
+
+  // A 429 (rate-limit, rejected before write) is still retried up to the cap.
+  let calls429 = 0;
+  await assert.rejects(
+    () => retryWithBackoff(
+      async () => { calls429 += 1; const e = new Error('rate limited'); e.status = 429; throw e; },
+      { isRetryable: isTransientAppendError, sleep: async () => {}, maxAttempts: 3 }
+    ),
+    /rate limited/
+  );
+  assert.equal(calls429, 3, '429 stays retryable (a pre-write rejection is safe to retry)');
 });
 
 test('retryWithBackoff succeeds on the first attempt without sleeping', async () => {
@@ -410,7 +443,9 @@ test('retryWithBackoff retries transient failures then succeeds, with exponentia
   const result = await retryWithBackoff(
     async () => {
       calls += 1;
-      if (calls < 3) throw { code: 503 };
+      // 429 (rate-limit, rejected before write) is the retryable transient error;
+      // a 503 is ambiguous and is NOT retried here (WRITE-5).
+      if (calls < 3) throw { code: 429 };
       return 'written';
     },
     { isRetryable: isTransientAppendError, sleep: async ms => { delays.push(ms); } }

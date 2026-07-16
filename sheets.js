@@ -36,10 +36,16 @@ function getSafeSpreadsheetConfig(environment = process.env.NODE_ENV) {
 // write_id idempotency guard lives one layer up in index.js (it dedupes across
 // separate HTTP requests, not inside this retry loop). So we may only retry on
 // errors where Google rejected the request *before* touching the spreadsheet:
-// HTTP 429 (rate limit) / 503 (backend unavailable), and the equivalent
-// rate-limit/quota reason codes Google sometimes returns as 403. A post-send
-// timeout or a 500 is ambiguous — the rows might already be written — so those
-// propagate and are never retried, to avoid a silent double-append.
+// HTTP 429 (rate limit), and the equivalent rate-limit/quota reason codes Google
+// sometimes returns as 403 — both are pre-write rejections.
+//
+// WRITE-5: a 503 (backend unavailable), like a 500 or a post-send timeout, is
+// AMBIGUOUS — the append may have been committed on Google's side before the
+// backend failed to respond — so retrying it here can silently double-write. It
+// therefore propagates and is never retried in this loop; recovery defers to the
+// upstream write_id idempotency + composite-key dedupe, which make the client's
+// retry at-most-once. Only unambiguous pre-write rejections (429 / 403 quota) are
+// retried in-request.
 function isTransientAppendError(error) {
   if (!error) return false;
   // Read the numeric HTTP status FIRST. On a gaxios GaxiosError (gaxios 7 via
@@ -51,10 +57,10 @@ function isTransientAppendError(error) {
       : (error.response && error.response.status != null) ? error.response.status
         : error.code
   );
-  if (status === 429 || status === 503) return true;
-  // Any other explicit status is non-retryable — a 500 (or its message) must NEVER
-  // be re-classified as retryable by the reason text below, or we reintroduce the
-  // ambiguous-post-send double-append this guard exists to prevent. The reason is
+  if (status === 429) return true;
+  // Any other explicit status is non-retryable — a 500/503 (or its message) must
+  // NEVER be re-classified as retryable by the reason text below, or we reintroduce
+  // the ambiguous-post-send double-append this guard exists to prevent. The reason is
   // consulted ONLY for a 403 (quota/rate-limit rejection — rejected before write)
   // or a status-less error. The reason match is correspondingly narrow:
   // rate-limit/quota only (NOT backendError/unavailable, which are 500/503 signals).
