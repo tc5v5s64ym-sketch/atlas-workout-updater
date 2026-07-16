@@ -1,509 +1,286 @@
-# Atlas — AI Agent Operating Brief
+# Atlas — Canonical Agent Brief
 
-This file is the **canonical** implementation-agent brief for Atlas. It is the
-first thing an AI agent (Claude Code or any other) should read before touching
-this repository. `AGENTS.md` and `CODEX.md` are compatibility pointers to this
-file and carry no independent role, review, branch, or merge rules.
+This is the first file every implementation agent reads. It defines Atlas's operating, safety, branch, review, and merge rules.
 
----
+The sole active execution campaign is:
 
-## What this repo is
+- [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md)
 
-Atlas is a personal workout logging assistant for one owner (Dale). It parses
-natural-language gym input, previews rows, and writes to Google Sheets on
-explicit approval. There is no database — Google Sheets is the permanent record.
+`AGENTS.md` and `CODEX.md` are compatibility pointers only. No other roadmap, old plan, audit, proposal, issue, backlog section, or chat prompt may reorder the campaign.
 
-Read `docs/GOVERNANCE.md` to understand how Dream, Vision, Constitution,
-Roadmap, and Backlog relate and where to file new ideas from owner
-conversations.
-Read `docs/CONSTITUTION.md` for mission and scope.
-Read `docs/INVARIANTS.md` for rules that must never be broken.
-Read `docs/DOCS_INDEX.md` to understand which docs are active, reference-only,
-historical, or archived.
-Read `docs/AGENT_WORKFLOW.md` for the full Dale + ChatGPT + Claude + GitHub
-workflow.
+## What Atlas is
 
----
+Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews rows, and writes to Google Sheets only after explicit approval.
 
-## Merge authority (owner ruling)
+- Google Sheets is the permanent V1 record; there is no second database.
+- The deterministic engine owns every number and decision.
+- The application LLM only words whitelisted facts and answers grounded questions.
+- The conversation is the product; other surfaces support it.
+- Atlas is single-owner during V1.
 
-Atlas runs an automation-first workflow. The governing owner ruling (updated by
-Dale, 2026-07-15) is:
+## Read order
 
-> Claude Code is the Atlas implementation agent and holds **standing merge
-> authority**. Once the deterministic GitHub CI hard gates pass and any Codex
-> advisory findings are addressed, Claude **merges its own PRs** — there is no
-> owner merge step and no PR waits on Dale to click merge. Codex GitHub Review is
-> **advisory**, and Claude auto-fixes what it flags. ChatGPT remains available as
-> an **optional** Atlas Contract Review / decision desk for genuinely
-> owner-reserved product, trust, schema, security, or roadmap questions — it is
-> not a merge gate.
+For routine implementation:
 
-This authority is deliberately broad: **Claude decides and merges.** It is
-bounded only by the absolute **data-safety** rules — Claude never authorizes a
-real production Sheets write, a data migration/deletion, a credentials/security
-change, or an INVARIANT/Constitution amendment without explicit owner approval,
-because those touch Dale's real data irreversibly. That is a data-safety
-confirmation, **not** a merge bottleneck: it is about protecting real data, never
-about making Dale click merge on clean code. Dale can still merge anything himself
-or revoke this authority at any time.
+1. `CLAUDE.md`
+2. `docs/ATLAS_V1_EXECUTION_PLAN.md`
+3. `docs/DECISION_KERNEL.md`
+4. `BACKLOG.md` for awareness and deferred discoveries
+5. relevant specs, invariants, tests, and evidence ledgers
 
-This ruling **supersedes** any conflicting merge-authority, cold-review, or
-"owner must merge / stop for Dale to merge" language elsewhere in the docs
-(`docs/AUTOMATION_PROTOCOL.md`, `docs/AGENT_WORKFLOW.md`,
-`docs/OWNER_CHECKIN_RULES.md`, `.github/PULL_REQUEST_TEMPLATE.md`, etc.); those
-are being reconciled to match (`BACKLOG.md`).
+Read `docs/DOCS_INDEX.md` when classifying a document. Read the full Vision/Architecture only when the active card reaches product direction, architecture, or a genuine conflict.
 
----
-
-## Roles
+## Roles and authority
 
 ### Dale — owner
 
-- Owns product direction and real-data / production-write authorization.
-- May request live app or gym validation and is the only authority that can
-  resume an explicit owner hold.
-- Can merge anything directly and can revoke Claude's merge authority at any
-  time, but is **never required to click merge** on a routine PR.
+Dale owns product direction, real production-data authorization, genuine gym/device evidence, destructive/schema/security decisions, Constitution/Invariant changes, application/runtime/provider/model selection, and One-Brain promotion.
 
-### ChatGPT — Atlas Contract Review and decision desk
+Dale may merge anything or revoke authority, but routine PRs do not wait for him to click merge.
 
-- Is Atlas's product decision desk with Dale.
-- Performs the external **Atlas Contract Review** when risk-triggered: roadmap
-  fit, product intent, one-concern scope, Atlas trust, live-path fit, and
-  write/schema risk.
-- Returns `BLOCKING`, `NON-BLOCKING`, or `READY FOR DALE MERGE`.
-- Is required for owner-reserved, governance, roadmap/phase-transition, product
-  scope, coaching-philosophy, trust-contract, write/schema,
-  security/credentials, runtime/provider/model, promotion, destructive, and
-  genuinely ambiguous changes. Routine settled implementation PRs do not require
-  this lane.
+### ChatGPT — project decision desk
 
-### Claude — implementation agent and merge operator
+ChatGPT helps Dale resolve genuinely non-derivable product/scope/trust forks and performs a risk-triggered Atlas Contract Review for phase transitions, roadmap changes, product/trust-contract changes, write/schema/security/promotion/destructive work, or genuine ambiguity.
 
-- Runs the Current-State Verification Gate before editing.
-- Implements one approved concern on a fresh `claude/<concern>` or
-  `agent/<concern>` branch, tests it, opens the PR, completes the merge card, and
-  addresses only in-scope blockers.
-- **Merges its own PRs** once the CI hard gates pass and Codex advisory findings
-  are addressed — preferring GitHub auto-merge, else a direct merge of the exact
-  head SHA. No owner merge step.
-- Gets explicit owner approval before a genuinely owner-reserved **data-safety**
-  item (real production write, data migration/deletion, credentials/security,
-  INVARIANT/Constitution amendment) — a data-safety confirmation, not a merge
-  hand-off — and never starts adjacent work on the PR branch.
+It is not a routine merge gate and never authorizes a production write.
 
----
+### Claude Code — implementation and merge operator
 
-## Review and merge model
+Claude:
 
-### Hard gates (deterministic, always required)
+- selects the first eligible unfinished campaign card;
+- verifies current state before editing;
+- implements one concern on a fresh branch;
+- tests the live path or closest integration path;
+- opens and completes the PR;
+- handles real in-scope advisory findings;
+- merges the exact passing head under standing authority;
+- updates campaign state, refreshes `main`, and continues.
 
-Every PR must pass the applicable deterministic GitHub CI checks. A skipped,
-errored, unavailable, timed-out, or incomplete required signal is a **failure**,
-not a pass. The hard gates are:
+Do not stop merely to report that a routine PR is merge-ready.
 
-- build (where applicable);
-- tests;
-- lint;
-- wiring check;
-- secret scan;
-- merge-card check;
-- applicable E2E; and
-- required trust/write/schema tests.
+### GitHub Actions and Codex
 
-### Review model (advisory, not a required human gate)
+GitHub Actions supplies deterministic hard gates. Required checks that are missing, stale, skipped, errored, timed out, cancelled, incomplete, or failed are failures.
 
-Code review is provided by (a) the **Codex GitHub advisory review**, which
-comments on every PR and which Claude **auto-fixes** (fix confident/small/in-scope
-findings, ask the owner on genuinely ambiguous or architectural ones, skip false
-alarms), and (b) an **optional** independent clean-context review Claude may run
-for its own confidence on higher-risk changes. Neither is a required human
-sign-off, and neither blocks a merge once the CI hard gates have passed. There is
-**no cold-review marker requirement**.
+Codex comments are advisory only. Fix real confident in-scope findings; route genuinely ambiguous ones; record false alarms as non-issues. Never create a synthetic review status from bot wording, reactions, or identity.
 
-When Claude does run its own review and it surfaces a real `P0`/`P1`, Claude fixes
-it before merging (the same way it acts on a Codex flag); genuine `P2`/`P3` items
-go to `BACKLOG.md`.
+An optional clean-context review may be used for confidence on higher-risk work. It is not a required status, account, marker, or human sign-off.
 
-> **Cold-review gate — being retired.** The `cold-review/exact-head` attestation
-> gate was removed as a governance requirement here. Its workflow stays in the
-> repo only until the owner removes `cold-review/exact-head` from the branch
-> protection required-status-checks — a repo-admin action Claude cannot perform.
-> Until then Claude records the pass marker itself (from its own passing review)
-> so merges are never blocked, and deletes the workflow once the required-check
-> rule is lifted.
+## Campaign execution loop
 
-### Native Codex GitHub Review is retired
+1. Verify current `main`, a clean worktree, prerequisites, and deployment when relevant.
+2. Read the first eligible unfinished card in `docs/ATLAS_V1_EXECUTION_PLAN.md`.
+3. Run the Current-State Verification Gate.
+4. Create a fresh `claude/<concern>` or `agent/<concern>` branch from current `main`.
+5. Implement one concern only.
+6. Run focused tests plus every applicable build/test/lint/wiring/secret/E2E/trust check.
+7. Inspect the diff, commits, secrets, and unrelated drift.
+8. Open one PR with the Atlas Merge Card and one primary risk label.
+9. Obtain ChatGPT Atlas Contract Review only when risk-triggered.
+10. Address real in-scope advisory findings without expanding the PR.
+11. Merge the exact head after every hard gate passes and no owner authorization remains outstanding.
+12. Verify `main` and deployment, update the campaign card/completion record, and continue from a fresh branch.
 
-Native Codex GitHub Review is **no longer a required gate**. `@codex review` is
-not a delivery step, and an exact-head Codex review is not a merge-card
-requirement. If Codex auto-comments, treat it as **advisory only**. Do not build
-any synthetic workflow that parses bot comments, reactions, or wording into a
-fake status check.
+A conversation running out of context is not a project blocker. Start a new session and resume from repository state.
 
-### Merge-authority gate
+## Current-State Verification Gate
 
-Claude merges a PR when all of the following hold:
+Before editing, report:
 
-- every applicable required GitHub check passed (the hard gates above);
-- Codex advisory findings are addressed (fixed, or judged non-issues);
-- the PR implements one concern authorized by the active roadmap or an explicit
-  owner goal;
-- one-concern scope, branch hygiene, the risk label, and the merge card are
-  complete; and
-- it is **not** a genuinely owner-reserved data-safety item (real production
-  write, migration/deletion, credentials/security, INVARIANT/Constitution
-  amendment) awaiting explicit owner approval.
+1. **Source:** canonical campaign card and supporting finding/issue.
+2. **Duplicate/stale search:** current code, tests, backlog, recent PRs/issues, and deployed behavior where relevant.
+3. **Verdict:** exactly one of:
+   - `STILL BROKEN`
+   - `ALREADY FIXED`
+   - `PARTIALLY FIXED`
+   - `FIXED BUT UNTESTED`
+   - `STALE / SUPERSEDED`
+   - `NEEDS OWNER APP-TEST`
+4. **Evidence:** exact file/function/test/PR/issue and current failure/fix path.
+5. **Allowed next action:** smallest implementation, proof-only, status-only, or stop.
 
-Never merge when a required check is missing, stale, skipped, errored, or failed.
-Prefer GitHub auto-merge; if it is unavailable, merge directly with the exact head
-SHA. **Do not stop merely to report that a PR is merge-ready — merge it.** After
-merging, verify `origin/main`, confirm deployment when applicable using read-only
-evidence, cut a fresh branch from main, and continue the next approved concern.
+If already fixed, do not manufacture code. If fixed but untested, prove it rather than refactoring it.
 
----
+For a `BUG-…` item, check `docs/BUG_TRIAGE_LEDGER.md` before implementation because the Sheet itself does not identify resolved rows.
 
-## Escalation policy — PM authority first, then ChatGPT; the owner for reserved categories
+## Branch and scope rules
 
-**Escalation Policy v3 (`docs/OWNER_CHECKIN_RULES.md`) is authoritative.** The
-owner is pulled in **only when human judgment or live testing is genuinely
-required.** Reduce escalations to the minimum; the default is to keep shipping.
-Do **not** escalate simply because a change touches the coach surface, coach
-wording, coach rendering, frontend, or UX — if the correct behavior is derivable
-from governance, decide autonomously and proceed.
+- New work uses `claude/*` or `agent/*` from current `main`.
+- One PR equals one concern.
+- Never stack later campaign work on an open or merged feature branch.
+- Stage only intended files; never include `.env`, credentials, production IDs, private evidence, or unrelated changes.
+- Future discoveries go to `BACKLOG.md`; they do not expand the current PR.
+- If a fix spreads, split it.
+- Do not build later cards early.
+- Do not create another roadmap, fix-it document, campaign controller, or giant session prompt.
 
-1. **Pre-authorized — decide and proceed (Atlas PM authority).** If the answer
-   is derivable from `CLAUDE.md` / `docs/CONSTITUTION.md` / `docs/INVARIANTS.md`
-   / `docs/ACTIVE_ROADMAP.md` / `docs/DECISION_ROUTING.md` /
-   `docs/OWNER_CHECKIN_RULES.md` / previously accepted Atlas behavior / the
-   trust-contract rules, you **make the call and keep going.** This includes
-   root-cause analysis, implementation selection, PR sizing, test design,
-   regression strategy, refactors, principle-derivable parser routing, and
-   **whether to fix a bug whose behavior clearly violates an Atlas principle.**
-2. **Decision Desk (ChatGPT, not the owner)** — only a **genuinely
-   non-derivable** product/scope/trust fork the docs do not settle and that is
-   not owner-reserved (`docs/DECISION_ROUTING.md`). A fork whose answer is
-   derivable is not a fork — resolve it under PM authority.
-3. **Owner — the reserved categories** (`docs/OWNER_CHECKIN_RULES.md`): (1) a
-   live test only the owner can perform; (2) a change to product vision,
-   **coaching philosophy**, or new product scope (new capability/workflow/logging
-   model/trust contract, or app/runtime model selection); (3) destructive or
-   irreversible operations (schema, migrations, deletion, credentials,
-   security-sensitive infrastructure); (4) a genuine, unresolvable principle
-   conflict with no precedent. Coach **wording/rendering/UX** is **not** reserved
-   when derivable — that is PM authority.
+### High-risk files
 
-This governs *who decides*. It does **not** relax the absolute data-safety
-rules: no real Sheets write without explicit owner approval, the
-preview→approve→write trust loop, and the proof fields are unchanged. PM
-authority never authorizes a real production write, a data migration, or an
-INVARIANT/Constitution amendment.
+These may be touched only when the active card explicitly requires them, with a tiny focused diff and live-path tests:
 
-**Live testing — agent self-serve (standing authorization, 2026-07-14).** When
-the owner asks to test the app, do not ask for URLs, keys, or sheet details —
-read `docs/AGENT_LIVE_TESTING.md` and the local `.env`, then run the test
-yourself. Tier 1 (read-only) and Tier 2 (`test_mode` dry-run) are pre-authorized;
-Tier 3 (real sheet writes) only on explicit per-test owner authorization. Always
-send a synthetic `x-atlas-request-origin`. This narrows the owner-reserved "live
-testing" category: agent-runnable live tests are agent-run by default; only tests
-genuinely requiring the owner's real device, real gym session, or first-use
-confirmation remain owner-only. GATE A eligible evidence remains owner-only by
-provenance design.
+- `index.js` — write path, `test_mode`, proof fields, enrichment/append orchestration
+- `src/app/app.js` — preview → approve → write trust loop and major client state
+- `services/workoutTextParser.js` — slash notation and parser grammar
 
----
+Editing the file is not automatically owner-reserved; changing its protected contract is.
 
-## Branch strategy
+## Merge gate
 
-- Develop on the branch named in your task brief. New agent work uses a
-  `claude/<concern>` or `agent/<concern>` branch cut from the latest verified
-  `origin/main` on a clean worktree.
-- Never push directly to `main`.
-- One PR equals one concern (Invariant PR1). If a fix spreads, stop and split it.
-- Do not stack new roadmap work on an open PR branch. After a PR merges, a later
-  concern starts from newly fetched main.
+Claude merges when:
 
----
+- every applicable required GitHub check passed on the exact current head;
+- no genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains;
+- real advisory findings are addressed;
+- one-concern scope, branch hygiene, risk label, Vision Alignment Check, and merge card are complete;
+- the PR is authorized by the campaign or explicit owner instruction; and
+- no owner-reserved authorization remains outstanding.
 
-## Before you write any code
+Prefer GitHub auto-merge when available; otherwise merge the exact head SHA directly.
 
-Before implementing any roadmap, backlog, or GitHub issue fix, perform the
-**Current-State Verification Gate** in `docs/AGENT_WORKFLOW.md`. Do not begin
-implementation only because an item exists in `BACKLOG.md`,
-`docs/ACTIVE_ROADMAP.md`, or GitHub. First verify whether the failure still
-exists in the current repo and report exactly one verdict (`STILL BROKEN` /
-`ALREADY FIXED` / `PARTIALLY FIXED` / `FIXED BUT UNTESTED` / `STALE / SUPERSEDED`
-/ `NEEDS OWNER APP-TEST`) with evidence.
+## Owner-reserved stops
 
-**If the task is a `Bug_Reports` row (a `BUG-…` id), read
-`docs/BUG_TRIAGE_LEDGER.md` FIRST.** The Google Sheet has no resolved/open
-column, so a fixed bug looks identical to an open one — the ledger is the shared
-done-vs-open record. Confirm status there (and `git log --all --grep='BUG-…'`)
-before touching code, then still run the verification gate. When you ship a fix,
-cite the `BUG-…` id in the commit and update the ledger in the same PR.
+Stop for Dale only when required for:
 
-1. Check `config/routes.js` — if you are adding a route, add it here too.
-2. Check `docs/INVARIANTS.md` — if your change touches the parser, sheet writes,
-   auth, or undo flow, re-read the relevant invariant group first.
-3. Check existing tests in `test/api-smoke.test.js` — the stubs pattern matters
-   (see Invariants T1–T3).
+1. genuine owner-only gym/device evidence;
+2. real production-write authorization;
+3. product vision, coaching philosophy, new capability/workflow/scope, or application/runtime/provider/model changes;
+4. schema, migration, deletion, credentials, or security-sensitive infrastructure;
+5. Constitution/Invariant amendments;
+6. One-Brain or other promotion decisions;
+7. a genuine unresolved principle conflict or explicit owner hold.
 
----
+Routine code, tests, refactors, derivable UX/wording, advisory disposition, and clean merges are not owner stops.
 
-## Critical behaviours — never change without owner approval
+## Absolute data safety
 
-| Behaviour | Where |
+- No real Google Sheets write without explicit owner authorization.
+- `test_mode` absent means live write. Dry-runs must pass `test_mode:true` explicitly.
+- Dry-run proof requires `sheet_written:false` and `no_write_confirmed:true`.
+- Live-write success requires authoritative proof such as `sheet_write:'success'` and positive row/range evidence.
+- No manual Sheet edits by agents.
+- No schema migration, historical rewrite, deletion of owner data, approval-gate weakening, proof-field change, or credentials/security change without Dale.
+- Any production data-integrity anomaly freezes writes immediately.
+- No secrets, `.env`, production Sheet IDs, private payloads, Render env values, screenshots, or workout data in commits/PRs.
+
+## Critical behavior contracts
+
+Never change these semantics without explicit owner approval:
+
+| Contract | Authority |
 |---|---|
-| Slash notation: `225 5/2` = 225 lb × 5 reps @ RIR 2 | `services/workoutTextParser.js` |
-| `test_mode` absent = live write | `index.js` log-workout handler |
-| Dry-run proof fields: `sheet_written:false`, `no_write_confirmed:true` | `index.js` |
-| Live-write proof fields: `sheet_write:'success'`, `log_rows_written>0` | `index.js` |
-| Undo read-back: missing/empty row = 409 | `index.js` undo-last handler |
-| Log tab restriction in undo | `index.js` undo-last handler |
-| Deload = predefined protocol, not invented numbers; AI decides *if*, engine decides *what* | `docs/DELOAD_SPEC.md` |
+| `225 5/2` = 225 lb × 5 reps @ RIR 2 | parser contract / `services/workoutTextParser.js` |
+| Preview → approve → write | Constitution / Invariants |
+| `test_mode` absent = live write | write route |
+| Dry-run vs live-write proof fields | Invariants W1–W3 |
+| Undo read-back must fail closed | undo route/invariants |
+| Engine owns numbers; LLM only words facts | Constitution / Decision Kernel |
+| Deload prescription is deterministic protocol | `docs/DELOAD_SPEC.md` |
 
----
+## Sheet schemas
 
-## Scope discipline for agents
+No columns may be added, removed, or reordered without a migration and explicit owner approval. `config/columns.js` and the relevant sheet contract are authoritative.
 
-A task prompt names the file(s) you should work in. If a fix needs a small edit
-to an ordinary file outside that list — e.g. wiring a new helper into its one
-call site — you may make it without asking.
+### `Log_Cleaned` — 12 columns
 
-The high-risk files — `index.js` (log/write path, `test_mode` + proof fields,
-row enrichment & append), `src/app/app.js` (the preview→approve→write trust
-loop; committed source since PR-22 — `public/` is gitignored build output, see
-`docs/ARCHITECTURE.md`), `services/workoutTextParser.js` (the slash-notation
-parser) — may be worked **only when the active roadmap/backlog item explicitly
-requires it** (owner standing instruction). When you do, treat them as
-high-risk: a tiny PR, a focused diff, tests, and **stop if the change starts
-spreading** beyond what the item names. Then report.
-
-The deep behaviors on the "Critical behaviours" list are still owner-gated
-regardless: do not change `test_mode`/proof-field semantics, the
-preview→approve→write trust loop, the slash-notation contract, or the undo flow
-without explicit owner approval. Editing these files to wire an item the roadmap
-names is allowed under discipline; silently changing what they *do* on the
-write/trust path is not.
-
----
-
-## Sheet schema contracts
-
-Do not add, remove, or reorder columns without a schema migration and explicit
-owner approval.
-
-### `Log_Cleaned` (12 columns)
-
-```
+```text
 date_clean | session_id | exercise | canonical_exercise | muscle_group | lift_code | set_number | weight | reps | rir | notes | volume_calc
 ```
 
-### `Effort` tab (9 columns)
+### `Effort` — 9 columns
 
-Apple Watch / session effort rows written by `/api/complete-workout` go to the
-`Effort` tab in this order:
-
-```
+```text
 date | session_id | duration | active_calories | total_calories | average_hr | peak_hr | location | notes
 ```
 
-`average_hr` and `peak_hr` are distinct metrics — never copy one into the other.
-These columns feed the recovery curve via `effortIntensityBySession()` in
-`services/analytics.js`.
+`average_hr` and `peak_hr` are distinct.
 
-### `Constraints` tab (5 columns)
+### `Constraints` — 5 columns
 
-```
+```text
 date | kind | target | rule | note
 ```
 
-`kind` ∈ `injury | equipment | preference`; `rule` ∈ `avoid | limit |
-substitute`; `target` is the movement/pattern/equipment (≤100 chars); `note` is
-optional context (≤200 chars). A *typed* sibling of the free-text
-`Coaching_Notes` tab — both coexist. Vocabularies are pinned in
-`config/columns.js` (`constraintsColumns`) and validated in both the write route
-and `sanitizeConstraint()` (`services/coach.js`). The tab is optional
-(`config/sheetContract.js`); the write route returns 503 until it exists.
+Use the vocabulary and validation in `config/columns.js` and the active reader/writer; do not invent row conventions.
 
-### `Deload_State` tab (7 columns)
+### `Deload_State` — 7 columns
 
-```
+```text
 updated_at | training_state | deload_protocol | deload_reason | deload_start_date | deload_sessions_remaining | deload_exit_criteria
 ```
 
-**Append-only**: each state change appends a row; the current state is the *last*
-row. Read/written by `services/deloadState.js`, never by hand. These are
-**system-state writes, not logged sets** — they do NOT route through the
-preview→approve→write trust loop, carry no `write_id`, and never touch
-`Log_Cleaned`/`Effort`.
+Append-only system state.
 
-### `Session_Plans` tab (13 columns)
+### `Session_Plans` — 13 columns
 
-```
+```text
 idempotency_key | session_id | session_date | plan_version | event_type | plan_item_id | planned_order | planned_lift_code | movement_pattern | outcome | performed_lift_code | closeout_status | recorded_at
 ```
 
-**Append-only, never mutated.** Three frozen event types (`plan_accepted`,
-`item_outcome`, `session_closeout`); `outcome` is frozen to `planned | completed
-| skipped | substituted`. The reader folds by `(session_id + plan_version +
-plan_item_id)`, last-wins. Every event carries a deterministic `idempotency_key`
-(a hash of the event's semantic identity, never the timestamp). **Canonical lift
-CODES only** (`planned_lift_code` / `performed_lift_code`). Rows are built by
-`services/sessionPlanEvents.js` (pure); the writer (`services/sessionPlanStore.js`)
-and its live capture wiring land in later PRs. Optional
-(`config/sheetContract.js`); system-state writes, not logged sets — no
-`write_id`, never through the trust loop, never touching `Log_Cleaned`/`Effort`.
+Append-only, deterministic idempotency, canonical lift codes, and plan-item identity. It does not pass through the logged-set preview/write loop.
 
----
+## Coach/LLM boundary
 
-## Coaching voice (LLM)
+- Application provider/model selection is owner-reserved.
+- Coach endpoints are read-only and never write Sheets.
+- Forward only whitelisted, bounded fields through the sanitizer.
+- The LLM never invents numbers, verdicts, rules, progress, history, or write claims.
+- When the LLM is unavailable, degrade to deterministic templated/null behavior—never a guess.
+- Engine-selected safety/recovery/correction modes outrank stylistic voice.
 
-Atlas's deterministic engine owns every number; the LLM only ever *words* facts
-and *answers questions* — it never writes, and never invents numbers.
+## Testing
 
-- **Provider selection** (`services/vision.js`, `getProviderConfig`):
-  `ATLAS_LLM_PROVIDER` (`openai` default, or `gemini`) + `GEMINI_API_KEY` /
-  `OPENAI_API_KEY` + optional `ATLAS_LLM_MODEL`. `gemini` with no key throws —
-  never a silent fallback.
-- **`services/coach.js`** — the Gemini coaching voice (separate
-  `GEMINI_COACH_MODEL`). Three read-only voices: set reaction, plan "why today",
-  and free-form chat. All degrade to `null`/templated copy when Gemini is down.
-- **Read-only endpoints**: `POST /api/coach/message`, `POST /api/coach/chat`.
-  Neither touches Google Sheets. Both are `writeCapable:false` in
-  `config/routes.js`.
-- **Frontend**: `src/app/coach-conversation.js` types the replies;
-  `src/app/chat.js` paints user bubbles. Neither calls a write path — the trust
-  loop stays in `src/app/app.js`.
-
-When adding to the coach: forward only whitelisted fields to the model (see
-`sanitizeFacts` / `sanitizeChatContext`), never raw client objects.
-Application/runtime/provider/model changes remain owner-reserved.
-
----
-
-## Test suite
+Primary suite:
 
 ```bash
 npm test
 ```
 
-Tests use `require.cache` injection to stub `sheets.js` before the Express app
-loads. Never replace this with a mocking library without reviewing the injection
-pattern first — the stub must capture the destructured function references that
-`index.js` grabs at load time.
+Also run applicable focused tests, build, lint, wiring, secret scan, E2E, and trust/write/schema checks.
 
----
+Tests use `require.cache` injection to stub `sheets.js` before the Express application loads. Preserve that pattern unless a scoped architecture change explicitly replaces it.
 
-## Backlog and roadmap discipline
+A test should prove the historical failure cannot recur through the live path or closest integration seam, not only through a new helper.
 
-`BACKLOG.md` (repo root) is the single source of truth for open and deferred
-work.
+## Live testing
 
-- At the start of any work session, read `BACKLOG.md`.
-- While `docs/ACTIVE_ROADMAP.md` has eligible work, select from it; do not use
-  older plans or backlog entries to jump the queue.
-- Whenever you defer a task, discover a follow-up, or decide something is out of
-  scope, append it to `BACKLOG.md` in the same PR — never rely on memory or chat
-  history to carry it.
-- When an item ships, mark it done or remove it in the same PR.
-- Do not build future roadmap steps early. If a premise is wrong, stop and
-  report with evidence; do not manufacture work.
+Read `docs/AGENT_LIVE_TESTING.md` and local `.env` instead of asking Dale to repeat known setup.
 
----
+- Tier 1 read-only and Tier 2 `test_mode` dry-run tests are pre-authorized.
+- Tier 3 real writes require explicit per-test authorization.
+- Mark synthetic traffic exactly as the testing playbook requires.
+- Never fabricate genuine owner activity, LT evidence, or GATE A eligible events.
 
-## What not to build
+## What not to build during the V1 campaign
 
-Unless the owner explicitly requests it, do not add:
+Unless Dale explicitly changes direction, do not add:
 
-- Nutrition tracking
-- Voice interface
-- Multi-user support (not this phase)
-- A secondary database (SQLite, Postgres, etc.)
-- An "Atlas Brain" autonomous agent mode
-- A Dashboard tab restoration
-- Big refactors "to clean things up"
+- a second database or storage migration;
+- multi-user/public-product architecture;
+- nutrition tracking;
+- broad wearable support;
+- native mobile app;
+- frontend-framework rewrite;
+- autonomous Atlas-agent mode or another orchestration platform;
+- another coaching-intelligence roadmap;
+- speculative UI redesign or broad cleanup.
 
-When in doubt, do less and ask.
+Finish the campaign, prove V1, stabilize, then decide what observed use justifies.
 
----
+## Builder model and optional tooling
 
-## Atlas PR Execution Contract
+Dale's standing Claude builder preference is Opus 4.8. That is a working preference, not a branch-protection rule, required status, or merge gate, and it does not change Atlas's application LLM.
 
-Every PR must follow these rules without exception:
+Optional tools such as gstack may improve investigation/review quality when available. They never replace Atlas governance or create a required paid review lane.
 
-- **One concern per PR.** Tiny PRs only. If a fix expands into two concerns,
-  split it.
-- **Deterministic logic first.** Build the engine, data, or service layer before
-  adding any LLM voice or coaching wording.
-- **LLM wording second.** The LLM only words facts the engine already emits. It
-  never invents numbers, verdicts, or rules.
-- **Read existing code before changing it.** Understand what is there. Do not
-  assume.
-- **If a premise is wrong, stop and report with evidence.** Do not work around a
-  false assumption. Surface it.
-- **Do not build future roadmap steps early.** Implement only what the current
-  PR scope names.
-- **Do not refactor unrelated systems.**
-- **Future discoveries go to `BACKLOG.md`.** Append them in the same PR.
-- **Never self-author a PR from a review note.** A non-blocking review
-  observation or follow-up idea becomes a backlog line in the next authorized
-  PR, or a "want me to file this?" to the owner — it is never grounds to open a
-  new unprompted PR.
-- **Stop for the owner only when a data-safety reserved category applies** (real
-  production write, migration/deletion, credentials/security,
-  INVARIANT/Constitution amendment — see the escalation policy above). Otherwise,
-  open the PR, run the hard gates, address Codex advisory findings, apply the risk
-  label, complete the merge card, and **merge it yourself** without blocking on
-  the owner.
+## Fresh-session launcher
 
----
+> Read `CLAUDE.md` and `docs/ATLAS_V1_EXECUTION_PLAN.md`. Execute the first eligible unfinished card. Verify before editing, use one concern per PR, merge the exact passing head under standing authority, update campaign state, refresh `main`, and continue. Stop only for an explicit owner-reserved gate.
 
-## Investigation Reporting
+Before implementation, report only:
 
-When investigating bugs, reviewing code, or preparing a PR:
-
-- **Investigate silently.** Read files, trace logic, grep for patterns.
-- **Do not stream file-by-file narration.**
-- **Report findings, evidence, blockers, and decisions.** Not the investigation
-  process.
-
-For debugging, code review, or prep work, the report must include only: root
-cause, affected files, fix, tests, deferred items, and blockers if any.
-Architecture reviews, audits, roadmap planning, and owner-requested analysis may
-include higher-level tradeoffs.
-
----
-
-## gstack Workflow
-
-Atlas follows the gstack sprint philosophy: **Think → Plan → Build → Review →
-Test → Ship → Reflect**. Use gstack to improve thinking and review quality — not
-to replace Atlas governance. **Atlas governance always takes precedence:** in any
-conflict, follow `CLAUDE.md`, `BACKLOG.md`, `docs/ACTIVE_ROADMAP.md`, owner
-decisions, and Atlas trust-first principles.
-
-In cloud/remote sessions the skills may be unavailable — check with
-`ls ~/.claude/skills/gstack` before invoking any skill. If unavailable, follow
-the gstack methodology manually and note "skills unavailable" in the merge card
-gstack section. `/review` is the gstack cold-review entry point; the cold
-reviewer must still run clean-context against the exact final head.
-
-Every implementation PR records a short `gstack` section in the merge card or PR
-body listing the commands considered, the commands used (or `None`), and one
-line per command on why it was or was not used.
-
----
-
-## Model: Opus 4.8 is Dale's standing Claude builder choice
-
-By owner standing instruction, the builder runs on **Opus 4.8** for all work.
-There is no model-selection decision and no owner stop for model: the merge card
-records `Opus 4.8` and proceeds. Opus 4.8 is the standing *builder* choice — it
-is **not** a GitHub branch-protection rule or a required CI status check, and it
-must not be encoded as one.
-
-This concerns the *builder's* model only. It does **not** change any app model,
-LLM behavior, API model, prompt model, or runtime model — `services/vision.js` /
-`services/coach.js` provider and model selection are unchanged and remain
-owner-gated.
+1. active milestone;
+2. next eligible card;
+3. current-state verdict;
+4. whether code is actually required;
+5. any genuine owner gate.
