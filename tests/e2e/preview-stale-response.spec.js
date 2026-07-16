@@ -101,3 +101,29 @@ test('a stale dry-run response is ignored; Approve writes the NEWER preview', as
   // The write carries the NEWER preview's write_id — the stale response did not win.
   expect(capture.writeRequests[0].write_id).toBe(writeIdB);
 });
+
+test('a form edit during an in-flight preview drops the stale response (Save stays disabled)', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await page.locator('#workout-text').fill('bench 225 5/2 x3');
+  await page.locator('#preview-btn').click();
+  await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+
+  // "done" opens a closeout dry-run (held).
+  await page.locator('#workout-text').fill('done');
+  await page.locator('#preview-btn').click();
+  await expect.poll(() => capture.previewRequests.length).toBe(1);
+
+  // The lifter edits the composer while the dry-run is in flight — the form's input handler
+  // fires invalidatePreview(), which must supersede the in-flight request so its late response
+  // can't re-enable Save.
+  await page.locator('#workout-text').fill('changed my mind');
+  await expect(page.locator('#approve-btn')).toBeDisabled();
+
+  // The stale dry-run resolves LAST. It must be dropped — Save must NOT re-enable.
+  capture.gates[0]();
+  await page.waitForTimeout(300);
+  await expect(page.locator('#approve-btn')).toBeDisabled();
+  expect(capture.writeRequests).toHaveLength(0);
+});
