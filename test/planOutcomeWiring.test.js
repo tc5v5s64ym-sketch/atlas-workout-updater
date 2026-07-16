@@ -63,5 +63,5 @@ test('PR-G1 scope: the skip/substitute outcome handlers emit neither completed n
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planOutcome\.js/, 'planOutcome.js is in SHELL_ASSETS');
-  assert.match(sw, /atlas-shell-v136/, 'SW cache version bumped for the new asset');
+  assert.match(sw, /atlas-shell-v137/, 'SW cache version bumped for the new asset');
 });
