@@ -1,205 +1,117 @@
 # Atlas Automation Protocol
 
-> **Status:** Active governance contract. Read with
-> `docs/AGENT_WORKFLOW.md`, `docs/OWNER_CHECKIN_RULES.md`, and
-> `docs/RISK_LABELS.md`. `CLAUDE.md` is the canonical brief.
+> **Status:** Active governance contract. `CLAUDE.md` is canonical. `docs/ATLAS_V1_EXECUTION_PLAN.md` authorizes and sequences campaign work.
 
-This protocol defines positive evidence, review separation, and merge authority.
-It changes no Atlas application behavior, runtime model, prompt, schema, approval
-gate, or write path.
+This protocol defines positive evidence, review roles, merge authority, and safety. It changes no Atlas runtime, prompt, schema, approval gate, or write behavior.
 
-## 1. Roles
+## Roles
 
-### Claude — implementation agent and routine merge operator
+### Claude — implementation and merge operator
 
-- Implements one approved concern per PR after the Current-State Verification
-  Gate.
-- Uses a fresh `claude/*` or `agent/*` branch from current `origin/main`.
-- Tests, classifies risk, opens the PR, completes the merge card, and fixes only
-  in-scope blockers.
-- Merges only routine PRs after every gate in section 4 passes. Prefer GitHub
-  auto-merge when available; otherwise merge directly with the exact reviewed
-  head SHA.
-- Stops for Dale on owner-reserved PRs.
+- Runs the Current-State Verification Gate.
+- Implements one canonical-plan concern per fresh branch and PR.
+- Runs tests and deterministic checks, completes the merge card, and fixes real in-scope advisory findings.
+- Merges the exact passing head under standing authority and continues from refreshed `main`.
+- Stops only for an unresolved owner-reserved authorization.
 
-By owner standing instruction the builder runs on Opus 4.8. That is the standing
-builder choice, not a merge gate and not a required CI status check. Atlas
-application/runtime/provider/model changes remain separately owner-reserved.
+### GitHub Actions — deterministic hard gates
 
-### Cold review — clean-context correctness/safety lane
+Applicable required checks include build, tests, lint, wiring, secret scan, merge-card validation, E2E, and trust/write/schema tests.
 
-- Required before any **non-trivial** PR merges. Performed by a fresh Claude
-  session, a clean-context reviewer, an isolated subagent, or gstack `/review`.
-- The reviewer must not receive the builder conversation or implementation
-  reasoning. It receives only the base SHA, the exact final head SHA, the PR
-  description, the exact diff, the changed tests, the relevant current
-  governance/invariants, and the CI results.
-- Read-only review of the exact current PR head for correctness, security,
-  regressions, invariants, schema and write safety, trust-loop safety, secrets,
-  and live-path test coverage.
-- `P0`/`P1` findings block; the builder fixes them. A push after a blocking
-  finding requires one fresh cold review of the new head. A stale, missing,
-  skipped, or incomplete cold review on a non-trivial PR is a failure.
-- Native Codex GitHub Review is retired as a required gate. A Codex auto-comment
-  is advisory only and never a substitute for the cold review.
+A required check that is missing, stale, skipped, errored, timed out, cancelled, incomplete, or failed is a failure. An agent's claim is not a substitute for a workflow conclusion.
 
-### ChatGPT — product decision desk and risk-triggered Atlas Contract Review
+### Codex — advisory review
 
-- Reviews roadmap fit, product intent, one-concern scope, Atlas trust, live-path
-  fit, write/schema risk, and accidental future work when a PR is
-  owner-reserved, high-risk, phase-transitioning, roadmap/vision/coaching or
-  trust-contract related, write/schema/security/runtime-model/promotion/
-  destructive, or genuinely ambiguous.
-- Returns `BLOCKING`, `NON-BLOCKING`, or `READY FOR DALE MERGE`.
-- Answers genuinely non-derivable product/scope/trust decisions with Dale.
-- Does not replace the cold review.
+Codex may comment on PRs. Its comments are advisory, not a required status or human approval.
 
-### GitHub Actions — deterministic CI (hard gates)
+Claude:
 
-- Runs required build (where applicable), tests, lint, wiring check, secret
-  scan, applicable E2E, required trust/write/schema tests, and merge-card
-  validation.
-- Does not parse, publish, or enforce any bot review result as a GitHub status
-  check.
-- A workflow conclusion is evidence; an agent's claim is not.
+- fixes real, confident, in-scope findings;
+- routes a genuine non-derivable fork appropriately;
+- records false alarms as non-issues; and
+- never turns bot wording, reactions, or identity into a synthetic trust status.
 
-### Dale — owner-reserved merge authority
+### ChatGPT — decision desk and contract review
 
-- Owns product direction, owner-reserved decisions, promotion, production-data
-  authorization, and owner-reserved merge decisions.
-- Is required for owner-only or gym evidence; new product direction, coaching
-  philosophy, or scope; schema, migrations, deletion, credentials,
-  security-sensitive infrastructure, or production-data risk;
-  application/runtime/provider/model changes; One-Brain or other promotion
-  decisions; unresolved governance conflicts; and explicit owner holds.
+ChatGPT helps Dale resolve genuinely non-derivable product/scope/trust decisions and reviews risk-triggered roadmap, phase-transition, product, trust-contract, write/schema, security, promotion, destructive, or ambiguous changes.
 
-## 2. Pass/fail principle
+This review does not authorize production writes and is not required for routine campaign implementation.
 
-> A required check or review that was skipped, errored, unavailable, timed out,
-> stale, or incomplete is a failure, not a pass.
+### Dale — owner-reserved authority
 
-Positive evidence is required for every signal. Silence, an old-head review, a
-cancelled job, a self-reported test result, or the absence of a finding is not a
-substitute.
+Dale owns product direction, owner-only gym/device evidence, production-data authorization, schema/destructive/security decisions, Constitution/Invariant changes, and promotion decisions. Dale may merge or revoke Claude's authority, but routine clean PRs never wait for an owner merge click.
 
-| Signal                        | Pass requirement                                                                                                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Tests/lint/secret scan/E2E    | applicable required jobs conclude `success`                                                                                             |
-| Cold review                   | completed clean-context review of the exact current head with no P0/P1 finding; all actionable review conversations resolved (trivial docs-only PRs are exempt) |
-| ChatGPT Atlas Contract Review | explicit `NON-BLOCKING` or `READY FOR DALE MERGE` verdict when risk-triggered; not required for routine PRs settled by active governance |
-| Risk classification           | exactly one primary risk label                                                                                                          |
-| Merge card                    | present and fully completed                                                                                                             |
+## Positive-evidence principle
 
-Any new push after a blocking cold-review finding invalidates the prior cold
-review and requires one fresh cold review of the new head.
+Silence is not a pass. Every required signal needs positive evidence.
 
-## 3. Review lanes are separate
+| Signal | Pass requirement |
+|---|---|
+| Required CI | Applicable jobs conclude successfully on the current head |
+| Advisory findings | Real in-scope findings fixed; false alarms explicitly dispositioned |
+| ChatGPT Contract Review | Explicit non-blocking/ready verdict when risk-triggered |
+| Risk classification | Exactly one primary risk label |
+| Merge card | Complete and current |
+| Scope | One concern authorized by the canonical plan or explicit owner instruction |
 
-The review lanes answer different questions:
+An optional clean-context review may be used for confidence on higher-risk work. It is not a required marker, status, account, or merge condition.
 
-| Lane                          | Primary question                                                                  | Authority                                            |
-| ----------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Cold review                   | Is this exact head correct, safe, and trust-preserving?                           | clean-context Claude findings recorded on the PR     |
-| ChatGPT Atlas Contract Review | Is this the right Atlas change, at the right scope, preserving roadmap and trust? | external product/contract verdict recorded in the PR |
+## Merge authority
 
-Neither lane may impersonate or satisfy the other. The implementing session's
-own build-time reasoning does not count as a cold review — the cold review must
-be clean-context. A clean cold review does not count as Atlas Contract Review.
-The cold review is required for every non-trivial PR. ChatGPT Atlas Contract
-Review is required only when the risk triggers it.
+Claude merges when all of the following hold:
 
-## 4. Merge authority
+1. Every applicable required GitHub check passed on the exact current head.
+2. No genuine P0/P1, invariant, trust-loop, schema, security, secret, or write-safety problem remains.
+3. Real Codex/advisory findings are addressed.
+4. One primary risk label, the merge card, and the Vision Alignment Check are complete.
+5. The branch is current, clean, mergeable, and contains one concern.
+6. The concern is authorized by `docs/ATLAS_V1_EXECUTION_PLAN.md` or an explicit owner instruction.
+7. No owner-reserved authorization is outstanding.
 
-A routine PR may be merged by Claude only when all of the following hold:
+Prefer GitHub auto-merge when available; otherwise merge the exact head SHA directly. After merge, verify `main`, confirm deployment when applicable, update campaign state, and continue from a fresh branch.
 
-1. Every applicable required GitHub check passed.
-2. The cold review passed for the exact current head (clean-context, no P0/P1,
-   all actionable threads resolved) — required for every non-trivial PR; trivial
-   docs-only typo/status/index PRs may merge on deterministic CI alone.
-3. No P0/P1 finding or unresolved invariant, trust-loop, schema, security, or
-   write-safety violation remains.
-4. One primary risk label is applied.
-5. The merge card and Vision Alignment Check are complete.
-6. The branch is one concern, current with `main`, mergeable, and contains no
-   unrelated or prior-session commits.
-7. The PR matches the active roadmap or an explicit owner instruction.
-8. No owner-reserved decision is involved.
+Do not stop merely to report that a routine PR is merge-ready.
 
-Never merge when a required check or the exact-head cold review is missing,
-stale, skipped, errored, failed, or incomplete.
+## Severity handling
 
-When all routine gates pass, Claude must prefer GitHub auto-merge when available.
-If auto-merge is unavailable, Claude may merge directly with the exact reviewed
-head SHA. After a routine merge, Claude verifies main, confirms deployment when
-applicable using read-only evidence, creates a fresh branch, and continues the
-next approved concern.
+- **P0:** data/trust corruption, critical safety/security, write/schema/invariant break — blocks.
+- **P1:** material live-path correctness or missing trust-critical regression proof — blocks.
+- **P2:** safe non-blocking correctness/polish — file without expanding the PR.
+- **P3:** housekeeping/wording — file only when worthwhile.
 
-Owner-reserved PRs stop for Dale after the non-owner gates pass. ChatGPT Atlas
-Contract Review remains required for those PRs.
+Never downgrade a real trust, safety, security, privacy, or acceptance failure to avoid blocking.
 
-### Severity ladder
-
-| Severity | Meaning                                                                                                    | Effect                         |
-| -------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| P0       | data/trust corruption, write/schema/invariant break, critical security or secret exposure                  | blocks                         |
-| P1       | user-visible correctness, broken live path, material security issue, missing live-path regression coverage | blocks                         |
-| P2       | safe non-blocking correctness/polish                                                                       | defer without expanding the PR |
-| P3       | housekeeping/wording                                                                                       | defer without expanding the PR |
-
-No finding may be labeled P2/P3 merely to avoid blocking an actual invariant,
-safety, trust, privacy, or acceptance failure. Genuine P2/P3 findings are
-recorded in `BACKLOG.md` when authorized and do not force a re-review treadmill.
-
-## 5. Decision boundary
-
-Claude may decide implementation details already derivable from governance:
-root cause, smallest safe fix, PR sizing, test design, regression strategy, and
-governance-settled wording/rendering. A genuine non-derivable product/scope/trust
-fork goes to ChatGPT's Atlas Decision Desk.
+## Owner boundary
 
 Dale is required for:
 
-1. owner-only or gym evidence;
-2. product vision, coaching philosophy, new product scope, or application/runtime
-   provider/model changes;
-3. destructive or irreversible operations, including schema, migrations,
-   deletion, credentials, security-sensitive infrastructure, or production-data
-   risk;
-4. One-Brain or other promotion decisions;
-5. a genuine unresolvable conflict between governing principles; and
-6. any explicit owner hold.
+1. genuine owner-only gym/device evidence;
+2. real production writes outside already-approved product use;
+3. product vision, coaching philosophy, new scope, or application/runtime/provider/model changes;
+4. schema, migration, deletion, credentials, or security-sensitive infrastructure;
+5. Constitution/Invariant amendments;
+6. One-Brain or other promotion decisions;
+7. genuine unresolved principle conflicts and explicit owner holds.
 
-No decision lane authorizes a real production write, weakens the
-preview-to-approve-to-write trust loop, changes proof-field semantics, amends an
-invariant/constitution, or grants owner-reserved merge authority.
+Routine implementation, tests, derivable wording/UX, and clean merges remain Claude authority.
 
-## 6. Safety and scope remain unchanged
+## Absolute safety
 
-- No real Sheets write without explicit owner approval; dry-runs use
-  `test_mode=true` and must prove `sheet_written:false` plus
-  `no_write_confirmed:true`.
-- No manual Sheet writes by agents; no secrets, production Sheet IDs, private
-  evidence, `.env`, credentials, screenshots, or workout data in commits/PRs.
-- No schema, approval-gate, parser grammar, progression math, write behavior,
-  Render env, or application model change unless explicitly scoped and approved.
+- No real Sheets write without explicit authorization.
+- Dry-runs use `test_mode:true` and prove `sheet_written:false` plus `no_write_confirmed:true`.
+- No manual Sheet edits by agents.
+- No secret, `.env`, production Sheet ID, private evidence, or workout data in commits or PRs.
+- No schema migration, historical rewrite, approval-gate weakening, parser-contract change, or proof-field change unless explicitly scoped and approved.
 - Tests cover the live path or closest integration path.
-- One concern per PR. Future work never expands the current PR.
+- One concern per PR; discoveries go to `BACKLOG.md`.
 
-The 2026-07-10 production-verification amendment in
-`docs/OWNER_CHECKIN_RULES.md` remains unchanged and narrow: read-only/dry-run by
-default; a test-marked, same-session-reverted write only as a last resort; any
-data-integrity anomaly stops work and returns control to Dale.
+## Relationship to active documents
 
-## 7. Relationship to active docs
+- `CLAUDE.md` — canonical operating brief.
+- `docs/ATLAS_V1_EXECUTION_PLAN.md` — sole campaign queue.
+- `docs/AGENT_WORKFLOW.md` — branch, verification, PR, and continuation loop.
+- `docs/OWNER_CHECKIN_RULES.md` — owner-reserved categories.
+- `docs/DECISION_ROUTING.md` — ChatGPT decision desk.
+- `docs/INVARIANTS.md` and `docs/CONSTITUTION.md` — rules no process may relax.
 
-- `CLAUDE.md` — canonical implementation-agent and safety brief.
-- `docs/AGENT_WORKFLOW.md` — current-state, branch, build, review, and handoff
-  process.
-- `docs/OWNER_CHECKIN_RULES.md` — owner-reserved decisions and data safety.
-- `docs/DECISION_ROUTING.md` — ChatGPT Atlas Decision Desk.
-- `docs/INVARIANTS.md` and `docs/CONSTITUTION.md` — rules no workflow may relax.
-- `.github/PULL_REQUEST_TEMPLATE.md` — merge-card evidence format.
-
-If active governance conflicts, stop and reconcile it in a focused governance
-PR. Historical records are not rewritten merely because they describe an older
-Codex-era or Claude-era workflow.
+If active governance conflicts, reconcile it in the smallest focused docs PR. Do not create another governance layer.

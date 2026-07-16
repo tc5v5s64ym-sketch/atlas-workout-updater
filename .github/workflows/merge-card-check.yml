@@ -1,8 +1,6 @@
 name: Merge card check
 
-# Enforces the merge card standard (docs/AUTOMATION_PROTOCOL.md §2:
-# "an empty field is a failure"). Fails the PR if the body is missing the
-# Atlas Merge Card section or still contains template placeholders.
+# Fails when a PR body is missing the Atlas Merge Card or retains placeholders.
 
 on:
   pull_request:
@@ -28,32 +26,34 @@ jobs:
               problems.push('PR body is missing the "Atlas Merge Card" section. Start from .github/PULL_REQUEST_TEMPLATE.md.');
             }
 
-            // Sentinels that only exist in the UNFILLED template — leaving any
-            // of them means a merge-card field was not completed. Covers the
-            // table fields AND the prose sections (concern, current-state
-            // verdict, tests). The Trust/scope safety checkboxes are NOT enforced
-            // here (several are "or owner-flagged", so an unchecked box can be
-            // legitimate) — they are reviewed, not gated.
+            // Sentinels copied from the unfilled template. Checkboxes are reviewed
+            // rather than mechanically enforced because an authorized exception can
+            // legitimately leave one unchecked with an explanation.
             const sentinels = [
-              // table
-              'number, filled after open',
-              'one line -->',
-              'e.g. docs-only',
-              'low / medium / high -->',
-              'command/check + result; not-run',
-              'risk-triggered: READY FOR DALE MERGE / NON-BLOCKING / BLOCKING',
-              'No (routine) · or Yes + reserved criterion',
-              'steps for Dale if needed',
-              'Claude may routine-merge / fix-then-review / hold-for-Dale -->',
-              // prose
-              'One sentence: the single concern',
-              'STILL BROKEN / ALREADY FIXED',
+              '#<!-- number -->',
+              'F## or explicit owner instruction',
+              '<!-- one line -->',
+              'one label + low/medium/high',
+              '<!-- concise -->',
+              'STILL BROKEN / ALREADY FIXED / PARTIALLY FIXED',
+              'exact commands/checks + results',
+              'Codex/optional clean review: fixed / non-issue / none',
+              'NON-BLOCKING / READY / BLOCKING / not risk-triggered',
+              'No, or exact reserved category and status',
+              'evidence/script needed, or n/a',
+              'Claude merges exact passing head / blocked on owner authorization',
+              'One sentence. One PR equals one concern',
+              'Source card/finding, duplicate/stale search',
               'Principle advanced',
-              'command/check + result',
+              'Focused summary',
+              'Commands, deterministic CI',
+              'List each real finding',
+              'Main/deploy verification',
             ];
-            for (const s of sentinels) {
-              if (body.includes(s)) {
-                problems.push(`Merge card field left as template placeholder: "${s}"`);
+
+            for (const sentinel of sentinels) {
+              if (body.includes(sentinel)) {
+                problems.push(`Merge card field left as template placeholder: "${sentinel}"`);
               }
             }
 

@@ -1,87 +1,53 @@
 # Atlas Workout Updater
 
-Atlas is the production backend that parses, enriches, validates, and writes workout data to the live Google Sheet.
+Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews the exact rows that would be saved, and writes to Google Sheets only after explicit approval.
 
-## Production Status
+## Production
 
-- Render production URL: `https://atlas-workout-updater.onrender.com`
-- Google Sheets integration is live.
-- Dashboard is intentionally absent and optional.
-- Required production tabs are `Metadata`, `Log_Cleaned`, `Exercise_Catalog`, `Effort`, `Logic`, and `Session_Summary`.
-- Mission Control is the GitHub Actions smoke test used for safe production checks.
+- Render deploys from GitHub `main`.
+- Google Sheets is the permanent V1 record.
+- The application is served at `/app`.
+- Data requests require the Atlas API key.
+- Static assets are public; workout data and APIs are not.
+- The authoritative Sheet contract lives in `config/columns.js`, `config/sheetContract.js`, and `docs/SHEET_CONTRACT.md`.
 
-## Web UI
+## Trust contract
 
-A lightweight web UI is served at `/app` (e.g. `https://atlas-workout-updater.onrender.com/app/`). It provides:
+- Never commit `.env`, API keys, Google credentials, production Sheet IDs, screenshots, spreadsheets, or private workout data.
+- Never run a real production write without explicit authorization.
+- Dry-runs pass `test_mode:true` and prove `sheet_written:false` plus `no_write_confirmed:true`.
+- The preview → approve → write flow is mandatory.
+- The deterministic engine owns numbers and decisions; the LLM only words whitelisted facts.
 
-- **Dashboard** — weekly summary, recent workouts, recent PRs, stalled lifts (read-only).
-- **Progress** — per-lift progress and next-set recommendation (read-only).
-- **Log Workout** — approve-before-save flow: enter sets plus manual effort or an Apple Watch screenshot, run a `test_mode=true` dry-run preview, review enrichment/warnings, then explicitly approve to write.
-- **Settings** — paste your Atlas API key; it is stored only in the browser's localStorage and sent as the `x-atlas-api-key` header on every data call.
+## Start here
 
-The static assets are public, but every data request still requires the API key. Nothing is ever written without a previewed dry-run and an explicit Approve click.
+- [CLAUDE.md](CLAUDE.md) — canonical agent operating and safety brief.
+- [docs/ATLAS_V1_EXECUTION_PLAN.md](docs/ATLAS_V1_EXECUTION_PLAN.md) — sole active execution campaign.
+- [docs/DECISION_KERNEL.md](docs/DECISION_KERNEL.md) — durable product/trust principles.
+- [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md) — documentation authority map.
+- [docs/ATLAS_PRODUCT_VISION.md](docs/ATLAS_PRODUCT_VISION.md) — product north star.
+- [docs/CONSTITUTION.md](docs/CONSTITUTION.md) and [docs/INVARIANTS.md](docs/INVARIANTS.md) — non-negotiable rules.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — current system boundaries.
+- [docs/AGENT_LIVE_TESTING.md](docs/AGENT_LIVE_TESTING.md) — safe live-test tiers.
+- [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md) — production checks.
+- [docs/BACKUP_ROLLBACK.md](docs/BACKUP_ROLLBACK.md) — recovery.
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — diagnosis.
 
-## Safety Rules
+Historical plans and compatibility pointers do not select work.
 
-- Never commit `.env`, API keys, Google credentials, screenshots, spreadsheets, or private workout data.
-- Do not change `GOOGLE_SHEETS_ID` without an approved cutover or rollback.
-- Do not run a real workout write unless explicitly approved.
-- Use `test_mode=true` for production dry-runs.
-- Treat `would_write:true` as validation signal only. No-write proof requires `sheet_written:false` and `no_write_confirmed:true`.
+## For implementation agents
 
-## Docs
+Read `CLAUDE.md` and `docs/ATLAS_V1_EXECUTION_PLAN.md`, then execute the first eligible unfinished card. Verify current state before editing, use one concern per PR, run deterministic hard gates, merge the exact passing head under standing authority, update campaign state, and continue from refreshed `main`.
 
-- Agent instructions: [CLAUDE.md](CLAUDE.md)
-- Product vision: [docs/ATLAS_PRODUCT_VISION.md](docs/ATLAS_PRODUCT_VISION.md)
-- Atlas context: [docs/ATLAS_CONTEXT.md](docs/ATLAS_CONTEXT.md)
-- Safety rules: [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md)
-- Workflow: [docs/WORKFLOW.md](docs/WORKFLOW.md)
-- Codex session starter: [docs/CODEX_SESSION_STARTER.md](docs/CODEX_SESSION_STARTER.md)
-- Foundation audit: [docs/FOUNDATION_AUDIT.md](docs/FOUNDATION_AUDIT.md)
-- Post-cutover baseline: [docs/BASELINE_POST_CUTOVER.md](docs/BASELINE_POST_CUTOVER.md)
-- Mission Control: [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md)
-- Sheet contract: [docs/SHEET_CONTRACT.md](docs/SHEET_CONTRACT.md)
-- Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- First real write plan: [docs/FIRST_REAL_WRITE.md](docs/FIRST_REAL_WRITE.md)
-- API audit: [docs/API_AUDIT.md](docs/API_AUDIT.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Product plan: [docs/PRODUCT_PLAN.md](docs/PRODUCT_PLAN.md)
-- Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md)
-- Backup and rollback: [docs/BACKUP_ROLLBACK.md](docs/BACKUP_ROLLBACK.md)
-- Secret hygiene plan: [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md)
-- Secret rotation runbook: [docs/SECRET_ROTATION_RUNBOOK.md](docs/SECRET_ROTATION_RUNBOOK.md)
-- Secret hygiene checklist: [docs/SECRET_HYGIENE_CHECKLIST.md](docs/SECRET_HYGIENE_CHECKLIST.md)
-- API reference: [API_REFERENCE.md](API_REFERENCE.md)
+`AGENTS.md` and `CODEX.md` are compatibility pointers only.
 
-## For AI Agents
+## Local setup and checks
 
-Read [CLAUDE.md](CLAUDE.md) before changing code. It is the canonical
-implementation-agent brief: the permanent Atlas safety rules, sheet contract,
-no-write requirements, review/merge model, and PR workflow. `AGENTS.md` and
-`CODEX.md` are compatibility pointers to it.
-
-## Local Environment
-
-Use [.env.example](.env.example) as a placeholder template for local setup. Never commit `.env` or real secret values. See [docs/SECRET_HYGIENE_PLAN.md](docs/SECRET_HYGIENE_PLAN.md) and [docs/SAFETY_RULES.md](docs/SAFETY_RULES.md) before rotating or cleaning up secrets.
-
-Secret hygiene docs: [plan](docs/SECRET_HYGIENE_PLAN.md), [rotation runbook](docs/SECRET_ROTATION_RUNBOOK.md), [checklist](docs/SECRET_HYGIENE_CHECKLIST.md), and [safety rules](docs/SAFETY_RULES.md).
-
-## Local Checks
+Use `.env.example` as a placeholder template. Never commit real secrets.
 
 ```bash
 npm run lint
 npm test
 ```
 
-## Mission Control
-
-Run the CI workflow manually from GitHub Actions:
-
-1. Open the CI workflow.
-2. Choose branch `main`.
-3. Select a smoke mode.
-4. Use `read-only` for safe health checks.
-5. Use `full` or `post-switch` only when a `test_mode=true` dry-run is appropriate.
-
-See [docs/MISSION_CONTROL.md](docs/MISSION_CONTROL.md) for the full mobile-friendly workflow.
+Run other applicable build, wiring, secret-scan, E2E, and trust/write/schema checks named by the active card and PR template.

@@ -1,37 +1,46 @@
 # Atlas Governance Spine
 
-This file defines how Atlas's planning documents relate. It is a map of roles, not content. It exists so every idea has one correct home and no important decision lives only in chat.
+This file defines where Atlas truth lives so no decision depends on chat memory and no second roadmap competes for execution authority.
 
 ## The hierarchy
 
+```text
+Dream / Vision
+      ↓
+Constitution + Invariants
+      ↓
+Canonical Execution Plan
+      ↓
+Backlog / Evidence / Specs
 ```
-Dream
-  ↓
-Vision
-  ↓
-Constitution
-  ↓
-Roadmap
-  ↓
-Backlog
-```
-
-Each layer serves the one above it. A Roadmap step exists to advance the Vision; the Vision exists to reach the Dream. The Constitution is the set of rules none of the layers below it may break in the pursuit.
 
 ## The layers
 
-**Dream** — The destination. Why Atlas exists at all, years out. Changes rarely. Not a plan; the direction every other layer is checked against. Lives in `docs/ATLAS_PRODUCT_VISION.md` → "The Dream".
+**Dream and Vision** — why Atlas exists and what the finished product should feel like. Lives in `docs/ATLAS_PRODUCT_VISION.md`.
 
-**Vision** — The product we build to reach the Dream. What Atlas actually becomes — its shape, its pillars, the experience. The Vision answers "what are we building," the Dream answers "toward what end." Lives in `docs/ATLAS_PRODUCT_VISION.md` and `docs/CONSTITUTION.md`.
+**Constitution and Invariants** — laws Atlas must not break: approve-before-write, deterministic numbers, truthful state, and absolute data safety. Lives in `docs/CONSTITUTION.md` and `docs/INVARIANTS.md`.
 
-**Constitution** — The laws we will not break while pursuing the Dream and Vision. Inviolable: the trust contract, no blind writes, the engine owns the numbers and AI only words them, the owner approves. A guardrail, not a destination. If anything below it conflicts with the Constitution, the Constitution wins. Lives in `docs/CONSTITUTION.md` and `docs/INVARIANTS.md`.
+**Canonical Execution Plan** — the one ordered campaign currently being built. Lives in `docs/ATLAS_V1_EXECUTION_PLAN.md`. It is the sole authority for selecting the next PR until V1 stabilization ends.
 
-**Roadmap** — The current leg of the journey. What is actively being built now, as one ordered execution queue. Everything here must trace upward to the Vision and stay inside the Constitution. Lives in `docs/ACTIVE_ROADMAP.md`.
+**Backlog** — the intake and deferred-work ledger. Lives in `BACKLOG.md`. While the canonical plan has eligible work, the backlog records discoveries but does not reorder the campaign.
 
-**Backlog** — The single source of truth for all open and deferred work. The widest and most concrete layer. Everything not yet done lives here so nothing is lost. Lives in `BACKLOG.md`.
+**Evidence and specs** — `docs/TEST_QUEUE.md`, `docs/BUG_TRIAGE_LEDGER.md`, promotion criteria, architecture, narrow design specs, audits, and research. They prove, constrain, or explain work; they do not independently select it.
 
 ## The curator rule
 
-Every significant idea discovered through discussion must be intentionally assigned a primary home in Dream, Vision, Constitution, Roadmap, or Backlog. No important project decision should exist only in chat history.
+Every significant idea must be assigned to one primary home. The owner is not responsible for filing it.
 
-The owner is not responsible for filing. When the owner brainstorms, the agent places the idea in the correct layer and states where it went.
+- Product direction → Vision.
+- Non-negotiable rule → Constitution/Invariants.
+- Approved current campaign work → canonical execution plan.
+- New or deferred work → Backlog.
+- Validation result → evidence ledger.
+- Narrow implementation contract → spec.
+
+## One-plan rule
+
+Atlas may have only one active execution plan.
+
+Do not create another roadmap, phase plan, fix-it document, campaign controller, or giant session prompt. A narrow spec may exist when a plan card needs design, but `docs/ATLAS_V1_EXECUTION_PLAN.md` remains the sequencing authority.
+
+Git history is the archive for retired plans. Compatibility-pointer files must redirect to the canonical plan and carry no independent queue.
