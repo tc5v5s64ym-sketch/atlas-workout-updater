@@ -64,17 +64,14 @@ export async function refreshSessionStatus() {
     const json = await res.json().catch(() => null);
     const data = (json && json.data) || {};
     sessionsEnabled = Boolean(data.sessions_enabled);
-    // Only a CONFIRMED server verdict moves the persistent flag: authenticated →
-    // set; sessions enabled but explicitly not authenticated (real expiry/invalid
-    // cookie) → clear. A transient failure/timeout falls to catch and leaves the
-    // flag untouched, so a cold-start blip never logs the owner out.
-    if (data.authenticated) {
-      markConnected();
-    } else if (data.sessions_enabled) {
-      markDisconnected();
-    } else {
-      sessionActive = false;
-    }
+    // A status check only ever CONFIRMS a session (authenticated → set the durable
+    // flag); it must NEVER clear it. A not-authenticated result here can mean the
+    // browser simply did not present the cookie on this particular request (e.g. a
+    // Safari cold-reopen navigation), and wiping the flag on that would falsely log
+    // the owner out. Only an explicit logout clears the flag. The cookie remains
+    // the real credential enforced by the server on every actual API call.
+    if (data.authenticated) markConnected();
+    else sessionActive = false;
     return data;
   } catch (_) {
     return null;

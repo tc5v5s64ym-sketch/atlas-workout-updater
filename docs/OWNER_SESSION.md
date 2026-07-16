@@ -6,12 +6,12 @@ service-worker refreshes, without a raw API key sitting in browser `localStorage
 ## How it works
 
 - On connect, the browser exchanges the Atlas key for a **signed, HttpOnly,
-  Secure, SameSite=Strict** cookie (`atlas_session`, ~120-day lifetime). The raw
+  Secure, SameSite=Lax** cookie (`atlas_session`, ~120-day lifetime). The raw
   key is then removed from `localStorage`. JavaScript cannot read or forge the
   cookie — the signing secret never leaves the server.
 - Same-origin `/api` requests send the cookie automatically. State-changing
   (non-GET) requests additionally require a same-origin `Origin` (CSRF defense on
-  top of `SameSite=Strict`).
+  top of `SameSite=Lax`).
 - An actively-used session is **rotated** (re-issued) once it is past its
   half-life, so an active owner is not forced to re-authenticate on the hard
   boundary.

@@ -550,7 +550,7 @@ test('durable owner session (F04C): login → cookie auth → CSRF → logout', 
       assert.equal(setCookies.length, 1);
       const sc = setCookies[0];
       assert.match(sc, /HttpOnly/);
-      assert.match(sc, /SameSite=Strict/);
+      assert.match(sc, /SameSite=Lax/);
       assert.match(sc, /Max-Age=\d+/);
       const m = sc.match(/atlas_session=([^;]+)/);
       assert.ok(m, 'a session token is present');
