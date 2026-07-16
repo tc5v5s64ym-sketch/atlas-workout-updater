@@ -73,9 +73,11 @@ const {
   createCorsMiddleware,
   createRateLimiter,
   createRequestContext,
-  requireApiKey: requireApiKeyMiddleware
+  requireApiKey: requireApiKeyMiddleware,
+  timingSafeStringEqual
 } = require('./middleware');
 const { success: standardSuccess, error: standardError } = require('./response');
+const sessionModule = require('./services/session');
 const { createTtlCache } = require('./services/cache');
 const { parseWorkoutScreenshot } = require('./services/vision');
 const coach = require('./services/coach');
@@ -171,7 +173,21 @@ app.use('/api', createRateLimiter({
   windowMs: Number(process.env.ATLAS_API_RATE_LIMIT_WINDOW_MS || 60 * 1000),
   max: Number(process.env.ATLAS_API_RATE_LIMIT_MAX || 300)
 }));
-app.use('/api', requireApiKeyMiddleware(atlasApiKey, { publicPaths: [] }));
+// A dedicated, tight limiter on the credential-checking login route bounds
+// brute-force attempts independently of the general /api budget. logout/status
+// carry no secret so they ride the general limiter only.
+app.use(['/api/session/login'], createRateLimiter({
+  name: 'session_login',
+  windowMs: Number(process.env.ATLAS_LOGIN_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
+  max: Number(process.env.ATLAS_LOGIN_RATE_LIMIT_MAX || 10)
+}));
+// Session login/logout/status bypass the API-key gate: login authenticates by the
+// credential in its body (or the legacy header) and mints the cookie; logout only
+// clears it; status only reports enabled/authenticated. Everything else under /api
+// still requires the key OR a valid session cookie.
+app.use('/api', requireApiKeyMiddleware(atlasApiKey, {
+  publicPaths: ['/api/session/login', '/api/session/logout', '/api/session/status']
+}));
 app.use(['/api/parse-workout-image', '/api/complete-workout'], createRateLimiter({
   name: 'vision_upload',
   windowMs: Number(process.env.ATLAS_VISION_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000),
@@ -865,6 +881,46 @@ app.get('/.well-known/atlas-status.json', (req, res) => {
       status_reason_codes: ['STATUS_ASSEMBLY_FAILED']
     });
   }
+});
+
+// Durable owner session (F04C). These three routes are in the auth publicPaths so
+// they bypass the x-atlas-api-key gate: login authenticates by the credential in
+// its body (never persisted) and mints a signed HttpOnly cookie; logout clears it;
+// status reports enabled/authenticated without exposing anything. Sessions are
+// active ONLY when ATLAS_SESSION_SECRET is set — until then login returns 503 and
+// the app keeps using the legacy header, so nothing breaks before it is provisioned.
+app.post('/api/session/login', (req, res) => {
+  const secret = sessionModule.sessionSecret();
+  if (!secret) {
+    return standardError(req, res, 'Durable sessions are not enabled on this server', { session: 'disabled' }, 503);
+  }
+  const provided = (req.body && typeof req.body === 'object' ? req.body.api_key : null) || req.header('x-atlas-api-key');
+  if (!timingSafeStringEqual(provided, atlasApiKey)) {
+    return res.status(401).json({ status: 'error', message: 'Unauthorized', requestId: req.requestId });
+  }
+  const { token, maxAgeMs } = sessionModule.issueToken(secret);
+  res.setHeader('Set-Cookie', sessionModule.buildSetCookie(token, { maxAgeMs, secure: sessionModule.isSecureRequest(req) }));
+  return standardSuccess(req, res, 'Session established', {
+    session: 'active',
+    expires_in_days: Math.round(maxAgeMs / 86400000)
+  });
+});
+
+app.post('/api/session/logout', (req, res) => {
+  res.setHeader('Set-Cookie', sessionModule.buildClearCookie({ secure: sessionModule.isSecureRequest(req) }));
+  return standardSuccess(req, res, 'Session cleared', { session: 'cleared' });
+});
+
+app.get('/api/session/status', (req, res) => {
+  const secret = sessionModule.sessionSecret();
+  const payload = secret
+    ? sessionModule.verifySession(sessionModule.parseCookies(req.header('cookie'))[sessionModule.COOKIE_NAME], secret, Date.now())
+    : null;
+  return standardSuccess(req, res, 'Session status', {
+    sessions_enabled: Boolean(secret),
+    authenticated: Boolean(payload),
+    expires_at: payload ? new Date(payload.exp).toISOString() : null
+  });
 });
 
 // GET /api/pending-exercises

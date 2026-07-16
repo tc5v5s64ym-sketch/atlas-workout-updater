@@ -117,6 +117,7 @@ These remain active when their domain applies:
 - `docs/RELEASE_CHECKLIST.md`
 - `docs/BACKUP_ROLLBACK.md`
 - `docs/TROUBLESHOOTING.md`
+- `docs/OWNER_SESSION.md` — durable owner-session cookie (F04C): endpoints, cookie flags, migration, and the `ATLAS_SESSION_SECRET` activation step.
 - `docs/SECRET_HYGIENE_PLAN.md`
 - `docs/SECRET_HYGIENE_CHECKLIST.md`
 - `docs/SECRET_ROTATION_RUNBOOK.md`

@@ -16,6 +16,9 @@ process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL = 'stub@example.com';
 process.env.ATLAS_API_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_WRITE_RATE_LIMIT_MAX = '1000000';
 process.env.ATLAS_VISION_RATE_LIMIT_MAX = '1000000';
+// The durable-session login limiter (F04C) reads its cap at app load; lift it so
+// the session-flow tests below can log in repeatedly without tripping the guard.
+process.env.ATLAS_LOGIN_RATE_LIMIT_MAX = '1000000';
 // Not a real key. sheets.js is fully stubbed in these tests (see require.cache
 // injection below), so this value is never parsed — it only needs to be present
 // so config validation does not trip. Kept free of a literal PEM header so the
@@ -512,6 +515,116 @@ test('api smoke: routes include key endpoints and write metadata', async () => {
     assert.equal(routeByPath.get(p).authRequired, true, `${p} must require auth`);
     assert.equal(routeByPath.get(p).readOnly, false);
     assert.equal(routeByPath.get(p).writeCapable, true);
+  }
+});
+
+test('durable owner session (F04C): login → cookie auth → CSRF → logout', async (t) => {
+  const prevSecret = process.env.ATLAS_SESSION_SECRET;
+  process.env.ATLAS_SESSION_SECRET = 'integration-test-session-secret-value';
+  let cookie = null;
+  try {
+    await t.test('status reports sessions enabled + unauthenticated before login', async () => {
+      const r = await fetch(`${baseUrl}/api/session/status`);
+      const b = await r.json();
+      assert.equal(r.status, 200);
+      assert.equal(b.data.sessions_enabled, true);
+      assert.equal(b.data.authenticated, false);
+    });
+
+    await t.test('login with the wrong key is rejected and sets no cookie', async () => {
+      const r = await fetch(`${baseUrl}/api/session/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ api_key: 'not-the-key' })
+      });
+      assert.equal(r.status, 401);
+      assert.equal(r.headers.getSetCookie().length, 0);
+    });
+
+    await t.test('login with the correct key mints a hardened HttpOnly cookie', async () => {
+      const r = await fetch(`${baseUrl}/api/session/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ api_key: process.env.ATLAS_API_KEY })
+      });
+      assert.equal(r.status, 200);
+      const setCookies = r.headers.getSetCookie();
+      assert.equal(setCookies.length, 1);
+      const sc = setCookies[0];
+      assert.match(sc, /HttpOnly/);
+      assert.match(sc, /SameSite=Strict/);
+      assert.match(sc, /Max-Age=\d+/);
+      const m = sc.match(/atlas_session=([^;]+)/);
+      assert.ok(m, 'a session token is present');
+      cookie = `atlas_session=${m[1]}`;
+    });
+
+    await t.test('the cookie authenticates a protected request with NO API key', async () => {
+      const r = await fetch(`${baseUrl}/api/pending-exercises`, { headers: { cookie } });
+      assert.equal(r.status, 200);
+    });
+
+    await t.test('status reports authenticated when the cookie is presented', async () => {
+      const r = await fetch(`${baseUrl}/api/session/status`, { headers: { cookie } });
+      const b = await r.json();
+      assert.equal(b.data.authenticated, true);
+      assert.ok(b.data.expires_at);
+    });
+
+    await t.test('a cookie-authenticated write with a same-origin Origin passes auth', async () => {
+      const r = await fetch(`${baseUrl}/api/parse-workout-text`, {
+        method: 'POST',
+        headers: { cookie, origin: baseUrl, 'content-type': 'application/json' },
+        body: JSON.stringify({ workout_text: 'Bench Press 135 5/2', test_mode: true })
+      });
+      assert.notEqual(r.status, 401);
+      assert.notEqual(r.status, 403);
+    });
+
+    await t.test('a cookie-authenticated write from a CROSS origin is refused (CSRF)', async () => {
+      const r = await fetch(`${baseUrl}/api/parse-workout-text`, {
+        method: 'POST',
+        headers: { cookie, origin: 'https://evil.example.com', 'content-type': 'application/json' },
+        body: JSON.stringify({ workout_text: 'Bench Press 135 5/2', test_mode: true })
+      });
+      assert.equal(r.status, 403);
+    });
+
+    await t.test('a forged/garbage cookie does not authenticate', async () => {
+      const r = await fetch(`${baseUrl}/api/pending-exercises`, { headers: { cookie: 'atlas_session=forged.token' } });
+      assert.equal(r.status, 401);
+    });
+
+    await t.test('the legacy x-atlas-api-key header still authenticates (migration path)', async () => {
+      const r = await fetch(`${baseUrl}/api/pending-exercises`, { headers: { 'x-atlas-api-key': process.env.ATLAS_API_KEY } });
+      assert.equal(r.status, 200);
+    });
+
+    await t.test('an unauthenticated write is refused', async () => {
+      const r = await fetch(`${baseUrl}/api/parse-workout-text`, {
+        method: 'POST', headers: { 'content-type': 'application/json', origin: baseUrl },
+        body: JSON.stringify({ workout_text: 'Bench Press 135 5/2', test_mode: true })
+      });
+      assert.equal(r.status, 401);
+    });
+
+    await t.test('logout clears the cookie (Max-Age=0)', async () => {
+      const r = await fetch(`${baseUrl}/api/session/logout`, { method: 'POST', headers: { cookie, origin: baseUrl } });
+      assert.equal(r.status, 200);
+      const sc = r.headers.getSetCookie();
+      assert.equal(sc.length, 1);
+      assert.match(sc[0], /Max-Age=0/);
+    });
+
+    await t.test('login returns 503 when durable sessions are disabled (no secret)', async () => {
+      delete process.env.ATLAS_SESSION_SECRET;
+      const r = await fetch(`${baseUrl}/api/session/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ api_key: process.env.ATLAS_API_KEY })
+      });
+      assert.equal(r.status, 503);
+    });
+  } finally {
+    if (prevSecret === undefined) delete process.env.ATLAS_SESSION_SECRET;
+    else process.env.ATLAS_SESSION_SECRET = prevSecret;
   }
 });
 

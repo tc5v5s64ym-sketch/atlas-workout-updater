@@ -8,15 +8,55 @@ function createRequestContext(req, res, next) {
   next();
 }
 
-function requireApiKey(atlasApiKey, { publicPaths = [] } = {}) {
+// Auth accepts EITHER of two credentials, checked in this order — the addition of
+// the cookie path never weakens the gate; an unauthenticated request still fails
+// closed with 401:
+//   1. x-atlas-api-key header (timing-safe) — the machine/script path and the
+//      bounded legacy path browsers used before durable sessions.
+//   2. A signed, unexpired `atlas_session` cookie (F04C) — the browser path, only
+//      when ATLAS_SESSION_SECRET is set. For state-changing (non-GET) requests a
+//      same-origin Origin is additionally required (CSRF defense atop SameSite).
+function requireApiKey(atlasApiKey, { publicPaths = [], session = require('./services/session') } = {}) {
   const allow = new Set(publicPaths);
   return function apiKeyMiddleware(req, res, next) {
-    if (allow.has(req.path)) return next();
+    // Match publicPaths against BOTH the mount-relative path (req.path is stripped
+    // of the '/api' mount prefix inside app.use('/api', …)) and the full original
+    // URL, so a caller can list either '/api/session/login' or '/session/login'.
+    const fullPath = (req.originalUrl || req.url || '').split('?')[0];
+    if (allow.has(req.path) || allow.has(fullPath)) return next();
+
     const incomingApiKey = req.header('x-atlas-api-key');
-    if (!timingSafeStringEqual(incomingApiKey, atlasApiKey)) {
-      return res.status(401).json({ status: 'error', message: 'Unauthorized', requestId: req.requestId });
+    if (incomingApiKey && timingSafeStringEqual(incomingApiKey, atlasApiKey)) {
+      req.authMethod = 'api_key';
+      return next();
     }
-    return next();
+
+    const secret = session.sessionSecret();
+    if (secret) {
+      const cookies = session.parseCookies(req.header('cookie'));
+      const payload = session.verifySession(cookies[session.COOKIE_NAME], secret, Date.now());
+      if (payload) {
+        const method = String(req.method || '').toUpperCase();
+        const stateChanging = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+        if (stateChanging && !session.isAllowedOrigin(req.header('origin'), req)) {
+          return res.status(403).json({ status: 'error', message: 'Cross-origin request refused', requestId: req.requestId });
+        }
+        req.authMethod = 'session';
+        req.session = payload;
+        // Honest rotation: extend an actively-used session so the owner is not
+        // forced to re-authenticate on the hard expiry boundary.
+        if (session.shouldRenew(payload, Date.now())) {
+          const rotated = session.issueToken(secret);
+          res.setHeader('Set-Cookie', session.buildSetCookie(rotated.token, {
+            maxAgeMs: rotated.maxAgeMs,
+            secure: session.isSecureRequest(req)
+          }));
+        }
+        return next();
+      }
+    }
+
+    return res.status(401).json({ status: 'error', message: 'Unauthorized', requestId: req.requestId });
   };
 }
 

@@ -279,7 +279,7 @@ One canonical, agent-first status contract so any agent (Claude/Codex/ChatGPT/fr
 
 ### F04C — Durable owner session (remove repeated key entry)
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Objective**
 
@@ -295,7 +295,9 @@ Replace `atlas_api_key` in `localStorage` + per-call `x-atlas-api-key` with a lo
 
 **Owner gate:** A **new server-side session-signing secret** (Render env var) is owner-only. If required, stop and give Dale the exact variable name + steps — never a value. All other code/tests are autonomous.
 
-**Completion record:** PR — · Commit —
+**Owner activation step (non-blocking):** The code merges safely with **no** behavior change — durable sessions stay OFF until the secret is provisioned, and auth falls back to the `x-atlas-api-key` header until then. To activate, set one Render env var on the Atlas service: **`ATLAS_SESSION_SECRET`** = a fresh 32-byte random hex value (generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`; never a value in the repo/PR/logs), then redeploy. Rotating it is the global-logout lever. Full runbook: `docs/OWNER_SESSION.md`.
+
+**Completion record:** PR — this PR · Commit — `services/session.js` (HMAC-signed cookie sign/verify, expiry, rotation, CSRF `isAllowedOrigin`, cookie flags; secret read dynamically so absence = disabled); `middleware.js` (auth accepts the key header OR a valid session cookie, CSRF origin check on cookie-auth writes, publicPaths matched against the full URL); `index.js` (`POST /api/session/login|logout`, `GET /api/session/status`, dedicated login rate-limiter, publicPaths) + `config/routes.js`; client migration in `src/app/api.js` (`credentials`, conditional key header, `isConnected`/`sessionLogin`/`sessionLogout`/`refreshSessionStatus`), `src/app/app.js` (connect→login, disconnect→logout, one-time key→cookie migration bootstrap, all connection gates use `isConnected()`), `src/app/flightRecorder.js`, `src/app/index.html` (Connect/Disconnect); `.env.example` + `docs/OWNER_SESSION.md`. Tests: `test/session.test.js` (16 unit — sign/verify/tamper/expiry/wrong-secret/cookie-flags/origin/renew), the F04C integration block in `test/api-smoke.test.js` (login→cookie-auth→CSRF-refused→forged-cookie→legacy-header→unauthenticated→logout→disabled-503), and `test/sessionClientMigration.test.js`. Full suite 5499 pass; E2E unaffected (every spec mocks `/api/session/status` via its `**/api/**` fallback, so no migration fires under test).
 
 ### F05 — Parser full-consumption and `@N` ambiguity guard
 

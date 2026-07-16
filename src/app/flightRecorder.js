@@ -238,7 +238,11 @@ const _exports = (function (root) {
 
   // ---- DOM/context helpers (all best-effort) ----
   function fetchJson(method, path, body, apiKey, keepalive) {
-    let opts = { method: method, headers: { 'x-atlas-api-key': apiKey } };
+    // same-origin so the durable session cookie (F04C) authenticates the flight
+    // ingest once the raw key is migrated out of localStorage; the legacy key
+    // header only rides along while a key is still stored.
+    let opts = { method: method, credentials: 'same-origin', headers: {} };
+    if (apiKey) opts.headers['x-atlas-api-key'] = apiKey;
     if (body != null) {
       opts.headers['content-type'] = 'application/json';
       opts.body = JSON.stringify(body);
