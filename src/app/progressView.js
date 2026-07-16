@@ -1,6 +1,6 @@
 'use strict';
 // Atlas frontend — progressView module (PR-09b mechanical extraction from app.js).
-import { api, getApiKey } from './api.js';
+import { api, isConnected } from './api.js';
 import { formatSetLoad } from './app.js';
 import { el, renderTable, svgLineChart } from './dom.js';
 
@@ -170,7 +170,7 @@ export async function loadProgressLiftList() {
   const drillCard = document.getElementById('lift-drilldown-card');
   if (drillCard) drillCard.hidden = true;
 
-  if (!getApiKey()) {
+  if (!isConnected()) {
     resultBox.innerHTML = '<span class="muted">Set your API key in Settings to see your lifts.</span>';
     return;
   }

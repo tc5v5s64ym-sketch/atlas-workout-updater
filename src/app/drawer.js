@@ -6,7 +6,7 @@
  * .tab-btn controls, so app.js's tab engine + nav.js's surface router stay the
  * single source of truth and the preview/approve/write trust loop is untouched.
  *
- * Reuses app.js globals: api, getApiKey, FRIENDLY_PATTERN_LABELS,
+ * Reuses app.js globals: api, isConnected, FRIENDLY_PATTERN_LABELS,
  * FRIENDLY_STATUS_WORDS.
  */
 (function () {
@@ -174,7 +174,7 @@
   }
 
   function loadData() {
-    if (typeof api !== 'function' || (typeof getApiKey === 'function' && !getApiKey())) return;
+    if (typeof api !== 'function' || (typeof isConnected === 'function' && !isConnected())) return;
 
     api('/api/plan/intent-recommendation').then(res => {
       const read = (res.data && res.data.todays_read) || {};

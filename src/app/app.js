@@ -6953,6 +6953,11 @@ async function loadBodyTab() {
 window.api = api;
 window.fetchReaction = fetchReaction;
 window.getApiKey = getApiKey;
+// F04C: modules that gate on "is the owner connected?" must consult isConnected()
+// (a durable session cookie OR a legacy key), never getApiKey() alone — after the
+// cookie migration the raw key is gone but the session is live. Exposed as a global
+// for the browser-global modules (drawer.js, coach-conversation.js).
+window.isConnected = isConnected;
 window.addSetRow = addSetRow;
 window.emitSetLogged = emitSetLogged;
 window.getActiveIntentId = getActiveIntentId;

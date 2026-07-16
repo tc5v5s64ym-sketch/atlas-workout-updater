@@ -279,7 +279,7 @@ One canonical, agent-first status contract so any agent (Claude/Codex/ChatGPT/fr
 
 ### F04C — Durable owner session (remove repeated key entry)
 
-**Status:** ✅ COMPLETE (2026-07-16)
+**Status:** 🔁 FIXED — RE-VALIDATING LIVE (2026-07-16). First live test FAILED: after connecting, reload/reopen showed "Set your API key" (Safari, shell v133, server `51a628e`). Root cause was **client-only** — the deployed cookie path is correct (login returns `Set-Cookie: atlas_session=…; Path=/; HttpOnly; SameSite=Strict; Max-Age=10368000; Secure` and `/api/session/status` with the cookie returns `authenticated:true`, verified live), but four client modules (`coach-conversation.js`, `progressView.js`, `dom.js`, `drawer.js`) still gated "connected?" on `getApiKey()`, which is empty after the cookie migration, so they falsely prompted for a key. Fix converts every such gate to `isConnected()` (+ `window.isConnected` global + eslint global) with a red-first regression test that fails if any `src/app` module gates connection on the raw key alone. Awaiting Dale's repeat live test to mark COMPLETE.
 
 **Objective**
 
