@@ -301,7 +301,7 @@ Replace `atlas_api_key` in `localStorage` + per-call `x-atlas-api-key` with a lo
 
 ### F05 — Parser full-consumption and `@N` ambiguity guard
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Findings:** `PARSE-4`, `PARSE-5`
 
@@ -328,7 +328,7 @@ Route-level ambiguity fixtures plus regression coverage for valid terse notation
 
 Autonomous within the existing parser/trust contract. Any grammar-contract change beyond ambiguity refusal is owner-reserved.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — new route-level `services/fullConsumptionGate.js` (`applyFullConsumptionGate(parsed, rawText)`), wired in `index.js` immediately after the unresolved-lift gate on `POST /api/parse-workout-text`. It downgrades a `log_sets` parse to `needs_clarification` when the raw text (a) mixes 2+ distinct set-notation families — slash `\d+/\d+`, `x\d+@`, `\d+ for \d+` — the exact shape where first-sub-parser-wins silently drops a group (PARSE-4), or (b) uses the barbell `NxM@W` form with `W ≤ 10` and the parser actually emitted that tiny weight (PARSE-5). **No parser grammar touched** — `services/workoutTextParser.js` and every parser golden are byte-identical; the `225 5/2` slash contract and repeated-slash / `@>10` / dumbbell-`@RIR` inputs are proven to still parse. Tests: `test/fullConsumptionGate.test.js` (9 unit — both downgrades, @10/@11 boundary, precision guard, no-over-rejection, no-op robustness) + a live-path F05 block in `test/api-smoke.test.js` (real parser+gate via the route: the three PARSE-4 inputs and the PARSE-5 input ask with zero rows and no write; five valid inputs still parse to exact sets). Full suite 5511 pass.
 
 ### F06 — Preserve user-edited preview rows
 

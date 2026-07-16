@@ -2460,6 +2460,54 @@ test('api smoke: parse-workout-text splits inline multi-exercise (dry-run, no wr
   assert.deepEqual(fakeSheetsState.appendCalls, []);
 });
 
+test('api smoke: F05 PARSE-4 — mixed set notation asks instead of silently dropping a group', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  for (const text of [
+    'bench 185 5/2 3x8@165',            // slash set silently dropped today
+    'bench 3x8@165 then 175 for 5',      // "175 for 5" dropped today
+    'incline db press 60s 10/3 55s x8 @2' // second dumbbell group dropped today
+  ]) {
+    const { response, body } = await requestJson('/api/parse-workout-text', {
+      method: 'POST', body: JSON.stringify({ text, test_mode: true })
+    });
+    assert.equal(response.status, 200, text);
+    assert.equal(body.data.no_write_confirmed, true, text);
+    assert.equal(body.data.sheet_written, false, text);
+    assert.equal(body.data.parsed.intent, 'needs_clarification', text);
+    assert.ok((body.data.parsed.warnings || []).includes('mixed_set_format'), `${text}: ${JSON.stringify(body.data.parsed.warnings)}`);
+    assert.equal(body.data.parsed.sets, undefined, `${text}: no partial set list`);
+  }
+  assert.deepEqual(fakeSheetsState.appendCalls, [], 'a clarification never writes');
+});
+
+test('api smoke: F05 PARSE-5 — a small "@N" barbell weight asks instead of logging a 2 lb bench', async () => {
+  const { response, body } = await requestJson('/api/parse-workout-text', {
+    method: 'POST', body: JSON.stringify({ text: 'bench 3x10 @2', test_mode: true })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.parsed.intent, 'needs_clarification');
+  assert.ok((body.data.parsed.warnings || []).includes('ambiguous_at_value'));
+  assert.equal(body.data.parsed.sets, undefined);
+});
+
+test('api smoke: F05 does not over-reject valid terse notation (225 5/2, @>10, single-notation)', async () => {
+  const valid = [
+    ['bench 225 5/2', [[225, 5, 2]]],
+    ['squat 225 5/2 185 8/2', [[225, 5, 2], [185, 8, 2]]],  // repeated slash — one family, must pass
+    ['bench 3x5 @205', [[205, 5, null], [205, 5, null], [205, 5, null]]],
+    ['bench 3x8@165', [[165, 8, null], [165, 8, null], [165, 8, null]]],
+    ['incline db press 55s x10 @3', [[55, 10, 3]]]  // dumbbell @RIR stays RIR
+  ];
+  for (const [text, expected] of valid) {
+    const { response, body } = await requestJson('/api/parse-workout-text', {
+      method: 'POST', body: JSON.stringify({ text, test_mode: true })
+    });
+    assert.equal(response.status, 200, text);
+    assert.equal(body.data.parsed.intent, 'log_sets', `${text} must still parse`);
+    assert.deepEqual(body.data.parsed.sets.map(s => [s.weight, s.reps, s.rir]), expected, text);
+  }
+});
+
 // PR 486 slice 3: the dry-run preview attaches recognized non-slash modality
 // metadata (timed holds / steady cardio / intervals / circuits) so the client can
 // show what was understood — still without writing anything. Real route + real
