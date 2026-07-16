@@ -421,6 +421,26 @@ function normalizeLogRowObject(row, topLevelSessionId, topLevelDate) {
   return result;
 }
 
+// F08 / CLIENT-4: a closeout writes ONE session under ONE canonical date. On
+// /api/complete-workout the Effort row already uses the resolved session date
+// unconditionally, but a Log row honours its own `date_clean` first — so a
+// client-stamped per-row date (today's auto-fill) would split Log_Cleaned from
+// the Effort row when the session is dated from a screenshot or a backdated
+// manual entry. Force every Log row onto the resolved session date. Only stamps
+// the rows being written now — no historical rewrite. Handles the client object
+// shape and the Log_Cleaned array shape (date at index 0).
+function withCanonicalSessionDate(row, sessionDate) {
+  if (Array.isArray(row)) {
+    const copy = row.slice();
+    copy[0] = sessionDate;
+    return copy;
+  }
+  if (row && typeof row === 'object') {
+    return { ...row, date_clean: sessionDate, dateClean: undefined, date: undefined };
+  }
+  return row;
+}
+
 function logRowArrayToObject(row) {
   if (!Array.isArray(row) || (row.length !== logCleanedColumns.length && row.length !== logCleanedColumns.length - 1)) {
     throw new Error(`Each log row must contain ${logCleanedColumns.length - 1} or ${logCleanedColumns.length} values in Log_Cleaned column order.`);
@@ -2251,7 +2271,13 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
         // fetch catalog once and pass the map to the enricher to ensure consistent lookup
         const catalogRows = await getExerciseCatalog();
         const catalogMap = buildExerciseCatalogMap(catalogRows);
-        const enrichResult = await enrichAndFormatLogRows(parsedLogRows, sessionId, dateValue, catalogMap);
+        // F08 / CLIENT-4: stamp the resolved canonical session date onto every Log
+        // row so Log_Cleaned can never diverge from the Effort row (which already
+        // uses dateValue) on a screenshot-dated or backdated closeout. Applies to
+        // the dry-run preview AND the live write — the preview shows exactly what
+        // Approve writes.
+        const sessionDatedLogRows = parsedLogRows.map(row => withCanonicalSessionDate(row, dateValue));
+        const enrichResult = await enrichAndFormatLogRows(sessionDatedLogRows, sessionId, dateValue, catalogMap);
         formattedLogRows = enrichResult.formattedRows;
         enrichWarnings = enrichResult.warnings || [];
         pendingExercises = enrichResult.pending_exercises || [];
