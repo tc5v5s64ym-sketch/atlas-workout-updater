@@ -86,5 +86,5 @@ test('the button is restored (never stuck on "Starting…") when a concurrent ac
 
 test('the new module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planAcceptance\.js/, 'planAcceptance.js is in SHELL_ASSETS (offline-safe)');
-  assert.match(sw, /atlas-shell-v134/, 'the SW cache version is bumped for the new asset');
+  assert.match(sw, /atlas-shell-v135/, 'the SW cache version is bumped for the new asset');
 });
