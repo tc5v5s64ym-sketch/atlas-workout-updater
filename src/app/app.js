@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v137';
+const ATLAS_SHELL_BUILD = 'v138';
 
 
 
@@ -3465,6 +3465,13 @@ function addSetRow(values = {}) {
     row.remove();
     invalidatePreview();
   });
+  // F06 / CLIENT-2: flag a field the moment the lifter changes it, so a correction made in
+  // the preview can be folded back into the session buffer (reconcileSessionLogFromTable)
+  // before the table is rebuilt — otherwise logging another set reverts it to the parser value.
+  for (const cls of ['.set-weight', '.set-reps', '.set-rir', '.set-notes']) {
+    const input = row.querySelector(cls);
+    if (input) input.addEventListener('input', () => { input.dataset.userEdited = '1'; });
+  }
   setsTableBody.appendChild(row);
   parsedRowsEditor.hidden = false;
 }
@@ -3897,6 +3904,9 @@ async function rowsFromWorkoutInput() {
   // absent match) it is byte-identical and the existing alias/ask/default stands.
   workoutText = rewriteBareLeadAgainstPlan(workoutText, planNamesForDisambiguation());
   if (!workoutText || workoutText === lastParsedWorkoutText) return;
+
+  // F06/CLIENT-2: fold preview hand-edits into the buffer before this reparse wipes the table.
+  reconcileSessionLogFromTable();
 
   // Multi-exercise display-block paste — the live composer / app-export format:
   // bare exercise-name headers with per-line sets ("135lbs 10 · warm-up" warm-ups,
@@ -4690,6 +4700,40 @@ function currentPlannedExercise() {
 }
 
 // Editor-ready rows from the buffer, numbering sets per exercise.
+// F06 / CLIENT-2: fold the lifter's hand-edits in the preview table back into the session
+// buffer so they stay authoritative when the table is rebuilt from that buffer (e.g. at the
+// next closeout, after another set is logged). Rows map to buffer entries the SAME way
+// buildRowsFromSessionLog numbers them — by exercise + per-exercise occurrence order — and
+// only a field the lifter actually changed (data-user-edited) overwrites the buffer. Inert
+// when nothing was hand-edited, so the parser-driven flow is unchanged.
+function reconcileSessionLogFromTable() {
+  const rows = setsTableBody && setsTableBody.children;
+  if (!rows || !rows.length) return;
+  const buffer = (typeof getSessionLog === 'function') ? getSessionLog() : null;
+  if (!buffer || !buffer.length) return;
+  const byExercise = new Map();
+  for (const entry of buffer) {
+    const key = String(entry.exercise || '').trim().toLowerCase();
+    if (!byExercise.has(key)) byExercise.set(key, []);
+    byExercise.get(key).push(entry);
+  }
+  const cursor = new Map();
+  for (const tr of rows) {
+    if (!tr || typeof tr.querySelector !== 'function') continue;
+    const key = String(tr.querySelector('.set-exercise')?.value || '').trim().toLowerCase();
+    const list = byExercise.get(key);
+    if (!list) continue;
+    const i = cursor.get(key) || 0;
+    cursor.set(key, i + 1);
+    const entry = list[i];
+    if (!entry) continue;
+    for (const [cls, field] of [['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']]) {
+      const input = tr.querySelector(cls);
+      if (input && input.dataset.userEdited === '1') entry[field] = input.value;
+    }
+  }
+}
+
 function buildRowsFromSessionLog() {
   const counts = new Map();
   return getSessionLog().map(s => {
@@ -4878,6 +4922,9 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
   // The session lives in the buffer (sessionLog) above, not the parsed-rows
   // editor — clear the transient rows so the end-of-session save rebuilds the
   // FULL session from the buffer.
+  // F06 / CLIENT-2: preserve any hand-edits still in the table before wiping it (belt-and-
+  // suspenders for log paths that reach here without a reparse). Inert when nothing was edited.
+  reconcileSessionLogFromTable();
   if (setsTableBody) setsTableBody.innerHTML = '';
   if (parsedRowsEditor) parsedRowsEditor.hidden = true;
   // Every logged set refreshes the session pin (current lift · sets in · next).

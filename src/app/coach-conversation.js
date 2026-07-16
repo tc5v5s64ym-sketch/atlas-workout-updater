@@ -1817,9 +1817,13 @@ import * as sessionQuestion from './sessionQuestion.js';
       }
     } else if (edit.action === 'update_set') {
       const row = rows[edit.index];
-      if (edit.weight != null) row.querySelector('.set-weight').value = String(edit.weight);
-      if (edit.reps != null) row.querySelector('.set-reps').value = String(edit.reps);
-      if (edit.rir != null) row.querySelector('.set-rir').value = String(edit.rir);
+      // F06 / CLIENT-2: a coach-accepted correction is a preview edit too — mark each changed
+      // field user-edited so it is folded back into the session buffer on a later reparse/log
+      // (the programmatic .value set below fires no 'input' event, so mark it explicitly).
+      const markEdit = (cls, value) => { const i = row.querySelector(cls); i.value = String(value); i.dataset.userEdited = '1'; };
+      if (edit.weight != null) markEdit('.set-weight', edit.weight);
+      if (edit.reps != null) markEdit('.set-reps', edit.reps);
+      if (edit.rir != null) markEdit('.set-rir', edit.rir);
     } else if (edit.action === 'add_set') {
       if (typeof addSetRow !== 'function') return false;
       const lastRow = allRows[allRows.length - 1];
