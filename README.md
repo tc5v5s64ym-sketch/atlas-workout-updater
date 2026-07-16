@@ -7,7 +7,7 @@ Atlas is Dale's conversation-first personal strength coach and workout logger. I
 - Render deploys from GitHub `main`.
 - Google Sheets is the permanent V1 record.
 - The application is served at `/app`.
-- Data requests require the Atlas API key.
+- Data requests require the Atlas API key or a durable owner-session cookie (see [docs/OWNER_SESSION.md](docs/OWNER_SESSION.md)).
 - Static assets are public; workout data and APIs are not.
 - The authoritative Sheet contract lives in `config/columns.js`, `config/sheetContract.js`, and `docs/SHEET_CONTRACT.md`.
 

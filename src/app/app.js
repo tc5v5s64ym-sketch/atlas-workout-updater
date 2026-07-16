@@ -10,7 +10,7 @@
 // server reports a newer build but this tag is stale/absent, the browser is running
 // a cached service-worker shell — i.e. a "fix didn't take" is a stale shell, not a
 // code bug. Bump this whenever the SW cache version bumps (a test pins them equal).
-import { API_KEY_STORAGE, api, friendlyTransportMessage, getApiKey } from './api.js';
+import { API_KEY_STORAGE, api, friendlyTransportMessage, getApiKey, isConnected, refreshSessionStatus, sessionLogin, sessionLogout } from './api.js';
 import { BUG_REPORT_ACTION_LIMIT, BUG_REPORT_ERROR_LIMIT, BUG_REPORT_RECENT_API_LIMIT, BUG_REPORT_REDACTED, BUG_REPORT_SECRET_VALUE_PATTERNS, BUG_REPORT_SIZE_BUDGET, BUG_REPORT_STORAGE_KEY_RE, atlasActionLog, atlasRecentApiRequests, atlasRecentErrors, recordAtlasAction, recordAtlasError } from './bugReport.js';
 import { el, loadExerciseDatalist, renderTable, setStatus, svgBarChart, svgLineChart } from './dom.js';
 import { loadHistory, loadSessions } from './historyView.js';
@@ -174,7 +174,7 @@ window.atlasRefreshSessions = () => {
 
 /* ===== Settings ===== */
 
-document.getElementById('settings-form').addEventListener('submit', e => {
+document.getElementById('settings-form').addEventListener('submit', async e => {
   e.preventDefault();
   const key = document.getElementById('api-key-input').value.trim();
   const statusBox = document.getElementById('settings-status');
@@ -182,17 +182,32 @@ document.getElementById('settings-form').addEventListener('submit', e => {
     setStatus(statusBox, 'Enter an API key first.', 'error');
     return;
   }
-  localStorage.setItem(API_KEY_STORAGE, key);
+  // Prefer a durable server session so the raw key is never persisted in this
+  // browser. Fall back to the legacy localStorage key only when the server has
+  // not enabled sessions yet (503) or is unreachable — never on a rejected key.
+  const result = await sessionLogin(key);
   document.getElementById('api-key-input').value = '';
-  setStatus(statusBox, 'API key saved to this browser.', 'ok');
+  if (result.ok) {
+    localStorage.removeItem(API_KEY_STORAGE);
+    setStatus(statusBox, 'Atlas connected on this device.', 'ok');
+  } else if (result.status === 401) {
+    setStatus(statusBox, 'That key was not accepted. Check it and try again.', 'error');
+    return;
+  } else {
+    // 503 (sessions not enabled) or a transport failure — keep the legacy key so
+    // the owner is never locked out before the session secret is provisioned.
+    localStorage.setItem(API_KEY_STORAGE, key);
+    setStatus(statusBox, 'API key saved to this browser.', 'ok');
+  }
   loadDashboard();
   loadCoachPlan();
   loadWeeklyCoach();
 });
 
-document.getElementById('clear-key-btn').addEventListener('click', () => {
+document.getElementById('clear-key-btn').addEventListener('click', async () => {
+  await sessionLogout();
   localStorage.removeItem(API_KEY_STORAGE);
-  setStatus(document.getElementById('settings-status'), 'API key cleared.', 'ok');
+  setStatus(document.getElementById('settings-status'), 'Disconnected on this device.', 'ok');
 });
 
 /* ===== Backend health / debug ===== */
@@ -720,7 +735,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
     panel.innerHTML = '';
     panel.appendChild(el('div', {}, buildPanelContent(null, 'Loading last session…')));
     // Enhance async with last working set
-    if (getApiKey()) {
+    if (isConnected()) {
       fetchReaction(liftCode).then(rec => {
         if (!rec || !panel || panel.hidden) return;
         const last = rec.last_working_sets?.[rec.last_working_sets.length - 1];
@@ -742,7 +757,7 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
 }
 
 async function loadDashboard() {
-  if (!getApiKey()) {
+  if (!isConnected()) {
     const pickBox = document.getElementById('todays-pick');
     if (pickBox) pickBox.innerHTML = '<span class="muted">Set your API key in Settings to see today\'s plan.</span>';
     for (const id of ['progress-snapshot', 'intent-grid', 'coaching', 'weekly-summary', 'recent-history', 'recent-prs', 'stalls']) {
@@ -929,7 +944,7 @@ function emitGlanceReady(intentData) {
 async function loadCoachPlan() {
   const card = document.getElementById('coach-plan-card');
   if (!card) return;
-  if (!getApiKey()) { card.hidden = true; return; }
+  if (!isConnected()) { card.hidden = true; return; }
 
   const [intentResult, planResult] = await Promise.allSettled([
     api('/api/plan/intent-recommendation'),
@@ -998,7 +1013,7 @@ function renderCoachPlan(card, { focusReason, topRec }) {
 async function loadWeeklyCoach() {
   const card = document.getElementById('weekly-coach-card');
   if (!card) return;
-  if (!getApiKey()) { card.hidden = true; return; }
+  if (!isConnected()) { card.hidden = true; return; }
 
   const [reportResult, insightsResult] = await Promise.allSettled([
     api('/api/report/weekly'),
@@ -3369,7 +3384,7 @@ async function lookupNextTarget(name) {
 
 async function showLastTimeHint(exerciseInput, hintEl) {
   const exercise = exerciseInput.value.trim();
-  if (!exercise || !getApiKey()) { hintEl.textContent = ''; return; }
+  if (!exercise || !isConnected()) { hintEl.textContent = ''; return; }
   const stillCurrent = () => exerciseInput.value.trim().toLowerCase() === exercise.toLowerCase();
 
   let data = lastTimeCache.get(exercise.toLowerCase());
@@ -4852,7 +4867,7 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
 // it the recommendation reflects the PREVIOUS session. Other callers (preview,
 // post-write) omit it and get the history-only recommendation, unchanged.
 async function fetchReaction(liftCode, justLoggedSet) {
-  if (!liftCode || !getApiKey()) return null;
+  if (!liftCode || !isConnected()) return null;
   try {
     const params = new URLSearchParams();
     // Thread the active plan intent (e.g. 'recovery_pump' / 'deload_reset') so the
@@ -4886,7 +4901,7 @@ async function checkAndSuggestSubstitute(text) {
   // Use canonical session to find the current exercise — exercises[index] lags after
   // a logged set until "Next exercise →" is clicked, causing stale substitute checks.
   const currentEx = currentPlannedExercise();
-  if (!currentEx || !currentEx.name || !getApiKey()) return false;
+  if (!currentEx || !currentEx.name || !isConnected()) return false;
   try {
     const res = await api('/api/suggest-substitute', {
       method: 'POST',
@@ -4929,7 +4944,7 @@ async function checkAndSuggestSubstitute(text) {
 // session_id to the session we saved. Read-only and best-effort — any failure
 // just yields no PR label.
 async function fetchSessionPrLabel(liftCode, sessionId) {
-  if (!liftCode || !sessionId || !getApiKey()) return '';
+  if (!liftCode || !sessionId || !isConnected()) return '';
   try {
     const res = await api('/api/prs/recent');
     const prs = res.data?.prs || [];
@@ -4947,7 +4962,7 @@ async function fetchSessionPrLabel(liftCode, sessionId) {
 
 // Is this lift currently flagged as stalled? Read-only and best-effort.
 async function fetchStall(liftCode) {
-  if (!liftCode || !getApiKey()) return null;
+  if (!liftCode || !isConnected()) return null;
   try {
     const res = await api('/api/stalls');
     const stalls = res.data?.stalls || [];
@@ -4972,7 +4987,7 @@ async function attachVerdictContext(rec, liftCode, sessionId) {
 }
 
 async function verifyWrittenRange(range, sessionId, expectedRows) {
-  if (!range || !sessionId || !getApiKey()) return false;
+  if (!range || !sessionId || !isConnected()) return false;
   try {
     const params = new URLSearchParams({ range, session_id: sessionId });
     if (expectedRows) params.set('expected_rows', String(expectedRows));
@@ -5525,7 +5540,8 @@ function observeComposerText(text) {
   try {
     fetch('/api/debug/intent-observe', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-atlas-api-key': getApiKey() },
+      credentials: 'same-origin', // session cookie authenticates post-migration (F04C)
+      headers: { 'Content-Type': 'application/json', ...(getApiKey() ? { 'x-atlas-api-key': getApiKey() } : {}) },
       // app_version stamps the Intent_Shadow diagnostics row with the running shell
       // build, so the owner can tell which build produced an observation.
       // request_origin marks this as genuine athlete-UI activity for GATE A evidence
@@ -6242,7 +6258,7 @@ function renderLogWorkoutPreview(result, effortRow) {
   }
   const liftCodes = extractLiftCodes(data.log_rows_preview);
   if (pendingWrite) pendingWrite.liftCodes = liftCodes;
-  if (liftCodes.length && getApiKey()) {
+  if (liftCodes.length && isConnected()) {
     // Per-exercise in-preview coaching: each lift's last set + a coaching hint.
     // Read-only and best-effort — a failed lookup for one lift just drops its
     // card and never blocks the preview or the save.
@@ -6334,7 +6350,7 @@ function renderCompleteWorkoutPreview(result) {
       // wrong year) — the card words the fallback honestly and offers the picker.
       ...(data.screenshot_date_rejected ? { rejected: data.screenshot_date_rejected } : {})
     } : null);
-  if (completeLiftCodes.length && getApiKey()) {
+  if (completeLiftCodes.length && isConnected()) {
     const suggestionSlot = el('div', {});
     previewContent.appendChild(suggestionSlot);
     fetchReaction(completeLiftCodes[0]).then(rec => {
@@ -6862,7 +6878,7 @@ async function loadBwHistory() {
   const glance = document.getElementById('bw-glance');
   const box = document.getElementById('bw-history');
   const hint = document.getElementById('bw-history-hint');
-  if (!getApiKey()) {
+  if (!isConnected()) {
     if (glance) glance.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
     if (box) box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
     return;
@@ -6894,7 +6910,7 @@ async function loadBwHistory() {
 
 async function loadPendingExercises() {
   const box = document.getElementById('pending-exercises');
-  if (!getApiKey()) {
+  if (!isConnected()) {
     box.innerHTML = '<span class="muted">Set your API key in Settings.</span>';
     return;
   }
@@ -6998,10 +7014,28 @@ checkConnection();
 // Mobile resume safety: if a recent in-progress session was snapshotted before a
 // reload/force-quit/background, restore it so the lifter picks up mid-session.
 restoreSessionSnapshot();
-loadDashboard();
-loadCoachPlan();
-loadWeeklyCoach();
-loadExerciseDatalist();
+// Durable owner session bootstrap (F04C): learn whether this browser is
+// authenticated by a cookie, and — one time — migrate any legacy localStorage key
+// into a session cookie and delete the raw key. This runs BEFORE the first data
+// loads so the connection gates see the correct state for a cookie-only owner.
+// Every branch degrades safely: with sessions disabled or the status call failing,
+// isConnected() falls back to the localStorage key exactly as before.
+(async () => {
+  try {
+    const status = await refreshSessionStatus();
+    if (status && status.sessions_enabled && !status.authenticated) {
+      const legacyKey = getApiKey();
+      if (legacyKey) {
+        const migrated = await sessionLogin(legacyKey);
+        if (migrated.ok) localStorage.removeItem(API_KEY_STORAGE);
+      }
+    }
+  } catch (_) { /* never block the app on session bootstrap */ }
+  loadDashboard();
+  loadCoachPlan();
+  loadWeeklyCoach();
+  loadExerciseDatalist();
+})();
 
 document.getElementById('intent-drawer-backdrop')?.addEventListener('click', closeIntentDrawer);
 document.getElementById('intent-drawer-close')?.addEventListener('click', closeIntentDrawer);

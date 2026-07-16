@@ -407,11 +407,11 @@
     <section id="tab-settings" class="tab" role="tabpanel" tabindex="-1">
       <div class="card">
         <h2>Settings</h2>
-        <p>The API key is stored only in this browser (localStorage) and sent as the <code>x-atlas-api-key</code> header.</p>
+        <p>Enter the Atlas key once to connect this device. When the server supports durable sessions the key is exchanged for a secure, long-lived session cookie and is <strong>not</strong> stored in this browser; otherwise it falls back to this-browser storage.</p>
         <form id="settings-form" class="inline-form">
           <input type="password" id="api-key-input" placeholder="Atlas API key" autocomplete="off">
-          <button type="submit">Save key</button>
-          <button type="button" id="clear-key-btn" class="secondary">Clear</button>
+          <button type="submit">Connect</button>
+          <button type="button" id="clear-key-btn" class="secondary">Disconnect</button>
         </form>
         <div id="settings-status"></div>
         <p id="shell-info" class="shell-info">Running shell: <strong id="shell-version">…</strong></p>

@@ -21,16 +21,24 @@ test('client: the api() wrapper attaches x-atlas-request-origin (athlete_ui, or 
   assert.match(api, /navigator\.webdriver\s*===\s*true\s*\)\s*\?\s*'playwright'\s*:\s*'athlete_ui'/,
     'automation (WebDriver) sends a synthetic marker, never athlete_ui');
   assert.match(api, /'x-atlas-request-origin':\s*uiOrigin/, 'the computed marker rides the header');
-  // It must sit in the base header object, before the (recorder-gated) flightHeaders spread.
+  // The provenance marker sits in the ALWAYS-built base headers object, so it is
+  // sent unconditionally on every api() call.
   const headerLine = api.split('\n').find(l => l.includes("'x-atlas-request-origin'"));
-  assert.ok(/'x-atlas-api-key'/.test(headerLine), 'rides the always-present base headers, so it is unconditional');
+  assert.ok(/const headers = \{/.test(headerLine), 'the marker rides the unconditional base headers object');
+  // The api-key header is now CONDITIONAL — the durable session cookie is primary
+  // (F04C); the legacy key header is attached only while a raw key is still stored.
+  assert.match(api, /if \(key\) headers\['x-atlas-api-key'\] = key;/,
+    'the legacy key header is conditional, not unconditional');
 });
 
 test('client: the composer intent-observe POST body carries the webdriver-aware request_origin (bypasses api())', () => {
   const app = read('src/app/app.js');
   const idx = app.indexOf("fetch('/api/debug/intent-observe'");
   assert.ok(idx > -1, 'the intent-observe POST exists');
-  const block = app.slice(idx, idx + 900);
+  // Scope to the fetch call itself (up to its trailing .catch) so the assertion is
+  // robust to additive fields like credentials, not a brittle fixed char window.
+  const end = app.indexOf('.catch(', idx);
+  const block = app.slice(idx, end > -1 ? end : idx + 1200);
   assert.match(block, /navigator\.webdriver\s*===\s*true\s*\)\s*\?\s*'playwright'\s*:\s*'athlete_ui'/,
     'the body marker is also automation-aware since this POST bypasses the api.js header seam');
 });

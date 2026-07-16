@@ -262,7 +262,8 @@ test('shadow wiring: the composer submit chokepoint fires observeComposerText BE
   // A BARE fetch, not api() (review #838): api() records failures into the request
   // history that bug reports capture, so a dropped observation would leave a trace.
   assert.match(helper, /fetch\('\/api\/debug\/intent-observe'/, 'uses a bare fetch (not api()) so a dropped observation leaves no error-history trace');
-  assert.match(helper, /'x-atlas-api-key': getApiKey\(\)/, 'the bare fetch still carries auth');
+  assert.match(helper, /credentials: 'same-origin'/, 'the bare fetch sends the durable session cookie (F04C)');
+  assert.match(helper, /'x-atlas-api-key': getApiKey\(\)/, 'the legacy key header still rides along while a raw key is stored');
   // The call sits at the TOP of the submit handler, before the first lane branch
   // (parseBugCommand / looksLikeSessionRequest), so every submission is observed.
   const submitIdx = app.indexOf("document.getElementById('logger-form').addEventListener('submit'");

@@ -5,8 +5,77 @@ import { BUG_REPORT_RECENT_API_LIMIT, atlasRecentApiRequests, recordAtlasError, 
 
 export const API_KEY_STORAGE = 'atlas_api_key';
 
+// Durable owner session (F04C). When the server has ATLAS_SESSION_SECRET set, the
+// browser authenticates via a signed HttpOnly `atlas_session` cookie instead of a
+// raw key in localStorage. These module-level flags cache the last known session
+// state (refreshed via /api/session/status) so the many "am I connected?" gates
+// keep working after the raw key has been migrated out of localStorage.
+let sessionActive = false;
+let sessionsEnabled = false;
+
 export function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || '';
+}
+
+// "Connected" = an active server session OR a legacy key still in localStorage.
+// This is the value the app's connection gates should consult so a cookie-only
+// (post-migration) owner is correctly treated as connected.
+export function isConnected() {
+  return sessionActive || Boolean(getApiKey());
+}
+
+export function sessionsFeatureEnabled() {
+  return sessionsEnabled;
+}
+
+// Ask the server whether durable sessions are enabled and whether this browser is
+// currently authenticated by its cookie. Best-effort; never throws.
+export async function refreshSessionStatus() {
+  // Bounded so a slow/cold server can never block app startup — on timeout the
+  // caller proceeds and isConnected() falls back to the localStorage key.
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 4000) : null;
+  try {
+    const res = await fetch('/api/session/status', {
+      credentials: 'same-origin',
+      signal: controller ? controller.signal : undefined
+    });
+    const json = await res.json().catch(() => null);
+    const data = (json && json.data) || {};
+    sessionsEnabled = Boolean(data.sessions_enabled);
+    sessionActive = Boolean(data.authenticated);
+    return data;
+  } catch (_) {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// Exchange the owner key for a session cookie. On success the raw key is NOT
+// persisted by the caller. Returns { ok, status, json }.
+export async function sessionLogin(key) {
+  try {
+    const res = await fetch('/api/session/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key })
+    });
+    const json = await res.json().catch(() => null);
+    if (res.ok) sessionActive = true;
+    return { ok: res.ok, status: res.status, json };
+  } catch (err) {
+    return { ok: false, status: 0, json: null, error: err };
+  }
+}
+
+// Clear the server session cookie. Best-effort; always resolves.
+export async function sessionLogout() {
+  try {
+    await fetch('/api/session/logout', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) { /* best-effort — the cookie clears on the server response */ }
+  sessionActive = false;
 }
 
 // Transport-level fetch failures surface as cryptic browser strings ("Load failed",
@@ -38,13 +107,19 @@ export async function api(path, options = {}) {
   // a non-production runtime / test / sim / direct-API request. Telemetry only; never
   // affects request/response semantics or the write path.
   const uiOrigin = (typeof navigator !== 'undefined' && navigator.webdriver === true) ? 'playwright' : 'athlete_ui';
-  const headers = { 'x-atlas-api-key': getApiKey(), 'x-atlas-request-origin': uiOrigin, ...flightHeaders, ...(options.headers || {}) };
+  // Send the legacy key header ONLY when a key is still stored (machine/legacy /
+  // pre-migration path). Once migrated to a session cookie, getApiKey() is '' and
+  // the same-origin cookie authenticates instead — no empty header is sent.
+  const headers = { 'x-atlas-request-origin': uiOrigin, ...flightHeaders, ...(options.headers || {}) };
+  const key = getApiKey();
+  if (key) headers['x-atlas-api-key'] = key;
   const method = options.method || 'GET';
   const startedAt = Date.now();
   let res = null;
   let json = null;
   try {
-    res = await fetch(path, { ...options, headers });
+    // same-origin so the HttpOnly session cookie is attached on /api calls.
+    res = await fetch(path, { credentials: 'same-origin', ...options, headers });
     json = await res.json().catch(() => null);
     if (!res.ok) {
       const message = json?.message || json?.error || `Request failed (${res.status})`;
