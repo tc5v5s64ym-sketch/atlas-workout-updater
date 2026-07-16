@@ -174,7 +174,7 @@ Code/tests are autonomous. Any real production canary write requires explicit au
 
 ### F03 — Interrupted-closeout idempotency
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16)
 
 **Findings:** `WRITE-2`, `WRITE-3`
 
@@ -201,7 +201,7 @@ Interrupted request, process-restart rehydration, concurrent retry, stale reserv
 
 No production write without authorization.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — **WRITE-3:** `services/idempotency.js` tags in_progress records rehydrated from disk and `beginWrite` now downgrades a stale (`>5min`) rehydrated reservation to retryable — not only at load — closing the ≤24h post-crash wedge. **WRITE-2:** the closeout route reuses the server-minted `session_id` stamped in the prior idempotency record (new read-only `peekWrite`) instead of re-minting on retry, and the duplicate-session hard-stop now also covers a reused minted id, so the composite-key (Log) + duplicate-session (Effort) dedupes catch the replay (no full-workout double write). Red-first tests: beginWrite downgrade of an early-rehydrated stale reservation, `peekWrite` recovery, and a route-level reused-minted-id retry that refuses (409) and never re-appends. Full suite green (5460). No schema change.
 
 ### F04 — Ambiguous Google Sheets append recovery
 

@@ -63,6 +63,7 @@ const {
 const { selectProtocol, roundLoad, computePrescription } = require('./services/deloadProtocols');
 const {
   beginWrite,
+  peekWrite,
   completeWrite,
   failWrite,
   normalizeWriteId
@@ -2096,11 +2097,42 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
 
     // If the client supplied a session_id, honour it (explicit beats implicit).
     // A supplied id that already exists is still a duplicate (same data sent twice).
-    const sessionId = formFields.session_id
-      ? formFields.session_id
-      : nextAvailableSessionId(dateValue, existingEffortSessionIds);
+    //
+    // WRITE-2: when the client omits a session_id (server-minted), a retry with the
+    // SAME write_id must REUSE the id stamped into the prior idempotency record
+    // instead of minting a fresh one. A freshly-minted id on retry would slip past
+    // the composite-key (Log) and duplicate-session (Effort) dedupes and double-write
+    // the whole workout. The client's explicit id always wins; a first attempt (no
+    // prior record) mints fresh as before.
+    let sessionId;
+    let sessionIdReused = false;
+    if (formFields.session_id) {
+      sessionId = formFields.session_id;
+    } else {
+      const priorRecord = normalizeWriteId(writeId) ? peekWrite(writeId) : null;
+      // Only reuse the minted id for a NON-completed prior attempt (failed or a
+      // stale/in-progress reservation that beginWrite will downgrade) — that is the
+      // retry path that actually writes, where reuse keeps the dedupes effective. A
+      // COMPLETED record must instead fall through to beginWrite's idempotency
+      // replay (200 skipped_duplicate); reusing its id here would trip the
+      // duplicate-session hard-stop below and 409 a successful, already-saved
+      // workout on a lost-response retry.
+      const priorMintedSessionId = priorRecord
+        && priorRecord.status !== 'completed'
+        && priorRecord.metadata
+        && priorRecord.metadata.session_id;
+      if (priorMintedSessionId) {
+        sessionId = priorMintedSessionId;
+        sessionIdReused = true;
+      } else {
+        sessionId = nextAvailableSessionId(dateValue, existingEffortSessionIds);
+      }
+    }
 
-    const duplicateSession = Boolean(formFields.session_id) &&
+    // A client-supplied id OR a reused server-minted id that already exists in Effort
+    // is a duplicate session (never double-write the Effort tab). A freshly-minted id
+    // is next-available by construction, so it is never already in the list.
+    const duplicateSession = (Boolean(formFields.session_id) || sessionIdReused) &&
       existingEffortSessionIds.map(id => id.toLowerCase()).includes(String(sessionId).toLowerCase());
     // A duplicate effort session HARD-STOPS the live write (never double-write the
     // Effort tab). But a DRY-RUN preview must not fail closed — it continues to the
