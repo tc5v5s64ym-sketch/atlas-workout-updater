@@ -27,6 +27,7 @@ These govern direction and constraints. They do not independently select the nex
 - [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — milestones M0–M6, executable cards F01–F12, five-session proving run, stabilization, and the parallel One-Brain evidence lane.
 - [`docs/AGENT_WORKFLOW.md`](./AGENT_WORKFLOW.md) — Current-State Verification Gate, branch hygiene, PR loop, and compact-prompt rules.
 - [`docs/AUTOMATION_PROTOCOL.md`](./AUTOMATION_PROTOCOL.md) — deterministic hard gates and standing merge authority.
+- [`docs/ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md) — the agent-first status surface (`npm run atlas:status` and the public `GET /.well-known/atlas-status.json`). A status contract, not a work-selection plan.
 - [`docs/OWNER_CHECKIN_RULES.md`](./OWNER_CHECKIN_RULES.md) — the narrow owner-reserved categories and absolute data safety.
 - [`docs/DECISION_ROUTING.md`](./DECISION_ROUTING.md) — ChatGPT decision desk for genuinely non-derivable product/trust forks.
 - [`docs/RISK_LABELS.md`](./RISK_LABELS.md) — primary risk labels.

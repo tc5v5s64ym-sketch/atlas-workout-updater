@@ -4,6 +4,10 @@
 
 When the owner says “test the app for/against X,” the agent designs and runs the smallest safe test itself. Do not ask Dale to repeat URLs, API keys, Sheet IDs, or tab names available in local `.env` and repository contracts.
 
+## Quick status first
+
+Before probing anything, run `npm run atlas:status` (add `-- --json` for the schema) — it answers "where are we / is prod healthy / did the latest write+undo hold" from the deployed public `GET /.well-known/atlas-status.json` (or a local view offline), with no Sheet ID or tab name needed. Contract: [`ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md).
+
 ## Targets
 
 - **Deployed app:** `ATLAS_BASE_URL` from `.env`. Before any live test, `GET /version` and record the deployed build.

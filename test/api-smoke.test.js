@@ -462,6 +462,29 @@ test('api smoke: /version reports the Render-injected commit SHA + deploy time',
     'deployed_at must be an ISO timestamp');
 });
 
+test('api smoke: Control Tower status is public, bounded, and never leaks a secret', async () => {
+  const { ALLOWED_KEYS } = require('../services/atlasStatus');
+  // No x-atlas-api-key is sent for a non-/api path — a public agent/uptime check.
+  const response = await fetch(`${baseUrl}/.well-known/atlas-status.json`);
+  assert.equal(response.status, 200, 'the status endpoint must need no API key');
+  assert.match(response.headers.get('content-type') || '', /application\/json/);
+  const body = await response.json();
+
+  // Bare machine document (the contract schema), not wrapped in the {status,data} envelope.
+  assert.equal(body.schema_version, '1.0');
+  assert.equal(body.generated_by, 'endpoint');
+  assert.ok(['healthy', 'degraded', 'unknown'].includes(body.overall_status));
+  assert.match(String(body.deployed_commit), /^[0-9a-f]{12}$|^unknown$/);
+  assert.match(String(body.active_card), /^F\d+[A-Z]?$/); // resolves the real plan card
+
+  // Redaction: keys are a closed whitelist and no configured secret appears.
+  for (const k of Object.keys(body)) assert.ok(ALLOWED_KEYS.includes(k), `unexpected key: ${k}`);
+  const serialized = JSON.stringify(body);
+  assert.ok(!serialized.includes(process.env.GOOGLE_SHEETS_ID), 'must not leak the Sheet ID');
+  assert.ok(!serialized.includes(process.env.ATLAS_API_KEY), 'must not leak the API key');
+  assert.ok(!serialized.includes(process.env.GOOGLE_PRIVATE_KEY), 'must not leak the private key');
+});
+
 test('api smoke: routes include key endpoints and write metadata', async () => {
   const { response, body } = await requestJson('/routes');
   const routes = body.data.routes;

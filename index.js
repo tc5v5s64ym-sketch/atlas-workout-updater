@@ -244,6 +244,7 @@ app.use((req, res, next) => {
   }
 });
 const { readBuildInfo } = require('./services/buildInfo');
+const { buildServerStatus: buildAtlasStatus } = require('./services/atlasStatus');
 // In-memory pending exercises collected from complete-workout responses
 const pendingExercisesMemory = [];
 // TODO(persistence-layer): replace in-memory pending exercises/cache with durable storage.
@@ -833,6 +834,37 @@ app.get('/version', (req, res) => {
     commit_subject: build.subject || null,
     endpoints: routeDefinitions
   });
+});
+
+// Atlas Control Tower (F04B) — public, redacted, READ-ONLY operational status.
+// Registered here alongside /, /health, /routes, /version so it stays outside the
+// /api auth mount (no browser API key required). It composes only bounded, safe
+// facts (build/version, env-presence flags, the checked-out campaign plan + test
+// ledger); it never runs an authenticated sheet read or LLM call, never writes,
+// and can never emit a secret, sheet ID/range, or workout/health data — the
+// bounded schema is a closed whitelist in services/atlasStatus.js. Contract:
+// docs/ATLAS_OPERATIONS_CONTRACT.md.
+app.get('/.well-known/atlas-status.json', (req, res) => {
+  try {
+    const build = readBuildInfo();
+    const status = buildAtlasStatus({
+      deployed_commit: gitVersion,
+      app_version: build.pr != null ? `PR #${build.pr}` : null,
+      deployed_at: deploymentTimestamp
+    });
+    res.set('Cache-Control', 'public, max-age=15');
+    return res.type('application/json').json(status);
+  } catch (_) {
+    // Fail honest, not green: an assembler fault degrades to an explicit unknown.
+    res.set('Cache-Control', 'no-store');
+    return res.status(200).type('application/json').json({
+      schema_version: '1.0',
+      generated_at: new Date().toISOString(),
+      generated_by: 'endpoint',
+      overall_status: 'unknown',
+      status_reason_codes: ['STATUS_ASSEMBLY_FAILED']
+    });
+  }
 });
 
 // GET /api/pending-exercises
