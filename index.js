@@ -2216,6 +2216,20 @@ app.post('/api/complete-workout', upload.single('image'), async (req, res) => {
           original_effort_written: originalData.effort_written === true,
           original_completed_at: record.completed_at || null
         };
+        // F02 / WRITE-1: an original write whose Sheets append proof was never
+        // verified must NOT be replayed as a save on retry. The rows may be on the
+        // sheet, but the proof was inconsistent — so a retried write_id keeps
+        // failing closed with the unverified state instead of returning the
+        // skipped_duplicate success shape the client accepts as saved.
+        if (originalData.sheet_write === 'unverified' || originalData.proof_mismatch === true) {
+          if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+          return standardError(
+            req, res,
+            'Duplicate write_id; the original complete-workout append proof was unverified and cannot be confirmed as saved.',
+            { ...duplicateData, sheet_write: 'unverified', proof_mismatch: true },
+            500
+          );
+        }
         if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
         const dupMessage = record.status === 'completed'
           ? 'Duplicate write_id; original complete-workout was already processed.'

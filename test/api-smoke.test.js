@@ -3758,6 +3758,55 @@ test('api smoke (F02/WRITE-1): complete-workout dry-run carries no append proof 
   });
 });
 
+// F02 / WRITE-1 (Codex P1): an unverified proof must stay fail-closed on retry —
+// a retried write_id (e.g. the original 500 was lost) must never be replayed as a
+// skipped_duplicate save, and must never re-append.
+test('api smoke (F02/WRITE-1): a retried write_id after an unverified proof stays fail-closed (never a false save)', async () => {
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  fakeSheetsState.miswriteAppendForTab = 'Log_Cleaned';
+  const wid = 'f02-unverified-retry-01';
+  const mkForm = () => {
+    const form = new FormData();
+    form.append('session_id', 'F02-RETRY-01');
+    form.append('date', '2026-06-12');
+    form.append('log_rows_json', JSON.stringify([
+      { exercise: 'Bench Press', set_number: 1, weight: 185, reps: 5, rir: 2 }
+    ]));
+    form.append('write_id', wid);
+    form.append('effort_json', JSON.stringify({
+      duration: '40', activeCalories: 400, totalCalories: 500,
+      averageHR: 145, peakHR: 168, workoutType: 'Traditional Strength Training'
+    }));
+    return form;
+  };
+  try {
+    await withMutedConsoleLog(async () => {
+      // First attempt: the append proof is inconsistent → unverified 500.
+      const first = await requestMultipart('/api/complete-workout', mkForm());
+      assert.equal(first.response.status, 500, JSON.stringify(first.body));
+      assert.equal(first.body.details.sheet_write, 'unverified');
+      const logAppendsAfterFirst = fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length;
+
+      // Retry the SAME write_id — the original 500 was lost. It must NOT replay as
+      // a save, and must NOT re-append the rows.
+      const retry = await requestMultipart('/api/complete-workout', mkForm());
+      assert.equal(retry.response.status, 500, JSON.stringify(retry.body));
+      assert.equal(retry.body.details.sheet_write, 'unverified', 'retry stays unverified, not skipped_duplicate');
+      assert.notEqual(retry.body.details.sheet_write, 'skipped_duplicate');
+      assert.equal(retry.body.details.proof_mismatch, true);
+      assert.equal(
+        fakeSheetsState.appendCalls.filter(c => c.tabName === 'Log_Cleaned').length,
+        logAppendsAfterFirst,
+        'a retry of an unverified write must not re-append log rows'
+      );
+    });
+  } finally {
+    fakeSheetsState.miswriteAppendForTab = null;
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
 // Multiple sessions per day: an effort-only upload with NO session_id must auto-increment
 // past an existing session the SAME day (e.g. a later run after the gym session was already
 // saved) instead of colliding on …-01. The server resolves the next free suffix via
