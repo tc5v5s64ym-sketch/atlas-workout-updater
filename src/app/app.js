@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v139';
+const ATLAS_SHELL_BUILD = 'v140';
 
 
 
@@ -3321,6 +3321,12 @@ const parsedRowsEditor = document.getElementById('parsed-rows-editor');
 // cleared whenever the form changes so stale previews can never be approved.
 let pendingWrite = null;
 
+// F07 / CLIENT-3: monotonic preview-request identity. Bumped at the start of every preview
+// submit; each async parse/dry-run response only updates preview state (the parsed rows and
+// pendingWrite) while its captured seq still matches the latest. A slow OLDER response whose
+// seq is stale is dropped, so it can never overwrite a NEWER request's preview or pending write.
+let previewRequestSeq = 0;
+
 // In-thread effort cards mirror the global approve button. When a preview is
 // replaced or invalidated, an older card no longer matches the live pendingWrite,
 // so its Save must be permanently neutralised — otherwise clicking a stale card
@@ -3911,6 +3917,10 @@ async function rowsFromWorkoutInput() {
   // F06/CLIENT-2: fold preview hand-edits into the buffer before this reparse wipes the table.
   reconcileSessionLogFromTable();
 
+  // F07/CLIENT-3: capture this parse's request identity. If a newer submit supersedes it while
+  // we await the backend, the stale rows are dropped instead of overwriting the table.
+  const parseSeq = previewRequestSeq;
+
   // Multi-exercise display-block paste — the live composer / app-export format:
   // bare exercise-name headers with per-line sets ("135lbs 10 · warm-up" warm-ups,
   // "245lbs 6/2" working sets), several exercises stacked. The proven single-line
@@ -4004,6 +4014,10 @@ async function rowsFromWorkoutInput() {
     lastPrescribed = null;
     return;
   }
+
+  // F07 / CLIENT-3: a newer submit superseded this parse while the backend ran — drop the
+  // stale rows so they can't overwrite the newer request's table.
+  if (parseSeq !== previewRequestSeq) return;
 
   if (parsed.intent === 'delete_last_set') {
     deleteLastSetRow();
@@ -5726,6 +5740,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
   setStatus(loggerStatus, '', 'ok');
   invalidatePreview();
+  // F07 / CLIENT-3: this submit is now the latest preview request. Its async responses only
+  // apply while previewRequestSeq still equals submitSeq (see the guards below).
+  const submitSeq = ++previewRequestSeq;
   // RC2: a FRESH submit starts with no date-source banner. The closeout branch below
   // re-sets it when a screenshot drives the save. Gating on sessionCompiledAwaitingPreview
   // preserves it across the closeout RE-ENTRY (which skips that branch but must still
@@ -6021,6 +6038,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   const completeWorkoutSessionId = effortOnly ? explicitSessionId : sessionId;
 
   try {
+    // F07 / CLIENT-3: a newer preview submit superseded this one during the parse — abandon
+    // this stale request before issuing its dry-run so it can't overwrite the newer preview.
+    if (submitSeq !== previewRequestSeq) return;
     if (mode === 'screenshot' && file) {
       if (!file) throw new Error('Choose a screenshot file, or switch to manual effort entry.');
 
@@ -6044,6 +6064,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       const resolvedSessionId = resolvedData.session_id || sessionId || generateSessionId(resolvedDate);
       document.getElementById('log-date').value = resolvedDate;
       sessionIdInput.value = resolvedSessionId;
+      // F07 / CLIENT-3: a newer submit superseded this one while its dry-run was in flight —
+      // drop this stale response so it can't overwrite the newer pending write.
+      if (submitSeq !== previewRequestSeq) return;
       pendingWrite = {
         mode: 'screenshot',
         file,
@@ -6076,6 +6099,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       const resolvedEffortData = result?.data?.data || {};
       const resolvedEffortSessionId = resolvedEffortData.session_id || completeWorkoutSessionId || sessionId;
       sessionIdInput.value = resolvedEffortSessionId;
+      // F07 / CLIENT-3: drop a superseded dry-run response (see the screenshot branch above).
+      if (submitSeq !== previewRequestSeq) return;
       pendingWrite = { mode: 'effort-only', logRows, sessionId: resolvedEffortSessionId, date, location, notes, manualEffort, effortOnly: true, writeId: generateWriteId(),
         // Mirror the screenshot path: an already-saved session disables approve so the
         // graceful "already saved" preview note doesn't lead to a live 409 on tap.
@@ -6121,6 +6146,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (!hasLogWorkoutNoWriteProof(result)) {
         throw new Error('Preview did not prove no-write safety. Nothing can be written.');
       }
+      // F07 / CLIENT-3: drop a superseded dry-run response — a newer submit's preview wins.
+      if (submitSeq !== previewRequestSeq) return;
       pendingWrite = { mode: 'manual', payload, previewProof: previewProofFromResult(result, 'manual') };
       renderLogWorkoutPreview(result, effortRow);
     }

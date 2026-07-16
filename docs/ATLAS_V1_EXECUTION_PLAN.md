@@ -363,7 +363,7 @@ No owner gate unless the preview→approve→write authority model must change. 
 
 ### F07 — Ignore stale dry-run/preview responses
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16, proven via red-first E2E; shell v140). The preview path set `pendingWrite` unconditionally after each dry-run `await` (and `populateSetRows` after each parse) with no request identity, so a slow OLDER response could overwrite a NEWER request's preview/pending write and Approve would write the stale rows. Fix adds a monotonic `previewRequestSeq` bumped at each submit start (`submitSeq`); the parse (`rowsFromWorkoutInput`) and every dry-run branch (manual / effort-only / screenshot) drop their response when their captured seq no longer matches the latest. Approval already binds to `pendingWrite`, which now stays the latest — approval semantics unchanged (autonomous per the owner gate).
 
 **Finding:** `CLIENT-3`
 
@@ -390,7 +390,7 @@ Out-of-order success/success, success/error, error/success, approve-after-race, 
 
 Autonomous if approval semantics remain unchanged.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — client-only change in `src/app/app.js`: new module-level `previewRequestSeq`; the logger-form submit handler captures `submitSeq = ++previewRequestSeq` at start; guards `if (submitSeq !== previewRequestSeq) return;` sit at the top of the dry-run try and before each `pendingWrite` assignment (manual / effort-only / screenshot), and `rowsFromWorkoutInput` captures `parseSeq` and drops a superseded parse before it can overwrite the table. Shell bumped v139→v140 (SW cache + `ATLAS_SHELL_BUILD` + wiring/unit version pins; the `rowsFromWorkoutInput` source-slice window widened to 3000 for the grown function). Red-first `tests/e2e/preview-stale-response.spec.js`: two closeout dry-runs overlap and resolve out of order (newer first, stale older last); each submit mints its own `write_id`, and the test asserts the live write carries the NEWER preview's `write_id` — fails before the guard (the stale response wins), passes after. Full node suite 5519 pass; E2E green (the lone `undo-stale-card.spec.js:162` failure is a pre-existing timing flake on the undo path, unrelated to this change and covered by CI retries); lint 0 errors. Approval semantics and the write payload source (`pendingWrite`) are unchanged.
 
 ### F08 — Canonical screenshot session date
 

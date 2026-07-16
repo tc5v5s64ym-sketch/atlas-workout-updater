@@ -59,5 +59,5 @@ test("completed is emitted ONLY by the explicit button — not by logging a set,
 
 test('the pure selector module is precached and the shell cache is bumped', () => {
   assert.match(sw, /\/app\/planCompletion\.js/, 'planCompletion.js is in SHELL_ASSETS');
-  assert.match(sw, /atlas-shell-v139/, 'SW cache version bumped for the new asset');
+  assert.match(sw, /atlas-shell-v140/, 'SW cache version bumped for the new asset');
 });
