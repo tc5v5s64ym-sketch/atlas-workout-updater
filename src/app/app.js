@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v141';
+const ATLAS_SHELL_BUILD = 'v142';
 
 
 
@@ -3468,6 +3468,16 @@ function addSetRow(values = {}) {
     el('td', {}, el('button', { type: 'button', class: 'remove-set', text: '✕' }))
   ]);
   row.querySelector('.remove-set').addEventListener('click', () => {
+    // F06 follow-up: if this row is a folded manual ("+ Add set") row, drop its
+    // session-buffer entry too — otherwise the removed set resurrects on the next buffer
+    // rebuild and reaches the write. Parser / buffer-rebuilt rows carry no manualId, so
+    // their removal is unchanged.
+    const mid = row.dataset ? row.dataset.manualId : '';
+    if (mid && typeof getSessionLog === 'function') {
+      const buf = getSessionLog();
+      const idx = buf.findIndex(e => e && String(e._manualId) === String(mid));
+      if (idx !== -1) buf.splice(idx, 1);
+    }
     row.remove();
     invalidatePreview();
   });
@@ -3477,6 +3487,9 @@ function addSetRow(values = {}) {
   // changes it, so the correction is folded back into the buffer before the table is rebuilt
   // — otherwise logging another set reverts it to the parser value.
   row.dataset.originExercise = String(values.exercise || '');
+  // A folded manual row keeps its stable id across rebuilds so its ✕ removal (above) can
+  // find and drop the matching buffer entry.
+  if (values._manualId) row.dataset.manualId = String(values._manualId);
   for (const cls of ['.set-exercise', '.set-weight', '.set-reps', '.set-rir', '.set-notes']) {
     const input = row.querySelector(cls);
     if (input) input.addEventListener('input', () => { input.dataset.userEdited = '1'; });
@@ -4727,34 +4740,66 @@ function currentPlannedExercise() {
 // buildRowsFromSessionLog numbers them — by exercise + per-exercise occurrence order — and
 // only a field the lifter actually changed (data-user-edited) overwrites the buffer. Inert
 // when nothing was hand-edited, so the parser-driven flow is unchanged.
+// Stable id for a manually-added ("+ Add set") row, so folding it into the session
+// buffer is idempotent across repeated reconciles before a rebuild.
+let manualRowSeq = 0;
+
 function reconcileSessionLogFromTable() {
   const rows = setsTableBody && setsTableBody.children;
   if (!rows || !rows.length) return;
   const buffer = (typeof getSessionLog === 'function') ? getSessionLog() : null;
   if (!buffer || !buffer.length) return;
   const byExercise = new Map();
+  const byManualId = new Map();
   for (const entry of buffer) {
+    if (entry && entry._manualId) byManualId.set(String(entry._manualId), entry);
     const key = String(entry.exercise || '').trim().toLowerCase();
     if (!byExercise.has(key)) byExercise.set(key, []);
     byExercise.get(key).push(entry);
   }
   const cursor = new Map();
+  const val = (tr, cls) => { const input = tr.querySelector(cls); return input ? input.value : ''; };
+  const FIELDS = [['.set-exercise', 'exercise'], ['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']];
   for (const tr of rows) {
     if (!tr || typeof tr.querySelector !== 'function') continue;
+    // A manually-added row already folded on an earlier pass re-matches by its stable id
+    // (so it is never folded twice); a manual row is fully authoritative — take all fields.
+    const manualId = (tr.dataset && tr.dataset.manualId) || '';
+    if (manualId && byManualId.has(manualId)) {
+      const entry = byManualId.get(manualId);
+      for (const [cls, field] of FIELDS) entry[field] = val(tr, cls);
+      continue;
+    }
     // Match on the name the row was BUILT with (its buffer key), NOT the current input value
     // — otherwise a renamed exercise misses its entry and every edit on that row is dropped.
     const origin = (tr.dataset ? tr.dataset.originExercise : undefined) ?? tr.querySelector('.set-exercise')?.value;
     const key = String(origin || '').trim().toLowerCase();
     const list = byExercise.get(key);
-    if (!list) continue;
     const i = cursor.get(key) || 0;
-    cursor.set(key, i + 1);
-    const entry = list[i];
-    if (!entry) continue;
-    // Exercise is preserved too (the unknown-lift "check the name" flow depends on it).
-    for (const [cls, field] of [['.set-exercise', 'exercise'], ['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']]) {
-      const input = tr.querySelector(cls);
-      if (input && input.dataset.userEdited === '1') entry[field] = input.value;
+    const entry = list ? list[i] : null;
+    if (entry) {
+      cursor.set(key, i + 1);
+      // Exercise is preserved too (the unknown-lift "check the name" flow depends on it).
+      for (const [cls, field] of FIELDS) {
+        const input = tr.querySelector(cls);
+        if (input && input.dataset.userEdited === '1') entry[field] = input.value;
+      }
+      continue;
+    }
+    // No buffer entry AND the row was built with no origin exercise → a manually-added
+    // ("+ Add set") row (parser / buffer-rebuilt / copy-last-session rows all carry their
+    // origin name). Fold it into the session buffer with a stable id so it survives the
+    // rebuild and reaches the write — otherwise a hand-added row is silently dropped the
+    // next time the table rebuilds from the buffer. Only a row with real content (a named
+    // exercise + a weight or reps) is folded; a blank scaffold is ignored (collectLogRows
+    // skips it too). This makes the added row authoritative pending-session state BEFORE
+    // any rebuild, matched by stable id rather than list position.
+    const builtEmpty = tr.dataset && tr.dataset.originExercise === '';
+    const exercise = val(tr, '.set-exercise').trim();
+    if (builtEmpty && exercise && (val(tr, '.set-weight') !== '' || val(tr, '.set-reps') !== '')) {
+      const id = manualId || `manual-${++manualRowSeq}`;
+      if (tr.dataset) tr.dataset.manualId = id;
+      buffer.push({ exercise, weight: val(tr, '.set-weight'), reps: val(tr, '.set-reps'), rir: val(tr, '.set-rir'), notes: val(tr, '.set-notes'), _manualId: id });
     }
   }
 }
@@ -4764,7 +4809,9 @@ function buildRowsFromSessionLog() {
   return getSessionLog().map(s => {
     const n = (counts.get(s.exercise) || 0) + 1;
     counts.set(s.exercise, n);
-    return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '' };
+    // Carry a folded manual row's stable id across the rebuild so its ✕ removal can still
+    // drop the matching buffer entry (otherwise a removed manual set would resurrect).
+    return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '', _manualId: s._manualId };
   });
 }
 
