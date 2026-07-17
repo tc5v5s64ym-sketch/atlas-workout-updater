@@ -185,6 +185,29 @@ test('client subscribes to atlas:* events on document, not window', () => {
   assert.doesNotMatch(appSrc, /window\.dispatchEvent\(new CustomEvent\('atlas:/, 'atlas:* events are dispatched on document, not window');
 });
 
+// ── F09B / FR-REPLAY-1: activation must NOT require a raw localStorage key ───────────
+// Production v141 recorded only server rows because initBrowser() early-returned when the
+// raw atlas_api_key was absent — which it always is after the F04C cookie migration. The
+// recorder must authenticate the enabled-check via the same-origin session cookie instead,
+// so a cookie-only owner still activates. The browser proof is
+// tests/e2e/flight-recorder-replay.spec.js; this is the deterministic regression guard.
+test('FR-REPLAY-1: the client does NOT gate activation on a raw localStorage key', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'flightRecorder.js'), 'utf8');
+  assert.doesNotMatch(src, /if\s*\(\s*!apiKey\s*\)\s*return;/,
+    'initBrowser must not early-return when the raw key is absent (cookie-only owner would never record)');
+  // The enabled-check still runs, and it authenticates via the same-origin cookie.
+  assert.match(src, /\/api\/flight\/recent/, 'the enabled-check endpoint is still called on boot');
+  assert.match(src, /credentials:\s*'same-origin'/, 'requests carry the session cookie');
+});
+
+test('FR-REPLAY-1: the session-state snapshot captures the pending plan + captured sets', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'flightRecorder.js'), 'utf8');
+  // The replay must show the pending state at each step — the exact evidence v141 lacked.
+  assert.match(src, /pending_set_count/, 'session_state snapshot records the pending captured-set count');
+  assert.match(src, /plan_order/, 'session_state snapshot records the active plan order');
+  assert.match(src, /remaining/, 'session_state snapshot records the remaining planned exercises');
+});
+
 // ── Live-validation follow-up: API-event session linkage ────────────────────────────
 // The client must send x-atlas-flight-session / x-atlas-device-id on its API calls so the
 // server-side api_response events (FR2 middleware) can be linked to the client session.

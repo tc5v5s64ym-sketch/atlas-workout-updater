@@ -11,8 +11,9 @@
  *
  * HARD CONTRACT (mirrors the server lanes):
  *   * Fully INERT unless the server flag is on: on load it asks GET /api/flight/recent
- *     whether ATLAS_FLIGHT_RECORDER is enabled; if not (or no API key, or the check fails)
- *     it attaches nothing, buffers nothing, sends nothing. Byte-identical app when off.
+ *     (authenticated by the same-origin session cookie) whether ATLAS_FLIGHT_RECORDER is
+ *     enabled; if not (or the owner isn't authenticated, or the check fails) it attaches
+ *     nothing, buffers nothing, sends nothing. Byte-identical app when off.
  *   * TOTAL: every capture path is wrapped and can never throw into app code.
  *   * Best-effort: a failed flush is swallowed; it never blocks the UI or surfaces an error.
  *   * Batches flush at 25 events, every 10s, and immediately on error / bug_marker / pagehide.
@@ -108,9 +109,18 @@ const _exports = (function (root) {
     let hasDom = typeof document !== 'undefined' && typeof window !== 'undefined';
     if (!hasDom) return;
 
+    // F09B / FR-REPLAY-1: authenticate the enabled-check and the flush via the SAME-ORIGIN
+    // SESSION COOKIE, not a raw localStorage key. After the F04C cookie migration the raw
+    // atlas_api_key is REMOVED from localStorage, so the old raw-key early-return gate made
+    // the recorder fully INERT for a cookie-authenticated owner — the exact production v141
+    // failure where ONLY the server middleware's api_response rows were captured (and even
+    // those had no client-session/seq/device linkage, because requestHeaders() returns {}
+    // while inactive). The legacy key header still rides along while a key is stored
+    // (pre-migration / legacy-header servers). The server's auth on /api/flight/recent is the
+    // real gate: an unauthenticated owner gets a 401 (never an enabled:true payload), so the
+    // recorder stays inert; the default-OFF flag is unchanged.
     let apiKey = '';
     try { apiKey = window.localStorage.getItem(API_KEY_STORAGE) || ''; } catch (e) { apiKey = ''; }
-    if (!apiKey) return; // no key → cannot auth the enabled-check or the flush; stay inert
 
     let state = {
       active: false,
@@ -341,12 +351,59 @@ const _exports = (function (root) {
     } catch (e) { return {}; }
   }
 
+  // Read a window-bridged session getter, fully guarded — the store bridge (PR-24) is
+  // exposed by app.js after boot; these are best-effort and must never throw into a record().
+  function callGetter(name) {
+    try {
+      let fn = (typeof window !== 'undefined') ? window[name] : null;
+      return typeof fn === 'function' ? fn() : undefined;
+    } catch (e) { return undefined; }
+  }
+
+  // A bounded list of exercise display names from a getter that returns names or
+  // plan-exercise objects. Caps count + per-name length; returns undefined when not an array.
+  function boundedNameList(value, cap) {
+    if (!Array.isArray(value)) return undefined;
+    return value.slice(0, cap || 40).map(function (v) {
+      if (v == null) return '';
+      if (typeof v === 'string') return truncate(v, 80);
+      try { return truncate(String(v.name || v.exercise || v.canonical_exercise || v.canonicalName || ''), 80); }
+      catch (e) { return ''; }
+    });
+  }
+
   function snapshotSessionState() {
-    // The client cannot see the server's authoritative plan object; capture the visible
-    // session pin/next-up chrome instead (server has the rest via the API-flow lane).
     try {
       let pin = document.querySelector('#session-pin, .session-pin, #session-resume-notice');
-      return { pin: pin ? truncate((pin.textContent || '').trim(), 200) : null };
+      let out = { pin: pin ? truncate((pin.textContent || '').trim(), 200) : null };
+
+      // F09B / FR-REPLAY-1: the client now owns the canonical session store (PR-24), so a
+      // replay can finally show the PENDING state at each step — the exact evidence the v141
+      // session lacked (its final confirmation was wrong and nobody could see the captured
+      // buffer that produced it). Capture a BOUNDED, best-effort view of the active plan and
+      // the pending (captured-not-yet-saved) log from the bridged getters. Reads only; never
+      // mutates the store or any coach/preview copy; TOTAL. The server re-redacts + truncates.
+      let order = boundedNameList(callGetter('plannedExerciseOrder'), 40);
+      if (order) out.plan_order = order;
+      let remaining = boundedNameList(callGetter('remainingPlannedExercises'), 40);
+      if (remaining) out.remaining = remaining;
+      let completed = boundedNameList(callGetter('getSessionCompleted'), 40);
+      if (completed) out.completed = completed;
+
+      let log = callGetter('getSessionLog');
+      if (Array.isArray(log)) {
+        out.pending_set_count = log.length;
+        out.pending_sets = log.slice(0, 40).map(function (s) {
+          s = s || {};
+          return {
+            exercise: truncate(String(s.exercise || s.canonical_exercise || s.name || ''), 80),
+            weight: s.weight != null ? s.weight : '',
+            reps: s.reps != null ? s.reps : '',
+            rir: s.rir != null ? s.rir : ''
+          };
+        });
+      }
+      return out;
     } catch (e) { return {}; }
   }
 
