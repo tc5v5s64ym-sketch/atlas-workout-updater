@@ -199,6 +199,41 @@ test('chat prompt: challenge carries no register/profanity escalation (honesty, 
   assert.ok(chat.includes('challenge is honesty, not heat'), 'challenge stays in the ordinary direct register — no escalation');
 });
 
+// ── F09J (UNDER-TARGET-1): a consistent_underperformance challenge is a BENCHMARK/TREND
+// comparison against the lift's own established performance — no per-session prescription
+// was ever stored, so it is NOT a missed plan. The prompt must forbid plan-failure
+// vocabulary ("under target", "missed target", "failed the plan", "beat expectations")
+// and supply the honest benchmark replacement wording. ─────────────────────────────────
+
+test('chat prompt: challenge frames the comparison as a benchmark/trend, NOT a missed plan', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('BENCHMARK/TREND comparison'), 'challenge must frame it as a benchmark/trend comparison');
+  assert.ok(chat.includes('NOT a missed plan'), 'challenge must state no per-session prescription was stored — not a missed plan');
+});
+
+test('chat prompt: challenge explicitly forbids plan-failure vocabulary', () => {
+  const chat = buildChatSystemPrompt();
+  // The forbidden phrases may appear ONLY inside this prohibition, never as guidance.
+  assert.ok(
+    chat.includes('NEVER say "under target", "missed target", "failed the plan", or "beat expectations"'),
+    'challenge must forbid describing a benchmark trend as a missed/failed plan'
+  );
+});
+
+test('chat prompt: challenge supplies the benchmark replacement wording', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('below your recent benchmark'), 'challenge must offer "below your recent benchmark" wording');
+  assert.ok(chat.includes('below your established range'), 'challenge must offer "below your established range" wording');
+});
+
+test('chat prompt: challenge example models benchmark phrasing, not target phrasing', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(
+    chat.includes('below your recent benchmark 3 of the last 4 sessions'),
+    'the worked example must use benchmark phrasing, so the model imitates the honest framing'
+  );
+});
+
 // ── G5: coach claims grounding audit (PR / personal-best / session count) ──────
 
 test('set-reaction prompt: PR language IRON RULE requires progression_verdict.level new_ground', () => {

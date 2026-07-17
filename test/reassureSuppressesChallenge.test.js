@@ -3,8 +3,8 @@
 // LT-011 live-validation finding (2026-07-12): the chat coach's `reassure` mode was
 // forwarding `memory_patterns` (the challenge fuel) to the prompt, so on an athlete
 // with a standing `consistent_underperformance` pattern an explicit-discouragement
-// message reliably came back as a CHALLENGE ("Bench Press under target 5 of 5 — what's
-// going on?") instead of REASSURANCE — the exact pile-on reassure exists to prevent.
+// message reliably came back as a CHALLENGE ("Bench Press below your recent benchmark 5 of 5
+// — what's going on?") instead of REASSURANCE — the exact pile-on reassure exists to prevent.
 //
 // Owner Decision 1 (LT-011) already places `reassure` ABOVE `challenge` at the mode
 // seam. This pins the data-layer half of that decision: when the engine has decided

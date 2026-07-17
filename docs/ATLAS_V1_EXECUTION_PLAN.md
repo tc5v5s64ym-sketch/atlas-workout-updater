@@ -685,7 +685,7 @@ Replace UTC-day derivation such as `new Date().toISOString().slice(0,10)` on own
 
 ### F09J — Stop calling benchmark comparisons "under target"
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 **Finding:** `UNDER-TARGET-1`
 
@@ -697,7 +697,9 @@ Preserve the current benchmark detector only where it is analytically valid, but
 
 **Owner gate:** Autonomous (wording/claim truthfulness; no number or write change).
 
-**Completion record:** PR — · Commit —
+**Resolution:** The `consistent_underperformance` challenge lives ONLY in the chat coach's CHALLENGE MODE prompt block (`services/coach.js` `buildChatSystemPrompt`) — there is no deterministic string that stamped "under target" onto a benchmark trend; the detector already forwards only `sessions_below of sessions_checked`. The fix rewords that prompt block: it now frames the signal explicitly as a `BENCHMARK/TREND comparison` against the lift's own established performance, `NOT a missed plan` (no per-session prescription was stored), forbids `"under target"`, `"missed target"`, `"failed the plan"`, and `"beat expectations"`, and supplies the honest replacement wording ("below your recent benchmark" / "below your established range"), including the worked example. Deterministic tests in `test/coachPromptRules.test.js` pin the benchmark framing, the plan-failure-vocabulary prohibition, and the replacement wording. The valid prescribed-RIR `effort_verdict` "way under target" path (a real per-set target comparison) is untouched.
+
+**Completion record:** PR — this PR (F09J) · Commit — reword the chat CHALLENGE MODE prompt block to benchmark/trend framing (`services/coach.js`), add `test/coachPromptRules.test.js` F09J assertions, sync the LT-011 narration comment.
 
 ### F10 — Authoritative planned-slot completion identity
 
