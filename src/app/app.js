@@ -3468,6 +3468,16 @@ function addSetRow(values = {}) {
     el('td', {}, el('button', { type: 'button', class: 'remove-set', text: '✕' }))
   ]);
   row.querySelector('.remove-set').addEventListener('click', () => {
+    // F06 follow-up: if this row is a folded manual ("+ Add set") row, drop its
+    // session-buffer entry too — otherwise the removed set resurrects on the next buffer
+    // rebuild and reaches the write. Parser / buffer-rebuilt rows carry no manualId, so
+    // their removal is unchanged.
+    const mid = row.dataset ? row.dataset.manualId : '';
+    if (mid && typeof getSessionLog === 'function') {
+      const buf = getSessionLog();
+      const idx = buf.findIndex(e => e && String(e._manualId) === String(mid));
+      if (idx !== -1) buf.splice(idx, 1);
+    }
     row.remove();
     invalidatePreview();
   });
@@ -3477,6 +3487,9 @@ function addSetRow(values = {}) {
   // changes it, so the correction is folded back into the buffer before the table is rebuilt
   // — otherwise logging another set reverts it to the parser value.
   row.dataset.originExercise = String(values.exercise || '');
+  // A folded manual row keeps its stable id across rebuilds so its ✕ removal (above) can
+  // find and drop the matching buffer entry.
+  if (values._manualId) row.dataset.manualId = String(values._manualId);
   for (const cls of ['.set-exercise', '.set-weight', '.set-reps', '.set-rir', '.set-notes']) {
     const input = row.querySelector(cls);
     if (input) input.addEventListener('input', () => { input.dataset.userEdited = '1'; });
@@ -4796,7 +4809,9 @@ function buildRowsFromSessionLog() {
   return getSessionLog().map(s => {
     const n = (counts.get(s.exercise) || 0) + 1;
     counts.set(s.exercise, n);
-    return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '' };
+    // Carry a folded manual row's stable id across the rebuild so its ✕ removal can still
+    // drop the matching buffer entry (otherwise a removed manual set would resurrect).
+    return { exercise: s.exercise, set_number: String(n), weight: s.weight, reps: s.reps, rir: s.rir, notes: s.notes || '', _manualId: s._manualId };
   });
 }
 

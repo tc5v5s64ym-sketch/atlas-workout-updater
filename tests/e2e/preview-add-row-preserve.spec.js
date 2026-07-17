@@ -162,3 +162,40 @@ test('a manually added row for an EXISTING (duplicate) exercise also survives an
   expect(writtenHeavy, 'the write contains the manually added 245 bench').toBeTruthy();
   expect(written.length).toBe(rows.length);
 });
+
+test('removing a folded manual row via ✕ drops it for good — no resurrection, not in the write', async ({ page }) => {
+  const capture = {};
+  await openApp(page, capture);
+
+  await logSet(page, 'bench 225 5/2 x2');
+  await endSession(page);
+  await expandEditor(page);
+  await addRow(page, { exercise: 'Cable Fly', weight: 30, reps: 12, rir: 2 });
+
+  // Log another set → Cable Fly is folded into the buffer; the closeout rebuilds it.
+  await logSet(page, 'bench 225 5/2 x1');
+  await endSession(page);
+  await expandEditor(page);
+  let rows = await rowValues(page);
+  expect(rows.find(r => r.exercise === 'Cable Fly'), 'Cable Fly was folded + rebuilt').toBeTruthy();
+
+  // Remove the (rebuilt) Cable Fly row via its ✕ button.
+  const idx = await page.locator('#sets-table tbody tr').evaluateAll(trs =>
+    trs.findIndex(tr => tr.querySelector('.set-exercise').value === 'Cable Fly'));
+  expect(idx).toBeGreaterThanOrEqual(0);
+  await page.locator('#sets-table tbody tr').nth(idx).locator('.remove-set').click();
+
+  // Log another set and reopen — the removed Cable Fly must NOT resurrect on the rebuild.
+  await logSet(page, 'bench 225 5/2 x1');
+  await endSession(page);
+  await expandEditor(page);
+  rows = await rowValues(page);
+  expect(rows.find(r => r.exercise === 'Cable Fly'), 'the removed manual row must not resurrect').toBeFalsy();
+
+  // And the approved write must not contain the removed row.
+  await page.locator('.rv-save').click();
+  await expect.poll(() => capture.writeRequests.length).toBe(1);
+  const written = capture.writeRequests[0].log_rows;
+  expect(written.find(r => r.exercise === 'Cable Fly'), 'the removed row is absent from the write').toBeFalsy();
+  expect(written.length).toBe(rows.length);
+});
