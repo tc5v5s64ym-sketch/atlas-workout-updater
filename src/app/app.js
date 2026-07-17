@@ -48,8 +48,12 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // logged still-unresolved accepted item so "Done with <exercise>" stays reachable after
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
+// F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
+// those detected reps on a short affirmation ("Just log it"), so clarified sets are
+// never dropped nor fabricated.
+import { setPendingClarification, resolvePendingClarification, clearPendingClarification } from './pendingClarification.js';
 
-const ATLAS_SHELL_BUILD = 'v144';
+const ATLAS_SHELL_BUILD = 'v145';
 
 
 
@@ -3711,6 +3715,10 @@ function rowsFromBackendParsedWorkout(parsed) {
     // a coach message (the live-audit "looks logged but wasn't" trust gap).
     err.parsedIntent = parsed?.intent || null;
     err.recognizedExercise = (parsed?.partial && parsed.partial.exercise) || null;
+    // F09G (CONVO-LOG-1): carry the reps the parser ALREADY detected (e.g. bare-rep
+    // bodyweight knee raises) so a clarification can HOLD them and a "Just log it" can
+    // commit them — instead of silently discarding partial.sets here.
+    err.partialSets = (parsed?.partial && Array.isArray(parsed.partial.sets)) ? parsed.partial.sets : null;
     // Multi-line partial-log (owner 2026-07-02): when NO line resolved, the parser
     // still returns per-line specifics — carry them so the caller can surface the
     // first specific ask ("Which row — seated, bent-over…?") instead of routing a
@@ -5767,6 +5775,21 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     }
   }
 
+  // F09G (CONVO-LOG-1): a short affirmation ("Just log it", "yes", "log it") RESOLVES a
+  // held bodyweight-rep clarification — committing exactly the reps the parser already
+  // detected — BEFORE the closeout / "log it" routing, so those sets are never dropped
+  // and "Just log it" is never mistaken for a session close. ("Done" is deliberately not
+  // an affirmation here, so it still closes out.)
+  {
+    const resolvedRows = resolvePendingClarification(workoutTextInput.value.trim());
+    if (resolvedRows) {
+      const affirmText = workoutTextInput.value.trim();
+      workoutTextInput.value = '';
+      emitSetLogged(resolvedRows, affirmText, [], null);
+      return;
+    }
+  }
+
   // "Log it" / "done" — compile the full conversational session from chat
   // history and run the normal parse → preview → approve flow on the result.
   if (looksLikeLogIt(workoutTextInput.value)) {
@@ -5895,6 +5918,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (err.parsedIntent === 'needs_clarification' && Array.isArray(err.unresolvedLines) &&
           err.unresolvedLines.length && /\d+\s*\/\s*\d+/.test(pendingChatText)) {
         setStatus(loggerStatus, `${err.displayMessage} Re-type that line and I'll add it.`, 'warn');
+        activeExercise = null;
+        return;
+      }
+      // F09G (CONVO-LOG-1): a needs_clarification that ALREADY carries detected reps
+      // (bare-rep bodyweight, e.g. "Knee raises 15 12 10") HOLDS those sets and surfaces
+      // the bounded question, so a following short "Just log it" commits exactly them.
+      // Without this the partial.sets were discarded and the sets silently dropped from
+      // the session buffer (and thus from the final confirmation). setPendingClarification
+      // returns truthy only when there are usable detected sets to hold.
+      if (err.parsedIntent === 'needs_clarification' && setPendingClarification(err)) {
+        setStatus(loggerStatus, err.displayMessage, 'warn');
         activeExercise = null;
         return;
       }
@@ -6074,6 +6108,9 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
         midSessionEnrichment = subResult?.data?.enrichment || null;
       } catch { /* best-effort — classification never blocks the set note */ }
     }
+    // F09G: a real set log supersedes any held bodyweight-rep clarification (the lifter
+    // moved on and logged other work without affirming it).
+    clearPendingClarification();
     emitSetLogged(logRows, pendingChatText, midSessionSubstitutions, midSessionEnrichment);
     return;
   }

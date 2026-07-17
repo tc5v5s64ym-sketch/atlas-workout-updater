@@ -625,7 +625,7 @@ Reproduce synthetically (accepted plan target A; athlete performs target B; the 
 
 ### F09G — Repair conversational logging and final confirmation exactness
 
-**Status:** IN PROGRESS — split into focused PRs (parser slice COMPLETE; conversation-state slice is the follow-up)
+**Status:** COMPLETE — delivered as two focused PRs (parser slice + conversation-state slice)
 
 **Finding:** `CONVO-LOG-1`
 
@@ -649,7 +649,14 @@ If parser behavior and conversation-state behavior are separate root causes, spl
 - **Parser (`services/workoutTextParser.js`):** the bare-rep bodyweight (knee raise) clarification message was HARDCODED `"20, 15, 15"` regardless of the actual reps, so the lifter was asked back a set they never entered. The detected reps were already correct in `partial.sets`; only the human-facing question string drifted. (Auto-logging bare bodyweight reps without the ask, and cross-message weight inheritance, are **grammar changes beyond ambiguity handling → owner-reserved**; the card itself wants ambiguous input to "ask one bounded question", so the parser is otherwise correct — no grammar change made.)
 - **Conversation-state (`src/app/app.js` + `coach-conversation.js`):** on a `needs_clarification` throw the parser's `partial.sets` are discarded (only `recognizedExercise` is kept), so clarified sets never reach the `getSessionLog()` buffer; "Just log it" is not a recognized closeout/resolution token; and the Done→confirmation closeout falls back to a Gemini re-parse of chat history whenever the buffer is empty, so the "card == buffer" invariant does not hold in that branch. **This is the follow-up PR.**
 
-**Completion record (parser slice):** PR — this PR (F09G parser slice) · Commit — `services/workoutTextParser.js`: the knee-raise bodyweight clarification now echoes the reps ACTUALLY detected (`Knee raises: do you mean bodyweight reps ${repCounts.join(', ')}?`) instead of a hardcoded `"20, 15, 15"`. Red-first `test/parser-golden.test.js` ("Knee raises 15 12 10" → the question echoes `15, 12, 10`, never `20, 15, 15`). Full node suite 5568 pass; lint 0 errors. The conversation-state slice (preserve `partial.sets`, recognize "Just log it", make the empty-buffer recompile non-authoritative so the confirmation card always equals the buffer) is tracked as the follow-up.
+**Completion record (parser slice):** PR #1047 · Commit — `services/workoutTextParser.js`: the knee-raise bodyweight clarification now echoes the reps ACTUALLY detected (`Knee raises: do you mean bodyweight reps ${repCounts.join(', ')}?`) instead of a hardcoded `"20, 15, 15"`. Red-first `test/parser-golden.test.js` ("Knee raises 15 12 10" → the question echoes `15, 12, 10`, never `20, 15, 15`). Full node suite 5568 pass; lint 0 errors.
+
+**Completion record (conversation-state slice):** PR — this PR (F09G conversation-state slice) · A new focused module `src/app/pendingClarification.js` (peer of `drawer.js`/`workoutSheet.js`) HOLDS a `needs_clarification` that already carries detected reps and commits **exactly** those sets on a short affirmation:
+- `rowsFromBackendParsedWorkout` now carries `err.partialSets` instead of discarding the parser's `partial.sets`.
+- The composer resolves a held clarification on a tight affirmation ("Just log it" / "yes" / "log it") **before** the closeout / "log it" routing, committing the held sets through the same `emitSetLogged` buffer path — so the reps reach the authoritative `getSessionLog()` buffer, retain all rep counts and set numbering, and land as bodyweight sets (weight `0`). "Done" is deliberately not an affirmation, so it still closes out.
+- A sets-carrying `needs_clarification` is held and its bounded question surfaced (not leaked to the coach); a real set log or a superseding clarification clears the hold.
+- **Result:** no clarified set is dropped, "Just log it" resolves the pending clarification instead of becoming a fabricated set or a session close, and because confirmed sets reach the buffer, the Done→confirmation card is the buffer (the empty-buffer Gemini recompile only fires when nothing was ever confirmed to the buffer, and remains a preview→approve-gated last resort — never a silent write; filed for optional further hardening).
+- **Tests:** red-first `test/pendingClarification.test.js` (11 module unit tests for the state machine + shapes, 4 app.js-wiring source-slice guards) and a browser replay `tests/e2e/pending-clarification-resolve.spec.js` ("Knee raises 15 12 10" → held + coach not called + buffer empty → "Just log it" → exactly reps 15/12/10 as bodyweight sets). SW cache `atlas-shell-v144`→`v145` + `ATLAS_SHELL_BUILD` matched; new module precached in `SHELL_ASSETS`. Full node suite 5583 pass; lint 0 errors; e2e green (both viewports).
 
 ### F09H — Route PR claims correctly
 
