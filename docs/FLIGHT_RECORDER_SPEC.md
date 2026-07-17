@@ -84,6 +84,18 @@ Ten `event_type` values. Each event populates only the columns it needs; the res
 
 `bug_marker` bridges to the bug flow: it drops a labeled pin **into the same transcript** so replay lands exactly where the owner flagged a problem.
 
+> **F09B / FR-REPLAY-1 correction (2026-07-17).** The client source now lives at
+> `src/app/flightRecorder.js` (ES module; built verbatim to `public/`). Two fixes restore the
+> client replay that production v141 lost: (1) **activation is cookie-authenticated** — it no
+> longer gates on a raw `localStorage['atlas_api_key']`, which the F04C migration removes, so a
+> cookie-only owner activates and the server's `api_response` rows regain their
+> `flight_session_id`/`seq`/`device` linkage; (2) `session_state_json` now captures a **bounded
+> view of the pending session** (active-plan order/remaining/completed + the captured-not-saved
+> log) from the client store (PR-24), so a replay shows *what pending state existed at each
+> step* — an intentional, owner-directed fidelity increase over the original "pin text only"
+> snapshot (the §1 note anticipated "can be switched to full fidelity if the owner later
+> prefers"). Trust loop, `test_mode`, proof fields, and the parser are untouched.
+
 ## 3. Frontend capture points (`public/`)
 
 A new `public/flightRecorder.js` (UMD, self-contained, never throws) owns a capped in-memory ring + batched flush. It taps existing hooks rather than adding new instrumentation:

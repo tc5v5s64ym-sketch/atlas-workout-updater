@@ -39,7 +39,8 @@ const EXPECTED = {
   ],
   flightRecorder: [
     'FLUSH_AT', 'FLUSH_INTERVAL_MS', 'RING_MAX', 'ATLAS_EVENT_MAP', 'redactString', 'truncate',
-    'buildClientEvent', 'shouldFlush', 'markIssue', 'getSessionId', 'requestHeaders', 'latestCoachMessage',
+    'buildClientEvent', 'shouldFlush', 'boundTailForKeepalive', 'KEEPALIVE_MAX_BYTES',
+    'markIssue', 'getSessionId', 'requestHeaders', 'latestCoachMessage',
   ],
 };
 
