@@ -574,7 +574,7 @@ Test normal owner-device behavior **without** clearing browser history or websit
 
 ### F09E — Generate complete executable session plans
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-17)
 
 **Finding:** `PLAN-EXEC-1`
 
@@ -594,7 +594,9 @@ Every planned exercise must carry an **executable prescription**: explicit set c
 
 **Owner gate:** Autonomous within existing plan/parser contracts (slash `225 5/2` semantics unchanged).
 
-**Completion record:** PR — · Commit —
+**Resolution (render-layer completeness).** The failure mode was in the plan card render (`src/app/coach-conversation.js` `formatPlanSetLine` / `appendWorkoutPlan` / `suggestedExercisesBlock`), not the engine — the deterministic engine already emits `target_sets`/`target_reps`/`target_rir` and the accepted plan already retains them in session state (`normalizePlanExercise` → `activePlannedSession`, so the prescription is not prose-only). Two concrete defects fixed: (1) a **bodyweight** lift (the engine emits `weight: 0`) rendered a meaningless `0lbs 15/?` because `Number.isFinite(0)` is truthy — now it renders **`BW — 15 reps ×3`** (grouped, explicit set count, RIR only when applicable), distinguished from a load-**omitted** accessory (`weight: null`, e.g. Face Pull) which keeps `15 reps/2`; (2) an exercise with **no confident rep target** (`reps == null`, the "isolated targets" case) rendered a **bare name** — now it shows a clarify prompt ("confirm reps and sets — I don't have a target for this yet") instead of a misleading isolated number. Weighted complete-target rendering (`225lbs 5/2`) and the `225 5/2` slash contract are unchanged.
+
+**Completion record:** PR — this PR · Commit — `src/app/coach-conversation.js` (bodyweight `BW —` grouped line via a new `isBodyweightTarget` = `weight === 0` signal; `reps == null` → `.workout-plan-clarify` prompt; text-fallback `suggestedExercisesBlock` mirrors it), `src/app/styles.css` (`.workout-plan-clarify`), shell v143→v144 (`sw.js`/`app.js`/6 wiring pins). Red-first deterministic tests in `test/workoutPresentationConsistency.test.js` (BW → `BW — 15 reps ×3`, never `0lbs`/`15/3`; `reps==null` → clarify not a bare name; weighted + load-omitted regression unchanged) — RED before, GREEN after. Full node suite 5552 pass; plan-render e2e (app-smoke Suggested Workout) green; lint 0 errors. `BACKLOG.md` `PLAN-EXEC-1` marked fixed.
 
 ### F09F — Make the visible plan and live coach share one current target
 

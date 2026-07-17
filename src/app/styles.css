@@ -1102,6 +1102,12 @@ button.approve {
 .workout-plan-warmup {
   color: var(--muted);
 }
+/* F09E: a clarify prompt shown in place of a set line when the engine has no
+   confident rep/set target — reads as a question, not a prescription. */
+.workout-plan-clarify {
+  color: var(--muted);
+  font-style: italic;
+}
 .workout-plan-closing {
   margin-top: var(--s3);
   color: var(--muted);

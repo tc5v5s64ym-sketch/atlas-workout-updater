@@ -139,6 +139,49 @@ test('bug2: a fully-prescribed lift still renders weight, reps, sets, and RIR', 
   for (const s of setNodes) assert.equal(s.text, '225lbs 5/2', 'faithful load × reps / RIR');
 });
 
+/* ══════════ F09E — complete, executable set structure ══════════ */
+
+test('F09E: a bodyweight lift (weight 0) renders "BW — reps ×sets", never "0lbs" or the ambiguous "15/3"', () => {
+  const { appendWorkoutPlan, formatPlanSetLine } = loadPlanRenderer();
+  // formatPlanSetLine marks a zero-load (bodyweight) target as BW — never a meaningless "0lbs".
+  const line = formatPlanSetLine({ weight: 0, reps: 15, rir: null });
+  assert.match(line, /BW/, 'bodyweight is marked BW');
+  assert.doesNotMatch(line, /0lbs/, 'never a meaningless 0lbs load');
+  assert.doesNotMatch(line, /\b15\/3\b/, 'never the ambiguous 15/3 that reads like a set count');
+  // appendWorkoutPlan groups identical bodyweight sets into ONE explicit "×N" line.
+  const container = makeEl();
+  const rendered = appendWorkoutPlan(container, { exercises: [{ name: 'Hanging Knee Raise', weight: 0, reps: 15, sets: 3, rir: null }] });
+  assert.equal(rendered, 1);
+  const setNodes = collect(container).filter((n) => n.cls === 'workout-plan-set');
+  assert.equal(setNodes.length, 1, 'one grouped line for identical bodyweight sets');
+  assert.match(setNodes[0].text, /BW — 15 reps ×3/, 'explicit BW + reps + set count');
+  assert.doesNotMatch(setNodes[0].text, /0lbs/, 'no 0lbs leak');
+});
+
+test('F09E: an exercise with no rep target asks for clarification, never a bare name or a misleading isolated number', () => {
+  const { appendWorkoutPlan } = loadPlanRenderer();
+  const container = makeEl();
+  const rendered = appendWorkoutPlan(container, { exercises: [{ name: 'Cable Fly', weight: 40, reps: null, sets: 3, rir: 2 }] });
+  assert.equal(rendered, 1, 'the exercise still renders (name + a clarify prompt)');
+  const nodes = collect(container);
+  assert.equal(nodes.filter((n) => n.cls === 'workout-plan-name').length, 1, 'name still shown');
+  assert.equal(nodes.filter((n) => n.cls === 'workout-plan-set').length, 0, 'no misleading set line when reps are unknown');
+  const clarify = nodes.filter((n) => n.cls && n.cls.includes('workout-plan-clarify'));
+  assert.equal(clarify.length, 1, 'a clarification prompt is shown instead');
+  assert.match(clarify[0].text, /confirm|reps|target/i, 'the prompt asks for the missing target');
+});
+
+test('F09E regression: weighted and load-omitted (non-zero) rendering is unchanged', () => {
+  const { appendWorkoutPlan, formatPlanSetLine } = loadPlanRenderer();
+  assert.equal(formatPlanSetLine({ weight: 60, reps: 15, rir: 2 }), '60lbs 15/2', 'weighted unchanged');
+  assert.equal(formatPlanSetLine({ weight: null, reps: 15, rir: 2 }), '15 reps/2', 'load-omitted accessory unchanged (not BW)');
+  const container = makeEl();
+  appendWorkoutPlan(container, { exercises: [{ name: 'Bench Press', weight: 225, reps: 5, sets: 3, rir: 2 }] });
+  const setNodes = collect(container).filter((n) => n.cls === 'workout-plan-set');
+  assert.equal(setNodes.length, 3, 'weighted still renders one line per set');
+  for (const s of setNodes) assert.equal(s.text, '225lbs 5/2');
+});
+
 /* ══════════ Bug 3 / Bug 4 — one workout model feeds every surface ══════════ */
 
 test('bug3: applyProposedPlanEdit returns the applied exercises for a single-source render', () => {

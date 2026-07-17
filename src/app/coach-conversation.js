@@ -476,8 +476,24 @@ import * as sessionQuestion from './sessionQuestion.js';
   // so it is unit-testable.
   function formatPlanSetLine(ex) {
     const rir = (ex.rir != null && Number.isFinite(Number(ex.rir))) ? `${ex.rir}` : '?';
-    const hasWeight = ex.weight != null && ex.weight !== '' && Number.isFinite(Number(ex.weight));
+    // Bodyweight: mark "BW — N reps", never a meaningless "0lbs" and never the ambiguous
+    // "N/M" that reads like a set count (F09E). Target RIR is shown only when applicable.
+    if (isBodyweightTarget(ex)) {
+      return (ex.rir != null && Number.isFinite(Number(ex.rir)))
+        ? `BW — ${ex.reps} reps · RIR ${ex.rir}`
+        : `BW — ${ex.reps} reps`;
+    }
+    const hasWeight = ex.weight != null && ex.weight !== '' && Number.isFinite(Number(ex.weight)) && Number(ex.weight) !== 0;
     return hasWeight ? `${ex.weight}lbs ${ex.reps}/${rir}` : `${ex.reps} reps/${rir}`;
+  }
+
+  // F09E: a zero-load target is a BODYWEIGHT lift (the engine emits weight 0 for lifts with
+  // no load to carry — services/analytics.js next_target). A load-OMITTED accessory (e.g.
+  // Face Pull, weight null/absent) is NOT bodyweight and keeps the "reps/RIR" form. Declared
+  // after formatPlanSetLine but hoisted, so both render paths (and the plan-render test slice
+  // that starts at formatPlanSetLine) see it.
+  function isBodyweightTarget(ex) {
+    return ex && ex.weight != null && ex.weight !== '' && Number(ex.weight) === 0;
   }
 
   // Format one engine-owned warm-up (priming) set as "{weight}lbs {reps} · warm-up".
@@ -517,9 +533,14 @@ import * as sessionQuestion from './sessionQuestion.js';
       // disappears (PR-12 Bug 2). formatPlanSetLine handles the absent weight.
       if (ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
-        for (let i = 0; i < count; i++) {
-          lines.push(formatPlanSetLine(ex));
+        if (isBodyweightTarget(ex)) {
+          lines.push(count > 1 ? `${formatPlanSetLine(ex)} ×${count}` : formatPlanSetLine(ex));
+        } else {
+          for (let i = 0; i < count; i++) lines.push(formatPlanSetLine(ex));
         }
+      } else {
+        // F09E: no confident rep target → ask rather than render a bare name.
+        lines.push('confirm reps and sets — I don’t have a target for this yet');
       }
     }
     if (any) {
@@ -561,12 +582,28 @@ import * as sessionQuestion from './sessionQuestion.js';
       // to a bare name (PR-12 Bug 2). formatPlanSetLine renders the absent weight.
       if (ex.reps != null) {
         const count = (ex.sets != null && ex.sets > 1) ? ex.sets : 1;
-        for (let i = 0; i < count; i++) {
+        if (isBodyweightTarget(ex)) {
+          // F09E: group identical bodyweight sets into ONE explicit "×N" line
+          // ("BW — 15 reps ×3") so the set count is unambiguous.
           const set = document.createElement('div');
           set.className = 'workout-plan-set';
-          set.textContent = formatPlanSetLine(ex);
+          set.textContent = count > 1 ? `${formatPlanSetLine(ex)} ×${count}` : formatPlanSetLine(ex);
           exEl.appendChild(set);
+        } else {
+          for (let i = 0; i < count; i++) {
+            const set = document.createElement('div');
+            set.className = 'workout-plan-set';
+            set.textContent = formatPlanSetLine(ex);
+            exEl.appendChild(set);
+          }
         }
+      } else {
+        // F09E: no confident rep target — ASK rather than show a bare name or a
+        // misleading isolated number. The exercise stays visible with a clarify prompt.
+        const clarify = document.createElement('div');
+        clarify.className = 'workout-plan-set workout-plan-clarify';
+        clarify.textContent = 'confirm reps and sets — I don’t have a target for this yet';
+        exEl.appendChild(clarify);
       }
       plan.appendChild(exEl);
       rendered++;
