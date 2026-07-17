@@ -30,9 +30,13 @@ assert.ok(fnEnd > fnStart, 'handlePreviewReady must follow handleSetLogged');
 
 const fnSrc = src.slice(fnStart, fnEnd);
 
-test('handleSetLogged: derives hasEngagedPlan from detail.plannedOrder before computing nextEx', () => {
-  assert.match(fnSrc, /const hasEngagedPlan = \(detail\.plannedOrder \|\| \[\]\)\.length > 0/,
-    'must compute hasEngagedPlan from detail.plannedOrder so freestyle (empty array) is distinguished from guided');
+test('handleSetLogged: derives hasEngagedPlan from the re-derived live plan order before computing nextEx', () => {
+  // SESS-1 (F09): the plan order is re-read live (plannedExerciseOrder()) with the
+  // emit-time detail.plannedOrder as the fallback, then hasEngagedPlan derives from it.
+  assert.match(fnSrc, /const currentPlannedOrder = livePlannedOrder \|\| detail\.plannedOrder \|\| \[\]/,
+    'the plan order must prefer the live selector, falling back to the snapshot');
+  assert.match(fnSrc, /const hasEngagedPlan = currentPlannedOrder\.length > 0/,
+    'hasEngagedPlan must derive from the re-derived plan order so freestyle (empty) is still distinguished from guided');
 });
 
 test('handleSetLogged: only calls getNextExerciseInPlan when hasEngagedPlan is true', () => {

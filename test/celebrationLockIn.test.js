@@ -106,8 +106,12 @@ test('AC8(c) client: the opener praises only from the engine effort verdict or r
 });
 
 test('AC8(c) client: closeout copy requires a genuinely complete plan and never declares the session over', () => {
-  assert.match(clientSrc, /if \(!nextEx && detail\.planIsComplete\) \{\s*\n\s*if \(!closeoutAnnounced\)/,
-    'closeout renders only when every planned exercise is logged, once');
+  // SESS-1 (F09): the closeout decision is re-derived from the LIVE canonical store
+  // right before announcing (never the emit-time `detail` snapshot), then gated once.
+  assert.match(clientSrc, /const currentPlanIsComplete = liveRemaining[\s\S]{0,120}currentPlannedOrder\.length > 0 && liveRemaining\.length === 0/,
+    'plan-complete must be re-derived live from remainingPlannedExercises(), not read from the stale snapshot');
+  assert.match(clientSrc, /if \(!nextEx && currentPlanIsComplete\) \{\s*\n\s*if \(!closeoutAnnounced\)/,
+    'closeout renders only when the LIVE plan is complete, once');
   assert.ok(clientSrc.includes("That's your planned work done"),
     'closeout copy is the planned-work-done wording — never a "session over" declaration (G3)');
 });

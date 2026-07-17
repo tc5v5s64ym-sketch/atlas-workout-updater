@@ -425,7 +425,7 @@ Autonomous within existing date semantics; no historical rewrite.
 
 ### F09 — Current-state coach narration
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-16, proven via red-first Playwright E2E on the real coach listeners; shell v140→v141). **SESS-1:** `handleSetLogged` (`src/app/coach-conversation.js`) announced next-up/closeout from the emit-time `detail` snapshot, computed before up to two ~9s coach-LLM awaits — so a concurrent set-logged handler could leave it announcing an already-logged "next up" or a superseded closeout. Fix: re-derive next-up, plan order, completed set, and plan-completeness from the LIVE bridged selectors (`remainingPlannedExercises`/`plannedExerciseOrder`/`getSessionCompleted`) right before the announce block, with the snapshot as a typeof-guarded fallback (source/eval harnesses). **SESS-3:** the one-shot `closeoutAnnounced` guard reset only on `atlas:session-reset`, so adding exercises after a plan closed out (reopen) suppressed the second session-close prompt for the rest of the session. Fix: the `atlas:plan-mutated` listener re-arms `closeoutAnnounced` + `lastAnnouncedNextUp` when a closed-out plan has live remaining work again. Client-only (coach render layer); the write path, proof fields, and preview→approve→write trust loop are untouched.
 
 **Findings:** `SESS-1`, `SESS-3`
 
@@ -451,7 +451,7 @@ Plan mutation followed by narration, closeout→reopen→closeout, reload/resume
 
 Autonomous because the behavior is derivable from current-state truth.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — this PR · Commit — client-only change in `src/app/coach-conversation.js`: `handleSetLogged` re-derives `currentNextPlanned`/`currentPlannedOrder`/`currentCompleted`/`currentPlanIsComplete` from the live bridged selectors before the handoff/closeout (snapshot fallback via `typeof`), and the `atlas:plan-mutated` listener re-arms `closeoutAnnounced`/`lastAnnouncedNextUp` when a closed-out plan is reopened. Shell v140→v141 (`ATLAS_SHELL_BUILD` + `sw.js` `CACHE_NAME` + 6 version pins). Tests: red-first `tests/e2e/coach-current-state.spec.js` (SESS-3 closeout→reopen→closeout renders two closeouts; SESS-1 a stale out-of-order set-logged snapshot never re-announces an already-logged next-up) — both fail before the fix, pass after; updated the source-introspection lock-in tests (`celebrationLockIn`, `freestyleNextUp`, `sessionPlanExecutor`, `unit.test.js` handoff/closeout/P0-2a) to the live-re-derive shape + a new SESS-3 guard-reset assertion. Full node suite 5527 pass; full E2E 70 pass; lint 0 errors. `BACKLOG.md` SESS-1/SESS-3 marked fixed.
 
 ### F10 — Authoritative planned-slot completion identity
 

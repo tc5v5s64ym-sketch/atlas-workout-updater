@@ -236,7 +236,7 @@ test('bug report UI has settings trigger and failure copy fallback', () => {
   assert.match(appSource, /Bug report saved/);
   assert.match(appSource, /Bug report could not be saved\. Copy report JSON\?/);
   assert.match(appSource, /navigator\.clipboard\?\.writeText/);
-  assert.match(sw, /atlas-shell-v140/, 'bug report UI wiring changes must bump the service worker cache');
+  assert.match(sw, /atlas-shell-v141/, 'bug report UI wiring changes must bump the service worker cache');
 });
 
 test('bug report captures rich diagnostic context on a single tap', () => {
@@ -5718,8 +5718,8 @@ test('recovery intent is sourced from an engaged Coach\'s Pick, not just a start
 
 test('shell cache: service worker version bumped and all shell scripts precached', () => {
   const sw = fs.readFileSync(path.join(repoRoot, 'public', 'sw.js'), 'utf8');
-  assert.match(sw, /atlas-shell-v140/, 'cache name must be bumped so stale assets are evicted');
-  assert.doesNotMatch(sw, /atlas-shell-v139/, 'old cache name must be gone');
+  assert.match(sw, /atlas-shell-v141/, 'cache name must be bumped so stale assets are evicted');
+  assert.doesNotMatch(sw, /atlas-shell-v140/, 'old cache name must be gone');
   // The shell build tag baked into app.js must equal the SW cache version, so the
   // "Running shell: vNN" line truthfully reflects the running bundle.
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
@@ -5845,7 +5845,7 @@ test('P0 wiring 2a: deterministic plan-mutation intent is wired into the message
   // The coach layer narrates the mutation + re-points the composer (does not own it).
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   assert.match(cc, /addEventListener\('atlas:plan-mutated'/, 'coach layer listens for the mutation');
-  const lis = cc.slice(cc.indexOf("addEventListener('atlas:plan-mutated'"), cc.indexOf("addEventListener('atlas:plan-mutated'") + 400);
+  const lis = cc.slice(cc.indexOf("addEventListener('atlas:plan-mutated'"), cc.indexOf("addEventListener('atlas:plan-mutated'") + 1300);
   assert.match(lis, /setWorkoutPlaceholder\(/, 'composer re-points to the new current exercise');
 });
 
@@ -5996,6 +5996,17 @@ test('coach closeout: closeoutAnnounced guard prevents repeated "Planned work do
   assert.match(resetListener, /closeoutAnnounced = false/, 'reset is wired inside the session-reset listener');
 });
 
+// SESS-3 (F09): adding exercises after a plan was already closed out reopens it; the
+// one-shot closeout guard must re-arm so the SECOND completion still gets its prompt.
+test('coach closeout (SESS-3): a plan reopened via atlas:plan-mutated re-arms the closeout guard', () => {
+  const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
+  const listener = cc.slice(cc.indexOf("addEventListener('atlas:plan-mutated'"), cc.indexOf("addEventListener('atlas:plan-mutated'") + 1400);
+  assert.match(listener, /if \(closeoutAnnounced\)/, 'the re-arm is gated on a prior closeout having fired');
+  assert.match(listener, /remainingPlannedExercises\(\)\.length > 0/, 'reopen is detected from the LIVE remaining work, not the snapshot');
+  assert.match(listener, /closeoutAnnounced = false/, 'the closeout guard is re-armed when a closed-out plan is reopened');
+  assert.match(listener, /lastAnnouncedNextUp = null/, 'the next-up suppressor is also cleared so the newly-added lift announces');
+});
+
 // ── Set-effort signals: live coach wiring (Training Intelligence PR 477) ────────
 
 test('set-effort wiring: app.js threads the remaining planned queue into atlas:set-logged', () => {
@@ -6094,19 +6105,18 @@ test('handoff: the /api/plan/today fallback never resurrects an already-complete
     ccSource.indexOf('async function handlePreviewReady')
   );
   // B4: freestyle guard — only look up next-up when a plan is engaged.
-  assert.match(block, /const hasEngagedPlan = \(detail\.plannedOrder \|\| \[\]\)\.length > 0/,
-    'freestyle guard: hasEngagedPlan derived from detail.plannedOrder');
+  assert.match(block, /const hasEngagedPlan = currentPlannedOrder\.length > 0/,
+    'freestyle guard: hasEngagedPlan derived from the live-re-derived plan order');
   // next-up is computed BEFORE the closeout decision, so a genuine next wins.
-  assert.match(block, /let nextEx = detail\.nextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
+  assert.match(block, /let nextEx = currentNextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
     'freestyle guard: getNextExerciseInPlan fires only when hasEngagedPlan is true');
-  // A fallback next-up (only when there's no deterministic nextPlanned) that is
-  // already in detail.completed is dropped — this is the "wanted weighted dips
-  // again" fix.
-  assert.match(block, /if \(nextEx && !detail\.nextPlanned\)/);
-  assert.match(block, /detail\.completed \|\| \[\]\)\.some/);
+  // A fallback next-up (only when there's no deterministic next) that is already in
+  // the completed set is dropped — this is the "wanted weighted dips again" fix.
+  assert.match(block, /if \(nextEx && !currentNextPlanned\)/);
+  assert.match(block, /currentCompleted \|\| \[\]\)\.some/);
   assert.match(block, /if \(done\) nextEx = null;/);
-  // Closeout fires only when the plan is complete AND nothing is genuinely next.
-  assert.match(block, /if \(!nextEx && detail\.planIsComplete\)/);
+  // Closeout fires only when the LIVE plan is complete AND nothing is genuinely next.
+  assert.match(block, /if \(!nextEx && currentPlanIsComplete\)/);
   // app.js threads the completed-lift names into the event for that rejection.
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /completed: \[\.\.\.getSessionCompleted\(\)\]/);
