@@ -27,6 +27,14 @@ const _exports = (function (root) {
   let FLUSH_INTERVAL_MS = 10000;  // …or every 10 seconds
   let RING_MAX = 100;             // capped in-memory transcript
   let INPUT_MAX = 2000;           // per-field text cap (client-side; server re-caps)
+  // A keepalive (unload/pagehide) request has a hard ~64KB TOTAL body budget across all
+  // in-flight keepalive requests; a batch over it is SILENTLY DROPPED by the browser — which
+  // would lose the closeout tail this recorder exists to preserve. Bound the unload batch to
+  // the newest events fitting under a safe fraction of that limit (headroom for the JSON
+  // envelope + any concurrent keepalive). Periodic (non-unload) flushes use a normal fetch
+  // with no such limit and are never trimmed. (F09B review, P2.)
+  let KEEPALIVE_MAX_BYTES = 55000;
+  let PENDING_SETS_MAX = 20;      // per-event captured-set cap (true count kept as pending_set_count)
 
   let API_KEY_STORAGE = 'atlas_api_key';
   let DEVICE_ID_STORAGE = 'atlas_flight_device';
@@ -231,10 +239,33 @@ const _exports = (function (root) {
     } catch (e) { /* TOTAL */ }
   }
 
+  // Keep the NEWEST suffix of `events` whose serialized size fits under `maxBytes` (always
+  // at least the last event). Used only for the unload keepalive flush so an oversized tail
+  // batch can't be silently dropped by the browser — and the closeout is the newest, so
+  // trimming the OLDEST is exactly the safe choice. Pure + TOTAL. (F09B review, P2.)
+  function boundTailForKeepalive(events, maxBytes) {
+    try {
+      if (!Array.isArray(events) || events.length <= 1) return events;
+      let cap = typeof maxBytes === 'number' && maxBytes > 0 ? maxBytes : KEEPALIVE_MAX_BYTES;
+      let kept = [];
+      let size = 0;
+      for (let i = events.length - 1; i >= 0; i--) {
+        let sz = 0;
+        try { sz = JSON.stringify(events[i]).length; } catch (e) { sz = 0; }
+        if (kept.length && (size + sz) > cap) break;
+        kept.unshift(events[i]);
+        size += sz;
+      }
+      return kept.length ? kept : events.slice(-1);
+    } catch (e) { return events; }
+  }
+
   function flush(state, unloading) {
     try {
       if (!state.buffer.length) return;
       let events = state.buffer.splice(0, state.buffer.length);
+      // Unload path: bound the keepalive body so the browser can't silently drop the tail.
+      if (unloading === true) events = boundTailForKeepalive(events, KEEPALIVE_MAX_BYTES);
       let body = {
         flight_session_id: state.flightSessionId,
         device_id: state.deviceId,
@@ -392,8 +423,8 @@ const _exports = (function (root) {
 
       let log = callGetter('getSessionLog');
       if (Array.isArray(log)) {
-        out.pending_set_count = log.length;
-        out.pending_sets = log.slice(0, 40).map(function (s) {
+        out.pending_set_count = log.length; // true count preserved even when the list is capped
+        out.pending_sets = log.slice(0, PENDING_SETS_MAX).map(function (s) {
           s = s || {};
           return {
             exercise: truncate(String(s.exercise || s.canonical_exercise || s.name || ''), 80),
@@ -521,6 +552,8 @@ const _exports = (function (root) {
     truncate: truncate,
     buildClientEvent: buildClientEvent,
     shouldFlush: shouldFlush,
+    boundTailForKeepalive: boundTailForKeepalive,
+    KEEPALIVE_MAX_BYTES: KEEPALIVE_MAX_BYTES,
     markIssue: markIssue,
     getSessionId: getSessionId,
     requestHeaders: requestHeaders,
@@ -553,6 +586,8 @@ export const {
   truncate,
   buildClientEvent,
   shouldFlush,
+  boundTailForKeepalive,
+  KEEPALIVE_MAX_BYTES,
   markIssue,
   getSessionId,
   requestHeaders,

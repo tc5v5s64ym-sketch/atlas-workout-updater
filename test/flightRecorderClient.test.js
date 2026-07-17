@@ -185,6 +185,32 @@ test('client subscribes to atlas:* events on document, not window', () => {
   assert.doesNotMatch(appSrc, /window\.dispatchEvent\(new CustomEvent\('atlas:/, 'atlas:* events are dispatched on document, not window');
 });
 
+// ── F09B review (P2): the unload keepalive batch must stay under the browser budget ──
+// pending-set snapshots repeated on every session_state_changed event can push a tail batch
+// over the ~64KB keepalive limit, which the browser drops SILENTLY — losing the closeout
+// this fix exists to preserve. The unload flush keeps the NEWEST events under a byte budget.
+test('boundTailForKeepalive keeps the newest events under the byte budget (closeout preserved)', () => {
+  // 30 events, each ~1KB; a 5KB budget must keep only the newest handful, and they must be
+  // the highest-seq (newest) events — the closeout tail.
+  const events = [];
+  for (let i = 0; i < 30; i++) events.push({ seq: i, event_type: 'session_state_changed', blob: 'x'.repeat(1000) });
+  const kept = client.boundTailForKeepalive(events, 5000);
+  assert.ok(kept.length > 0 && kept.length < events.length, 'trims an oversized batch');
+  // Kept slice is a contiguous NEWEST suffix.
+  assert.equal(kept[kept.length - 1].seq, 29, 'the very last (newest) event is always kept');
+  assert.ok(kept[0].seq > events[0].seq, 'oldest events are dropped, not newest');
+  const bytes = kept.reduce((n, e) => n + JSON.stringify(e).length, 0);
+  assert.ok(bytes <= 5000 + JSON.stringify(kept[0]).length, 'kept batch fits the budget (± one boundary event)');
+});
+
+test('boundTailForKeepalive is TOTAL and keeps at least the last event / small batches whole', () => {
+  assert.deepEqual(client.boundTailForKeepalive([], 100), []);
+  const one = [{ seq: 1 }];
+  assert.deepEqual(client.boundTailForKeepalive(one, 1), one, 'always keeps the last event even over budget');
+  const small = [{ seq: 1 }, { seq: 2 }];
+  assert.deepEqual(client.boundTailForKeepalive(small, 100000), small, 'a batch under budget is untouched');
+});
+
 // ── F09B / FR-REPLAY-1: activation must NOT require a raw localStorage key ───────────
 // Production v141 recorded only server rows because initBrowser() early-returned when the
 // raw atlas_api_key was absent — which it always is after the F04C cookie migration. The
