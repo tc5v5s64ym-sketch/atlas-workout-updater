@@ -931,11 +931,14 @@ function parseLogSets(rawText, context = {}) {
   }
 
   if (resolvedExercise.canonicalName === 'Hanging Knee Raises' && looksLikeBodyweightRepsOnly(resolvedExercise.rest)) {
-    const reps = extractNumbers(resolvedExercise.rest).map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
+    const repCounts = extractNumbers(resolvedExercise.rest);
+    const reps = repCounts.map(value => setRecord({ weight: null, reps: value, rir: null, weight_unit: null }));
     return {
       intent: 'needs_clarification',
       raw_text: rawText,
-      message: 'Knee raises: do you mean bodyweight reps 20, 15, 15?',
+      // Echo the reps ACTUALLY detected (F09G / CONVO-LOG-1) — never a hardcoded set,
+      // which asked the lifter back a rep sequence they never entered.
+      message: `Knee raises: do you mean bodyweight reps ${repCounts.join(', ')}?`,
       partial: {
         exercise: resolvedExercise.canonicalName,
         raw_name: resolvedExercise.rawName,

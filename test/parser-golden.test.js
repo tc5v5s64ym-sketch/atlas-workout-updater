@@ -134,6 +134,17 @@ test('golden: knee raises with space-separated reps asks for clarification', () 
   assert.deepEqual(result.partial.sets.map(s => s.reps), [20, 15, 15]);
 });
 
+test('golden (F09G): the knee-raise clarification echoes the ACTUAL reps, never a hardcoded set', () => {
+  // CONVO-LOG-1: the clarification message was hardcoded "20, 15, 15" regardless of
+  // input, so "Knee raises 15 12 10" asked back a set the lifter never said. The
+  // question must reflect the reps actually detected (which partial.sets already are).
+  const result = parseWorkoutText('Knee raises 15 12 10');
+  assert.equal(result.intent, 'needs_clarification');
+  assert.deepEqual(result.partial.sets.map(s => s.reps), [15, 12, 10]);
+  assert.match(result.message, /15, 12, 10/, 'the question echoes the actual reps');
+  assert.doesNotMatch(result.message, /20, 15, 15/, 'never a hardcoded rep set');
+});
+
 test('golden: squat — five sets across four weights with trailing implied-weight set', () => {
   // 5/1 at the end inherits 240 lb from the previous weight token
   const result = parseWorkoutText('Squat 135 10/4 185 8/4 225 8/2 240 5/2 5/1');

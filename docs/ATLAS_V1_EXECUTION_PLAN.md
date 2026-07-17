@@ -625,7 +625,7 @@ Reproduce synthetically (accepted plan target A; athlete performs target B; the 
 
 ### F09G — Repair conversational logging and final confirmation exactness
 
-**Status:** QUEUED
+**Status:** IN PROGRESS — split into focused PRs (parser slice COMPLETE; conversation-state slice is the follow-up)
 
 **Finding:** `CONVO-LOG-1`
 
@@ -645,7 +645,11 @@ If parser behavior and conversation-state behavior are separate root causes, spl
 
 **Owner gate:** Autonomous within the parser/trust contract (grammar changes beyond ambiguity handling are owner-reserved).
 
-**Completion record:** PR — · Commit —
+**Root-cause split (from a six-surface pipeline map).** The failure is BOTH parser and conversation-state, and they are independent:
+- **Parser (`services/workoutTextParser.js`):** the bare-rep bodyweight (knee raise) clarification message was HARDCODED `"20, 15, 15"` regardless of the actual reps, so the lifter was asked back a set they never entered. The detected reps were already correct in `partial.sets`; only the human-facing question string drifted. (Auto-logging bare bodyweight reps without the ask, and cross-message weight inheritance, are **grammar changes beyond ambiguity handling → owner-reserved**; the card itself wants ambiguous input to "ask one bounded question", so the parser is otherwise correct — no grammar change made.)
+- **Conversation-state (`src/app/app.js` + `coach-conversation.js`):** on a `needs_clarification` throw the parser's `partial.sets` are discarded (only `recognizedExercise` is kept), so clarified sets never reach the `getSessionLog()` buffer; "Just log it" is not a recognized closeout/resolution token; and the Done→confirmation closeout falls back to a Gemini re-parse of chat history whenever the buffer is empty, so the "card == buffer" invariant does not hold in that branch. **This is the follow-up PR.**
+
+**Completion record (parser slice):** PR — this PR (F09G parser slice) · Commit — `services/workoutTextParser.js`: the knee-raise bodyweight clarification now echoes the reps ACTUALLY detected (`Knee raises: do you mean bodyweight reps ${repCounts.join(', ')}?`) instead of a hardcoded `"20, 15, 15"`. Red-first `test/parser-golden.test.js` ("Knee raises 15 12 10" → the question echoes `15, 12, 10`, never `20, 15, 15`). Full node suite 5568 pass; lint 0 errors. The conversation-state slice (preserve `partial.sets`, recognize "Just log it", make the empty-buffer recompile non-authoritative so the confirmation card always equals the buffer) is tracked as the follow-up.
 
 ### F09H — Route PR claims correctly
 
