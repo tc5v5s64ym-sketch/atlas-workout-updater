@@ -568,7 +568,9 @@ Test normal owner-device behavior **without** clearing browser history or websit
 
 **Owner gate:** Autonomous unless a new server-side secret is required (owner-reserved — name + steps, never a value).
 
-**Completion record:** PR — · Commit —
+**Status:** ✅ COMPLETE (2026-07-17) — **ALREADY FIXED (proof-only close, no production-code change).** Verification: the LT-012 "required the credential again" observation was traced (by **F04C, live-validated on shell v137**) to expected loss of site data — clearing Safari history/website data correctly clears the session — **not a persistence regression.** The session is durable and server-authoritative: `services/session.js` issues a **120-day** (`DEFAULT_TTL_MS`) HttpOnly + Secure + SameSite=Lax signed cookie that **renews after 60 days** (`RENEW_AFTER_MS`), so it survives refresh, close/reopen, service-worker/shell updates, and a return later within the window; a transport failure never becomes a key prompt and only a **server-confirmed** unauthenticated response asks to reconnect (`tests/e2e/session-auth.spec.js`: cookie-only reload, delayed status, status-timeout-then-success, genuine 401, Settings/Coach agreement). None of the forbidden changes were made (no raw keys to `localStorage`, no second client truth, no new auth system, no weakened routes, no exposed secrets).
+
+**Completion record:** PR — this PR · Commit — no production code changed. Added durable-lifetime regression pins in `test/session.test.js` (TTL ≥ ~90 days and renews before expiry; a cookie stays valid across an 80-day gap and expires only after the TTL; a durable Set-Cookie carries HttpOnly + Secure + SameSite=Lax + a long Max-Age) so a future change that shortens the lifetime — re-prompting the owner sooner — is caught. `BACKLOG.md` `AUTH-DURABLE-1` resolved. Full node suite green.
 
 ### F09E — Generate complete executable session plans
 
