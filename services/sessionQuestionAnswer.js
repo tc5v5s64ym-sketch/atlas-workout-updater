@@ -62,33 +62,51 @@ function resolveLiftName(message, history, clientContext) {
   return null;
 }
 
-// A target from the client's live plan/preview, when present (no Sheets needed).
+// The ACCEPTED-PLAN target for a lift, when present (no Sheets needed). F09F: only
+// `current_plan` (today's accepted prescription) is a source of a "planned" target.
+// `current_preview` holds PERFORMED/preview rows — what the lifter is about to log or
+// just logged — so it is NEVER read here as a prescription (that is the "actual
+// silently becomes plan" bug). Preview still helps resolve lift IDENTITY elsewhere
+// (resolveLiftName / currentLiftFromContext); it just cannot supply target numbers.
+// The returned target is tagged `source: 'plan'` so callers can keep plan and live
+// engine values distinct in the wording.
 function targetFromContext(liftName, clientContext) {
   const cc = clientContext && typeof clientContext === 'object' ? clientContext : {};
   const key = normName(liftName);
 
   for (const p of (Array.isArray(cc.current_plan) ? cc.current_plan : [])) {
     if (p && normName(p.name) === key && (p.rir != null || p.reps != null || p.weight != null || p.sets != null)) {
-      return { exercise_name: p.name, weight: p.weight ?? null, reps: p.reps ?? null, sets: p.sets ?? null, rir: p.rir ?? null };
-    }
-  }
-  for (const p of (Array.isArray(cc.current_preview) ? cc.current_preview : [])) {
-    if (p && normName(p.exercise) === key && (p.rir != null || p.reps != null || p.weight != null)) {
-      return { exercise_name: p.exercise, weight: p.weight ?? null, reps: p.reps ?? null, sets: null, rir: p.rir ?? null };
+      return { exercise_name: p.name, weight: p.weight ?? null, reps: p.reps ?? null, sets: p.sets ?? null, rir: p.rir ?? null, source: 'plan' };
     }
   }
   return null;
 }
 
-// Conclusion-first, brief. Only includes attributes that were asked AND known.
-function formatAnswer(liftName, attrs, target) {
-  const name = (target && target.exercise_name) || liftName;
+// The asked-and-known attributes, worded conclusion-first.
+function formatParts(attrs, target) {
   const parts = [];
   if (attrs.includes('weight') && target.weight != null) parts.push(`${target.weight} lbs`);
   if (attrs.includes('reps') && target.reps != null) parts.push(`${target.reps} reps`);
   if (attrs.includes('sets') && target.sets != null) parts.push(`${target.sets} sets`);
   if (attrs.includes('rir') && target.rir != null) parts.push(`RIR ${target.rir}`);
+  return parts;
+}
+
+// Word a resolved answer with EXPLICIT provenance (F09F). `resolved` is
+// { target, provenance } from resolveAnswerTarget:
+//   - 'plan'   → the accepted plan's own prescription (worded plainly, as today's plan);
+//   - 'engine' → a live recommendation for the NEXT set, labeled so it is never
+//                mistaken for the stored plan (and never a performed value).
+// Only asked-and-known attributes are included. Returns null when nothing is known.
+function formatAnswer(liftName, attrs, resolved) {
+  const { target, provenance } = resolved || {};
+  if (!target) return null;
+  const name = target.exercise_name || liftName;
+  const parts = formatParts(attrs, target);
   if (!parts.length) return null;
+  if (provenance === 'engine') {
+    return `${name}: no planned target — recommended for your next set: ${parts.join(', ')}.`;
+  }
   return `${name}: ${parts.join(', ')}.`;
 }
 
@@ -116,6 +134,24 @@ function mergeTargets(primary, fallback) {
   };
 }
 
+// F09F provenance resolver. Given the accepted-plan target (or null) and the live
+// engine target (or null), decide which the answer speaks with:
+//   - accepted plan present → speak as the PLAN; the engine may only FILL attributes
+//     the plan genuinely lacks (e.g. a missing set count) — the lift IS planned, so it
+//     is still the plan's answer (this preserves the missing-set-count behavior).
+//   - no accepted plan target → the engine value is a REVISED NEXT-SET RECOMMENDATION,
+//     surfaced under that label, never as the plan.
+//   - neither → no reliable target.
+// A performed/preview value never reaches here as a target (targetFromContext drops it),
+// so actual can never masquerade as plan.
+function resolveAnswerTarget(planTarget, engineTarget) {
+  if (planTarget) {
+    return { target: engineTarget ? mergeTargets(planTarget, engineTarget) : planTarget, provenance: 'plan' };
+  }
+  if (engineTarget) return { target: engineTarget, provenance: 'engine' };
+  return { target: null, provenance: 'none' };
+}
+
 /**
  * @param {string} message
  * @param {object} opts
@@ -133,20 +169,19 @@ function buildSessionQuestionAnswer(message, { history = [], clientContext = nul
   const liftName = resolveLiftName(message, history, clientContext);
   if (!liftName) return null;
 
-  const ctxTarget = targetFromContext(liftName, clientContext);
-  // Consult the engine whenever the client context can't cover EVERY asked
-  // attribute (e.g. the plan carries rir but the user asked "sets?"), then merge
-  // with context values winning — so a partial context target never shadows a
-  // fuller engine answer.
-  const contextMissingAsked = !ctxTarget || attrs.some(a => ctxTarget[a] == null);
-  let target = ctxTarget;
-  if (contextMissingAsked && typeof resolveTarget === 'function') {
-    const engineTarget = resolveTarget(liftName);
-    if (engineTarget) target = mergeTargets(ctxTarget, engineTarget);
-  }
-  if (!target) return null;
+  const planTarget = targetFromContext(liftName, clientContext);
+  // Consult the engine whenever the accepted plan can't cover EVERY asked attribute
+  // (a real plan lift missing e.g. its set count, or no accepted plan target at all).
+  const planMissingAsked = !planTarget || attrs.some(a => planTarget[a] == null);
+  const engineTarget = (planMissingAsked && typeof resolveTarget === 'function')
+    ? resolveTarget(liftName)
+    : null;
 
-  return formatAnswer(liftName, attrs, target);
+  const resolved = resolveAnswerTarget(planTarget, engineTarget);
+  // This layer answers only when the LLM coach is unavailable, so when a lift is named
+  // and attributes are asked but neither the accepted plan nor the engine can ground a
+  // target, the honest floor is to say so — never a performed value, never a guess.
+  return formatAnswer(liftName, attrs, resolved) || `${liftName}: no reliable target available.`;
 }
 
 /**
@@ -242,15 +277,16 @@ function answerBareShorthand(message, clientContext = null, resolveTarget = null
     return null; // no active lift context → let the caller fall back (education is fine)
   }
 
-  const ctxTarget = targetFromContext(current, clientContext);
-  const contextMissingAsked = !ctxTarget || attrs.some(a => ctxTarget[a] == null);
-  let target = ctxTarget;
-  if (contextMissingAsked && typeof resolveTarget === 'function') {
-    const engineTarget = resolveTarget(current);
-    if (engineTarget) target = mergeTargets(ctxTarget, engineTarget);
-  }
-  if (!target) return null;
-  const text = formatAnswer(current, attrs, target);
+  const planTarget = targetFromContext(current, clientContext);
+  const planMissingAsked = !planTarget || attrs.some(a => planTarget[a] == null);
+  const engineTarget = (planMissingAsked && typeof resolveTarget === 'function')
+    ? resolveTarget(current)
+    : null;
+  const resolved = resolveAnswerTarget(planTarget, engineTarget);
+  // Pre-Gemini lane: defer (null) when nothing can be grounded so the LLM / education
+  // path still applies — the "no reliable target" floor belongs to the LLM-down lane.
+  if (!resolved.target) return null;
+  const text = formatAnswer(current, attrs, resolved);
   return text ? { kind: 'answer', text } : null;
 }
 
