@@ -49,7 +49,7 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
 
-const ATLAS_SHELL_BUILD = 'v141';
+const ATLAS_SHELL_BUILD = 'v142';
 
 
 
@@ -4727,34 +4727,66 @@ function currentPlannedExercise() {
 // buildRowsFromSessionLog numbers them — by exercise + per-exercise occurrence order — and
 // only a field the lifter actually changed (data-user-edited) overwrites the buffer. Inert
 // when nothing was hand-edited, so the parser-driven flow is unchanged.
+// Stable id for a manually-added ("+ Add set") row, so folding it into the session
+// buffer is idempotent across repeated reconciles before a rebuild.
+let manualRowSeq = 0;
+
 function reconcileSessionLogFromTable() {
   const rows = setsTableBody && setsTableBody.children;
   if (!rows || !rows.length) return;
   const buffer = (typeof getSessionLog === 'function') ? getSessionLog() : null;
   if (!buffer || !buffer.length) return;
   const byExercise = new Map();
+  const byManualId = new Map();
   for (const entry of buffer) {
+    if (entry && entry._manualId) byManualId.set(String(entry._manualId), entry);
     const key = String(entry.exercise || '').trim().toLowerCase();
     if (!byExercise.has(key)) byExercise.set(key, []);
     byExercise.get(key).push(entry);
   }
   const cursor = new Map();
+  const val = (tr, cls) => { const input = tr.querySelector(cls); return input ? input.value : ''; };
+  const FIELDS = [['.set-exercise', 'exercise'], ['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']];
   for (const tr of rows) {
     if (!tr || typeof tr.querySelector !== 'function') continue;
+    // A manually-added row already folded on an earlier pass re-matches by its stable id
+    // (so it is never folded twice); a manual row is fully authoritative — take all fields.
+    const manualId = (tr.dataset && tr.dataset.manualId) || '';
+    if (manualId && byManualId.has(manualId)) {
+      const entry = byManualId.get(manualId);
+      for (const [cls, field] of FIELDS) entry[field] = val(tr, cls);
+      continue;
+    }
     // Match on the name the row was BUILT with (its buffer key), NOT the current input value
     // — otherwise a renamed exercise misses its entry and every edit on that row is dropped.
     const origin = (tr.dataset ? tr.dataset.originExercise : undefined) ?? tr.querySelector('.set-exercise')?.value;
     const key = String(origin || '').trim().toLowerCase();
     const list = byExercise.get(key);
-    if (!list) continue;
     const i = cursor.get(key) || 0;
-    cursor.set(key, i + 1);
-    const entry = list[i];
-    if (!entry) continue;
-    // Exercise is preserved too (the unknown-lift "check the name" flow depends on it).
-    for (const [cls, field] of [['.set-exercise', 'exercise'], ['.set-weight', 'weight'], ['.set-reps', 'reps'], ['.set-rir', 'rir'], ['.set-notes', 'notes']]) {
-      const input = tr.querySelector(cls);
-      if (input && input.dataset.userEdited === '1') entry[field] = input.value;
+    const entry = list ? list[i] : null;
+    if (entry) {
+      cursor.set(key, i + 1);
+      // Exercise is preserved too (the unknown-lift "check the name" flow depends on it).
+      for (const [cls, field] of FIELDS) {
+        const input = tr.querySelector(cls);
+        if (input && input.dataset.userEdited === '1') entry[field] = input.value;
+      }
+      continue;
+    }
+    // No buffer entry AND the row was built with no origin exercise → a manually-added
+    // ("+ Add set") row (parser / buffer-rebuilt / copy-last-session rows all carry their
+    // origin name). Fold it into the session buffer with a stable id so it survives the
+    // rebuild and reaches the write — otherwise a hand-added row is silently dropped the
+    // next time the table rebuilds from the buffer. Only a row with real content (a named
+    // exercise + a weight or reps) is folded; a blank scaffold is ignored (collectLogRows
+    // skips it too). This makes the added row authoritative pending-session state BEFORE
+    // any rebuild, matched by stable id rather than list position.
+    const builtEmpty = tr.dataset && tr.dataset.originExercise === '';
+    const exercise = val(tr, '.set-exercise').trim();
+    if (builtEmpty && exercise && (val(tr, '.set-weight') !== '' || val(tr, '.set-reps') !== '')) {
+      const id = manualId || `manual-${++manualRowSeq}`;
+      if (tr.dataset) tr.dataset.manualId = id;
+      buffer.push({ exercise, weight: val(tr, '.set-weight'), reps: val(tr, '.set-reps'), rir: val(tr, '.set-rir'), notes: val(tr, '.set-notes'), _manualId: id });
     }
   }
 }
