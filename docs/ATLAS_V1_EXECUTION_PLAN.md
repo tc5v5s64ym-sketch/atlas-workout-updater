@@ -73,7 +73,7 @@ Do **not** stop merely because a PR is merge-ready, a session is getting long, o
 |---|---|---|---|
 | **M0** | Consolidate execution authority | ✅ COMPLETE in the installation PR | One canonical plan; old plan bodies retired; governance points here |
 | **M1** | Close Soul honestly | ✅ COMPLETE (2026-07-16) | LT-010 required Part 1 PASS with profanity OFF; S5 and Soul recorded complete |
-| **M2** | Close remaining silent-correctness risks | ▶ ACTIVE | F02–F10 complete and no open P0/P1 silent-trust finding in these seams |
+| **M2** | Close remaining silent-correctness risks | ▶ ACTIVE | F02–F10 **plus the owner-directed 2026-07-16 stabilization insertion (F09A–F09J, F10A–F10E)** complete, and no open P0/P1 silent-trust finding in these seams |
 | **M3** | Prove cross-seam behavior automatically | QUEUED | F11 proving packs green in deterministic CI |
 | **M4** | Prove Atlas in real use | BLOCKED on M3 | Five consecutive clean live sessions recorded |
 | **M5** | Declare and stabilize V1 | BLOCKED on M4 | V1 declaration merged; minimum two-week defect-only period completed |
@@ -453,9 +453,245 @@ Autonomous because the behavior is derivable from current-state truth.
 
 **Completion record:** PR — this PR · Commit — client-only change in `src/app/coach-conversation.js`: `handleSetLogged` re-derives `currentNextPlanned`/`currentPlannedOrder`/`currentCompleted`/`currentPlanIsComplete` from the live bridged selectors before the handoff/closeout (snapshot fallback via `typeof`), and the `atlas:plan-mutated` listener re-arms `closeoutAnnounced`/`lastAnnouncedNextUp` when a closed-out plan is reopened. Shell v140→v141 (`ATLAS_SHELL_BUILD` + `sw.js` `CACHE_NAME` + 6 version pins). Tests: red-first `tests/e2e/coach-current-state.spec.js` (SESS-3 closeout→reopen→closeout renders two closeouts; SESS-1 a stale out-of-order set-logged snapshot never re-announces an already-logged next-up) — both fail before the fix, pass after; updated the source-introspection lock-in tests (`celebrationLockIn`, `freestyleNextUp`, `sessionPlanExecutor`, `unit.test.js` handoff/closeout/P0-2a) to the live-re-derive shape + a new SESS-3 guard-reset assertion. Full node suite 5527 pass; full E2E 70 pass; lint 0 errors. `BACKLOG.md` SESS-1/SESS-3 marked fixed.
 
-### F10 — Authoritative planned-slot completion identity
+### Owner-directed insertion — live-session stabilization (F09A–F09J, then F10, then F10A–F10E)
+
+**Authority:** Explicit owner-approved change to the canonical campaign sequence (Dale, 2026-07-17). Dale paused normal V1 progression at the clean boundary after F09 to repair defects demonstrated during the 2026-07-16 owner gym session. This is **not** a second roadmap, fix-it document, or competing plan — it is inserted into this canonical plan. Completed cards F01–F09 are **not** renumbered or erased; existing F10 and F11 keep their numbers. **Execution order:** F09A → F09B → … → F09J → **existing F10** → F10A → F10B → … → F10E → F11.
+
+**Goal:** not to polish Atlas — to make the normal workout loop trustworthy end to end:
+
+> executable plan → conversational execution and pivots → accurate confirmation → approved write → truthful planned-versus-actual history → replayable test evidence.
+
+**Evidence base:** the 2026-07-16 owner live session (real upper-body workout through the production app; shell v141; backend changed mid-session from `029d508…` to `cefc34c…` — a split-build caveat, do not attribute every observation to one build). Bounded evidence recorded in `docs/TEST_QUEUE.md` **LT-012** (owner verdict FAIL overall; trust-boundary PASS because the owner rejected the final preview so no bad workout row entered permanent history). Do **not** copy private production workout details, Sheet IDs, ranges, screenshots, credentials, or raw transcripts into commits or PRs — use synthetic equivalents in automated tests.
+
+**Product decision — living coach-plan ledger (owner-approved):** Atlas maintains **two separate truths**: (1) Atlas's **evolving recommendation ledger** — what Atlas independently recommended at each point; and (2) **actual execution** — what the athlete performed. **Never copy actual performance backward and label it Atlas's plan.** Semantics:
+
+- A user-selected load does not automatically become "Atlas's plan." It becomes the plan only when Atlas explicitly recommends or endorses it.
+- On a pivot, Atlas computes what it *would* recommend for the new exercise using history and pre-work session context; that recommendation becomes the active plan for the pivot. Performed sets remain actuals whether or not they match.
+- If Atlas revises its recommendation after seeing a set, the revision applies **only to future sets** — it must not retroactively change the target for a completed set.
+- When the athlete begins an exercise without requesting a target, Atlas derives the recommendation from pre-exercise information, **excluding the new result it is about to evaluate**.
+- When evidence is insufficient, record **no reliable target available**; do not invent or copy the result.
+- Replaced/skipped exercises are plan changes, not automatically failures.
+- Original and revised plans both remain in history; assessment uses the recommendation effective when each set occurred.
+- No mid-session production Sheet writes are required — maintain the evolving ledger in trusted pending-session state and include it in the final reviewed closeout, which the owner approves once.
+
+A production Sheet schema change still follows the explicit schema safety gate (owner-reserved). Per-card rules: refresh `main`; run the Current-State Verification Gate and record one verdict; write the failing test/replay first; one fresh branch and one PR per concern; smallest safe fix; focused live-path + full deterministic + applicable Playwright/E2E + lint + secret-scan + wiring/trust checks; address real in-scope Codex findings (advisory; deterministic CI is the hard gate); merge the exact passing head; update the card and supporting evidence; refresh `main` and continue. If a card proves to contain multiple independent root causes, split it into smaller lettered cards.
+
+### F09A — Install the stabilization campaign and record the owner test
+
+**Status:** ✅ COMPLETE (2026-07-17) — docs-only.
+
+**Objective**
+
+Install this owner-directed insertion into this canonical plan (no second document), record the 2026-07-16 owner live session as the next owner live-test entry in `docs/TEST_QUEUE.md`, and file narrow `BACKLOG.md` findings for the observed defects without turning the backlog into a competing queue.
+
+**Acceptance criteria**
+
+- This insertion added to `docs/ATLAS_V1_EXECUTION_PLAN.md` before F11; F01–F09 not renumbered/erased; existing F10 executed at the stated point; F10A–F10E follow.
+- `docs/TEST_QUEUE.md` LT-012 records: shell/app version (v141), split-build caveat (`029d508…`→`cefc34c…`), tested workflow, trust-boundary PASS (rejected preview ⇒ no permanent bad write), the bounded findings, and the required retest after fixes. Owner verdict: **FAIL overall.**
+- Narrow BACKLOG findings added/updated for the new observations (F09B–F09J tags), not a competing queue.
+- No other campaign document created.
+
+**Completion record:** PR — this PR · Commit — inserted F09A–F09J + F10A–F10E into this plan (F10 unchanged at its stated point), added `docs/TEST_QUEUE.md` LT-012 (bounded, no private data), filed narrow BACKLOG findings `FR-REPLAY-1`, `REVIEW-LIVE-1`, `AUTH-DURABLE-1`, `PLAN-EXEC-1`, `PLAN-COACH-SPLIT-1`, `CONVO-LOG-1`, `PR-CLAIM-1`, `SIDECAR-DATE-1`, `UNDER-TARGET-1`, `PLAN-LEDGER-1`. Docs-only; no code, test, or schema change.
+
+### F09B — Restore full Flight Recorder replay
 
 **Status:** QUEUED
+
+**Finding:** `FR-REPLAY-1`
+
+**Objective**
+
+Reproduce why production v141 recorded only server `api_response` rows and restore the useful **client** replay so a reviewer can see what the athlete typed, what Atlas showed, and what pending state existed at each step.
+
+**Required behavior**
+
+- One stable `flight_session_id` per app observation session; monotonic `seq` ordering; device linkage where available.
+- Client `user_input` and `user_action` events; visible card/tile/confirmation snapshots; coach-message snapshots; pending-session and active-plan state snapshots; linked server API responses.
+- Pagehide/background flush that does not lose the final closeout sequence.
+- Existing redaction, truncation, feature flag, best-effort behavior, and trust-path isolation intact. Recorder failure never blocks workout logging or saving; it never touches preview→approve→write, `test_mode`, proof fields, or the parser.
+
+**Required tests**
+
+Red-first browser test drives an owner-like flow — session-plan card; several conversational logs; a coaching response; a correction/pivot; Done; final confirmation card; reject or approve — and proves the replay captures the athlete input, what Atlas showed, and the pending state at each step. Do not redesign the UI or modify preview/write semantics.
+
+**Owner gate:** Autonomous (telemetry only; default-OFF flag; no write/schema/trust-loop change).
+
+**Completion record:** PR — · Commit —
+
+### F09C — One-command latest live-test review
+
+**Status:** QUEUED
+
+**Finding:** `REVIEW-LIVE-1`
+
+**Objective**
+
+Create the missing agent workflow for "Review my latest live app test." One obvious canonical command (name per existing conventions, e.g. `npm run atlas:review-live`).
+
+**Required behavior**
+
+- Uses local `.env`, known Sheet configuration, and `config/sheetContract.js`; never asks Dale for Sheet IDs, tab names, session IDs, or row ranges already available.
+- Automatically identifies the newest genuine owner/app session; prefers `flight_session_id`; bounded timestamp/build/device fallback when older evidence lacks linkage.
+- Joins the relevant Flight Recorder, Intent Shadow, Brain Shadow, Session Plans, Log, and Effort evidence; detects a deployment/build change during a session.
+- Reconstructs user inputs, actions, visible cards, coach replies, plan state, API errors, preview, approval/rejection, and verified writes.
+- Outputs PASS / FAIL / UNKNOWN per trust criterion; clearly distinguishes **missing evidence** from **passing behavior**; never reports a false green.
+- Redacts secrets; does not commit generated private reports; read-only; no new database or dashboard.
+
+**Docs:** update `docs/AGENT_LIVE_TESTING.md`, `CLAUDE.md`, and the operations documentation so a fresh agent knows `atlas:status` answers general health/campaign status and `atlas:review-live` reviews the newest real app session.
+
+**Required tests:** deterministic fixture tests, including the v141-shaped failure where only server rows exist.
+
+**Owner gate:** Autonomous (read-only; no write/schema/credential change).
+
+**Completion record:** PR — · Commit —
+
+### F09D — Durable owner-session verification
+
+**Status:** QUEUED
+
+**Finding:** `AUTH-DURABLE-1` (treated as **unverified** — F04C previously passed live on v137)
+
+**Objective**
+
+Determine whether the repeated-credential-entry observation was a real persistence regression or expected loss of site data, before changing any auth.
+
+**Required behavior**
+
+Test normal owner-device behavior **without** clearing browser history or website data: authenticate; refresh; close and reopen; receive a service-worker/shell update; encounter a temporary session-status timeout; return later within the configured cookie lifetime. Expected: no repeated API-key entry; Settings and Coach never disagree; a transport failure never becomes a key prompt; only a **server-confirmed** unauthenticated response asks to reconnect.
+
+- If current behavior passes, **close this card proof-only** with no production-code change.
+- If it fails, make the smallest F04C follow-up. Do **not** restore raw keys to `localStorage`, add a second client truth, add a new authentication system, weaken protected routes, or expose secrets.
+
+**Owner gate:** Autonomous unless a new server-side secret is required (owner-reserved — name + steps, never a value).
+
+**Completion record:** PR — · Commit —
+
+### F09E — Generate complete executable session plans
+
+**Status:** QUEUED
+
+**Finding:** `PLAN-EXEC-1`
+
+**Objective**
+
+Every planned exercise must carry an **executable prescription**: explicit set count; target weight or bodyweight; reps; target RIR when applicable; warm-up vs work-set distinction; unambiguous formatting. The accepted plan must preserve the same structured set information in session state — it cannot exist only as prose.
+
+**Formatting rules**
+
+- Repeated identical work sets may use `×3`.
+- Different set targets appear as separate lines.
+- Bodyweight knee raises read like `BW — 15 reps ×3`, **not** `15/3`.
+- Slash notation continues to mean reps/RIR, never set count.
+- Low-confidence or unsupported targets ask for clarification rather than displaying a misleading isolated number.
+
+**Required tests:** red-first planner/rendering test matching the failed upper-body-plan shape. Do not add general program generation, templates, or UI redesign.
+
+**Owner gate:** Autonomous within existing plan/parser contracts (slash `225 5/2` semantics unchanged).
+
+**Completion record:** PR — · Commit —
+
+### F09F — Make the visible plan and live coach share one current target
+
+**Status:** QUEUED
+
+**Finding:** `PLAN-COACH-SPLIT-1`
+
+**Objective**
+
+Reproduce synthetically (accepted plan target A; athlete performs target B; the live coach/recommendation engine treats B as though it were the original plan) and create one authoritative **current-plan selector/state** used by the visible plan card, next-up guidance, per-lift recommendation, coach response, recap, and closeout.
+
+**Required semantics**
+
+- The pre-set target remains authoritative for the completed set.
+- A post-set recommendation change is an explicit revision applying only to future sets; the coach must say when it is revising the plan.
+- It must not silently rewrite history; displayed plan and coach facts must agree; actual performance never becomes plan merely because it was logged.
+- Deterministic-engine ownership of every number preserved.
+
+**Required tests:** the reproduced case above plus cross-surface parity (plan card / next-up / per-lift rec / coach / recap / closeout agree). If F09F and F10 (completion identity) turn out to be the same selector, sequence F10 before the ledger cards as planned.
+
+**Owner gate:** Autonomous (derivable from current-state truth).
+
+**Completion record:** PR — · Commit —
+
+### F09G — Repair conversational logging and final confirmation exactness
+
+**Status:** QUEUED
+
+**Finding:** `CONVO-LOG-1`
+
+**Objective**
+
+Make conversational multi-message logging exact through Done and the final confirmation card.
+
+**Required proof (red-first E2E replay of synthetic equivalents of the observed flow — normal compound-lift entry; a repeated multi-set accessory where the weight is stated once; a second clarification/rephrasing of that accessory; "Just log it"; a bodyweight exercise expressed as several bare rep counts; Done; final confirmation):**
+
+- No duplicate exercise created from a clarification; no completed set dropped; no set silently invented.
+- Weight inheritance occurs only under an existing supported grammar rule; ambiguous input asks one bounded question.
+- "Just log it" resolves the pending clarification rather than becoming a fabricated set.
+- Bodyweight sets retain all rep counts and correct set numbering; Done does not mutate captured sets.
+- The final confirmation card exactly equals the authoritative pending-session buffer; approval would write exactly the displayed rows; rejection writes nothing.
+
+If parser behavior and conversation-state behavior are separate root causes, split this card into focused PRs. Do not loosen the parser into guessing.
+
+**Owner gate:** Autonomous within the parser/trust contract (grammar changes beyond ambiguity handling are owner-reserved).
+
+**Completion record:** PR — · Commit —
+
+### F09H — Route PR claims correctly
+
+**Status:** QUEUED
+
+**Finding:** `PR-CLAIM-1`
+
+**Objective**
+
+A "that was a PR" statement must not be parsed as workout-set input, must not open coaching-note consent, and must not write `Coaching_Notes`.
+
+**Required behavior (red-first cases: "That was a PR!"; "I think that was a PR"; "That felt like a PR"; a false typed claim; a genuine PR in pending unsaved sets; a genuine PR after verified save):**
+
+- Before verified workout save, Atlas may say it *appears* to be a candidate based on captured sets, but must not claim permanent history.
+- After verified save, PR status is calculated from actual approved rows and historical data.
+- A typed claim cannot manufacture a PR. A note-service failure cannot interrupt workout logging or closeout. PR state belongs to workout/progress records, not durable free-form memory.
+
+**Owner gate:** Autonomous (no write/schema change; a failed note write must never 503-block logging).
+
+**Completion record:** PR — · Commit —
+
+### F09I — Use one canonical local session date for sidecar writes
+
+**Status:** QUEUED
+
+**Finding:** `SIDECAR-DATE-1`
+
+**Objective**
+
+Replace UTC-day derivation such as `new Date().toISOString().slice(0,10)` on owner-facing sidecar records with one canonical Atlas date utility and the configured owner timezone (**America/Vancouver**).
+
+**Required coverage:** evening Pacific time; UTC midnight crossover; month/year boundary; daylight-saving transitions; Coaching Notes; Constraints; any adjacent owner-session sidecar using the same broken pattern. Do not rewrite historical rows. Verify the production timezone setting before the eventual live retest.
+
+**Owner gate:** Autonomous within existing date semantics (no historical rewrite). Setting `ATLAS_TIMEZONE` in production is an owner env action if not already set.
+
+**Completion record:** PR — · Commit —
+
+### F09J — Stop calling benchmark comparisons "under target"
+
+**Status:** QUEUED
+
+**Finding:** `UNDER-TARGET-1`
+
+**Objective**
+
+Preserve the current benchmark detector only where it is analytically valid, but correct its **claims**. Without a stored historical prescription, allowed language: "below your recent benchmark"; "below your established performance range"; a factual trend using actual numbers. Without a stored plan, Atlas must **not** say "missed target", "under target", "failed the plan", or "beat expectations".
+
+**Required tests:** deliberately lighter sessions, alternate rep prescriptions, and recovery sessions are not described as plan failures merely because estimated performance is below a benchmark. This card fixes truthfulness now; full plan-aware assessment arrives in F10E.
+
+**Owner gate:** Autonomous (wording/claim truthfulness; no number or write change).
+
+**Completion record:** PR — · Commit —
+
+### F10 — Authoritative planned-slot completion identity
+
+**Status:** QUEUED — executes **after F09J** per the 2026-07-16 owner insertion. Its canonical `plan_item_id` and ambiguity-safe slot completion semantics are prerequisites for the F10A–F10E evolving-plan ledger. Do not skip it.
 
 **Findings:** PR-24 slice-3 divergence, `SESS-4`, `SESS-5`, Workout Sheet duplicate-name identity
 
@@ -489,6 +725,97 @@ The semantics are already owner-approved. Implementation is autonomous unless it
 
 **Completion record:** PR — · Commit —
 
+### F10A — Define the set-level recommendation ledger and storage contract
+
+**Status:** QUEUED (executes after F10)
+
+**Objective**
+
+Implement the smallest append-only model capable of preserving: session identity; plan version; plan item identity; target set identity or set count; target weight; target reps; target RIR; recommendation source; effective event/set boundary; replacement/supersession; confidence / no-reliable-target status; original and revised plan history; final effective plan; closeout/write identity.
+
+**Direction & trust requirements**
+
+- Prefer a narrowly scoped extension of the existing `Session_Plans` system or a companion `Session_Plan_Sets` tab. **Do not introduce another database.**
+- No historical rewrite; no actual-result-to-plan copying; no mid-session production Sheet write requirement; deterministic IDs and idempotency; reload/resume safe; bounded JSON only where justified; exact schema contract and tests; migration forward-only.
+- The owner approves the **product model**, but **applying a production Sheet schema migration remains an explicit owner-reserved action.** Build and merge code, contracts, fixtures, and dry-run behavior; continue through downstream cards using test/sandbox contracts. Stop only before the actual production schema change if it cannot be applied safely without owner authorization — do **not** halt all development at this point.
+
+**Completion record:** PR — · Commit —
+
+### F10B — Capture accepted plans and explicit live revisions
+
+**Status:** QUEUED
+
+**Objective**
+
+When Atlas proposes and the athlete accepts a session, create ledger **version 1** including every planned set, preserving ordering and `plan_item_id`.
+
+**During the workout**
+
+- Explicit substitution/pivot generates a new recommendation **before** the substitute's work is evaluated.
+- Skipping or replacing an exercise records the plan outcome.
+- A user-requested change becomes Atlas's recommendation **only** when Atlas explicitly endorses or revises it.
+- Post-set adjustments apply only to future sets; completed-set targets remain immutable.
+- All revisions are visible in current plan state; reload/resume retains them.
+
+No background Sheet write is required — keep the pending ledger in trusted session state until closeout approval.
+
+**Completion record:** PR — · Commit —
+
+### F10C — Generate an independent recommendation for an unannounced exercise
+
+**Status:** QUEUED
+
+**Objective**
+
+When the athlete simply logs an exercise that was not requested or planned:
+
+1. snapshot history and current-session context **before** incorporating that exercise result;
+2. call the deterministic recommendation engine as though the athlete had asked for the target;
+3. record that recommendation as an implicit plan addition;
+4. record the submitted sets separately as actual execution;
+5. compare them without moving the goalposts.
+
+The just-submitted result must be **excluded** from the evidence used to derive its own target. When there is insufficient history: record **no reliable target available**; preserve the actual; do not invent a target; do not call the actual result the plan.
+
+**Required tests:** leakage tests proving that changing the submitted result does not change the recommendation derived from the same pre-exercise evidence.
+
+**Completion record:** PR — · Commit —
+
+### F10D — Confirm and write planned versus actual together
+
+**Status:** QUEUED
+
+**Objective**
+
+Extend the **existing** closeout flow — do not create a second save workflow. When the athlete says Done or uploads the effort screenshot, the existing confirmation must show: final effective Atlas plan; actual performed sets; substitutions/pivots; skipped/replaced work; target-vs-actual differences; any no-reliable-target items; session date and effort information. The owner approves the whole closeout **once**.
+
+**Required trust behavior**
+
+- Rejected confirmation writes nothing; approved actual rows equal the visible actual rows; approved plan-ledger rows equal the visible effective plan/history.
+- Original recommendations remain append-only history; final effective plan is clearly distinguished from the original plan.
+- Log, Effort, and plan-ledger writes return exact proof; partial append failure never produces a false success; retries are idempotent; a plan-ledger failure does not silently leave Atlas claiming a fully verified closeout; no retroactive plan mutation during closeout.
+
+Use dry-run and sandbox/integration coverage. A production schema application or real write remains owner-gated.
+
+**Completion record:** PR — · Commit —
+
+### F10E — Plan-aware historical assessment
+
+**Status:** QUEUED
+
+**Objective**
+
+Build deterministic planned-versus-actual assessment using stored effective prescriptions. Allowed outcomes when a valid target exists: met plan; exceeded reps; used more/less load; worked closer to / farther from failure; completed fewer/more sets; met revised plan; self-selected work versus Atlas recommendation.
+
+**Rules**
+
+- Compare each actual set only to the recommendation effective for that set; a revision after set 1 cannot change set 1's target.
+- Replaced/skipped items follow plan-outcome semantics; PRs derive from actual execution only.
+- Historical sessions without stored plans receive benchmark/trend descriptions only; never fabricate a plan for legacy history; do not backfill old sessions from today's recommendation.
+- Update challenge/reassure/progress wording to use plan-aware results when available and honest benchmark wording otherwise. (This completes the truthfulness fix begun in F09J.)
+
+**Completion record:** PR — · Commit —
+
 ## 8. Milestone M3 — Cross-seam proving packs
 
 ### F11 — Deterministic V1 proving packs
@@ -506,11 +833,13 @@ Prove the repaired seams together using the existing simulation, Flight Recorder
 - **RAMBLER:** long dictation, corrections, multiple intents, and late clarification.
 - **CHAOS extension:** every repaired F02–F10 historical failure replayed across its nearest real seam.
 
+**Owner-directed expansion (2026-07-16 stabilization).** The proving packs must additionally include: normal owner-like plan and logging; a complete set-structured plan; explicit substitution; unannounced exercise; post-set plan revision; actual differing from plan; repeated accessory-set notation; bodyweight bare-rep entry; a PR claim; rejected confirmation; approved planned-versus-actual closeout; reload/resume; stale-response race; Flight Recorder full replay; automatic latest-live-test review; a legacy session with no historical plan; and all prior F02–F10 (and F09A–F10E) failures. Keep deterministic checks blocking and model-wording evaluation advisory. Do not create another test framework.
+
 **Acceptance criteria**
 
 - Tier-1 deterministic packs run in normal CI and are blocking.
 - LLM wording scans remain advisory/report-only; no nondeterministic model judge becomes a hard gate.
-- Every F02–F10 fix has at least one cross-seam fixture in addition to its focused regression.
+- Every F02–F10 and F09A–F10E fix has at least one cross-seam fixture in addition to its focused regression.
 - Failures identify the exact stage and preserve replay artifacts without secrets or production data.
 
 **Likely surfaces**
@@ -526,6 +855,18 @@ None for synthetic/dry-run packs. Real production writes remain prohibited witho
 ## 9. Milestone M4 — Five-session V1 proving run
 
 Begins only after F11 is deployed. Feature development pauses. The run uses five owner-live cards created in `docs/TEST_QUEUE.md` when the run starts.
+
+### Stabilization retest gate (owner-directed 2026-07-16)
+
+After all F09A–F10E cards and the expanded F11 are green, and before M4's five-session count may begin:
+
+1. Verify the exact deployed commit.
+2. Verify Flight Recorder client **and** server capture are enabled.
+3. Verify `ATLAS_TIMEZONE=America/Vancouver`.
+4. Report whether a production Sheet schema action remains, and the exact smallest owner action if schema activation is required.
+5. Create one bounded owner live-retest card (in `docs/TEST_QUEUE.md`) covering: plan generation; conversational logging; one pivot; one unannounced exercise; final planned-versus-actual confirmation; screenshot effort; approval and exact write proof; and automatic `atlas:review-live` review.
+
+**The failed 2026-07-16 session does not count toward the five-session proving run. The five-consecutive-session M4 count does not begin until this stabilization retest passes.**
 
 ### Clean-session definition
 
