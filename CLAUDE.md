@@ -255,6 +255,8 @@ Read `docs/AGENT_LIVE_TESTING.md` and local `.env` instead of asking Dale to rep
 
 To answer "where are we / is prod healthy / did the latest write+undo hold" without being handed Sheet IDs, tab names, session IDs, or doc paths, run `npm run atlas:status` (add `-- --json` for the machine schema). The same bounded, redacted document is served publicly (no API key) at `GET /.well-known/atlas-status.json`. The full schema, sources, redaction, and honesty rules are in [`docs/ATLAS_OPERATIONS_CONTRACT.md`](docs/ATLAS_OPERATIONS_CONTRACT.md). It is read-only and never fabricates health.
 
+To answer "review my latest live app test", run `npm run atlas:review-live` (add `-- --json`). It auto-selects the newest genuine owner session, joins Flight Recorder / Intent Shadow / Brain Shadow / Session Plans / Log / Effort, detects a build change during the session, and reports PASS/FAIL/UNKNOWN per trust criterion (UNKNOWN = missing evidence, never a false green). Read-only; needs no Sheet ID/tab/session id. **`atlas:status` = general health/campaign status; `atlas:review-live` = the newest real app session.**
+
 ## What not to build during the V1 campaign
 
 Unless Dale explicitly changes direction, do not add:

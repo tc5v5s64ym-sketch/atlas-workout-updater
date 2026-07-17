@@ -8,6 +8,12 @@ When the owner says “test the app for/against X,” the agent designs and runs
 
 Before probing anything, run `npm run atlas:status` (add `-- --json` for the schema) — it answers "where are we / is prod healthy / did the latest write+undo hold" from the deployed public `GET /.well-known/atlas-status.json` (or a local view offline), with no Sheet ID or tab name needed. Contract: [`ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md).
 
+## Review the newest live app session
+
+To answer "review my latest live app test", run `npm run atlas:review-live` (add `-- --json`, or `-- --session=<flight_session_id>` / `-- --from-dir=<backup>`). It automatically selects the **newest** genuine owner session (prefers `flight_session_id`; falls back to the newest unlinked server rows — the v141 shape — so a broken session is still reviewed), joins Flight Recorder / Intent Shadow / Brain Shadow / Session Plans / Log / Effort, detects a build change during the session, and reports **PASS / FAIL / UNKNOWN per trust criterion** (UNKNOWN = missing evidence, never a false green). READ-ONLY; needs no Sheet ID, tab, or session id (reads local `.env` + `config/sheetContract.js`).
+
+> **Two commands, one job each:** `atlas:status` answers general health / campaign status; `atlas:review-live` reviews the newest real app session.
+
 ## Targets
 
 - **Deployed app:** `ATLAS_BASE_URL` from `.env`. Before any live test, `GET /version` and record the deployed build.
