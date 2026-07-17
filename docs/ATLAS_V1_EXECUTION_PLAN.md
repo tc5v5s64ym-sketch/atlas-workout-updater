@@ -667,7 +667,7 @@ A "that was a PR" statement must not be parsed as workout-set input, must not op
 
 ### F09I — Use one canonical local session date for sidecar writes
 
-**Status:** QUEUED
+**Status:** ✅ COMPLETE (2026-07-17)
 
 **Finding:** `SIDECAR-DATE-1`
 
@@ -679,7 +679,9 @@ Replace UTC-day derivation such as `new Date().toISOString().slice(0,10)` on own
 
 **Owner gate:** Autonomous within existing date semantics (no historical rewrite). Setting `ATLAS_TIMEZONE` in production is an owner env action if not already set.
 
-**Completion record:** PR — · Commit —
+**Resolution.** The canonical Atlas date utility already existed — `localTodayIso(now, tz = ATLAS_TIMEZONE)` in `services/analytics.js` (IANA-zone `en-CA` → `YYYY-MM-DD`; UTC fallback when unset). The two owner-facing sidecar write routes (`POST /api/coaching-notes`, `POST /api/constraints` in `index.js`) and the adjacent `Deload_State` `deload_start_date` (`services/deloadEngine.js`) each derived the date with a raw `new Date().toISOString().slice(0,10)` (UTC), so an evening-Pacific write was stamped tomorrow. All three now call `localTodayIso()`. No historical rows rewritten; behavior is unchanged until `ATLAS_TIMEZONE` is set (owner env action, `America/Vancouver`, verified at the final gate).
+
+**Completion record:** PR — this PR · Commit — `index.js` (import `localTodayIso`; coaching-notes + constraints use it), `services/deloadEngine.js` (`deload_start_date` uses it). Red-first route tests in `test/api-smoke.test.js` (F09I: with `ATLAS_TIMEZONE=America/Vancouver` the coaching-note and constraint dates equal the Vancouver local day, not the raw UTC slice) — deterministically RED before / GREEN after (verified during the evening-Pacific window where UTC day ≠ Vancouver day). Added `localTodayIso` unit coverage for month/year boundary + daylight-saving transitions (`test/unit.test.js`). Full node suite 5556 pass; lint 0 errors. `BACKLOG.md` `SIDECAR-DATE-1` marked fixed.
 
 ### F09J — Stop calling benchmark comparisons "under target"
 

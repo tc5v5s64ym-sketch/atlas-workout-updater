@@ -28,7 +28,8 @@ const {
   buildBodyweightHistory,
   previewTestRows,
   scoreIntents,
-  detectSwap
+  detectSwap,
+  localTodayIso
 } = require('./services/analytics');
 const { classifySubstitution } = require('./services/substitutionIntent');
 const { inferPrescribedPairs } = require('./services/planMatcher');
@@ -1085,7 +1086,9 @@ app.post('/api/coaching-notes', async (req, res) => {
     return standardError(req, res, 'Coaching_Notes tab not found — create it in Google Sheets first (columns: date, note)', null, 503);
   }
 
-  const dateStr = new Date().toISOString().slice(0, 10);
+  // F09I: stamp the owner's LOCAL day (ATLAS_TIMEZONE), not the UTC day — an evening-Pacific
+  // note was being dated tomorrow. localTodayIso falls back to UTC until the zone is set.
+  const dateStr = localTodayIso();
   try {
     await appendRows('Coaching_Notes', [[dateStr, note.slice(0, 200)]]);
     invalidateSheetRowsCache();
@@ -1169,7 +1172,8 @@ app.post('/api/constraints', async (req, res) => {
     return standardError(req, res, 'Constraints tab not found — create it in Google Sheets first (columns: date, kind, target, rule, note)', null, 503);
   }
 
-  const dateStr = new Date().toISOString().slice(0, 10);
+  // F09I: owner's LOCAL day (ATLAS_TIMEZONE), not UTC — see coaching-notes above.
+  const dateStr = localTodayIso();
   const cleanTarget = target.slice(0, 100);
   const cleanNote = note.slice(0, 200);
   try {

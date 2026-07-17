@@ -15,7 +15,7 @@
 // (begin/record/resolve) read and append Deload_State via services/deloadState,
 // which is stubbed in tests.
 
-const { normalizeLogRow } = require('./analytics');
+const { normalizeLogRow, localTodayIso } = require('./analytics');
 const { computeFatigueScore, estimateE1rm } = require('./deloadFatigueScore');
 const { evaluate } = require('./deloadEscalationLadder');
 const { PROTOCOLS } = require('./deloadProtocols');
@@ -212,7 +212,7 @@ async function beginDeload({
     training_state: STATES.DELOAD_ACTIVE,
     deload_protocol: protocol_id,
     deload_reason: reason,
-    deload_start_date: start_date || new Date().toISOString().slice(0, 10),
+    deload_start_date: start_date || localTodayIso(), // F09I: owner LOCAL day, not UTC
     deload_sessions_remaining: sessions_remaining,
     deload_exit_criteria: exit_criteria
   });
