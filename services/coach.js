@@ -1012,6 +1012,7 @@ function buildChatSystemPrompt(context) {
     'PROPOSING A COACHING NOTE (persistent background memory):',
     '- When the lifter reveals something durable and actionable — an injury, a mobility limit, a goal, a program change, an equipment constraint — you MAY propose saving it as a coaching note.',
     '- Only propose a note for facts worth persisting across sessions. Session observations ("great set today") do not qualify.',
+    '- A self-reported PR / personal-best / "that was a PR" is a session RESULT, not a durable coaching note — NEVER propose saving it as a note or constraint. PR status is determined by the engine from the logged sets and history, never from a typed claim; a claim you cannot ground in the facts stays conversational (say it looks like a candidate once it is saved, if the captured sets support it) and is never persisted as memory.',
     '- Put your prose reply first. Then, as the VERY LAST LINE of your response, write exactly:',
     '  PROPOSE_NOTE: {"note": "..."}',
     '- The note text must be concise (under 120 characters), factual, and third-person ("Left shoulder impingement — avoid overhead pressing"). No coaching advice in the note text itself.',
@@ -1596,9 +1597,35 @@ async function compileSessionFromHistory(turns, { timeoutMs = DEFAULT_TIMEOUT_MS
   return { workout_text: result };
 }
 
+// F09H / PR-CLAIM-1: a self-reported "that was a PR" / personal-best CLAIM is a session
+// result, not a durable fact — it must never be persisted as a coaching note/constraint
+// (PR status is engine-owned, computed from logged rows, never from a typed claim). This
+// deterministic classifier gates that suppression at the coach route. It matches a CLAIM
+// (or question) about a set just performed, but NOT a training GOAL that mentions a PR
+// (a goal IS a durable, note-worthy fact).
+const PR_TERM = "(?:prs?|personal\\s+(?:best|record)s?)";
+const PR_CLAIM_RE = new RegExp(
+  "\\b(?:" +
+  "new\\s+" + PR_TERM +                                                             // "new PR", "new personal best"
+  "|(?:that|it|this|those|these)(?:'s|s)?\\s+(?:was\\s+|were\\s+|is\\s+|felt\\s+like\\s+)?(?:a\\s+|an\\s+)?" + PR_TERM + // "that was a PR", "that's a PR"
+  "|(?:was|were|felt\\s+like|hit|set|got|scored|had|beat|matched)\\s+(?:a\\s+|an\\s+)?" + PR_TERM +                     // "was a PR", "hit a PR"
+  "|just\\s+pr(?:'?d|ed|red)?" +                                                     // "just PR'd"
+  "|pr'?d" +                                                                        // "PR'd" / "PRd"
+  "|" + PR_TERM + "\\s+today" +                                                     // "PR today"
+  ")\\b", "i");
+const PR_GOAL_RE = /\b(goals?|aim(?:ing)?|want|wanna|hop(?:e|ing)|targets?|working\s+toward|someday|eventually|by\s+(?:the\s+)?(?:end|next)|next\s+(?:week|month|year|session))\b/i;
+
+function looksLikePrClaim(message) {
+  const m = String(message == null ? '' : message).trim();
+  if (!m) return false;
+  if (PR_GOAL_RE.test(m)) return false; // a PR GOAL is a durable, note-worthy fact — not a claim
+  return PR_CLAIM_RE.test(m);
+}
+
 module.exports = {
   isConfigured,
   coachModel,
+  looksLikePrClaim,
   pingGemini,
   callGemini,
   stripFabricatedUnits,

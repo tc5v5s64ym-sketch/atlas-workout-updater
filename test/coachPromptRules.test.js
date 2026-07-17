@@ -234,6 +234,16 @@ test('chat prompt: challenge example models benchmark phrasing, not target phras
   );
 });
 
+// ── F09H (PR-CLAIM-1): a self-reported PR must never become a coaching note ─────
+
+test('chat prompt: forbids proposing a note/constraint for a self-reported PR claim', () => {
+  const chat = buildChatSystemPrompt();
+  assert.ok(chat.includes('NEVER propose saving it as a note or constraint'),
+    'the note-proposing guidance must exclude a self-reported PR/personal-best claim');
+  assert.ok(chat.includes('PR status is determined by the engine'),
+    'the prompt must state PR status is engine-owned, never a typed claim');
+});
+
 // ── G5: coach claims grounding audit (PR / personal-best / session count) ──────
 
 test('set-reaction prompt: PR language IRON RULE requires progression_verdict.level new_ground', () => {

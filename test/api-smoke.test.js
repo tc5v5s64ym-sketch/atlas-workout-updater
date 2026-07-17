@@ -262,9 +262,13 @@ const fakeCoachState = {
   registerViolations: [], // set by tests to simulate the production suppressor verdict
   lastPlanFacts: null // captures the facts passed to generatePlanMessage for assertions
 };
+// F09H: the PR-claim classifier is a PURE deterministic function — capture the REAL one
+// before the stub replaces coach.js so the route exercises the genuine suppression logic.
+const { looksLikePrClaim: realLooksLikePrClaim } = require('../services/coach');
 const fakeCoach = {
   isConfigured: () => fakeCoachState.configured,
   coachModel: () => 'gemini-2.5-flash-lite',
+  looksLikePrClaim: realLooksLikePrClaim,
   pingGemini: async () => {
     if (fakeCoachState.pingError) throw new Error(fakeCoachState.pingError);
     return 'OK';
@@ -1210,6 +1214,55 @@ test('api smoke: coach/chat — a non-tired question still reaches the LLM (no o
     assert.equal(body.data.message, fakeCoachState.chatMessage);
   } finally {
     fakeCoachState.configured = false;
+  }
+});
+
+test('api smoke (F09H): a "that was a PR" claim never opens note/constraint consent', async () => {
+  // PR-CLAIM-1: a self-reported PR is a session result, not durable memory. Even when the
+  // model proposes a note (and a constraint), the route must drop BOTH — no "Save note?"
+  // consent, so nothing ever reaches Coaching_Notes — while the prose reply still stands.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatNoteProposal = { note: 'Hit a PR on bench press' };
+  fakeCoachState.chatConstraintProposal = { kind: 'preference', target: 'bench press', rule: 'limit', note: 'pr' };
+  fakeCoachState.registerViolations = [];
+  const before = fakeSheetsState.appendCalls.length;
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'That was a PR!' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini');
+    assert.equal(body.data.propose_note, null, 'a PR claim must not open a coaching-note consent');
+    assert.equal(body.data.propose_constraint, null, 'a PR claim must not open a constraint consent');
+    assert.ok(body.data.message && body.data.message.trim(), 'the coach still replies in prose');
+    assert.equal(fakeSheetsState.appendCalls.length, before, 'a PR claim is read-only — never writes a sheet');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatNoteProposal = null;
+    fakeCoachState.chatConstraintProposal = null;
+  }
+});
+
+test('api smoke (F09H): a genuine durable fact (not a PR claim) still proposes a note', async () => {
+  // The suppression is scoped to PR/personal-best CLAIMS — a real durable fact (an injury)
+  // must still reach note consent, so the guard does not over-capture.
+  fakeCoachState.configured = true;
+  fakeCoachState.throwError = null;
+  fakeCoachState.chatNoteProposal = { note: 'Left shoulder impingement — avoid overhead pressing' };
+  fakeCoachState.registerViolations = [];
+  try {
+    const { response, body } = await requestJson('/api/coach/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'my left shoulder has been impinging, I should avoid overhead work' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.source, 'gemini');
+    assert.ok(body.data.propose_note && body.data.propose_note.note, 'a real durable fact still proposes a note');
+  } finally {
+    fakeCoachState.configured = false;
+    fakeCoachState.chatNoteProposal = null;
   }
 });
 
