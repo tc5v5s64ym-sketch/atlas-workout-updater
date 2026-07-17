@@ -7287,3 +7287,55 @@ test('Flight Recorder ingest: POST /api/flight/ingest is flag-gated and Flight_R
     else process.env.ATLAS_FLIGHT_RECORDER = originalFlag;
   }
 });
+
+// ── F09I: owner-facing sidecar dates use the LOCAL day (ATLAS_TIMEZONE), not UTC ──────
+// An evening-Pacific coaching note / constraint was being stamped with tomorrow's UTC
+// date. The routes now derive the date via localTodayIso() (the same tz-aware helper the
+// recency math uses; unit-tested in test/unit.test.js). This proves the wiring: with a
+// zone configured, the written date equals localTodayIso() rather than a raw UTC slice.
+const { localTodayIso: liveLocalTodayIso } = require('../services/analytics');
+
+test('api smoke (F09I): a coaching note is dated the owner LOCAL day, not UTC', async () => {
+  const prevTz = process.env.ATLAS_TIMEZONE;
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  process.env.ATLAS_TIMEZONE = 'America/Vancouver';
+  try {
+    const { response, body } = await requestJson('/api/coaching-notes', {
+      method: 'POST',
+      body: JSON.stringify({ note: 'felt strong on pulls', write_id: 'f09i-note-1' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.sheet_written, true);
+    const append = fakeSheetsState.appendCalls.find(c => c.tabName === 'Coaching_Notes');
+    assert.ok(append, 'the note was appended to Coaching_Notes');
+    const writtenDate = append.rows[0][0];
+    assert.match(writtenDate, /^\d{4}-\d{2}-\d{2}$/, 'a YYYY-MM-DD date');
+    // The route stamps the owner's LOCAL day via localTodayIso — the response echoes it too.
+    assert.equal(writtenDate, liveLocalTodayIso(new Date(), 'America/Vancouver'), 'local (Vancouver) day, not raw UTC');
+    assert.equal(body.data.date, writtenDate, 'the response date matches the written row');
+  } finally {
+    if (prevTz === undefined) delete process.env.ATLAS_TIMEZONE; else process.env.ATLAS_TIMEZONE = prevTz;
+  }
+});
+
+test('api smoke (F09I): a structured constraint is dated the owner LOCAL day, not UTC', async () => {
+  const prevTz = process.env.ATLAS_TIMEZONE;
+  fakeSheetsState.appendCalls.length = 0;
+  fakeSheetsState.allowAppend = true;
+  process.env.ATLAS_TIMEZONE = 'America/Vancouver';
+  try {
+    const { response, body } = await requestJson('/api/constraints', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'injury', target: 'left shoulder', rule: 'avoid', note: 'no overhead', write_id: 'f09i-con-1' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal(body.data.sheet_written, true);
+    const append = fakeSheetsState.appendCalls.find(c => c.tabName === 'Constraints');
+    assert.ok(append, 'the constraint was appended to Constraints');
+    const writtenDate = append.rows[0][0];
+    assert.equal(writtenDate, liveLocalTodayIso(new Date(), 'America/Vancouver'), 'local (Vancouver) day, not raw UTC');
+  } finally {
+    if (prevTz === undefined) delete process.env.ATLAS_TIMEZONE; else process.env.ATLAS_TIMEZONE = prevTz;
+  }
+});

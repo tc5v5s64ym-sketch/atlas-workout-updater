@@ -368,6 +368,27 @@ test('localTodayIso falls back to UTC for an invalid timezone rather than throwi
   assert.match(localTodayIso('garbage', undefined), /^\d{4}-\d{2}-\d{2}$/);
 });
 
+// F09I: the owner-facing sidecar dates (Coaching Notes / Constraints / deload) stamp the
+// owner's LOCAL day via localTodayIso — so these edge cases matter for those writes too.
+test('localTodayIso: month and year boundaries resolve to the LOCAL day', () => {
+  // 05:00 UTC Jan 1 is still 21:00 Dec 31 in Los Angeles (PST, UTC-8) — a YEAR + month rollback.
+  assert.equal(localTodayIso(new Date('2026-01-01T05:00:00Z'), 'America/Los_Angeles'), '2025-12-31');
+  assert.equal(localTodayIso(new Date('2026-01-01T05:00:00Z'), undefined), '2026-01-01'); // UTC differs
+  // 04:00 UTC Aug 1 is 21:00 Jul 31 in Vancouver (PDT, UTC-7) — a MONTH boundary (30/31).
+  assert.equal(localTodayIso(new Date('2026-08-01T04:00:00Z'), 'America/Vancouver'), '2026-07-31');
+  // A zone ahead of UTC pushes into the next month.
+  assert.equal(localTodayIso(new Date('2026-07-31T23:30:00Z'), 'Asia/Tokyo'), '2026-08-01');
+});
+
+test('localTodayIso: daylight-saving transitions stay correct (America/Vancouver)', () => {
+  // Spring-forward 2026: DST begins Mar 8. Just after (UTC-7): 06:30 UTC Mar 9 → 23:30 Mar 8.
+  assert.equal(localTodayIso(new Date('2026-03-09T06:30:00Z'), 'America/Vancouver'), '2026-03-08');
+  // Fall-back 2026: DST ends Nov 1 (back to UTC-8): 07:30 UTC Nov 2 → 23:30 Nov 1.
+  assert.equal(localTodayIso(new Date('2026-11-02T07:30:00Z'), 'America/Vancouver'), '2026-11-01');
+  // Same instant, UTC basis is the next calendar day — the exact off-by-one the fix prevents.
+  assert.equal(localTodayIso(new Date('2026-11-02T07:30:00Z'), undefined), '2026-11-02');
+});
+
 test('isTransientAppendError retries only pre-write rate-limit rejections (429 / 403 quota), never ambiguous 5xx (WRITE-5)', () => {
   // Safe to retry — Google rejected the request before touching the sheet.
   assert.equal(isTransientAppendError({ code: 429 }), true);
