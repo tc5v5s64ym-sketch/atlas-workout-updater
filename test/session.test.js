@@ -137,3 +137,34 @@ test('sessionsEnabled reflects ATLAS_SESSION_SECRET presence', () => {
     if (prev === undefined) delete process.env.ATLAS_SESSION_SECRET; else process.env.ATLAS_SESSION_SECRET = prev;
   }
 });
+
+// --- F09D: durable owner session (proof-only) --------------------------------
+// LT-012's "Atlas required the owner credential again" was traced (F04C, live-validated on
+// v137) to expected loss of site data (clearing Safari history/website data), NOT a
+// persistence regression. The session itself is durable: a long-lived, HttpOnly, Secure,
+// SameSite=Lax cookie that renews before it expires. These pins lock that durability so a
+// future change that shortens the lifetime (re-prompting the owner sooner) is caught.
+test('F09D: the session TTL is durable (multi-month) and renews before it expires', () => {
+  const DAY = 86400000;
+  assert.ok(session.DEFAULT_TTL_MS >= 90 * DAY, 'lifetime is at least ~90 days (survives normal use / a return within the window)');
+  assert.ok(session.RENEW_AFTER_MS < session.DEFAULT_TTL_MS, 'renews before expiry, so an active owner is never logged out mid-lifetime');
+});
+
+test('F09D: a cookie stays valid across a long gap within the lifetime, and only expires after the TTL', () => {
+  const DAY = 86400000;
+  const now = 1_600_000_000_000;
+  const { token } = session.issueToken('secret-abc', now, session.DEFAULT_TTL_MS);
+  // Return 80 days later (well within the 120-day TTL): still authenticated, no re-prompt.
+  assert.ok(session.verifySession(token, 'secret-abc', now + 80 * DAY), 'still authenticated returning 80 days later');
+  // Only after the TTL does it expire.
+  assert.equal(session.verifySession(token, 'secret-abc', now + 200 * DAY), null, 'expired only after the TTL elapses');
+});
+
+test('F09D: a durable Set-Cookie carries HttpOnly + Secure + SameSite=Lax + a long Max-Age', () => {
+  const c = session.buildSetCookie('tok', { maxAgeMs: session.DEFAULT_TTL_MS, secure: true });
+  assert.match(c, /HttpOnly/);
+  assert.match(c, /Secure/);
+  assert.match(c, /SameSite=Lax/);
+  const m = c.match(/Max-Age=(\d+)/);
+  assert.ok(m && Number(m[1]) >= 90 * 86400, 'Max-Age is at least ~90 days (durable across shell/service-worker refreshes)');
+});
