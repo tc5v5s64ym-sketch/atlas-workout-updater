@@ -562,13 +562,14 @@ test('app.js next-up follows the visible plan order (started OR coach-suggested)
   assert.match(src, /detail:\s*\{[\s\S]*nextPlanned/, 'nextPlanned must be included in the set-logged event detail');
 });
 
-test('coach-conversation.js prefers detail.nextPlanned for the next-up handoff; API fallback gated on hasEngagedPlan', () => {
+test('coach-conversation.js re-derives the next-up handoff from live state; API fallback gated on hasEngagedPlan', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
-  // B4: the API fallback is now gated — only fires when a plan is engaged.
-  assert.match(src, /const hasEngagedPlan = \(detail\.plannedOrder \|\| \[\]\)\.length > 0/,
+  // SESS-1 (F09): the plan order + next-up are re-derived from the LIVE store (with the
+  // emit-time snapshot as fallback); the API fallback stays gated on hasEngagedPlan.
+  assert.match(src, /const hasEngagedPlan = currentPlannedOrder\.length > 0/,
     'hasEngagedPlan gates the /api/plan/today fallback so freestyle logging produces no next-up');
-  assert.match(src, /detail\.nextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
-    'handoff uses detail.nextPlanned first; the API fallback fires only when hasEngagedPlan is true');
+  assert.match(src, /currentNextPlanned \|\| \(hasEngagedPlan \? await getNextExerciseInPlan/,
+    'handoff uses the live-re-derived next-up first; the API fallback fires only when hasEngagedPlan is true');
 });
 
 // ── Completed-exercise read-back: plural/singular name variants ──────────────

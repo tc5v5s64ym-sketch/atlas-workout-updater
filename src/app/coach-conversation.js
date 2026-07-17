@@ -1460,22 +1460,39 @@ import * as sessionQuestion from './sessionQuestion.js';
     // B4: only look up next-up when a plan is engaged (started session or accepted
     // Coach's Pick). Freestyle logging (empty plannedOrder) must parse, confirm,
     // coach, and stop — never auto-guide with "Moving on — next up: X".
-    const hasEngagedPlan = (detail.plannedOrder || []).length > 0;
-    let nextEx = detail.nextPlanned || (hasEngagedPlan ? await getNextExerciseInPlan(lastLogged.exercise) : null);
-    if (nextEx && !detail.nextPlanned) {
-      const done = (detail.completed || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
+    // SESS-1 (F09): this handoff/closeout runs AFTER up to two ~9s coach-LLM awaits
+    // above (getInWorkoutNote), during which a CONCURRENT set-logged handler can
+    // advance the canonical store. Re-derive next-up, the plan order, the completed
+    // set, and plan-completeness from the LIVE store right here — never from the
+    // emit-time `detail` snapshot — so a lift already logged by a later set is never
+    // announced as "next up" and a superseded closeout never fires. Falls back to the
+    // snapshot only when the bridged selectors are unavailable (source/eval harnesses).
+    const liveRemaining = (typeof remainingPlannedExercises === 'function') ? remainingPlannedExercises() : null;
+    const livePlannedOrder = (typeof plannedExerciseOrder === 'function') ? plannedExerciseOrder() : null;
+    const liveCompleted = (typeof getSessionCompleted === 'function') ? getSessionCompleted() : null;
+    const currentPlannedOrder = livePlannedOrder || detail.plannedOrder || [];
+    const currentNextPlanned = liveRemaining ? (liveRemaining[0] || null) : detail.nextPlanned;
+    const currentCompleted = liveCompleted || detail.completed || [];
+    const currentPlanIsComplete = liveRemaining
+      ? (currentPlannedOrder.length > 0 && liveRemaining.length === 0)
+      : detail.planIsComplete;
+
+    const hasEngagedPlan = currentPlannedOrder.length > 0;
+    let nextEx = currentNextPlanned || (hasEngagedPlan ? await getNextExerciseInPlan(lastLogged.exercise) : null);
+    if (nextEx && !currentNextPlanned) {
+      const done = (currentCompleted || []).some(c => String(c).toLowerCase() === String(nextEx).toLowerCase());
       if (done) nextEx = null;
       // A fallback next-up must belong to the engaged plan — never a stored-program
       // lift the lifter isn't following (the live "next up: Hammer Curls" that wasn't
       // in the plan). Fuzzy match mirrors getNextExerciseInPlan.
-      const plan = (detail.plannedOrder || []).map(p => String(p || '').toLowerCase()).filter(Boolean);
+      const plan = currentPlannedOrder.map(p => String(p || '').toLowerCase()).filter(Boolean);
       if (nextEx && plan.length) {
         const k = String(nextEx).toLowerCase();
         const inEngagedPlan = plan.some(p => p === k || p.includes(k) || k.includes(p));
         if (!inEngagedPlan) nextEx = null;
       }
     }
-    if (!nextEx && detail.planIsComplete) {
+    if (!nextEx && currentPlanIsComplete) {
       if (!closeoutAnnounced) {
         const session = typeof getActivePlannedSession === 'function' ? getActivePlannedSession() : null;
         const count = session ? session.exercises.length : null;
@@ -1731,6 +1748,21 @@ import * as sessionQuestion from './sessionQuestion.js';
   // new current exercise. The engine OWNS the mutation; this only narrates it.
   document.addEventListener('atlas:plan-mutated', e => {
     const d = (e && e.detail) || {};
+    // SESS-3 (F09): if the plan had already been closed out and this mutation REOPENS
+    // it (adds work back so there's an unlogged lift again), re-arm the one-shot
+    // closeout guard + the next-up suppressor so the NEXT completion gets its
+    // session-close prompt and the new lift announces. Without this, adding exercises
+    // after closeout suppressed the second "planned work done" line for the rest of
+    // the session. Only fires when a closed-out plan actually has remaining work now.
+    if (closeoutAnnounced) {
+      const stillWork = (typeof remainingPlannedExercises === 'function')
+        ? remainingPlannedExercises().length > 0
+        : Boolean(d.current);
+      if (stillWork) {
+        closeoutAnnounced = false;
+        lastAnnouncedNextUp = null;
+      }
+    }
     if (d.summary) {
       const node = appendAtlasBubble();
       if (node && node.body) node.body.textContent = d.current ? `${d.summary} Next up: ${d.current}.` : d.summary;
