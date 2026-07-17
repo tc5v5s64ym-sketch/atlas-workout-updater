@@ -79,10 +79,48 @@ function toReviewCorpora(raw) {
   return { corpora, rowCounts };
 }
 
-// Pick the NEWEST session to review. Prefers a linked flight_session_id (the newest by
-// time). If none exists but unlinked server rows do (the v141 shape), synthesize a
-// server-only pseudo-session from the newest such rows so the broken session is STILL
-// reviewed — never silently skipped.
+// A time gap (default 30 min) that separates distinct unlinked (server-only) sessions, so a
+// week of orphan rows isn't lumped into one giant pseudo-session.
+const UNLINKED_GAP_MS = 30 * 60000;
+
+// Cluster the unlinked (blank flight_session_id) server rows into time-gap-separated
+// pseudo-sessions, each with its own first/last time — so the NEWEST broken cluster can be
+// compared against the linked sessions on the same time axis.
+function clusterUnlinked(rows, gapMs) {
+  const sorted = (rows || []).slice().sort(byTimeThenRow);
+  const gap = typeof gapMs === 'number' && gapMs >= 0 ? gapMs : UNLINKED_GAP_MS;
+  const clusters = [];
+  let cur = null;
+  let prevT = null;
+  for (const e of sorted) {
+    const t = fr.parseTimestamp(e.captured_at);
+    if (!cur || (prevT != null && t != null && (t - prevT) > gap)) { cur = []; clusters.push(cur); }
+    cur.push(e);
+    if (t != null) prevT = t;
+  }
+  return clusters.map(events => {
+    const times = events.map(e => fr.parseTimestamp(e.captured_at)).filter(t => t != null);
+    return {
+      flight_session_id: '(unlinked)',
+      events,
+      first_at_ms: times.length ? Math.min(...times) : null,
+      last_at_ms: times.length ? Math.max(...times) : null
+    };
+  });
+}
+
+function sessionEndMs(s) {
+  if (s.last_at_ms != null) return s.last_at_ms;
+  if (s.first_at_ms != null) return s.first_at_ms;
+  return -Infinity;
+}
+
+// Pick the NEWEST session to review. Crucially, LINKED sessions and UNLINKED (server-only)
+// clusters are compared on the SAME time axis: in the exact v141 shape this command exists to
+// catch, the newest owner session can have ONLY unlinked server rows while older LINKED
+// sessions sit in the same cumulative tab — so preferring "any linked session" would review
+// an old good session and silently skip the newest broken one (a false green). We instead
+// select the candidate with the latest end time. (Codex P1.)
 function selectLatestSession(frRecords, opts) {
   const { sessions, noSession } = fr.groupBySession(frRecords || []);
   if (opts && opts.session) {
@@ -91,24 +129,15 @@ function selectLatestSession(frRecords, opts) {
     if (hit) return { session: hit, mode: 'linked', other_session_count: sessions.length - 1 };
     return { session: null, mode: 'none', other_session_count: sessions.length, requested_missing: want };
   }
-  if (sessions.length) {
-    return { session: sessions[sessions.length - 1], mode: 'linked', other_session_count: sessions.length - 1 };
-  }
-  if (noSession.length) {
-    const events = noSession.slice().sort(byTimeThenRow);
-    const times = events.map(e => fr.parseTimestamp(e.captured_at)).filter(t => t != null);
-    return {
-      session: {
-        flight_session_id: '(unlinked)',
-        events,
-        first_at_ms: times.length ? Math.min(...times) : null,
-        last_at_ms: times.length ? Math.max(...times) : null
-      },
-      mode: 'server-only',
-      other_session_count: 0
-    };
-  }
-  return { session: null, mode: 'none', other_session_count: 0 };
+  const unlinked = clusterUnlinked(noSession, opts && opts.unlinkedGapMs);
+  const candidates = [
+    ...sessions.map(s => ({ session: s, mode: 'linked' })),
+    ...unlinked.map(s => ({ session: s, mode: 'server-only' }))
+  ];
+  if (!candidates.length) return { session: null, mode: 'none', other_session_count: 0 };
+  candidates.sort((a, b) => sessionEndMs(a.session) - sessionEndMs(b.session));
+  const latest = candidates[candidates.length - 1];
+  return { session: latest.session, mode: latest.mode, other_session_count: candidates.length - 1 };
 }
 
 // Correlate sidecar rows (Session_Plans / Effort) to the session by workout session id, else
@@ -450,6 +479,7 @@ module.exports = {
   REVIEW_COLUMNS,
   toReviewCorpora,
   selectLatestSession,
+  clusterUnlinked,
   correlateSidecar,
   planRowHasSetTarget,
   evaluateCriteria,

@@ -140,6 +140,38 @@ test('newest session is selected by time; older ones are counted, not reviewed',
   assert.equal(review.other_session_count, 1);
 });
 
+test('P1: the NEWEST session wins even when it is only unlinked server rows and OLDER linked sessions exist', () => {
+  // The exact v141 shape in a cumulative tab: an older HEALTHY linked session plus a newer
+  // BROKEN session that recorded only unlinked server rows. The review must pick the newest
+  // (broken) one — never silently review the older good session and report a false green.
+  const c = corpora({
+    Flight_Recorder: [
+      fe({ flight_session_id: 'FR-OLDGOOD', seq: 1, captured_at: '2026-07-14T18:00:00.000Z', event_type: 'user_input', user_input: 'old good' }),
+      fe({ flight_session_id: 'FR-OLDGOOD', seq: 2, captured_at: '2026-07-14T18:01:00.000Z', event_type: 'api_response', api_endpoint: 'POST /api/log-workout', response_summary: '200 OK' }),
+      fe({ flight_session_id: '', seq: '', app_version: 'v141', captured_at: at(1), event_type: 'api_response', api_endpoint: 'POST /api/log-workout', response_summary: '200 OK' }),
+      fe({ flight_session_id: '', seq: '', app_version: 'v141', captured_at: at(2), event_type: 'api_response', api_endpoint: 'POST /api/coach/message', response_summary: '200 OK' })
+    ]
+  });
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(review.session.mode, 'server-only', 'reviews the NEWEST (broken) session, not the older linked one');
+  assert.equal(verdictOf(review, 'client_replay'), 'FAIL');
+  assert.equal(review.overall, 'FAIL');
+  assert.equal(review.other_session_count, 1, 'the older linked session is counted, not reviewed');
+});
+
+test('clusterUnlinked splits unlinked rows into distinct sessions on a time gap', () => {
+  const rows = [
+    fe({ flight_session_id: '', captured_at: '2026-07-14T18:00:00.000Z', event_type: 'api_response' }),
+    fe({ flight_session_id: '', captured_at: '2026-07-14T18:05:00.000Z', event_type: 'api_response' }),
+    // > 30-min gap → a new cluster.
+    fe({ flight_session_id: '', captured_at: '2026-07-16T18:00:00.000Z', event_type: 'api_response' })
+  ];
+  const clusters = rl.clusterUnlinked(rows);
+  assert.equal(clusters.length, 2);
+  assert.equal(clusters[0].events.length, 2);
+  assert.equal(clusters[1].events.length, 1);
+});
+
 test('--session selects a specific session; a missing one is reported, not faked', () => {
   const c = corpora({
     Flight_Recorder: [
