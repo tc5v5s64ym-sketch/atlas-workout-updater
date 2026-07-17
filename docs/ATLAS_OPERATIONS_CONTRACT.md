@@ -18,6 +18,14 @@ Two entry points, one schema:
 | Command | agent at repo root | none | `npm run atlas:status` (human) · `npm run atlas:status -- --json` (schema) |
 | Endpoint | anyone / uptime checks | **none** (public, redacted) | `GET /.well-known/atlas-status.json` |
 
+> **Companion command (not this surface):** `npm run atlas:review-live`
+> (`scripts/atlas-review-live.js`, F09C) reviews the **newest real app session** —
+> it selects the latest session, joins Flight Recorder / Intent Shadow / Brain Shadow /
+> Session Plans / Log / Effort, and reports PASS/FAIL/UNKNOWN per trust criterion
+> (UNKNOWN = missing evidence, never a false green). `atlas:status` answers **general
+> health / campaign status**; `atlas:review-live` reviews **one specific session**. Both
+> are read-only.
+
 The command, when `ATLAS_BASE_URL` is set, fetches and presents the deployed
 endpoint's document (and warns if your local `HEAD` differs from the deployed
 commit). Offline or with no base URL, it degrades to a **local view** assembled
