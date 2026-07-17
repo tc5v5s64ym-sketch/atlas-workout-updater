@@ -660,7 +660,7 @@ If parser behavior and conversation-state behavior are separate root causes, spl
 
 ### F09H — Route PR claims correctly
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 **Finding:** `PR-CLAIM-1`
 
@@ -676,7 +676,12 @@ A "that was a PR" statement must not be parsed as workout-set input, must not op
 
 **Owner gate:** Autonomous (no write/schema change; a failed note write must never 503-block logging).
 
-**Completion record:** PR — · Commit —
+**Resolution (from a four-surface map).** Two of the four surfaces were already correct and needed no change: the **parser** never parses a PR claim as a set ("pr" resolves to no alias; `parseWorkoutText` returns `needs_clarification`, never `log_sets` — verified against the alias table), and the **note-service is already isolated** — `POST /api/coaching-notes` returns an ordinary 503/500 that is swallowed by the client `showSaveNotePrompt` try/catch, and no logging/closeout path (`emitSetLogged`, `runCloseout`, `handleLogIt`) ever calls the note endpoint, so a note failure cannot interrupt logging (the 503 in the incident was a benign side-effect of the mis-proposed note). The **primary root cause** was that a self-reported PR claim could become a coaching-note: the note-proposing prompt had no exclusion for it and the server passed `propose_note` through untouched. Fixed deterministically:
+- New pure classifier `looksLikePrClaim(message)` (`services/coach.js`, exported) detects a self-reported PR / personal-best CLAIM (or question) about a set just performed, but NOT a training GOAL that mentions a PR (a goal is a durable, note-worthy fact).
+- The coach route (`routes/coachOps.js`) drops BOTH `propose_note` and `propose_constraint` when the message is a PR claim — so no "Save note?" consent opens and nothing reaches `Coaching_Notes` — while the grounded prose reply still stands.
+- The chat prompt's note-proposing guidance now explicitly excludes a self-reported PR claim and states PR status is engine-owned (from logged rows), never a typed claim (defense in depth). The existing set-reaction IRON RULE + register suppressor already prevent the coach's prose from claiming a permanent PR without `progression_verdict.level === 'new_ground'`, and PR status is computed from actual rows (`progressionVerdict` / `athlete_identity.lift_prs`), so a typed claim cannot manufacture a PR.
+
+**Completion record:** PR — this PR (F09H) · Commit — `services/coach.js` (`looksLikePrClaim` + prompt exclusion), `routes/coachOps.js` (drop note/constraint for a PR claim). Red-first `test/prClaimGuard.test.js` (claim vs goal vs ordinary), integration `test/api-smoke.test.js` (a "That was a PR!" claim yields `propose_note: null` + `propose_constraint: null` + a prose reply + no sheet write; a genuine injury note still proposes), prompt-content pin in `test/coachPromptRules.test.js`. Full node suite 5589 pass; lint 0 errors. The OPTIONAL deterministic client "appears-to-be-a-candidate" grounded lane is filed as an enhancement (not required; the LLM prose is already grounded by the IRON RULE).
 
 ### F09I — Use one canonical local session date for sidecar writes
 

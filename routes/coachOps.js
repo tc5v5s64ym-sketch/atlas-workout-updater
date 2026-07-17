@@ -1248,13 +1248,21 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
           : ['register_guard_unavailable'])
         : [];
       const hasSafeReply = hasReply && registerViolations.length === 0;
+      // F09H (PR-CLAIM-1): a self-reported "that was a PR" / personal-best claim is a
+      // session RESULT, not a durable fact — it must never open note/constraint consent
+      // or reach Coaching_Notes (PR status is engine-owned, from logged rows, never a
+      // typed claim). Deterministically drop any note/constraint the model proposed for
+      // such a message; the grounded prose reply still stands.
+      const isPrClaim = typeof coach.looksLikePrClaim === 'function' && coach.looksLikePrClaim(message);
+      const safeNote = isPrClaim ? null : (propose_note || null);
+      const safeConstraint = isPrClaim ? null : (propose_constraint || null);
       // Return the Gemini result when it has usable prose OR carries a structured
       // proposal (edit/note/constraint) — a proposal must never be dropped just
       // because the prose came back empty. Only a truly empty result (no prose, no
       // proposal) falls through to the deterministic engine fallback below.
-      if (hasSafeReply || propose_edit || propose_note || propose_constraint || propose_plan_edit) {
+      if (hasSafeReply || propose_edit || safeNote || safeConstraint || propose_plan_edit) {
         return standardSuccess(req, res, 'Coach chat reply', {
-          message: hasSafeReply ? reply : null, propose_edit: propose_edit || null, propose_note: propose_note || null, propose_constraint: propose_constraint || null, propose_plan_edit: propose_plan_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
+          message: hasSafeReply ? reply : null, propose_edit: propose_edit || null, propose_note: safeNote, propose_constraint: safeConstraint, propose_plan_edit: propose_plan_edit || null, configured: true, model: coach.coachModel(), source: 'gemini'
         });
       }
       // Empty reply and no proposal → fall through to the deterministic fallback below.
