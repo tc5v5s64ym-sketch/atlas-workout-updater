@@ -600,7 +600,7 @@ Every planned exercise must carry an **executable prescription**: explicit set c
 
 ### F09F — Make the visible plan and live coach share one current target
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 **Finding:** `PLAN-COACH-SPLIT-1`
 
@@ -619,7 +619,9 @@ Reproduce synthetically (accepted plan target A; athlete performs target B; the 
 
 **Owner gate:** Autonomous (derivable from current-state truth).
 
-**Completion record:** PR — · Commit —
+**Resolution.** A read-layer map (six surfaces) established that the "actual silently becomes plan" behavior is **not** a stored write-back — no code ever overwrites `activePlannedSession.exercises[i].{weight,reps,rir}` with a performed value. It is a **read-time provenance gap** in the deterministic coach-answer layer (`services/sessionQuestionAnswer.js`), in two seams: (1) `targetFromContext` sourced a "target" from `current_preview` (performed rows) when the accepted plan lacked the lift — echoing a performed value as a prescription; (2) the engine fallback (`recommendNextSet`, recomputed from the just-performed set) was merged into the answer and worded identically to a frozen-plan value. The visible plan card, next-up, `currentPlanForChat`, recap, and closeout already read the frozen accepted plan (or carry no targets at all), so the divergence was concentrated in the coach's spoken facts. The fix makes every deterministic answer's target **explicitly one of**: the accepted plan (worded as today's plan), a **revised next-set recommendation** (live engine, labeled "no planned target — recommended for your next set: …", never merged into plan wording), or **"no reliable target available."** `targetFromContext` is now accepted-plan-only (tagged `source:'plan'`); preview still resolves lift identity but never prescribes numbers; the engine may fill genuinely-missing guidance for a real plan lift (e.g. a missing set count) still worded as the plan; context still outranks the engine where a real accepted-plan target exists. The pre-Gemini lanes defer (null) when they can't ground an answer so the LLM/education path is preserved; "no reliable target available" is the honest floor only in the LLM-down lane. Scope stayed inside the answer layer — no F10 ledger, schema, recap/closeout, or slot-completion-identity work (F09F ≠ F10: the target-value selector is distinct from F10's `plan_item_id` completion-identity selector).
+
+**Completion record:** PR — this PR (F09F) · Commit — `services/sessionQuestionAnswer.js` (provenance: `targetFromContext` plan-only + `source`, `resolveAnswerTarget`, provenance-aware `formatAnswer`, `buildSessionQuestionAnswer`/`answerBareShorthand` rewired, honest "no reliable target available" floor). Red-first tests in `test/sessionQuestionAnswer.test.js` (the six required cases: plan-A-over-performed-B, preview-not-echoed, labeled next-set recommendation, no-reliable-target floor, next-set-scoped revision, missing-set-count stays green) + updated the two integration pins in `test/api-smoke.test.js` (#452 unplanned-lift engine answer now labeled a recommendation) and `test/sessionStateStress.test.js` (P4 preview resolves identity but no longer prescribes). Full node suite 5567 pass; lint 0 errors; secret scan clean.
 
 ### F09G — Repair conversational logging and final confirmation exactness
 

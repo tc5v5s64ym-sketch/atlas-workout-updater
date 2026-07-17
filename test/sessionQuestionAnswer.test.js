@@ -18,19 +18,21 @@ test('attributesAsked detects each shorthand and combinations', () => {
   assert.deepEqual(attributesAsked('hey coach'), []);
 });
 
-test('answers a multi-attribute question from the lift named in the message', () => {
+test('answers a multi-attribute question from the engine, labeled a next-set recommendation', () => {
+  // No accepted plan in context — the engine value is a live recommendation, so F09F
+  // words it as one (never as today's plan).
   const ans = buildSessionQuestionAnswer('Going to do bench 225 how many reps and rir should I do?', {
     resolveTarget: resolveBench
   });
-  assert.equal(ans, 'Bench Press: 5 reps, RIR 2.');
+  assert.equal(ans, 'Bench Press: no planned target — recommended for your next set: 5 reps, RIR 2.');
 });
 
-test('answers "how much?" with the engine weight when the lift is in recent history', () => {
+test('answers "how much?" with the engine weight, labeled a next-set recommendation', () => {
   const ans = buildSessionQuestionAnswer('how much?', {
     history: [{ role: 'user', text: 'Going to do bench next' }],
     resolveTarget: resolveBench
   });
-  assert.equal(ans, 'Bench Press: 230 lbs.');
+  assert.equal(ans, 'Bench Press: no planned target — recommended for your next set: 230 lbs.');
 });
 
 test('resolves the lift from the client preview/plan and prefers its target (no Sheets)', () => {
@@ -88,17 +90,111 @@ test('returns null when the lift cannot be resolved', () => {
   assert.equal(buildSessionQuestionAnswer('RIR?', { resolveTarget: resolveBench }), null);
 });
 
-test('returns null when no target is available for the resolved lift', () => {
+test('says "no reliable target available" when neither plan nor engine can ground it', () => {
+  // A lift is named and an attribute asked, but there is no accepted plan target and
+  // the engine has nothing — the honest floor (F09F), never a guess.
   const ans = buildSessionQuestionAnswer('bench rir?', { resolveTarget: () => null });
-  assert.equal(ans, null);
+  assert.equal(ans, 'Bench Press: no reliable target available.');
 });
 
-test('only includes asked attributes that the engine actually knows', () => {
-  // Asks reps + rir, but the target has no rir → only reps is reported.
+test('only includes asked attributes that the engine actually knows (labeled a recommendation)', () => {
+  // Asks reps + rir, but the engine target has no rir → only reps is reported, and
+  // since there is no accepted plan it is labeled a next-set recommendation.
   const ans = buildSessionQuestionAnswer('bench reps and rir?', {
     resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: null })
   });
-  assert.equal(ans, 'Bench Press: 5 reps.');
+  assert.equal(ans, 'Bench Press: no planned target — recommended for your next set: 5 reps.');
+});
+
+// ── F09F (PLAN-COACH-SPLIT-1): explicit target provenance ─────────────────────
+// Every deterministic answer's target is exactly one of: the ACCEPTED PLAN, a
+// REVISED NEXT-SET RECOMMENDATION (live engine), or NO RELIABLE TARGET. A performed
+// or previewed value is NEVER echoed as the plan; a live engine value is only ever
+// surfaced labeled as a next-set recommendation, never merged into plan wording.
+
+const RECO_RE = /recommend/i;              // the revised-next-recommendation label
+const NEXT_SET_RE = /next set/i;
+const NO_TARGET_RE = /no reliable target available/i;
+
+test('F09F(1): accepted plan target A wins over a performed value B (plan stays A)', () => {
+  // Plan says 205; the athlete performed 185 (preview) and the engine, re-reading the
+  // performed set, would now say 190. The answer must be the ACCEPTED PLAN's 205 —
+  // never the performed 185 or the recomputed 190.
+  const ctx = {
+    current_plan: [{ name: 'Bench Press', weight: 205, reps: 5, sets: 3, rir: 2 }],
+    current_preview: [{ exercise: 'Bench Press', weight: 185, reps: 5, rir: 1 }]
+  };
+  const ans = buildSessionQuestionAnswer('how much for bench?', {
+    clientContext: ctx,
+    resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 190, reps: 5, sets: 3, rir: 2 })
+  });
+  assert.equal(ans, 'Bench Press: 205 lbs.');
+  assert.doesNotMatch(ans, /185|190/, 'never the performed or recomputed value');
+  // The plan-first lane agrees.
+  assert.equal(answerPlannedLiftQuestion('how much for bench?', ctx), 'Bench Press today: 205 lbs.');
+});
+
+test('F09F(2): no accepted target — a performed preview value is NOT echoed as a prescription', () => {
+  // Bench is not in today's accepted plan; only a performed preview row exists (185).
+  // With no engine target either, the answer must NOT present 185 as a target.
+  const ctx = { current_preview: [{ exercise: 'Bench Press', weight: 185, reps: 5, rir: 1 }] };
+  const ans = buildSessionQuestionAnswer('how much for bench?', {
+    clientContext: ctx,
+    resolveTarget: () => null
+  });
+  assert.doesNotMatch(String(ans), /185/, 'a performed value is never a prescription');
+  assert.match(String(ans), NO_TARGET_RE);
+  // The plan-first lane defers (null) for an off-plan lift so the LLM can still answer.
+  assert.equal(answerPlannedLiftQuestion('how much for bench?', ctx), null);
+});
+
+test('F09F(3): no accepted target + a valid engine value → labeled next-set recommendation', () => {
+  // No accepted plan target for bench, but the engine has a live recommendation. It
+  // must be surfaced explicitly as a recommendation for the NEXT set, not as the plan.
+  const ans = buildSessionQuestionAnswer('how much for bench?', {
+    clientContext: { current_plan: [] },
+    resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 })
+  });
+  assert.match(ans, /230 lbs/);
+  assert.match(ans, RECO_RE, 'labeled as a recommendation');
+  assert.match(ans, NEXT_SET_RE, 'scoped to the next set');
+  assert.doesNotMatch(ans, /today: 230|Bench Press: 230 lbs\.$/, 'not worded as the accepted plan');
+});
+
+test('F09F(4): no plan and no engine target → "no reliable target available"', () => {
+  const ans = buildSessionQuestionAnswer('rir for bench?', {
+    clientContext: { current_plan: [] },
+    resolveTarget: () => null
+  });
+  assert.equal(ans, 'Bench Press: no reliable target available.');
+});
+
+test('F09F(5): a revision is scoped to the NEXT set and never rewrites the completed set', () => {
+  // Accepted plan A (205) is what the completed set was prescribed at; a live engine
+  // revision (190, from the performed set) is only ever offered for the next set.
+  const planCtxA = { current_plan: [{ name: 'Bench Press', weight: 205, reps: 5, sets: 3, rir: 2 }] };
+  // The completed set's planned target stays A — never overwritten by the performed value.
+  assert.equal(answerPlannedLiftQuestion('how much for bench?', planCtxA), 'Bench Press today: 205 lbs.');
+  // When the same lift has no accepted target, the engine revision is explicitly next-set scoped.
+  const revision = buildSessionQuestionAnswer('how much for bench?', {
+    clientContext: { current_plan: [] },
+    resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 190, reps: 5, sets: 3, rir: 2 })
+  });
+  assert.match(revision, NEXT_SET_RE);
+  assert.doesNotMatch(revision, /205/, 'the revision does not restate the completed-set target');
+});
+
+test('F09F(6): accepted-plan and missing-set-count behaviors stay green (engine fills only gaps)', () => {
+  // A real accepted-plan lift missing only its set count: the engine fills the set
+  // count and the answer is STILL worded as the plan (the lift IS planned) — no
+  // recommendation label, no "no reliable target".
+  const ans = buildSessionQuestionAnswer('sets?', {
+    clientContext: { current_plan: [{ name: 'Bench Press', weight: 225, reps: 5, sets: null, rir: 2 }] },
+    resolveTarget: () => ({ exercise_name: 'Bench Press', weight: 230, reps: 5, sets: 3, rir: 2 })
+  });
+  assert.equal(ans, 'Bench Press: 3 sets.');
+  assert.doesNotMatch(ans, RECO_RE);
+  assert.doesNotMatch(ans, NO_TARGET_RE);
 });
 
 test('resolveLiftName prefers the message over history over context', () => {

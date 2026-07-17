@@ -114,12 +114,29 @@ test('P4: plain logging / chatter is not mistaken for a session question', () =>
 //    2026-06-20 failure: mid-set shorthand returning generic education.
 // ---------------------------------------------------------------------------
 
-test('P4: bare shorthand answers from the live preview lift (no LLM)', () => {
-  assert.deepEqual(answerBareShorthand('RIR?', PREVIEW_CTX), { kind: 'answer', text: 'Bench Press: RIR 2.' });
-  assert.deepEqual(answerBareShorthand('Reps?', PREVIEW_CTX), { kind: 'answer', text: 'Bench Press: 8 reps.' });
-  assert.deepEqual(answerBareShorthand('How much?', PREVIEW_CTX), { kind: 'answer', text: 'Bench Press: 185 lbs.' });
-  assert.deepEqual(answerBareShorthand('How much weight?', PREVIEW_CTX), { kind: 'answer', text: 'Bench Press: 185 lbs.' });
-  assert.deepEqual(answerBareShorthand('Weight?', PREVIEW_CTX), { kind: 'answer', text: 'Bench Press: 185 lbs.' });
+test('P4 (F09F): the preview lift resolves identity but its performed numbers do NOT prescribe', () => {
+  // A previewed UNPLANNED lift (no accepted plan target). Preview still identifies the
+  // current lift, but its performed values (185×8) must NEVER be echoed as a target —
+  // with no engine to consult, bare shorthand DEFERS (null) so the LLM/education path
+  // applies, rather than presenting the performed value as a prescription.
+  assert.equal(answerBareShorthand('RIR?', PREVIEW_CTX), null);
+  assert.equal(answerBareShorthand('Reps?', PREVIEW_CTX), null);
+  assert.equal(answerBareShorthand('How much?', PREVIEW_CTX), null);
+  assert.equal(answerBareShorthand('How much weight?', PREVIEW_CTX), null);
+  assert.equal(answerBareShorthand('Weight?', PREVIEW_CTX), null);
+});
+
+test('P4 (F09F): a previewed unplanned lift + a live engine target → a LABELED next-set recommendation', () => {
+  // When an engine target is available for the previewed unplanned lift, the number is
+  // surfaced explicitly as a recommendation for the next set — never as the plan, and
+  // never the performed preview value.
+  const engine = () => ({ exercise_name: 'Bench Press', weight: 190, reps: 5, sets: 3, rir: 2 });
+  const r = answerBareShorthand('How much?', PREVIEW_CTX, engine);
+  assert.equal(r.kind, 'answer');
+  assert.match(r.text, /recommend/i);
+  assert.match(r.text, /next set/i);
+  assert.match(r.text, /190 lbs/);
+  assert.doesNotMatch(r.text, /185/, 'never the performed preview value');
 });
 
 test('P4: bare "sets?" answers from the plan (which carries sets)', () => {

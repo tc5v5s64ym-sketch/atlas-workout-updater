@@ -1492,7 +1492,9 @@ test('api smoke: coach/chat engine-fills a bare "how many sets?" during a previe
     });
     assert.equal(response.status, 200);
     assert.equal(body.data.source, 'engine', 'preview-of-unplanned-lift bare set question answers from the engine, not the LLM');
-    assert.equal(body.data.message, 'Bench Press: 3 sets.', 'reports the engine-recommended set count for the previewed lift');
+    // F09F: the lift is UNPLANNED, so the engine number is surfaced as a next-set
+    // recommendation, never as (nor merged into) an accepted plan target.
+    assert.equal(body.data.message, 'Bench Press: no planned target — recommended for your next set: 3 sets.', 'reports the engine set count, labeled a recommendation for the unplanned lift');
     assert.equal(fakeSheetsState.appendCalls.length, before, 'engine-fill is read-only — never writes a sheet');
   } finally {
     fakeCoachState.configured = false;
