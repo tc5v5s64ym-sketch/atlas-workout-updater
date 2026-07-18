@@ -929,7 +929,7 @@ Reproduce and fix, red-first:
 
 ### F10S-GATE — Smoke-test rerun (exit gate for the insertion)
 
-**Status:** QUEUED — blocks F10D
+**Status:** RERUN PASSED (2026-07-18) — every exit criterion green; evidence returned to the owner. F10D authorization remains owner-reserved.
 
 After the fixes merge, rerun the **exact same non-destructive** July 18 Work-mode smoke test. Do **not** proceed to F10D until all of:
 
@@ -941,11 +941,11 @@ After the fixes merge, rerun the **exact same non-destructive** July 18 Work-mod
 
 Return the rerun transcript and screenshots to the owner **before requesting F10D authorization**.
 
-**Completion record:** rerun — · transcript/screenshots —
+**Completion record:** rerun — `tests/e2e/gate/f10s-gate.spec.js` driving the REAL app end-to-end (real built client + real `index.js` server via `tests/e2e/gate/gate-server.js`, Sheets stubbed in-process/in-memory, no LLM key → deterministic voice, Playwright-marked synthetic traffic). All five criteria asserted HARD and green on desktop **and** mobile projects: 1-of-3 RDL set → slot in progress everywhere (rail current/not-done, pin `1 of 3 sets`, no handoff/closeout); slot completes only at 3/3; one-turn `Front Squat 185 7/2 x3 instead of Back Squat` logs 3 sets **and** satisfies the original slot (accepted `plan_item_id` retained, 3-set grain inherited, next-up advances, actuals 3× Front Squat / 0× Back Squat); chat (`how much?` — the deterministic `plan_state` lane) names Overhead Press agreeing with pin+rail; closeout renders once and the substitution ack appears exactly once across every Atlas bubble; **zero** sheet appends and **zero** tab creations end-to-end (the write phase stays F10D-gated). Runs in the standard E2E suite (154/154 with it). Transcript + 9 screenshots + thread + write-evidence returned to the owner 2026-07-18 (artifacts regenerate under `test-results/f10s-gate/` on every run) · Full suite 5741 pass / lint 0 errors.
 
 ### F10D — Confirm and write planned versus actual together
 
-**Status:** PAUSED (owner stabilization gate, 2026-07-18) — blocked on F10S1–F10S6 + a passing F10S-GATE rerun. The production tab / write-enablement / first-live-write authorizations remain owner-reserved on top of that gate.
+**Status:** PAUSED (owner gate, 2026-07-18) — the stabilization insertion is COMPLETE (F10S1–F10S6 merged; F10S-GATE rerun PASSED with evidence returned). The remaining blockers are exactly the owner-reserved authorizations: production `Session_Plan_Sets` tab creation, `SESSION_PLAN_SETS_WRITE_ENABLED=1`, and the first live ledger write. Do not proceed without Dale's explicit authorization.
 
 **Objective**
 
