@@ -2,6 +2,11 @@
   "_comment": "Wired-or-deleted allowlist enforced by scripts/check-wired-modules.js and test/wiredModules.test.js. `modules` are deliberately staged/unwired and require an expiry plus a durable backlog/spec reference; no retired execution plan may authorize wiring. `testOnly` modules are production-unreachable by design.",
   "modules": [
     {
+      "file": "services/implicitRecommendation.js",
+      "expires": "2026-12-31",
+      "roadmap": "F10C slice 1 (docs/SESSION_PLANS_LEDGER_DESIGN.md §4A) — the pure leakage-safe implicit-recommendation derivation. Wired by F10C slice 2 (BACKLOG.md `F10C-IMPLICIT-WIRING-1`: the /api/session-plan-sets/implicit derive+checkpoint route + client trigger on an unplanned log)."
+    },
+    {
       "file": "services/objectiveScorer.js",
       "expires": "2026-12-31",
       "roadmap": "BACKLOG.md deferred session-planning wiring + docs/SESSION_PLANNING_ENGINE.md; pure scorer shipped, live-snapshot wiring not selected by the V1 campaign."

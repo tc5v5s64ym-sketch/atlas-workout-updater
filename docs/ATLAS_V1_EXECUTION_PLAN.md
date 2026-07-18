@@ -825,7 +825,13 @@ When Atlas proposes and the athlete accepts a session, create ledger **version 1
 
 ### F10C — Generate an independent recommendation for an unannounced exercise
 
-**Status:** QUEUED
+**Status:** SLICE 1 COMPLETE — the leakage-safe derivation + `implicit_unplanned` ledger-row builder shipped (dry-run infra, pure). Slice 2 (the durable checkpoint route + client trigger on an unplanned log + reload reconstruction) tracked as `BACKLOG.md` `F10C-IMPLICIT-WIRING-1`.
+
+**Owner contract:** the 7-point decision (Dale, 2026-07-18) is written verbatim into `docs/SESSION_PLANS_LEDGER_DESIGN.md` §4A (amendment A4) — one next set only; no rep/RIR range collapsed to a scalar; an `implicit_unplanned` row only when exact weight+reps+rir derive from pre-session history; current session excluded (the leakage guarantee); absent/ambiguous/range-only → `no_reliable_target`, no row; a performed value never becomes the recommendation.
+
+**Resolution (slice 1).** `services/implicitRecommendation.js` `deriveImplicitRecommendation(...)` — PURE and deterministic. It excludes the current session from `logRows` first (rule 4/6 — the leakage guarantee), then derives an EXACT target: `target_weight` = the engine's pinned `recommendedWeight` (undefined on a cold start → `no_reliable_target`), `target_reps`/`target_rir` = the exact most-recent prior WORKING SET's reps/rir (the engine emits rep/RIR only as `{min,max}` RANGES, which rule 2 forbids collapsing — so a blank prior reps/rir reads strict-null, never a fabricated 0). Any of the three not exactly derivable → `no_reliable_target` (`target_set_count 1`, no row). `services/sessionPlanLedger.js` `buildImplicitRows` builds the standalone v1 `implicit_unplanned` row (`set_index 1`, `target_set_count 1`, `supersedes_key ''`, bodyweight `0` preserved) for a reliable target, and appends **no** row for a `no_reliable_target` item (§4A rule 5 — an unannounced exercise with no confident target has no recommendation to record). Red-first `test/implicitRecommendation.test.js` (the required leakage proof — a wild vs a light just-submitted set derive the identical target — plus exclusion, cold-start, blank-rir-not-0, one-set) + `test/sessionPlanLedger.test.js` (`buildImplicitRows`). `services/implicitRecommendation.js` is staged in `config/wiring-allowlist.json` (slice 2 wires it). No route/app/write change; no production tab.
+
+**Remaining (slice 2, `F10C-IMPLICIT-WIRING-1`).** The dry-run checkpoint lane: `POST /api/session-plan-sets/implicit` (derives server-side via injected `getSheetRows`, checkpoints via `captureImplicit`/`checkpointImplicit`, mirroring accept/revision) + the client trigger on an unplanned logged exercise (mint a `plan_item_id`, POST the checkpoint) + reload reconstruction. Touches `src/app/app.js` (higher-risk) — a focused follow-up.
 
 **Objective**
 
@@ -839,9 +845,9 @@ When the athlete simply logs an exercise that was not requested or planned:
 
 The just-submitted result must be **excluded** from the evidence used to derive its own target. When there is insufficient history: record **no reliable target available**; preserve the actual; do not invent a target; do not call the actual result the plan.
 
-**Required tests:** leakage tests proving that changing the submitted result does not change the recommendation derived from the same pre-exercise evidence.
+**Required tests:** leakage tests proving that changing the submitted result does not change the recommendation derived from the same pre-exercise evidence. ✅ delivered in `test/implicitRecommendation.test.js` (slice 1).
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR (slice 1) — this PR · Commits — new `services/implicitRecommendation.js`; `services/sessionPlanLedger.js` (`buildImplicitRows` + export); `config/wiring-allowlist.json` (implicitRecommendation staged); docs `docs/SESSION_PLANS_LEDGER_DESIGN.md` §4A/A4; tests `test/implicitRecommendation.test.js` (new), `test/sessionPlanLedger.test.js` (additions). Slice 2 tracked as `BACKLOG.md` `F10C-IMPLICIT-WIRING-1`.
 
 ### F10D — Confirm and write planned versus actual together
 

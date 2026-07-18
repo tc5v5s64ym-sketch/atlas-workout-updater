@@ -159,6 +159,52 @@ function buildAcceptedRows(session, items, opts = {}) {
   return rows;
 }
 
+// Build the IMPLICIT-recommendation ledger row(s) (plan_version = 1, one row per RELIABLE
+// item) for an exercise the athlete logged WITHOUT asking (F10C, design §4A). source =
+// 'implicit_unplanned', set_index = 1, target_set_count = 1 (one next set only, rule 1),
+// supersedes_key = '' (it supersedes nothing — a standalone v1 recommendation), the exact
+// derived scalars (bodyweight 0 preserved).
+//
+// A `no_reliable_target` item appends NO row (owner contract §4A rule 5) — unlike an
+// accepted-plan slot (buildAcceptedRows), which persists a blank-target no_reliable_target
+// row because the slot was explicitly planned. An unannounced exercise with no confident
+// target simply has no recommendation; the actual is still logged separately in Log_Cleaned.
+//
+// items: [{ plan_item_id, planned_lift_code, target_weight, target_reps, target_rir,
+//           confidence? }] — target_set_count is always forced to 1 here.
+function buildImplicitRows(session, items, opts = {}) {
+  const { session_id, session_date } = _requireSession(session);
+  const recorded_at = _str(opts.recordedAt);
+  const list = Array.isArray(items) ? items : [];
+  const rows = [];
+  list.forEach((item, i) => {
+    const it = item && typeof item === 'object' ? item : {};
+    // Rule 5: no confident target → append no row (never a phantom recommendation slot).
+    if (_str(it.confidence) === 'no_reliable_target') return;
+    const plan_item_id = _str(it.plan_item_id);
+    if (!plan_item_id) throw new Error(`sessionPlanLedger: plan_item_id is required (implicit item index ${i})`);
+    const planned_lift_code = _requireLiftCode(it.planned_lift_code, 'planned_lift_code');
+    rows.push(toRow({
+      session_id,
+      session_date,
+      plan_version: 1,
+      plan_item_id,
+      planned_lift_code,
+      set_index: 1,
+      target_set_count: 1,
+      target_weight: _numOrBlank(it.target_weight),
+      target_reps: _numOrBlank(it.target_reps),
+      target_rir: _numOrBlank(it.target_rir),
+      recommendation_source: 'implicit_unplanned',
+      supersedes_key: '',
+      confidence: 'reliable',
+      closeout_write_id: '',
+      recorded_at,
+    }));
+  });
+  return rows;
+}
+
 // A number written verbatim (bodyweight 0 is preserved), or '' when absent/invalid.
 function _numOrBlank(v) {
   if (v === 0 || v === '0') return '0';
@@ -407,6 +453,7 @@ module.exports = Object.freeze({
   toRow,
   parseRow,
   buildAcceptedRows,
+  buildImplicitRows,
   buildRevisionRow,
   supersedesKeyFor,
   validateChain,
