@@ -1590,7 +1590,25 @@ import * as sessionQuestion from './sessionQuestion.js';
         const isReroute = Boolean(reaction.reroute && reaction.reroute.line);
         const sameAsLast = lastAnnouncedNextUp
           && String(nextEx).toLowerCase() === String(lastAnnouncedNextUp).toLowerCase();
-        if (isReroute || !sameAsLast) {
+        // A slot still IN PROGRESS is not a handoff: never announce a lift that
+        // already has logged sets this session while its slot is still the live
+        // next-up verdict (remaining[0] — F10S1 keeps an under-count slot
+        // remaining). Without this, a per-set handler deriving mid-slot found
+        // remaining[0] = the slot the lifter is already on and announced it — the
+        // wrong "Moving on — next up: Romanian Deadlift." card after set 1 of 3,
+        // landing at a runner-speed-dependent moment. Both sides are store truth:
+        // remaining[0] is the slot name and currentCompleted carries RESOLVED
+        // canonical names, so an alias-form raw log ("RDL") cannot dodge the
+        // guard. A genuine boundary still announces (the completed slot's
+        // remaining[0] moves past the logged lift — including single-set slots),
+        // an untouched next slot still announces after an off-plan log, and a
+        // reroute always speaks. (A mid-slot off-plan log no longer re-announces
+        // the in-progress slot — the pin already shows it.)
+        const nextExKey = String(nextEx).toLowerCase();
+        const stillOnLoggedSlot = Boolean(liveRemaining && liveRemaining[0]
+          && String(liveRemaining[0]).toLowerCase() === nextExKey
+          && (currentCompleted || []).some(c => String(c).toLowerCase() === nextExKey));
+        if (isReroute || (!sameAsLast && !stillOnLoggedSlot)) {
           const handoff = document.createElement('div');
           handoff.className = 'next-exercise-handoff';
           // When the engine flags a same-prime-mover conflict, word its reroute
