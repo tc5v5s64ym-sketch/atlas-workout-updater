@@ -799,8 +799,6 @@ Implement the smallest append-only model capable of preserving: session identity
 
 ### F10B — Capture accepted plans and explicit live revisions
 
-**Status:** QUEUED
-
 **Objective**
 
 When Atlas proposes and the athlete accepts a session, create ledger **version 1** including every planned set, preserving ordering and `plan_item_id`.
@@ -855,7 +853,7 @@ The just-submitted result must be **excluded** from the evidence used to derive 
 
 Rules for the insertion (owner-set): work red-first; one focused PR per card **unless two cards are proven to share one root cause** (record the shared-root-cause evidence in the merge card); route every UI and coach surface through the canonical completion selector (`src/app/planSlotStatuses.js`) rather than patching wording locally. Run the Current-State Verification Gate per card — a card may resolve as root-caused by another card (e.g. F10S2's entry path may prove to be F10S6c), and that verdict must be recorded, not assumed. Positive finding preserved from the smoke test: closeout kept actuals separate and did not overwrite the original plan — the two-truths foundation is sound; the broken part is **progression and binding across surfaces**.
 
-#### F10S1 — Planned-slot completion multiplicity
+### F10S1 — Planned-slot completion multiplicity
 
 **Status:** QUEUED
 
@@ -863,7 +861,7 @@ One performed set must not complete an entire multi-set planned slot. Completion
 
 **Completion record:** PR — · Commit —
 
-#### F10S2 — Substitution binding
+### F10S2 — Substitution binding
 
 **Status:** QUEUED
 
@@ -871,7 +869,7 @@ A recognized Front Squat substitution for Back Squat must satisfy the original B
 
 **Completion record:** PR — · Commit —
 
-#### F10S3 — Single completion-state source
+### F10S3 — Single completion-state source
 
 **Status:** QUEUED
 
@@ -879,7 +877,7 @@ Fix the disagreement where chat says Overhead Press is next while the TODAY rail
 
 **Completion record:** PR — · Commit —
 
-#### F10S4 — Session pin set attribution
+### F10S4 — Session pin set attribution
 
 **Status:** QUEUED
 
@@ -887,7 +885,7 @@ The pin must show sets completed for the **current planned item only**, not tota
 
 **Completion record:** PR — · Commit —
 
-#### F10S5 — Closeout commentary deduplication
+### F10S5 — Closeout commentary deduplication
 
 **Status:** QUEUED
 
@@ -895,7 +893,7 @@ The same substitution/coaching note must appear once, not once per performed set
 
 **Completion record:** PR — · Commit —
 
-#### F10S6 — Natural-language intent/parser regressions
+### F10S6 — Natural-language intent/parser regressions
 
 **Status:** QUEUED
 
@@ -909,7 +907,7 @@ Reproduce and fix, red-first:
 
 **Completion record:** PR — · Commit —
 
-#### F10S-GATE — Smoke-test rerun (exit gate for the insertion)
+### F10S-GATE — Smoke-test rerun (exit gate for the insertion)
 
 **Status:** QUEUED — blocks F10D
 

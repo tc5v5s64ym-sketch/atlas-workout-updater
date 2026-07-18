@@ -482,7 +482,9 @@ test('api smoke: Control Tower status is public, bounded, and never leaks a secr
   assert.equal(body.generated_by, 'endpoint');
   assert.ok(['healthy', 'degraded', 'unknown'].includes(body.overall_status));
   assert.match(String(body.deployed_commit), /^[0-9a-f]{12}$|^unknown$/);
-  assert.match(String(body.active_card), /^F\d+[A-Z]?$/); // resolves the real plan card
+  // Extended id grammar: F09 / F10A plus the 2026-07-18 stabilization insertion's
+  // F10S1…F10S6 / F10S-GATE (keep in sync with services/atlasStatus.js cardRe).
+  assert.match(String(body.active_card), /^F\d+(?:S-GATE|S\d+|[A-Z])?$/); // resolves the real plan card
 
   // Redaction: keys are a closed whitelist and no configured secret appears.
   for (const k of Object.keys(body)) assert.ok(ALLOWED_KEYS.includes(k), `unexpected key: ${k}`);
