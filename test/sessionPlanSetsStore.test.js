@@ -15,13 +15,13 @@ const assert = require('node:assert/strict');
 const { sessionPlanSetsColumns } = require('../config/columns');
 
 // ── fake sheets (stateful; counts calls so dry-run "never touches the sheet" is provable) ──
-const state = { tabs: ['Session_Plan_Sets'], rows: [], appends: [], updates: [], a1: [['idempotency_key']], calls: 0, updateCellsResult: null };
+const state = { tabs: ['Session_Plan_Sets'], rows: [], appends: [], updates: [], a1: [['idempotency_key']], calls: 0, updateCellsResult: null, failGetTabs: false, failGetRows: false };
 function reset({ tabs = ['Session_Plan_Sets'], rows = [], a1 = [['idempotency_key']] } = {}) {
-  state.tabs = tabs; state.rows = rows.slice(); state.appends = []; state.updates = []; state.a1 = a1; state.calls = 0; state.updateCellsResult = null;
+  state.tabs = tabs; state.rows = rows.slice(); state.appends = []; state.updates = []; state.a1 = a1; state.calls = 0; state.updateCellsResult = null; state.failGetTabs = false; state.failGetRows = false;
 }
 const fakeSheets = {
-  getSpreadsheetTabs: async () => { state.calls += 1; return state.tabs.slice(); },
-  getSheetRows: async (tab) => { state.calls += 1; if (!state.tabs.includes(tab)) throw new Error('tab missing'); return state.rows.slice(); },
+  getSpreadsheetTabs: async () => { state.calls += 1; if (state.failGetTabs) throw new Error('metadata outage'); return state.tabs.slice(); },
+  getSheetRows: async (tab) => { state.calls += 1; if (state.failGetRows) throw new Error('read outage'); if (!state.tabs.includes(tab)) throw new Error('tab missing'); return state.rows.slice(); },
   // Mirror the REAL sheets.appendRows return shape: the raw Google API response
   // object, whose authoritative write-proof is data.updates.{updatedRange,updatedRows}.
   appendRows: async (tab, rows) => {
@@ -299,4 +299,37 @@ test('F10D seal: mixed already-sealed + blank rows stamps only the blanks', asyn
   assert.equal(r.sealed_ok, true);
   const upd = state.updates || [];
   assert.deepEqual(upd[0].cells.map(c => c.row).sort((a, b) => a - b), [3, 4], 'rows 2 and 3 of the tab data (sheet rows 3,4)');
+});
+
+// ── Codex P1 (PR #1068): an UNREADABLE ledger is never a verified (empty) seal ──
+// A confirmed-absent tab is a legacy no-op; a READ FAILURE (metadata probe or row
+// read) is a ledger failure and must fail closed — closeout_fully_verified hangs
+// off sealed_ok, so a transient Sheets outage must never claim verification.
+
+test('F10D seal: a metadata-probe failure fails CLOSED (ledger_read_failed), never a verified no_ledger', async () => {
+  reset({ rows: ledgerRowsFor('S1') });
+  state.failGetTabs = true;
+  const store = loadStore({ writeEnabled: true });
+  const r = await store.sealCloseout(SESSION, 'w-close-1');
+  assert.equal(r.sealed_ok, false);
+  assert.equal(r.reason, 'ledger_read_failed');
+  assert.equal(r.no_ledger, undefined, 'an outage is NOT "no ledger"');
+  assert.equal((state.updates || []).length, 0);
+});
+
+test('F10D seal: a row-read failure (tab present) fails CLOSED, never a verified no_ledger', async () => {
+  reset({ rows: ledgerRowsFor('S1') });
+  state.failGetRows = true;
+  const store = loadStore({ writeEnabled: true });
+  const r = await store.sealCloseout(SESSION, 'w-close-1');
+  assert.equal(r.sealed_ok, false);
+  assert.equal(r.reason, 'ledger_read_failed');
+  assert.equal((state.updates || []).length, 0);
+});
+
+test('F10D readLedgerRows: a metadata-probe failure returns null (read-failed), not [] (no rows)', async () => {
+  reset({ rows: ledgerRowsFor('S1') });
+  state.failGetTabs = true;
+  const store = loadStore({ writeEnabled: false });
+  assert.equal(await store.readLedgerRows('S1'), null);
 });

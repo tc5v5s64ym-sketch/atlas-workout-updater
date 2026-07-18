@@ -36,6 +36,7 @@ const state = {
   updates: [],           // every updateColumnCells call
   updateCellsResult: null, // force a seal-proof mismatch when set
   failEffortAppend: false,
+  failTabsProbe: false,    // metadata outage — the seal must fail closed
   logCompositeKeys: [],
 };
 
@@ -75,9 +76,12 @@ const fakeSheets = {
     if (tab === 'Effort') return [...effortColumns];
     return [];
   },
-  getSpreadsheetTabs: async () => [
-    'Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Constraints', 'Deload_State', 'Session_Plans', 'Session_Plan_Sets'
-  ],
+  getSpreadsheetTabs: async () => {
+    if (state.failTabsProbe) throw new Error('metadata outage');
+    return [
+      'Metadata', 'Log_Cleaned', 'Exercise_Catalog', 'Effort', 'Constraints', 'Deload_State', 'Session_Plans', 'Session_Plan_Sets'
+    ];
+  },
   ensureSheetTab: async () => ({ existed: true }),
   getSafeSpreadsheetConfig: () => ({ sheetId: 'stub-sheet', configured: true }),
   isTransientAppendError: () => false,
@@ -115,6 +119,7 @@ function reset() {
   state.updates = [];
   state.updateCellsResult = null;
   state.failEffortAppend = false;
+  state.failTabsProbe = false;
   state.logCompositeKeys = [];
   seedDipsLedger();
 }
@@ -291,4 +296,44 @@ test('malformed ledger chain: the summary flags it and the live seal fails close
   assert.ok(live.body.data.ledger_seal.diagnostics, 'diagnostics identify the offending chain');
   assert.equal(live.body.data.closeout_fully_verified, false);
   assert.equal(state.updates.length, 0, 'nothing stamped');
+});
+
+// ── Codex P1 pair (PR #1068): verification never lies about the ledger ───────────
+
+test('P1-A: a ledger READ OUTAGE during the approved closeout fails closed — never a verified closeout', async () => {
+  reset();
+  state.failTabsProbe = true;
+  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-p1a' }));
+  assert.equal(response.status, 200);
+  const d = body.data;
+  assert.equal(d.sheet_write, 'success', 'the committed Log append is still reported truthfully');
+  assert.equal(d.ledger_seal.sealed_ok, false);
+  assert.equal(d.ledger_seal.reason, 'ledger_read_failed');
+  assert.equal(d.ledger_seal.no_ledger, undefined, 'an outage is NOT "no ledger"');
+  assert.equal(d.closeout_fully_verified, false);
+  assert.equal(state.updates.length, 0, 'nothing stamped blind');
+});
+
+test('P1-B: a PLANNED closeout with zero ledger rows is NOT fully verified (a lost checkpoint never masquerades)', async () => {
+  reset();
+  state.planSetRows = []; // the tab exists, but this session checkpointed nothing
+  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-p1b' }));
+  assert.equal(response.status, 200);
+  const d = body.data;
+  assert.equal(d.sheet_write, 'success');
+  assert.equal(d.ledger_seal.no_ledger, true);
+  assert.equal(d.ledger_seal.sealed_ok, true, 'the empty seal itself is honest');
+  assert.equal(d.closeout_fully_verified, false, 'planned items + no ledger rows = NOT verified');
+});
+
+test('P1-B guard: a FREESTYLE closeout (no planned items) with no ledger rows stays fully verified', async () => {
+  reset();
+  state.planSetRows = [];
+  const { response, body } = await post('/api/log-workout', {
+    session_id: SESSION_ID, date: '2026-07-18', write_id: 'w-co-p1b2',
+    log_rows: DIP_ACTUALS, closeout_context: { items: [] }
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.ledger_seal.no_ledger, true);
+  assert.equal(body.data.closeout_fully_verified, true, 'nothing was planned, nothing is missing');
 });

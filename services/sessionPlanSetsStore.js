@@ -204,10 +204,26 @@ const SEAL_COL_LETTER = _colLetter(SEAL_IDX + 1);
 // when the tab is missing or the session has none (a legacy / pre-enablement
 // session), and null on a READ FAILURE — the caller must surface the difference
 // honestly (an unreadable ledger is never presented as "no stored plan").
+// Probe the tab list, distinguishing CONFIRMED-ABSENT from UNREADABLE (Codex P1,
+// PR #1068): a metadata outage must never be collapsed into "the tab doesn't
+// exist" — the seal fails closed on it, and the summary flags it.
+//   → { present: boolean }  when the metadata call succeeded
+//   → null                  when the metadata call itself failed
+async function _probeTab() {
+  try {
+    const tabs = await sheets.getSpreadsheetTabs();
+    return { present: Array.isArray(tabs) && tabs.includes(SESSION_PLAN_SETS_TAB) };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function readLedgerRows(sessionId) {
   const sid = String(sessionId == null ? '' : sessionId).trim();
   if (!sid) return [];
-  if (!(await _tabExists())) return [];
+  const probe = await _probeTab();
+  if (probe === null) return null;      // unreadable — the caller must flag it
+  if (!probe.present) return [];        // confirmed absent — a legacy/no-ledger session
   let rows;
   try {
     rows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
@@ -230,16 +246,31 @@ async function sealCloseout(session, closeoutWriteId, opts = {}) {
   const dryProof = { sheet_written: false, no_write_confirmed: true, dry_run: true, reason: dryReason };
 
   // Read the ledger (read-only — used by both the dry-run preview counts and the
-  // live stamp). A missing/unreadable tab means this session simply has no durable
-  // ledger yet (legacy / pre-enablement) — an empty, VERIFIED seal, not an error.
-  let allRows = null;
-  if (await _tabExists()) {
-    try { allRows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB); } catch (_) { allRows = null; }
+  // live stamp). A CONFIRMED-absent tab means this session simply has no durable
+  // ledger (legacy / pre-enablement) — an empty, verified seal. An UNREADABLE
+  // ledger (metadata or row read failed) is a ledger failure and FAILS CLOSED
+  // (Codex P1, PR #1068): a transient outage must never claim a verified closeout
+  // while real rows may sit unstamped.
+  const probe = await _probeTab();
+  if (probe === null) {
+    const failed = { sealed: 0, already_sealed: 0, sealed_ok: false, reason: 'ledger_read_failed' };
+    return dryRun
+      ? { ...dryProof, would_seal: null, read_failed: true, ...failed }
+      : { sheet_written: false, no_write_confirmed: true, ...failed };
   }
-  if (allRows == null) {
+  if (!probe.present) {
     return dryRun
       ? { ...dryProof, would_seal: 0, already_sealed: 0, no_ledger: true }
       : { sheet_written: false, no_write_confirmed: true, sealed: 0, already_sealed: 0, sealed_ok: true, no_ledger: true, reason: 'tab_missing' };
+  }
+  let allRows;
+  try {
+    allRows = await sheets.getSheetRows(SESSION_PLAN_SETS_TAB);
+  } catch (_) {
+    const failed = { sealed: 0, already_sealed: 0, sealed_ok: false, reason: 'ledger_read_failed' };
+    return dryRun
+      ? { ...dryProof, would_seal: null, read_failed: true, ...failed }
+      : { sheet_written: false, no_write_confirmed: true, ...failed };
   }
 
   const mine = [];

@@ -2713,6 +2713,21 @@ async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, rul
   return out;
 }
 
+// F10D — the one approval's verification verdict (Codex P1, PR #1068). The seal
+// must be OK, and a PLANNED closeout (client-declared items) that found NO ledger
+// rows is NOT verified — once the write flag is on, a lost acceptance checkpoint
+// or missing tab must never masquerade as a fully verified closeout. A freestyle
+// session (no declared items) with no ledger is verified-empty, and a dry-run
+// seal (owner gate closed) leaves nothing pending to verify.
+function closeoutVerification(ledgerSeal, closeoutContext) {
+  if (!ledgerSeal) return undefined;
+  if (ledgerSeal.dry_run === true) return true;
+  const ctx = closeoutContext && typeof closeoutContext === 'object' ? closeoutContext : {};
+  const plannedItems = boundCloseoutContextItems(ctx.items).length > 0;
+  if (ledgerSeal.no_ledger === true && plannedItems) return false;
+  return ledgerSeal.sealed_ok === true;
+}
+
 app.post('/api/log-workout', async (req, res) => {
 
   const payload = req.body;
@@ -3004,7 +3019,7 @@ app.post('/api/log-workout', async (req, res) => {
       try {
         const seal = await sealCloseout({ session_id }, normalizeWriteId(writeId), {});
         duplicateBody.ledger_seal = seal;
-        duplicateBody.closeout_fully_verified = seal.sealed_ok === true || seal.dry_run === true;
+        duplicateBody.closeout_fully_verified = closeoutVerification(seal, payload.closeout_context);
       } catch (error) {
         duplicateBody.ledger_seal = { sealed_ok: false, reason: 'seal_error', error: String((error && error.message) || error) };
         duplicateBody.closeout_fully_verified = false;
@@ -3143,7 +3158,7 @@ app.post('/api/log-workout', async (req, res) => {
     };
     if (ledgerSeal) {
       responseBody.ledger_seal = ledgerSeal;
-      responseBody.closeout_fully_verified = ledgerSeal.sealed_ok === true || ledgerSeal.dry_run === true;
+      responseBody.closeout_fully_verified = closeoutVerification(ledgerSeal, payload.closeout_context);
     }
     if (skippedDuplicates.length > 0) {
       responseBody.skipped_duplicates = skippedDuplicates.length;
