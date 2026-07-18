@@ -6916,7 +6916,7 @@ test('session pin: wired to every session-state moment (log, plan render, reset)
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   assert.match(appSource, /document\.addEventListener\('atlas:session-reset', renderSessionPin\)/,
     'the reset signal re-derives (and hides) the pin');
-  const emitFn = appSource.slice(appSource.indexOf('function emitSetLogged('), appSource.indexOf('function emitSetLogged(') + 6500);
+  const emitFn = appSource.slice(appSource.indexOf('function emitSetLogged('), appSource.indexOf('function emitSetLogged(') + 7200);
   assert.match(emitFn, /renderSessionPin\(\)/, 'every logged set refreshes the pin');
   const bannerFn = appSource.slice(appSource.indexOf('function renderActiveSessionBanner('), appSource.indexOf('function renderActiveSessionBanner(') + 4000);
   assert.match(bannerFn, /renderSessionPin\(\)/, 'plan engage/mutate/restore refresh the pin');

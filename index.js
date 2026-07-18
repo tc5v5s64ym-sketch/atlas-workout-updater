@@ -317,7 +317,7 @@ app.use(registerCoachOpsRoutes({ getSheetRows }));
 // feature-flagged (ATLAS_SESSION_PLANS_WRITE, default OFF) sidecar endpoints. Global
 // /api auth + rate limiting run before this router; it writes only the Session_Plans
 // tab (never Log_Cleaned/Effort). No client calls this yet (PR-F wires the client).
-app.use(registerSessionPlanRoutes());
+app.use(registerSessionPlanRoutes({ getSheetRows, logSheetName, effortSheetName }));
 
 const { routeDefinitions } = require('./config/routes');
 // eslint-disable-next-line no-unused-vars -- exerciseCatalogColumns unused in this file; imported for catalog-audit route (Phase 0 PR-06)

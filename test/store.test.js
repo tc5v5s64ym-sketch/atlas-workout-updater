@@ -139,21 +139,46 @@ test('start → substitution pending → applied clears the pending swap', () =>
   assert.equal(store.getActivePlannedSession().exercises[0].name, 'Hack Squat');
 });
 
-test('persist writes a v3 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B) + sessionId', () => {
+test('persist writes a v4 snapshot carrying pendingSubstitution (SESS-2), sessionRevisions (F10B), sessionImplicitRecs (F10C) + sessionId', () => {
   store.setActivePlannedSession({ label: 'p', exercises: [{ name: 'Leg Press' }], index: 0 });
   store.getSessionLog().push({ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 });
   store.setSessionCompleted(['Bench Press']);
   store.setPendingSubstitution({ prescribed: 'Leg Press' });
   store.setSessionRevisions([{ plan_item_id: 'pi_1', set_index: 2, plan_version: 2, target_weight: 60, target_reps: 8, target_rir: 2, recommendation_source: 'live_revision' }]);
+  store.setSessionImplicitRecs([{ plan_item_id: 'pi_impl_S1_HCURL', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1, target_set_count: 1 }]);
   store.persistSessionSnapshot('SESSION-42');
   const snap = JSON.parse(globalThis.localStorage.getItem('atlas_session_snapshot_v1'));
-  assert.equal(snap.v, 3);
+  assert.equal(snap.v, 4);
   assert.equal(typeof snap.ts, 'number');
   assert.equal(snap.sessionId, 'SESSION-42');
   assert.deepEqual(snap.pendingSubstitution, { prescribed: 'Leg Press' });
   assert.deepEqual(snap.sessionCompleted, ['Bench Press']);
   assert.equal(snap.sessionRevisions.length, 1);
   assert.equal(snap.sessionRevisions[0].plan_version, 2);
+  assert.equal(snap.sessionImplicitRecs.length, 1);
+  assert.equal(snap.sessionImplicitRecs[0].planned_lift_code, 'HCURL');
+});
+
+test('F10C: implicit recommendations round-trip through the snapshot (reconstructed after reload)', () => {
+  store.setActivePlannedSession({ accepted: true, session_id: 'S1', plan_version: 'pv_x', label: 'p', exercises: [{ name: 'Bench Press', plan_item_id: 'pi_1' }], index: 0 });
+  store.getSessionLog().push({ exercise: 'Bench Press', weight: 185, reps: 8, rir: 2 });
+  store.setSessionImplicitRecs([{ plan_item_id: 'pi_impl_S1_HCURL', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1, target_set_count: 1 }]);
+  store.persistSessionSnapshot('S1');
+  store.resetSessionStore();
+  assert.deepEqual(store.getSessionImplicitRecs(), [], 'reset clears implicit recs');
+  assert.equal(store.hydrateSessionSnapshot().resumed, true);
+  assert.equal(store.getSessionImplicitRecs().length, 1, 'the implicit rec survives a reload');
+  assert.equal(store.getSessionImplicitRecs()[0].target_reps, 12);
+});
+
+test('v3 snapshot back-compat: sessionImplicitRecs restores as [] (older snapshot has no such field)', () => {
+  globalThis.localStorage.setItem('atlas_session_snapshot_v1', JSON.stringify({
+    v: 3, ts: Date.now(),
+    sessionLog: [{ exercise: 'Squat', weight: 315, reps: 5, rir: 1 }],
+    sessionCompleted: ['Squat'], activePlannedSession: null,
+  }));
+  assert.equal(store.hydrateSessionSnapshot().resumed, true);
+  assert.deepEqual(store.getSessionImplicitRecs(), []);
 });
 
 test('F10B: mid-session revisions round-trip through the snapshot (reconstructed after reload)', () => {

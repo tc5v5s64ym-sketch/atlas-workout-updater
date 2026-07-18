@@ -115,9 +115,17 @@ async function captureRevision(session, revision) {
   return _capture(() => store.checkpointRevision(session, revision));
 }
 
+// Checkpoint the IMPLICIT recommendation(s) for unannounced exercises (F10C) at the
+// moment the athlete logs an unplanned exercise. A no_reliable_target derivation yields
+// no row (nothing durable) — a dry-run noop, never a fabricated recommendation.
+async function captureImplicit(session, items) {
+  return _capture(() => store.checkpointImplicit(session, items));
+}
+
 module.exports = {
   SESSION_PLAN_SETS_TAB,
   validateHeader,
   captureAcceptedPlan,
   captureRevision,
+  captureImplicit,
 };

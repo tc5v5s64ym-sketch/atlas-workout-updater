@@ -30,6 +30,7 @@ import {
   getSessionCompleted, setSessionCompleted,
   getSessionSavedLog, setSessionSavedLog,
   getSessionRevisions, setSessionRevisions,
+  getSessionImplicitRecs, setSessionImplicitRecs,
   getCoachDiscussionSinceLog, setCoachDiscussionSinceLog,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
@@ -53,7 +54,7 @@ import { mostRecentCompletablePlanItem } from './planCompletion.js';
 // plan_item_id + slot position; name/liftCode used ONLY as logged-evidence to
 // attribute a log to one slot (exact-outranks-substring + ambiguity refusal). Every
 // remaining/completion surface routes through it so they can never disagree.
-import { remainingSlotNames, variantSatisfies } from './planSlotStatuses.js';
+import { remainingSlotNames, variantSatisfies, planSlotStatuses } from './planSlotStatuses.js';
 // F10B — the client session ledger: build future-set-only revisions from an explicit
 // mid-session recommendation (a substitution), append-only, and count performed sets
 // so a completed set is never revised. Revisions live in the store (getSessionRevisions)
@@ -1736,6 +1737,67 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
   }
 }
 
+// F10C — a DETERMINISTIC plan_item_id for the implicit recommendation of an unannounced
+// lift: stable per (session, lift) so a re-log of the same off-plan exercise is
+// idempotent (identical server idempotency_key → one ledger row at F10D, one client rec),
+// and distinct from the crypto-UUID ids minted for accepted slots.
+function implicitPlanItemId(sessionId, liftCode) {
+  const s = String(sessionId || '').replace(/[^a-zA-Z0-9]/g, '');
+  const c = String(liftCode || '').replace(/[^a-zA-Z0-9]/g, '');
+  return `pi_impl_${s}_${c}`;
+}
+
+// F10C — is a just-logged exercise OFF the accepted plan (unannounced)? Reuses the F10
+// slot selector in ISOLATION (one completion vs the plan's slots, no explicit outcomes)
+// so this can never diverge from how a log is attributed to a slot. Off-plan ⟺ the
+// name/liftCode attributes to NO slot. No plan / no slots → not off-plan (nothing to
+// recommend against — implicit recs are scoped to accepted-plan sessions).
+function isOffPlanLoggedExercise(plan, name, liftCode) {
+  if (!plan || !Array.isArray(plan.exercises) || !plan.exercises.length) return false;
+  const statuses = planSlotStatuses({ exercises: plan.exercises }, [{ name, liftCode }]);
+  return !statuses.some(s => s.status === 'completed');
+}
+
+// F10C — append an implicit recommendation, deduped by its (deterministic) plan_item_id
+// so a double-fire or a reload never duplicates it. Append-only; returns a NEW array.
+function appendImplicitRec(recs, rec) {
+  const base = Array.isArray(recs) ? recs.slice() : [];
+  if (!rec || !rec.plan_item_id || base.some(r => r.plan_item_id === rec.plan_item_id)) return base;
+  base.push(rec);
+  return base;
+}
+
+// F10C — form and checkpoint the IMPLICIT recommendation for an exercise the athlete
+// logged WITHOUT asking (unannounced/off-plan). The server DERIVES it leakage-safe from
+// prior sessions (the current session is excluded there), so this only triggers the
+// derivation and stores a RELIABLE result for reload; a no_reliable_target result stores
+// nothing (no row, §4A rule 5). No-op without an accepted plan (which carries the pv_
+// identity), a canonical lift code, or when this lift already has an implicit rec this
+// session. Dry-run, non-blocking — never unwinds the workout.
+function emitImplicitRecommendation(exerciseName, liftCode) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true) return; // scoped to accepted-plan sessions (pv_ identity)
+  const code = String(liftCode || '').trim();
+  if (!code) return; // an implicit recommendation needs a canonical lift code
+  const planItemId = implicitPlanItemId(plan.session_id, code);
+  if (getSessionImplicitRecs().some(r => r.plan_item_id === planItemId)) return; // one per lift/session
+  Promise.resolve(api('/api/session-plan-sets/implicit', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: plan.session_id, session_date: plan.session_date, plan_version: plan.plan_version,
+      item: { plan_item_id: planItemId, planned_lift_code: code, exercise_name: exerciseName || '' },
+    }),
+  })).then((res) => {
+    const d = res && res.data && res.data.derivation;
+    if (!d || d.confidence !== 'reliable') return; // no_reliable_target → store nothing (no row)
+    setSessionImplicitRecs(appendImplicitRec(getSessionImplicitRecs(), {
+      plan_item_id: planItemId, planned_lift_code: code, exercise_name: exerciseName || '',
+      target_weight: d.target_weight, target_reps: d.target_reps, target_rir: d.target_rir, target_set_count: 1,
+    }));
+    if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot(); // durable across reload
+  }).catch(() => { /* non-blocking sidecar — never unwinds the workout */ });
+}
+
 // PR-2 (Workout Sheet drag-to-reorder): move a PENDING plan slot to a new position in
 // the LIVE plan. The visible order lives in ONE place — activePlannedSession.exercises —
 // which getCanonicalSession() / plannedExerciseOrder() / remainingPlannedExercises() all
@@ -1857,7 +1919,7 @@ async function acceptDisplayedPlan(rec) {
       // abandoned/reloaded prior session (mirrors startPlannedSession's
       // setPendingSubstitution(null), Step 373b) — cleared as the accepted plan is
       // stored, before it is persisted.
-      setActivePlan: (plan) => { setPendingSubstitution(null); setSessionRevisions([]); setActivePlannedSession(plan); },
+      setActivePlan: (plan) => { setPendingSubstitution(null); setSessionRevisions([]); setSessionImplicitRecs([]); setActivePlannedSession(plan); },
       persist: () => {
         document.getElementById('coach-empty')?.setAttribute('hidden', '');
         if (sessionIdEl && !existingId) sessionIdEl.value = sessionId; // reuse this id on the eventual save
@@ -2596,7 +2658,7 @@ function applyProposedPlanEdit(edit) {
     });
     setPendingSubstitution(null);
     setSessionCompleted([]);
-    setSessionRevisions([]); // a replaced plan starts a fresh recommendation ledger
+    setSessionRevisions([]); setSessionImplicitRecs([]); // a replaced plan starts a fresh recommendation ledger
     renderActiveSessionBanner();
     return { applied: true, exercises };
   }
@@ -4421,7 +4483,7 @@ function clearSessionSnapshot() {
 function discardRestoredSession() {
   setSessionLog([]);
   setSessionCompleted([]);
-  setSessionRevisions([]);
+  setSessionRevisions([]); setSessionImplicitRecs([]);
   setSessionSavedLog([]);     // discarding the restored workout also clears its saved recap
   endPlannedSession();
   closeoutScreenshotFile = null;
@@ -5041,6 +5103,21 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
     const completedName = resolveCompletedIdentity(o.exercise, enrichMap.get(o.exercise));
     if (!getSessionCompleted().includes(completedName)) getSessionCompleted().push(completedName);
   }
+  // F10C — an exercise logged that is NOT on the accepted plan (and not the declared
+  // substitution applied above, which now IS a slot) is UNANNOUNCED: form an independent
+  // implicit recommendation for it (leakage-safe, derived server-side, dry-run). Driven
+  // ONLY by a logged off-plan exercise — never for a planned slot or a substitute.
+  {
+    const plan = getActivePlannedSession();
+    if (plan && plan.accepted === true) {
+      for (const g of byExercise) {
+        const enr = enrichMap.get(g.exercise) || {};
+        const canonical = enr.canonical_exercise || g.exercise;
+        const code = enr.lift_code || '';
+        if (code && isOffPlanLoggedExercise(plan, canonical, code)) emitImplicitRecommendation(canonical, code);
+      }
+    }
+  }
   if (byExercise.length) {
     // ADD-5: a set was just logged — the just-logged lift is the fresh focus again,
     // so an immediate demonstrative correction re-identifies IT (fast path restored).
@@ -5402,7 +5479,7 @@ function startOverWorkout() {
   lastParsedWorkoutText = '';
   setSessionLog([]);
   setSessionCompleted([]);
-  setSessionRevisions([]);
+  setSessionRevisions([]); setSessionImplicitRecs([]);
   setSessionSavedLog([]);     // deliberate fresh start — forget this workout's saved recap
   clearSessionSnapshot();   // a deliberate reset must not resume the old session
   document.dispatchEvent(new CustomEvent('atlas:session-reset'));
@@ -6902,7 +6979,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // null) keeps Step 385's deload teardown firing before the plan is cleared.
     setSessionLog([]);
     setSessionCompleted([]);
-    setSessionRevisions([]);
+    setSessionRevisions([]); setSessionImplicitRecs([]);
     endPlannedSession();
     closeoutScreenshotFile = null;
     closeoutScreenshotEffort = null;

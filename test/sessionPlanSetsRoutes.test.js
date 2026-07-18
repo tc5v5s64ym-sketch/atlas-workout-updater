@@ -17,17 +17,24 @@ const fakeSetsCapture = {
   validateHeader: async () => ({ ok: true }),
   captureAcceptedPlan: async (session, items) => { captureCalls.push({ fn: 'accept', session, items }); return dryRunEnvelope; },
   captureRevision: async (session, revision) => { captureCalls.push({ fn: 'revision', session, revision }); return dryRunEnvelope; },
+  captureImplicit: async (session, items) => { captureCalls.push({ fn: 'implicit', session, items }); return dryRunEnvelope; },
 };
 const setsCapturePath = require.resolve('../services/sessionPlanSetsCapture');
 require.cache[setsCapturePath] = { id: setsCapturePath, filename: setsCapturePath, loaded: true, exports: fakeSetsCapture };
 
 const registerSessionPlanRoutes = require('../routes/sessionPlans');
 
+// F10C: the /implicit route derives server-side from injected history (getSheetRows).
+// The derivation (deriveImplicitRecommendation) runs for REAL; only history + capture
+// are stubbed. `implicitLogRows` is the Log_Cleaned fixture each test sets.
+let implicitLogRows = [];
+const fakeGetSheetRows = async (tab) => (tab === 'Log_Cleaned' ? implicitLogRows : []);
+
 let baseUrl, server;
 test.before(async () => {
   const app = express();
   app.use(express.json());
-  app.use(registerSessionPlanRoutes());
+  app.use(registerSessionPlanRoutes({ getSheetRows: fakeGetSheetRows, logSheetName: 'Log_Cleaned', effortSheetName: 'Effort' }));
   await new Promise(resolve => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); }); });
 });
 test.after(() => { if (server) server.close(); });
@@ -90,4 +97,40 @@ test('revision: supersedes_key is OPTIONAL — the server derives it from the pr
   const { status } = await post('/api/session-plan-sets/revision', { ...BASE, revision: noKey });
   assert.equal(status, 200, 'a revision without supersedes_key is accepted (derived server-side)');
   assert.equal(captureCalls[0].fn, 'revision');
+});
+
+// ── implicit (F10C) ─────────────────────────────────────────────────────────────
+
+// A prior-session working set for lift CROW (object row — normalizeLogRow reads it).
+const priorRow = (over = {}) => ({ date_clean: '2026-07-01', session_id: 'S_prior', exercise: 'Cable Row', canonical_exercise: 'Cable Row', muscle_group: 'back', lift_code: 'CROW', set_number: 1, weight: 100, reps: 8, rir: 2, notes: '', volume_calc: 800, ...over });
+const IMPL_ITEM = { plan_item_id: PI, planned_lift_code: 'CROW', exercise_name: 'Cable Row' };
+
+test('implicit: a reliable derivation from PRIOR history checkpoints one implicit item', async () => {
+  implicitLogRows = [priorRow(), priorRow({ set_number: 2 })];
+  const { status, body } = await post('/api/session-plan-sets/implicit', { ...BASE, item: IMPL_ITEM });
+  assert.equal(status, 200);
+  assert.equal(body.data.derivation.confidence, 'reliable');
+  assert.equal(body.data.derivation.target_reps, 8, 'exact prior reps');
+  assert.equal(body.data.derivation.target_rir, 2, 'exact prior rir');
+  assert.equal(body.data.derivation.target_set_count, 1);
+  assert.equal(captureCalls[0].fn, 'implicit');
+  assert.equal(captureCalls[0].items[0].plan_item_id, PI);
+  assert.equal(captureCalls[0].items[0].confidence, 'reliable');
+});
+
+test('implicit: the CURRENT session is excluded — only-current-session history → no_reliable_target', async () => {
+  implicitLogRows = [priorRow({ session_id: 'S1' })]; // same session as BASE → excluded (leakage guarantee)
+  const { status, body } = await post('/api/session-plan-sets/implicit', { ...BASE, item: IMPL_ITEM });
+  assert.equal(status, 200);
+  assert.equal(body.data.derivation.confidence, 'no_reliable_target');
+  assert.equal(captureCalls[0].items[0].confidence, 'no_reliable_target', 'forwarded unreliable → the builder skips it (no row)');
+});
+
+test('implicit: bad session / missing item / bad ID shapes are 400', async () => {
+  implicitLogRows = [priorRow()];
+  assert.equal((await post('/api/session-plan-sets/implicit', { ...BASE, plan_version: 'nope', item: IMPL_ITEM })).status, 400);
+  assert.equal((await post('/api/session-plan-sets/implicit', { ...BASE })).status, 400, 'no item');
+  assert.equal((await post('/api/session-plan-sets/implicit', { ...BASE, item: { ...IMPL_ITEM, plan_item_id: 'x' } })).status, 400);
+  assert.equal((await post('/api/session-plan-sets/implicit', { ...BASE, item: { ...IMPL_ITEM, planned_lift_code: 'has space' } })).status, 400);
+  assert.equal(captureCalls.length, 0, 'no forward on a rejected request');
 });

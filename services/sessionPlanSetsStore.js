@@ -24,7 +24,7 @@
 
 const sheets = require('../sheets');
 const { sessionPlanSetsColumns } = require('../config/columns');
-const { buildAcceptedRows, buildRevisionRow } = require('./sessionPlanLedger');
+const { buildAcceptedRows, buildImplicitRows, buildRevisionRow } = require('./sessionPlanLedger');
 
 const SESSION_PLAN_SETS_TAB = process.env.SESSION_PLAN_SETS_SHEET_NAME || 'Session_Plan_Sets';
 // OWNER-RESERVED live-write gate (F10D). Default OFF → every checkpoint is a dry-run.
@@ -162,9 +162,18 @@ async function checkpointRevision(session, revision, opts = {}) {
   return _append([buildRevisionRow(session, revision, { ...opts, recordedAt })], opts);
 }
 
+// Checkpoint the IMPLICIT recommendation(s) for unannounced exercises (F10C). A
+// no_reliable_target item builds NO row (buildImplicitRows, §4A rule 5), so an
+// all-unreliable batch is an empty (nothing-to-write) dry-run. Non-blocking; dry-run.
+async function checkpointImplicit(session, items, opts = {}) {
+  const recordedAt = opts.recordedAt || _nowIso();
+  return _append(buildImplicitRows(session, items, { ...opts, recordedAt }), opts);
+}
+
 module.exports = {
   SESSION_PLAN_SETS_TAB,
   LIVE_WRITE_ENABLED,
   checkpointAcceptedPlan,
   checkpointRevision,
+  checkpointImplicit,
 };
