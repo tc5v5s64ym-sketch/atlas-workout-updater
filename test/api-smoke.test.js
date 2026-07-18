@@ -7396,3 +7396,129 @@ test('api smoke (F09I): a structured constraint is dated the owner LOCAL day, no
     if (prevTz === undefined) delete process.env.ATLAS_TIMEZONE; else process.env.ATLAS_TIMEZONE = prevTz;
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────
+// F10D — closeout confirmation + ledger seal in the /api/log-workout envelope.
+// This suite runs the PRODUCTION-TODAY posture: no Session_Plan_Sets tab exists and
+// SESSION_PLAN_SETS_WRITE_ENABLED is off — so the summary reports no stored plan,
+// the seal is a dry-run/no-ledger no-op, and NOTHING can write (allowAppend throws
+// on any unexpected append). The with-ledger + live-seal cases live in
+// test/closeoutSealIntegration.test.js with its own app boot.
+// ─────────────────────────────────────────────────────────────────────────────────
+
+test('F10D: a per-message dry-run WITHOUT closeout_context is untouched — no summary, no seal fields', async () => {
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'F10D-PM-1', date: '2026-07-18', test_mode: true,
+      log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }]
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.equal('closeout_summary' in body.data, false, 'per-message previews carry no closeout summary');
+  assert.equal('ledger_seal_preview' in body.data, false);
+});
+
+test('F10D: the closeout dry-run returns the single-confirmation summary + seal preview with the W1–W3 proof intact', async () => {
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'F10D-CO-1', date: '2026-07-18', test_mode: true,
+      log_rows: [
+        { exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 },
+        { exercise: 'Bench Press', set_number: 2, weight: 135, reps: 8, rir: 2 }
+      ],
+      effort_row: {
+        date: '2026-07-18', session_id: 'F10D-CO-1', duration: '00:40:00',
+        active_calories: 400, total_calories: 500, average_hr: 140, peak_hr: 165, location: 'Work'
+      },
+      closeout_context: { items: [] }
+    })
+  });
+  assert.equal(response.status, 200);
+  const d = body.data;
+  // The no-write proof is byte-identical to every other dry-run.
+  assert.equal(d.test_mode, true);
+  assert.equal(d.sheet_write, 'skipped');
+  assert.equal(d.sheet_written, false);
+  assert.equal(d.no_write_confirmed, true);
+  // The confirmation payload.
+  const s = d.closeout_summary;
+  assert.ok(s, 'closeout_summary present when closeout_context is sent');
+  assert.equal(s.session_id, 'F10D-CO-1');
+  assert.equal(s.has_stored_plan, false, 'no Session_Plan_Sets tab in this posture');
+  assert.equal(s.unplanned.length, 1, 'the actuals are honestly unplanned (legacy posture)');
+  assert.equal(s.unplanned[0].sets.length, 2);
+  assert.equal('target_weight' in s.unplanned[0].sets[0], false, 'no target field exists on an unplanned actual');
+  // The EXACT rows the approval would write are echoed verbatim.
+  assert.deepEqual(s.rows_to_write.log, d.log_rows_preview);
+  assert.deepEqual(s.rows_to_write.effort, d.effort_row_preview);
+  // The seal preview is a no-ledger dry-run no-op with its own no-write proof.
+  const sp = d.ledger_seal_preview;
+  assert.ok(sp);
+  assert.equal(sp.sheet_written, false);
+  assert.equal(sp.no_write_confirmed, true);
+  assert.equal(sp.no_ledger, true);
+  assert.equal(s.rows_to_seal.count, 0);
+});
+
+test('F10D: a malformed closeout_context never blocks the preview — bounded to a labeled-empty summary', async () => {
+  const { response, body } = await requestJson('/api/log-workout', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: 'F10D-CO-2', date: '2026-07-18', test_mode: true,
+      log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }],
+      closeout_context: { items: 'not-an-array' }
+    })
+  });
+  assert.equal(response.status, 200);
+  assert.equal(body.data.no_write_confirmed, true);
+  assert.ok(body.data.closeout_summary, 'summary still present');
+  assert.equal(body.data.closeout_summary.items.length, 0, 'junk items are bounded away');
+});
+
+test('F10D: the approved closeout write carries ledger_seal + closeout_fully_verified (dry-run seal while the owner gate is closed)', async () => {
+  fakeSheetsState.allowAppend = true;
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'F10D-CO-3', date: '2026-07-18', write_id: 'w-f10d-co3',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }],
+        closeout_context: { items: [] }
+      })
+    });
+    assert.equal(response.status, 200);
+    const d = body.data;
+    assert.equal(d.sheet_write, 'success');
+    assert.ok(d.ledger_seal, 'the seal outcome rides the SAME approved write');
+    assert.equal(d.ledger_seal.dry_run, true, 'owner gate closed → the seal lane is a dry-run');
+    assert.equal(d.ledger_seal.reason, 'write_disabled');
+    assert.equal(d.closeout_fully_verified, true, 'nothing pending while the ledger lane is disabled');
+  } finally {
+    fakeSheetsState.allowAppend = false;
+  }
+});
+
+test('F10D: a fresh-write_id all-duplicate closeout retry re-attempts the seal (heal path) without re-appending', async () => {
+  fakeSheetsState.logCompositeKeys = ['f10d-co-4||bench press||1'];
+  try {
+    const { response, body } = await requestJson('/api/log-workout', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: 'F10D-CO-4', date: '2026-07-18', write_id: 'w-f10d-co4-retry',
+        log_rows: [{ exercise: 'Bench Press', set_number: 1, weight: 135, reps: 8, rir: 3 }],
+        closeout_context: { items: [] }
+      })
+    });
+    assert.equal(response.status, 200);
+    const d = body.data;
+    assert.equal(d.all_rows_duplicate, true, 'nothing new to append');
+    assert.equal(d.log_rows_written, 0);
+    assert.ok(d.ledger_seal, 'the retry still reports the seal outcome');
+    assert.equal(d.closeout_fully_verified, true);
+  } finally {
+    fakeSheetsState.logCompositeKeys = [];
+  }
+});

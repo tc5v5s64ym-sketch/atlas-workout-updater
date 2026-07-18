@@ -94,6 +94,10 @@ const { applyFullConsumptionGate } = require('./services/fullConsumptionGate');
 const registerReadRoutes = require('./routes/reads');
 const registerCoachOpsRoutes = require('./routes/coachOps');
 const registerSessionPlanRoutes = require('./routes/sessionPlans');
+// F10D — closeout confirmation + ledger seal (dry-run until the owner enables
+// SESSION_PLAN_SETS_WRITE_ENABLED; the store gates every write internally).
+const { sealCloseout, readLedgerRows } = require('./services/sessionPlanSetsStore');
+const { buildCloseoutSummary, boundCloseoutContextItems } = require('./services/closeoutSummary');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
@@ -2709,6 +2713,21 @@ async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, rul
   return out;
 }
 
+// F10D — the one approval's verification verdict (Codex P1, PR #1068). The seal
+// must be OK, and a PLANNED closeout (client-declared items) that found NO ledger
+// rows is NOT verified — once the write flag is on, a lost acceptance checkpoint
+// or missing tab must never masquerade as a fully verified closeout. A freestyle
+// session (no declared items) with no ledger is verified-empty, and a dry-run
+// seal (owner gate closed) leaves nothing pending to verify.
+function closeoutVerification(ledgerSeal, closeoutContext) {
+  if (!ledgerSeal) return undefined;
+  if (ledgerSeal.dry_run === true) return true;
+  const ctx = closeoutContext && typeof closeoutContext === 'object' ? closeoutContext : {};
+  const plannedItems = boundCloseoutContextItems(ctx.items).length > 0;
+  if (ledgerSeal.no_ledger === true && plannedItems) return false;
+  return ledgerSeal.sealed_ok === true;
+}
+
 app.post('/api/log-workout', async (req, res) => {
 
   const payload = req.body;
@@ -2851,6 +2870,32 @@ app.post('/api/log-workout', async (req, res) => {
       previewSkippedDuplicates = 0;
     }
 
+    // F10D — the closeout confirmation. Presence-gated on closeout_context: the
+    // per-message logging previews never send it and are byte-identical to before.
+    // The summary composes the two truths (recommendation ledger + staged actuals)
+    // and echoes the EXACT rows the approved write will append; the seal preview
+    // reports what the approval would stamp. An unreadable ledger is flagged
+    // honestly — never presented as "no stored plan".
+    let closeoutSummary = null;
+    let ledgerSealPreview = null;
+    if (payload.closeout_context !== undefined) {
+      const ctx = payload.closeout_context && typeof payload.closeout_context === 'object' ? payload.closeout_context : {};
+      const ledger = await readLedgerRows(session_id);
+      try {
+        ledgerSealPreview = await sealCloseout({ session_id }, normalizeWriteId(writeId) || 'closeout-preview', { test_mode: true });
+      } catch (_) { ledgerSealPreview = null; }
+      closeoutSummary = buildCloseoutSummary({
+        session: { session_id, session_date: workoutDate },
+        ledgerRows: ledger === null ? [] : ledger,
+        items: boundCloseoutContextItems(ctx.items),
+        actualRows: enrichedRowObjects,
+        logRowsPreview: previewLogRows,
+        effortRowPreview: formattedEffortRow,
+        sealPreview: ledgerSealPreview,
+      });
+      if (ledger === null) closeoutSummary.ledger_read_failed = true;
+    }
+
     const previewBody = {
       test_mode: true,
       sheet_write: 'skipped',
@@ -2859,6 +2904,10 @@ app.post('/api/log-workout', async (req, res) => {
       effortWritten: Boolean(formattedEffortRow),
       log_rows_preview: previewLogRows
     };
+    if (closeoutSummary) {
+      previewBody.closeout_summary = closeoutSummary;
+      if (ledgerSealPreview) previewBody.ledger_seal_preview = ledgerSealPreview;
+    }
     if (previewSkippedDuplicates > 0) previewBody.skipped_duplicates = previewSkippedDuplicates;
     if (formattedEffortRow) previewBody.effort_row_preview = formattedEffortRow;
     if (warnings.length > 0) previewBody.warnings = [...new Set(warnings)];
@@ -2961,6 +3010,21 @@ app.post('/api/log-workout', async (req, res) => {
       log_rows_written: 0,
       skipped_duplicates: skippedDuplicates.length
     };
+    // F10D — a fresh-write_id closeout retry may still need to SEAL: the rows were
+    // appended by the earlier approval, but a seal failure there left the ledger
+    // unbound. The seal is idempotent (already-stamped rows skip; a different
+    // stamp fails closed), so attempting it here lets a retry HEAL an unsealed
+    // closeout without ever re-appending a row.
+    if (payload.closeout_context !== undefined) {
+      try {
+        const seal = await sealCloseout({ session_id }, normalizeWriteId(writeId), {});
+        duplicateBody.ledger_seal = seal;
+        duplicateBody.closeout_fully_verified = closeoutVerification(seal, payload.closeout_context);
+      } catch (error) {
+        duplicateBody.ledger_seal = { sealed_ok: false, reason: 'seal_error', error: String((error && error.message) || error) };
+        duplicateBody.closeout_fully_verified = false;
+      }
+    }
     if (idempotency.enabled) {
       duplicateBody.write_id = idempotency.write_id;
       duplicateBody.idempotency_status = 'completed';
@@ -3065,6 +3129,21 @@ app.post('/api/log-workout', async (req, res) => {
     }
   }
 
+  // F10D — seal the recommendation ledger under the SAME approved write_id (the
+  // shared closeout_write_id). The Log/Effort appends above are already committed,
+  // so a seal failure must NEVER fail the response, release the write_id, or claim
+  // a fully verified closeout — it is reported honestly and a retry can heal it
+  // (the seal is idempotent; the all-duplicate lane above re-attempts it).
+  // Dry-run while the owner gate is closed: the store returns the no-write proof.
+  let ledgerSeal = null;
+  if (payload.closeout_context !== undefined) {
+    try {
+      ledgerSeal = await sealCloseout({ session_id }, idempotency.write_id || normalizeWriteId(writeId), {});
+    } catch (error) {
+      ledgerSeal = { sealed_ok: false, reason: 'seal_error', error: String((error && error.message) || error) };
+    }
+  }
+
   try {
     invalidateSheetRowsCache();
 
@@ -3077,6 +3156,10 @@ app.post('/api/log-workout', async (req, res) => {
       test_mode: false,
       sheet_write: 'success'
     };
+    if (ledgerSeal) {
+      responseBody.ledger_seal = ledgerSeal;
+      responseBody.closeout_fully_verified = closeoutVerification(ledgerSeal, payload.closeout_context);
+    }
     if (skippedDuplicates.length > 0) {
       responseBody.skipped_duplicates = skippedDuplicates.length;
     }
