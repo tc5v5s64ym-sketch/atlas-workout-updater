@@ -911,7 +911,9 @@ The same substitution/coaching note must appear once, not once per performed set
 
 ### F10S6 — Natural-language intent/parser regressions
 
-**Status:** PARTIAL — (b) and (c) COMPLETE (the parser-grammar pair, one PR — shared root cause: NL grammar gaps in `services/workoutTextParser.js`); (a) intent routing remains.
+**Status:** COMPLETE — (b) and (c) via the parser-grammar pair (one PR — shared root cause: NL grammar gaps in `services/workoutTextParser.js`); (a) via the composer routing PR.
+
+**Resolution (a).** The failing layer was client intent routing, exactly as the card predicted — not the parser. The composer's deterministic planning lane (`looksLikeSessionRequest`, which routes to the ONE canonical in-thread Coach's Pick) recognized "what should I train" / "what are we doing" but not the "what should I do today" family, so the phrase fell through to generic chat, whose no-digit catch-all is the "keep logging" reply the smoke saw. Fix: one additive alternation — `what (should|do) (i|we) do today` — in the pick route. The bare "what should I do" (no "today") deliberately stays OFF the route: during an active session `sessionQuestion.js` answers it from the live prescription (next-up), and claiming it would steal that lane. Digits still rule a phrase out, so workout shorthand can never be swallowed. `services/workoutTextParser.js` untouched — the composer claims the phrase before any parse, and the protected parser contract was not required by this fix.
 
 **Resolution (b, c).** Two tiny additive grammar changes, red-first (`test/parserSmokeGrammar.test.js`): **(b)** `parseWeightRepsAtRir` — `WEIGHT x REPS [@ RIR]` (one set). The surface syntax collides with the existing sets-first claim (`3 x 8 @ 135` = 3 sets of 8 @ 135 lb), so the new reading engages only where sets-first rejects (first number > 10 → a load) and only for a plausible RIR (≤ 6); an implausible pair or a trailing `x3` compound still refuses to a clarification — never a guess, never a silent truncation. The `slp 70 x 12 @2` golden was updated to the owner-superseded truth (its two catastrophic-misparse protections retained). **(c)** a one-turn `<substitute log> instead of <original>` strips the trailing clause, parses the log normally, and carries `substitution: { for: <original> }` on the `log_sets` result — the F10S2 entry path; an unparseable remainder keeps the original full-text clarification (never a half-applied substitution). `225 5/2` byte-for-byte unchanged (golden + new guard).
 
@@ -923,7 +925,7 @@ Reproduce and fix, red-first:
 
 `services/workoutTextParser.js` is a protected contract: tiny focused grammar additions with live-path tests; the `225 5/2` semantics are untouched. (b) and (c) may share a parser root cause; (a) is intent routing and stays a separate concern unless proven otherwise.
 
-**Completion record:** PR — · Commit —
+**Completion record:** PR — (b)+(c) the parser-grammar PR (#1061, entry wiring #1062); (a) this PR · Commit — (a) `src/app/app.js` (`looksLikeSessionRequest` + the bare-phrase constraint note); red-first tests in `test/coachConversation.test.js` (smoke reproduce + lane-guard). Full suite 5741 pass / 0 fail; lint 0 errors.
 
 ### F10S-GATE — Smoke-test rerun (exit gate for the insertion)
 
