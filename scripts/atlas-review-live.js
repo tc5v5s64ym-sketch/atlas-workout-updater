@@ -158,6 +158,26 @@ function correlateSidecar(rows, idSet, dateSet) {
   return out;
 }
 
+// STRICT correlation for closeout-truth rows (the seal criterion's inputs): a row
+// that CARRIES a session_id correlates only when that id matches — the date
+// fallback applies only to id-less rows. Without this, an earlier same-day
+// session's sealed ledger rows and finalized event pollute the reviewed
+// session's verdict (Codex P2, this PR): a neighbor's seal could PASS the wrong
+// session, or a correct one could FAIL on the neighbor's mixed ids.
+function correlateSidecarStrict(rows, idSet, dateSet) {
+  const out = [];
+  for (const r of rows || []) {
+    const sid = String(r.session_id || '').trim().toLowerCase();
+    const d = String(r.session_date || r.date || r.date_clean || '').trim();
+    if (sid) {
+      if (idSet.has(sid)) out.push({ match: 'session_id', rec: r });
+    } else if (d && dateSet.has(d)) {
+      out.push({ match: 'date', rec: r });
+    }
+  }
+  return out;
+}
+
 // True when a Session_Plans row carries a set-level prescription (target weight/reps/rir).
 // Session_Plans today has no set-level target columns (finding #8 → F10A), so this stays
 // false — which correctly yields UNKNOWN, not a false PASS.
@@ -354,7 +374,7 @@ function evaluateCriteria(evidence, session, mode, sidecar) {
   }
 
   // 7. F10D — the Session_Plan_Sets seal (see evaluateLedgerSeal for the rules).
-  out.push(evaluateLedgerSeal(sidecar.plan_sets || [], ledgerReadable, sidecar.session_plans || []));
+  out.push(evaluateLedgerSeal(sidecar.plan_sets || [], ledgerReadable, sidecar.session_plans_strict || sidecar.session_plans || []));
 
   return out;
 }
@@ -396,7 +416,10 @@ function reviewCorpora(corpora, opts) {
   const sidecar = {
     session_plans: correlateSidecar(corpora.Session_Plans, idSet, dateSet),
     effort: correlateSidecar(corpora.Effort, idSet, dateSet),
-    plan_sets: correlateSidecar(corpora.Session_Plan_Sets, idSet, dateSet),
+    plan_sets: correlateSidecarStrict(corpora.Session_Plan_Sets, idSet, dateSet),
+    // The finalized-closeout scan for the seal criterion is likewise id-strict —
+    // a neighbor same-day session's finalized event must not vouch for this one.
+    session_plans_strict: correlateSidecarStrict(corpora.Session_Plans, idSet, dateSet),
     // Readability is an explicit signal, never inferred from emptiness: the CLI
     // threads rowCounts (null = tab absent/unreadable); pure-corpora callers mark
     // readability by providing the key at all (undefined/null = unreadable).
@@ -583,6 +606,7 @@ module.exports = {
   selectLatestSession,
   clusterUnlinked,
   correlateSidecar,
+  correlateSidecarStrict,
   planRowHasSetTarget,
   evaluateCriteria,
   evaluateLedgerSeal,

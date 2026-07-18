@@ -46,7 +46,7 @@ function healthyCorpora() {
       fe({ flight_session_id: S, seq: 2, captured_at: at(2), event_type: 'user_input', user_input: 'bench 225 5/2' }),
       fe({ flight_session_id: S, seq: 3, captured_at: at(3), event_type: 'card_rendered', ui_snapshot_json: JSON.stringify({ visible_cards: ['preview'] }) }),
       fe({ flight_session_id: S, seq: 4, captured_at: at(4), event_type: 'session_state_changed', session_state_json: JSON.stringify({ pending_set_count: 3 }) }),
-      fe({ flight_session_id: S, seq: 5, captured_at: at(5), event_type: 'api_response', api_endpoint: 'POST /api/log-workout', response_summary: '200 OK', latency_ms: 120 }),
+      fe({ flight_session_id: S, seq: 5, captured_at: at(5), event_type: 'api_response', api_endpoint: 'POST /api/log-workout', response_summary: '200 OK session_id=20260716-PM-01', latency_ms: 120 }),
       fe({ flight_session_id: S, seq: 6, captured_at: at(6), event_type: 'coach_message_rendered', ui_snapshot_json: JSON.stringify({ coach_message: 'Logged 3 sets of Bench Press.' }) })
     ],
     Log_Cleaned: [
@@ -243,7 +243,7 @@ test('planRowHasSetTarget is true only with a set-level prescription', () => {
 
 function ledgerRow(over = {}) {
   return Object.assign({
-    idempotency_key: 'k', session_id: 'W1', session_date: DAY, plan_version: '1',
+    idempotency_key: 'k', session_id: '20260716-PM-01', session_date: DAY, plan_version: '1',
     plan_item_id: 'pi_b', planned_lift_code: 'BEN01', set_index: '1', target_set_count: '3',
     target_weight: '225', target_reps: '5', target_rir: '2', recommendation_source: 'accepted',
     supersedes_key: '', confidence: 'reliable', closeout_write_id: 'wr_20260716_1',
@@ -260,7 +260,7 @@ function sealedLedger() {
 }
 
 function finalizedEventRow() {
-  return { session_id: 'W1', session_date: DAY, event_type: 'session_closeout', closeout_status: 'finalized' };
+  return { session_id: '20260716-PM-01', session_date: DAY, event_type: 'session_closeout', closeout_status: 'finalized' };
 }
 
 function sealedHealthyCorpora() {
@@ -361,10 +361,27 @@ test('F10D seal: malformed revision chain (v2 with no supersedes) → FAIL with 
   assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /Malformed revision chain/);
 });
 
-test('F10D seal: correlated rows spanning two workout session_ids → FAIL on identity disagreement', () => {
+test('F10D seal: a same-day NEIGHBOR session\'s ledger rows are EXCLUDED (id-strict correlation — Codex P2)', () => {
+  // The neighbor W2 shares the calendar date but not the workout session id — its
+  // sealed rows (under a DIFFERENT write id) must not pollute W1's verdict: the
+  // reviewed session still PASSes on its own 3 rows, never a mixed-id FAIL.
   const c = sealedHealthyCorpora();
-  c.Session_Plan_Sets.push(ledgerRow({ idempotency_key: 'k9', session_id: 'W2', session_date: DAY, _row: 9 }));
+  c.Session_Plan_Sets.push(ledgerRow({ idempotency_key: 'k9', session_id: '20260716-AM-01', session_date: DAY, closeout_write_id: 'wr_OTHER_2', _row: 9 }));
   const review = rl.reviewCorpora(c, { now: at(9) });
-  assert.equal(verdictOf(review, 'ledger_sealed'), 'FAIL');
-  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /session_ids/);
+  assert.equal(review.session.ledger_rows, 3, 'the neighbor row does not correlate');
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'PASS');
+});
+
+test('F10D seal: ONLY a same-day neighbor\'s sealed ledger + finalized closeout → UNKNOWN, never a borrowed PASS (Codex P2)', () => {
+  // The reviewed session (W1) has no ledger rows and no finalized closeout of its
+  // own; the neighbor W2 has both. Date-fallback must not let W2 vouch for W1.
+  const c = healthyCorpora();
+  c.Session_Plans.push({ session_id: '20260716-AM-01', session_date: DAY, event_type: 'session_closeout', closeout_status: 'finalized' });
+  c.Session_Plan_Sets = [1, 2, 3].map(n => ledgerRow({
+    idempotency_key: `n${n}`, session_id: '20260716-AM-01', set_index: String(n), closeout_write_id: 'wr_OTHER_2', _row: 1 + n
+  }));
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(review.session.ledger_rows, 0);
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /No Session_Plan_Sets rows correlate/);
 });

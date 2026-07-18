@@ -6377,6 +6377,12 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // (warned, effortless) — never a silent drop, never a second workflow.
   // Effort-only uploads (no rows anywhere) keep their existing lane unchanged.
   let screenshotConvertedCloseout = false;
+  // The resolved identity must reach the PAYLOAD too (Codex P1, this PR): the
+  // server keys readLedgerRows / recordCloseoutEvent / sealCloseout off the
+  // top-level session_id and date, so stale lexicals here would stamp Log/Effort
+  // with the screenshot identity while sealing a different session.
+  let screenshotResolvedSessionId = null;
+  let screenshotResolvedDate = null;
   if (mode === 'screenshot' && file && logRows.length) {
     setStatus(loggerStatus, 'Reading screenshot effort...', 'ok');
     let parsedShotEffort = null;
@@ -6395,6 +6401,8 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     document.getElementById('log-date').value = resolvedShot.date;
     const resolvedShotSessionId = sessionIdInput.value.trim() || generateSessionId(resolvedShot.date);
     sessionIdInput.value = resolvedShotSessionId;
+    screenshotResolvedSessionId = resolvedShotSessionId;
+    screenshotResolvedDate = resolvedShot.date;
     if (getSessionLog().length) populateSetRows(buildRowsFromSessionLog());
     logRows = collectLogRows(resolvedShotSessionId, resolvedShot.date);
     if (parsedShotEffort) {
@@ -6588,7 +6596,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     } else {
       const effortRow = manualEffort;
 
-      const payload = { session_id: sessionId, date, log_rows: logRows, test_mode: 'true', write_id: generateWriteId() };
+      // A converted screenshot closeout carries its RESOLVED identity on the
+      // payload — the same identity its re-stamped rows and effort row carry —
+      // so the summary, seal, and finalized event address the same session the
+      // appends are stamped with (Codex P1, this PR).
+      const payload = {
+        session_id: screenshotResolvedSessionId || sessionId,
+        date: screenshotResolvedDate || date,
+        log_rows: logRows, test_mode: 'true', write_id: generateWriteId()
+      };
       if (effortRow) payload.effort_row = effortRow;
       // F10D — the session closeout sends the confirmation context, so the dry-run
       // returns the single-confirmation summary and the SAME approved payload seals
