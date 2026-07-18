@@ -5893,6 +5893,21 @@ function routeMessageToCoach(text) {
   // without plan_state, so later composer edits were based on a non-authoritative
   // transcript instead of the same plan state debug/composer use.
   if (plannedExerciseOrder().length > 0) context.plan_completed = [...getSessionCompleted()];
+  // F10S3 (owner smoke 2026-07-18) — the canonical selector's VERDICT travels with the
+  // question: planned/completed/remaining from the ONE multiplicity-aware selector the
+  // rail/pin/recap read, so the server's session-state answers ("what's next?",
+  // "are we done?") can never disagree with what the athlete sees. The server
+  // validates, bounds, and recomputes isComplete; old clients without this field fall
+  // back to the server-side name-matcher unchanged.
+  if (plannedExerciseOrder().length > 0) {
+    const remaining = remainingPlannedExercises();
+    context.plan_state = {
+      planned: plannedExerciseOrder(),
+      completed: [...getSessionCompleted()],
+      remaining,
+      isComplete: remaining.length === 0,
+    };
+  }
   // Defer one tick so chat.js's submit listener paints the user bubble first —
   // without this, the Atlas "Thinking…" bubble appends before the user bubble.
   setTimeout(() => {

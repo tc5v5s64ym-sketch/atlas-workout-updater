@@ -405,6 +405,82 @@ test('clampCursorAfterRemoval: non-integer index defaults to 0', () => {
   assert.equal(clampCursorAfterRemoval(undefined, 0, 1), 0);
 });
 
+/* ===== F10S3 — the canonical selector's verdict travels (single completion source) ===== */
+
+test('F10S3 SMOKE REPRODUCE: a client-sent plan_state outranks the server name-matcher (chat can never disagree with the rail)', () => {
+  // The July 18 divergence: one Back Squat set logged on a 3-set slot. The server
+  // name-matcher marks Back Squat done (name matched → claimed) and answers
+  // "Overhead Press is next" — while the rail (canonical selector, multiplicity-
+  // aware) still shows Back Squat in progress. The client now sends the selector's
+  // verdict; the server must PREFER it.
+  const ctx = {
+    current_plan: [{ name: 'Back Squat' }, { name: 'Overhead Press' }],
+    plan_completed: ['Back Squat'],
+    plan_state: {
+      planned: ['Back Squat', 'Overhead Press'],
+      completed: ['Back Squat'],
+      remaining: ['Back Squat', 'Overhead Press'], // in progress at 1/3 — still remaining
+      isComplete: false,
+    },
+  };
+  const ps = planStateFromContext(ctx);
+  assert.deepEqual(ps.remaining, ['Back Squat', 'Overhead Press'],
+    'the selector verdict wins — Back Squat is still next, exactly like the rail');
+  assert.equal(ps.isComplete, false);
+  // The deterministic close answer reads the SAME struct → same truth.
+  const close = buildSessionCloseAnswer('are we done?', ps);
+  assert.ok(close && /back squat/i.test(close), 'the close answer names the still-remaining lift');
+});
+
+test('F10S3: isComplete is recomputed server-side from remaining (the client flag is not trusted)', () => {
+  const ps = planStateFromContext({
+    current_plan: ['A'], plan_completed: ['A'],
+    plan_state: { planned: ['A'], completed: ['A'], remaining: [], isComplete: false },
+  });
+  assert.equal(ps.isComplete, true, 'empty remaining → complete, whatever the client flag said');
+});
+
+test('F10S3: a malformed/empty plan_state falls back to the legacy name-matcher (old clients unchanged)', () => {
+  const legacy = planStateFromContext({ current_plan: ['Deadlift', 'Row'], plan_completed: ['Deadlift'] });
+  assert.deepEqual(legacy.remaining, ['Row']);
+  const malformed = planStateFromContext({
+    current_plan: ['Deadlift', 'Row'], plan_completed: ['Deadlift'],
+    plan_state: { planned: 'nope', remaining: 42 },
+  });
+  assert.deepEqual(malformed.remaining, ['Row'], 'garbage plan_state is ignored, not half-applied');
+  const emptyPlanned = planStateFromContext({
+    current_plan: ['Deadlift'], plan_completed: [],
+    plan_state: { planned: [], completed: [], remaining: [] },
+  });
+  assert.deepEqual(emptyPlanned.remaining, ['Deadlift'], 'an empty planned list falls back too');
+});
+
+test('F10S3: plan_state entries are bounded and cleaned (strings only, trimmed, capped)', () => {
+  const ps = planStateFromContext({
+    current_plan: ['A'], plan_completed: [],
+    plan_state: {
+      planned: ['  Back Squat  ', 7, null, 'Overhead Press'],
+      completed: [{}, ' Back Squat '],
+      remaining: ['  Overhead Press ', ''],
+    },
+  });
+  assert.deepEqual(ps.planned, ['Back Squat', 'Overhead Press']);
+  assert.deepEqual(ps.completed, ['Back Squat']);
+  assert.deepEqual(ps.remaining, ['Overhead Press']);
+  assert.equal(ps.isComplete, false);
+});
+
+test('F10S3 wiring: the client chat context sends the selector verdict (plan_state) whenever a plan exists', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const block = appSrc.slice(appSrc.indexOf('function routeMessageToCoach('), appSrc.indexOf('function routeMessageToCoach(') + 3000);
+  assert.match(block, /context\.plan_state = \{/, 'routeMessageToCoach sends plan_state');
+  assert.match(block, /planned: plannedExerciseOrder\(\)/, 'planned from the canonical order');
+  assert.match(block, /remaining,?\s*\n/, 'remaining from remainingPlannedExercises (the selector)');
+  assert.match(block, /const remaining = remainingPlannedExercises\(\)/, 'derived from the ONE selector');
+});
+
 /* ===== Step 377 — planStateFromContext (shared gate) ===== */
 
 test('step-377: planStateFromContext returns plan_state when current_plan + plan_completed ([]) are present', () => {
