@@ -889,11 +889,13 @@ Fix the disagreement where chat says Overhead Press is next while the TODAY rail
 
 ### F10S4 — Session pin set attribution
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 The pin must show sets completed for the **current planned item only**, not total session sets. **Reproduce:** the bad state "Back Squat · 4 sets in" after one RDL set plus three Front Squat sets.
 
-**Completion record:** PR — · Commit —
+**Resolution.** `renderSessionPin` derived its count from `getSessionLog().length` (the whole session) while its current lift came from the selector — the mismatch. Now the pin's identity AND count come from the same selector verdict every other surface reads: `firstUnloggedSlot(activePlanForSlots(), completed, log)` supplies the current slot with `performedSets`/`requiredSets`, rendered as "N of M sets" (or "N sets in" when the slot has no known count — still the item's own count, never the session total). Freestyle (no plan) keeps the session-total behavior unchanged — there is no planned item to attribute to; the plan-complete fallback keeps the total too. Red-first `test/sessionPinAttribution.test.js` (real `renderSessionPin` sliced from the bundle, real selector, DOM-faithful fake pin): the smoke reproduce (1 RDL + 3 off-plan sets → "Romanian Deadlift · 1 of 3 sets", never 4), advancing 2/3 → next slot at 3/3, freestyle unchanged, a no-count slot shows its own 0 — never the off-plan total.
+
+**Completion record:** PR — this PR · Commit — `src/app/app.js` (`renderSessionPin` + `firstUnloggedSlot` import); tests `test/sessionPinAttribution.test.js` (new). Full suite 5737 pass; lint 0 errors; workout-sheet E2E green locally.
 
 ### F10S5 — Closeout commentary deduplication
 
