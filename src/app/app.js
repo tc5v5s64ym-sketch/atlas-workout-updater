@@ -54,7 +54,7 @@ import { mostRecentCompletablePlanItem } from './planCompletion.js';
 // plan_item_id + slot position; name/liftCode used ONLY as logged-evidence to
 // attribute a log to one slot (exact-outranks-substring + ambiguity refusal). Every
 // remaining/completion surface routes through it so they can never disagree.
-import { remainingSlotNames, variantSatisfies, planSlotStatuses } from './planSlotStatuses.js';
+import { remainingSlotNames, variantSatisfies, planSlotStatuses, firstUnloggedSlot } from './planSlotStatuses.js';
 // F10B — the client session ledger: build future-set-only revisions from an explicit
 // mid-session recommendation (a substitution), append-only, and count performed sets
 // so a completed set is never revised. Revisions live in the store (getSessionRevisions)
@@ -4854,13 +4854,28 @@ function renderSessionPin() {
   const guided = planned.length > 0;
   if (!setsDone && !guided) { pin.hidden = true; pin.textContent = ''; return; }
   const remaining = guided ? remainingPlannedExercises() : [];
+  // F10S4 (owner smoke 2026-07-18) — the pin shows sets completed for the CURRENT
+  // PLANNED ITEM only, never the whole session (the failure: "Back Squat · 4 sets
+  // in" after 1 RDL + 3 Front Squat sets). Identity AND count come from the same
+  // selector verdict every other surface reads (firstUnloggedSlot → performedSets/
+  // requiredSets). Freestyle (no plan) keeps the session total — there is no
+  // planned item to attribute to.
+  const currentSlot = guided
+    ? firstUnloggedSlot(activePlanForSlots(), getSessionCompleted(), getSessionLog())
+    : null;
   const current = guided
-    ? (remaining[0] || planned[planned.length - 1])
+    ? ((currentSlot && currentSlot.name) || remaining[0] || planned[planned.length - 1])
     : (setsDone ? getSessionLog()[getSessionLog().length - 1].exercise : null);
   const next = guided && remaining.length > 1 ? remaining[1] : null;
+  const itemSets = currentSlot ? (currentSlot.performedSets || 0) : setsDone;
+  const setsText = currentSlot
+    ? (currentSlot.requiredSets != null
+      ? `${itemSets} of ${currentSlot.requiredSets} sets`
+      : `${itemSets} set${itemSets === 1 ? '' : 's'} in`)
+    : `${setsDone} set${setsDone === 1 ? '' : 's'} in`;
   pin.textContent = '';
   if (current) pin.appendChild(el('span', { class: 'pin-lift', text: String(current) }));
-  pin.appendChild(el('span', { class: 'pin-sets', text: `${setsDone} set${setsDone === 1 ? '' : 's'} in` }));
+  pin.appendChild(el('span', { class: 'pin-sets', text: setsText }));
   if (next) pin.appendChild(el('span', { class: 'pin-next', text: `next: ${next}` }));
   // The pin is the tap target for the collapsed plan card (dropdown) whenever a
   // live session exists. Wired once — the element persists across re-renders.
