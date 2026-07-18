@@ -198,15 +198,17 @@ test('F10S-GATE: July 18 Work-mode smoke rerun — every exit criterion holds', 
   await logSet(page, 'Romanian Deadlift 245 x 5 @2');
   await expect(page.locator('#session-pin .pin-lift')).toHaveText('Back Squat', { timeout: 20000 });
   await expect(page.locator('#session-pin .pin-sets')).toContainText('0 of 3');
-  // The criterion is WHICH lift the newest handoff announces — a handoff naming a
-  // wrong lift still fails the content check. Exact count is relaxed to one
-  // boundary's worth plus at most one duplicate: the known announce race (BACKLOG:
-  // check-then-act on lastAnnouncedNextUp) can emit the SAME correct handoff twice
-  // on slow CI runners. Tighten back to exact counts when that race is fixed.
+  // Exactly ONE handoff exists at the first boundary and it names Back Squat.
+  // The count is deterministic because of the in-progress-slot guard: a per-set
+  // handler never announces the slot the lifter is already on (pre-guard, a
+  // mid-slot derivation could announce the CURRENT lift as "next up" at a
+  // runner-speed-dependent moment, so counts flapped in CI). Content is asserted
+  // on every card so a wrong next-up can never hide behind the count.
   await expect(page.locator('.next-exercise-handoff').last()).toContainText('Back Squat');
-  const handoffsAtFirstBoundary = await page.locator('.next-exercise-handoff').count();
-  expect(handoffsAtFirstBoundary).toBeGreaterThanOrEqual(1);
-  expect(handoffsAtFirstBoundary).toBeLessThanOrEqual(2);
+  await expect(page.locator('.next-exercise-handoff')).toHaveCount(1);
+  for (const t of await page.locator('.next-exercise-handoff').allInnerTexts()) {
+    expect(t).toContain('Back Squat');
+  }
   record('F10S1', 'slot completed at 3/3 — handoff advanced to Back Squat; pin: Back Squat · 0 of 3 sets');
   await snap(page, '04-slot-complete-at-three.png');
 
@@ -216,12 +218,14 @@ test('F10S-GATE: July 18 Work-mode smoke rerun — every exit criterion holds', 
   await logSet(page, 'Front Squat 185 7/2 x3 instead of Back Squat');
   await expect(page.locator('#session-pin .pin-lift')).toHaveText('Overhead Press', { timeout: 20000 });
   await expect(page.locator('#session-pin .pin-sets')).toContainText('0 of 3');
-  // Same relaxation as the first boundary: newest-handoff CONTENT is the criterion;
-  // the count tolerates the known single-dup announce race at either boundary.
+  // Exactly TWO handoffs exist after the second boundary, in boundary order, and
+  // each names its own boundary's lift — a wrong, stale, or duplicated next-up
+  // card fails on count, content, or position.
   await expect(page.locator('.next-exercise-handoff').last()).toContainText('Overhead Press');
-  const handoffsAtSecondBoundary = await page.locator('.next-exercise-handoff').count();
-  expect(handoffsAtSecondBoundary).toBeGreaterThanOrEqual(2);
-  expect(handoffsAtSecondBoundary).toBeLessThanOrEqual(4);
+  await expect(page.locator('.next-exercise-handoff')).toHaveCount(2);
+  const handoffsAtSecondBoundary = await page.locator('.next-exercise-handoff').allInnerTexts();
+  expect(handoffsAtSecondBoundary[0]).toContain('Back Squat');
+  expect(handoffsAtSecondBoundary[1]).toContain('Overhead Press');
   await openSheet(page);
   // The rail shows the PERFORMED truth: the original Back Squat slot is SATISFIED
   // (done) and now carries the substitute's name; Back Squat is current nowhere.

@@ -5998,7 +5998,19 @@ test('coach next-up: repeated identical next-up is suppressed; placeholder uses 
   // context-specific reroute) — no "Moving on — next up: X" after every off-plan log.
   assert.match(cc, /let lastAnnouncedNextUp = null/, 'tracks the last announced next-up');
   assert.match(cc, /const sameAsLast = lastAnnouncedNextUp/, 'compares the new next-up to the last announced');
-  assert.match(cc, /if \(isReroute \|\| !sameAsLast\)/, 'announces only on a changed next-up (or a reroute)');
+  assert.match(cc, /if \(isReroute \|\| \(!sameAsLast && !stillOnLoggedSlot\)\)/,
+    'announces only on a changed next-up that is not the in-progress slot (or a reroute)');
+  // In-progress-slot guard: a per-set handler must never announce a lift that
+  // already has logged sets this session while its slot is still the live
+  // remaining[0] (the wrong "Moving on — next up: Romanian Deadlift." card after
+  // set 1 of 3, landing at a runner-speed-dependent moment). Both comparison
+  // sides are store truth — the slot name and the RESOLVED completed names — so
+  // an alias-form raw log ("RDL") cannot dodge the guard. Boundary handoffs,
+  // single-set slots, untouched-slot nudges, and reroutes all still announce.
+  assert.match(cc, /const stillOnLoggedSlot = Boolean\(liveRemaining && liveRemaining\[0\]/,
+    'guards the in-progress slot at the live remaining[0] verdict');
+  assert.match(cc, /\(currentCompleted \|\| \[\]\)\.some\(c => String\(c\)\.toLowerCase\(\) === nextExKey\)/,
+    'the guard checks the verdict lift against the RESOLVED completed names');
   assert.match(cc, /if \(!isReroute\) lastAnnouncedNextUp = nextEx/, 'records the announced next-up');
   // Resets so a fresh session re-announces: at closeout AND on session (re)start
   // (PR-575 review — cross-session staleness if the prior session never closed out).
