@@ -77,11 +77,17 @@ test('revision: a valid explicit revision forwards and returns the dry-run envel
   assert.equal(captureCalls[0].fn, 'revision');
 });
 
-test('revision: a performed-value source / v1 / missing supersedes are 400 (only explicit future revisions)', async () => {
+test('revision: a performed-value source / v1 / bad set_index are 400 (only explicit future revisions)', async () => {
   assert.equal((await post('/api/session-plan-sets/revision', { ...BASE, revision: { ...REV, recommendation_source: 'accepted' } })).status, 400);
   assert.equal((await post('/api/session-plan-sets/revision', { ...BASE, revision: { ...REV, plan_version: 1 } })).status, 400);
-  assert.equal((await post('/api/session-plan-sets/revision', { ...BASE, revision: { ...REV, supersedes_key: '' } })).status, 400);
   assert.equal((await post('/api/session-plan-sets/revision', { ...BASE, revision: { ...REV, set_index: 0 } })).status, 400);
   assert.equal((await post('/api/session-plan-sets/revision', { ...BASE, revision: null })).status, 400);
   assert.equal(captureCalls.length, 0);
+});
+
+test('revision: supersedes_key is OPTIONAL — the server derives it from the prior version', async () => {
+  const { supersedes_key, ...noKey } = REV; // eslint-disable-line no-unused-vars
+  const { status } = await post('/api/session-plan-sets/revision', { ...BASE, revision: noKey });
+  assert.equal(status, 200, 'a revision without supersedes_key is accepted (derived server-side)');
+  assert.equal(captureCalls[0].fn, 'revision');
 });

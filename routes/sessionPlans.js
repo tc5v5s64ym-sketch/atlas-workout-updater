@@ -67,7 +67,9 @@ function _ledgerItemError(item, { requireRevision = false } = {}) {
     if (!_isPosInt(it.set_index)) return 'a revision requires a positive integer set_index';
     if (!_isPosInt(it.plan_version) || Number(it.plan_version) < 2) return 'a revision requires plan_version ≥ 2';
     if (!REVISION_SOURCES.includes(_str(it.recommendation_source))) return `a revision recommendation_source must be one of ${REVISION_SOURCES.join('|')} (a performed value never revises)`;
-    if (!_str(it.supersedes_key)) return 'a revision requires supersedes_key (the row it replaces)';
+    // supersedes_key is DERIVED server-side from the immediately-prior version (a
+    // revision chain is linear), so the client need not send it; an explicit one is
+    // still honored by the builder.
   }
   return null;
 }
