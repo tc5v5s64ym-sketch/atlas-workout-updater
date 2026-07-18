@@ -312,6 +312,54 @@ async function readRange(rangeA1) {
   return response.data.values || [];
 }
 
+// F10D closeout seal — a BOUNDED batch update of ONE column's cells. cells is
+// [{ row, value }] with `row` the 1-based SHEET row (header = row 1). This is the
+// only value-update primitive in sheets.js: it can never touch more than the named
+// column, and callers pass explicit rows — no ranges are inferred. Contiguous rows
+// are grouped into single ranges to keep the batch small. Returns the raw API
+// response; the AUTHORITATIVE proof is response.data.totalUpdatedCells.
+async function updateColumnCells(tabName, columnLetter, cells) {
+  if (!/^[A-Z]{1,2}$/.test(String(columnLetter || ''))) {
+    throw new Error('updateColumnCells: columnLetter must be an A1 column letter.');
+  }
+  const list = Array.isArray(cells) ? cells : [];
+  if (list.length === 0) throw new Error('updateColumnCells: cells must be a non-empty array.');
+  for (const c of list) {
+    if (!c || !Number.isInteger(c.row) || c.row < 2) {
+      throw new Error('updateColumnCells: each cell needs an integer sheet row ≥ 2 (row 1 is the header).');
+    }
+  }
+  // Group contiguous rows (sorted) into single-column ranges.
+  const sorted = [...list].sort((a, b) => a.row - b.row);
+  const data = [];
+  let run = null;
+  for (const c of sorted) {
+    if (run && c.row === run.end + 1) {
+      run.end = c.row;
+      run.values.push([String(c.value == null ? '' : c.value)]);
+    } else {
+      if (run) data.push(run);
+      run = { start: c.row, end: c.row, values: [[String(c.value == null ? '' : c.value)]] };
+    }
+  }
+  if (run) data.push(run);
+
+  console.log(`[sheets.js] Updating ${list.length} cell(s) in "${tabName}" column ${columnLetter} (${data.length} range(s))`);
+  const sheets = await getSheetsClient();
+  const response = await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: data.map(r => ({
+        range: `${tabName}!${columnLetter}${r.start}:${columnLetter}${r.end}`,
+        values: r.values
+      }))
+    }
+  });
+  console.log(`[sheets.js] Updated ${response.data.totalUpdatedCells} cell(s) in "${tabName}"`);
+  return response;
+}
+
 async function deleteRowsByRange(tabName, startIndex, endIndex) {
   // startIndex: 0-based inclusive. endIndex: 0-based exclusive.
   const sheets = await getSheetsClient();
@@ -339,6 +387,7 @@ async function deleteRowsByRange(tabName, startIndex, endIndex) {
 module.exports = {
   appendRows,
   readRange,
+  updateColumnCells,
   deleteRowsByRange,
   validateConfig,
   getExerciseCatalog,
