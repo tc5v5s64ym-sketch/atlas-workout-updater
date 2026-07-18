@@ -22,7 +22,18 @@ function reset({ tabs = ['Session_Plan_Sets'], rows = [], a1 = [['idempotency_ke
 const fakeSheets = {
   getSpreadsheetTabs: async () => { state.calls += 1; return state.tabs.slice(); },
   getSheetRows: async (tab) => { state.calls += 1; if (!state.tabs.includes(tab)) throw new Error('tab missing'); return state.rows.slice(); },
-  appendRows: async (tab, rows) => { state.calls += 1; state.appends.push({ tab, rows }); if (state.tabs.includes(tab)) state.rows.push(...rows); return `${tab}!A1`; },
+  // Mirror the REAL sheets.appendRows return shape: the raw Google API response
+  // object, whose authoritative write-proof is data.updates.{updatedRange,updatedRows}.
+  appendRows: async (tab, rows) => {
+    state.calls += 1; state.appends.push({ tab, rows });
+    let updatedRange = null;
+    if (state.tabs.includes(tab)) {
+      const start = state.rows.length + 2; // +1 header, +1 to 1-based
+      state.rows.push(...rows);
+      updatedRange = `${tab}!A${start}:P${start + rows.length - 1}`;
+    }
+    return { data: { updates: { updatedRange, updatedRows: rows.length } } };
+  },
   readRange: async () => { state.calls += 1; return state.a1; },
 };
 const sheetsPath = require.resolve('../sheets');
@@ -91,6 +102,9 @@ test('live: enabling the owner gate appends the checkpoint rows (only Session_Pl
   assert.equal(r.no_write_confirmed, false);
   assert.equal(r.written, 3);
   assert.ok(state.appends.every(a => a.tab === 'Session_Plan_Sets'), 'never writes another tab');
+  // The authoritative write proof is the A1 updatedRange, not the raw response object.
+  assert.match(r.range, /^Session_Plan_Sets!A\d+:P\d+$/, 'range is the extracted A1 updatedRange');
+  assert.equal(r.rows_written, 3);
 });
 
 test('live: retry is idempotent — same rows append nothing new', async () => {

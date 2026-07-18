@@ -71,6 +71,21 @@ test('buildAcceptedRows: the July 16 dips plan → three v1 rows (65×5, 3 sets)
   });
 });
 
+test('plan_version is the INTEGER revision counter, distinct from the Session_Plans pv_ token (join is by plan_item_id)', () => {
+  // The acceptance flow carries an opaque pv_… token as session.plan_version; the
+  // ledger's plan_version is the integer set-revision counter (1 = accepted). They are
+  // different dimensions — the ledger row's plan_version is 1, NOT the pv_ token — and
+  // the join back to the Session_Plans item is by the globally-unique plan_item_id.
+  const [r] = L.buildAcceptedRows(
+    { session_id: 'S1', session_date: '2026-07-16', plan_version: 'pv_abc123' },
+    [{ plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', target_set_count: 1, target_weight: 65, target_reps: 5, target_rir: 2 }],
+  );
+  assert.equal(r[col('plan_version')], '1', 'integer revision counter, never the pv_ token');
+  assert.equal(r[col('plan_item_id')], 'pi_dip', 'plan_item_id is the authoritative Session_Plans join key');
+  // The idempotency key uses the integer version too (retry-stable, pv-token-independent).
+  assert.equal(r[col('idempotency_key')], keyFor('pi_dip', 1, 1));
+});
+
 test('buildAcceptedRows: a no_reliable_target item carries blank targets, confidence flag set', () => {
   const [r] = L.buildAcceptedRows(SESSION, [
     { plan_item_id: 'pi_x', planned_lift_code: 'X01', target_set_count: 1, target_weight: 100, confidence: 'no_reliable_target' },

@@ -131,8 +131,21 @@ async function _append(rows, opts = {}) {
     return { sheet_written: false, no_write_confirmed: true, written: 0, skipped, tab_missing: false, reason: 'all_idempotent_skips' };
   }
   await _ensureHeaderRow();
-  const range = await sheets.appendRows(SESSION_PLAN_SETS_TAB, toAppend);
-  return { sheet_written: true, no_write_confirmed: false, written: toAppend.length, skipped, tab_missing: false, range: range || null };
+  // sheets.appendRows returns the raw Google API response — the AUTHORITATIVE write
+  // proof is response.data.updates.{updatedRange,updatedRows}, exactly as the
+  // Log_Cleaned/Effort write path extracts it (index.js). Never return the raw object
+  // as `range` (it is not the A1 proof the F10D closeout seal needs).
+  const response = await sheets.appendRows(SESSION_PLAN_SETS_TAB, toAppend);
+  const updates = response && response.data && response.data.updates ? response.data.updates : null;
+  return {
+    sheet_written: true,
+    no_write_confirmed: false,
+    written: toAppend.length,
+    skipped,
+    tab_missing: false,
+    range: updates ? (updates.updatedRange || null) : null,
+    rows_written: updates ? Number(updates.updatedRows || 0) : null,
+  };
 }
 
 // ── public API — creation-time checkpoints ──────────────────────────────────────

@@ -23,6 +23,18 @@
 // (amendment 3): duplicate versions, forks, missing/mismatched supersedes_key,
 // cross-session/item/set references, and non-contiguous versions all return
 // `no_reliable_target` WITH diagnostics — never a silently-selected max-version row.
+//
+// plan_version SEMANTICS + the Session_Plans join (design §2 col 4/5, §3, §4). This
+// ledger's `plan_version` is the INTEGER set-revision counter (1 = accepted, 2,3,… =
+// successive revisions) — the revision mechanism (`plan_version+1`, "highest
+// plan_version", the max-version fold) is arithmetic and REQUIRES an integer. It is a
+// DISTINCT dimension from `Session_Plans.plan_version`, which is the opaque accepted-
+// plan `pv_…` token (routes/sessionPlans.js requires /^pv_.+/). The two columns share
+// a name but are NOT the same field and must never be equality-joined across the two
+// tabs. The authoritative join to the Session_Plans item spine is by the globally
+// UNIQUE `plan_item_id` (a crypto UUID minted per slot per acceptance,
+// src/app/planAcceptance.js) — that id alone resolves the item, and through it the
+// session's `pv_…` token, so no join information is lost by storing an integer here.
 
 const crypto = require('crypto');
 const { sessionPlanSetsColumns } = require('../config/columns');
