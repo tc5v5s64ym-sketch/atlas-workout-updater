@@ -96,7 +96,7 @@ test('acceptCopy: only captured===true permits memory language', () => {
 // ── orchestration ─────────────────────────────────────────────────────────────
 
 function harness(overrides = {}) {
-  const calls = { setActivePlan: [], persist: 0, startWorkout: [], postAccept: [] };
+  const calls = { setActivePlan: [], persist: 0, startWorkout: [], postAccept: [], postLedgerCheckpoint: [] };
   const deps = {
     crypto: fakeRandomUuidCrypto(),
     guard: {},
@@ -106,10 +106,82 @@ function harness(overrides = {}) {
     persist: () => { calls.persist += 1; },
     startWorkout: (p) => calls.startWorkout.push(p),
     postAccept: async (payload) => { calls.postAccept.push(payload); return { data: { session_plans: { captured: true, status: 'written' } } }; },
+    postLedgerCheckpoint: async (payload) => { calls.postLedgerCheckpoint.push(payload); return { data: { session_plan_sets: { captured: false, status: 'dry_run' } } }; },
     ...overrides,
   };
   return { deps, calls };
 }
+
+// ── F10B: build the ledger v1 items + checkpoint at acceptance ──────────────────
+
+test('buildLedgerAcceptedItems: one row-spec per set-level item; targets carried; confidence set', () => {
+  const items = [
+    { plan_item_id: 'pi_1', planned_lift_code: 'DIP01' },
+    { plan_item_id: 'pi_2', planned_lift_code: 'ROW01' },
+  ];
+  const exercises = [
+    { sets: 3, weight: 65, reps: 5, rir: 2 },
+    { sets: 3, weight: 100, reps: 8, rir: 1 },
+  ];
+  const out = mod.buildLedgerAcceptedItems(items, exercises);
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], { plan_item_id: 'pi_1', planned_lift_code: 'DIP01', target_set_count: 3, target_weight: 65, target_reps: 5, target_rir: 2, confidence: 'reliable' });
+});
+
+test('buildLedgerAcceptedItems: no set count → NOT in the ledger; set count but no load/reps → no_reliable_target (never fabricated)', () => {
+  const items = [
+    { plan_item_id: 'pi_1', planned_lift_code: 'A1' },   // no sets → skipped
+    { plan_item_id: 'pi_2', planned_lift_code: 'B1' },   // sets but no load/reps → no_reliable_target
+    { plan_item_id: 'pi_3', planned_lift_code: 'PU01' }, // bodyweight (0) is a real target
+  ];
+  const exercises = [
+    { weight: 100, reps: 5 },              // no sets
+    { sets: 4 },                            // no load/reps
+    { sets: 3, weight: 0, reps: 8, rir: 2 },
+  ];
+  const out = mod.buildLedgerAcceptedItems(items, exercises);
+  assert.deepEqual(out.map(o => o.plan_item_id), ['pi_2', 'pi_3'], 'the no-set-count item is not invented into the ledger');
+  assert.equal(out[0].confidence, 'no_reliable_target');
+  assert.equal(out[0].target_weight, null, 'a missing target is never fabricated');
+  assert.equal(out[1].confidence, 'reliable');
+  assert.equal(out[1].target_weight, 0, 'bodyweight 0 is a real target');
+});
+
+test('runAcceptance: checkpoints the accepted plan as ledger v1 (non-blocking) when the plan has set-level targets', async () => {
+  const { deps, calls } = harness();
+  const REC_SETS = {
+    label: 'Push', id: 'i1',
+    exercises: [
+      { name: 'Weighted Dip', liftCode: 'DIP01', sets: 3, weight: 65, reps: 5, rir: 2 },
+      { name: 'Cable Row', liftCode: 'ROW01', sets: 3, weight: 100, reps: 8, rir: 1 },
+    ],
+  };
+  const r = await mod.runAcceptance(REC_SETS, deps);
+  assert.equal(r.started, true);
+  assert.equal(calls.postLedgerCheckpoint.length, 1, 'the ledger checkpoint fires at acceptance');
+  const payload = calls.postLedgerCheckpoint[0];
+  assert.equal(payload.plan_version, r.plan_version, 'carries the accepted pv_ token');
+  assert.equal(payload.items.length, 2);
+  assert.equal(payload.items[0].target_weight, 65);
+  assert.equal(payload.items[0].confidence, 'reliable');
+  // The plan_item_id on each ledger item matches the accepted snapshot (the F10 spine).
+  const acceptedIds = calls.startWorkout[0].items.map(i => i.plan_item_id);
+  assert.deepEqual(payload.items.map(i => i.plan_item_id), acceptedIds);
+});
+
+test('runAcceptance: a codes-only plan (no set counts) posts NO ledger checkpoint (nothing to store)', async () => {
+  const { deps, calls } = harness();
+  await mod.runAcceptance(REC, deps); // REC exercises carry no sets
+  assert.equal(calls.postLedgerCheckpoint.length, 0);
+});
+
+test('runAcceptance: a ledger-checkpoint sidecar failure never unwinds the accepted plan', async () => {
+  const { deps, calls } = harness({ postLedgerCheckpoint: async () => { throw new Error('network down'); } });
+  const REC_SETS = { label: 'Push', id: 'i1', exercises: [{ name: 'Weighted Dip', liftCode: 'DIP01', sets: 3, weight: 65, reps: 5, rir: 2 }] };
+  const r = await mod.runAcceptance(REC_SETS, deps);
+  assert.equal(r.started, true, 'the workout starts regardless of the checkpoint sidecar');
+  assert.equal(calls.startWorkout.length, 1);
+});
 
 test('runAcceptance: happy path stores the accepted snapshot, starts the workout, mints one revision', async () => {
   const { deps, calls } = harness();

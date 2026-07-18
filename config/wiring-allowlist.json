@@ -2,16 +2,6 @@
   "_comment": "Wired-or-deleted allowlist enforced by scripts/check-wired-modules.js and test/wiredModules.test.js. `modules` are deliberately staged/unwired and require an expiry plus a durable backlog/spec reference; no retired execution plan may authorize wiring. `testOnly` modules are production-unreachable by design.",
   "modules": [
     {
-      "file": "services/sessionPlanLedger.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/SESSION_PLANS_LEDGER_DESIGN.md §8 — F10A ships the pure ledger contract (builders + chain-validating effectiveRecommendation); it becomes production-reachable when F10B wires the checkpoint store to the acceptance/revision boundaries."
-    },
-    {
-      "file": "services/sessionPlanSetsStore.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/SESSION_PLANS_LEDGER_DESIGN.md §8 — F10A ships the dry-run creation-time checkpoint path; F10B wires it to the acceptance/revision boundaries and F10D enables owner-gated live writes."
-    },
-    {
       "file": "services/objectiveScorer.js",
       "expires": "2026-12-31",
       "roadmap": "BACKLOG.md deferred session-planning wiring + docs/SESSION_PLANNING_ENGINE.md; pure scorer shipped, live-snapshot wiring not selected by the V1 campaign."
