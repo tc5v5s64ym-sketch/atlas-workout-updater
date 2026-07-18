@@ -63,9 +63,13 @@ function normName(n) { return String(n == null ? '' : n).trim().toLowerCase(); }
 function numOr(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
 
 // Per-exercise summary from the logged sets: set count + heaviest logged set.
+// F10S1: a row's RESOLVED identity (`canonical`, stamped at log time) counts too, so an
+// alias-form raw row ("RDL") ticks the counter of its planned card ("Romanian Deadlift")
+// — the same identity grain the completion selector counts with.
 function logSummary(logRows, name) {
   const key = normName(name);
-  const sets = (Array.isArray(logRows) ? logRows : []).filter(r => r && normName(r.exercise) === key);
+  const sets = (Array.isArray(logRows) ? logRows : [])
+    .filter(r => r && (normName(r.exercise) === key || normName(r.canonical) === key));
   if (!sets.length) return { count: 0, top: null };
   const top = sets.reduce((best, s) => {
     const w = numOr(s.weight);
@@ -261,7 +265,9 @@ export function cardDetailText(card) {
     // can never disagree with the pin/recap/closeout. Falls back to an empty status
     // list (all pending) when the selector or session is unavailable.
     const completed = call('getSessionCompleted') || [];
-    const statuses = session ? planSlotStatuses(session, completed) : [];
+    // F10S1 — the per-set log engages the selector's multiplicity rule, so a slot
+    // below its required set count renders as CURRENT (in progress), never done.
+    const statuses = session ? planSlotStatuses(session, completed, log) : [];
     const cards = buildSheetCards({ planned, statuses, log });
 
     // Header: label + progress + the load-line signature bar.

@@ -48,9 +48,17 @@ function loadPlanCardHarness() {
   assert.ok(sliceSYNC.includes('syncPlannedIndexToCanonical'), 'sliceSYNC must contain the helper');
   assert.ok(slicePEE.includes('plannedExerciseEntries'), 'slicePEE must contain plannedExerciseEntries');
 
-  const factory = new Function('window', `
+  // F10S1: getCanonicalSession replays completions through the authoritative selector.
+  // Inject the real planSlotStatuses and mirror app.js's activePlanForSlots (the slice
+  // window here ends before its definition).
+  const { planSlotStatuses } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('window', 'planSlotStatuses', `
     ${STORE_SHIM}
     let lastIntentData = null;
+    function activePlanForSlots() {
+      const sess = getActivePlannedSession();
+      return { exercises: plannedExerciseEntries(), items: sess && Array.isArray(sess.items) ? sess.items : [] };
+    }
 
     ${slicePEE}
     ${sliceGCS}
@@ -74,7 +82,7 @@ function loadPlanCardHarness() {
     };
   `);
 
-  return factory({ activeSession: AS });
+  return factory({ activeSession: AS }, planSlotStatuses);
 }
 
 const PLAN = () => [

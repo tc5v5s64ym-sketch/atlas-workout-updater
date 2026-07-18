@@ -1593,12 +1593,22 @@ function getCanonicalSession() {
   let s = AS.createActiveSession({
     exercises: entries.map(e => ({ name: e.canonical || e.name, liftCode: e.liftCode || '' }))
   });
-  // Replay logged completions onto the canonical session. A logged name that
-  // matches a planned slot marks it done; one that doesn't is an off-plan insert
-  // (Hammer Curls / Knee Raises) so it is represented, not dropped.
-  for (const name of (Array.isArray(getSessionCompleted()) ? getSessionCompleted() : [])) {
-    const after = AS.markCompleted(s, name);
-    s = after !== s ? after : AS.markCompleted(AS.insertExercise(s, { name }), name);
+  // Replay logged completions onto the canonical session THROUGH the F10 selector
+  // (F10S1): a planned slot is marked done in the AS model only when the selector says
+  // it COMPLETED — attribution alone is not completion once the slot's required set
+  // count is known (one performed set must not complete a 3-set slot; the slot stays
+  // the AS model's current exercise while in progress). A logged name that attributes
+  // to NO slot is an off-plan insert (Hammer Curls / Knee Raises) so it is
+  // represented, not dropped — exactly as before.
+  const completions = Array.isArray(getSessionCompleted()) ? getSessionCompleted() : [];
+  const statuses = planSlotStatuses(activePlanForSlots(), completions, getSessionLog());
+  const attributed = new Set(statuses.filter(x => x.attributedName).map(x => String(x.attributedName).toLowerCase()));
+  for (const slot of statuses) {
+    if (slot.status === 'completed' && slot.name) s = AS.markCompleted(s, slot.name);
+  }
+  for (const name of completions) {
+    if (attributed.has(String(name).toLowerCase())) continue; // plan work (done or in progress)
+    s = AS.markCompleted(AS.insertExercise(s, { name }), name); // off-plan insert
   }
   return s;
 }
@@ -1750,12 +1760,13 @@ function implicitPlanItemId(sessionId, liftCode) {
 // F10C — is a just-logged exercise OFF the accepted plan (unannounced)? Reuses the F10
 // slot selector in ISOLATION (one completion vs the plan's slots, no explicit outcomes)
 // so this can never diverge from how a log is attributed to a slot. Off-plan ⟺ the
-// name/liftCode attributes to NO slot. No plan / no slots → not off-plan (nothing to
-// recommend against — implicit recs are scoped to accepted-plan sessions).
+// name/liftCode ATTRIBUTES to no slot (F10S1: attribution, not completion — an
+// in-progress multi-set slot is very much ON plan). No plan / no slots → not off-plan
+// (nothing to recommend against — implicit recs are scoped to accepted-plan sessions).
 function isOffPlanLoggedExercise(plan, name, liftCode) {
   if (!plan || !Array.isArray(plan.exercises) || !plan.exercises.length) return false;
   const statuses = planSlotStatuses({ exercises: plan.exercises }, [{ name, liftCode }]);
-  return !statuses.some(s => s.status === 'completed');
+  return !statuses.some(s => s.attributedName || s.status === 'completed');
 }
 
 // F10C — append an implicit recommendation, deduped by its (deterministic) plan_item_id
@@ -4404,7 +4415,10 @@ function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions, da
 function canonicalSessionRecap() {
   const AS = (typeof window !== 'undefined' && window.activeSession) || (typeof activeSession !== 'undefined' ? activeSession : null);
   const s = AS ? getCanonicalSession() : null;
-  if (!AS || !s || !AS.hasLoggedWork(s)) return null;
+  // F10S1: an IN-PROGRESS slot (sets logged, below its required count) is logged work
+  // even though the AS model does not mark it completed — the raw session log is the
+  // evidence. Without this, a 1-of-3 session would falsely report "nothing logged yet".
+  if (!AS || !s || !(AS.hasLoggedWork(s) || getSessionLog().length)) return null;
   const completed = AS.completedExercises(s).map(e => e.name).filter(Boolean);
   // F10 — recap remaining derives from the ONE authoritative selector (the same source
   // the pin/next-up/closeout/Workout Sheet read), which folds in the ADD-4 variant rule.
@@ -4646,7 +4660,10 @@ function plannedExerciseEntries() {
       liftCode: ex.liftCode || '',
       // F10: carry the immutable slot identity so the completion selector keys on it
       // (present on an accepted plan; null for a chat/suggested plan → position-keyed).
-      plan_item_id: ex.plan_item_id != null ? ex.plan_item_id : null
+      plan_item_id: ex.plan_item_id != null ? ex.plan_item_id : null,
+      // F10S1: carry the prescribed set count — the selector's multiplicity rule
+      // (one performed set must not complete a 3-set slot) reads it as requiredSets.
+      sets: ex.sets != null ? ex.sets : null
     })).filter(e => e.name);
   }
   // A displayed home-screen suggestion is NOT an active plan: only treat
@@ -4661,7 +4678,11 @@ function plannedExerciseEntries() {
   return exs.map(ex => ({
     name: ex.canonical_exercise || ex.exercise,
     canonical: ex.canonical_exercise || ex.exercise,
-    liftCode: ex.lift_code || ex.liftCode || ''
+    liftCode: ex.lift_code || ex.liftCode || '',
+    // F10S1: an engaged Coach's Pick carries its prescribed set count too, so the
+    // multiplicity rule holds before "Start this plan" materializes the session
+    // (a prescribed 3-set pick logged directly must not complete on one set).
+    sets: ex.target_sets != null ? ex.target_sets : (ex.sets != null ? ex.sets : null)
   })).filter(e => e.name);
 }
 
@@ -4694,7 +4715,9 @@ function remainingPlannedExercises() {
   // plan_item_id + slot position. Duplicate names stay slot-distinct (one logged set
   // never clears every same-named slot), a recognized substitution/variant satisfies
   // its original slot, and an ambiguous substring leaves the slot unresolved.
-  return remainingSlotNames(activePlanForSlots(), getSessionCompleted());
+  // F10S1 — the per-set log engages the multiplicity rule: a slot below its required
+  // set count stays remaining (in progress), so next-up holds on it.
+  return remainingSlotNames(activePlanForSlots(), getSessionCompleted(), getSessionLog());
 }
 
 function isPlanCloseoutAwaitingSave() {
@@ -5102,12 +5125,16 @@ function emitSetLogged(logObjs, text, substitutions, enrichment) {
       reps: o.reps,
       rir: (o.rir === '' || o.rir == null) ? null : Number(o.rir)
     });
-    // Accumulate the raw set into the session buffer for the end-of-session save.
-    getSessionLog().push({ exercise: o.exercise, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
     // Track the best available planned identity for plan_completed wiring so the
     // server's name-based computePlanState can mark the exercise as done even
     // when the logged canonical name differs from the plan entry name.
     const completedName = resolveCompletedIdentity(o.exercise, enrichMap.get(o.exercise));
+    // Accumulate the raw set into the session buffer for the end-of-session save.
+    // F10S1: the row also carries its RESOLVED identity (`canonical`) — the only moment
+    // it is known — so per-slot set COUNTING can match alias-form raw rows ("RDL") to
+    // their planned identity ("Romanian Deadlift"). Additive field; the save/editor
+    // paths map explicit fields and ignore it.
+    getSessionLog().push({ exercise: o.exercise, canonical: completedName, weight: o.weight, reps: o.reps, rir: o.rir, notes: o.notes || '' });
     if (!getSessionCompleted().includes(completedName)) getSessionCompleted().push(completedName);
   }
   // F10C — an exercise logged that is NOT on the accepted plan (and not the declared

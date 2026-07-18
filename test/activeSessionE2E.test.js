@@ -87,9 +87,10 @@ function loadE2EHarness() {
   assert.ok(sliceCSR.includes('canonicalSessionRecap'),  'sliceCSR must contain canonicalSessionRecap');
 
   // F10: canonicalSessionRecap → remainingPlannedExercises → remainingSlotNames (the
-  // authoritative slot selector). Inject its pure implementation into the harness.
-  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
-  const factory = new Function('window', 'remainingSlotNames', 'variantSatisfies', `
+  // authoritative slot selector). F10S1: getCanonicalSession itself now replays
+  // completions THROUGH planSlotStatuses. Inject the pure implementations.
+  const { planSlotStatuses, remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('window', 'planSlotStatuses', 'remainingSlotNames', 'variantSatisfies', `
     ${STORE_SHIM}
     let lastIntentData = null;
 
@@ -105,7 +106,7 @@ function loadE2EHarness() {
     };
   `);
 
-  return factory({ activeSession: AS }, remainingSlotNames, variantSatisfies);
+  return factory({ activeSession: AS }, planSlotStatuses, remainingSlotNames, variantSatisfies);
 }
 
 // Layer 2 setup — mirrors the real app state after all session mutations:

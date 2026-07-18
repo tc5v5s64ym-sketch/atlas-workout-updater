@@ -108,28 +108,59 @@ const _exports = (function () {
     return exs.map((ex, i) => {
       const name = String((ex && (ex.canonicalName || ex.name)) || '').trim();
       const planItemId = ex && ex.plan_item_id != null ? String(ex.plan_item_id) : null;
+      // F10S1 — the slot's REQUIRED set count (the accepted prescription's `sets`).
+      // A positive integer engages the multiplicity rule below; null (no known
+      // count) keeps the legacy any-attributed-log-completes rule.
+      const sets = Number(ex && ex.sets);
       return {
         plan_item_id: planItemId,
         name,
         liftCode: String((ex && (ex.liftCode || ex.lift_code)) || '').trim(),
         order: i,
         explicit: planItemId ? (outcomeById.get(planItemId) || null) : null,
+        requiredSets: Number.isInteger(sets) && sets >= 1 ? sets : null,
       };
     });
   }
 
+  // F10S1 — count the performed sets that belong to an attributed slot: sessionLog
+  // rows (per-set, RAW names) whose singular-normalized name matches the attributed
+  // completion identity OR the slot's own name (a variant's rows match the former; a
+  // substituted slot's rows match the latter). Floored at 1 when the slot has an
+  // attribution — the attribution itself is proof of at least one performed set even
+  // when alias-form raw rows defeat the name match (fail-closed toward IN PROGRESS,
+  // never a silent zero and never a silent completion).
+  function countPerformedSets(sessionLog, attributedName, slotName) {
+    const keys = new Set([normKey(attributedName), normKey(slotName)].filter(Boolean));
+    if (!keys.size) return 1;
+    let n = 0;
+    for (const r of (Array.isArray(sessionLog) ? sessionLog : [])) {
+      const k = normKey(r && (r.canonical || r.exercise || r.name));
+      if (k && keys.has(k)) n += 1;
+    }
+    return Math.max(n, 1);
+  }
+
   /**
-   * planSlotStatuses(activePlan, completedNames) →
-   *   [{ plan_item_id, name, liftCode, order, status }]   (1:1 with exercises, in order)
+   * planSlotStatuses(activePlan, completedNames, sessionLog?) →
+   *   [{ plan_item_id, name, liftCode, order, status,
+   *      attributedName, performedSets, requiredSets }]   (1:1 with exercises, in order)
    *
    * status ∈ 'completed' | 'skipped' | 'pending'.
    *
-   * activePlan: { exercises:[{name|canonicalName, liftCode, plan_item_id?}], items?:[{plan_item_id, outcome}] }
+   * activePlan: { exercises:[{name|canonicalName, liftCode, plan_item_id?, sets?}], items?:[{plan_item_id, outcome}] }
    * completedNames: resolved logged completions (name strings or { name, liftCode }),
    *   in log order — e.g. getSessionCompleted().
+   * sessionLog (F10S1): the per-set raw log rows (e.g. getSessionLog()) — REQUIRED for
+   *   the multiplicity rule. With it, a slot whose required set count is known completes
+   *   only when its performed-set count reaches that count; below it the slot stays
+   *   PENDING (in progress — one performed set never completes a 3-set slot, the July 18
+   *   smoke failure). Without it (legacy callers/tests), attribution completes as before.
+   *   The explicit id-outcome lane is AUTHORITATIVE either way.
    */
-  function planSlotStatuses(activePlan, completedNames) {
+  function planSlotStatuses(activePlan, completedNames, sessionLog) {
     const slots = buildSlots(activePlan);
+    const countable = Array.isArray(sessionLog);
 
     // 1) Seed from the AUTHORITATIVE id-keyed explicit item outcomes (AC5). An
     //    explicit "Done with this exercise" (completed) or a skip is definitive. A
@@ -140,6 +171,8 @@ const _exports = (function () {
       if (s.explicit === STATUS.COMPLETED) s.status = STATUS.COMPLETED;
       else if (s.explicit === STATUS.SKIPPED) s.status = STATUS.SKIPPED;
       else s.status = STATUS.PENDING;
+      s.attributedName = null;
+      s.performedSets = 0;
     }
 
     // 2) Attribute each logged completion name to AT MOST ONE still-pending slot,
@@ -169,44 +202,75 @@ const _exports = (function () {
         const subs = cand.filter(s => abbreviationMatch(cLc, lc(s.name)));
         if (subs.length === 1) target = subs[0]; // unique → attribute; ambiguous → refuse
       }
-      if (target) { target.status = STATUS.COMPLETED; claimed.add(target.order); }
+      if (target) {
+        // F10S1 — attribution claims the slot; COMPLETION additionally requires the
+        // performed-set count to reach the slot's required set count (when both the
+        // count and per-set evidence are available). Below the count the slot stays
+        // PENDING (in progress) — one performed set never completes a 3-set slot.
+        target.attributedName = cName;
+        claimed.add(target.order);
+        const performed = countable ? countPerformedSets(sessionLog, cName, target.name) : null;
+        if (performed != null) target.performedSets = performed;
+        const multiplicityKnown = countable && target.requiredSets != null;
+        if (!multiplicityKnown || performed >= target.requiredSets) target.status = STATUS.COMPLETED;
+      } else {
+        // Second-chance ATTRIBUTION (reporting only, status untouched): a name that
+        // matched no pending slot may still belong to an already-RESOLVED one (the
+        // athlete logged a set, then tapped the explicit Done — the slot completed via
+        // the id lane before this name could claim it). Recording the attachment here
+        // keeps such names recognized as PLAN work, so a consumer folding "unattributed
+        // completions" into off-plan inserts (getCanonicalSession) never duplicates an
+        // explicitly-completed planned lift as a phantom extra exercise.
+        const resolved = slots.filter(s => s.status !== STATUS.PENDING && !s.attributedName && !claimed.has(s.order));
+        const late =
+          resolved.find(s => normKey(s.name) === cKey) ||
+          (cCode ? resolved.find(s => s.liftCode && lc(s.liftCode) === lc(cCode)) : null) ||
+          resolved.find(s => variantSatisfies(cLc, lc(s.name)));
+        if (late) {
+          late.attributedName = cName;
+          claimed.add(late.order);
+          if (countable) late.performedSets = countPerformedSets(sessionLog, cName, late.name);
+        }
+      }
     }
 
     return slots.map(s => ({
       plan_item_id: s.plan_item_id, name: s.name, liftCode: s.liftCode, order: s.order, status: s.status,
+      attributedName: s.attributedName, performedSets: s.performedSets, requiredSets: s.requiredSets,
     }));
   }
 
   // ── Derived selectors (every consumer reads THESE — no parallel completion state) ─
 
-  // The still-to-do slots (status 'pending', real name), in visible order.
-  function remainingSlots(activePlan, completedNames) {
-    return planSlotStatuses(activePlan, completedNames).filter(s => s.status === STATUS.PENDING && s.name);
+  // The still-to-do slots (status 'pending', real name), in visible order. An
+  // in-progress slot (attributed but below its required set count) stays here.
+  function remainingSlots(activePlan, completedNames, sessionLog) {
+    return planSlotStatuses(activePlan, completedNames, sessionLog).filter(s => s.status === STATUS.PENDING && s.name);
   }
 
   // Pending slot NAMES in order — the slot-distinct replacement for the old name-Set
   // remaining computation (a duplicate name appears once PER still-pending slot).
-  function remainingSlotNames(activePlan, completedNames) {
-    return remainingSlots(activePlan, completedNames).map(s => s.name);
+  function remainingSlotNames(activePlan, completedNames, sessionLog) {
+    return remainingSlots(activePlan, completedNames, sessionLog).map(s => s.name);
   }
 
   // The first still-to-do slot (next up), or null when the plan is complete/empty.
-  function firstUnloggedSlot(activePlan, completedNames) {
-    return remainingSlots(activePlan, completedNames)[0] || null;
+  function firstUnloggedSlot(activePlan, completedNames, sessionLog) {
+    return remainingSlots(activePlan, completedNames, sessionLog)[0] || null;
   }
 
   // Is a specific slot (by plan_item_id) complete? Fails closed (false) without an id.
-  function isSlotComplete(activePlan, completedNames, planItemId) {
+  function isSlotComplete(activePlan, completedNames, planItemId, sessionLog) {
     const id = String(planItemId == null ? '' : planItemId);
     if (!id) return false;
-    return planSlotStatuses(activePlan, completedNames)
+    return planSlotStatuses(activePlan, completedNames, sessionLog)
       .some(s => s.plan_item_id === id && s.status === STATUS.COMPLETED);
   }
 
   // True when the plan has at least one real slot and NONE remain pending (completed
   // and skipped both count as resolved — mirrors the canonical session's isComplete).
-  function isPlanComplete(activePlan, completedNames) {
-    const named = planSlotStatuses(activePlan, completedNames).filter(s => s.name);
+  function isPlanComplete(activePlan, completedNames, sessionLog) {
+    const named = planSlotStatuses(activePlan, completedNames, sessionLog).filter(s => s.name);
     return named.length > 0 && named.every(s => s.status !== STATUS.PENDING);
   }
 

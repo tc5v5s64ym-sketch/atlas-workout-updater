@@ -33,13 +33,19 @@ async function logLift(page, name, weight, reps) {
   }, { name, weight, reps });
 }
 
+// F10S1: completion respects the slot's required set count, so completing a 3-set
+// prescription takes all three sets — one per emit, exactly as the athlete logs them.
+async function logFullLift(page, name, weight, reps, sets = 3) {
+  for (let i = 0; i < sets; i += 1) await logLift(page, name, weight, reps);
+}
+
 test('SESS-3: reopening a closed-out plan re-arms the closeout — the second completion prompts again', async ({ page }) => {
   await openApp(page);
   // A one-lift plan, so logging it completes the plan.
   await page.evaluate(bench => window.startPlannedSession({ label: 'Push', id: 'push', exercises: [bench] }), BENCH);
 
-  // Complete the plan → closeout fires exactly once.
-  await logLift(page, 'Bench Press', 225, 5);
+  // Complete the plan (all 3 prescribed sets — F10S1) → closeout fires exactly once.
+  await logFullLift(page, 'Bench Press', 225, 5);
   await expect(page.locator('.session-closeout')).toHaveCount(1);
 
   // Reopen: add an exercise to the active plan and announce the mutation (the real
@@ -49,9 +55,9 @@ test('SESS-3: reopening a closed-out plan re-arms the closeout — the second co
     document.dispatchEvent(new CustomEvent('atlas:plan-mutated', { detail: { summary: 'Added Overhead Press.', current: 'Overhead Press' } }));
   }, OHP);
 
-  // Complete the reopened plan → the closeout must fire a SECOND time.
+  // Complete the reopened plan (all 3 sets) → the closeout must fire a SECOND time.
   // Before the fix the guard stayed set through the reopen, so this stayed at 1.
-  await logLift(page, 'Overhead Press', 115, 6);
+  await logFullLift(page, 'Overhead Press', 115, 6);
   await expect(page.locator('.session-closeout')).toHaveCount(2);
 });
 
@@ -59,11 +65,12 @@ test('SESS-1: an out-of-order set-logged snapshot never re-announces an already-
   await openApp(page);
   await page.evaluate(({ bench, ohp }) => window.startPlannedSession({ label: 'Push', id: 'push', exercises: [bench, ohp] }), { bench: BENCH, ohp: OHP });
 
-  // Log Bench → remaining is [Overhead Press] → one handoff "next up: Overhead Press".
-  await logLift(page, 'Bench Press', 225, 5);
+  // Finish Bench (3 sets — F10S1) → remaining is [Overhead Press] → one handoff
+  // "next up: Overhead Press".
+  await logFullLift(page, 'Bench Press', 225, 5);
   await expect(page.locator('.next-exercise-handoff')).toHaveCount(1);
-  // Log Overhead Press → plan complete → closeout; no new handoff.
-  await logLift(page, 'Overhead Press', 115, 6);
+  // Finish Overhead Press → plan complete → closeout; no new handoff.
+  await logFullLift(page, 'Overhead Press', 115, 6);
   await expect(page.locator('.session-closeout')).toHaveCount(1);
   await expect(page.locator('.next-exercise-handoff')).toHaveCount(1);
 
