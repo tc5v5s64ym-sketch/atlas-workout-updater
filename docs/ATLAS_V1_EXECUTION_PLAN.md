@@ -899,11 +899,15 @@ The pin must show sets completed for the **current planned item only**, not tota
 
 ### F10S5 — Closeout commentary deduplication
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 The same substitution/coaching note must appear once, not once per performed set or source path. (The smoke failure: closeout duplicated substitution commentary three times.)
 
-**Completion record:** PR — · Commit —
+**Root cause (verified):** `/api/log-workout` re-detects the same prescribed→logged substitution on EVERY subsequent set of the substitute, and `handleSetLogged` rendered/forwarded the note each time — three sets, three copies stacking into the closeout view.
+
+**Resolution.** `src/app/coach-conversation.js`: a session-scoped `acknowledgedSubs` set keyed by the case-insensitive `prescribed|logged` pair; `dedupeSubstitutions` gates the incoming substitutions at the top of `handleSetLogged` — the first mention renders (LLM facts + inline extras included, since both read the filtered list), repeats drop, a different pair still renders, an unkeyable entry (missing names) passes through untouched (never over-suppressed), and a session reset clears the set (a fresh session may legitimately repeat the note). Red-first `test/coachConversation.test.js`: structural pins (the gate runs before any rendering; reset clears) + the behavioral smoke reproduce via the sliced real `dedupeSubstitutions` (same pair ×3 → once; new pair renders; case-insensitive identity; unkeyable passthrough).
+
+**Completion record:** PR — this PR · Commit — `src/app/coach-conversation.js`; tests `test/coachConversation.test.js` (F10S5 block). Full suite 5739 pass; lint 0 errors.
 
 ### F10S6 — Natural-language intent/parser regressions
 

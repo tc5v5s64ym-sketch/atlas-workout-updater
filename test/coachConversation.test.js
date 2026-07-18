@@ -779,3 +779,42 @@ test('chips: the deprecated static strip is gone; its in-thread handlers remain 
   assert.doesNotMatch(nav, /getElementById\('suggestion-chips'\)/, 'its dead listener is removed');
   assert.match(nav, /window\.atlasChipAnswerLast = chipAnswerLast/, 'the conversation layer still reuses chipAnswerLast');
 });
+
+// ---------------------------------------------------------------------------
+// F10S5 — closeout/coaching commentary dedup (owner card, 2026-07-18 smoke gate):
+// the SAME substitution note must appear once, not once per performed set. The
+// server re-detects the same prescribed→logged pair on every subsequent set of
+// the substitute, so the client acknowledges each pair exactly once per session.
+// ---------------------------------------------------------------------------
+
+test('F10S5: handleSetLogged dedupes substitutions before any rendering (once per session)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const fn = handleSetLoggedSource();
+  assert.match(fn, /dedupeSubstitutions\(/, 'the incoming substitutions pass through the once-per-session gate');
+  assert.match(src, /const acknowledgedSubs = new Set\(\)/, 'the session-scoped acknowledged-pair set exists');
+  const reset = src.slice(src.indexOf("addEventListener('atlas:session-reset'"), src.indexOf("addEventListener('atlas:session-reset'") + 400);
+  assert.match(reset, /acknowledgedSubs\.clear\(\)/, 'a session reset clears the acknowledged pairs');
+});
+
+test('F10S5 SMOKE REPRODUCE (behavioral): the same prescribed→logged pair renders once; a new pair still renders', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
+  const slice = src.slice(
+    src.indexOf('const acknowledgedSubs = new Set()'),
+    src.indexOf('async function handleSetLogged(')
+  );
+  assert.ok(slice.includes('function dedupeSubstitutions('), 'slice must contain dedupeSubstitutions');
+  const h = new Function(`${slice}; return { dedupeSubstitutions, acknowledgedSubs };`)();
+  const sub = { prescribed: { name: 'Back Squat' }, logged: { name: 'Front Squat' }, reason: 'equipment' };
+  // Set 1 of the substitute: the pair is fresh → acknowledged.
+  assert.equal(h.dedupeSubstitutions([sub]).length, 1, 'first mention renders');
+  // Sets 2 and 3 re-detect the SAME pair → dropped (the July 18 triplication).
+  assert.equal(h.dedupeSubstitutions([{ ...sub }]).length, 0, 'second mention is deduped');
+  assert.equal(h.dedupeSubstitutions([{ ...sub }]).length, 0, 'third mention is deduped');
+  // A DIFFERENT pair still renders; string-form prescribed keys identically.
+  assert.equal(h.dedupeSubstitutions([{ prescribed: 'Overhead Press', logged: { name: 'Arnold Press' } }]).length, 1);
+  assert.equal(h.dedupeSubstitutions([{ prescribed: { name: 'overhead press' }, logged: { name: 'ARNOLD PRESS' } }]).length, 0,
+    'case-insensitive pair identity');
+  // An unkeyable entry (missing names) passes through untouched — never over-suppressed.
+  assert.equal(h.dedupeSubstitutions([{ reason: 'no names' }]).length, 1);
+  assert.equal(h.dedupeSubstitutions([{ reason: 'no names' }]).length, 1);
+});
