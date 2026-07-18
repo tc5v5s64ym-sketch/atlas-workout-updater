@@ -4412,13 +4412,38 @@ function extractLiftCodes(logRowsPreview) {
 // original planned code lives in the durable ledger, joined server-side by the
 // slot's immutable plan_item_id.
 function closeoutContextItems() {
+  // The context walks the ACCEPTED IDENTITY SPINE (session.items — immutable
+  // plan_item_ids + planned codes), not the mutable working view: an explicitly
+  // declined slot leaves `exercises` entirely, and without the spine its item
+  // never reached the confirmation at all (the F10D proving pack caught the
+  // skipped slot rendering as a bare ledger code). The working view + statuses
+  // then label each surviving slot's outcome.
   const s = getActivePlannedSession();
-  if (!s || !Array.isArray(s.exercises)) return [];
+  if (!s) return [];
   let statuses = [];
   try { statuses = planSlotStatuses(activePlanForSlots(), getSessionCompleted(), getSessionLog()) || []; } catch { statuses = []; }
-  return s.exercises.filter(ex => ex && ex.plan_item_id).map((ex, i) => {
+  // The RAW session slot objects (never the plannedExerciseEntries projection —
+  // it drops `reason`, which erased the substituted outcome). Status order and
+  // slot order both derive from the session's exercises, index-aligned.
+  const viewByItemId = new Map();
+  (Array.isArray(s.exercises) ? s.exercises : []).forEach((ex, i) => {
+    if (ex && ex.plan_item_id && !viewByItemId.has(ex.plan_item_id)) {
+      viewByItemId.set(ex.plan_item_id, { ex, st: statuses[i] || {} });
+    }
+  });
+  const spineItems = (Array.isArray(s.items) ? s.items : []).filter(it => it && it.plan_item_id);
+  const spine = spineItems.length ? spineItems.map(it => it.plan_item_id)
+    : [...viewByItemId.keys()];
+  const plannedCodeById = new Map(spineItems.map(it => [it.plan_item_id, it.planned_lift_code || '']));
+  return spine.map(plan_item_id => {
+    const hit = viewByItemId.get(plan_item_id);
+    if (!hit) {
+      // The slot was removed from the working view (explicit decline). The
+      // accepted identity still reaches the confirmation as skipped work.
+      return { plan_item_id, planned_lift_code: plannedCodeById.get(plan_item_id) || '', outcome: 'skipped' };
+    }
+    const { ex, st } = hit;
     const substituted = ex.reason === 'substituted';
-    const st = statuses[i] || {};
     const performedSets = Number(st.performedSets || 0);
     // Outcome labels only what is derivable: completed / substituted / skipped
     // (zero performed sets). A started-but-incomplete slot sends no outcome —
@@ -4426,10 +4451,14 @@ function closeoutContextItems() {
     const outcome = substituted ? 'substituted'
       : st.status === 'completed' ? 'completed'
         : performedSets === 0 ? 'skipped' : '';
+    // A one-turn substitution can rename the slot before enrichment assigns its
+    // code — resolve the performed code from the client catalog so the summary
+    // can join the substitute's actuals (name-grain server fallback backstops).
+    const performedCode = ex.liftCode || liftCodeFromCatalog(ex.canonicalName || ex.name) || '';
     return {
-      plan_item_id: ex.plan_item_id,
-      planned_lift_code: substituted ? '' : (ex.liftCode || ''),
-      ...(substituted ? { performed_lift_code: ex.liftCode || '' } : {}),
+      plan_item_id,
+      planned_lift_code: substituted ? '' : (ex.liftCode || plannedCodeById.get(plan_item_id) || ''),
+      ...(substituted ? { performed_lift_code: performedCode } : {}),
       name: ex.name || '',
       ...(outcome ? { outcome } : {}),
     };

@@ -201,12 +201,23 @@ test('F10D confirm card: warnings surface plainly (unreadable ledger / inconsist
     ...SUMMARY, ledger_read_failed: true, malformed: true,
     items: [{
       ...SUMMARY.items[0], outcome: 'substituted', performed_lift_code: 'FSQ01', revised: false,
+      planned_name: 'Back Squat',
     }],
   });
   const text = allText(warned);
   assert.match(text, /plan ledger couldn't be read/, 'the read-failure warning shows');
   assert.match(text, /plan history for this session is inconsistent/i, 'the malformed warning shows');
-  assert.match(text, /\(substituted — performed FSQ01\)/, 'the substitution is labeled with the performed lift');
+  // The owner contract: the ORIGINAL plan stays visible — a substitution names
+  // what it stood in for, by name (the F10D proving pack caught the bare-code form).
+  assert.match(text, /\(substituted — in for Back Squat\)/, 'the substitution names the original lift');
+
+  // Without a resolvable name the tag still renders, falling back to the code —
+  // never silently untagged.
+  const codeOnly = build({
+    ...SUMMARY,
+    items: [{ ...SUMMARY.items[0], outcome: 'substituted', performed_lift_code: 'FSQ01', revised: false, planned_name: null }],
+  });
+  assert.match(allText(codeOnly), /\(substituted — in for DIP01\)/, 'code fallback when no name resolves');
 });
 
 test('F10D confirm card: null load is NOT bodyweight — loadless targets render as reps; true BW (0) renders BW', () => {
@@ -247,4 +258,23 @@ test('F10D confirm card: a freestyle summary (no stored plan) still confirms the
   const text = allText(card);
   assert.match(text, /Bench Press \(unplanned\): 225×5@2/);
   assert.match(text, /Approving writes 1 set row\(s\)\. Rejecting writes nothing\./, 'no effort bit, no seal bit');
+});
+
+// The owner-facing first-live-write procedure quotes the production tab header
+// row verbatim — the one line Dale copies to CREATE the tab. It must equal the
+// authoritative code order exactly (Codex P1 on PR #1071: a hand-typed draft
+// swapped supersedes_key/confidence; the capture layer would have rejected the
+// mis-created tab fail-closed, but the template itself must never drift).
+test('F10D readiness doc: the quoted production header row IS sessionPlanSetsColumns, verbatim and in order', () => {
+  const { sessionPlanSetsColumns } = require('../config/columns');
+  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'F10D_PRODUCTION_READINESS.md'), 'utf8');
+  const expected = sessionPlanSetsColumns.join(' | ');
+  assert.ok(doc.includes(expected), 'the doc quotes the exact 16-column header order from config/columns.js');
+  // And no OTHER 16-column pipe-joined line contradicts it: every doc line that
+  // mentions idempotency_key alongside recorded_at must be the exact order.
+  const headerLines = doc.split('\n').filter(l => l.includes('idempotency_key') && l.includes('recorded_at'));
+  assert.ok(headerLines.length >= 1, 'the header line exists');
+  for (const l of headerLines) {
+    assert.ok(l.trim() === expected, `header listing matches the code order exactly: "${l.trim()}"`);
+  }
 });

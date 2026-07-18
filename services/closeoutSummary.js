@@ -51,11 +51,19 @@ function _lc(v) { return _str(v).toLowerCase(); }
 //   logRowsPreview  — the EXACT Log_Cleaned rows the write will append (echoed)
 //   effortRowPreview— the EXACT Effort row (or null)
 //   sealPreview     — { would_seal, already_sealed } from the seal dry-run (optional)
+//   codeToName      — optional { LIFT_CODE: canonical name } for display names:
+//                     a skipped/ledger-only item has no client name, and the
+//                     confirmation must never show the owner a bare code
 function buildCloseoutSummary(input) {
   const {
     session = {}, ledgerRows = [], items = [], actualRows = [],
     logRowsPreview = [], effortRowPreview = null, sealPreview = null,
+    codeToName = {},
   } = input && typeof input === 'object' ? input : {};
+  const _nameForCode = code => {
+    const c = _str(code);
+    return (c && codeToName && typeof codeToName === 'object' && _str(codeToName[c])) || '';
+  };
 
   const session_id = _str(session.session_id);
   const session_date = _str(session.session_date);
@@ -137,9 +145,17 @@ function buildCloseoutSummary(input) {
 
     // Claim this item's actuals: the performed lift is the substitute when one was
     // recorded, else the planned lift. Ordinal pairing — the k-th performed set of
-    // that lift answers the k-th effective target set.
+    // that lift answers the k-th effective target set. When the client could not
+    // resolve a code (a one-turn substitution can rename a slot before enrichment
+    // assigns one), fall back to NAME-grain claiming against the item's own name —
+    // otherwise the substitute's real sets land in "unplanned" and the slot shows
+    // "not performed" (the F10D proving pack caught exactly that).
     const matchCode = _lc(it.performed_lift_code) || _lc(it.planned_lift_code);
-    const itemActuals = actuals.filter(a => !a.claimed && matchCode && _lc(a.lift_code) === matchCode);
+    let itemActuals = actuals.filter(a => !a.claimed && matchCode && _lc(a.lift_code) === matchCode);
+    if (!itemActuals.length && _str(it.name)) {
+      const matchName = _lc(it.name);
+      itemActuals = actuals.filter(a => !a.claimed && _lc(a.name) === matchName);
+    }
     for (const a of itemActuals) a.claimed = true;
 
     const target_vs_actual = [];
@@ -166,11 +182,16 @@ function buildCloseoutSummary(input) {
       target_vs_actual.push(entry);
     }
 
+    const resolvedPlannedCode = _str(it.planned_lift_code) || (v1.length ? v1[0].planned_lift_code : '');
     summaryItems.push({
       plan_item_id,
-      planned_lift_code: _str(it.planned_lift_code) || (v1.length ? v1[0].planned_lift_code : ''),
+      planned_lift_code: resolvedPlannedCode,
       performed_lift_code: _str(it.performed_lift_code) || null,
-      name: _str(it.name) || null,
+      // Display name: the client's slot name, else the catalog name of the
+      // performed/planned code — the confirmation never shows a bare code.
+      name: _str(it.name) || _nameForCode(it.performed_lift_code) || _nameForCode(resolvedPlannedCode) || null,
+      // The ORIGINAL lift's name, so a substitution can say what it stood in for.
+      planned_name: _nameForCode(resolvedPlannedCode) || null,
       outcome: _str(it.outcome) || null,
       source,
       revised,

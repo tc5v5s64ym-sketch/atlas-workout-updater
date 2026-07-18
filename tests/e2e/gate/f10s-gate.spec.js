@@ -331,6 +331,7 @@ test('F10S-GATE: July 18 Work-mode smoke rerun — every exit criterion holds', 
   fs.writeFileSync(path.join(artDir, 'write-evidence.json'), JSON.stringify(gateState, null, 2));
   expect((gateState.appends || []).length).toBe(0);
   expect((gateState.ensure_tab_calls || []).length).toBe(0);
+  expect((gateState.updates || []).length).toBe(0);
   expect(gateState.sheets_stubbed_in_memory).toBe(true);
   record('evidence', 'actuals: 3× Front Squat, 0× Back Squat (client canonical log); sheet writes: ZERO append calls, ZERO tab creations — the write phase remains F10D-gated');
   await snap(page, '08-final-state.png');

@@ -1690,8 +1690,10 @@ import * as sessionQuestion from './sessionQuestion.js';
         else if (target) bits.push(`${target} → not performed`);
         else if (actual) bits.push(`${t.extra ? 'extra: ' : ''}${actual}`);
       }
-      const tag = item.outcome === 'substituted' && item.performed_lift_code
-        ? ` (substituted — performed ${item.performed_lift_code})`
+      // A substitution names what it stood in for — the ORIGINAL plan stays
+      // visible on the card (owner contract), by name, never a bare code.
+      const tag = item.outcome === 'substituted'
+        ? ` (substituted — in for ${item.planned_name || item.planned_lift_code || 'planned lift'})`
         : item.outcome === 'skipped' ? ' (skipped)'
           : item.revised ? ' (revised mid-session)' : '';
       line('cc-item', `${name}${tag}: ${bits.join(' · ') || 'no sets'}`);
