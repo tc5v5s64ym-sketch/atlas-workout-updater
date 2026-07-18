@@ -131,6 +131,33 @@ test('an explicit substitute prescription still wins over the inherited set coun
   assert.equal(api.getPlan().exercises[0].sets, 4, 'the recommender-supplied set count is used when present');
 });
 
+test('the REAL parse pipeline forwards the directive end-to-end (server builder → parseWorkoutTextWithBackend) — Codex P1', async () => {
+  // The backend wrapper REBUILDS its return object; a field it does not forward is
+  // silently dead downstream (exactly how the directive was dropped on #1062's first
+  // head). Drive the REAL parseWorkoutTextWithBackend with an api stub that returns
+  // the REAL server dry-run response for the one-turn phrase, and pin the forwarding.
+  const { buildWorkoutTextParseDryRunResponse } = require('../services/workoutTextParser.js');
+  const serverBody = buildWorkoutTextParseDryRunResponse({
+    text: 'Front Squat 185 7/2 x3 instead of Back Squat', test_mode: true,
+  });
+  const slice = appSrc.slice(
+    appSrc.indexOf('function rowsFromBackendParsedWorkout('),
+    appSrc.indexOf('function populateSetRows(')
+  );
+  assert.ok(slice.includes('async function parseWorkoutTextWithBackend('), 'slice must contain the backend wrapper');
+  const factory = new Function('api', 'workoutTextInput', 'firstUnloggedPlannedLift', `
+    let activeExercise = null;
+    class AbortController { constructor() { this.signal = null; } abort() {} }
+    ${slice}
+    return { parseWorkoutTextWithBackend };
+  `);
+  const h = factory(async () => ({ data: serverBody }), { value: '' }, () => null);
+  const out = await h.parseWorkoutTextWithBackend('Front Squat 185 7/2 x3 instead of Back Squat');
+  assert.equal(out.intent, 'log_sets');
+  assert.equal(out.rows.length, 3, 'the three sets survive');
+  assert.deepEqual(out.substitution, { for: 'Back Squat' }, 'the directive survives the rebuilt response shape');
+});
+
 // ── structural: the client wiring exists and is one-shot ─────────────────────────
 
 test('wiring: the parse consumer holds the directive one-shot and the chat commit arms Step 373b', () => {

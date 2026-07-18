@@ -3968,7 +3968,10 @@ async function parseWorkoutTextWithBackend(workoutText) {
     // Multi-line partial-log (owner 2026-07-02): lines the parser could not resolve,
     // each with its own specific ask — surfaced by rowsFromWorkoutInput so a clean
     // paste never silently drops its one ambiguous line.
-    unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved : null
+    unresolved: Array.isArray(parsed.unresolved) ? parsed.unresolved : null,
+    // F10S2/F10S6c — the one-turn "instead of <original>" directive must survive this
+    // rebuilt shape, or the arming block downstream never sees it (Codex P1 on #1062).
+    substitution: (parsed.substitution && parsed.substitution.for) ? parsed.substitution : null
   };
 }
 
