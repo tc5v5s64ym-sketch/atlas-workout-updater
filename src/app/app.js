@@ -1648,6 +1648,11 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
   // plan_item_id (read off the slot before it is replaced/spliced). The replacement
   // slot below retains it so a later action still resolves the accepted item.
   const originalItemId = exs[idx].plan_item_id;
+  // F10B — the ACCEPTED plan's set count for this slot (the v1 ledger grain), read
+  // BEFORE the in-place swap below overwrites it. A revision bounds its future sets by
+  // THIS count so every revised set has a v1 predecessor — never by the substitute's own
+  // prescribed set count (which can differ and would dangle/strand the chain).
+  const originalSetCount = exs[idx].sets;
   const subCode = String(subLiftCode || '').toLowerCase();
   // Dedupe: if the substitute is already a slot elsewhere, drop the prescribed
   // slot instead of duplicating it (one logged set must not close two slots).
@@ -1679,17 +1684,19 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
       // substituted, not replaced by a new plan item.
       plan_item_id: originalItemId
     };
+    // F10B — the in-place swap is an EXPLICIT mid-session recommendation for THIS slot's
+    // FUTURE (unperformed) sets. Checkpoint it as a durable revision (append-only,
+    // reload-safe, dry-run), bounded by the accepted set count so every revised set has a
+    // v1 predecessor. Performed sets stay frozen; driven by the explicit swap, NEVER by a
+    // performed value. (The dedupe branch above removes the slot → no future sets → no
+    // revision.)
+    if (originalItemId) emitFutureSetRevision(originalItemId, subLiftCode, prescription, prescribedName, originalSetCount);
   }
   renderActiveSessionBanner();
   // PR-G1: emit the explicit `substituted` outcome — the accepted item keeps its
   // planned_lift_code (resolved server-side by plan_item_id) and records the actual
   // performed_lift_code. Fails closed if the slot had no identity (unaccepted plan).
   if (originalItemId) emitPlanItemOutcome({ plan_item_id: originalItemId, outcome: 'substituted', performed_lift_code: subLiftCode });
-  // F10B — the substitution is an EXPLICIT mid-session recommendation for the slot's
-  // FUTURE (unperformed) sets. Checkpoint it as a durable revision (append-only,
-  // reload-safe, dry-run). Performed sets stay frozen; a set the athlete already did is
-  // never revised. This is driven by the explicit swap, NEVER by a performed value.
-  if (originalItemId) emitFutureSetRevision(originalItemId, subLiftCode, prescription, prescribedName);
   return true;
 }
 
@@ -1699,7 +1706,12 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
 // appends them append-only to the session revisions (persisted for reload), and posts
 // each to the dry-run /revision checkpoint. No-op without an accepted plan, a canonical
 // substitute code, or a complete explicit target — it never fabricates a revision.
-function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribedName) {
+// `acceptedSetCount` is the slot's ACCEPTED (v1) set count — the ledger grain the
+// revision is bounded by, so every revised set has a v1 predecessor (an increased
+// substitute set count can never create a dangling chain, a decreased one can never
+// strand a stale v1 row). The substitute's own prescribed set count is deliberately NOT
+// used for the bound.
+function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribedName, acceptedSetCount) {
   const plan = getActivePlannedSession();
   if (!plan || plan.accepted !== true || !planItemId) return; // only an accepted plan carries ledger identity
   const p = prescription && typeof prescription === 'object' ? prescription : {};
@@ -1709,7 +1721,7 @@ function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribed
     target_weight: p.weight,
     target_reps: p.reps,
     target_rir: p.rir,
-    target_set_count: p.sets,
+    target_set_count: acceptedSetCount,
     performedCount: ledgerPerformedSetCount(getSessionLog(), prescribedName),
     sessionRevisions: getSessionRevisions(),
   });

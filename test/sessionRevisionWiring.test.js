@@ -42,7 +42,7 @@ test('an explicit substitution checkpoints future-set revisions (append + post),
   const h = loadHarness();
   h.state.plan = ACCEPTED;
   h.state.log = [{ exercise: 'Bench Press', weight: 185, reps: 8, rir: 2 }]; // 1 set of the ORIGINAL already done
-  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press');
+  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press', 3);
   await Promise.resolve();
   // Set 1 (performed) is NOT revised; sets 2 & 3 are.
   assert.deepEqual(h.state.revisions.map(r => r.set_index), [2, 3]);
@@ -58,11 +58,11 @@ test('an unaccepted plan / no canonical code / no explicit target → NO revisio
   const h = loadHarness();
   // unaccepted plan
   h.state.plan = { accepted: false, session_id: 'S1' };
-  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press');
+  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press', 3);
   assert.equal(h.state.revisions.length, 0);
   // accepted, but no prescription targets
   h.state.plan = ACCEPTED;
-  h.emitFutureSetRevision('pi_1', 'DBP01', { sets: 3 }, 'Bench Press');
+  h.emitFutureSetRevision('pi_1', 'DBP01', { sets: 3 }, 'Bench Press', 3);
   assert.equal(h.state.revisions.length, 0, 'no explicit weight/reps → no fabricated revision');
   assert.equal(h.state.posts.length, 0);
 });
@@ -71,10 +71,23 @@ test('append-only: re-emitting the same substitution does not duplicate revision
   const h = loadHarness();
   h.state.plan = ACCEPTED;
   h.state.log = [];
-  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press');
+  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press', 3);
   const after = h.state.revisions.length;
-  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press');
+  h.emitFutureSetRevision('pi_1', 'DBP01', PRESC, 'Bench Press', 3);
   assert.equal(h.state.revisions.length, after, 'no duplicate (item,set,version) rows');
+});
+
+test('the revision set-count is bounded by the ACCEPTED plan, never the substitute prescription', async () => {
+  const h = loadHarness();
+  h.state.plan = ACCEPTED;
+  h.state.log = [];
+  // The accepted slot has 2 sets; the substitute's prescription recommends 3. The ledger
+  // must bound future revisions by the ACCEPTED 2 (every revised set has a v1 predecessor)
+  // — an over-count 3 would create a v2 for set 3 with no v1 and dangle the chain.
+  h.emitFutureSetRevision('pi_1', 'DBP01', { weight: 60, reps: 8, sets: 3, rir: 2 }, 'Bench Press', 2);
+  assert.deepEqual(h.state.revisions.map(r => r.set_index), [1, 2], 'bounded by the accepted 2 sets, not the prescribed 3');
+  assert.ok(h.state.revisions.every(r => r.target_set_count === 2), 'the row target_set_count is the accepted grain');
+  assert.equal(h.state.posts.length, 2, 'one /revision post per accepted future set');
 });
 
 // ── structural: a PERFORMED value never creates a revision ────────────────────────
