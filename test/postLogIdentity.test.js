@@ -28,7 +28,12 @@ function loadIdentityHarness() {
     src.indexOf('function emitSetLogged(')
   );
   assert.ok(slice1 && slice2, 'identity helpers must be found in app.js');
-  const factory = new Function(`
+  // F10: the sliced helpers now route completion through the authoritative selector —
+  // resolveCompletedIdentity uses variantSatisfies, remainingPlannedExercises uses
+  // remainingSlotNames. Inject the real (pure) implementations so the harness exercises
+  // the SAME logic app.js imports from planSlotStatuses.js.
+  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('remainingSlotNames', 'variantSatisfies', `
     ${STORE_SHIM}
     let lastIntentData = null;
     ${slice1}
@@ -47,7 +52,7 @@ function loadIdentityHarness() {
       resolveCompletedIdentity,
     };
   `);
-  return factory();
+  return factory(remainingSlotNames, variantSatisfies);
 }
 
 // --- harness: coach-conversation.js liftCodeForExercise ----------------------
@@ -200,8 +205,12 @@ function loadEmitHarness(catalogOptions) {
     getElementById: id => (id === 'exercise-catalog' && catalogOptions) ? { options: catalogOptions } : null,
   };
   function FakeCustomEvent(type, init) { return { type, detail: init && init.detail }; }
+  // F10: emitSetLogged → remainingPlannedExercises → remainingSlotNames, and
+  // resolveCompletedIdentity → variantSatisfies. Inject the real pure implementations.
+  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
   const factory = new Function(
     'document', 'CustomEvent', 'setsTableBody', 'parsedRowsEditor', 'invalidatePreview',
+    'remainingSlotNames', 'variantSatisfies',
     `${STORE_SHIM}
      let lastIntentData = null;
      let lastParsedWorkoutText = '';
@@ -219,7 +228,7 @@ function loadEmitHarness(catalogOptions) {
        emitSetLogged,
      };`
   );
-  const api = factory(fakeDoc, FakeCustomEvent, { innerHTML: '' }, { hidden: false }, () => {});
+  const api = factory(fakeDoc, FakeCustomEvent, { innerHTML: '' }, { hidden: false }, () => {}, remainingSlotNames, variantSatisfies);
   return { api, events };
 }
 

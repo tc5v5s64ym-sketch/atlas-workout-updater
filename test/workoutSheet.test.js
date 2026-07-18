@@ -7,10 +7,17 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-let WS;
+let WS, SEL;
+// F10 — buildSheetCards now consumes per-slot statuses from the ONE authoritative
+// selector (planSlotStatuses), keyed on plan_item_id + slot position, instead of a
+// remaining-name set. Derive `statuses` from a plan + logged completions the same way
+// the DOM wiring does, so the sheet cards prove the real integration.
+const statusesFor = (planned, completed) => SEL.planSlotStatuses({ exercises: planned }, completed);
+
 describe('workoutSheet pure helpers', () => {
   it('loads the ES module (DOM wiring is a no-op in Node)', async () => {
     WS = await import('../src/app/workoutSheet.js');
+    SEL = await import('../src/app/planSlotStatuses.js');
     assert.ok(WS.detentsFor && WS.snapTarget && WS.buildSheetCards);
   });
 
@@ -56,10 +63,10 @@ describe('workoutSheet pure helpers', () => {
     { name: 'Overhead Press', canonicalName: 'Overhead Press', weight: 115, reps: 6, sets: 3, rir: 2 },
     { name: 'Cable Fly', canonicalName: 'Cable Fly', weight: 42.5, reps: 12, sets: 3, rir: 1 },
   ];
-  it('buildSheetCards: done (not remaining) / current (first remaining) / pending, in plan order', () => {
+  it('buildSheetCards: done (completed slot) / current (first pending) / pending, in plan order', () => {
     const cards = WS.buildSheetCards({
       planned: PLAN,
-      remaining: ['Incline DB Press', 'Overhead Press', 'Cable Fly'],
+      statuses: statusesFor(PLAN, ['Bench Press']),
       log: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }, { exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }],
     });
     assert.deepEqual(cards.map(c => c.status), ['done', 'current', 'pending', 'pending']);
@@ -67,30 +74,49 @@ describe('workoutSheet pure helpers', () => {
     assert.equal(cards[0].name, 'Bench Press');
     assert.equal(cards[0].logged.count, 2, 'done card carries its logged set count');
   });
-  it('buildSheetCards: an all-complete plan has no current (empty remaining)', () => {
-    const cards = WS.buildSheetCards({ planned: PLAN.slice(0, 1), remaining: [], log: [] });
+  it('buildSheetCards: F10 — duplicate-named slots stay independent (one log marks ONE card done)', () => {
+    // The Workout Sheet duplicate-name identity finding: two "Lat Pulldown" slots must
+    // NOT both flip to done on one logged set — each is its own plan_item_id.
+    const dup = [
+      { name: 'Lat Pulldown', canonicalName: 'Lat Pulldown', plan_item_id: 'pi_1', weight: 120, reps: 10, sets: 3, rir: 2 },
+      { name: 'Cable Row', canonicalName: 'Cable Row', plan_item_id: 'pi_2', weight: 100, reps: 10, sets: 3, rir: 2 },
+      { name: 'Lat Pulldown', canonicalName: 'Lat Pulldown', plan_item_id: 'pi_3', weight: 120, reps: 10, sets: 3, rir: 2 },
+    ];
+    const cards = WS.buildSheetCards({
+      planned: dup,
+      statuses: statusesFor(dup, ['Lat Pulldown']),
+      log: [{ exercise: 'Lat Pulldown', weight: 120, reps: 10, rir: 2 }],
+    });
+    assert.deepEqual(cards.map(c => c.status), ['done', 'current', 'pending'],
+      'first Lat Pulldown done; the second stays pending, not swept done');
+  });
+  it('buildSheetCards: an all-complete plan has no current (every slot resolved)', () => {
+    const one = PLAN.slice(0, 1);
+    const cards = WS.buildSheetCards({ planned: one, statuses: statusesFor(one, ['Bench Press']), log: [] });
     assert.equal(cards[0].status, 'done');
   });
   it('buildSheetCards: empty / bad input → []', () => {
     assert.deepEqual(WS.buildSheetCards({}), []);
     assert.deepEqual(WS.buildSheetCards(), []);
-    assert.deepEqual(WS.buildSheetCards({ planned: [{ name: '' }], remaining: [] }), [], 'blank names dropped');
+    assert.deepEqual(WS.buildSheetCards({ planned: [{ name: '' }], statuses: [] }), [], 'blank names dropped');
   });
 
   // ── detail text (no invented numbers) ──
   it('cardDetailText: done shows the logged top set; current shows the set counter + next; pending shows the prescription', () => {
+    const threePlan = PLAN.slice(0, 3);
     const [bench, incline, ohp] = WS.buildSheetCards({
-      planned: PLAN.slice(0, 3),
-      remaining: ['Incline DB Press', 'Overhead Press'],
+      planned: threePlan,
+      statuses: statusesFor(threePlan, ['Bench Press']),
       log: [{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }, { exercise: 'Incline DB Press', weight: 70, reps: 8, rir: 2 }],
     });
     assert.match(WS.cardDetailText(bench), /1 set · top 225×5 @2/); // one bench set in the fixture
     assert.match(WS.cardDetailText(incline), /set 2\/3 · next 70×8 @2/); // one set logged → next is set 2
     assert.match(WS.cardDetailText(ohp), /3 sets · 115×6 @2/);
     // Over-logged (more sets than prescribed) clamps the counter to the target — never "set 5/3".
+    const overPlan = [{ name: 'Incline DB Press', canonicalName: 'Incline DB Press', weight: 70, reps: 8, sets: 3, rir: 2 }];
     const [over] = WS.buildSheetCards({
-      planned: [{ name: 'Incline DB Press', canonicalName: 'Incline DB Press', weight: 70, reps: 8, sets: 3, rir: 2 }],
-      remaining: ['Incline DB Press'],
+      planned: overPlan,
+      statuses: statusesFor(overPlan, []),
       log: [0, 1, 2, 3].map(() => ({ exercise: 'Incline DB Press', weight: 70, reps: 8, rir: 2 })), // 4 logged vs sets:3
     });
     assert.match(WS.cardDetailText(over), /set 3\/3 · next 70×8 @2/, 'counter clamps at the target, not set 5/3');

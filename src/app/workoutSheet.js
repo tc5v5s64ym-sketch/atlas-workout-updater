@@ -22,6 +22,8 @@
  * the spring settle is a CSS transition disabled under prefers-reduced-motion.
  */
 
+import { planSlotStatuses } from './planSlotStatuses.js';
+
 // ── Pure helpers (exported for Node tests; DOM-free) ──────────────────────────
 
 // Three detents as pixel offsets from the top, for a given viewport height.
@@ -77,25 +79,35 @@ function logSummary(logRows, name) {
 
 // Build the ordered read-only card descriptors. Pure — DOM-free, no I/O.
 //   planned:   getActivePlannedSession().exercises — ordered, with prescriptions.
-//   remaining: remainingPlannedExercises() — pending names in order (canonical match).
+//   statuses:  planSlotStatuses(plan, sessionCompleted) — the ONE authoritative
+//              per-slot completion selector (F10), 1:1 with `planned` by position.
 //   log:       getSessionLog() — logged sets [{ exercise, weight, reps, rir }].
-// current = the first remaining; done = a plan item not in remaining; pending = the rest.
-export function buildSheetCards({ planned, remaining, log } = {}) {
+// F10: the card's done/current/pending is decided BY SLOT (plan_item_id + position),
+// never by name-set membership — so two same-named slots stay independent (one logged
+// set no longer marks every same-named card done). current = the first still-pending
+// slot; done = a completed/skipped slot; pending = the rest.
+export function buildSheetCards({ planned, statuses, log } = {}) {
   const plan = Array.isArray(planned) ? planned : [];
-  const rem = new Set((Array.isArray(remaining) ? remaining : []).map(normName));
-  const currentKey = (Array.isArray(remaining) && remaining.length) ? normName(remaining[0]) : null;
+  const st = Array.isArray(statuses) ? statuses : [];
+  const byOrder = new Map(st.map(s => [s.order, s]));
+  // The current slot = the first still-pending slot, by position.
+  let currentOrder = null;
+  for (let i = 0; i < plan.length; i++) {
+    const s = byOrder.get(i);
+    if (s && s.status === 'pending') { currentOrder = i; break; }
+  }
   return plan
     .map((ex, i) => {
       const name = String((ex && (ex.canonicalName || ex.name)) || '').trim();
       if (!name) return null;
-      const key = normName(name);
       const prescription = {
         weight: numOr(ex && ex.weight), reps: numOr(ex && ex.reps),
         sets: numOr(ex && ex.sets), rir: numOr(ex && ex.rir),
       };
+      const slotStatus = byOrder.get(i) ? byOrder.get(i).status : 'pending';
       let status;
-      if (!rem.has(key)) status = 'done';
-      else if (key === currentKey) status = 'current';
+      if (slotStatus === 'completed' || slotStatus === 'skipped') status = 'done';
+      else if (i === currentOrder) status = 'current';
       else status = 'pending';
       return { slot: i + 1, name, status, prescription, logged: logSummary(log, name) };
     })
@@ -243,9 +255,14 @@ export function cardDetailText(card) {
   function renderCards() {
     const session = call('getActivePlannedSession');
     const planned = session && Array.isArray(session.exercises) ? session.exercises : [];
-    const remaining = call('remainingPlannedExercises') || [];
     const log = call('getSessionLog') || [];
-    const cards = buildSheetCards({ planned, remaining, log });
+    // F10 — decide each card's status from the ONE authoritative per-slot selector,
+    // keyed on plan_item_id + position, so the sheet holds ZERO completion logic and
+    // can never disagree with the pin/recap/closeout. Falls back to an empty status
+    // list (all pending) when the selector or session is unavailable.
+    const completed = call('getSessionCompleted') || [];
+    const statuses = session ? planSlotStatuses(session, completed) : [];
+    const cards = buildSheetCards({ planned, statuses, log });
 
     // Header: label + progress + the load-line signature bar.
     const label = (session && session.label ? String(session.label) : '').trim();

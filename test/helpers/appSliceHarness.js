@@ -188,8 +188,11 @@ async function buildIdentityCorrectionHarness(catalogOptions) {
     dispatchEvent: evt => events.push(evt),
   };
   const fakeWindow = { identityCorrection };
+  // F10: the sliced plannedExerciseEntries/remaining + resolveCompletedIdentity helpers
+  // route completion through the authoritative selector — inject its pure functions.
+  const { remainingSlotNames, variantSatisfies } = require('../../src/app/planSlotStatuses.js');
 
-  const factory = new Function('document', 'window', 'CustomEvent', 'events', `
+  const factory = new Function('document', 'window', 'CustomEvent', 'events', 'remainingSlotNames', 'variantSatisfies', `
     ${STORE_SHIM}
     let lastIntentData = null;
     let activeExercise = null;
@@ -217,7 +220,7 @@ async function buildIdentityCorrectionHarness(catalogOptions) {
     };
   `);
 
-  return factory(fakeDoc, fakeWindow, FakeCustomEvent, events);
+  return factory(fakeDoc, fakeWindow, FakeCustomEvent, events, remainingSlotNames, variantSatisfies);
 }
 
 module.exports = {

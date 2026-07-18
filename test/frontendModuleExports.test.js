@@ -18,6 +18,7 @@ const EXPECTED = {
     'STATUS', 'createActiveSession', 'replaceExercise', 'skipExercise', 'markCompleted',
     'correctIdentity', 'insertExercise', 'reorderExercise', 'currentExercise', 'nextUp', 'remaining',
     'completedExercises', 'isComplete', 'hasLoggedWork', 'reconcileSubstitutedRemaining',
+    'variantSatisfies',
     'entryMatches', 'findMatchIndex', 'toEntry',
   ],
   planMutationIntent: ['classifyMutationIntent', 'cleanName', 'splitTargets', 'resolvePlanTargets'],

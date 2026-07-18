@@ -558,7 +558,7 @@ test('app.js next-up follows the visible plan order (started OR coach-suggested)
   assert.match(src, /function plannedExerciseOrder\(\)/, 'a shared plan-order helper exists');
   assert.match(src, /getActivePlannedSession\(\)\.exercises\.map\(/, 'order uses the started session when present');
   assert.match(src, /lastIntentData[\s\S]*?recommended/, 'order falls back to the cached coach-suggested plan');
-  assert.match(src, /function remainingPlannedExercises\(\)[\s\S]*?completed\.has/, 'remaining skips already-completed exercises');
+  assert.match(src, /function remainingPlannedExercises\(\)[\s\S]*?remainingSlotNames\(/, 'remaining routes through the authoritative plan_item_id-keyed slot selector (F10)');
   assert.match(src, /detail:\s*\{[\s\S]*nextPlanned/, 'nextPlanned must be included in the set-logged event detail');
 });
 

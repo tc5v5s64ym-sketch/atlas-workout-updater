@@ -358,16 +358,24 @@ const _exports = (function () {
   //     false-satisfies (which would hide a genuinely-undone lift from the recap).
   // Read-only: names in, filtered remaining out. Does not touch the session, the
   // written rows, or the save payload — only what the recap narrates as remaining.
+  // Does a logged completed name `c` satisfy a bare base slot `r` as a recognized
+  // equipment/angle/grip VARIANT? `c` must be "<qualifier…> <base r>" — the base is
+  // the trailing whole phrase AND every leading modifier is a variant qualifier
+  // ("incline dumbbell flyes" → "dumbbell flyes"). Directional + qualifier-gated so a
+  // DIFFERENT lift that merely ends with the base ("romanian deadlift" → "deadlift")
+  // never satisfies it. Both args must be lowercased/trimmed. THE SINGLE HOME of the
+  // variant rule: reconcileSubstitutedRemaining (recap) and planSlotStatuses (the F10
+  // per-slot completion selector) both consume it, so they can never diverge.
+  function variantSatisfies(c, r) {
+    if (!c || !r || c === r) return false;
+    if (!c.endsWith(r) || c[c.length - r.length - 1] !== ' ') return false;
+    const prefix = c.slice(0, c.length - r.length).trim().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
+    return prefix.length > 0 && prefix.every(w => VARIANT_QUALIFIERS.has(w));
+  }
+
   function reconcileSubstitutedRemaining(completedNames, remainingNames) {
     const completed = (Array.isArray(completedNames) ? completedNames : []).map(lc).filter(Boolean);
-    const satisfied = r => {
-      if (!r) return false;
-      return completed.some(c => {
-        if (c === r || !c.endsWith(r) || c[c.length - r.length - 1] !== ' ') return false;
-        const prefix = c.slice(0, c.length - r.length).trim().replace(/-/g, ' ').split(/\s+/).filter(Boolean);
-        return prefix.length > 0 && prefix.every(w => VARIANT_QUALIFIERS.has(w));
-      });
-    };
+    const satisfied = r => !!r && completed.some(c => variantSatisfies(c, r));
     return (Array.isArray(remainingNames) ? remainingNames : [])
       .filter(name => !satisfied(lc(name)));
   }
@@ -388,6 +396,9 @@ const _exports = (function () {
     isComplete,
     hasLoggedWork,
     reconcileSubstitutedRemaining,
+    // F10 — the single home of the equipment/angle/grip variant rule, consumed by
+    // both reconcileSubstitutedRemaining and planSlotStatuses.
+    variantSatisfies,
     // exposed for the later slices (identity correction PR4 / insert PR5) and tests
     entryMatches,
     findMatchIndex,
@@ -413,6 +424,7 @@ export const {
   isComplete,
   hasLoggedWork,
   reconcileSubstitutedRemaining,
+  variantSatisfies,
   entryMatches,
   findMatchIndex,
   toEntry,

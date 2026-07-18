@@ -1227,7 +1227,12 @@ import * as sessionQuestion from './sessionQuestion.js';
       if (map && map.size) {
         const keys = Array.from(map.keys());
         let idx = keys.indexOf(key);
-        if (idx === -1) idx = keys.findIndex(k => k.includes(key) || key.includes(k));
+        // F10 — exact key outranks substring; an AMBIGUOUS substring (>1 plan entry
+        // matches) refuses to guess rather than silently pick the wrong slot's next-up.
+        if (idx === -1) {
+          const subs = keys.map((k, i) => ({ k, i })).filter(({ k }) => k.includes(key) || key.includes(k));
+          if (subs.length === 1) idx = subs[0].i;
+        }
         if (idx !== -1) {
           // Found in the API plan — it is authoritative. Last entry → no handoff.
           if (idx >= keys.length - 1) return null;
@@ -1243,10 +1248,12 @@ import * as sessionQuestion from './sessionQuestion.js';
       const { exercises } = session;
       let idx = exercises.findIndex(e => String(e.name || '').toLowerCase() === key);
       if (idx === -1) {
-        idx = exercises.findIndex(e => {
-          const n = String(e.name || '').toLowerCase();
-          return n.includes(key) || key.includes(n);
-        });
+        // F10 — only a UNIQUE substring match resolves the just-logged lift's slot;
+        // an ambiguous overlap yields no handoff rather than advancing off the wrong slot.
+        const subs = exercises
+          .map((e, i) => ({ n: String(e.name || '').toLowerCase(), i }))
+          .filter(({ n }) => n && (n.includes(key) || key.includes(n)));
+        if (subs.length === 1) idx = subs[0].i;
       }
       if (idx !== -1 && idx < exercises.length - 1) return exercises[idx + 1].name || null;
     }

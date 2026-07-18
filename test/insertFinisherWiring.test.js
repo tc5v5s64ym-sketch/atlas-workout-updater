@@ -47,7 +47,9 @@ function loadInsertFinisherHarness() {
   assert.ok(sliceGCS.includes('getCanonicalSession'),    'sliceGCS must contain getCanonicalSession');
   assert.ok(sliceCSR.includes('canonicalSessionRecap'),  'sliceCSR must contain canonicalSessionRecap');
 
-  const factory = new Function('window', `
+  // F10: canonicalSessionRecap → remainingPlannedExercises → remainingSlotNames.
+  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('window', 'remainingSlotNames', 'variantSatisfies', `
     ${STORE_SHIM}
     let lastIntentData = null;
 
@@ -64,7 +66,7 @@ function loadInsertFinisherHarness() {
   `);
 
   const fakeWindow = { activeSession };
-  return factory(fakeWindow);
+  return factory(fakeWindow, remainingSlotNames, variantSatisfies);
 }
 
 // ===========================================================================

@@ -17,11 +17,13 @@
 // flightRecorderReplay), which lock the fix CORRECTNESS. Here we lock that the fix
 // stays STORE-DERIVED.
 //
-// Out of scope (owner-directed): next-up / pin / handoff / remainingPlannedExercises
-// behavior, the parser, the write path, save/approval, and the Sheet schema are all
-// untouched. The known divergence between the two "remaining" derivations
-// (remainingPlannedExercises vs canonicalSessionRecap's reconciled remaining) is
-// filed as a backlog follow-up, NOT changed here.
+// F10 UPDATE: the divergence this file's original note flagged as a backlog
+// follow-up — two "remaining" derivations (remainingPlannedExercises vs
+// canonicalSessionRecap's reconciled remaining) — is now RESOLVED. Both route through
+// the ONE authoritative plan_item_id-keyed completion selector (planSlotStatuses), so
+// these guards now lock that single-source shape (the recap's remaining IS
+// remainingPlannedExercises, which IS the slot selector) instead of the old
+// name-Set + separate-reconcile pair.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,10 +84,14 @@ test('SKIP is derived: skipPlannedExercise splices the store plan, keeps no sepa
     'a skip must not record into a separate skipped shadow collection');
 });
 
-test('RECAP is derived: canonicalSessionRecap reads the store via getCanonicalSession + reconciles', () => {
+test('RECAP is derived: canonicalSessionRecap = getCanonicalSession (completed) + remainingPlannedExercises (remaining)', () => {
   const body = fnBody(appSrc, 'function canonicalSessionRecap()');
-  assert.match(body, /getCanonicalSession\(\)/, 'recap must derive from the canonical session');
-  assert.match(body, /reconcileSubstitutedRemaining/, 'recap remaining must run the ADD-4 variant reconciliation');
+  assert.match(body, /getCanonicalSession\(\)/, 'recap completed derives from the canonical session');
+  // F10: recap remaining routes through the ONE authoritative completion selector so
+  // it can never disagree with the pin / next-up / Workout Sheet / closeout. The
+  // ADD-4 variant rule is enforced inside that selector (planSlotStatuses).
+  assert.match(body, /remaining:\s*remainingPlannedExercises\(\)/,
+    'recap remaining derives from the authoritative slot selector, not a separate reconcile pass');
   assert.doesNotMatch(body, /\b(?:let|const)\s+\w*[Rr]ecap\w*\s*=\s*(?:\[|\{)/,
     'recap must not build from a stored recap object');
 });
@@ -100,20 +106,25 @@ test('RECAP source: getCanonicalSession rebuilds from store (plan entries + sess
   assert.doesNotMatch(body, /\bcanonicalSessionCache\b|\b_canonicalSession\b/, 'no retained canonical-session cache');
 });
 
-test('REMAINING is derived: remainingPlannedExercises filters store order by the store completed set', () => {
+test('REMAINING is derived: remainingPlannedExercises routes the store plan + completed through the slot selector', () => {
   const body = fnBody(appSrc, 'function remainingPlannedExercises()');
   assert.match(body, /getSessionCompleted\(\)/, 'completion comes from the store buffer');
-  assert.match(body, /plannedExerciseOrder\(\)/, 'the order comes from the store-derived plan order');
+  // F10: the authoritative plan_item_id-keyed slot selector, not an inline name-Set filter.
+  assert.match(body, /remainingSlotNames\(/, 'remaining derives from the authoritative slot selector');
 });
 
-test('SUBSTITUTION reconciliation is single-sourced in activeSession.js (app.js only calls it)', () => {
-  // The "a logged variant satisfies its base slot" logic must have exactly one home,
-  // so recap and any future caller reconcile identically. app.js must not carry its
-  // own copy — it calls AS.reconcileSubstitutedRemaining.
-  assert.doesNotMatch(appSrc, /function\s+reconcileSubstitutedRemaining\b/,
-    'app.js must not define its own copy of the reconciliation');
-  assert.match(appSrc, /AS\.reconcileSubstitutedRemaining\(/, 'app.js calls the single activeSession.js implementation');
-  assert.match(activeSessionSrc, /function reconcileSubstitutedRemaining\(/, 'the one implementation lives in activeSession.js');
+test('SUBSTITUTION variant rule is single-sourced in activeSession.js (recap + F10 selector both consume it)', () => {
+  // The "a logged variant satisfies its base slot" logic must have exactly one home
+  // so the recap and the F10 completion selector reconcile identically. app.js
+  // reimplements neither the reconcile nor the variant rule.
+  const planSlotSrc = fs.readFileSync(path.join(repoRoot, 'src', 'app', 'planSlotStatuses.js'), 'utf8');
+  assert.doesNotMatch(appSrc, /function\s+reconcileSubstitutedRemaining\b/, 'app.js must not define its own reconciliation');
+  assert.doesNotMatch(appSrc, /function\s+variantSatisfies\b/, 'app.js must not define its own variant rule');
+  assert.match(activeSessionSrc, /function variantSatisfies\(/, 'the one variant rule lives in activeSession.js');
+  assert.match(activeSessionSrc, /function reconcileSubstitutedRemaining\(/, 'reconcileSubstitutedRemaining consumes the same rule');
+  // The F10 selector imports the SAME single-home rule rather than duplicating the qualifier table.
+  assert.match(planSlotSrc, /import\s*\{[^}]*variantSatisfies[^}]*\}\s*from\s*'\.\/activeSession\.js'/,
+    'planSlotStatuses imports the single-home variant rule from activeSession.js');
 });
 
 // ── B. Behavioral: the derivations recompute from state on read (no memoized shadow) ──
