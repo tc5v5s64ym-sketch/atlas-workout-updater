@@ -80,6 +80,46 @@ export function buildAcceptedItems(exercises, mintItemId) {
   return { ok: true, items };
 }
 
+// F10B — build the Session_Plan_Sets ledger v1 items (set-level recommendations) for
+// the accepted plan. Joins the immutable accepted items (identity + code) with the
+// displayed prescription (weight/reps/sets/rir), 1:1 by index. Only an item with a
+// positive-integer set count is a set-level recommendation; an item without one is
+// NOT invented into the ledger (it has no stored plan — F10E reads it as benchmark/
+// trend). An item with a set count but missing load/reps is kept as a
+// `no_reliable_target` recommendation (the set count is real; the target is honestly
+// absent — never fabricated). Pure — no I/O.
+export function buildLedgerAcceptedItems(items, exercises) {
+  const list = Array.isArray(items) ? items : [];
+  const exs = Array.isArray(exercises) ? exercises : [];
+  const posInt = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 1 ? n : null; };
+  const numOrNull = (v) => {
+    if (v === 0 || v === '0') return 0;
+    const n = Number(v);
+    return v == null || v === '' || !Number.isFinite(n) ? null : n;
+  };
+  const out = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i] || {};
+    const ex = exs[i] || {};
+    const target_set_count = posInt(ex.sets);
+    if (target_set_count == null) continue; // no set-level recommendation → not in the ledger
+    const target_weight = numOrNull(ex.weight);
+    const target_reps = numOrNull(ex.reps);
+    const target_rir = numOrNull(ex.rir);
+    const reliable = target_weight != null && target_reps != null;
+    out.push({
+      plan_item_id: item.plan_item_id,
+      planned_lift_code: item.planned_lift_code,
+      target_set_count,
+      target_weight,
+      target_reps,
+      target_rir,
+      confidence: reliable ? 'reliable' : 'no_reliable_target',
+    });
+  }
+  return out;
+}
+
 // The /api/session-plans/accept item payload (spec §4.1) — identity + planned
 // metadata only; no loads/reps/RIR. movement_pattern omitted when unresolved.
 export function toAcceptPayloadItem(item) {
@@ -153,6 +193,21 @@ export async function runAcceptance(rec, deps) {
   if (typeof d.setActivePlan === 'function') d.setActivePlan(accepted);
   if (typeof d.persist === 'function') d.persist();
   if (typeof d.startWorkout === 'function') d.startWorkout(accepted);
+
+  // F10B — durably checkpoint the accepted plan as the set-level ledger v1 the moment
+  // it is accepted (design amendment A2: durable at creation; session state is a cache
+  // reconstructed from these rows on reload). A NON-BLOCKING sidecar — DRY-RUN until
+  // the owner enables live writes at F10D — that never blocks the workout, never
+  // unwinds the accepted snapshot, and never touches the preview→approve→write path.
+  const ledgerItems = buildLedgerAcceptedItems(built.items, exercises);
+  if (ledgerItems.length && typeof d.postLedgerCheckpoint === 'function') {
+    Promise.resolve(d.postLedgerCheckpoint({
+      session_id: accepted.session_id,
+      session_date: accepted.session_date,
+      plan_version: planVersion,
+      items: ledgerItems,
+    })).catch(() => { /* sidecar failure never unwinds the accepted plan */ });
+  }
 
   const payload = {
     session_id: accepted.session_id,

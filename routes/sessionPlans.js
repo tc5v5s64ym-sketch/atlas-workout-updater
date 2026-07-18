@@ -19,7 +19,9 @@
 const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
 const capture = require('../services/sessionPlanCapture');
+const setsCapture = require('../services/sessionPlanSetsCapture');
 const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
+const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
 
 // Opaque, client-generated identity tokens (spec §4.4): a prefix + a non-empty
 // body. The server validates SHAPE only (it never mints IDs); the builders enforce
@@ -45,6 +47,28 @@ function _sessionError(s) {
   if (!s.session_date) return 'session_date is required';
   if (!s.plan_version) return 'plan_version is required';
   if (!PV_SHAPE.test(s.plan_version)) return 'plan_version must be an opaque token (pv_…)';
+  return null;
+}
+
+// A positive 1-based integer (target_set_count / set_index / plan_version).
+function _isPosInt(v) { const n = Number(v); return Number.isInteger(n) && n >= 1; }
+
+// Validate one Session_Plan_Sets ledger target item at the route (400) rather than
+// letting a bad shape throw in the builder and surface as a 200 error envelope.
+function _ledgerItemError(item, { requireRevision = false } = {}) {
+  const it = item && typeof item === 'object' ? item : {};
+  if (!PI_SHAPE.test(_str(it.plan_item_id))) return 'each item requires an opaque plan_item_id (pi_…)';
+  if (!LIFT_CODE_SHAPE.test(_str(it.planned_lift_code))) return 'each item requires a canonical planned_lift_code (non-empty, no spaces)';
+  if (!_isPosInt(it.target_set_count)) return 'each item requires a positive integer target_set_count';
+  if (it.confidence != null && _str(it.confidence) && !CONFIDENCE.includes(_str(it.confidence))) {
+    return `confidence must be one of ${CONFIDENCE.join('|')}`;
+  }
+  if (requireRevision) {
+    if (!_isPosInt(it.set_index)) return 'a revision requires a positive integer set_index';
+    if (!_isPosInt(it.plan_version) || Number(it.plan_version) < 2) return 'a revision requires plan_version ≥ 2';
+    if (!REVISION_SOURCES.includes(_str(it.recommendation_source))) return `a revision recommendation_source must be one of ${REVISION_SOURCES.join('|')} (a performed value never revises)`;
+    if (!_str(it.supersedes_key)) return 'a revision requires supersedes_key (the row it replaces)';
+  }
   return null;
 }
 
@@ -102,6 +126,45 @@ module.exports = function registerSessionPlanRoutes() {
     }
     const result = await capture.captureCloseout(session, closeoutStatus);
     return standardSuccess(req, res, 'Session_Plans closeout', { session_plans: result });
+  });
+
+  // ── Session_Plan_Sets — set-level recommendation ledger (F10B) ─────────────────
+  // The creation-time durable checkpoint (design amendment A2). DRY-RUN in F10B/F10C
+  // (gated behind SESSION_PLAN_SETS_WRITE_ENABLED, off) → returns the no-write proof
+  // and never touches the sheet; the production tab + live-write flag are the
+  // owner-reserved F10D gate. Sidecar only — never Log_Cleaned/Effort, no write_id.
+
+  // POST /api/session-plan-sets/accept — checkpoint the accepted plan as ledger v1
+  // (one row per set of every planned item, with targets).
+  router.post('/api/session-plan-sets/accept', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const session = _readSession(body);
+    const sessionErr = _sessionError(session);
+    if (sessionErr) return standardError(req, res, sessionErr, null, 400);
+    const items = Array.isArray(body.items) ? body.items : null;
+    if (!items || items.length === 0) return standardError(req, res, 'items[] is required and must be non-empty', null, 400);
+    for (const it of items) {
+      const err = _ledgerItemError(it);
+      if (err) return standardError(req, res, err, null, 400);
+    }
+    const result = await setsCapture.captureAcceptedPlan(session, items);
+    return standardSuccess(req, res, 'Session_Plan_Sets accept', { session_plan_sets: result });
+  });
+
+  // POST /api/session-plan-sets/revision — checkpoint ONE explicit future-set
+  // revision (a live_revision / user_endorsed Atlas recommendation for a not-yet-
+  // performed set). A performed value never reaches this route (amendment 1).
+  router.post('/api/session-plan-sets/revision', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const session = _readSession(body);
+    const sessionErr = _sessionError(session);
+    if (sessionErr) return standardError(req, res, sessionErr, null, 400);
+    const revision = body.revision && typeof body.revision === 'object' ? body.revision : null;
+    if (!revision) return standardError(req, res, 'revision is required', null, 400);
+    const err = _ledgerItemError(revision, { requireRevision: true });
+    if (err) return standardError(req, res, err, null, 400);
+    const result = await setsCapture.captureRevision(session, revision);
+    return standardSuccess(req, res, 'Session_Plan_Sets revision', { session_plan_sets: result });
   });
 
   return router;

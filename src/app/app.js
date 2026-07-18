@@ -1817,6 +1817,12 @@ async function acceptDisplayedPlan(rec) {
       postAccept: (payload) => api('/api/session-plans/accept', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       }),
+      // F10B — durably checkpoint the accepted plan as the set-level ledger v1 (design
+      // amendment A2). Non-blocking sidecar; dry-run until F10D. Same additive shape as
+      // postAccept — never the preview→approve→write path.
+      postLedgerCheckpoint: (payload) => api('/api/session-plan-sets/accept', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }),
     });
   } finally {
     _acceptInFlight = false;
