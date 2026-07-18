@@ -96,8 +96,8 @@ test('F10D ctx: no active session (freestyle) → empty items; slots without pla
 test('F10D wiring: EVERY end trigger attaches closeout_context to the ONE payload (dry-run + approved write)', () => {
   // Codex P1 (PR #1069): typed manual effort with buffered rows is the submit's
   // OTHER end-of-session trigger and must enter the confirmation/seal path too.
-  assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true\s*\n\s*\|\| \(logRows\.length > 0 && Boolean\(manualEffort\)\);/,
-    'the closeout marker covers the compiled path AND manual-effort-with-rows');
+  assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true\s*\n\s*\|\| \(logRows\.length > 0 && Boolean\(manualEffort\)\)\s*\n\s*\|\| screenshotConvertedCloseout;/,
+    'the closeout marker covers the compiled path, manual-effort-with-rows, AND the converted screenshot-with-rows lane');
   assert.match(appSrc, /payload\.closeout_context = \{\s*\n\s*plan_version: \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true\s*\n\s*&& getActivePlannedSession\(\)\.plan_version\) \|\| '',\s*\n\s*items: closeoutContextItems\(\),\s*\n\s*\};/,
     'the context carries the accepted plan pv_ token so the SERVER records the finalized event with proof');
   assert.match(appSrc, /pendingWrite = \{ mode: 'manual', payload, sessionCloseout: isSessionCloseout,/,
@@ -277,4 +277,17 @@ test('F10D readiness doc: the quoted production header row IS sessionPlanSetsCol
   for (const l of headerLines) {
     assert.ok(l.trim() === expected, `header listing matches the code order exactly: "${l.trim()}"`);
   }
+});
+
+// Codex P1 (readiness PR): the converted screenshot closeout's PAYLOAD carries the
+// RESOLVED identity — the same one its re-stamped rows and effort row carry — so
+// the server's summary, seal, and finalized event address the session the appends
+// are stamped with, never the stale pre-parse lexicals.
+test('F10D screenshot conversion: the closeout payload uses the screenshot-resolved identity', () => {
+  assert.match(appSrc, /session_id: screenshotResolvedSessionId \|\| sessionId,/,
+    'the payload session_id prefers the screenshot-resolved id');
+  assert.match(appSrc, /date: screenshotResolvedDate \|\| date,/,
+    'the payload date prefers the screenshot-resolved date');
+  assert.match(appSrc, /screenshotResolvedSessionId = resolvedShotSessionId;\s*\n\s*screenshotResolvedDate = resolvedShot\.date;/,
+    'the conversion records the resolved identity for the payload');
 });

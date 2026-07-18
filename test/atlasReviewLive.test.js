@@ -46,7 +46,7 @@ function healthyCorpora() {
       fe({ flight_session_id: S, seq: 2, captured_at: at(2), event_type: 'user_input', user_input: 'bench 225 5/2' }),
       fe({ flight_session_id: S, seq: 3, captured_at: at(3), event_type: 'card_rendered', ui_snapshot_json: JSON.stringify({ visible_cards: ['preview'] }) }),
       fe({ flight_session_id: S, seq: 4, captured_at: at(4), event_type: 'session_state_changed', session_state_json: JSON.stringify({ pending_set_count: 3 }) }),
-      fe({ flight_session_id: S, seq: 5, captured_at: at(5), event_type: 'api_response', api_endpoint: 'POST /api/log-workout', response_summary: '200 OK', latency_ms: 120 }),
+      fe({ flight_session_id: S, seq: 5, captured_at: at(5), event_type: 'api_response', api_endpoint: 'POST /api/log-workout', response_summary: '200 OK session_id=20260716-PM-01', latency_ms: 120 }),
       fe({ flight_session_id: S, seq: 6, captured_at: at(6), event_type: 'coach_message_rendered', ui_snapshot_json: JSON.stringify({ coach_message: 'Logged 3 sets of Bench Press.' }) })
     ],
     Log_Cleaned: [
@@ -59,8 +59,11 @@ function healthyCorpora() {
   });
 }
 
-test('healthy session → every trust criterion PASS, overall PASS', () => {
-  const review = rl.reviewCorpora(healthyCorpora(), { now: at(9) });
+test('healthy session (post-F10D shape: sealed ledger + finalized closeout) → every trust criterion PASS, overall PASS', () => {
+  // F10D: overall PASS now requires the seal criterion too — the fully-healthy
+  // corpus is the post-enablement shape. The pre-enablement (tab absent) shape is
+  // covered below and is UNKNOWN overall, never a false PASS.
+  const review = rl.reviewCorpora(sealedHealthyCorpora(), { now: at(9) });
   assert.equal(review.session.flight_session_id, 'FR-HEALTHY');
   assert.equal(review.session.mode, 'linked');
   assert.equal(verdictOf(review, 'client_replay'), 'PASS');
@@ -69,6 +72,7 @@ test('healthy session → every trust criterion PASS, overall PASS', () => {
   assert.equal(verdictOf(review, 'confirm_matches_actual'), 'PASS');
   assert.equal(verdictOf(review, 'plan_captured'), 'PASS');
   assert.equal(verdictOf(review, 'write_verified'), 'PASS');
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'PASS');
   assert.equal(review.overall, 'PASS');
 });
 
@@ -229,4 +233,155 @@ test('planRowHasSetTarget is true only with a set-level prescription', () => {
   assert.equal(rl.planRowHasSetTarget({ target_reps: '5' }), true);
   assert.equal(rl.planRowHasSetTarget({ planned_lift_code: 'BEN01', closeout_status: 'finalized' }), false);
   assert.equal(rl.planRowHasSetTarget({}), false);
+});
+
+// ── F10D — the Session_Plan_Sets seal criterion ─────────────────────────────────
+// PASS only for one-id fully-sealed valid history agreeing with the finalized
+// closeout; unreadable/absent evidence is UNKNOWN (never inferred); pre-closeout
+// unsealed checkpoints are UNKNOWN; every mixed/conflicting/partial/malformed/
+// disagreeing state is FAIL with exact evidence.
+
+function ledgerRow(over = {}) {
+  return Object.assign({
+    idempotency_key: 'k', session_id: '20260716-PM-01', session_date: DAY, plan_version: '1',
+    plan_item_id: 'pi_b', planned_lift_code: 'BEN01', set_index: '1', target_set_count: '3',
+    target_weight: '225', target_reps: '5', target_rir: '2', recommendation_source: 'accepted',
+    supersedes_key: '', confidence: 'reliable', closeout_write_id: 'wr_20260716_1',
+    recorded_at: at(0), _row: 2
+  }, over);
+}
+
+function sealedLedger() {
+  return [
+    ledgerRow({ idempotency_key: 'k1', set_index: '1', _row: 2 }),
+    ledgerRow({ idempotency_key: 'k2', set_index: '2', _row: 3 }),
+    ledgerRow({ idempotency_key: 'k3', set_index: '3', _row: 4 }),
+  ];
+}
+
+function finalizedEventRow() {
+  return { session_id: '20260716-PM-01', session_date: DAY, event_type: 'session_closeout', closeout_status: 'finalized' };
+}
+
+function sealedHealthyCorpora() {
+  const c = healthyCorpora();
+  c.Session_Plans.push(finalizedEventRow());
+  c.Session_Plan_Sets = sealedLedger();
+  return c;
+}
+
+test('F10D seal: fully sealed one-id ledger matching the finalized closeout → PASS with evidence range; overall PASS', () => {
+  const review = rl.reviewCorpora(sealedHealthyCorpora(), { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'PASS');
+  const c = review.criteria.find(x => x.id === 'ledger_sealed');
+  assert.match(c.detail, /All 3 of 3 correlated ledger row\(s\) sealed under one closeout_write_id/);
+  assert.match(c.detail, /Session_Plan_Sets!A2:P4/, 'the exact evidence range is included');
+  assert.equal(review.session.ledger_rows, 3);
+  assert.equal(review.overall, 'PASS');
+});
+
+test('F10D seal: tab absent/unreadable → UNKNOWN (never inferred), explicitly the pre-enablement state', () => {
+  const review = rl.reviewCorpora(healthyCorpora(), { now: at(9) });  // no Session_Plan_Sets key
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  const c = review.criteria.find(x => x.id === 'ledger_sealed');
+  assert.equal(c.missing, true);
+  assert.match(c.detail, /absent or unreadable/);
+  assert.match(c.detail, /never inferred/);
+  assert.equal(review.overall, 'UNKNOWN', 'a healthy pre-enablement session is UNKNOWN overall — not a false PASS');
+});
+
+test('F10D seal: rowCounts readability signal wins — an unreadable tab with an empty corpus stays UNKNOWN', () => {
+  const c = healthyCorpora();
+  c.Session_Plan_Sets = [];
+  const review = rl.reviewCorpora(c, { now: at(9), rowCounts: { Session_Plan_Sets: null } });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /absent or unreadable/);
+});
+
+test('F10D seal: readable tab, zero correlated rows → UNKNOWN (freestyle / pre-F10D history), not FAIL', () => {
+  const c = healthyCorpora();
+  c.Session_Plan_Sets = [];
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /No Session_Plan_Sets rows correlate/);
+});
+
+test('F10D seal: unsealed checkpoint rows with NO finalized closeout → UNKNOWN pre-closeout state, not a failure', () => {
+  const c = healthyCorpora();
+  c.Session_Plan_Sets = sealedLedger().map(r => Object.assign(r, { closeout_write_id: '' }));
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /pre-closeout state/);
+});
+
+test('F10D seal: finalized closeout but ZERO sealed rows → FAIL (the tabs disagree)', () => {
+  const c = healthyCorpora();
+  c.Session_Plans.push(finalizedEventRow());
+  c.Session_Plan_Sets = sealedLedger().map(r => Object.assign(r, { closeout_write_id: '' }));
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'FAIL');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /finalized closeout but ZERO/);
+  assert.equal(review.overall, 'FAIL');
+});
+
+test('F10D seal: partially sealed rows → FAIL naming the unsealed sheet rows', () => {
+  const c = sealedHealthyCorpora();
+  c.Session_Plan_Sets[2].closeout_write_id = '';
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'FAIL');
+  const d = review.criteria.find(x => x.id === 'ledger_sealed').detail;
+  assert.match(d, /Partially sealed: 2 of 3/);
+  assert.match(d, /row 4/);
+});
+
+test('F10D seal: conflicting closeout_write_ids → FAIL', () => {
+  const c = sealedHealthyCorpora();
+  c.Session_Plan_Sets[1].closeout_write_id = 'wr_DIFFERENT_9';
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'FAIL');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /Conflicting closeout_write_ids/);
+});
+
+test('F10D seal: sealed ledger with NO finalized Session_Plans closeout → FAIL (the tabs disagree)', () => {
+  const c = healthyCorpora();           // no finalized event pushed
+  c.Session_Plan_Sets = sealedLedger();
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'FAIL');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /no finalized Session_Plans closeout/);
+});
+
+test('F10D seal: malformed revision chain (v2 with no supersedes) → FAIL with the diagnostic', () => {
+  const c = sealedHealthyCorpora();
+  c.Session_Plan_Sets.push(ledgerRow({
+    idempotency_key: 'k4', set_index: '2', plan_version: '2', recommendation_source: 'live_revision',
+    supersedes_key: '', target_weight: '215', _row: 5
+  }));
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'FAIL');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /Malformed revision chain/);
+});
+
+test('F10D seal: a same-day NEIGHBOR session\'s ledger rows are EXCLUDED (id-strict correlation — Codex P2)', () => {
+  // The neighbor W2 shares the calendar date but not the workout session id — its
+  // sealed rows (under a DIFFERENT write id) must not pollute W1's verdict: the
+  // reviewed session still PASSes on its own 3 rows, never a mixed-id FAIL.
+  const c = sealedHealthyCorpora();
+  c.Session_Plan_Sets.push(ledgerRow({ idempotency_key: 'k9', session_id: '20260716-AM-01', session_date: DAY, closeout_write_id: 'wr_OTHER_2', _row: 9 }));
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(review.session.ledger_rows, 3, 'the neighbor row does not correlate');
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'PASS');
+});
+
+test('F10D seal: ONLY a same-day neighbor\'s sealed ledger + finalized closeout → UNKNOWN, never a borrowed PASS (Codex P2)', () => {
+  // The reviewed session (W1) has no ledger rows and no finalized closeout of its
+  // own; the neighbor W2 has both. Date-fallback must not let W2 vouch for W1.
+  const c = healthyCorpora();
+  c.Session_Plans.push({ session_id: '20260716-AM-01', session_date: DAY, event_type: 'session_closeout', closeout_status: 'finalized' });
+  c.Session_Plan_Sets = [1, 2, 3].map(n => ledgerRow({
+    idempotency_key: `n${n}`, session_id: '20260716-AM-01', set_index: String(n), closeout_write_id: 'wr_OTHER_2', _row: 1 + n
+  }));
+  const review = rl.reviewCorpora(c, { now: at(9) });
+  assert.equal(review.session.ledger_rows, 0);
+  assert.equal(verdictOf(review, 'ledger_sealed'), 'UNKNOWN');
+  assert.match(review.criteria.find(x => x.id === 'ledger_sealed').detail, /No Session_Plan_Sets rows correlate/);
 });

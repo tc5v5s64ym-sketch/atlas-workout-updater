@@ -39,13 +39,18 @@
 const fs = require('fs');
 const path = require('path');
 const fr = require('./flight-review');
-const { sessionPlansColumns, effortColumns } = require('../config/columns');
+const { sessionPlansColumns, effortColumns, sessionPlanSetsColumns } = require('../config/columns');
+const { parseRow: parseLedgerRow, effectivePlan: ledgerEffectivePlan } = require('../services/sessionPlanLedger');
 
-// flight-review's tabs + the two owner-session sidecars this review also joins.
-const REVIEW_TABS = ['Flight_Recorder', 'Brain_Shadow', 'Intent_Shadow', 'Log_Cleaned', 'Bug_Reports', 'Session_Plans', 'Effort'];
+// flight-review's tabs + the owner-session sidecars this review also joins.
+// Session_Plan_Sets is OPTIONAL sheet-side (it does not exist before the owner's
+// F10D production enablement) — absence reads as UNREADABLE for the seal
+// criterion, which yields UNKNOWN, never an inferred PASS.
+const REVIEW_TABS = ['Flight_Recorder', 'Brain_Shadow', 'Intent_Shadow', 'Log_Cleaned', 'Bug_Reports', 'Session_Plans', 'Effort', 'Session_Plan_Sets'];
 const REVIEW_COLUMNS = Object.assign({}, fr.KNOWN_COLUMNS, {
   Session_Plans: sessionPlansColumns,
-  Effort: effortColumns
+  Effort: effortColumns,
+  Session_Plan_Sets: sessionPlanSetsColumns
 });
 
 const V = { PASS: 'PASS', FAIL: 'FAIL', UNKNOWN: 'UNKNOWN' };
@@ -153,6 +158,26 @@ function correlateSidecar(rows, idSet, dateSet) {
   return out;
 }
 
+// STRICT correlation for closeout-truth rows (the seal criterion's inputs): a row
+// that CARRIES a session_id correlates only when that id matches — the date
+// fallback applies only to id-less rows. Without this, an earlier same-day
+// session's sealed ledger rows and finalized event pollute the reviewed
+// session's verdict (Codex P2, this PR): a neighbor's seal could PASS the wrong
+// session, or a correct one could FAIL on the neighbor's mixed ids.
+function correlateSidecarStrict(rows, idSet, dateSet) {
+  const out = [];
+  for (const r of rows || []) {
+    const sid = String(r.session_id || '').trim().toLowerCase();
+    const d = String(r.session_date || r.date || r.date_clean || '').trim();
+    if (sid) {
+      if (idSet.has(sid)) out.push({ match: 'session_id', rec: r });
+    } else if (d && dateSet.has(d)) {
+      out.push({ match: 'date', rec: r });
+    }
+  }
+  return out;
+}
+
 // True when a Session_Plans row carries a set-level prescription (target weight/reps/rir).
 // Session_Plans today has no set-level target columns (finding #8 → F10A), so this stays
 // false — which correctly yields UNKNOWN, not a false PASS.
@@ -168,9 +193,94 @@ function crit(id, title, verdict, detail, missing) {
   return { id, title, verdict, detail: detail || '', missing: missing === true };
 }
 
+// F10D — evaluate the Session_Plan_Sets seal for the session. PASS only when every
+// correlated ledger row is sealed under ONE closeout_write_id, the history chain is
+// valid, the rows agree on one workout session identity, and the finalized
+// Session_Plans closeout tells the same story. Unreadable tab/rows are UNKNOWN
+// (never inferred); pre-closeout unsealed checkpoints are UNKNOWN, not a failure;
+// every mixed / conflicting / partially sealed / malformed state is FAIL with the
+// exact evidence rows and a concise reason.
+function evaluateLedgerSeal(planSetRecs, ledgerReadable, sessionPlansRecs) {
+  const title = 'Plan ledger sealed to the closeout (Session_Plan_Sets)';
+  if (!ledgerReadable) {
+    return crit('ledger_sealed', title, V.UNKNOWN,
+      'Session_Plan_Sets tab is absent or unreadable — the seal cannot be verified (never inferred). Before F10D production enablement this is the expected state.', true);
+  }
+  const rows = (planSetRecs || []).map(x => x.rec);
+  const finalized = (sessionPlansRecs || []).some(x =>
+    String(x.rec.event_type || '').trim() === 'session_closeout' &&
+    String(x.rec.closeout_status || '').trim() === 'finalized');
+  if (!rows.length) {
+    return crit('ledger_sealed', title, V.UNKNOWN,
+      finalized
+        ? 'A finalized closeout correlates but ZERO Session_Plan_Sets rows do — no accepted-plan checkpoint for this session (freestyle, or a checkpoint gap to investigate).'
+        : 'No Session_Plan_Sets rows correlate to this session (no accepted plan checkpoint — freestyle, or pre-F10D history).', true);
+  }
+
+  const sheetRows = rows.map(r => Number(r._row)).filter(n => Number.isFinite(n));
+  const lastCol = String.fromCharCode(64 + sessionPlanSetsColumns.length);
+  const evidenceRange = sheetRows.length
+    ? `Session_Plan_Sets!A${Math.min(...sheetRows)}:${lastCol}${Math.max(...sheetRows)}`
+    : 'Session_Plan_Sets!(row numbers unavailable)';
+  const rowRef = r => (Number.isFinite(Number(r._row)) ? `row ${r._row}` : 'row ?');
+
+  // One workout session identity across every correlated ledger row.
+  const sids = [...new Set(rows.map(r => String(r.session_id || '').trim()).filter(Boolean))];
+  if (sids.length > 1) {
+    return crit('ledger_sealed', title, V.FAIL,
+      `Correlated ledger rows span ${sids.length} session_ids (${sids.slice(0, 3).join(', ')}…) — tabs disagree on session identity. Evidence: ${evidenceRange}.`);
+  }
+
+  // Chain validity through the SAME fail-closed selectors the seal itself uses.
+  const rawRows = rows.map(r => sessionPlanSetsColumns.map(c => (r[c] == null ? '' : String(r[c]))));
+  const unparseable = rawRows.filter(r => parseLedgerRow(r).malformed);
+  if (unparseable.length) {
+    return crit('ledger_sealed', title, V.FAIL,
+      `${unparseable.length} ledger row(s) are structurally unparseable — malformed history. Evidence: ${evidenceRange}.`);
+  }
+  const itemIds = [...new Set(rawRows.map(r => parseLedgerRow(r).rec.plan_item_id).filter(Boolean))];
+  for (const itemId of itemIds) {
+    const eff = ledgerEffectivePlan(rawRows, itemId);
+    const bad = eff.find(e => e.confidence === 'no_reliable_target' && e.reason === 'malformed_chain');
+    if (bad) {
+      const diag = Array.isArray(bad.diagnostics) && bad.diagnostics.length ? bad.diagnostics[0] : 'invalid chain';
+      return crit('ledger_sealed', title, V.FAIL,
+        `Malformed revision chain for item ${itemId} set ${bad.set_index} (${diag}) — the seal would refuse this history. Evidence: ${evidenceRange}.`);
+    }
+  }
+
+  const sealed = rows.filter(r => String(r.closeout_write_id || '').trim() !== '');
+  const unsealed = rows.filter(r => String(r.closeout_write_id || '').trim() === '');
+  const sealIds = [...new Set(sealed.map(r => String(r.closeout_write_id).trim()))];
+
+  if (sealIds.length > 1) {
+    return crit('ledger_sealed', title, V.FAIL,
+      `Conflicting closeout_write_ids on one session (${sealIds.slice(0, 2).map(s => `${s.slice(0, 12)}…`).join(' vs ')}) — a closeout must seal under ONE id. Evidence: ${evidenceRange}.`);
+  }
+  if (sealed.length && unsealed.length) {
+    return crit('ledger_sealed', title, V.FAIL,
+      `Partially sealed: ${sealed.length} of ${rows.length} row(s) carry closeout_write_id; unsealed ${unsealed.slice(0, 4).map(rowRef).join(', ')}. Evidence: ${evidenceRange}.`);
+  }
+  if (!sealed.length) {
+    if (finalized) {
+      return crit('ledger_sealed', title, V.FAIL,
+        `Session_Plans records a finalized closeout but ZERO of ${rows.length} ledger row(s) are sealed — the tabs disagree on the closeout. Evidence: ${evidenceRange}.`);
+    }
+    return crit('ledger_sealed', title, V.UNKNOWN,
+      `${rows.length} checkpoint row(s) present, none sealed, and no finalized closeout — pre-closeout state (a rejected or not-yet-saved session), not a failure. Evidence: ${evidenceRange}.`, true);
+  }
+  if (!finalized) {
+    return crit('ledger_sealed', title, V.FAIL,
+      `All ${sealed.length} ledger row(s) sealed under ${sealIds[0].slice(0, 12)}… but no finalized Session_Plans closeout correlates — the tabs disagree on the closeout. Evidence: ${evidenceRange}.`);
+  }
+  return crit('ledger_sealed', title, V.PASS,
+    `All ${sealed.length} of ${rows.length} correlated ledger row(s) sealed under one closeout_write_id (${sealIds[0].slice(0, 12)}…), chain valid, one session identity, matching the finalized closeout. Evidence: ${evidenceRange}.`);
+}
+
 // Evaluate the trust criteria for the selected session. Every criterion is PASS / FAIL /
 // UNKNOWN; UNKNOWN means MISSING EVIDENCE (never a false green).
 function evaluateCriteria(evidence, session, mode, sidecar) {
+  const ledgerReadable = sidecar && sidecar.ledger_readable === true;
   const counts = (evidence && evidence.event_type_counts) || {};
   const clientEvents = sumCounts(counts, CLIENT_EVENT_TYPES);
   const serverEvents = sumCounts(counts, SERVER_EVENT_TYPES);
@@ -263,6 +373,9 @@ function evaluateCriteria(evidence, session, mode, sidecar) {
         : 'No verified write for this session (a rejected preview writes nothing — not a failure).', true));
   }
 
+  // 7. F10D — the Session_Plan_Sets seal (see evaluateLedgerSeal for the rules).
+  out.push(evaluateLedgerSeal(sidecar.plan_sets || [], ledgerReadable, sidecar.session_plans_strict || sidecar.session_plans || []));
+
   return out;
 }
 
@@ -302,7 +415,17 @@ function reviewCorpora(corpora, opts) {
   const dateSet = fr.sessionDateSet(session, windowMs);
   const sidecar = {
     session_plans: correlateSidecar(corpora.Session_Plans, idSet, dateSet),
-    effort: correlateSidecar(corpora.Effort, idSet, dateSet)
+    effort: correlateSidecar(corpora.Effort, idSet, dateSet),
+    plan_sets: correlateSidecarStrict(corpora.Session_Plan_Sets, idSet, dateSet),
+    // The finalized-closeout scan for the seal criterion is likewise id-strict —
+    // a neighbor same-day session's finalized event must not vouch for this one.
+    session_plans_strict: correlateSidecarStrict(corpora.Session_Plans, idSet, dateSet),
+    // Readability is an explicit signal, never inferred from emptiness: the CLI
+    // threads rowCounts (null = tab absent/unreadable); pure-corpora callers mark
+    // readability by providing the key at all (undefined/null = unreadable).
+    ledger_readable: options.rowCounts
+      ? options.rowCounts.Session_Plan_Sets != null
+      : corpora.Session_Plan_Sets != null
   };
 
   // Build-change detection within the session (the split-build caveat).
@@ -327,6 +450,7 @@ function reviewCorpora(corpora, opts) {
       workout_session_ids: evidence.workout_session_ids,
       log_rows: evidence.workout_rows_written.length,
       effort_rows: sidecar.effort.length,
+      ledger_rows: sidecar.plan_sets.length,
       plan_rows: sidecar.session_plans.length
     },
     build_change: { detected: versions.length > 1, versions },
@@ -357,7 +481,7 @@ function renderHuman(review) {
   const s = review.session;
   L.push(`Session:     ${s.flight_session_id}  (${s.mode})`);
   L.push(`Window:      ${s.first_at || '?'} → ${s.last_at || '?'}   events: ${s.event_count}`);
-  L.push(`Correlated:  ${s.log_rows} Log · ${s.effort_rows} Effort · ${s.plan_rows} Session_Plans`);
+  L.push(`Correlated:  ${s.log_rows} Log · ${s.effort_rows} Effort · ${s.plan_rows} Session_Plans · ${s.ledger_rows != null ? s.ledger_rows : '?'} Session_Plan_Sets`);
   if (review.build_change.detected) {
     L.push(`Build change: ⚠️  ${review.build_change.versions.join(' → ')} (split-build caveat)`);
   }
@@ -462,11 +586,12 @@ async function main() {
     raw = await loadFromSheets(spreadsheetId);
   }
 
-  const { corpora } = toReviewCorpora(raw);
+  const { corpora, rowCounts } = toReviewCorpora(raw);
   const review = reviewCorpora(corpora, {
     windowMins: opts.windowMins,
     session: opts.session,
     source,
+    rowCounts,
     now: new Date().toISOString()
   });
 
@@ -481,8 +606,10 @@ module.exports = {
   selectLatestSession,
   clusterUnlinked,
   correlateSidecar,
+  correlateSidecarStrict,
   planRowHasSetTarget,
   evaluateCriteria,
+  evaluateLedgerSeal,
   reviewCorpora,
   renderHuman,
   overallFrom,
