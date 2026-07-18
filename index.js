@@ -98,6 +98,9 @@ const registerSessionPlanRoutes = require('./routes/sessionPlans');
 // SESSION_PLAN_SETS_WRITE_ENABLED; the store gates every write internally).
 const { sealCloseout, readLedgerRows } = require('./services/sessionPlanSetsStore');
 const { buildCloseoutSummary, boundCloseoutContextItems } = require('./services/closeoutSummary');
+// F10D (Codex P1, PR #1069) — the finalized Session_Plans closeout event records
+// INSIDE the one approved write, with proof, instead of a client fire-and-forget.
+const { captureCloseout } = require('./services/sessionPlanCapture');
 const { validateLogRowsBounds } = require('./rules/validationRules');
 const { evaluateSessionSafety } = require('./rules/safetyRules');
 const { holdUntilClean } = require('./rules/progressionRules');
@@ -2719,13 +2722,39 @@ async function buildSubstitutionPreviews(prescribedList, enrichedLoggedRows, rul
 // or missing tab must never masquerade as a fully verified closeout. A freestyle
 // session (no declared items) with no ledger is verified-empty, and a dry-run
 // seal (owner gate closed) leaves nothing pending to verify.
-function closeoutVerification(ledgerSeal, closeoutContext) {
+function closeoutVerification(ledgerSeal, closeoutContext, sessionPlansCloseout) {
   if (!ledgerSeal) return undefined;
+  // The Session_Plans closeout event must have recorded (or be genuinely
+  // inapplicable: no accepted plan, or its capture lane disabled) — a failed or
+  // missing-tab event capture is an unverified closeout (Codex P1, PR #1069).
+  const ev = sessionPlansCloseout || null;
+  const eventOk = !ev || ev.captured === true || ev.status === 'disabled' || ev.status === 'no_plan';
+  if (!eventOk) return false;
   if (ledgerSeal.dry_run === true) return true;
   const ctx = closeoutContext && typeof closeoutContext === 'object' ? closeoutContext : {};
   const plannedItems = boundCloseoutContextItems(ctx.items).length > 0;
   if (ledgerSeal.no_ledger === true && plannedItems) return false;
   return ledgerSeal.sealed_ok === true;
+}
+
+// The accepted plan's opaque pv_ token from the client closeout context; '' when
+// absent or malformed (a freestyle session, or junk — either way: no event).
+function closeoutPlanVersion(closeoutContext) {
+  const ctx = closeoutContext && typeof closeoutContext === 'object' ? closeoutContext : {};
+  const pv = String(ctx.plan_version == null ? '' : ctx.plan_version).trim();
+  return /^pv_.+/.test(pv) ? pv : '';
+}
+
+// Record the finalized closeout event for an accepted plan, failure-isolated to
+// an honest envelope (never a throw). '' plan_version → { status: 'no_plan' }.
+async function recordCloseoutEvent(session_id, session_date, closeoutContext) {
+  const pv = closeoutPlanVersion(closeoutContext);
+  if (!pv) return { status: 'no_plan', captured: false };
+  try {
+    return await captureCloseout({ session_id, session_date, plan_version: pv }, 'finalized');
+  } catch (error) {
+    return { status: 'error', captured: false, reason: String((error && error.message) || error) };
+  }
 }
 
 app.post('/api/log-workout', async (req, res) => {
@@ -3016,10 +3045,12 @@ app.post('/api/log-workout', async (req, res) => {
     // stamp fails closed), so attempting it here lets a retry HEAL an unsealed
     // closeout without ever re-appending a row.
     if (payload.closeout_context !== undefined) {
+      const eventResult = await recordCloseoutEvent(session_id, workoutDate, payload.closeout_context);
+      duplicateBody.session_plans_closeout = eventResult;
       try {
         const seal = await sealCloseout({ session_id }, normalizeWriteId(writeId), {});
         duplicateBody.ledger_seal = seal;
-        duplicateBody.closeout_fully_verified = closeoutVerification(seal, payload.closeout_context);
+        duplicateBody.closeout_fully_verified = closeoutVerification(seal, payload.closeout_context, eventResult);
       } catch (error) {
         duplicateBody.ledger_seal = { sealed_ok: false, reason: 'seal_error', error: String((error && error.message) || error) };
         duplicateBody.closeout_fully_verified = false;
@@ -3136,7 +3167,11 @@ app.post('/api/log-workout', async (req, res) => {
   // (the seal is idempotent; the all-duplicate lane above re-attempts it).
   // Dry-run while the owner gate is closed: the store returns the no-write proof.
   let ledgerSeal = null;
+  let sessionPlansCloseout = null;
   if (payload.closeout_context !== undefined) {
+    // The finalized closeout EVENT records under this same approval (with the
+    // capture layer's proof envelope), then the set-ledger SEAL binds the rows.
+    sessionPlansCloseout = await recordCloseoutEvent(session_id, workoutDate, payload.closeout_context);
     try {
       ledgerSeal = await sealCloseout({ session_id }, idempotency.write_id || normalizeWriteId(writeId), {});
     } catch (error) {
@@ -3158,7 +3193,8 @@ app.post('/api/log-workout', async (req, res) => {
     };
     if (ledgerSeal) {
       responseBody.ledger_seal = ledgerSeal;
-      responseBody.closeout_fully_verified = closeoutVerification(ledgerSeal, payload.closeout_context);
+      if (sessionPlansCloseout) responseBody.session_plans_closeout = sessionPlansCloseout;
+      responseBody.closeout_fully_verified = closeoutVerification(ledgerSeal, payload.closeout_context, sessionPlansCloseout);
     }
     if (skippedDuplicates.length > 0) {
       responseBody.skipped_duplicates = skippedDuplicates.length;

@@ -27,7 +27,9 @@ const src = fs.readFileSync(
 const fnStart = src.indexOf('async function handlePreviewReady(');
 assert.ok(fnStart >= 0, 'handlePreviewReady must exist in coach-conversation.js');
 // Grab enough source to cover the full function (up to buildReviewCard call).
-const fnSrc = src.slice(fnStart, fnStart + 3100);
+// F10D widened: the closeout-confirmation insert sits between the intro and the
+// review card, so the function body grew.
+const fnSrc = src.slice(fnStart, fnStart + 3700);
 
 test('handlePreviewReady: checks for an existing unsaved .review card before appending a new bubble', () => {
   // :not(.done) excludes already-saved cards so a second-workout preview in the
