@@ -1298,6 +1298,8 @@ import * as sessionQuestion from './sessionQuestion.js';
   document.addEventListener('atlas:session-reset', () => {
     lastAnnouncedNextUp = null;
     closeoutAnnounced = false;
+    // F10S5: a fresh session may legitimately repeat a substitution note.
+    acknowledgedSubs.clear();
   });
 
   // Build the composer placeholder for the next planned lift from the ACTIVE PLAN
@@ -1327,8 +1329,34 @@ import * as sessionQuestion from './sessionQuestion.js';
     return Array.isArray(unverified) ? unverified.includes(name) : unverified === name;
   }
 
+  // F10S5 (owner smoke 2026-07-18) — a substitution is acknowledged ONCE per session.
+  // The server re-detects the same prescribed→logged pair on EVERY subsequent set of
+  // the substitute, so without this gate the same commentary stacked once per
+  // performed set (the July 18 closeout showed it three times). Keyed by the
+  // case-insensitive pair; an unkeyable entry (missing names) passes through
+  // untouched — never over-suppressed. Cleared on session reset.
+  const acknowledgedSubs = new Set();
+  function dedupeSubstitutions(subs) {
+    const out = [];
+    for (const s of (Array.isArray(subs) ? subs : [])) {
+      const logged = s && s.logged && typeof s.logged.name === 'string' ? s.logged.name.trim() : '';
+      const p = s && s.prescribed;
+      const prescribed = p && typeof p === 'object'
+        ? (typeof p.name === 'string' ? p.name.trim() : '')
+        : (typeof p === 'string' ? p.trim() : '');
+      if (!logged || !prescribed) { out.push(s); continue; }
+      const key = `${prescribed.toLowerCase()}|${logged.toLowerCase()}`;
+      if (acknowledgedSubs.has(key)) continue;
+      acknowledgedSubs.add(key);
+      out.push(s);
+    }
+    return out;
+  }
+
   async function handleSetLogged(detail) {
-    const { exercises = [], text = '', substitutions = [], unverified = null } = detail || {};
+    const { exercises = [], text = '', substitutions: rawSubstitutions = [], unverified = null } = detail || {};
+    // F10S5: acknowledge each substitution pair once per session (see above).
+    const substitutions = dedupeSubstitutions(rawSubstitutions);
     if (!exercises.length) return;
     if (text) chatTurns.push({ role: 'user', text });
 
