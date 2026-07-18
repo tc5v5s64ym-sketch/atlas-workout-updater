@@ -46,8 +46,10 @@ Failure behavior (all proven):
 `Session_Plan_Sets` (16 columns, `config/columns.js` `sessionPlanSetsColumns`, design §2):
 
 ```text
-idempotency_key | session_id | session_date | plan_version | plan_item_id | planned_lift_code | set_index | target_set_count | target_weight | target_reps | target_rir | recommendation_source | confidence | supersedes_key | closeout_write_id | recorded_at
+idempotency_key | session_id | session_date | plan_version | plan_item_id | planned_lift_code | set_index | target_set_count | target_weight | target_reps | target_rir | recommendation_source | supersedes_key | confidence | closeout_write_id | recorded_at
 ```
+
+This line is pinned by a test to `config/columns.js` `sessionPlanSetsColumns` — if they ever disagree, the suite fails. (Codex P1 on the original draft: `supersedes_key`/`confidence` were hand-typed swapped; the capture layer's exact-header validation would have rejected the mis-created tab fail-closed, but the owner-facing template must be exact, so it is now generated-verified, not trusted.)
 
 Append-only. `closeout_write_id` (column **O**) is the ONLY cell ever updated in place, exclusively by the seal (`sheets.updateColumnCells`, bounded single-column), stamping the shared approved `write_id` onto the session's rows.
 

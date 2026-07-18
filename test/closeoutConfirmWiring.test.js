@@ -259,3 +259,22 @@ test('F10D confirm card: a freestyle summary (no stored plan) still confirms the
   assert.match(text, /Bench Press \(unplanned\): 225×5@2/);
   assert.match(text, /Approving writes 1 set row\(s\)\. Rejecting writes nothing\./, 'no effort bit, no seal bit');
 });
+
+// The owner-facing first-live-write procedure quotes the production tab header
+// row verbatim — the one line Dale copies to CREATE the tab. It must equal the
+// authoritative code order exactly (Codex P1 on PR #1071: a hand-typed draft
+// swapped supersedes_key/confidence; the capture layer would have rejected the
+// mis-created tab fail-closed, but the template itself must never drift).
+test('F10D readiness doc: the quoted production header row IS sessionPlanSetsColumns, verbatim and in order', () => {
+  const { sessionPlanSetsColumns } = require('../config/columns');
+  const doc = fs.readFileSync(path.join(__dirname, '..', 'docs', 'F10D_PRODUCTION_READINESS.md'), 'utf8');
+  const expected = sessionPlanSetsColumns.join(' | ');
+  assert.ok(doc.includes(expected), 'the doc quotes the exact 16-column header order from config/columns.js');
+  // And no OTHER 16-column pipe-joined line contradicts it: every doc line that
+  // mentions idempotency_key alongside recorded_at must be the exact order.
+  const headerLines = doc.split('\n').filter(l => l.includes('idempotency_key') && l.includes('recorded_at'));
+  assert.ok(headerLines.length >= 1, 'the header line exists');
+  for (const l of headerLines) {
+    assert.ok(l.trim() === expected, `header listing matches the code order exactly: "${l.trim()}"`);
+  }
+});
