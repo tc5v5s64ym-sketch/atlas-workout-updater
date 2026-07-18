@@ -849,9 +849,85 @@ The just-submitted result must be **excluded** from the evidence used to derive 
 
 **Completion record:** PR (slice 1) — #1056 · PR (slice 2) — this PR · Commits — slice 1: new `services/implicitRecommendation.js`, `services/sessionPlanLedger.js` (`buildImplicitRows`), `docs/SESSION_PLANS_LEDGER_DESIGN.md` §4A/A4, `test/implicitRecommendation.test.js`; slice 2: `routes/sessionPlans.js` + `config/routes.js` (`/implicit` route) + `index.js` (DI), `services/sessionPlanSetsStore.js`/`sessionPlanSetsCapture.js` (`checkpointImplicit`/`captureImplicit`), `src/app/app.js` (`emitImplicitRecommendation` + off-plan trigger) + `src/app/store.js` (`_sessionImplicitRecs`, snapshot v4), `config/wiring-allowlist.json` (implicitRecommendation now wired), tests `test/implicitRecommendationWiring.test.js`, `test/sessionPlanSetsRoutes.test.js`, `test/store.test.js`. Full suite 5689 pass; lint 0 errors.
 
-### F10D — Confirm and write planned versus actual together
+### Post-F10 stabilization insertion — F10S1–F10S6 + F10S-GATE (owner-directed, 2026-07-18)
+
+**Authority:** Explicit owner instruction (Dale, 2026-07-18). The July 18 owner Work-mode smoke test is treated as a **failed stabilization gate**: it demonstrated that F10's completion identity is not yet authoritative on every surface, plus two older parser/intent failures. **F10D is paused** — no F10D implementation, no production `Session_Plan_Sets` tab, no production-write enablement, and no live ledger write until every F10S card is complete and the F10S-GATE rerun passes. This is an insertion into this canonical plan, not a second roadmap. **Execution order: F10S1 → F10S2 → F10S3 → F10S4 → F10S5 → F10S6 → F10S-GATE → F10D.**
+
+Rules for the insertion (owner-set): work red-first; one focused PR per card **unless two cards are proven to share one root cause** (record the shared-root-cause evidence in the merge card); route every UI and coach surface through the canonical completion selector (`src/app/planSlotStatuses.js`) rather than patching wording locally. Run the Current-State Verification Gate per card — a card may resolve as root-caused by another card (e.g. F10S2's entry path may prove to be F10S6c), and that verdict must be recorded, not assumed. Positive finding preserved from the smoke test: closeout kept actuals separate and did not overwrite the original plan — the two-truths foundation is sound; the broken part is **progression and binding across surfaces**.
+
+#### F10S1 — Planned-slot completion multiplicity
 
 **Status:** QUEUED
+
+One performed set must not complete an entire multi-set planned slot. Completion status must account for the required set count per `plan_item_id`, not merely whether any performed row matches the item. **Reproduce:** accepted RDL target has 3 working sets; perform one RDL set; the slot remains **in progress**, not complete; rail, pin, next-up, recap, handoff, and closeout agree. (The smoke failure: one RDL set completed the whole RDL slot.)
+
+**Completion record:** PR — · Commit —
+
+#### F10S2 — Substitution binding
+
+**Status:** QUEUED
+
+A recognized Front Squat substitution for Back Squat must satisfy the original Back Squat `plan_item_id` everywhere. **Reproduce:** plan Back Squat; perform "Front Squat … instead of Back Squat"; the substitution outcome binds to the original slot; Back Squat does not remain current; next-up advances consistently; the performed exercise remains Front Squat in actuals. (Verify first: the binding layer (`applySessionSubstitution` retains the original `plan_item_id`) may already be sound, with the failed entry path being the one-turn parser — F10S6c. If proven, record the shared root cause and fix at the true layer.)
+
+**Completion record:** PR — · Commit —
+
+#### F10S3 — Single completion-state source
+
+**Status:** QUEUED
+
+Fix the disagreement where chat says Overhead Press is next while the TODAY rail still shows Back Squat. Every completion/remaining consumer must read the same canonical selector result — no parallel completion state, no locally-derived "next".
+
+**Completion record:** PR — · Commit —
+
+#### F10S4 — Session pin set attribution
+
+**Status:** QUEUED
+
+The pin must show sets completed for the **current planned item only**, not total session sets. **Reproduce:** the bad state "Back Squat · 4 sets in" after one RDL set plus three Front Squat sets.
+
+**Completion record:** PR — · Commit —
+
+#### F10S5 — Closeout commentary deduplication
+
+**Status:** QUEUED
+
+The same substitution/coaching note must appear once, not once per performed set or source path. (The smoke failure: closeout duplicated substitution commentary three times.)
+
+**Completion record:** PR — · Commit —
+
+#### F10S6 — Natural-language intent/parser regressions
+
+**Status:** QUEUED
+
+Reproduce and fix, red-first:
+
+1. "What should I do today?" must invoke **planning**, not the "keep logging" fallback.
+2. "Romanian Deadlift 245 x 6 @3" must log correctly (compact slash notation worked; this natural form did not).
+3. "Front Squat 185 7/2 x3 instead of Back Squat" must log **and** bind the substitution in one turn.
+
+`services/workoutTextParser.js` is a protected contract: tiny focused grammar additions with live-path tests; the `225 5/2` semantics are untouched. (b) and (c) may share a parser root cause; (a) is intent routing and stays a separate concern unless proven otherwise.
+
+**Completion record:** PR — · Commit —
+
+#### F10S-GATE — Smoke-test rerun (exit gate for the insertion)
+
+**Status:** QUEUED — blocks F10D
+
+After the fixes merge, rerun the **exact same non-destructive** July 18 Work-mode smoke test. Do **not** proceed to F10D until all of:
+
+- one-of-three sets shows **in progress**;
+- the substitution completes the **original** slot;
+- chat, rail, pin, and closeout **agree**;
+- natural-language inputs work;
+- closeout commentary is deduplicated.
+
+Return the rerun transcript and screenshots to the owner **before requesting F10D authorization**.
+
+**Completion record:** rerun — · transcript/screenshots —
+
+### F10D — Confirm and write planned versus actual together
+
+**Status:** PAUSED (owner stabilization gate, 2026-07-18) — blocked on F10S1–F10S6 + a passing F10S-GATE rerun. The production tab / write-enablement / first-live-write authorizations remain owner-reserved on top of that gate.
 
 **Objective**
 
