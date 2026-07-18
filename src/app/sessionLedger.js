@@ -44,8 +44,10 @@ const _exports = (function () {
   function performedSetCount(sessionLog, exerciseName) {
     const key = normName(exerciseName);
     if (!key) return 0;
+    // F10S1: a row's resolved identity (`canonical`, stamped at log time) outranks its
+    // raw name, so alias-form rows ("RDL") count toward their planned lift.
     return (Array.isArray(sessionLog) ? sessionLog : [])
-      .filter(r => r && normName(r.exercise) === key).length;
+      .filter(r => r && (normName(r.canonical) === key || normName(r.exercise) === key)).length;
   }
 
   // The plan_version for the NEXT revision of (plan_item_id, set_index): one past the

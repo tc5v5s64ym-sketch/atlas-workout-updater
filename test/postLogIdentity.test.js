@@ -308,15 +308,24 @@ const VARIANT_CATALOG = [
   { value: 'Squat', label: 'SQ01' },
 ];
 
-test('owner repro: an alias log against a chat-created plan (no lift codes) advances the plan', () => {
+test('owner repro: an alias log against a chat-created plan (no lift codes) advances the plan at its FULL set count', () => {
   const { api, events } = loadEmitHarness(VARIANT_CATALOG);
   api.setActiveSession(JSON.parse(JSON.stringify(CHAT_PLAN_SESSION)));
   // No enrichment at all — the best-effort dry-run never returned (gym network).
   api.emitSetLogged([{ exercise: 'RDL', weight: 240, reps: 8, rir: 3 }], '', [], null);
   assert.ok(api.getCompleted().includes('Romanian Deadlift'),
     '"RDL" resolves to the planned "Romanian Deadlift" via the two-sided datalist code bridge');
-  const detail = events[events.length - 1].detail;
-  assert.equal(detail.nextPlanned, 'Back Squat', 'handoff/composer advance past the logged lift');
+  // F10S1 (owner 2026-07-18): the slot prescribes 3 sets — ONE set leaves it IN
+  // PROGRESS, so the handoff holds on it instead of advancing.
+  let detail = events[events.length - 1].detail;
+  assert.equal(detail.nextPlanned, 'Romanian Deadlift', 'one of three sets → next-up HOLDS on the in-progress lift');
+  assert.ok(detail.plannedQueue.includes('Romanian Deadlift'), 'the in-progress lift stays in the queue');
+  // Logging the remaining two alias sets reaches the required count → NOW it advances
+  // (the alias rows count via their stamped canonical identity).
+  api.emitSetLogged([{ exercise: 'RDL', weight: 240, reps: 8, rir: 3 }], '', [], null);
+  api.emitSetLogged([{ exercise: 'RDL', weight: 240, reps: 7, rir: 2 }], '', [], null);
+  detail = events[events.length - 1].detail;
+  assert.equal(detail.nextPlanned, 'Back Squat', 'at 3/3 the handoff/composer advance past the logged lift');
   assert.ok(!detail.plannedQueue.includes('Romanian Deadlift'), 'the done lift leaves the queue');
 });
 

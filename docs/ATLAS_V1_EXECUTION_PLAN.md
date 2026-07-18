@@ -855,11 +855,13 @@ Rules for the insertion (owner-set): work red-first; one focused PR per card **u
 
 ### F10S1 — Planned-slot completion multiplicity
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 One performed set must not complete an entire multi-set planned slot. Completion status must account for the required set count per `plan_item_id`, not merely whether any performed row matches the item. **Reproduce:** accepted RDL target has 3 working sets; perform one RDL set; the slot remains **in progress**, not complete; rail, pin, next-up, recap, handoff, and closeout agree. (The smoke failure: one RDL set completed the whole RDL slot.)
 
-**Completion record:** PR — · Commit —
+**Resolution.** `src/app/planSlotStatuses.js` is now set-count aware: `buildSlots` reads the slot's prescribed `sets` as `requiredSets`, and `planSlotStatuses(activePlan, completedNames, sessionLog)` takes the per-set log — attribution (unchanged tiers) claims a slot, but COMPLETION additionally requires the performed-set count to reach `requiredSets` (below it the slot stays PENDING and exposes `performedSets`/`requiredSets`/`attributedName`). The explicit id-outcome lane (Done/skip) stays authoritative; a slot with no known count and legacy no-log callers keep the old rule; over-logging never blocks. Set counting matches rows by the attributed identity OR slot name, floored at 1 when attributed — and `emitSetLogged` now stamps each buffer row with its resolved identity (`canonical`) so alias-form rows ("RDL") count toward their planned lift (`sessionLedger.performedSetCount` honors it too, tightening the F10B frozen floor). Consumers routed: `plannedExerciseEntries` carries `sets`; `remainingPlannedExercises`/`firstUnloggedPlannedLift`/handoff/`isPlanCloseoutAwaitingSave` pass the log; the TODAY rail (`workoutSheet.js renderCards`) passes the log; `getCanonicalSession` replays completions THROUGH the selector (an in-progress slot is not marked done in the AS model and not inserted off-plan — recap/banner/current agree), with `canonicalSessionRecap`'s logged-work gate widened to the raw session log; `isOffPlanLoggedExercise` (F10C) now tests ATTRIBUTION, not completion, so an in-progress planned lift never triggers an implicit recommendation.
+
+**Completion record:** PR — this PR · Commit — `src/app/planSlotStatuses.js`, `src/app/app.js`, `src/app/workoutSheet.js`, `src/app/sessionLedger.js`; red-first `test/planSlotMultiplicity.test.js` (10 cases incl. the smoke reproduce) + `test/planSlotSurfaceParity.test.js` (real-app.js surface agreement on the 1-of-3 case) + harness/pin updates (`activeSessionE2E`, `insertFinisherWiring`, `activeSessionPlanCard`, `postLogIdentity` owner-repro now proves hold-then-advance at 3/3, `identityCorrectionWiring`, `unit.test.js`). Full suite 5703 pass; lint 0 errors.
 
 ### F10S2 — Substitution binding
 

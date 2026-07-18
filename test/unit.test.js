@@ -5792,7 +5792,7 @@ test('P0 wiring: public/activeSession.js is loaded in index.html and app.js expo
   assert.match(bridge, /window\.activeSession =/, 'legacyBridge must expose activeSession on window for app.js');
 
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fn = appSrc.slice(appSrc.indexOf('function getCanonicalSession('), appSrc.indexOf('function getCanonicalSession(') + 1100);
+  const fn = appSrc.slice(appSrc.indexOf('function getCanonicalSession('), appSrc.indexOf('function getCanonicalSession(') + 2000);
   assert.ok(fn.length > 50, 'getCanonicalSession must exist');
   // Built from the authoritative store through the shared model — never a second copy.
   assert.match(fn, /window\.activeSession/, 'derives from the shared activeSession model');
@@ -5800,6 +5800,9 @@ test('P0 wiring: public/activeSession.js is loaded in index.html and app.js expo
   assert.match(fn, /plannedExerciseEntries\(\)/, 'uses the planned order as the source');
   assert.match(fn, /markCompleted\(/, 'replays logged completions onto the canonical session');
   assert.match(fn, /insertExercise\(/, 'an off-plan logged lift is represented, not dropped');
+  // F10S1: the replay routes THROUGH the authoritative selector — completion is the
+  // selector's verdict (set-count aware), never raw name attribution.
+  assert.match(fn, /planSlotStatuses\(/, 'the AS replay is gated by the canonical completion selector');
 });
 
 // P0 wiring Sub-PR 2a: an explicit swap/skip mutates the canonical session
@@ -5882,7 +5885,7 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
 
   // canonicalSessionRecap builds from getCanonicalSession + the model selectors,
   // and returns null unless work was actually logged (hasLoggedWork).
-  const recap = appSrc.slice(appSrc.indexOf('function canonicalSessionRecap('), appSrc.indexOf('function canonicalSessionRecap(') + 800);
+  const recap = appSrc.slice(appSrc.indexOf('function canonicalSessionRecap('), appSrc.indexOf('function canonicalSessionRecap(') + 1200);
   assert.match(recap, /getCanonicalSession\(\)/, 'recap derives from the canonical session');
   assert.match(recap, /hasLoggedWork\(s\)/, 'an all-skipped/empty session returns null (not narrated as a workout)');
   assert.match(recap, /completedExercises\(s\)/, 'recap reads completed from the model');

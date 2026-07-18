@@ -261,7 +261,9 @@ export function cardDetailText(card) {
     // can never disagree with the pin/recap/closeout. Falls back to an empty status
     // list (all pending) when the selector or session is unavailable.
     const completed = call('getSessionCompleted') || [];
-    const statuses = session ? planSlotStatuses(session, completed) : [];
+    // F10S1 — the per-set log engages the selector's multiplicity rule, so a slot
+    // below its required set count renders as CURRENT (in progress), never done.
+    const statuses = session ? planSlotStatuses(session, completed, log) : [];
     const cards = buildSheetCards({ planned, statuses, log });
 
     // Header: label + progress + the load-line signature bar.

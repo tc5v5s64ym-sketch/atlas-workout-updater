@@ -46,8 +46,9 @@ function loadSurfaceHarness() {
   assert.ok(sliceGCS.includes('function getCanonicalSession()'), 'slice must contain getCanonicalSession');
   assert.ok(sliceRecap.includes('function canonicalSessionRecap()'), 'slice must contain canonicalSessionRecap');
 
-  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
-  const factory = new Function('window', 'remainingSlotNames', 'variantSatisfies', `
+  // F10S1: getCanonicalSession replays completions through planSlotStatuses itself.
+  const { planSlotStatuses, remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('window', 'planSlotStatuses', 'remainingSlotNames', 'variantSatisfies', `
     ${STORE_SHIM}
     let lastIntentData = null;
     function getLocalDateString() { return '2026-07-18'; } // closeout-date helpers (defined, not exercised)
@@ -64,7 +65,7 @@ function loadSurfaceHarness() {
       canonicalSessionRecap,
     };
   `);
-  return factory({ activeSession: AS }, remainingSlotNames, variantSatisfies);
+  return factory({ activeSession: AS }, planSlotStatuses, remainingSlotNames, variantSatisfies);
 }
 
 // Duplicate "Lat Pulldown" (pi_1, pi_3) + a substituted middle slot (pi_2 was swapped
@@ -84,12 +85,27 @@ function scenario(h) {
       { plan_item_id: 'pi_3', planned_lift_code: 'LAT01', outcome: 'planned' },
     ],
   });
+  // F10S1: the slots prescribe 3 sets each, so the log carries the FULL 3 sets per
+  // lift — completion now requires the count, not merely an attributed name.
   h.setSessionLog([
     { exercise: 'Lat Pulldown', weight: 120, reps: 10, rir: 2 },
+    { exercise: 'Lat Pulldown', weight: 120, reps: 10, rir: 2 },
+    { exercise: 'Lat Pulldown', weight: 120, reps: 9, rir: 1 },
     { exercise: 'Pec Deck', weight: 90, reps: 12, rir: 1 },
+    { exercise: 'Pec Deck', weight: 90, reps: 12, rir: 1 },
+    { exercise: 'Pec Deck', weight: 90, reps: 11, rir: 1 },
   ]);
   h.setSessionCompleted(['Lat Pulldown', 'Pec Deck']);
 }
+
+const SCENARIO_LOG = [
+  { exercise: 'Lat Pulldown', weight: 120, reps: 10, rir: 2 },
+  { exercise: 'Lat Pulldown', weight: 120, reps: 10, rir: 2 },
+  { exercise: 'Lat Pulldown', weight: 120, reps: 9, rir: 1 },
+  { exercise: 'Pec Deck', weight: 90, reps: 12, rir: 1 },
+  { exercise: 'Pec Deck', weight: 90, reps: 12, rir: 1 },
+  { exercise: 'Pec Deck', weight: 90, reps: 11, rir: 1 },
+];
 
 test('F10 AC4: every surface reports the SAME remaining from the one selector (duplicate names + substitution)', () => {
   const h = loadSurfaceHarness();
@@ -109,8 +125,10 @@ test('F10 AC4: every surface reports the SAME remaining from the one selector (d
   };
   const completed = ['Lat Pulldown', 'Pec Deck'];
 
-  // 1) The selector itself: pi_1 + pi_2 done, pi_3 (the SECOND Lat Pulldown) pending.
-  const statuses = SEL.planSlotStatuses(plan, completed);
+  // 1) The selector itself (same inputs as the surfaces, incl. the per-set log —
+  //    F10S1): pi_1 + pi_2 done at their full set counts, pi_3 (the SECOND Lat
+  //    Pulldown) pending.
+  const statuses = SEL.planSlotStatuses(plan, completed, SCENARIO_LOG);
   assert.deepEqual(statuses.map(s => [s.plan_item_id, s.status]),
     [['pi_1', 'completed'], ['pi_2', 'completed'], ['pi_3', 'pending']]);
 
@@ -134,4 +152,48 @@ test('F10 AC4: every surface reports the SAME remaining from the one selector (d
   assert.equal(currentCard.name, h.firstUnloggedPlannedLift(), 'the sheet current card === next-up');
   const sheetPending = cards.filter(c => c.status !== 'done').map(c => c.name);
   assert.deepEqual(sheetPending, remaining, 'sheet pending names === remainingPlannedExercises');
+});
+
+test('F10S1 SMOKE REPRODUCE: one set of a 3-set slot leaves it IN PROGRESS on every surface (rail, next-up, recap, handoff)', () => {
+  const h = loadSurfaceHarness();
+  h.setActivePlannedSession({
+    accepted: true, session_id: 'S1', plan_version: 'pv_x', index: 0,
+    exercises: [
+      { name: 'Romanian Deadlift', canonicalName: 'Romanian Deadlift', liftCode: 'RDL01', plan_item_id: 'pi_rdl', weight: 245, reps: 6, sets: 3 },
+      { name: 'Back Squat', canonicalName: 'Back Squat', liftCode: 'BSQ01', plan_item_id: 'pi_bsq', weight: 225, reps: 5, sets: 3 },
+    ],
+    items: [
+      { plan_item_id: 'pi_rdl', planned_lift_code: 'RDL01', outcome: 'planned' },
+      { plan_item_id: 'pi_bsq', planned_lift_code: 'BSQ01', outcome: 'planned' },
+    ],
+  });
+  const oneSet = [{ exercise: 'Romanian Deadlift', weight: 245, reps: 6, rir: 3 }];
+  h.setSessionLog(oneSet);
+  h.setSessionCompleted(['Romanian Deadlift']);
+
+  const plan = {
+    exercises: [
+      { name: 'Romanian Deadlift', canonicalName: 'Romanian Deadlift', liftCode: 'RDL01', plan_item_id: 'pi_rdl', sets: 3 },
+      { name: 'Back Squat', canonicalName: 'Back Squat', liftCode: 'BSQ01', plan_item_id: 'pi_bsq', sets: 3 },
+    ],
+  };
+  // The selector: RDL is attributed but IN PROGRESS (1 of 3), never completed.
+  const statuses = SEL.planSlotStatuses(plan, ['Romanian Deadlift'], oneSet);
+  assert.equal(statuses[0].status, 'pending');
+  assert.equal(statuses[0].performedSets, 1);
+  assert.equal(statuses[0].requiredSets, 3);
+
+  // Real app.js surfaces agree — RDL stays remaining and IS next-up (the handoff/
+  // closeout guards see an unfinished plan).
+  assert.deepEqual(h.remainingPlannedExercises(), ['Romanian Deadlift', 'Back Squat']);
+  assert.equal(h.firstUnloggedPlannedLift(), 'Romanian Deadlift');
+  assert.equal(h.isPlanCloseoutAwaitingSave(), false);
+  const recap = h.canonicalSessionRecap();
+  assert.ok(!recap.completed.includes('Romanian Deadlift'), 'recap does NOT report the in-progress lift as completed');
+  assert.deepEqual(recap.remaining, ['Romanian Deadlift', 'Back Squat'], 'recap remaining matches the selector');
+
+  // The rail: the in-progress slot renders as the CURRENT card with the set counter.
+  const cards = WS.buildSheetCards({ planned: plan.exercises, statuses, log: oneSet });
+  assert.deepEqual(cards.map(c => c.status), ['current', 'pending'], 'no card is done after one of three sets');
+  assert.match(WS.cardDetailText(cards[0]), /set 2\/3/, 'the current card shows the in-progress set counter');
 });
