@@ -250,6 +250,29 @@ test('no active lift context defers (null) so education can apply', () => {
   assert.equal(answerBareShorthand('RIR?', null), null);
 });
 
+test('F10S3 SMOKE REPRODUCE: the selector verdict (plan_state.remaining) decides the current lift — an IN-PROGRESS multi-set lift still answers', () => {
+  // 1 of 3 Back Squat sets logged: plan_completed carries 'Back Squat' (attribution
+  // evidence), but the canonical selector says the slot is still REMAINING. The old
+  // set-difference skipped it and answered from Overhead Press while the rail/pin
+  // showed Back Squat in progress (Codex P2 on #1063).
+  const ctx = {
+    current_plan: [{ name: 'Back Squat', weight: 225, reps: 5, sets: 3, rir: 2 }, { name: 'Overhead Press', weight: 115, reps: 6, sets: 3, rir: 2 }],
+    plan_completed: ['Back Squat'],
+    plan_state: { planned: ['Back Squat', 'Overhead Press'], completed: ['Back Squat'], remaining: ['Back Squat', 'Overhead Press'], isComplete: false },
+  };
+  assert.deepEqual(answerBareShorthand('RIR?', ctx), { kind: 'answer', text: 'Back Squat: RIR 2.' },
+    'mid-set "RIR?" answers for the in-progress lift the athlete is standing at');
+  assert.deepEqual(answerBareShorthand('How much?', ctx), { kind: 'answer', text: 'Back Squat: 225 lbs.' });
+});
+
+test('F10S3: without plan_state the legacy plan_completed set-difference stands (old clients unchanged)', () => {
+  const ctx = {
+    current_plan: [{ name: 'Back Squat', rir: 2 }, { name: 'Overhead Press', rir: 2 }],
+    plan_completed: ['Back Squat'],
+  };
+  assert.deepEqual(answerBareShorthand('RIR?', ctx), { kind: 'answer', text: 'Overhead Press: RIR 2.' });
+});
+
 test('non-bare shorthand defers (null) — named-lift and off-topic go to the normal flow', () => {
   const ctx = { current_plan: [{ name: 'Deadlift', rir: 2 }] };
   assert.equal(answerBareShorthand('For deadlifts how many RIR?', ctx), null);

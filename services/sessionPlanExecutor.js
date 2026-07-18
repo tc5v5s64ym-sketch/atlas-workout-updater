@@ -268,6 +268,27 @@ function clampCursorAfterRemoval(index, removedIdx, newLength) {
  */
 function planStateFromContext(context) {
   const cc = context && typeof context === 'object' ? context : {};
+  // F10S3 (owner smoke 2026-07-18) — SINGLE completion-state source: when the client
+  // sends the canonical selector's verdict (`plan_state`, computed by
+  // src/app/planSlotStatuses.js — multiplicity-aware, variant/ambiguity-safe), it is
+  // AUTHORITATIVE and this server-side name-matcher is bypassed, so a typed
+  // "what's next?" can never disagree with the rail/pin/recap. Validated + bounded
+  // (strings only, trimmed, capped) and `isComplete` is recomputed here — the client
+  // flag is never trusted. A malformed/absent plan_state falls back to the legacy
+  // recomputation below (old clients unchanged).
+  const ps = cc.plan_state;
+  if (ps && typeof ps === 'object' && Array.isArray(ps.planned) && Array.isArray(ps.remaining)) {
+    const clean = a => a
+      .filter(x => typeof x === 'string' && x.trim())
+      .map(x => x.trim())
+      .slice(0, 50);
+    const planned = clean(ps.planned);
+    if (planned.length) {
+      const remaining = clean(ps.remaining);
+      const completed = Array.isArray(ps.completed) ? clean(ps.completed) : [];
+      return { planned, completed, remaining, isComplete: remaining.length === 0 };
+    }
+  }
   const planNames = Array.isArray(cc.current_plan)
     ? cc.current_plan
         .map(e => (e && typeof e === 'object'
