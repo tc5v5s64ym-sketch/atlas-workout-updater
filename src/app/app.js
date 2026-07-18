@@ -1790,6 +1790,13 @@ function emitImplicitRecommendation(exerciseName, liftCode) {
   })).then((res) => {
     const d = res && res.data && res.data.derivation;
     if (!d || d.confidence !== 'reliable') return; // no_reliable_target → store nothing (no row)
+    // Guard a STALE response: if the session changed while /implicit was in flight (save /
+    // start-over / discard / a different accepted plan), drop it — never append an old
+    // session's recommendation into a later session's cache + snapshot (which would undo a
+    // reset and cross-contaminate the reload cache). The store update happens in this async
+    // callback (the derivation is server-side), so this re-check is required.
+    const cur = getActivePlannedSession();
+    if (!cur || cur.accepted !== true || cur.session_id !== plan.session_id || cur.plan_version !== plan.plan_version) return;
     setSessionImplicitRecs(appendImplicitRec(getSessionImplicitRecs(), {
       plan_item_id: planItemId, planned_lift_code: code, exercise_name: exerciseName || '',
       target_weight: d.target_weight, target_reps: d.target_reps, target_rir: d.target_rir, target_set_count: 1,

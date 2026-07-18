@@ -86,6 +86,18 @@ test('idempotent per lift: a second off-plan log of the same lift neither re-pos
   assert.equal(h.state.posts.length, 1, 'the second log is deduped before posting');
 });
 
+test('a STALE response after a session change is dropped (no cross-session contamination)', async () => {
+  const h = loadHarness(RELIABLE);
+  h.state.plan = ACCEPTED;
+  h.emitImplicitRecommendation('Hammer Curl', 'HCURL'); // posts under session S1
+  // The session changes before the /implicit response resolves (saved / started over → a
+  // different accepted plan). The in-flight S1 result must NOT land in the S2 store.
+  h.state.plan = { ...ACCEPTED, session_id: 'S2', plan_version: 'pv_y' };
+  await flush();
+  assert.equal(h.state.implicit.length, 0, 'the old-session rec is dropped, not appended into the new session');
+  assert.equal(h.state.snapshots, 0, 'and no stale snapshot write');
+});
+
 test('fails closed: an unaccepted plan or a missing lift code → no post', async () => {
   const h = loadHarness(RELIABLE);
   h.state.plan = { accepted: false, session_id: 'S1', exercises: [] };
