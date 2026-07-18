@@ -30,6 +30,10 @@ const _pendingSubstitution = signal(null);
 const _sessionLog = signal([]);
 const _sessionCompleted = signal([]);
 const _sessionSavedLog = signal([]);
+// F10B — the durable set-level recommendation REVISIONS accumulated this session
+// (append-only). Persisted in the reload snapshot so the effective plan survives a
+// reload; the accepted plan (v1) is reconstructed from activePlannedSession.
+const _sessionRevisions = signal([]);
 // ADD-5 session flag (PR-24 slice 2): true once a message has been handled as coach
 // discussion/question SINCE the last set was logged — i.e. the session has moved OFF
 // the just-logged lift. Read by the identity-correction guard so a later demonstrative
@@ -47,6 +51,7 @@ export function getPendingSubstitution() { return _pendingSubstitution.value; }
 export function getSessionLog() { return _sessionLog.value; }
 export function getSessionCompleted() { return _sessionCompleted.value; }
 export function getSessionSavedLog() { return _sessionSavedLog.value; }
+export function getSessionRevisions() { return _sessionRevisions.value; }
 export function getCoachDiscussionSinceLog() { return _coachDiscussionSinceLog.value; }
 
 // ── actions (every reassignment the old top-level `let`s took) ──────────────────
@@ -57,6 +62,7 @@ export function setPendingSubstitution(v) { _pendingSubstitution.value = v || nu
 export function setSessionLog(v) { _sessionLog.value = Array.isArray(v) ? v : []; }
 export function setSessionCompleted(v) { _sessionCompleted.value = Array.isArray(v) ? v : []; }
 export function setSessionSavedLog(v) { _sessionSavedLog.value = Array.isArray(v) ? v : []; }
+export function setSessionRevisions(v) { _sessionRevisions.value = Array.isArray(v) ? v : []; }
 export function setCoachDiscussionSinceLog(v) { _coachDiscussionSinceLog.value = !!v; }
 
 // Derived values: none live here yet. The derivations callers actually need
@@ -98,6 +104,7 @@ export function getState() {
     sessionLog: _sessionLog.value,
     sessionCompleted: _sessionCompleted.value,
     sessionSavedLog: _sessionSavedLog.value,
+    sessionRevisions: _sessionRevisions.value,
     coachDiscussionSinceLog: _coachDiscussionSinceLog.value,
   };
 }
@@ -112,8 +119,10 @@ export function getState() {
 // v1 → v2 to carry `pendingSubstitution` (audit SESS-2: a declared swap was dropped
 // on reload, stranding the swapped-out lift as pending forever). A v1 snapshot (no
 // pendingSubstitution) is still read — the missing field simply restores as null.
+// v2 → v3 carries `sessionRevisions` (F10B — the durable mid-session recommendation
+// revisions), so the effective plan survives a reload; older snapshots restore [].
 const SNAPSHOT_KEY = 'atlas_session_snapshot_v1';
-const SNAPSHOT_SHAPE_VERSION = 2;
+const SNAPSHOT_SHAPE_VERSION = 3;
 const SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 function storage() {
@@ -134,6 +143,7 @@ export function persistSessionSnapshot(sessionId) {
     const plan = _activePlannedSession.value;
     if (!(Array.isArray(log) && log.length) && !plan) { store.removeItem(SNAPSHOT_KEY); return; }
     const sub = _pendingSubstitution.value;
+    const revs = _sessionRevisions.value;
     store.setItem(SNAPSHOT_KEY, JSON.stringify({
       v: SNAPSHOT_SHAPE_VERSION,
       ts: Date.now(),
@@ -141,6 +151,7 @@ export function persistSessionSnapshot(sessionId) {
       sessionCompleted: _sessionCompleted.value,
       activePlannedSession: plan,
       ...(sub ? { pendingSubstitution: sub } : {}),
+      ...(Array.isArray(revs) && revs.length ? { sessionRevisions: revs } : {}),
       ...(sessionId ? { sessionId } : {}),
     }));
   } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
@@ -158,7 +169,9 @@ export function hydrateSessionSnapshot() {
     const raw = store.getItem(SNAPSHOT_KEY);
     if (!raw) return { resumed: false };
     const snap = JSON.parse(raw);
-    const versionOk = snap && (snap.v === 1 || snap.v === SNAPSHOT_SHAPE_VERSION);
+    // Accept any shape version up to the current one — older snapshots simply lack the
+    // newer fields (they restore as null/[]), never rejected on a deploy.
+    const versionOk = snap && Number.isInteger(snap.v) && snap.v >= 1 && snap.v <= SNAPSHOT_SHAPE_VERSION;
     if (!versionOk || typeof snap.ts !== 'number' || (Date.now() - snap.ts) > SNAPSHOT_MAX_AGE_MS) {
       clearPersistedSnapshot();
       return { resumed: false };
@@ -181,6 +194,8 @@ export function hydrateSessionSnapshot() {
     // reload; v1 snapshots have no such field and correctly restore as no pending swap.
     setPendingSubstitution((snap.pendingSubstitution && typeof snap.pendingSubstitution === 'object')
       ? snap.pendingSubstitution : null);
+    // F10B: restore the durable mid-session revisions (v3+); older snapshots restore [].
+    setSessionRevisions(Array.isArray(snap.sessionRevisions) ? snap.sessionRevisions : []);
     return {
       resumed: true,
       sessionId: snap.sessionId || null,
@@ -204,5 +219,6 @@ export function resetSessionStore() {
   _sessionLog.value = [];
   _sessionCompleted.value = [];
   _sessionSavedLog.value = [];
+  _sessionRevisions.value = [];
   _coachDiscussionSinceLog.value = false;
 }

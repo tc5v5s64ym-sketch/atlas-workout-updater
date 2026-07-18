@@ -16,6 +16,7 @@ module.exports.STORE_SHIM = `
     let sessionLog = [];
     let sessionCompleted = [];
     let sessionSavedLog = [];
+    let sessionRevisions = [];
     let coachDiscussionSinceLog = false;
     function getActivePlannedSession(){ return activePlannedSession; }
     function setActivePlannedSession(v){ activePlannedSession = v || null; }
@@ -31,6 +32,8 @@ module.exports.STORE_SHIM = `
     function setSessionCompleted(v){ sessionCompleted = Array.isArray(v) ? v : []; }
     function getSessionSavedLog(){ return sessionSavedLog; }
     function setSessionSavedLog(v){ sessionSavedLog = Array.isArray(v) ? v : []; }
+    function getSessionRevisions(){ return sessionRevisions; }
+    function setSessionRevisions(v){ sessionRevisions = Array.isArray(v) ? v : []; }
     function getCoachDiscussionSinceLog(){ return coachDiscussionSinceLog; }
     function setCoachDiscussionSinceLog(v){ coachDiscussionSinceLog = !!v; }
 `;

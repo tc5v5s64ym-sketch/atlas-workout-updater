@@ -123,6 +123,31 @@ test('buildRevisionRow: an explicit live_revision appends v2 with supersedes_key
   assert.equal(r[col('idempotency_key')], keyFor('pi_dip', 2, 2));
 });
 
+test('buildRevisionRow: supersedes_key is DERIVED from the immediately-prior version when omitted', () => {
+  // A revision chain is linear (v1→v2→…), so the row a vN revision replaces is always
+  // version N-1 of the same (item, set). The client need not track prior keys — the
+  // builder derives supersedes_key = idempotencyKey(session_id, N-1, item, set).
+  const r = L.buildRevisionRow(SESSION, {
+    plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', set_index: 2, plan_version: 2,
+    target_set_count: 3, target_weight: 60, target_reps: 5, target_rir: 2,
+    recommendation_source: 'live_revision', // no supersedes_key provided
+  });
+  assert.equal(r[col('supersedes_key')], keyFor('pi_dip', 1, 2), 'derived to the v1 row key');
+  // A v3 derives to the v2 key; the derived value forms a clean chain the validator accepts.
+  const r3 = L.buildRevisionRow(SESSION, {
+    plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', set_index: 2, plan_version: 3,
+    target_set_count: 3, target_weight: 55, target_reps: 5, target_rir: 2, recommendation_source: 'live_revision',
+  });
+  assert.equal(r3[col('supersedes_key')], keyFor('pi_dip', 2, 2));
+  assert.equal(L.supersedesKeyFor(SESSION, { plan_item_id: 'pi_dip', set_index: 2, plan_version: 2 }), keyFor('pi_dip', 1, 2));
+  // An explicitly-provided supersedes_key still wins (back-compat).
+  const explicit = L.buildRevisionRow(SESSION, {
+    plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', set_index: 2, plan_version: 2, target_set_count: 3,
+    target_weight: 60, target_reps: 5, target_rir: 2, recommendation_source: 'live_revision', supersedes_key: 'explicit0000key0',
+  });
+  assert.equal(explicit[col('supersedes_key')], 'explicit0000key0');
+});
+
 test('buildRevisionRow: a performed value can never revise — only live_revision/user_endorsed (amendment 1)', () => {
   const base = {
     plan_item_id: 'pi_dip', planned_lift_code: 'DIP01', set_index: 2, plan_version: 2,
@@ -130,10 +155,9 @@ test('buildRevisionRow: a performed value can never revise — only live_revisio
   };
   assert.throws(() => L.buildRevisionRow(SESSION, { ...base, recommendation_source: 'accepted' }), /recommendation_source/);
   assert.throws(() => L.buildRevisionRow(SESSION, { ...base, recommendation_source: 'engine' }), /recommendation_source/);
+  assert.throws(() => L.buildRevisionRow(SESSION, { ...base, recommendation_source: 'implicit_unplanned' }), /recommendation_source/);
   // v1 is the accepted plan, never a revision.
   assert.throws(() => L.buildRevisionRow(SESSION, { ...base, plan_version: 1, recommendation_source: 'live_revision' }), /plan_version ≥ 2/);
-  // supersedes_key is mandatory (the row it replaces — never mutated).
-  assert.throws(() => L.buildRevisionRow(SESSION, { ...base, recommendation_source: 'live_revision', supersedes_key: '' }), /supersedes_key/);
 });
 
 // ── effectiveRecommendation — the dips case (the failure the ledger prevents) ────

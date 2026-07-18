@@ -21,6 +21,7 @@ const SHELL_ASSETS = [
   '/app/planCloseout.js',
   '/app/planCompletion.js',
   '/app/planSlotStatuses.js',
+  '/app/sessionLedger.js',
   '/app/signals-core.js',
   '/app/api.js',
   '/app/dom.js',

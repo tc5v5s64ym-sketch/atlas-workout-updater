@@ -29,6 +29,7 @@ import {
   getSessionLog, setSessionLog,
   getSessionCompleted, setSessionCompleted,
   getSessionSavedLog, setSessionSavedLog,
+  getSessionRevisions, setSessionRevisions,
   getCoachDiscussionSinceLog, setCoachDiscussionSinceLog,
   getAtlasLastError, setHistoryLoaded,
   persistSessionSnapshot, hydrateSessionSnapshot, clearPersistedSnapshot,
@@ -53,6 +54,11 @@ import { mostRecentCompletablePlanItem } from './planCompletion.js';
 // attribute a log to one slot (exact-outranks-substring + ambiguity refusal). Every
 // remaining/completion surface routes through it so they can never disagree.
 import { remainingSlotNames, variantSatisfies } from './planSlotStatuses.js';
+// F10B — the client session ledger: build future-set-only revisions from an explicit
+// mid-session recommendation (a substitution), append-only, and count performed sets
+// so a completed set is never revised. Revisions live in the store (getSessionRevisions)
+// and are checkpointed to the dry-run /revision sidecar.
+import { buildFutureRevisions, appendRevisions, performedSetCount as ledgerPerformedSetCount } from './sessionLedger.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -1679,7 +1685,43 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
   // planned_lift_code (resolved server-side by plan_item_id) and records the actual
   // performed_lift_code. Fails closed if the slot had no identity (unaccepted plan).
   if (originalItemId) emitPlanItemOutcome({ plan_item_id: originalItemId, outcome: 'substituted', performed_lift_code: subLiftCode });
+  // F10B — the substitution is an EXPLICIT mid-session recommendation for the slot's
+  // FUTURE (unperformed) sets. Checkpoint it as a durable revision (append-only,
+  // reload-safe, dry-run). Performed sets stay frozen; a set the athlete already did is
+  // never revised. This is driven by the explicit swap, NEVER by a performed value.
+  if (originalItemId) emitFutureSetRevision(originalItemId, subLiftCode, prescription, prescribedName);
   return true;
+}
+
+// F10B — form and checkpoint the durable set-level revision(s) for an explicit
+// mid-session recommendation on an ACCEPTED plan slot. Builds one revision per FUTURE
+// (unperformed) set from the explicit prescription (never from a performed value),
+// appends them append-only to the session revisions (persisted for reload), and posts
+// each to the dry-run /revision checkpoint. No-op without an accepted plan, a canonical
+// substitute code, or a complete explicit target — it never fabricates a revision.
+function emitFutureSetRevision(planItemId, subLiftCode, prescription, prescribedName) {
+  const plan = getActivePlannedSession();
+  if (!plan || plan.accepted !== true || !planItemId) return; // only an accepted plan carries ledger identity
+  const p = prescription && typeof prescription === 'object' ? prescription : {};
+  const revisions = buildFutureRevisions({
+    plan_item_id: planItemId,
+    planned_lift_code: subLiftCode,
+    target_weight: p.weight,
+    target_reps: p.reps,
+    target_rir: p.rir,
+    target_set_count: p.sets,
+    performedCount: ledgerPerformedSetCount(getSessionLog(), prescribedName),
+    sessionRevisions: getSessionRevisions(),
+  });
+  if (!revisions.length) return;
+  setSessionRevisions(appendRevisions(getSessionRevisions(), revisions));
+  if (typeof saveSessionSnapshot === 'function') saveSessionSnapshot(); // durable across reload
+  for (const revision of revisions) {
+    Promise.resolve(api('/api/session-plan-sets/revision', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: plan.session_id, session_date: plan.session_date, plan_version: plan.plan_version, revision }),
+    })).catch(() => { /* non-blocking sidecar — never unwinds the workout */ });
+  }
 }
 
 // PR-2 (Workout Sheet drag-to-reorder): move a PENDING plan slot to a new position in
@@ -1803,7 +1845,7 @@ async function acceptDisplayedPlan(rec) {
       // abandoned/reloaded prior session (mirrors startPlannedSession's
       // setPendingSubstitution(null), Step 373b) — cleared as the accepted plan is
       // stored, before it is persisted.
-      setActivePlan: (plan) => { setPendingSubstitution(null); setActivePlannedSession(plan); },
+      setActivePlan: (plan) => { setPendingSubstitution(null); setSessionRevisions([]); setActivePlannedSession(plan); },
       persist: () => {
         document.getElementById('coach-empty')?.setAttribute('hidden', '');
         if (sessionIdEl && !existingId) sessionIdEl.value = sessionId; // reuse this id on the eventual save
@@ -2542,6 +2584,7 @@ function applyProposedPlanEdit(edit) {
     });
     setPendingSubstitution(null);
     setSessionCompleted([]);
+    setSessionRevisions([]); // a replaced plan starts a fresh recommendation ledger
     renderActiveSessionBanner();
     return { applied: true, exercises };
   }
@@ -4366,6 +4409,7 @@ function clearSessionSnapshot() {
 function discardRestoredSession() {
   setSessionLog([]);
   setSessionCompleted([]);
+  setSessionRevisions([]);
   setSessionSavedLog([]);     // discarding the restored workout also clears its saved recap
   endPlannedSession();
   closeoutScreenshotFile = null;
@@ -5346,6 +5390,7 @@ function startOverWorkout() {
   lastParsedWorkoutText = '';
   setSessionLog([]);
   setSessionCompleted([]);
+  setSessionRevisions([]);
   setSessionSavedLog([]);     // deliberate fresh start — forget this workout's saved recap
   clearSessionSnapshot();   // a deliberate reset must not resume the old session
   document.dispatchEvent(new CustomEvent('atlas:session-reset'));
@@ -6845,6 +6890,7 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     // null) keeps Step 385's deload teardown firing before the plan is cleared.
     setSessionLog([]);
     setSessionCompleted([]);
+    setSessionRevisions([]);
     endPlannedSession();
     closeoutScreenshotFile = null;
     closeoutScreenshotEffort = null;

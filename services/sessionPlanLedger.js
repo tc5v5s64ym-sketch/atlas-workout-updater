@@ -166,11 +166,28 @@ function _numOrBlank(v) {
   return n == null ? '' : String(n);
 }
 
+// The idempotency_key of the row a revision REPLACES — always the immediately-prior
+// version of the SAME (session, item, set), because a revision chain is linear
+// (v1→v2→…). So supersedes_key is deterministically derivable and the client never has
+// to track prior keys. (Matches validateChain's "supersedes the immediately-prior
+// version" rule exactly.)
+function supersedesKeyFor(session, revision) {
+  const { session_id } = _requireSession(session);
+  const r = revision && typeof revision === 'object' ? revision : {};
+  const plan_version = _requirePosInt(r.plan_version, 'plan_version');
+  return idempotencyKey({
+    session_id,
+    plan_version: plan_version - 1,
+    plan_item_id: _str(r.plan_item_id),
+    set_index: _requirePosInt(r.set_index, 'set_index'),
+  });
+}
+
 // Build a single EXPLICIT revision row (a future-set-only Atlas recommendation —
-// amendment 1). Requires source ∈ REVISION_SOURCES, plan_version ≥ 2, and a non-empty
-// supersedes_key (the key of the row this revision replaces — the prior row is NEVER
-// mutated). The caller (F10B) supplies plan_version and supersedes_key from the
-// current chain; deriveRevision() below computes them from the ledger.
+// amendment 1). Requires source ∈ REVISION_SOURCES and plan_version ≥ 2. supersedes_key
+// is DERIVED (supersedesKeyFor) when omitted — the row it replaces is always version
+// N-1 of the same (item, set); an explicit supersedes_key still wins (back-compat).
+// The prior row is NEVER mutated.
 function buildRevisionRow(session, revision, opts = {}) {
   const { session_id, session_date } = _requireSession(session); // the revision carries its own plan_version
   const r = revision && typeof revision === 'object' ? revision : {};
@@ -184,8 +201,8 @@ function buildRevisionRow(session, revision, opts = {}) {
   if (!REVISION_SOURCES.includes(source)) {
     throw new Error(`sessionPlanLedger: a revision recommendation_source must be one of ${REVISION_SOURCES.join('|')} (a performed value never revises — amendment 1), got ${JSON.stringify(r.recommendation_source)}`);
   }
-  const supersedes_key = _str(r.supersedes_key);
-  if (!supersedes_key) throw new Error('sessionPlanLedger: a revision requires supersedes_key (the key of the row it replaces)');
+  // Derive the superseded key from the immediately-prior version when not supplied.
+  const supersedes_key = _str(r.supersedes_key) || supersedesKeyFor(session, { plan_item_id, set_index, plan_version });
   const reliable = _str(r.confidence) !== 'no_reliable_target';
   return toRow({
     session_id,
@@ -391,6 +408,7 @@ module.exports = Object.freeze({
   parseRow,
   buildAcceptedRows,
   buildRevisionRow,
+  supersedesKeyFor,
   validateChain,
   effectiveRecommendation,
   effectivePlan,
