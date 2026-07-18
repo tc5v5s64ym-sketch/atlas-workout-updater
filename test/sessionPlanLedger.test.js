@@ -108,6 +108,55 @@ test('buildAcceptedRows: rejects a missing lift code / non-positive set count (n
   assert.throws(() => L.buildAcceptedRows(SESSION, [{ plan_item_id: '', planned_lift_code: 'A1', target_set_count: 1 }]), /plan_item_id/);
 });
 
+// ── buildImplicitRows (F10C — the implicit_unplanned recommendation) ─────────────
+
+test('buildImplicitRows: an unannounced-exercise recommendation → ONE v1 row, set 1, one set', () => {
+  const rows = L.buildImplicitRows(SESSION, [
+    { plan_item_id: 'pi_hc', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1 },
+  ], { recordedAt: '2026-07-16T18:30:00Z' });
+
+  assert.equal(rows.length, 1, 'one implicit row per item (one next set only)');
+  const r = rows[0];
+  assert.equal(r[col('plan_version')], '1');
+  assert.equal(r[col('plan_item_id')], 'pi_hc');
+  assert.equal(r[col('set_index')], '1');
+  assert.equal(r[col('target_set_count')], '1', 'exactly one next set (rule 1)');
+  assert.equal(r[col('target_weight')], '30');
+  assert.equal(r[col('target_reps')], '12');
+  assert.equal(r[col('target_rir')], '1');
+  assert.equal(r[col('recommendation_source')], 'implicit_unplanned');
+  assert.equal(r[col('supersedes_key')], '', 'a standalone recommendation supersedes nothing');
+  assert.equal(r[col('confidence')], 'reliable');
+  assert.equal(r[col('closeout_write_id')], '', 'not sealed until closeout (F10D)');
+  assert.equal(r[col('idempotency_key')], keyFor('pi_hc', 1, 1));
+});
+
+test('buildImplicitRows: a no_reliable_target item → blank targets, confidence no_reliable_target (no invention)', () => {
+  const rows = L.buildImplicitRows(SESSION, [
+    { plan_item_id: 'pi_x', planned_lift_code: 'KRAISE', confidence: 'no_reliable_target' },
+  ]);
+  const r = rows[0];
+  assert.equal(r[col('target_weight')], '', 'no target invented');
+  assert.equal(r[col('target_reps')], '');
+  assert.equal(r[col('target_rir')], '');
+  assert.equal(r[col('target_set_count')], '1', 'still one set (the recommendation slot exists)');
+  assert.equal(r[col('recommendation_source')], 'implicit_unplanned');
+  assert.equal(r[col('confidence')], 'no_reliable_target');
+});
+
+test('buildImplicitRows: bodyweight 0 is a real target (preserved, not blanked)', () => {
+  const rows = L.buildImplicitRows(SESSION, [
+    { plan_item_id: 'pi_pu', planned_lift_code: 'PULLUP', target_weight: 0, target_reps: 8, target_rir: 2 },
+  ]);
+  assert.equal(rows[0][col('target_weight')], '0');
+  assert.equal(rows[0][col('confidence')], 'reliable');
+});
+
+test('buildImplicitRows: rejects a missing lift code / plan_item_id (never invents identity)', () => {
+  assert.throws(() => L.buildImplicitRows(SESSION, [{ plan_item_id: 'pi', planned_lift_code: '' }]), /lift code/);
+  assert.throws(() => L.buildImplicitRows(SESSION, [{ plan_item_id: '', planned_lift_code: 'A1' }]), /plan_item_id/);
+});
+
 // ── buildRevisionRow (explicit, future-set-only) ─────────────────────────────────
 
 test('buildRevisionRow: an explicit live_revision appends v2 with supersedes_key set', () => {
