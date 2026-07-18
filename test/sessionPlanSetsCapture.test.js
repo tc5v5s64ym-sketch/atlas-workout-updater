@@ -10,12 +10,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { sessionPlanSetsColumns } = require('../config/columns');
 
-const state = { tabs: ['Session_Plan_Sets'], rows: [], header: [[...sessionPlanSetsColumns]], calls: 0, appendThrows: null };
+const state = { tabs: ['Session_Plan_Sets'], rows: [], header: [[...sessionPlanSetsColumns]], calls: 0, appendThrows: null, appendShort: false };
 function reset(over = {}) {
   state.tabs = over.tabs || ['Session_Plan_Sets'];
   state.rows = over.rows ? over.rows.slice() : [];
   state.header = 'header' in over ? over.header : [[...sessionPlanSetsColumns]];
-  state.calls = 0; state.appendThrows = over.appendThrows || null;
+  state.calls = 0; state.appendThrows = over.appendThrows || null; state.appendShort = over.appendShort || false;
 }
 const fakeSheets = {
   getSpreadsheetTabs: async () => { state.calls += 1; return state.tabs.slice(); },
@@ -24,6 +24,8 @@ const fakeSheets = {
     state.calls += 1;
     if (state.appendThrows) throw new Error(state.appendThrows);
     if (state.tabs.includes(tab)) state.rows.push(...rows);
+    // appendShort models a malformed / short Google response (no range, wrong count).
+    if (state.appendShort) return { data: { updates: { updatedRange: null, updatedRows: 0 } } };
     return { data: { updates: { updatedRange: `${tab}!A2:P4`, updatedRows: rows.length } } };
   },
   readRange: async () => { state.calls += 1; if (!state.tabs.includes('Session_Plan_Sets')) throw new Error('no tab'); return state.header; },
@@ -78,6 +80,14 @@ test('live: a missing tab is tab_missing (owner creates it), no write', async ()
   const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
   assert.equal(env.captured, false);
   assert.equal(env.status, 'tab_missing');
+});
+
+test('live: an unconfirmed append (no range / short row count) FAILS CLOSED — never a false captured', async () => {
+  reset({ appendShort: true });
+  const cap = loadCapture({ writeEnabled: true });
+  const env = await cap.captureAcceptedPlan(SESSION, ITEMS);
+  assert.equal(env.captured, false, 'no captured claim without authoritative Sheets proof');
+  assert.equal(env.status, 'unconfirmed');
 });
 
 test('live: a store failure NEVER throws at the call site — it becomes a captured:false envelope', async () => {

@@ -81,8 +81,22 @@ async function _capture(writerFn) {
     if (r && r.tab_missing) return _envelope('tab_missing', false, { reason: 'Session_Plan_Sets tab missing at write time' });
     const written = (r && r.written) || 0;
     const skipped = (r && r.skipped) || 0;
-    const captured = (written + skipped) > 0;
-    return _envelope(written > 0 ? 'written' : 'skipped', captured, { written, skipped, range: r && r.range });
+    if (written > 0) {
+      // A live append is `captured` ONLY with AUTHORITATIVE Google proof: the store
+      // confirmed the write AND returned an A1 range AND the confirmed row count
+      // equals what we asked to append. A malformed / short / range-less append fails
+      // closed as `unconfirmed` (captured:false) — never a false 'written' that lets a
+      // caller believe the durable ledger exists when Sheets did not confirm it
+      // (write-safety; CLAUDE.md live-write proof requires positive range/row evidence).
+      const confirmed = r && r.sheet_written === true && !!r.range && Number(r.rows_written) === written;
+      if (!confirmed) {
+        return _envelope('unconfirmed', false, { written, skipped, range: r && r.range, reason: 'append not confirmed by Sheets (missing range or row-count mismatch)' });
+      }
+      return _envelope('written', true, { written, skipped, range: r.range });
+    }
+    // A pure idempotent skip is already durable (the row exists) → captured.
+    if (skipped > 0) return _envelope('skipped', true, { skipped });
+    return _envelope('noop', false, { reason: 'nothing to checkpoint' });
   } catch (e) {
     const reason = /revision collision/i.test(e.message || '') ? 'revision_collision' : (e.message || 'sidecar checkpoint failed');
     return _envelope('error', false, { reason });
