@@ -42,6 +42,25 @@ test('duplicate names: both slots complete only once both are logged (order pres
   assert.equal(mod.isPlanComplete(p, done), true);
 });
 
+test('duplicate names: the SECOND identical slot completes via the id-outcome lane, not deduped names', () => {
+  // Codex P2: getSessionCompleted() de-dupes by name, so two identical "Lat Pulldown"
+  // slots receive only ONE name completion in the live path — the second stays pending
+  // (fail-closed: name evidence cannot tell one slot's repeated sets from two slots'
+  // work; the non-dedup alternative would OVER-complete a multi-set single slot). The
+  // authoritative id lane (a "Done with this exercise" tap → items[].outcome, or the
+  // F10A set-level ledger) completes the second slot without fabricating from names.
+  const namesOnly = plan([ex('Lat Pulldown', 'LAT01', 'pi_1'), ex('Lat Pulldown', 'LAT01', 'pi_2')]);
+  assert.deepEqual(mod.planSlotStatuses(namesOnly, ['Lat Pulldown']).map(s => s.status),
+    ['completed', 'pending'], 'a single deduped name completes exactly ONE identical slot');
+  const withIdOutcome = plan(
+    [ex('Lat Pulldown', 'LAT01', 'pi_1'), ex('Lat Pulldown', 'LAT01', 'pi_2')],
+    [{ plan_item_id: 'pi_2', outcome: 'completed' }],
+  );
+  assert.deepEqual(mod.planSlotStatuses(withIdOutcome, ['Lat Pulldown']).map(s => s.status),
+    ['completed', 'completed'], 'the explicit id outcome completes the second slot with no second name');
+  assert.equal(mod.isPlanComplete(withIdOutcome, ['Lat Pulldown']), true);
+});
+
 // ── AC3 — exact identity outranks substring; ambiguous substring refuses ──────────
 
 test('substring collision: an ambiguous substring resolves NOTHING (SESS-5, no guess)', () => {

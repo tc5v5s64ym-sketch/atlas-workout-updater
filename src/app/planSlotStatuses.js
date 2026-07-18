@@ -29,6 +29,14 @@
  *     back to slot POSITION for distinctness; the same safe name attribution applies
  *     (the id-keyed lane fails closed to a hardened name path — architecture-map
  *     hard-case c).
+ *   - Logged completions arrive NAME-DEDUPED (getSessionCompleted keeps one entry per
+ *     distinct resolved name), so two IDENTICAL-name slots receive a single name
+ *     completion: the FIRST completes, the rest stay pending. This is deliberate and
+ *     fail-closed — name evidence cannot tell one slot's repeated sets from work spread
+ *     across two identical slots, and fabricating the second from ambiguous multiplicity
+ *     would re-introduce the over-completion bug F10 fixes. The remaining identical
+ *     slot(s) complete via the AUTHORITATIVE id lane (an explicit "Done" →
+ *     items[].outcome) or the F10A–F10E set-level ledger, never from name multiplicity.
  *
  * Name/liftCode are used ONLY as logged-evidence to attribute a log to a slot — never
  * as the authoritative completion key. That is the whole point of F10.
