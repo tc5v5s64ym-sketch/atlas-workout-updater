@@ -33,6 +33,15 @@ process.env.ATLAS_LOGIN_RATE_LIMIT_MAX = '1000000';
 delete process.env.GEMINI_API_KEY;
 delete process.env.OPENAI_API_KEY;
 delete process.env.ANTHROPIC_API_KEY;
+// Pin every behavior/telemetry flag to the deterministic baseline. An inherited
+// shadow-persistence flag (e.g. ATLAS_FLIGHT_RECORDER=1 in a live-validation
+// shell) would make the real middleware append telemetry rows through the stub
+// and spuriously trip the gate's zero-appends evidence (Codex P2, PR #1067).
+delete process.env.ATLAS_FLIGHT_RECORDER;
+delete process.env.ATLAS_INTENT_ROUTER;
+delete process.env.ATLAS_BRAIN_SHADOW_PERSIST;
+delete process.env.ATLAS_DRIFT_SHADOW;
+delete process.env.ATLAS_COACH_ENGINE;
 // The ledger write-enable flag stays absent: Session_Plan_Sets lanes remain dry-run,
 // exactly as production is configured while F10D is paused.
 delete process.env.SESSION_PLAN_SETS_WRITE_ENABLED;
