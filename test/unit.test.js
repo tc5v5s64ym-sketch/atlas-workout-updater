@@ -6588,7 +6588,10 @@ test('FIX2: coach-conversation.js advances the composer to the full next prescri
 test('mid-session substitution: app.js classifies prescribed pairs before emitSetLogged', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   // Isolate the mid-session branch (between the early-return check and emitSetLogged).
-  const branchStart = appSource.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview)');
+  // F10D readiness: the guard also excludes the converted screenshot-with-rows
+  // closeout (screenshotConvertedCloseout) — a converted upload must reach the
+  // confirmation, never the mid-session set-note lane.
+  const branchStart = appSource.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout)');
   const branchEnd = appSource.indexOf('emitSetLogged(logRows', branchStart) + 60;
   const branch = appSource.slice(branchStart, branchEnd);
   assert.match(branch, /lastPrescribed/, 'mid-session branch must consult lastPrescribed');

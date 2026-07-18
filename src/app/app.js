@@ -6362,6 +6362,48 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     }
   }
 
+  // F10D readiness — a screenshot uploaded WITH workout rows IS a session-closeout
+  // signal and must run through the SAME single confirmation as "done" and typed
+  // effort (owner directive, 2026-07-18): parse the effort here, resolve the
+  // screenshot-date authority (RC2 — a typed date still wins), re-stamp the rows
+  // under the resolved identity so Log_Cleaned and Effort can never disagree, and
+  // fold everything into the ONE log-workout closeout payload — confirmation,
+  // seal, finalized event, verification, and the reachable retry all inherited.
+  // The plan-complete upload already routes here via the FB lane above
+  // (closeoutScreenshotFile → handleLogIt → closeoutAttachmentOnly, which nulls
+  // `file` before this point); this closes the freestyle / incomplete-plan /
+  // typed-rows shapes that previously staged a /api/complete-workout write with
+  // no confirmation. An unreadable screenshot still closes out the ROWS honestly
+  // (warned, effortless) — never a silent drop, never a second workflow.
+  // Effort-only uploads (no rows anywhere) keep their existing lane unchanged.
+  let screenshotConvertedCloseout = false;
+  if (mode === 'screenshot' && file && logRows.length) {
+    setStatus(loggerStatus, 'Reading screenshot effort...', 'ok');
+    let parsedShotEffort = null;
+    try {
+      parsedShotEffort = await parseWorkoutImage(file);
+    } catch {
+      setStatus(loggerStatus, "I couldn't read effort from the screenshot. I can still save the workout without effort data.", 'warn');
+    }
+    const resolvedShot = resolveCloseoutWorkoutDate({
+      manualDate: date,
+      manualEntered: logDateManuallyEntered,
+      screenshotDate: parsedShotEffort && parsedShotEffort.date,
+      today: getLocalDateString()
+    });
+    closeoutScreenshotDateSource = resolvedShot.source;
+    document.getElementById('log-date').value = resolvedShot.date;
+    const resolvedShotSessionId = sessionIdInput.value.trim() || generateSessionId(resolvedShot.date);
+    sessionIdInput.value = resolvedShotSessionId;
+    if (getSessionLog().length) populateSetRows(buildRowsFromSessionLog());
+    logRows = collectLogRows(resolvedShotSessionId, resolvedShot.date);
+    if (parsedShotEffort) {
+      manualEffort = effortRowFromParsedEffort(parsedShotEffort, resolvedShotSessionId, resolvedShot.date, location, notes);
+    }
+    file = null;
+    screenshotConvertedCloseout = true;
+  }
+
   const effortOnly = !logRows.length && Boolean(file || manualEffort);
   if (!logRows.length && !effortOnly) {
     // Pure text with nothing to log → route to the coach (same as the parse
@@ -6382,7 +6424,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // screenshot, or manual effort. This makes "no mid-workout Save" a STRUCTURAL
   // invariant — the preview/approve/write surface is unreachable from logging a
   // set, by construction (not just hidden by styling).
-  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview) {
+  if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout) {
     // Substitution classification: if the parser extracted a skip-notation pair
     // ("Deadlift skipped - platform busy"), classify it here where lastPrescribed
     // and the log rows are already assembled, then pass the engine's verdict into
@@ -6447,13 +6489,13 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   }
   // F10D — remember whether THIS preview is the session closeout before the
   // one-shot flag resets. EVERY end-of-session trigger counts (Codex P1, PR
-  // #1069): the compiled "done"/"log it"/Finish path (the flag) AND typed manual
-  // effort attached to buffered rows — the submit's other end trigger, which
-  // previously skipped the confirmation/seal path entirely. (A screenshot WITH
-  // rows saves via /api/complete-workout — its confirmation is a filed follow-up,
-  // not silently claimed here.)
+  // #1069): the compiled "done"/"log it"/Finish path (the flag), typed manual
+  // effort attached to buffered rows, AND a screenshot uploaded with rows (the
+  // converted lane above — flagged separately so an unreadable screenshot's
+  // rows-only closeout still gets its confirmation).
   const isSessionCloseout = sessionCompiledAwaitingPreview === true
-    || (logRows.length > 0 && Boolean(manualEffort));
+    || (logRows.length > 0 && Boolean(manualEffort))
+    || screenshotConvertedCloseout;
   sessionCompiledAwaitingPreview = false;
 
   const previewBtn = document.getElementById('preview-btn');

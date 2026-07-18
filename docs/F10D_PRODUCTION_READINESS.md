@@ -58,7 +58,7 @@ Append-only. `closeout_write_id` (column **O**) is the ONLY cell ever updated in
 1. **Owner creates the tab** (no agent schema action): a `Session_Plan_Sets` tab in the production spreadsheet with row 1 exactly as §3 (16 headers, exact order/spelling). No other rows.
 2. **Owner sets the flag** on Render: `SESSION_PLAN_SETS_WRITE_ENABLED=1` (`ATLAS_SESSION_PLANS_WRITE` per its current production setting — it is a separate, already-governed lane). Deploy; confirm boot via `npm run atlas:status`.
 3. **One bounded owner session** (the smallest complete exercise of every lane): accept a small real plan (2 slots is enough) → log it (include one substitution or skip if convenient, not required) → type effort → "done" → review the single confirmation → **Save once**.
-4. **Verify immediately** with `npm run atlas:review-live` (PASS/FAIL/UNKNOWN per criterion) plus a read of the response evidence: `closeout_fully_verified: true`, `ledger_seal.sealed_ok: true`, sealed-row count = the session's ledger rows, Log/Effort ranges positive.
+4. **Verify immediately** with `npm run atlas:review-live` — the `ledger_sealed` criterion now automatically verifies the seal (one nonblank shared `closeout_write_id` on every correlated ledger row, valid chain, cross-tab closeout agreement, exact evidence range); corroborate with the response evidence (`closeout_fully_verified: true`, `ledger_seal.sealed_ok: true`, positive Log/Effort ranges).
 5. **Stop.** No second session until the owner reviews the first write's evidence.
 
 ## 5. Rollback / containment if the first write misbehaves
@@ -68,7 +68,9 @@ Append-only. `closeout_write_id` (column **O**) is the ONLY cell ever updated in
 - **Contain (Log/Effort):** unchanged existing surfaces with the existing undo: the review card's Undo (`/api/log-workout/undo-last`) removes the appended Log range read-back-verified, fail-closed. Effort follows the existing duplicate-session guard.
 - **Recover:** because the ledger is append-only + idempotency-keyed, a corrected retry after a fix re-appends nothing and re-seals under the governing rules; no migration, no rewrite, no deletion is ever part of recovery. Anything beyond flag-off + evidence triage is owner-decision territory.
 
-## 6. Residual gaps (declared, not hidden)
+## 6. Residual gaps
 
-- The screenshot-with-rows save path (`/api/complete-workout`) does not yet render the closeout confirmation (filed follow-up from PR #1069; typed-effort and "done" paths are covered).
-- `atlas:review-live` does not yet evaluate the seal column (it predates F10D); §4 step 4 therefore includes reading the response evidence directly. Extending it is a natural F10E-adjacent follow-up.
+**None.** The two gaps declared in earlier revisions of this document are closed (owner readiness directive, 2026-07-18):
+
+- **Screenshot-with-rows closeout** now routes through the SAME single confirmation: the upload converts client-side into the one `/api/log-workout` closeout payload (vision parse → screenshot-date resolution → rows re-stamped under the resolved identity → `effort_row` + `closeout_context`), inheriting the confirmation, seal, finalized event, verification, and reachable retry. There is no second closeout workflow — the `/api/complete-workout` write lane remains only for effort-only uploads (no session rows), which are not session closeouts. Proven end-to-end by the `F10D-SS-R` / `F10D-SS-A` / `F10D-SS-RT` scenarios (rejected-writes-nothing, approved parity with the parsed effort riding the one approval, idempotent seal retry).
+- **`atlas:review-live` evaluates the seal**: the `ledger_sealed` criterion verifies, for the newest tested session, that expected ledger rows exist, every applicable row carries the SAME nonblank `closeout_write_id`, the sealed count matches the correlated-row count, no mixed/conflicting/partially-sealed/malformed state exists (chain-validated through the same fail-closed selectors the seal uses), and Log / Effort / Session_Plans / Session_Plan_Sets agree on session identity and closeout. PASS / FAIL / UNKNOWN per criterion with exact evidence ranges (`Session_Plan_Sets!A2:P4` style) and concise failure reasons; an absent or unreadable tab is UNKNOWN, never an inferred PASS — so §4 step 4's verification is now fully automatic.

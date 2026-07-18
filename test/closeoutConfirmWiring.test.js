@@ -96,8 +96,8 @@ test('F10D ctx: no active session (freestyle) → empty items; slots without pla
 test('F10D wiring: EVERY end trigger attaches closeout_context to the ONE payload (dry-run + approved write)', () => {
   // Codex P1 (PR #1069): typed manual effort with buffered rows is the submit's
   // OTHER end-of-session trigger and must enter the confirmation/seal path too.
-  assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true\s*\n\s*\|\| \(logRows\.length > 0 && Boolean\(manualEffort\)\);/,
-    'the closeout marker covers the compiled path AND manual-effort-with-rows');
+  assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true\s*\n\s*\|\| \(logRows\.length > 0 && Boolean\(manualEffort\)\)\s*\n\s*\|\| screenshotConvertedCloseout;/,
+    'the closeout marker covers the compiled path, manual-effort-with-rows, AND the converted screenshot-with-rows lane');
   assert.match(appSrc, /payload\.closeout_context = \{\s*\n\s*plan_version: \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true\s*\n\s*&& getActivePlannedSession\(\)\.plan_version\) \|\| '',\s*\n\s*items: closeoutContextItems\(\),\s*\n\s*\};/,
     'the context carries the accepted plan pv_ token so the SERVER records the finalized event with proof');
   assert.match(appSrc, /pendingWrite = \{ mode: 'manual', payload, sessionCloseout: isSessionCloseout,/,

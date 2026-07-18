@@ -94,7 +94,8 @@ const state = {
   ensureTabCalls: [], // recorded, never acted on — no tab can be created here
   updateCalls: [],   // every updateColumnCells call (the seal stamp primitive)
   planSetRows: [],   // sandbox: the materialized Session_Plan_Sets tab (appends + seal stamps)
-  failNextSeal: false // sandbox: armed via the state server; the next seal attempt throws once
+  failNextSeal: false, // sandbox: armed via the state server; the next seal attempt throws once
+  visionCalls: []    // every stubbed vision parse (the F10D screenshot scenario's evidence)
 };
 
 // Rows appended DURING the run must be visible to the safety read-backs, exactly
@@ -178,6 +179,36 @@ const fakeSheets = {
 const sheetsPath = require.resolve('../../../sheets');
 require.cache[sheetsPath] = { id: sheetsPath, filename: sheetsPath, loaded: true, exports: fakeSheets };
 
+// The vision LLM is likewise replaced in-process: no key exists here (deleted
+// above), so the real module could only fail — the stub returns a DETERMINISTIC
+// synthetic Apple-Watch-style parse so the F10D screenshot-closeout scenario can
+// prove the parsed effort riding the single confirmation. The parse itself is
+// not under test; the closeout ROUTING is. Every call is recorded as evidence.
+const realVision = require('../../../services/vision');
+const visionPath = require.resolve('../../../services/vision');
+require.cache[visionPath] = {
+  id: visionPath, filename: visionPath, loaded: true,
+  exports: {
+    ...realVision,
+    parseWorkoutScreenshot: async imagePath => {
+      state.visionCalls.push({ at: new Date().toISOString(), imagePath: String(imagePath || '') });
+      // The REAL module's parsed_metrics contract is camelCase (see
+      // services/vision.js normalizeParsedMetrics) — the stub must match it.
+      return {
+        status: 'parsed',
+        parsed_metrics: {
+          date: '2026-07-18',
+          duration: '48:22',
+          activeCalories: 389,
+          totalCalories: 512,
+          averageHR: 131,
+          peakHR: 168,
+        },
+      };
+    },
+  },
+};
+
 const { app } = require('../../../index.js');
 
 // Harness-only observability on its OWN server (the app's 404 catch-all is already
@@ -199,6 +230,7 @@ const stateServer = http.createServer((req, res) => {
     ensure_tab_calls: state.ensureTabCalls,
     updates: state.updateCalls,
     plan_set_rows: state.planSetRows,
+    vision_calls: state.visionCalls,
     ledger_sandbox: LEDGER_SANDBOX,
     google_client_initialized: false,
     sheets_stubbed_in_memory: true
