@@ -209,8 +209,12 @@ test('golden: slp 70 x 12 @2 — must not explode into 70 rows', () => {
     !result.sets?.some(s => s.weight === 2),
     'weight must not be 2 (the catastrophic misparse value)'
   );
-  assert.equal(result.intent, 'needs_clarification');
-  assert.ok(result.warnings.includes('missing_sets'));
+  // F10S6b (owner decision 2026-07-18, July 18 smoke gate): this input IS the
+  // owner's WEIGHT x REPS @ RIR shorthand — the historical refuse-to-clarify
+  // outcome is superseded by the correct single-set parse. Both catastrophic-
+  // misparse protections above still hold.
+  assert.equal(result.intent, 'log_sets');
+  assert.deepEqual(result.sets.map(s => [s.weight, s.reps, s.rir]), [[70, 12, 2]]);
 });
 
 test('golden: lat pulldown 170 8/2 x99 — xN above cap is rejected', () => {

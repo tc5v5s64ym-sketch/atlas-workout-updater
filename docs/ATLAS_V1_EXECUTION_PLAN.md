@@ -897,7 +897,9 @@ The same substitution/coaching note must appear once, not once per performed set
 
 ### F10S6 — Natural-language intent/parser regressions
 
-**Status:** QUEUED
+**Status:** PARTIAL — (b) and (c) COMPLETE (the parser-grammar pair, one PR — shared root cause: NL grammar gaps in `services/workoutTextParser.js`); (a) intent routing remains.
+
+**Resolution (b, c).** Two tiny additive grammar changes, red-first (`test/parserSmokeGrammar.test.js`): **(b)** `parseWeightRepsAtRir` — `WEIGHT x REPS [@ RIR]` (one set). The surface syntax collides with the existing sets-first claim (`3 x 8 @ 135` = 3 sets of 8 @ 135 lb), so the new reading engages only where sets-first rejects (first number > 10 → a load) and only for a plausible RIR (≤ 6); an implausible pair or a trailing `x3` compound still refuses to a clarification — never a guess, never a silent truncation. The `slp 70 x 12 @2` golden was updated to the owner-superseded truth (its two catastrophic-misparse protections retained). **(c)** a one-turn `<substitute log> instead of <original>` strips the trailing clause, parses the log normally, and carries `substitution: { for: <original> }` on the `log_sets` result — the F10S2 entry path; an unparseable remainder keeps the original full-text clarification (never a half-applied substitution). `225 5/2` byte-for-byte unchanged (golden + new guard).
 
 Reproduce and fix, red-first:
 
