@@ -1293,14 +1293,25 @@ function parseWeightRepsSets(text) {
 // the existing clarification, never a guess. Bare "W x R" (W > 10) is one set with
 // rir null (never a fabricated 0). Slash notation ("225 5/2") is untouched.
 function parseWeightRepsAtRir(text) {
-  const match = text.match(/\b(\d+(?:\.\d+)?)\s*x\s*(\d+)(?:\s*@\s*(\d+(?:\.\d+)?))?(?!\s*[x@])\b/i);
-  if (!match) return null;
-  const weight = Number(match[1]);
-  if (weight <= 10) return null; // small first number stays sets-first territory
-  const reps = Number(match[2]);
-  const rir = match[3] == null ? null : Number(match[3]);
-  if (rir != null && rir > 6) return null; // implausible RIR → clarification, not a guess
-  return [setRecord({ weight, reps, rir })];
+  const groupRe = /(\d+(?:\.\d+)?)\s*x\s*(\d+)(?:\s*@\s*(\d+(?:\.\d+)?))?/gi;
+  const groups = [...text.matchAll(groupRe)];
+  if (!groups.length) return null;
+  // The matched groups must TILE the whole remaining text (whitespace aside): an
+  // unanchored partial claim would silently DROP the lifter's other sets
+  // ("245 x 6 @3 225 x 5 @2" logging only the first — Codex P1 on #1061), and a
+  // trailing "x3" multiplier must refuse rather than truncate to one set. Any
+  // residue → fall through to the existing clarification, never a partial log.
+  if (text.replace(groupRe, ' ').trim()) return null;
+  const sets = [];
+  for (const g of groups) {
+    const weight = Number(g[1]);
+    if (weight <= 10) return null; // small first number stays sets-first territory
+    const reps = Number(g[2]);
+    const rir = g[3] == null ? null : Number(g[3]);
+    if (rir != null && rir > 6) return null; // implausible RIR → clarification, not a guess
+    sets.push(setRecord({ weight, reps, rir }));
+  }
+  return sets;
 }
 
 function parseNaturalSets(text) {

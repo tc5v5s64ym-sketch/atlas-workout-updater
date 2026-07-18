@@ -63,6 +63,16 @@ test('(b) a trailing set-multiplier after @rir is NOT silently truncated to one 
   assert.equal(r.intent, 'needs_clarification');
 });
 
+test('(b) MULTIPLE W x R [@rir] groups all log — never a silent partial claim (Codex P1)', () => {
+  assert.deepEqual(sets(parseWorkoutText('Bench Press 245 x 6 @3 225 x 5 @2')), [[245, 6, 3], [225, 5, 2]]);
+  assert.deepEqual(sets(parseWorkoutText('Bench Press 225 x 5 225 x 5')), [[225, 5, null], [225, 5, null]]);
+});
+
+test('(b) a group plus unclaimable residue refuses — sets are never partially dropped', () => {
+  const r = parseWorkoutText('Bench Press 245 x 6 @3 plus some more');
+  assert.notEqual(r.intent, 'log_sets', 'residue after the group → clarification, not a partial log');
+});
+
 // ── (c) the one-turn "instead of" substitution clause ───────────────────────────
 
 test('SMOKE (c): "Front Squat 185 7/2 x3 instead of Back Squat" logs 3 sets AND carries the substitution', () => {
