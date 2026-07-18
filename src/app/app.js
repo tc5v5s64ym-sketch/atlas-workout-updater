@@ -1688,7 +1688,12 @@ function applySessionSubstitution(prescribedName, subName, subLiftCode, prescrip
       name: subName, canonicalName: subName, liftCode: subLiftCode || '',
       weight: p.weight != null ? p.weight : null,
       reps: p.reps != null ? p.reps : null,
-      sets: p.sets != null ? p.sets : null,
+      // F10S2/F10S1: with no explicit substitute prescription (the one-turn
+      // "instead of" directive carries none), the slot KEEPS the original's set
+      // count — the athlete is doing the original prescription with a different
+      // movement, and dropping the count would let one substitute set complete a
+      // multi-set slot (the multiplicity rule needs requiredSets to survive).
+      sets: p.sets != null ? p.sets : (originalSetCount != null ? originalSetCount : null),
       rir: p.rir != null ? p.rir : null,
       reason: 'substituted',
       // Keep the ORIGINAL planned item's identity on the slot (PR-G1) — the item was
@@ -3502,6 +3507,11 @@ let activeExercise = null;
 // (fast path) from "I'm talking about something else now" (must not silently relabel
 // the completed lift). Reset when a set enters the log buffer (emitSetLogged).
 let lastPrescribed = null;
+// F10S2 — the one-turn "instead of <original>" directive from the LAST parse
+// (parsed.substitution.for). One-shot: reset at every new parse, consumed (armed
+// into the deferred-swap lane) at the chat-lane log commit, so it can never
+// linger across turns and mis-bind a later, unrelated log.
+let lastParseSubstitution = null;
 // Card/advisory consistency (owner 07-02): the exercise name the unknown-lift
 // advisory flagged on the LAST parse (null when the lift resolved). Threaded into
 // the atlas:set-logged detail so the ✓ confirmation card marks the name instead of
@@ -4073,6 +4083,7 @@ function planNamesForDisambiguation() {
 }
 
 async function rowsFromWorkoutInput() {
+  lastParseSubstitution = null; // F10S2: one-shot — every new parse starts clean
   let workoutText = workoutTextInput.value.trim();
   // Plan-aware disambiguation: a bare generic lead ("rows", "bench", "curls") means
   // the plan's unique exercise of that family. Rewrite it to that planned name BEFORE
@@ -4210,6 +4221,12 @@ async function rowsFromWorkoutInput() {
   parsedRowsEditor.hidden = true;
   lastParsedWorkoutText = workoutText;
   lastPrescribed = parsed.prescribed || null;
+  // F10S2 — the parser recognized a one-turn "<substitute log> instead of <original>"
+  // (F10S6c) and carried the replaced exercise. Hold it one-shot; the chat-lane log
+  // commit arms the deferred-swap lane with it so THIS turn's logged exercise binds
+  // to the named planned slot (its original plan_item_id).
+  lastParseSubstitution = (parsed.substitution && parsed.substitution.for)
+    ? String(parsed.substitution.for) : null;
 
   // The parser couldn't confidently resolve a lift name and echoed the typed
   // text instead of guessing a real lift. Surface it so the wrong history isn't
@@ -6313,6 +6330,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // F09G: a real set log supersedes any held bodyweight-rep clarification (the lifter
     // moved on and logged other work without affirming it).
     clearPendingClarification();
+    // F10S2 — a one-turn "<substitute log> instead of <original>" directive rode the
+    // parse; arm the EXISTING deferred-swap lane (Step 373b) so this log's first
+    // exercise replaces the named planned slot, binding to its original plan_item_id
+    // (outcome + F10B revision + completion identity all follow that one lane).
+    // One-shot either way — a directive with no active plan simply drops.
+    if (lastParseSubstitution && getActivePlannedSession()) {
+      setPendingSubstitution({ prescribed: lastParseSubstitution, prescription: null });
+    }
+    lastParseSubstitution = null;
     emitSetLogged(logRows, pendingChatText, midSessionSubstitutions, midSessionEnrichment);
     return;
   }
