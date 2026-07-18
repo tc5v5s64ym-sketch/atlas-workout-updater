@@ -454,7 +454,22 @@ function parseWorkoutText(input, context = {}) {
   }
 
   const skipped = extractSkipNotes(rawText);
-  let result = parseLogSets(rawText, context);
+  // F10S6c / F10S2 entry (owner smoke 2026-07-18): a one-turn
+  // "<substitute log> instead of <original>" names the planned exercise being
+  // replaced. Strip the trailing clause, parse the log normally, and carry the
+  // directive (`substitution.for`) so the client binds the swap to the original
+  // slot in the same turn. Anything that does not parse to a clean log keeps the
+  // ORIGINAL full-text behavior (clarifications reference what the lifter typed);
+  // without a clean log there is never a half-applied substitution.
+  let result = null;
+  const instead = rawText.match(/\s+instead of\s+([a-z][a-z\s'()-]*?)\s*$/i);
+  if (instead) {
+    const stripped = parseLogSets(rawText.slice(0, instead.index), context);
+    if (stripped && stripped.intent === 'log_sets') {
+      result = { ...stripped, raw_text: rawText, substitution: { for: instead[1].trim() } };
+    }
+  }
+  if (!result) result = parseLogSets(rawText, context);
 
   // Multi-line rescue (partial-log, owner decision 2026-07-02): normalizeParserText
   // collapses newlines, so a paste with one exercise per line reaches parseLogSets as
@@ -1055,6 +1070,7 @@ function parseSetGroups(text) {
     || parseDumbbellList(cleaned)
     || parseSetsFirst(cleaned)
     || parseWeightRepsSets(cleaned)
+    || parseWeightRepsAtRir(cleaned)
     || parseNaturalSets(cleaned);
   if (early) return early;
   // PARSE-3: parseDaleShorthand returns AMBIGUOUS_SET_FORMAT to REFUSE an implausible
@@ -1266,6 +1282,25 @@ function parseWeightRepsSets(text) {
   const setCount = Number(match[3]);
   if (setCount > 10) return null;
   return Array.from({ length: setCount }, () => setRecord({ weight, reps, rir: null }));
+}
+
+// F10S6b (owner smoke 2026-07-18): "245 x 6 @3" — WEIGHT x REPS [@ RIR], one set.
+// The surface syntax collides with parseSetsFirst's EXISTING claim on "A x B @ C"
+// (SETS x REPS @ WEIGHT, e.g. "3 x 8 @ 135"), so this lane engages ONLY where that
+// claim rejects: the first number exceeds any plausible set count (> 10 → it is a
+// load). An @-suffix must be a plausible RIR (≤ 6) and nothing may trail the match
+// (a "…@2 x3" compound is NOT silently truncated to one set) — otherwise refuse to
+// the existing clarification, never a guess. Bare "W x R" (W > 10) is one set with
+// rir null (never a fabricated 0). Slash notation ("225 5/2") is untouched.
+function parseWeightRepsAtRir(text) {
+  const match = text.match(/\b(\d+(?:\.\d+)?)\s*x\s*(\d+)(?:\s*@\s*(\d+(?:\.\d+)?))?(?!\s*[x@])\b/i);
+  if (!match) return null;
+  const weight = Number(match[1]);
+  if (weight <= 10) return null; // small first number stays sets-first territory
+  const reps = Number(match[2]);
+  const rir = match[3] == null ? null : Number(match[3]);
+  if (rir != null && rir > 6) return null; // implausible RIR → clarification, not a guess
+  return [setRecord({ weight, reps, rir })];
 }
 
 function parseNaturalSets(text) {
