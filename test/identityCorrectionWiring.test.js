@@ -551,7 +551,7 @@ test('ADD-5 (source): coachDiscussionSinceLog is set by the coach route, reset o
   assert.match(afterRoute, /activeExercise = null/, 'coach route nulls activeExercise (why the durable flag is needed)');
 
   // (3) emitSetLogged resets it when a set is logged.
-  const emit = appSrc.slice(appSrc.indexOf('function emitSetLogged('), appSrc.indexOf('function emitSetLogged(') + 2600);
+  const emit = appSrc.slice(appSrc.indexOf('function emitSetLogged('), appSrc.indexOf('function emitSetLogged(') + 3300);
   assert.match(emit, /setCoachDiscussionSinceLog\(false\)/, 'a logged set resets the moved-on signal');
 
   // (4) the correction guard reads it.

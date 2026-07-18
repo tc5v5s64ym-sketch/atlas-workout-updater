@@ -75,7 +75,8 @@ const routeDefinitions = [
   { path: '/api/session-plans/outcome', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/session-plans/closeout', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
   { path: '/api/session-plan-sets/accept', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
-  { path: '/api/session-plan-sets/revision', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
+  { path: '/api/session-plan-sets/revision', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true },
+  { path: '/api/session-plan-sets/implicit', methods: ['POST'], public: false, authRequired: true, readOnly: false, writeCapable: true }
 ];
 
 module.exports = { routeDefinitions };

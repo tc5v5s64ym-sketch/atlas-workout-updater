@@ -20,6 +20,7 @@ const express = require('express');
 const { success: standardSuccess, error: standardError } = require('../response');
 const capture = require('../services/sessionPlanCapture');
 const setsCapture = require('../services/sessionPlanSetsCapture');
+const { deriveImplicitRecommendation } = require('../services/implicitRecommendation');
 const { ITEM_OUTCOMES, CLOSEOUT_STATUSES } = require('../services/sessionPlanEvents');
 const { CONFIDENCE, REVISION_SOURCES } = require('../services/sessionPlanLedger');
 
@@ -74,7 +75,12 @@ function _ledgerItemError(item, { requireRevision = false } = {}) {
   return null;
 }
 
-module.exports = function registerSessionPlanRoutes() {
+// deps (F10C): getSheetRows + the Log_Cleaned/Effort tab names are injected so the
+// /implicit route can derive the recommendation server-side over the full history (the
+// only place that history lives). The other routes are pure checkpoint sinks and use no
+// deps — so an older `registerSessionPlanRoutes()` call still works (deps default to {}).
+module.exports = function registerSessionPlanRoutes(deps = {}) {
+  const { getSheetRows, logSheetName = 'Log_Cleaned', effortSheetName = 'Effort' } = deps;
   const router = express.Router();
 
   // POST /api/session-plans/accept — establishes plan identity: one plan_accepted
@@ -167,6 +173,56 @@ module.exports = function registerSessionPlanRoutes() {
     if (err) return standardError(req, res, err, null, 400);
     const result = await setsCapture.captureRevision(session, revision);
     return standardSuccess(req, res, 'Session_Plan_Sets revision', { session_plan_sets: result });
+  });
+
+  // POST /api/session-plan-sets/implicit — derive + checkpoint the IMPLICIT recommendation
+  // for an exercise the athlete logged WITHOUT asking (F10C, design §4A). The server
+  // DERIVES the target from Log_Cleaned history EXCLUDING the current session (the leakage
+  // guarantee — the just-logged set can never move its own target), then checkpoints only
+  // a RELIABLE target; a no_reliable_target derivation appends NO row (rule 5). The
+  // just-logged set is never read (it is not written to the sheet until closeout, and the
+  // current session_id is excluded regardless). Dry-run until F10D. Sidecar only.
+  router.post('/api/session-plan-sets/implicit', async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const session = _readSession(body);
+    const sessionErr = _sessionError(session);
+    if (sessionErr) return standardError(req, res, sessionErr, null, 400);
+    const item = body.item && typeof body.item === 'object' ? body.item : null;
+    if (!item) return standardError(req, res, 'item is required', null, 400);
+    if (!PI_SHAPE.test(_str(item.plan_item_id))) return standardError(req, res, 'item.plan_item_id must be an opaque token (pi_…)', null, 400);
+    const liftCode = _str(item.planned_lift_code);
+    if (!LIFT_CODE_SHAPE.test(liftCode)) return standardError(req, res, 'item.planned_lift_code must be a canonical lift code (non-empty, no spaces)', null, 400);
+    if (typeof getSheetRows !== 'function') return standardError(req, res, 'implicit recommendation is unavailable (no history access)', null, 503);
+
+    // Read the full Log_Cleaned (+ Effort) history; the derivation excludes the current
+    // session itself, so a read failure degrades to no_reliable_target, never a guess.
+    let logRows = [];
+    let effortRows = [];
+    try { logRows = await getSheetRows(logSheetName); } catch (_) { logRows = []; }
+    if (effortSheetName) { try { effortRows = await getSheetRows(effortSheetName); } catch (_) { effortRows = []; } }
+
+    const derivation = deriveImplicitRecommendation({
+      logRows,
+      effortRows,
+      liftCode,
+      exerciseName: _str(item.exercise_name),
+      currentSessionId: session.session_id,
+      currentSessionDate: session.session_date,
+      today: _str(body.today) || undefined,
+    });
+
+    // Always route through the capture layer: a reliable target builds one implicit row;
+    // a no_reliable_target item is SKIPPED by the builder (§4A rule 5) → an empty dry-run
+    // (no phantom recommendation row). The client reads `derivation` for the outcome.
+    const result = await setsCapture.captureImplicit(session, [{
+      plan_item_id: _str(item.plan_item_id),
+      planned_lift_code: liftCode,
+      confidence: derivation.confidence,
+      target_weight: derivation.target_weight,
+      target_reps: derivation.target_reps,
+      target_rir: derivation.target_rir,
+    }]);
+    return standardSuccess(req, res, 'Session_Plan_Sets implicit', { session_plan_sets: result, derivation });
   });
 
   return router;

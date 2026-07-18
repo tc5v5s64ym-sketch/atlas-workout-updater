@@ -34,6 +34,10 @@ const _sessionSavedLog = signal([]);
 // (append-only). Persisted in the reload snapshot so the effective plan survives a
 // reload; the accepted plan (v1) is reconstructed from activePlannedSession.
 const _sessionRevisions = signal([]);
+// F10C — the IMPLICIT recommendations Atlas derived for exercises the athlete logged
+// WITHOUT asking (unannounced/off-plan), one per unplanned lift this session. Derived
+// server-side (leakage-safe) and held here so they survive a reload; dry-run until F10D.
+const _sessionImplicitRecs = signal([]);
 // ADD-5 session flag (PR-24 slice 2): true once a message has been handled as coach
 // discussion/question SINCE the last set was logged — i.e. the session has moved OFF
 // the just-logged lift. Read by the identity-correction guard so a later demonstrative
@@ -52,6 +56,7 @@ export function getSessionLog() { return _sessionLog.value; }
 export function getSessionCompleted() { return _sessionCompleted.value; }
 export function getSessionSavedLog() { return _sessionSavedLog.value; }
 export function getSessionRevisions() { return _sessionRevisions.value; }
+export function getSessionImplicitRecs() { return _sessionImplicitRecs.value; }
 export function getCoachDiscussionSinceLog() { return _coachDiscussionSinceLog.value; }
 
 // ── actions (every reassignment the old top-level `let`s took) ──────────────────
@@ -63,6 +68,7 @@ export function setSessionLog(v) { _sessionLog.value = Array.isArray(v) ? v : []
 export function setSessionCompleted(v) { _sessionCompleted.value = Array.isArray(v) ? v : []; }
 export function setSessionSavedLog(v) { _sessionSavedLog.value = Array.isArray(v) ? v : []; }
 export function setSessionRevisions(v) { _sessionRevisions.value = Array.isArray(v) ? v : []; }
+export function setSessionImplicitRecs(v) { _sessionImplicitRecs.value = Array.isArray(v) ? v : []; }
 export function setCoachDiscussionSinceLog(v) { _coachDiscussionSinceLog.value = !!v; }
 
 // Derived values: none live here yet. The derivations callers actually need
@@ -105,6 +111,7 @@ export function getState() {
     sessionCompleted: _sessionCompleted.value,
     sessionSavedLog: _sessionSavedLog.value,
     sessionRevisions: _sessionRevisions.value,
+    sessionImplicitRecs: _sessionImplicitRecs.value,
     coachDiscussionSinceLog: _coachDiscussionSinceLog.value,
   };
 }
@@ -121,8 +128,10 @@ export function getState() {
 // pendingSubstitution) is still read — the missing field simply restores as null.
 // v2 → v3 carries `sessionRevisions` (F10B — the durable mid-session recommendation
 // revisions), so the effective plan survives a reload; older snapshots restore [].
+// v3 → v4 carries `sessionImplicitRecs` (F10C — implicit recommendations for
+// unannounced exercises); older snapshots restore [].
 const SNAPSHOT_KEY = 'atlas_session_snapshot_v1';
-const SNAPSHOT_SHAPE_VERSION = 3;
+const SNAPSHOT_SHAPE_VERSION = 4;
 const SNAPSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 function storage() {
@@ -144,6 +153,7 @@ export function persistSessionSnapshot(sessionId) {
     if (!(Array.isArray(log) && log.length) && !plan) { store.removeItem(SNAPSHOT_KEY); return; }
     const sub = _pendingSubstitution.value;
     const revs = _sessionRevisions.value;
+    const implicit = _sessionImplicitRecs.value;
     store.setItem(SNAPSHOT_KEY, JSON.stringify({
       v: SNAPSHOT_SHAPE_VERSION,
       ts: Date.now(),
@@ -152,6 +162,7 @@ export function persistSessionSnapshot(sessionId) {
       activePlannedSession: plan,
       ...(sub ? { pendingSubstitution: sub } : {}),
       ...(Array.isArray(revs) && revs.length ? { sessionRevisions: revs } : {}),
+      ...(Array.isArray(implicit) && implicit.length ? { sessionImplicitRecs: implicit } : {}),
       ...(sessionId ? { sessionId } : {}),
     }));
   } catch { /* storage full / disabled — persistence is best-effort, never fatal */ }
@@ -196,6 +207,8 @@ export function hydrateSessionSnapshot() {
       ? snap.pendingSubstitution : null);
     // F10B: restore the durable mid-session revisions (v3+); older snapshots restore [].
     setSessionRevisions(Array.isArray(snap.sessionRevisions) ? snap.sessionRevisions : []);
+    // F10C: restore the implicit recommendations (v4+); older snapshots restore [].
+    setSessionImplicitRecs(Array.isArray(snap.sessionImplicitRecs) ? snap.sessionImplicitRecs : []);
     return {
       resumed: true,
       sessionId: snap.sessionId || null,
@@ -220,5 +233,6 @@ export function resetSessionStore() {
   _sessionCompleted.value = [];
   _sessionSavedLog.value = [];
   _sessionRevisions.value = [];
+  _sessionImplicitRecs.value = [];
   _coachDiscussionSinceLog.value = false;
 }
