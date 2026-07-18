@@ -56,6 +56,57 @@ test('parseActivePlanCard does not let a card borrow a later card status', () =>
   assert.equal(out.active_card_status, null);
 });
 
+test('parseActivePlanCard sees the F10S stabilization insertion (F10S1 outranks a PAUSED F10D)', () => {
+  // The owner-directed 2026-07-18 insertion uses ids like F10S1 / F10S-GATE. Status
+  // tooling must surface them as the active card — NOT skip to the paused F10D.
+  const plan = [
+    '### F10C — implicit recommendation',
+    '**Status:** COMPLETE — both slices shipped.',
+    '### Post-F10 stabilization insertion — F10S1–F10S6 + F10S-GATE (owner-directed, 2026-07-18)',
+    'authority prose (not a card)',
+    '### F10S1 — Planned-slot completion multiplicity',
+    '**Status:** QUEUED',
+    'body',
+    '### F10S-GATE — Smoke-test rerun (exit gate for the insertion)',
+    '**Status:** QUEUED — blocks F10D',
+    'body',
+    '### F10D — Confirm and write planned versus actual together',
+    '**Status:** PAUSED (owner stabilization gate, 2026-07-18)'
+  ].join('\n');
+  const out = parseActivePlanCard(plan);
+  assert.equal(out.active_card, 'F10S1', 'the inserted F10S1 card is the active card');
+  assert.equal(out.active_card_status, 'QUEUED');
+  // Once F10S1..S6 are COMPLETE, the gate card itself surfaces (id parses too).
+  const later = plan.replace('### F10S1 — Planned-slot completion multiplicity\n**Status:** QUEUED',
+    '### F10S1 — Planned-slot completion multiplicity\n**Status:** COMPLETE');
+  assert.equal(parseActivePlanCard(later).active_card, 'F10S-GATE');
+});
+
+test('the REAL execution plan: every F-card block carries exactly ONE Status line (no stale duplicate can shadow the truth)', () => {
+  // parseActivePlanCard takes the FIRST **Status:** line in a card block, so a card
+  // that keeps its old "QUEUED" line above a later "COMPLETE" record silently reports
+  // stale state (the F10B regression found on 2026-07-18). Pin the invariant on the
+  // real doc: one Status line per card, and the active card is never COMPLETE.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const text = fs.readFileSync(path.join(__dirname, '..', 'docs', 'ATLAS_V1_EXECUTION_PLAN.md'), 'utf8');
+  const cardRe = /^###\s+(F\d+(?:S-GATE|S\d+|[A-Z])?)\s+—\s+(.+?)\s*$/gm;
+  let m;
+  let cards = 0;
+  while ((m = cardRe.exec(text)) !== null) {
+    cards += 1;
+    const rest = text.slice(cardRe.lastIndex);
+    const next = rest.search(/^###\s+/m);
+    const block = next >= 0 ? rest.slice(0, next) : rest;
+    const statuses = [...block.matchAll(/^\*\*Status:\*\*/gm)];
+    assert.equal(statuses.length, 1, `card ${m[1]} must have exactly one **Status:** line, found ${statuses.length}`);
+  }
+  assert.ok(cards >= 20, `sanity: the plan parses into many cards (got ${cards})`);
+  const out = parseActivePlanCard(text);
+  assert.ok(out.active_card, 'the real plan yields an active card');
+  assert.doesNotMatch(String(out.active_card_status || ''), /\bCOMPLETE\b/i, 'the active card is never a COMPLETE one');
+});
+
 test('parseActivePlanCard on empty input reports unavailable', () => {
   const out = parseActivePlanCard('');
   assert.equal(out.available, false);
@@ -65,7 +116,8 @@ test('parseActivePlanCard on empty input reports unavailable', () => {
 test('parseActivePlanCard resolves the real execution plan to a real card', () => {
   const out = parseActivePlanCard(read('docs/ATLAS_V1_EXECUTION_PLAN.md'));
   assert.equal(out.available, true);
-  assert.match(String(out.active_card), /^F\d+[A-Z]?$/);
+  // Extended id grammar: F09 / F10A plus the 2026-07-18 insertion's F10S1…F10S-GATE.
+  assert.match(String(out.active_card), /^F\d+(?:S-GATE|S\d+|[A-Z])?$/);
   assert.ok(out.active_milestone && out.active_milestone.length > 0);
 });
 

@@ -72,7 +72,7 @@ emitted.
 ## Sources (all read-only, all best-effort)
 
 - **Build / version:** `services/buildInfo.js` + the runtime commit (`RENDER_GIT_COMMIT`).
-- **Campaign:** the `**Current active milestone:**` line and the first non-COMPLETE `### F..` card in `docs/ATLAS_V1_EXECUTION_PLAN.md`.
+- **Campaign:** the `**Current active milestone:**` line and the first non-COMPLETE `### F..` card in `docs/ATLAS_V1_EXECUTION_PLAN.md` (ids like `F09`, `F10A`, and the 2026-07-18 stabilization insertion's `F10S1`…`F10S6` / `F10S-GATE`).
 - **Services:** `getSafeSpreadsheetConfig().canVerify` (sheets), `coach.isConfigured()` + `coach.coachModel()` (LLM), `isFlightRecorderEnabled()` (recorder) — **presence probes only**.
 - **Latest test:** newest-by-date LT card in `docs/TEST_QUEUE.md`, with conservative write/undo extraction.
 - **Synthetic rows:** not scanned by the status surface (a live authenticated read). Use `POST /api/admin/preview-test-rows` when a real count is needed.

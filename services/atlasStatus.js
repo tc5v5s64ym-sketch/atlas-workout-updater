@@ -123,7 +123,11 @@ function parseActivePlanCard(planText) {
   const milestoneMatch = planText.match(/^\s*>?\s*\*\*Current active milestone:\*\*\s*(.+?)\s*$/m);
   if (milestoneMatch) out.active_milestone = milestoneMatch[1].trim();
 
-  const cardRe = /^###\s+(F\d+[A-Z]?)\s+—\s+(.+?)\s*$/gm;
+  // Card ids: F09, F10, F10A … plus the owner-directed 2026-07-18 stabilization
+  // insertion's F10S1…F10S6 and F10S-GATE. Alternation order matters: try the
+  // longer S-forms before the single-letter suffix so "F10S1" never half-matches
+  // as "F10S". "Post-F10 …" section headings never match (id must follow "### ").
+  const cardRe = /^###\s+(F\d+(?:S-GATE|S\d+|[A-Z])?)\s+—\s+(.+?)\s*$/gm;
   let m;
   while ((m = cardRe.exec(planText)) !== null) {
     const id = m[1];
