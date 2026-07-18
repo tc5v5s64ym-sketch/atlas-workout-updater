@@ -865,11 +865,15 @@ One performed set must not complete an entire multi-set planned slot. Completion
 
 ### F10S2 — Substitution binding
 
-**Status:** QUEUED
+**Status:** COMPLETE
 
 A recognized Front Squat substitution for Back Squat must satisfy the original Back Squat `plan_item_id` everywhere. **Reproduce:** plan Back Squat; perform "Front Squat … instead of Back Squat"; the substitution outcome binds to the original slot; Back Squat does not remain current; next-up advances consistently; the performed exercise remains Front Squat in actuals. (Verify first: the binding layer (`applySessionSubstitution` retains the original `plan_item_id`) may already be sound, with the failed entry path being the one-turn parser — F10S6c. If proven, record the shared root cause and fix at the true layer.)
 
-**Completion record:** PR — · Commit —
+**Verification verdict (as the card predicted):** the binding layer was sound; the smoke failure's root cause was the ENTRY — the one-turn phrase never parsed (F10S6c, fixed in the parser-grammar PR). This card's fix is the client wiring that carries the parsed directive into the existing binding lane.
+
+**Resolution.** The parse consumer holds `parsed.substitution.for` one-shot (`lastParseSubstitution` — reset at every new parse), and the chat-lane log commit arms the EXISTING deferred-swap lane (Step 373b) with it: `setPendingSubstitution({ prescribed: <original>, prescription: null })` immediately before `emitSetLogged`, so this turn's first logged exercise replaces the named planned slot via `applySessionSubstitution` — original `plan_item_id` retained, `substituted` outcome emitted, F10B revision semantics unchanged (no explicit target → no fabricated revision), completion identity follows the substitute. A directive with no active plan drops harmlessly; one-shot either way, so it can never mis-bind a later log. Multiplicity correctness rides along (F10S1): with no substitute prescription the replacement slot **inherits the original's set count**, so one substitute set can never complete a multi-set slot (an explicit recommender prescription still wins). Proven through the REAL lanes in `test/substitutionBindingWiring.test.js` (real `applySessionSubstitution` + real `emitSetLogged` composed): binds (id retained), Back Squat not current, next-up = the in-progress substitute at 1/3 and advances at 3/3, actuals keep Front Squat, outcome bound to `pi_bsq`, plus structural one-shot wiring pins.
+
+**Completion record:** PR — this PR (entry: the F10S6(b+c) parser PR) · Commit — `src/app/app.js` (`lastParseSubstitution` carrier + chat-commit arming + set-count inheritance in `applySessionSubstitution`); tests `test/substitutionBindingWiring.test.js` (new), `test/pendingClarification.test.js` (window widened, contract unchanged). Full suite 5725 pass; lint 0 errors.
 
 ### F10S3 — Single completion-state source
 

@@ -124,7 +124,10 @@ describe('pendingClarification — app.js wiring', () => {
   });
 
   it('a real set log supersedes any held clarification', () => {
-    assert.match(app, /clearPendingClarification\(\);\s*\n\s*emitSetLogged\(logRows,/,
+    // F10S2 inserts the deferred-swap arming between the clear and the emit; the
+    // contract pinned here is unchanged — the commit path clears the held
+    // clarification BEFORE logging (bounded window, same code block).
+    assert.match(app, /clearPendingClarification\(\);[\s\S]{0,800}?emitSetLogged\(logRows,/,
       'the normal set-log path clears any held clarification before logging');
   });
 });
