@@ -74,7 +74,9 @@ function loadCorrectionHarness(catalogOptions) {
 
   // Pass events array as a parameter so the factory body can access it
   // (new Function creates an isolated scope; outer-closure vars are not reachable).
-  const factory = new Function('document', 'window', 'CustomEvent', 'events', `
+  // F10: slicePEE/sliceLC route completion through the authoritative selector.
+  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('document', 'window', 'CustomEvent', 'events', 'remainingSlotNames', 'variantSatisfies', `
     // State vars mirroring app.js outer scope (PR-10: via the store shim)
     ${STORE_SHIM}
     let lastIntentData = null;
@@ -105,7 +107,7 @@ function loadCorrectionHarness(catalogOptions) {
     };
   `);
 
-  return factory(fakeDoc, fakeWindow, FakeCustomEvent, events);
+  return factory(fakeDoc, fakeWindow, FakeCustomEvent, events, remainingSlotNames, variantSatisfies);
 }
 
 // ===========================================================================

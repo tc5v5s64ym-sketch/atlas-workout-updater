@@ -86,7 +86,10 @@ function loadE2EHarness() {
   assert.ok(sliceGCS.includes('getCanonicalSession'),    'sliceGCS must contain getCanonicalSession');
   assert.ok(sliceCSR.includes('canonicalSessionRecap'),  'sliceCSR must contain canonicalSessionRecap');
 
-  const factory = new Function('window', `
+  // F10: canonicalSessionRecap → remainingPlannedExercises → remainingSlotNames (the
+  // authoritative slot selector). Inject its pure implementation into the harness.
+  const { remainingSlotNames, variantSatisfies } = require('../src/app/planSlotStatuses.js');
+  const factory = new Function('window', 'remainingSlotNames', 'variantSatisfies', `
     ${STORE_SHIM}
     let lastIntentData = null;
 
@@ -102,7 +105,7 @@ function loadE2EHarness() {
     };
   `);
 
-  return factory({ activeSession: AS });
+  return factory({ activeSession: AS }, remainingSlotNames, variantSatisfies);
 }
 
 // Layer 2 setup — mirrors the real app state after all session mutations:

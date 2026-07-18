@@ -48,6 +48,11 @@ import { runCloseout as runPlanCloseout } from './planCloseout.js'; // aliased �
 // logged still-unresolved accepted item so "Done with <exercise>" stays reachable after
 // the cursor auto-advances past a just-logged item.
 import { mostRecentCompletablePlanItem } from './planCompletion.js';
+// F10 — THE authoritative planned-slot completion selector (pure/DI). Keyed on
+// plan_item_id + slot position; name/liftCode used ONLY as logged-evidence to
+// attribute a log to one slot (exact-outranks-substring + ambiguity refusal). Every
+// remaining/completion surface routes through it so they can never disagree.
+import { remainingSlotNames, variantSatisfies } from './planSlotStatuses.js';
 // F09G (CONVO-LOG-1) — hold a parser bodyweight-rep clarification and commit exactly
 // those detected reps on a short affirmation ("Just log it"), so clarified sets are
 // never dropped nor fabricated.
@@ -4271,14 +4276,11 @@ function canonicalSessionRecap() {
   const s = AS ? getCanonicalSession() : null;
   if (!AS || !s || !AS.hasLoggedWork(s)) return null;
   const completed = AS.completedExercises(s).map(e => e.name).filter(Boolean);
-  const remainingRaw = AS.remaining(s).map(e => e.name).filter(Boolean);
+  // F10 — recap remaining derives from the ONE authoritative selector (the same source
+  // the pin/next-up/closeout/Workout Sheet read), which folds in the ADD-4 variant rule.
   return {
     completed,
-    // ADD-4: a suggested slot the lifter did a more-specific variant of ("Dumbbell
-    // Flyes" → logged "Incline Dumbbell Flyes") is satisfied, not still remaining.
-    remaining: typeof AS.reconcileSubstitutedRemaining === 'function'
-      ? AS.reconcileSubstitutedRemaining(completed, remainingRaw)
-      : remainingRaw
+    remaining: remainingPlannedExercises()
   };
 }
 
@@ -4510,7 +4512,10 @@ function plannedExerciseEntries() {
     return getActivePlannedSession().exercises.map(ex => ({
       name: ex.canonicalName || ex.name,
       canonical: ex.canonicalName || ex.name,
-      liftCode: ex.liftCode || ''
+      liftCode: ex.liftCode || '',
+      // F10: carry the immutable slot identity so the completion selector keys on it
+      // (present on an accepted plan; null for a chat/suggested plan → position-keyed).
+      plan_item_id: ex.plan_item_id != null ? ex.plan_item_id : null
     })).filter(e => e.name);
   }
   // A displayed home-screen suggestion is NOT an active plan: only treat
@@ -4541,12 +4546,24 @@ function plannedExerciseOrder() {
 // identity is normalized by resolveCompletedIdentity, so a logged alias
 // ("Dips (Weighted)" / "Lat pull") is matched to its planned name
 // ("Weighted Dip" / "Lat Pulldown") and correctly excluded.
+// F10: the plan shape the completion selector reads — the unified planned entries
+// (started session OR engaged Coach's Pick, each carrying its plan_item_id when
+// accepted) plus the accepted items[] that hold the authoritative explicit-outcome
+// lane (Done/skip). One builder so every routed surface reads the SAME plan.
+function activePlanForSlots() {
+  const sess = getActivePlannedSession();
+  return {
+    exercises: plannedExerciseEntries(),
+    items: sess && Array.isArray(sess.items) ? sess.items : [],
+  };
+}
+
 function remainingPlannedExercises() {
-  const completed = new Set(getSessionCompleted().map(c => String(c).toLowerCase()));
-  return plannedExerciseOrder().filter(name => {
-    const n = String(name || '').toLowerCase();
-    return n && !completed.has(n);
-  });
+  // F10 — route through the ONE authoritative selector: pending slot names, keyed by
+  // plan_item_id + slot position. Duplicate names stay slot-distinct (one logged set
+  // never clears every same-named slot), a recognized substitution/variant satisfies
+  // its original slot, and an ambiguous substring leaves the slot unresolved.
+  return remainingSlotNames(activePlanForSlots(), getSessionCompleted());
 }
 
 function isPlanCloseoutAwaitingSave() {
@@ -4894,23 +4911,34 @@ function resolveCompletedIdentity(rawName, enrichmentRow) {
     }
     const rk = String(rawName || '').toLowerCase();
     if (rk) {
-      const match = entries.find(e => {
+      // F10 / SESS-5: exact name outranks any substring, and an ambiguous alias
+      // REFUSES to guess. A logged name aliases a slot only as an ABBREVIATION
+      // contained in it ("Lat pull" ⊂ "Lat Pulldown") or as a recognized equipment/
+      // angle VARIANT of it ("Incline Dumbbell Flyes" → "Dumbbell Flyes"); the
+      // movement-crossing reverse direction ("Romanian Deadlift" over a bare
+      // "Deadlift" slot) is NOT an alias and never resolves. Each tier attributes
+      // only when EXACTLY ONE planned entry matches — otherwise it falls through to
+      // the raw name (leaving the completion for the slot selector to refuse too).
+      const exact = entries.find(e => e.name.toLowerCase() === rk);
+      if (exact) return exact.name;
+      const aliasable = entries.filter(e => {
         const n = e.name.toLowerCase();
-        return n === rk || n.includes(rk) || rk.includes(n);
+        return n.includes(rk) || variantSatisfies(rk, n);
       });
-      if (match) return match.name;
+      if (aliasable.length === 1) return aliasable[0].name;
       // Word-subset tier (mirrors planMutationIntent's resolver): every word of
       // the logged name present in the slot name, two-word minimum — bridges
-      // "single leg press" → "Single-Leg Seated Leg Press" without codes.
+      // "single leg press" → "Single-Leg Seated Leg Press" without codes. Same
+      // unique-only refusal so an ambiguous multi-word alias never guesses.
       const words = s => new Set(String(s).toLowerCase().replace(/[-/]+/g, ' ').split(/\s+/)
         .map(w => (/[^s]s$/.test(w) ? w.slice(0, -1) : w)).filter(Boolean));
       const rawWords = [...words(rk)];
       if (rawWords.length >= 2) {
-        const sub = entries.find(e => {
+        const wsubs = entries.filter(e => {
           const ew = words(e.name);
           return rawWords.every(w => ew.has(w));
         });
-        if (sub) return sub.name;
+        if (wsubs.length === 1) return wsubs[0].name;
       }
     }
   }

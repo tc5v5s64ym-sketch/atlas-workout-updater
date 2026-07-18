@@ -5886,7 +5886,9 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
   assert.match(recap, /getCanonicalSession\(\)/, 'recap derives from the canonical session');
   assert.match(recap, /hasLoggedWork\(s\)/, 'an all-skipped/empty session returns null (not narrated as a workout)');
   assert.match(recap, /completedExercises\(s\)/, 'recap reads completed from the model');
-  assert.match(recap, /remaining\(s\)/, 'recap reads remaining from the model');
+  // F10: recap remaining derives from the ONE authoritative slot selector so it agrees
+  // with the pin / next-up / Workout Sheet / closeout.
+  assert.match(recap, /remaining:\s*remainingPlannedExercises\(\)/, 'recap remaining derives from the authoritative slot selector');
   assert.match(recap, /return null/, 'returns null when there is no session or no logged work');
 
   // The coach layer renders the canonical remaining lifts in the review bubble.

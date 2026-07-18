@@ -68,18 +68,27 @@ function computePlanState(planned, completed) {
   const planRecs  = toRecords(planned);
   const doneRecs  = toRecords(completed);
 
-  // Match on the singular-normalized name so a plural logged name still completes its
-  // singular plan entry (the completed-work-read-back-as-remaining bug), plus the
-  // authoritative lift_code when both sides supply one.
-  const doneNames = new Set(doneRecs.map(r => normalizeExerciseName(r.name)));
-  const doneCodes = new Set(doneRecs.map(r => r.liftCode.toLowerCase()).filter(Boolean));
+  // F10 — authoritative completion identity: attribute each logged completion to AT
+  // MOST ONE planned slot (greedy, in plan order), rather than broadcasting a done
+  // name/code across the whole plan via Sets. Two same-named slots therefore stay
+  // slot-distinct — one logged "Lat Pulldown" clears ONE of them, not both (the
+  // duplicate-name bug). Matching per slot is the singular-normalized name (so a
+  // plural logged name still completes its singular plan entry) then the
+  // authoritative lift_code when both sides supply one. Exact identity only — no
+  // substring guessing here (the client selector owns the substring/ambiguity rung).
+  const claimed = new Array(planRecs.length).fill(false);
+  for (const d of doneRecs) {
+    const dName = normalizeExerciseName(d.name);
+    const dCode = d.liftCode ? d.liftCode.toLowerCase() : '';
+    let idx = planRecs.findIndex((r, i) => !claimed[i] && normalizeExerciseName(r.name) === dName);
+    if (idx === -1 && dCode) {
+      idx = planRecs.findIndex((r, i) => !claimed[i] && r.liftCode && r.liftCode.toLowerCase() === dCode);
+    }
+    if (idx !== -1) claimed[idx] = true;
+  }
 
   const remaining = planRecs
-    .filter(r => {
-      if (doneNames.has(normalizeExerciseName(r.name))) return false;
-      if (r.liftCode && doneCodes.has(r.liftCode.toLowerCase())) return false;
-      return true;
-    })
+    .filter((_r, i) => !claimed[i])
     .map(r => r.name);
 
   const planArr      = planRecs.map(r => r.name);
