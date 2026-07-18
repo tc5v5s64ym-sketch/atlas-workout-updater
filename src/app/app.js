@@ -2790,10 +2790,14 @@ function openTodaySessionPlan() {
 // Phrases that ask for the recommended workout rather than logging a set.
 // Workout shorthand always carries numbers, so any digit rules a phrase out —
 // this keeps "Bench 225 5/2 x3" on the normal parse/preview path.
+// Only the "today"-scoped "what should I do TODAY" is a day-planning ask; the
+// bare "what should I do" must stay off this route — during an active session
+// sessionQuestion.js answers it from the live prescription (next-up), and
+// claiming it here would steal that lane.
 function looksLikeSessionRequest(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t || /\d/.test(t)) return false;
-  return /\b(recommended (workout|session)|what should i train|what are we doing|today'?s plan|what'?s the plan|what (workout|session) (would|do|should|can) you (suggest|recommend)|(suggest|recommend) (a |an |me |today'?s )?(\w+ )?(workout|session)|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
+  return /\b(recommended (workout|session)|what should i train|what (should|do) (i|we) do today|what are we doing|today'?s plan|what'?s the plan|what (workout|session) (would|do|should|can) you (suggest|recommend)|(suggest|recommend) (a |an |me |today'?s )?(\w+ )?(workout|session)|do (my|the|your) (workout|session)|let'?s (do|start|run) (it|this|the workout|my workout|the session|your recommended workout))\b/.test(t);
 }
 
 // Composer-first Phase B2: phrases that ask to SEE a stored artifact — the

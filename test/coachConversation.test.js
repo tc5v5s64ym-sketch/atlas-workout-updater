@@ -818,3 +818,35 @@ test('F10S5 SMOKE REPRODUCE (behavioral): the same prescribed→logged pair rend
   assert.equal(h.dedupeSubstitutions([{ reason: 'no names' }]).length, 1);
   assert.equal(h.dedupeSubstitutions([{ reason: 'no names' }]).length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// F10S6a — planning-intent routing (owner card, 2026-07-18 smoke gate): "What
+// should I do today?" must invoke PLANNING — the composer's deterministic lane
+// routes it to the ONE canonical in-thread Coach's Pick — never fall through to
+// generic chat, whose no-digit catch-all is the "keep logging" reply the smoke
+// saw. Drives the REAL looksLikeSessionRequest sliced from the built bundle.
+// ---------------------------------------------------------------------------
+
+function sessionRequestFn() {
+  const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  const src = app.slice(app.indexOf('function looksLikeSessionRequest'), app.indexOf('function looksLikeArtifactRequest'));
+  assert.ok(src.includes('function looksLikeSessionRequest'), 'slice must contain looksLikeSessionRequest');
+  return new Function(`${src}; return looksLikeSessionRequest;`)();
+}
+
+test('F10S6a SMOKE REPRODUCE: "What should I do today?" routes to the canonical pick', () => {
+  const fn = sessionRequestFn();
+  for (const t of ['What should I do today?', 'what should i do today', 'What do I do today?', 'what should we do today']) {
+    assert.equal(fn(t), true, `the day-planning ask must route to the pick: "${t}"`);
+  }
+});
+
+test('F10S6a: bare "what should I do" stays OFF the pick route (mid-session state lane owns it)', () => {
+  const fn = sessionRequestFn();
+  // sessionQuestion.js answers the bare phrase from the live prescription during
+  // an active session; only the "today"-scoped ask is a day-planning request.
+  // Digits still rule a phrase out, so workout shorthand can never be swallowed.
+  for (const t of ['what should I do', 'What should I do?', 'what do i do', 'what should i do today 225 5/2']) {
+    assert.equal(fn(t), false, `must NOT route to the pick: "${t}"`);
+  }
+});
