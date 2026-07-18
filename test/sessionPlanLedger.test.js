@@ -131,17 +131,19 @@ test('buildImplicitRows: an unannounced-exercise recommendation → ONE v1 row, 
   assert.equal(r[col('idempotency_key')], keyFor('pi_hc', 1, 1));
 });
 
-test('buildImplicitRows: a no_reliable_target item → blank targets, confidence no_reliable_target (no invention)', () => {
+test('buildImplicitRows: a no_reliable_target item appends NO row (owner contract §4A rule 5)', () => {
   const rows = L.buildImplicitRows(SESSION, [
     { plan_item_id: 'pi_x', planned_lift_code: 'KRAISE', confidence: 'no_reliable_target' },
   ]);
-  const r = rows[0];
-  assert.equal(r[col('target_weight')], '', 'no target invented');
-  assert.equal(r[col('target_reps')], '');
-  assert.equal(r[col('target_rir')], '');
-  assert.equal(r[col('target_set_count')], '1', 'still one set (the recommendation slot exists)');
-  assert.equal(r[col('recommendation_source')], 'implicit_unplanned');
-  assert.equal(r[col('confidence')], 'no_reliable_target');
+  assert.equal(rows.length, 0, 'no confident target → no recommendation row (not a blank-target row)');
+  // A mixed batch keeps ONLY the reliable items — the unreliable one is dropped entirely.
+  const mixed = L.buildImplicitRows(SESSION, [
+    { plan_item_id: 'pi_x', planned_lift_code: 'KRAISE', confidence: 'no_reliable_target' },
+    { plan_item_id: 'pi_hc', planned_lift_code: 'HCURL', target_weight: 30, target_reps: 12, target_rir: 1 },
+  ]);
+  assert.equal(mixed.length, 1);
+  assert.equal(mixed[0][col('plan_item_id')], 'pi_hc');
+  assert.equal(mixed[0][col('confidence')], 'reliable');
 });
 
 test('buildImplicitRows: bodyweight 0 is a real target (preserved, not blanked)', () => {
