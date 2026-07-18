@@ -201,12 +201,23 @@ test('F10D confirm card: warnings surface plainly (unreadable ledger / inconsist
     ...SUMMARY, ledger_read_failed: true, malformed: true,
     items: [{
       ...SUMMARY.items[0], outcome: 'substituted', performed_lift_code: 'FSQ01', revised: false,
+      planned_name: 'Back Squat',
     }],
   });
   const text = allText(warned);
   assert.match(text, /plan ledger couldn't be read/, 'the read-failure warning shows');
   assert.match(text, /plan history for this session is inconsistent/i, 'the malformed warning shows');
-  assert.match(text, /\(substituted — performed FSQ01\)/, 'the substitution is labeled with the performed lift');
+  // The owner contract: the ORIGINAL plan stays visible — a substitution names
+  // what it stood in for, by name (the F10D proving pack caught the bare-code form).
+  assert.match(text, /\(substituted — in for Back Squat\)/, 'the substitution names the original lift');
+
+  // Without a resolvable name the tag still renders, falling back to the code —
+  // never silently untagged.
+  const codeOnly = build({
+    ...SUMMARY,
+    items: [{ ...SUMMARY.items[0], outcome: 'substituted', performed_lift_code: 'FSQ01', revised: false, planned_name: null }],
+  });
+  assert.match(allText(codeOnly), /\(substituted — in for DIP01\)/, 'code fallback when no name resolves');
 });
 
 test('F10D confirm card: null load is NOT bodyweight — loadless targets render as reps; true BW (0) renders BW', () => {

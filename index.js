@@ -2913,6 +2913,23 @@ app.post('/api/log-workout', async (req, res) => {
       try {
         ledgerSealPreview = await sealCloseout({ session_id }, normalizeWriteId(writeId) || 'closeout-preview', { test_mode: true });
       } catch (_) { ledgerSealPreview = null; }
+      // Display names for code-only items (a skipped slot has no client name; the
+      // confirmation must never show the owner a bare lift code). Best-effort — a
+      // catalog read failure only costs names, never the summary.
+      let codeToName = {};
+      try {
+        const catalogRows = await getExerciseCatalog();
+        const header = ((catalogRows && catalogRows[0]) || []).map(c => String(c || '').trim().toLowerCase());
+        const codeIdx = header.findIndex(v => ['lift code', 'lift_code', 'liftcode'].includes(v));
+        const nameIdx = header.findIndex(v => ['canonical_exercise', 'canonical exercise', 'canonical_name', 'canonical name', 'exercise'].includes(v));
+        if (codeIdx !== -1 && nameIdx !== -1) {
+          for (let i = 1; i < catalogRows.length; i += 1) {
+            const code = String((catalogRows[i] || [])[codeIdx] || '').trim();
+            const nm = String((catalogRows[i] || [])[nameIdx] || '').trim();
+            if (code && nm && !codeToName[code]) codeToName[code] = nm;
+          }
+        }
+      } catch (_) { codeToName = {}; }
       closeoutSummary = buildCloseoutSummary({
         session: { session_id, session_date: workoutDate },
         ledgerRows: ledger === null ? [] : ledger,
@@ -2921,6 +2938,7 @@ app.post('/api/log-workout', async (req, res) => {
         logRowsPreview: previewLogRows,
         effortRowPreview: formattedEffortRow,
         sealPreview: ledgerSealPreview,
+        codeToName,
       });
       if (ledger === null) closeoutSummary.ledger_read_failed = true;
     }
