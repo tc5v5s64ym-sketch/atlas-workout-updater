@@ -115,3 +115,16 @@ test('every slot exposes attribution (attributedName) so off-plan detection mean
   assert.equal(statuses[0].attributedName, 'Romanian Deadlift', 'the in-progress slot reports its attributed identity');
   assert.equal(statuses[1].attributedName, null);
 });
+
+test('a name belonging to an EXPLICITLY-completed slot still attributes to it (never mistaken for off-plan work)', () => {
+  // The athlete logs one set, then taps Done — the explicit id lane completes the slot
+  // BEFORE the logged name can claim it. The second-chance attribution pass must still
+  // attach the name to that resolved slot, or a consumer folding unattributed
+  // completions into off-plan inserts would duplicate the lift (Codex P2 on #1060).
+  const plan = { ...PLAN, items: [{ plan_item_id: 'pi_rdl', outcome: 'completed' }] };
+  const log = [row('Romanian Deadlift')];
+  const statuses = S.planSlotStatuses(plan, ['Romanian Deadlift'], log);
+  assert.equal(statuses[0].status, 'completed', 'the explicit Done stands');
+  assert.equal(statuses[0].attributedName, 'Romanian Deadlift', 'the logged name attaches to the Done slot');
+  assert.equal(statuses[0].performedSets, 1, 'its performed count is still reported');
+});

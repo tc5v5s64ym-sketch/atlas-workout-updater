@@ -4678,7 +4678,11 @@ function plannedExerciseEntries() {
   return exs.map(ex => ({
     name: ex.canonical_exercise || ex.exercise,
     canonical: ex.canonical_exercise || ex.exercise,
-    liftCode: ex.lift_code || ex.liftCode || ''
+    liftCode: ex.lift_code || ex.liftCode || '',
+    // F10S1: an engaged Coach's Pick carries its prescribed set count too, so the
+    // multiplicity rule holds before "Start this plan" materializes the session
+    // (a prescribed 3-set pick logged directly must not complete on one set).
+    sets: ex.target_sets != null ? ex.target_sets : (ex.sets != null ? ex.sets : null)
   })).filter(e => e.name);
 }
 

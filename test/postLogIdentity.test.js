@@ -340,6 +340,28 @@ test('owner repro: the word-subset tier bridges multi-word aliases with no codes
   // behavior — unchanged by this fix.)
 });
 
+test('F10S1: an engaged Coach\'s Pick with prescribed set counts holds at 1/3 and advances at 3/3 (Codex P2)', () => {
+  // The engaged-suggestion lane (no activePlannedSession yet) must carry target_sets
+  // into the selector, or a prescribed 3-set pick completes on one set (legacy rule).
+  const { api, events } = loadEmitHarness();
+  api.setIntentData({
+    intents: [{
+      recommended: true,
+      exercises: [
+        { exercise: 'Bench Press', canonical_exercise: 'Bench Press', lift_code: 'BEN01', target_sets: 3 },
+        { exercise: 'Seated Row', canonical_exercise: 'Seated Row', lift_code: 'ROW01', target_sets: 3 },
+      ],
+    }],
+  });
+  api.emitSetLogged([{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }], '', [], null);
+  let detail = events[events.length - 1].detail;
+  assert.equal(detail.nextPlanned, 'Bench Press', 'one of three sets → the pick holds on the in-progress lift');
+  api.emitSetLogged([{ exercise: 'Bench Press', weight: 225, reps: 5, rir: 2 }], '', [], null);
+  api.emitSetLogged([{ exercise: 'Bench Press', weight: 225, reps: 4, rir: 1 }], '', [], null);
+  detail = events[events.length - 1].detail;
+  assert.equal(detail.nextPlanned, 'Seated Row', 'at 3/3 the pick advances');
+});
+
 test('post-log live path: a coach-suggested plan registers COMPLETE after the last lift (no resurrected next-up)', () => {
   // The live "wanted weighted dips again" bug: in the coach-suggestion flow
   // (activePlannedSession === null) planIsComplete was always false, so after the

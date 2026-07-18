@@ -197,3 +197,42 @@ test('F10S1 SMOKE REPRODUCE: one set of a 3-set slot leaves it IN PROGRESS on ev
   assert.deepEqual(cards.map(c => c.status), ['current', 'pending'], 'no card is done after one of three sets');
   assert.match(WS.cardDetailText(cards[0]), /set 2\/3/, 'the current card shows the in-progress set counter');
 });
+
+test('F10S1: log-one-set-then-Done never duplicates the lift in the canonical session/recap (Codex P2)', () => {
+  const h = loadSurfaceHarness();
+  h.setActivePlannedSession({
+    accepted: true, session_id: 'S1', plan_version: 'pv_x', index: 0,
+    exercises: [
+      { name: 'Romanian Deadlift', canonicalName: 'Romanian Deadlift', liftCode: 'RDL01', plan_item_id: 'pi_rdl', sets: 3 },
+      { name: 'Back Squat', canonicalName: 'Back Squat', liftCode: 'BSQ01', plan_item_id: 'pi_bsq', sets: 3 },
+    ],
+    // The athlete logged one set, then tapped Done — the explicit id lane completes it.
+    items: [
+      { plan_item_id: 'pi_rdl', planned_lift_code: 'RDL01', outcome: 'completed' },
+      { plan_item_id: 'pi_bsq', planned_lift_code: 'BSQ01', outcome: 'planned' },
+    ],
+  });
+  h.setSessionLog([{ exercise: 'Romanian Deadlift', weight: 245, reps: 6, rir: 3 }]);
+  h.setSessionCompleted(['Romanian Deadlift']);
+
+  const recap = h.canonicalSessionRecap();
+  const rdlCount = recap.completed.filter(n => n === 'Romanian Deadlift').length;
+  assert.equal(rdlCount, 1, 'the explicitly-Done planned lift appears exactly ONCE (no off-plan duplicate)');
+  assert.deepEqual(recap.remaining, ['Back Squat'], 'only the untouched slot remains');
+});
+
+test('F10S1: the rail counter counts alias rows via their stamped canonical identity (Codex P2)', () => {
+  // Raw alias rows ("RDL") carry canonical "Romanian Deadlift" from emitSetLogged; the
+  // rail card's set counter must tick on them exactly as the completion selector does.
+  const aliasLog = [
+    { exercise: 'RDL', canonical: 'Romanian Deadlift', weight: 245, reps: 6, rir: 3 },
+    { exercise: 'RDL', canonical: 'Romanian Deadlift', weight: 245, reps: 6, rir: 3 },
+  ];
+  const plan = { exercises: [{ name: 'Romanian Deadlift', canonicalName: 'Romanian Deadlift', liftCode: 'RDL01', plan_item_id: 'pi_rdl', sets: 3 }] };
+  const statuses = SEL.planSlotStatuses(plan, ['Romanian Deadlift'], aliasLog);
+  assert.equal(statuses[0].status, 'pending');
+  assert.equal(statuses[0].performedSets, 2, 'the selector counts the alias rows');
+  const cards = WS.buildSheetCards({ planned: plan.exercises, statuses, log: aliasLog });
+  assert.equal(cards[0].logged.count, 2, 'the rail counts the same rows');
+  assert.match(WS.cardDetailText(cards[0]), /set 3\/3/, 'the counter reflects 2 done, 3rd up');
+});

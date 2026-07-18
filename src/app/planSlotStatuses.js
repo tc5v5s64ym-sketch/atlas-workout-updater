@@ -213,6 +213,24 @@ const _exports = (function () {
         if (performed != null) target.performedSets = performed;
         const multiplicityKnown = countable && target.requiredSets != null;
         if (!multiplicityKnown || performed >= target.requiredSets) target.status = STATUS.COMPLETED;
+      } else {
+        // Second-chance ATTRIBUTION (reporting only, status untouched): a name that
+        // matched no pending slot may still belong to an already-RESOLVED one (the
+        // athlete logged a set, then tapped the explicit Done — the slot completed via
+        // the id lane before this name could claim it). Recording the attachment here
+        // keeps such names recognized as PLAN work, so a consumer folding "unattributed
+        // completions" into off-plan inserts (getCanonicalSession) never duplicates an
+        // explicitly-completed planned lift as a phantom extra exercise.
+        const resolved = slots.filter(s => s.status !== STATUS.PENDING && !s.attributedName && !claimed.has(s.order));
+        const late =
+          resolved.find(s => normKey(s.name) === cKey) ||
+          (cCode ? resolved.find(s => s.liftCode && lc(s.liftCode) === lc(cCode)) : null) ||
+          resolved.find(s => variantSatisfies(cLc, lc(s.name)));
+        if (late) {
+          late.attributedName = cName;
+          claimed.add(late.order);
+          if (countable) late.performedSets = countPerformedSets(sessionLog, cName, late.name);
+        }
       }
     }
 
