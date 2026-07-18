@@ -232,12 +232,26 @@ function currentLiftFromContext(clientContext) {
   const planLifts = [...new Set((Array.isArray(cc.current_plan) ? cc.current_plan : [])
     .map(p => p && p.name).filter(Boolean))];
   if (planLifts.length === 1) return { current: planLifts[0], candidates: planLifts };
+  // F10S3 (owner smoke 2026-07-18): the canonical selector's verdict outranks the
+  // name set-difference below — an IN-PROGRESS multi-set lift is still REMAINING
+  // even though its name already appears in plan_completed (attribution evidence is
+  // not completion), so a mid-set "RIR?" answers for the lift the athlete is
+  // standing at, exactly like the rail/pin. plan_state.remaining is the client
+  // selector's output (validated shape only; strings, trimmed).
+  if (planLifts.length > 1 && cc.plan_state && Array.isArray(cc.plan_state.remaining)) {
+    const remaining = cc.plan_state.remaining
+      .filter(x => typeof x === 'string' && x.trim())
+      .map(x => x.trim())
+      .slice(0, 50);
+    if (remaining.length) return { current: remaining[0], candidates: remaining };
+  }
   // Owner live find (2026-07-03): a multi-lift plan's CURRENT STEP is not
   // ambiguous — "How much weight?" mid-session got "for which lift?" while the
   // session pin showed the current one. plan_completed is the client's
   // canonical done-list (sent whenever a plan is visible); the first
   // not-completed plan lift IS the current lift. Without plan_completed the
-  // old clarify behavior stands.
+  // old clarify behavior stands (and without plan_state — old clients — this
+  // legacy set-difference stands).
   if (planLifts.length > 1 && Array.isArray(cc.plan_completed)) {
     const done = new Set(cc.plan_completed.map(n => String(n == null ? '' : n).toLowerCase()));
     const pending = planLifts.filter(n => !done.has(String(n).toLowerCase()));
