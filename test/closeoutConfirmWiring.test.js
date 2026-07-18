@@ -93,11 +93,13 @@ test('F10D ctx: no active session (freestyle) → empty items; slots without pla
 
 // ── payload + event wiring — structural pins on the built bundle ────────────────
 
-test('F10D wiring: the compiled closeout attaches closeout_context to the ONE payload (dry-run + approved write)', () => {
-  assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true;\s*\n\s*sessionCompiledAwaitingPreview = false;/,
-    'the closeout marker is captured before the one-shot flag resets');
-  assert.match(appSrc, /if \(isSessionCloseout\) payload\.closeout_context = \{ items: closeoutContextItems\(\) \};/,
-    'the context rides the payload — the same object the approve handler re-sends live');
+test('F10D wiring: EVERY end trigger attaches closeout_context to the ONE payload (dry-run + approved write)', () => {
+  // Codex P1 (PR #1069): typed manual effort with buffered rows is the submit's
+  // OTHER end-of-session trigger and must enter the confirmation/seal path too.
+  assert.match(appSrc, /const isSessionCloseout = sessionCompiledAwaitingPreview === true\s*\n\s*\|\| \(logRows\.length > 0 && Boolean\(manualEffort\)\);/,
+    'the closeout marker covers the compiled path AND manual-effort-with-rows');
+  assert.match(appSrc, /payload\.closeout_context = \{\s*\n\s*plan_version: \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true\s*\n\s*&& getActivePlannedSession\(\)\.plan_version\) \|\| '',\s*\n\s*items: closeoutContextItems\(\),\s*\n\s*\};/,
+    'the context carries the accepted plan pv_ token so the SERVER records the finalized event with proof');
   assert.match(appSrc, /pendingWrite = \{ mode: 'manual', payload, sessionCloseout: isSessionCloseout,/,
     'the staged write remembers it is a session closeout');
 });
@@ -110,23 +112,35 @@ test('F10D wiring: the dry-run summary travels to the review card through atlas:
     'the confirmation renders ABOVE the sets card in the one review bubble');
 });
 
-test('F10D wiring: approval-scoped finalization — the finish button no longer emits; the approve handler does', () => {
+test('F10D wiring: approval-scoped finalization — no client-side finalized emission remains on the save path', () => {
   const finishLine = appSrc.slice(appSrc.indexOf("getElementById('finish-session-btn')"), appSrc.indexOf("getElementById('finish-session-btn')") + 200);
   assert.doesNotMatch(finishLine, /emitPlanCloseout/, 'tapping Finish only OPENS the confirmation — rejection writes nothing');
-  assert.match(appSrc, /if \(wasSessionCloseout\) emitPlanCloseout\('finalized'\);/,
-    'the finalized closeout event records on the APPROVED write only');
-  const approveIdx = appSrc.indexOf("getElementById('approve-btn').addEventListener");
-  const emitIdx = appSrc.indexOf("if (wasSessionCloseout) emitPlanCloseout('finalized');");
-  assert.ok(emitIdx > approveIdx, 'the emission lives inside the approve handler');
+  // Codex P1 (PR #1069): the SERVER records the finalized event inside the one
+  // approved write, with proof — the approve handler carries NO fire-and-forget
+  // emission at all (only the non-save affordances keep their click-time emits).
+  const approveBlock = appSrc.slice(
+    appSrc.indexOf("getElementById('approve-btn').addEventListener"),
+    appSrc.indexOf("getElementById('load-session-btn')")
+  );
+  assert.doesNotMatch(approveBlock, /emitPlanCloseout\('finalized'\)/,
+    'the approved path never fire-and-forgets the finalized event');
 });
 
-test('F10D wiring: an unverified seal is reported honestly, never as a clean success', () => {
-  assert.match(appSrc, /writeData\.closeout_fully_verified === false/, 'the approve handler reads the seal verdict');
-  assert.match(appSrc, /plan-ledger seal could not be verified\. Your sets are safe; tap Save again to retry the seal \(no rows will duplicate\)\./,
+test('F10D wiring: an unverified closeout keeps the retry REACHABLE and is never a clean success', () => {
+  assert.match(appSrc, /writeData\.closeout_fully_verified === false/, 'the approve handler reads the verification verdict');
+  assert.match(appSrc, /plan-ledger record could not be verified\. Your sets are safe; tap Save again to re-verify \(no rows will duplicate\)\./,
     'the honest partial copy exists');
-  const warnIdx = appSrc.indexOf('plan-ledger seal could not be verified');
-  const okIdx = appSrc.indexOf("'Workout written to Google Sheets. ✓'");
-  assert.ok(warnIdx > -1 && okIdx > -1 && warnIdx < okIdx, 'the seal-unverified branch is checked before the clean success copy');
+  // Codex P2 (PR #1069): the staged write stays ALIVE — fresh write_id (a reused
+  // id would replay the recorded failure), effort row dropped (never a duplicate-
+  // session 409), Save re-enabled — and the early return SKIPS the teardown.
+  const retryBlock = appSrc.slice(appSrc.indexOf('if (closeoutSealUnverified) {'), appSrc.indexOf('if (closeoutSealUnverified) {') + 900);
+  assert.match(retryBlock, /pendingWrite\.payload\.write_id = generateWriteId\(\)/, 'the retry mints a fresh write_id');
+  assert.match(retryBlock, /delete pendingWrite\.payload\.effort_row/, 'the already-written effort row never rides the retry');
+  assert.match(retryBlock, /approveBtn\.disabled = false/, 'Save is re-enabled for the retry');
+  assert.match(retryBlock, /return;/, 'the unverified path returns BEFORE the preview teardown');
+  const retryIdx = appSrc.indexOf('if (closeoutSealUnverified) {');
+  const teardownIdx = appSrc.indexOf('invalidatePreview();\n    setHistoryLoaded(false);');
+  assert.ok(retryIdx > -1 && teardownIdx > -1 && retryIdx < teardownIdx, 'the retry staging precedes the teardown');
 });
 
 // ── buildCloseoutConfirm — behavioral render (fake DOM) ─────────────────────────
@@ -193,6 +207,34 @@ test('F10D confirm card: warnings surface plainly (unreadable ledger / inconsist
   assert.match(text, /plan ledger couldn't be read/, 'the read-failure warning shows');
   assert.match(text, /plan history for this session is inconsistent/i, 'the malformed warning shows');
   assert.match(text, /\(substituted — performed FSQ01\)/, 'the substitution is labeled with the performed lift');
+});
+
+test('F10D confirm card: null load is NOT bodyweight — loadless targets render as reps; true BW (0) renders BW', () => {
+  const build = loadConfirmHarness();
+  const card = build({
+    ...SUMMARY,
+    items: [{
+      ...SUMMARY.items[0], revised: false, outcome: 'completed',
+      target_vs_actual: [
+        // A load-omitted target (reps/RIR known, weight null) — e.g. Face Pull.
+        { set_index: 1, target_weight: null, target_reps: 15, target_rir: 2, actual_weight: null, actual_reps: 15, actual_rir: 2 },
+        // True bodyweight (weight === 0) — the Log_Cleaned convention.
+        { set_index: 2, target_weight: 0, target_reps: 12, target_rir: 2, actual_weight: 0, actual_reps: 12, actual_rir: 1 },
+      ],
+    }],
+    unplanned: [],
+  });
+  const text = allText(card);
+  assert.match(text, /15 reps@2 → did 15 reps@2/, 'absent load renders loadless — never conflated with bodyweight');
+  assert.match(text, /BW×12@2 → did BW×12@1/, 'weight 0 IS bodyweight and renders BW');
+  assert.doesNotMatch(text, /BW×15/, 'the loadless target never shows as BW');
+});
+
+test('F10D confirm card: a re-preview replaces the stale confirmation (never stacked)', () => {
+  // Codex P2 (PR #1069): the existing-card update path must drop the prior
+  // .closeout-confirm sibling before appending the rebuilt one.
+  assert.match(coachSrc, /const staleConfirm = existingBubble && existingBubble\.querySelector\('\.closeout-confirm'\);\s*\n\s*if \(staleConfirm\) staleConfirm\.remove\(\);/,
+    'the stale closeout summary is removed in the existing-card branch');
 });
 
 test('F10D confirm card: a freestyle summary (no stored plan) still confirms the write, with no seal claim', () => {

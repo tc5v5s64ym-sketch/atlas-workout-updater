@@ -6416,10 +6416,15 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     emitSetLogged(logRows, pendingChatText, midSessionSubstitutions, midSessionEnrichment);
     return;
   }
-  // F10D — remember whether THIS preview is the session closeout (the compiled
-  // end-of-session save) before the one-shot flag resets: the closeout carries
-  // the confirmation context on both the dry-run and the approved write.
-  const isSessionCloseout = sessionCompiledAwaitingPreview === true;
+  // F10D — remember whether THIS preview is the session closeout before the
+  // one-shot flag resets. EVERY end-of-session trigger counts (Codex P1, PR
+  // #1069): the compiled "done"/"log it"/Finish path (the flag) AND typed manual
+  // effort attached to buffered rows — the submit's other end trigger, which
+  // previously skipped the confirmation/seal path entirely. (A screenshot WITH
+  // rows saves via /api/complete-workout — its confirmation is a filed follow-up,
+  // not silently claimed here.)
+  const isSessionCloseout = sessionCompiledAwaitingPreview === true
+    || (logRows.length > 0 && Boolean(manualEffort));
   sessionCompiledAwaitingPreview = false;
 
   const previewBtn = document.getElementById('preview-btn');
@@ -6516,8 +6521,17 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       if (effortRow) payload.effort_row = effortRow;
       // F10D — the session closeout sends the confirmation context, so the dry-run
       // returns the single-confirmation summary and the SAME approved payload seals
-      // the ledger under its write_id. Per-message previews never send it.
-      if (isSessionCloseout) payload.closeout_context = { items: closeoutContextItems() };
+      // the ledger AND records the finalized Session_Plans closeout event under its
+      // write_id (server-side, with proof — Codex P1, PR #1069). The accepted
+      // plan's opaque pv_ token rides along so the server can address the event;
+      // freestyle sessions send it blank. Per-message previews never send any of it.
+      if (isSessionCloseout) {
+        payload.closeout_context = {
+          plan_version: (getActivePlannedSession() && getActivePlannedSession().accepted === true
+            && getActivePlannedSession().plan_version) || '',
+          items: closeoutContextItems(),
+        };
+      }
       if (lastPrescribed && lastPrescribed.length > 0 && logRows.length > 0) {
         const loggedExercise = logRows[0].exercise || '';
         payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
@@ -7072,18 +7086,16 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           throw new Error(`Write confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'} and effort_rows_written=${writeData.effort_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
         }
       }
-      // F10D — the seal verdict rides the same response. `closeout_fully_verified`
-      // is false ONLY when a ledger seal genuinely failed or a planned session had
-      // no ledger rows to bind (server-side rule); a dry-run seal (owner gate
-      // closed) reports true. Never claim a fully verified closeout it isn't.
+      // F10D — the verification verdict rides the same response. The SERVER now
+      // owns the finalized Session_Plans closeout event (recorded inside this same
+      // approved write, with proof — Codex P1, PR #1069), so no client-side
+      // fire-and-forget emission remains for the approved path; a rejected
+      // confirmation therefore writes nothing at all. `closeout_fully_verified`
+      // is false when the ledger seal failed, a planned session had no ledger
+      // rows to bind, or the closeout event could not be recorded.
       if (wasSessionCloseout && writeData.closeout_fully_verified === false) {
         closeoutSealUnverified = true;
       }
-      // F10D — the approved save IS the session finalization: record the closeout
-      // event only now (a rejected/abandoned confirmation writes nothing). Also on
-      // a blocked duplicate — the original write completed, so finalization stands;
-      // the capture layer's deterministic key makes a repeat emission idempotent.
-      if (wasSessionCloseout) emitPlanCloseout('finalized');
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
       // On a blocked duplicate the original response is echoed back, so the
       // same undo details still point at the rows the first write appended.
@@ -7100,6 +7112,28 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
         getActivePlannedSession().deloadWritten = true;
       }
     }
+    // F10D (Codex P2, PR #1069): keep the promised retry REACHABLE. The rows are
+    // committed — only the ledger binding is unverified — so instead of tearing
+    // the preview down, keep the staged write alive with a FRESH write_id (the
+    // same id would just replay the recorded failed response), drop the
+    // already-written effort row (a retry must never 409 on the duplicate-session
+    // guard), and re-enable Save. The retry lands in the server's all-duplicate
+    // lane: zero re-appends, idempotent seal + closeout-event re-attempt.
+    if (closeoutSealUnverified) {
+      lastWrite = pendingLastWrite;
+      if (pendingWrite && pendingWrite.payload) {
+        pendingWrite.payload.write_id = generateWriteId();
+        delete pendingWrite.payload.effort_row;
+      }
+      approveBtn.disabled = false;
+      approveBtn.textContent = 'Retry ledger seal';
+      setStatus(
+        loggerStatus,
+        'Workout written to Google Sheets ✓ — but the plan-ledger record could not be verified. Your sets are safe; tap Save again to re-verify (no rows will duplicate).',
+        'warn'
+      );
+      return;
+    }
     invalidatePreview();
     setHistoryLoaded(false); clearLiveHintCaches(); // sheet changed
     document.getElementById('logger-form').reset();
@@ -7110,26 +7144,14 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     activeExercise = null;
     lastPrescribed = null;
     setDefaultDate();
-    // F10D — an unverified ledger seal after a committed write is reported
-    // honestly: the sets are safe on the sheet, the plan-ledger binding is not
-    // confirmed, and a retried Save heals it without duplicating rows (the
-    // server's all-duplicate lane re-attempts the idempotent seal).
-    if (closeoutSealUnverified) {
-      setStatus(
-        loggerStatus,
-        'Workout written to Google Sheets ✓ — but the plan-ledger seal could not be verified. Your sets are safe; tap Save again to retry the seal (no rows will duplicate).',
-        'warn'
-      );
-    } else {
-      setStatus(
-        loggerStatus,
-        duplicateBlocked
-          ? 'Duplicate tap blocked — this workout was already written. ✓'
-          : wasModality ? 'Cardio / conditioning written to Google Sheets. ✓'
-            : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
-        'ok'
-      );
-    }
+    setStatus(
+      loggerStatus,
+      duplicateBlocked
+        ? 'Duplicate tap blocked — this workout was already written. ✓'
+        : wasModality ? 'Cardio / conditioning written to Google Sheets. ✓'
+          : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+      'ok'
+    );
     // Always reflect the write that just happened. Screenshot / effort-only
     // writes produce no undoable log range (pendingLastWrite stays null), so
     // this clears any stale manual range — otherwise a correction after an

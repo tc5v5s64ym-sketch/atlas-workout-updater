@@ -3503,10 +3503,13 @@ test('approve success message: effortOnly is captured before invalidatePreview n
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 9000
+    appSource.indexOf(anchor) + 11400
   );
   const captureAt = approveSection.indexOf('const wasEffortOnly = pendingWrite.effortOnly');
-  const invalidateAt = approveSection.indexOf('invalidatePreview()', captureAt);
+  // Anchor on the real teardown CALL ('invalidatePreview();'), not the comment that
+  // merely names it — the F10D seal-retry block legally dereferences pendingWrite
+  // BEFORE the teardown (and returns), which the comment-anchored scan miscounted.
+  const invalidateAt = approveSection.indexOf('invalidatePreview();', captureAt);
   assert.ok(captureAt > -1, 'must capture effortOnly into a local before the write');
   assert.ok(invalidateAt > -1, 'approve path must still invalidate the preview');
   assert.ok(captureAt < invalidateAt, 'capture must happen before invalidatePreview clears pendingWrite');
@@ -3631,7 +3634,7 @@ test('duplicate-write: undo button is unaffected — still wired after success',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   // Window sized to reach the post-save undo button wiring (PR-0D added an
   // identity comment above it, nudging the handler length up).
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 11200);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12800);
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
@@ -5884,7 +5887,7 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
   const appSrc = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
 
   // emitCoachPreview threads the canonical recap into the preview event.
-  const emit = appSrc.slice(appSrc.indexOf('function emitCoachPreview('), appSrc.indexOf('function emitCoachPreview(') + 1500);
+  const emit = appSrc.slice(appSrc.indexOf('function emitCoachPreview('), appSrc.indexOf('function emitCoachPreview(') + 2400);
   assert.match(emit, /recap:\s*canonicalSessionRecap\(\)/, 'preview event carries the canonical recap');
 
   // canonicalSessionRecap builds from getCanonicalSession + the model selectors,
@@ -5900,7 +5903,7 @@ test('P0 wiring 2b: the recap derives from the canonical session and is gated on
 
   // The coach layer renders the canonical remaining lifts in the review bubble.
   const cc = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
-  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 3100);
+  const handler = cc.slice(cc.indexOf('async function handlePreviewReady('), cc.indexOf('async function handlePreviewReady(') + 3800);
   assert.match(handler, /recap\s*=\s*null/, 'handlePreviewReady destructures the recap (default null)');
   assert.match(handler, /Still on your plan:/, 'still-pending plan lifts are surfaced in the recap');
 });

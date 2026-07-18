@@ -33,16 +33,21 @@ test('emitPlanCloseout is a non-blocking sidecar POST to /closeout, gated on an 
   assert.match(emitBlock, /\.catch\(/, 'fire-and-forget — never blocks the close/discard');
 });
 
-test('finalized is emitted from End-session at click; Finish-session defers it to the APPROVED save (F10D)', () => {
+test('finalized is emitted from End-session at click; the SAVE path records it server-side on approval (F10D)', () => {
   assert.match(app, /endBtn\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('finalized'\); endPlannedSession\(\); \}\)/,
     'the banner "End session" button (no save flow) still emits finalized at the click');
   // F10D — one approval governs the complete closeout: tapping Finish only OPENS
-  // the confirmation; the finalized event records when the owner APPROVES the
-  // save, so a rejected confirmation writes nothing (including this event).
+  // the confirmation; the finalized event is recorded by the SERVER inside the
+  // approved /api/log-workout write (with the capture proof envelope), so a
+  // rejected confirmation writes nothing — including this event. No client-side
+  // finalized emission remains anywhere on the save path.
   assert.match(app, /finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
     'the "Finish session" affordance opens the closeout WITHOUT emitting');
-  assert.match(app, /if \(wasSessionCloseout\) emitPlanCloseout\('finalized'\);/,
-    'the approve handler emits finalized for the approved session closeout');
+  const idx = app.indexOf("emitPlanCloseout('finalized')");
+  const endBtnIdx = app.indexOf("endBtn.addEventListener");
+  assert.ok(idx > -1 && app.indexOf("emitPlanCloseout('finalized')", idx + 1) === -1,
+    'exactly ONE finalized emission remains (the non-save End-session affordance)');
+  assert.ok(Math.abs(idx - endBtnIdx) < 200, 'and it is the End-session click site');
 });
 
 test('abandoned is emitted from the explicit Start-over and discard-restored affordances', () => {
@@ -59,10 +64,10 @@ test('the implicit cleanup paths never emit closeout (no inference)', () => {
   assert.doesNotMatch(advBody, /emitPlanCloseout/, '"Next" auto-advance/auto-end must not emit closeout');
 });
 
-test('exactly the four explicit closeout emit sites exist', () => {
+test('exactly the three explicit closeout emit sites exist (the save path is server-recorded — F10D)', () => {
   const finalized = app.split("emitPlanCloseout('finalized')").length - 1;
   const abandoned = app.split("emitPlanCloseout('abandoned')").length - 1;
-  assert.equal(finalized, 2, 'finalized: End session + Finish session');
+  assert.equal(finalized, 1, 'finalized: End session only — the approved save records it server-side with proof');
   assert.equal(abandoned, 2, 'abandoned: Start over + discard-restored');
 });
 

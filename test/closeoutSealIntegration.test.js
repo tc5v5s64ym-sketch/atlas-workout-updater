@@ -14,7 +14,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resetIdempotencyStore } = require('../services/idempotency');
-const { logCleanedColumns, effortColumns, sessionPlanSetsColumns } = require('../config/columns');
+const { logCleanedColumns, effortColumns, sessionPlanSetsColumns, sessionPlansColumns } = require('../config/columns');
 
 process.env.ATLAS_API_KEY = 'test-api-key';
 process.env.GOOGLE_SHEETS_ID = 'stub-sheet';
@@ -27,6 +27,9 @@ process.env.ATLAS_LOGIN_RATE_LIMIT_MAX = '1000000';
 // The SANDBOX posture this file exists for: the ledger live-write lane is ON and
 // the (stubbed) tab exists. Nothing real is reachable — sheets.js is replaced.
 process.env.SESSION_PLAN_SETS_WRITE_ENABLED = '1';
+// The Session_Plans capture lane is ALSO live here, so the approved closeout's
+// server-recorded finalized event (Codex P1, PR #1069) is proven end-to-end.
+process.env.ATLAS_SESSION_PLANS_WRITE = '1';
 
 const SEAL_IDX = sessionPlanSetsColumns.indexOf('closeout_write_id');
 
@@ -51,7 +54,11 @@ const fakeSheets = {
     state.appends.push({ tab, rows: rows.map(r => [...r]) });
     return { data: { updates: { updatedRange: `${tab}!A100:L${99 + rows.length}`, updatedRows: rows.length } } };
   },
-  readRange: async () => [],
+  readRange: async (range) => {
+    // The Session_Plans capture layer validates the exact header before writing.
+    if (String(range).startsWith('Session_Plans!')) return [[...sessionPlansColumns]];
+    return [];
+  },
   updateColumnCells: async (tab, column, cells) => {
     state.updates.push({ tab, column, cells: cells.map(c => ({ ...c })) });
     for (const c of cells) {
@@ -69,6 +76,9 @@ const fakeSheets = {
   getRecentRows: async () => [],
   getSheetRows: async tab => {
     if (tab === 'Session_Plan_Sets') return state.planSetRows.map(r => [...r]);
+    // Serve appended Session_Plans rows back, so the capture layer's read-before-
+    // append idempotency works exactly as against the real sheet.
+    if (tab === 'Session_Plans') return state.appends.filter(a => a.tab === 'Session_Plans').flatMap(a => a.rows).map(r => [...r]);
     return [];
   },
   getHeaderRow: async tab => {
@@ -336,4 +346,67 @@ test('P1-B guard: a FREESTYLE closeout (no planned items) with no ledger rows st
   assert.equal(response.status, 200);
   assert.equal(body.data.ledger_seal.no_ledger, true);
   assert.equal(body.data.closeout_fully_verified, true, 'nothing was planned, nothing is missing');
+});
+
+
+// ── Codex P1 (PR #1069): the finalized Session_Plans event records INSIDE the approval ──
+
+const PLANNED_CONTEXT = { plan_version: 'pv_gate1', items: CLOSEOUT_CONTEXT.items };
+
+test('approved planned closeout records the finalized event server-side with proof, inside the same approval', async () => {
+  reset();
+  const { response, body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-1', closeout_context: PLANNED_CONTEXT }));
+  assert.equal(response.status, 200);
+  const d = body.data;
+  const ev = d.session_plans_closeout;
+  assert.ok(ev, 'the closeout-event envelope rides the approved response');
+  assert.equal(ev.captured, true, 'the finalized event actually recorded');
+  assert.equal(d.closeout_fully_verified, true);
+  const planAppend = state.appends.find(a => a.tab === 'Session_Plans');
+  assert.ok(planAppend, 'the Session_Plans event row was appended under this approval');
+});
+
+test('a freestyle closeout (no pv_ token) records no event and stays verified', async () => {
+  reset();
+  const { body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-2' }));
+  assert.equal(body.data.session_plans_closeout.status, 'no_plan');
+  assert.equal(body.data.session_plans_closeout.captured, false);
+  assert.equal(body.data.closeout_fully_verified, true, 'nothing was planned — nothing is missing');
+  assert.equal(state.appends.some(a => a.tab === 'Session_Plans'), false);
+});
+
+test('the fresh-write_id heal lane re-attempts BOTH the event (idempotent) and the seal after a failed first seal', async () => {
+  reset();
+  // First approval: the event captures, but the SEAL fails its cell proof — the
+  // honest partial. (The fake stamps regardless of the claimed count, so blank
+  // the stamps to model rows the failed seal never actually bound.)
+  state.updateCellsResult = { totalUpdatedCells: 2 };
+  const first = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-3', closeout_context: PLANNED_CONTEXT }));
+  assert.equal(first.body.data.session_plans_closeout.captured, true, 'the event recorded on the first approval');
+  assert.equal(first.body.data.closeout_fully_verified, false, 'the failed seal keeps the closeout unverified');
+  for (const r of state.planSetRows) r[SEAL_IDX] = '';
+  state.updateCellsResult = null;
+  const planAppendsAfterFirst = state.appends.filter(a => a.tab === 'Session_Plans').length;
+  // The rows are on the sheet; the fresh-write_id retry heals through the
+  // all-duplicate lane: zero re-appends anywhere, the event folds idempotently,
+  // the seal binds, and the closeout is finally fully verified.
+  state.logCompositeKeys = DIP_ACTUALS.map(a => `${SESSION_ID.toLowerCase()}||weighted dip||${a.set_number}`);
+  const { body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-3-retry', closeout_context: PLANNED_CONTEXT }));
+  assert.equal(body.data.all_rows_duplicate, true);
+  const ev = body.data.session_plans_closeout;
+  assert.equal(ev.captured, true, 'the idempotent replay still reports a captured event');
+  const planAppendsAfterRetry = state.appends.filter(a => a.tab === 'Session_Plans').length;
+  assert.equal(planAppendsAfterRetry, planAppendsAfterFirst, 'the event row appended exactly once');
+  assert.equal(body.data.ledger_seal.sealed_ok, true, 'the retry sealed the previously-unbound rows');
+  assert.equal(body.data.closeout_fully_verified, true);
+});
+
+test('a fresh-write_id retry on an ALREADY-sealed closeout fails closed (never re-seal under a new id)', async () => {
+  reset();
+  await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-4', closeout_context: PLANNED_CONTEXT }));
+  state.logCompositeKeys = DIP_ACTUALS.map(a => `${SESSION_ID.toLowerCase()}||weighted dip||${a.set_number}`);
+  const { body } = await post('/api/log-workout', closeoutPayload({ write_id: 'w-co-ev-4-new', closeout_context: PLANNED_CONTEXT }));
+  assert.equal(body.data.ledger_seal.sealed_ok, false);
+  assert.equal(body.data.ledger_seal.reason, 'conflicting_seal', 'the ledger stays bound to the ORIGINAL approved closeout');
+  assert.equal(body.data.closeout_fully_verified, false, 'a new id can never claim an already-sealed closeout');
 });

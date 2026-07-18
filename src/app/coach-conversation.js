@@ -1648,7 +1648,17 @@ import * as sessionQuestion from './sessionQuestion.js';
     if (s.ledger_read_failed) line('cc-warn', "Heads up: the plan ledger couldn't be read, so plan verification is unavailable for this save. Your sets still save normally.");
     if (s.malformed) line('cc-warn', 'Heads up: the stored plan history for this session is inconsistent — the plan ledger will not be sealed. Your sets still save normally.');
 
-    const setTxt = (w, r, rir) => `${w != null ? w : 'BW'}×${r != null ? r : '?'}${rir != null ? `@${rir}` : ''}`;
+    // House convention (F09E): TRUE bodyweight is weight === 0 → "BW×reps"; an
+    // ABSENT load (weight == null, e.g. a load-omitted accessory or a target with
+    // reps but no reliable load) renders loadless "N reps" — never conflated with
+    // bodyweight (Codex P2, PR #1069).
+    const setTxt = (w, r, rir) => {
+      const rirBit = rir != null ? `@${rir}` : '';
+      const reps = r != null ? r : '?';
+      if (w === 0) return `BW×${reps}${rirBit}`;
+      if (w == null) return `${reps} reps${rirBit}`;
+      return `${w}×${reps}${rirBit}`;
+    };
     for (const item of (s.items || [])) {
       const name = item.name || item.planned_lift_code || 'Planned lift';
       const bits = [];
@@ -1697,6 +1707,11 @@ import * as sessionQuestion from './sessionQuestion.js';
       const existingBubble = existingCard.closest('.chat-bubble-atlas');
       const existingBody = existingBubble && existingBubble.querySelector('.coach-msg');
       existingCard.remove();
+      // F10D (Codex P2, PR #1069): a re-preview replaces the WHOLE confirmation —
+      // drop the stale closeout summary too, so old write/seal counts can never
+      // sit above the rebuilt Save card.
+      const staleConfirm = existingBubble && existingBubble.querySelector('.closeout-confirm');
+      if (staleConfirm) staleConfirm.remove();
       if (existingBody) existingBody.textContent = '';
       handle = existingBubble && existingBody ? { bubble: existingBubble, body: existingBody } : appendAtlasBubble();
     } else {
