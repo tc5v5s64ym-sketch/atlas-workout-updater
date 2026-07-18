@@ -33,11 +33,16 @@ test('emitPlanCloseout is a non-blocking sidecar POST to /closeout, gated on an 
   assert.match(emitBlock, /\.catch\(/, 'fire-and-forget — never blocks the close/discard');
 });
 
-test('finalized is emitted from the explicit End-session and Finish-session affordances', () => {
+test('finalized is emitted from End-session at click; Finish-session defers it to the APPROVED save (F10D)', () => {
   assert.match(app, /endBtn\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('finalized'\); endPlannedSession\(\); \}\)/,
-    'the banner "End session" button emits finalized before ending the plan');
-  assert.match(app, /finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('finalized'\); handleLogIt\(\); \}\)/,
-    'the "Finish session" affordance emits finalized');
+    'the banner "End session" button (no save flow) still emits finalized at the click');
+  // F10D — one approval governs the complete closeout: tapping Finish only OPENS
+  // the confirmation; the finalized event records when the owner APPROVES the
+  // save, so a rejected confirmation writes nothing (including this event).
+  assert.match(app, /finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
+    'the "Finish session" affordance opens the closeout WITHOUT emitting');
+  assert.match(app, /if \(wasSessionCloseout\) emitPlanCloseout\('finalized'\);/,
+    'the approve handler emits finalized for the approved session closeout');
 });
 
 test('abandoned is emitted from the explicit Start-over and discard-restored affordances', () => {

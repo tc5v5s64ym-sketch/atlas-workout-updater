@@ -1624,8 +1624,65 @@ import * as sessionQuestion from './sessionQuestion.js';
   // from logging a set — so this renders the single review card. Its Save / Edit
   // / Undo delegate to the existing #approve-btn / #parsed-rows-editor /
   // window.atlasUndoLastWrite — the write path itself is unchanged.
+  // F10D — the single-confirmation session review (both truths, factually).
+  // Renders the server-assembled closeout summary ABOVE the sets card: the
+  // original accepted plan vs the final effective plan, per-set target-vs-actual,
+  // substitutions/skips, no-reliable-target honesty, unplanned work, and exactly
+  // what will be written and sealed. Numeric facts only — assessment wording is
+  // F10E's. Warnings (unreadable ledger / inconsistent history) surface plainly.
+  function buildCloseoutConfirm(s) {
+    const wrap = document.createElement('div');
+    wrap.className = 'closeout-confirm';
+    const head = document.createElement('div');
+    head.className = 'cc-head';
+    head.textContent = `Session review${s.session_date ? ` — ${s.session_date}` : ''}`;
+    wrap.appendChild(head);
+
+    const line = (cls, text) => {
+      const n = document.createElement('div');
+      n.className = cls;
+      n.textContent = text;
+      wrap.appendChild(n);
+    };
+
+    if (s.ledger_read_failed) line('cc-warn', "Heads up: the plan ledger couldn't be read, so plan verification is unavailable for this save. Your sets still save normally.");
+    if (s.malformed) line('cc-warn', 'Heads up: the stored plan history for this session is inconsistent — the plan ledger will not be sealed. Your sets still save normally.');
+
+    const setTxt = (w, r, rir) => `${w != null ? w : 'BW'}×${r != null ? r : '?'}${rir != null ? `@${rir}` : ''}`;
+    for (const item of (s.items || [])) {
+      const name = item.name || item.planned_lift_code || 'Planned lift';
+      const bits = [];
+      for (const t of (item.target_vs_actual || [])) {
+        const target = t.no_reliable_target ? 'no reliable target'
+          : t.malformed ? 'target unavailable'
+            : t.target_weight != null || t.target_reps != null ? setTxt(t.target_weight, t.target_reps, t.target_rir) : null;
+        const actual = t.unperformed ? 'not performed'
+          : t.actual_weight != null || t.actual_reps != null ? `did ${setTxt(t.actual_weight, t.actual_reps, t.actual_rir)}` : null;
+        if (target && actual) bits.push(`${target} → ${actual}`);
+        else if (target) bits.push(`${target} → not performed`);
+        else if (actual) bits.push(`${t.extra ? 'extra: ' : ''}${actual}`);
+      }
+      const tag = item.outcome === 'substituted' && item.performed_lift_code
+        ? ` (substituted — performed ${item.performed_lift_code})`
+        : item.outcome === 'skipped' ? ' (skipped)'
+          : item.revised ? ' (revised mid-session)' : '';
+      line('cc-item', `${name}${tag}: ${bits.join(' · ') || 'no sets'}`);
+    }
+    for (const up of (s.unplanned || [])) {
+      const sets = (up.sets || []).map(x => setTxt(x.weight, x.reps, x.rir)).join(' · ');
+      line('cc-unplanned', `${up.name || up.lift_code} (unplanned): ${sets}`);
+    }
+
+    const logCount = s.rows_to_write && Array.isArray(s.rows_to_write.log) ? s.rows_to_write.log.length : 0;
+    const effortBit = s.rows_to_write && s.rows_to_write.effort ? ' + your effort row' : '';
+    const sealBit = s.has_stored_plan && s.rows_to_seal && s.rows_to_seal.count
+      ? `; ${s.rows_to_seal.count} plan-ledger row(s) will be sealed to this save` : '';
+    line('cc-foot', `Approving writes ${logCount} set row(s)${effortBit}${sealBit}. Rejecting writes nothing.`);
+    return wrap;
+  }
+
   async function handlePreviewReady(detail) {
-    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [], recap = null, dateInfo = null } = detail || {};
+    const { rows = [], liftCodes = [], effortOnly, effort, substitutions = [], recap = null, dateInfo = null, closeoutSummary = null } = detail || {};
     if (!effortOnly && !liftCodes.length) return;       // nothing to review
 
     // If a review card already exists in the thread (e.g. the user added manual
@@ -1668,6 +1725,9 @@ import * as sessionQuestion from './sessionQuestion.js';
     const remaining = (recap && Array.isArray(recap.remaining)) ? recap.remaining.filter(Boolean) : [];
     if (remaining.length) intro += `\n\nStill on your plan: ${remaining.join(', ')}.`;
     await typeOut(body, intro);
+    // F10D — the session-closeout confirmation sits ABOVE the sets card: the plan
+    // review (both truths) first, then the exact rows the approval will write.
+    if (closeoutSummary) bubble.appendChild(buildCloseoutConfirm(closeoutSummary));
     bubble.appendChild(buildReviewCard(rows, liftCodes, effortOnly, effort, dateInfo));
   }
 

@@ -996,7 +996,8 @@ test('PR 486 frontend: modality logging mirrors the trust loop without altering 
   // preview proof, and it requires an explicit success confirmation.
   const approveBlock = appSource.slice(
     appSource.indexOf("getElementById('approve-btn').addEventListener('click'"),
-    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 4000
+    // F10D widened: the closeout seal-verdict capture sits above the branches.
+    appSource.indexOf("getElementById('approve-btn').addEventListener('click'") + 5200
   );
   assert.match(approveBlock, /pendingWrite\.mode === 'modality'/);
   assert.match(approveBlock, /write_id: pendingWrite\.writeId/, 'live write carries the staged write_id');
@@ -3461,7 +3462,7 @@ test('multi-session/day: a saved session clears #log-session-id so the next uplo
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 9600
+    appSource.indexOf(anchor) + 11200
   );
   // After a confirmed write the session is concluded, so its id must be cleared from the
   // field — otherwise the next effort upload re-sends the just-written id and collides.
@@ -3559,7 +3560,7 @@ test('verdict: write safety unchanged — undo button still wired after verdict 
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   const approveSection = appSource.slice(
     appSource.indexOf(anchor),
-    appSource.indexOf(anchor) + 10400
+    appSource.indexOf(anchor) + 12000
   );
   // undo button must still be appended before the verdict fetch
   const undoIdx = approveSection.indexOf('undo-write-btn');
@@ -3617,7 +3618,7 @@ test('duplicate-write: finally block always clears writeInFlight', () => {
 test('duplicate-write: successful write sets button text to Written ✓', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12000);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 13600);
   assert.match(handler, /Written\s*✓/, 'button must show "Written ✓" after success');
   // Written ✓ must appear before the catch block
   const writtenIdx = handler.indexOf('Written');
@@ -3630,7 +3631,7 @@ test('duplicate-write: undo button is unaffected — still wired after success',
   const anchor = "getElementById('approve-btn').addEventListener('click'";
   // Window sized to reach the post-save undo button wiring (PR-0D added an
   // identity comment above it, nudging the handler length up).
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 9600);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 11200);
   assert.match(handler, /undo-write-btn/, 'undo button must still exist in success path');
   assert.match(handler, /handleUndoLastWrite/, 'undo click handler must still be wired');
 });
@@ -3678,7 +3679,7 @@ test('readback: verifyWrittenRange function exists and fails quietly', () => {
 test('readback: approve handler fires verifyWrittenRange after write, before reaction fetch', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const anchor = "getElementById('approve-btn').addEventListener('click'";
-  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 10400);
+  const handler = appSource.slice(appSource.indexOf(anchor), appSource.indexOf(anchor) + 12000);
   assert.match(handler, /verifyWrittenRange/, 'must call verifyWrittenRange in success path');
   assert.match(handler, /Verified in Sheet/, 'must show Verified in Sheet note');
   assert.match(handler, /readback verification unavailable/, 'must show unavailable note on failure');
@@ -5054,7 +5055,8 @@ test('Step 385: approve handler marks deload session written; advance fires once
   // ── Approve handler: sets the flag, does NOT call advance directly ──────────
   const approveStart = app.indexOf("document.getElementById('approve-btn').addEventListener('click'");
   assert.ok(approveStart !== -1, 'approve-btn click handler must exist');
-  const handlerBody = app.slice(approveStart, approveStart + 6000);
+  // F10D widened: the seal-verdict + finalized-emission block sits above this.
+  const handlerBody = app.slice(approveStart, approveStart + 7400);
 
   // advance must NOT appear anywhere in the approve handler — it belongs in endPlannedSession.
   assert.doesNotMatch(handlerBody, /\/api\/deload\/advance/, 'advance must NOT be called inside the approve handler (it fires once per session in endPlannedSession)');
@@ -5709,8 +5711,10 @@ test('freestyle finish: explicit "Finish session" affordance triggers the existi
   // The button exists, is hidden by default (contextual), and lives in the logger form.
   assert.match(html, /id="finish-session-btn"[^>]*\bhidden\b/, 'finish button exists and starts hidden');
   // Clicking it runs the existing closeout (handleLogIt → runCloseout) — no new write path.
-  assert.match(app, /getElementById\('finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ emitPlanCloseout\('finalized'\); handleLogIt\(\); \}\)/,
-    'finish button click emits the finalized closeout (PR-H) then runs handleLogIt (the existing closeout)');
+  // F10D: the finalized event moved into the APPROVED save (rejection writes
+  // nothing) — the button now only opens the existing closeout confirmation.
+  assert.match(app, /getElementById\('finish-session-btn'\)\?\.addEventListener\('click', \(\) => \{ handleLogIt\(\); \}\)/,
+    'finish button click runs handleLogIt (the existing closeout confirmation)');
   // It is contextual: shown once a set is logged, hidden on session reset/save.
   assert.match(app, /addEventListener\('atlas:set-logged', \(\) => setFinishSessionVisible\(true\)\)/, 'shown on set-logged');
   assert.match(app, /addEventListener\('atlas:session-reset', \(\) => setFinishSessionVisible\(false\)\)/, 'hidden on session reset');
@@ -6710,7 +6714,7 @@ test('B5: screenshot preview sends the date ONLY when the owner actually entered
 
 test('B5: both preview renderers hand date + date_source to the review card event', () => {
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  assert.match(appSource, /function emitCoachPreview\(rows, liftCodes, effortOnly, effort, substitutions, dateInfo\)/);
+  assert.match(appSource, /function emitCoachPreview\(rows, liftCodes, effortOnly, effort, substitutions, dateInfo, closeoutSummary\)/);
   assert.match(appSource, /dateInfo: \(dateInfo && dateInfo\.date\) \? dateInfo : null/,
     'the preview-ready event must carry dateInfo');
   assert.match(appSource, /date: data\.date,\s*\n\s*source: data\.date_source \|\| null,/,

@@ -4359,7 +4359,10 @@ function setFinishSessionVisible(visible) {
 }
 // PR-H: the explicit "Finish session" affordance is a `finalized` closeout (emit
 // before the save-review flow; gated on an accepted plan → no-op for freestyle).
-document.getElementById('finish-session-btn')?.addEventListener('click', () => { emitPlanCloseout('finalized'); handleLogIt(); });
+// F10D — finishing opens the closeout CONFIRMATION; the finalized closeout event
+// records only when the owner APPROVES the save (the approve handler emits it).
+// A rejected/abandoned confirmation writes nothing — including this event.
+document.getElementById('finish-session-btn')?.addEventListener('click', () => { handleLogIt(); });
 document.addEventListener('atlas:set-logged', () => setFinishSessionVisible(true));
 document.addEventListener('atlas:session-reset', () => setFinishSessionVisible(false));
 // The pin re-derives (and hides) on every session reset — same signal that
@@ -4402,11 +4405,42 @@ function extractLiftCodes(logRowsPreview) {
   return codes;
 }
 
+// F10D — the closeout confirmation context: one bounded item per accepted plan
+// slot, LABELING the server's summary (the seal never depends on these — the
+// server validates and bounds them, and they can only make verification
+// stricter). A substituted slot's CURRENT liftCode is the PERFORMED lift; its
+// original planned code lives in the durable ledger, joined server-side by the
+// slot's immutable plan_item_id.
+function closeoutContextItems() {
+  const s = getActivePlannedSession();
+  if (!s || !Array.isArray(s.exercises)) return [];
+  let statuses = [];
+  try { statuses = planSlotStatuses(activePlanForSlots(), getSessionCompleted(), getSessionLog()) || []; } catch { statuses = []; }
+  return s.exercises.filter(ex => ex && ex.plan_item_id).map((ex, i) => {
+    const substituted = ex.reason === 'substituted';
+    const st = statuses[i] || {};
+    const performedSets = Number(st.performedSets || 0);
+    // Outcome labels only what is derivable: completed / substituted / skipped
+    // (zero performed sets). A started-but-incomplete slot sends no outcome —
+    // the summary's per-set unperformed flags carry the partial truth.
+    const outcome = substituted ? 'substituted'
+      : st.status === 'completed' ? 'completed'
+        : performedSets === 0 ? 'skipped' : '';
+    return {
+      plan_item_id: ex.plan_item_id,
+      planned_lift_code: substituted ? '' : (ex.liftCode || ''),
+      ...(substituted ? { performed_lift_code: ex.liftCode || '' } : {}),
+      name: ex.name || '',
+      ...(outcome ? { outcome } : {}),
+    };
+  });
+}
+
 // Hand the just-previewed sets to the conversation layer (coach-conversation.js)
 // so it can type a coaching note with an inline Save. Read-only narration: it
 // never writes — Save just clicks #approve-btn, which stays gated by the dry-run
 // proof. Best-effort; a missing listener is a no-op.
-function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions, dateInfo) {
+function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions, dateInfo, closeoutSummary) {
   try {
     document.dispatchEvent(new CustomEvent('atlas:preview-ready', {
       detail: {
@@ -4422,7 +4456,10 @@ function emitCoachPreview(rows, liftCodes, effortOnly, effort, substitutions, da
         // P0 wiring 2b: the recap's completed/remaining view derives from the ONE
         // canonical session (identity reconciled against the mutated plan), so it
         // can't disagree with what was logged. null when nothing was logged.
-        recap: canonicalSessionRecap()
+        recap: canonicalSessionRecap(),
+        // F10D — the server-assembled single-confirmation summary (both truths +
+        // the exact rows to write and seal), present only on a session closeout.
+        closeoutSummary: closeoutSummary || null
       }
     }));
   } catch { /* narration is optional */ }
@@ -6379,6 +6416,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     emitSetLogged(logRows, pendingChatText, midSessionSubstitutions, midSessionEnrichment);
     return;
   }
+  // F10D — remember whether THIS preview is the session closeout (the compiled
+  // end-of-session save) before the one-shot flag resets: the closeout carries
+  // the confirmation context on both the dry-run and the approved write.
+  const isSessionCloseout = sessionCompiledAwaitingPreview === true;
   sessionCompiledAwaitingPreview = false;
 
   const previewBtn = document.getElementById('preview-btn');
@@ -6473,6 +6514,10 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
 
       const payload = { session_id: sessionId, date, log_rows: logRows, test_mode: 'true', write_id: generateWriteId() };
       if (effortRow) payload.effort_row = effortRow;
+      // F10D — the session closeout sends the confirmation context, so the dry-run
+      // returns the single-confirmation summary and the SAME approved payload seals
+      // the ledger under its write_id. Per-message previews never send it.
+      if (isSessionCloseout) payload.closeout_context = { items: closeoutContextItems() };
       if (lastPrescribed && lastPrescribed.length > 0 && logRows.length > 0) {
         const loggedExercise = logRows[0].exercise || '';
         payload.prescribed = lastPrescribed.map(p => ({ exercise: p.exercise, logged_exercise: loggedExercise, ...(p.reason ? { reason: p.reason } : {}) }));
@@ -6509,7 +6554,7 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
       }
       // F07 / CLIENT-3: drop a superseded dry-run response — a newer submit's preview wins.
       if (submitSeq !== previewRequestSeq) return;
-      pendingWrite = { mode: 'manual', payload, previewProof: previewProofFromResult(result, 'manual') };
+      pendingWrite = { mode: 'manual', payload, sessionCloseout: isSessionCloseout, previewProof: previewProofFromResult(result, 'manual') };
       renderLogWorkoutPreview(result, effortRow);
     }
     // Session-level save: the in-thread review card (atlas:preview-ready) is the
@@ -6765,7 +6810,7 @@ function renderLogWorkoutPreview(result, effortRow) {
     source: closeoutScreenshotDateSource || (logDateManuallyEntered ? 'manual' : null)
   };
   emitCoachPreview(data.log_rows_preview, liftCodes, false, reviewEffort, data.substitutions,
-    logDateInfo.source ? logDateInfo : null);
+    logDateInfo.source ? logDateInfo : null, data.closeout_summary || null);
 }
 
 function renderCompleteWorkoutPreview(result) {
@@ -6943,6 +6988,11 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
   // the success message still needs to know which kind of write this was.
   const wasEffortOnly = pendingWrite.effortOnly === true;
   const wasModality = pendingWrite.mode === 'modality';
+  // F10D — a session closeout's approval also seals the plan ledger; the success
+  // copy must reflect the seal verdict honestly, and the finalized closeout event
+  // records only on THIS approval (rejection writes nothing).
+  const wasSessionCloseout = pendingWrite.sessionCloseout === true;
+  let closeoutSealUnverified = false;
   let pendingLastWrite = null;
   let duplicateBlocked = false;
   try {
@@ -7022,6 +7072,18 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
           throw new Error(`Write confirmed but log_rows_written=${writeData.log_rows_written ?? 'missing'} and effort_rows_written=${writeData.effort_rows_written ?? 'missing'}. Verify Sheets before approving again.`);
         }
       }
+      // F10D — the seal verdict rides the same response. `closeout_fully_verified`
+      // is false ONLY when a ledger seal genuinely failed or a planned session had
+      // no ledger rows to bind (server-side rule); a dry-run seal (owner gate
+      // closed) reports true. Never claim a fully verified closeout it isn't.
+      if (wasSessionCloseout && writeData.closeout_fully_verified === false) {
+        closeoutSealUnverified = true;
+      }
+      // F10D — the approved save IS the session finalization: record the closeout
+      // event only now (a rejected/abandoned confirmation writes nothing). Also on
+      // a blocked duplicate — the original write completed, so finalization stands;
+      // the capture layer's deterministic key makes a repeat emission idempotent.
+      if (wasSessionCloseout) emitPlanCloseout('finalized');
       // Capture undo details in a local — invalidatePreview() (called below) clears lastWrite.
       // On a blocked duplicate the original response is echoed back, so the
       // same undo details still point at the rows the first write appended.
@@ -7048,14 +7110,26 @@ document.getElementById('approve-btn').addEventListener('click', async () => {
     activeExercise = null;
     lastPrescribed = null;
     setDefaultDate();
-    setStatus(
-      loggerStatus,
-      duplicateBlocked
-        ? 'Duplicate tap blocked — this workout was already written. ✓'
-        : wasModality ? 'Cardio / conditioning written to Google Sheets. ✓'
-          : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
-      'ok'
-    );
+    // F10D — an unverified ledger seal after a committed write is reported
+    // honestly: the sets are safe on the sheet, the plan-ledger binding is not
+    // confirmed, and a retried Save heals it without duplicating rows (the
+    // server's all-duplicate lane re-attempts the idempotent seal).
+    if (closeoutSealUnverified) {
+      setStatus(
+        loggerStatus,
+        'Workout written to Google Sheets ✓ — but the plan-ledger seal could not be verified. Your sets are safe; tap Save again to retry the seal (no rows will duplicate).',
+        'warn'
+      );
+    } else {
+      setStatus(
+        loggerStatus,
+        duplicateBlocked
+          ? 'Duplicate tap blocked — this workout was already written. ✓'
+          : wasModality ? 'Cardio / conditioning written to Google Sheets. ✓'
+            : wasEffortOnly ? 'Effort written to Google Sheets. ✓' : 'Workout written to Google Sheets. ✓',
+        'ok'
+      );
+    }
     // Always reflect the write that just happened. Screenshot / effort-only
     // writes produce no undoable log range (pendingLastWrite stays null), so
     // this clears any stale manual range — otherwise a correction after an
