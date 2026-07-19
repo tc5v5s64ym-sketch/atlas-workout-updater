@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: recovery audit. Gates passed: install. Streak: 0/5.`
+`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: first implementation slice — retire the routine receipt (recovery audit published, docs/SOUL_RECOVERY_AUDIT.md). Gates passed: install. Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 
@@ -113,7 +113,7 @@ One scripted two-exercise workout: plan from history → accept → log normally
 ### Phase 1 — Soul Recovery (Issue #1073, exactly as written)
 
 - **GOAL:** the workout conversation feels like a knowledgeable, history-aware human coach; the receipt dies.
-- **WORK:** (1) the required recovery audit — map every live workout voice path from user input to rendered output (plan/acceptance, set and exercise logging, routine reaction, deviation/PR/fatigue/substitution/pain/safety, in-session question and correction, next-exercise handoff, closeout), recording for each the facts assembled, whether the model is called, which persona/prompt is used, any deterministic prose that can override it, available conversation history, and the production output; publish it. (2) The first implementation slice exactly as the issue defines: remove "On plan — logged." from the normal path; a routine block gets either a brief, fact-grounded, model-authored reply or deliberate silence chosen from session state; bounded context; honest outage degradation; templates outage-only. (3) Deterministic and contract tests; the ten golden conversation transcripts scored on behavior, not wording; define the Golden Session as a reusable scripted scenario.
+- **WORK:** (1) ✅ the required recovery audit — map every live workout voice path from user input to rendered output (plan/acceptance, set and exercise logging, routine reaction, deviation/PR/fatigue/substitution/pain/safety, in-session question and correction, next-exercise handoff, closeout), recording for each the facts assembled, whether the model is called, which persona/prompt is used, any deterministic prose that can override it, available conversation history, and the production output; publish it. **Published 2026-07-19 at [`docs/SOUL_RECOVERY_AUDIT.md`](SOUL_RECOVERY_AUDIT.md).** (2) The first implementation slice exactly as the issue defines: remove "On plan — logged." from the normal path; a routine block gets either a brief, fact-grounded, model-authored reply or deliberate silence chosen from session state; bounded context; honest outage degradation; templates outage-only. (3) Deterministic and contract tests; the ten golden conversation transcripts scored on behavior, not wording; define the Golden Session as a reusable scripted scenario.
 - **OWNER GATE — gate script:** "Ready for a Soul gate workout: two exercises, normal session. Afterward tell me: pass or not yet; the moments that felt like a coach; the moments that broke character (quote the reply, then what a real coach would have said, or whether silence was right)." On "not yet," fix the named misses, rerun the transcripts, and offer another gate. On "pass," mark the gate, then begin Phase 2.
 - **DONE WHEN:** the owner says pass after live sessions.
 - **CLOSES:** H-02; first bite of H-16.
