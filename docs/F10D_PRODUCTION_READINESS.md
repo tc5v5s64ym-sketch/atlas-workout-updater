@@ -57,7 +57,7 @@ Append-only. `closeout_write_id` (column **O**) is the ONLY cell ever updated in
 
 1. **Owner creates the tab** (no agent schema action): a `Session_Plan_Sets` tab in the production spreadsheet with row 1 exactly as §3 (16 headers, exact order/spelling). No other rows.
 2. **Owner sets the flag** on Render: `SESSION_PLAN_SETS_WRITE_ENABLED=1` (`ATLAS_SESSION_PLANS_WRITE` per its current production setting — it is a separate, already-governed lane). Deploy; confirm boot via `npm run atlas:status`.
-3. **One bounded owner session** (the smallest complete exercise of every lane): accept a small real plan (2 slots is enough) → log it (include one substitution or skip if convenient, not required) → type effort → "done" → review the single confirmation → **Save once**.
+3. **One bounded owner session** (the smallest complete exercise of every lane): accept a small real plan (2 slots is enough) by pressing **"Start this plan"** — the acceptance boundary now enforces this: a set logged from a displayed-but-unaccepted plan blocks with that one action, so the first canary's silent-freeform shape cannot recur → log it (include one substitution or skip if convenient, not required) → type or upload effort → "done" → review the single confirmation → **Save once**.
 4. **Verify immediately** with `npm run atlas:review-live` — the `ledger_sealed` criterion now automatically verifies the seal (one nonblank shared `closeout_write_id` on every correlated ledger row, valid chain, cross-tab closeout agreement, exact evidence range); corroborate with the response evidence (`closeout_fully_verified: true`, `ledger_seal.sealed_ok: true`, positive Log/Effort ranges).
 5. **Stop.** No second session until the owner reviews the first write's evidence.
 

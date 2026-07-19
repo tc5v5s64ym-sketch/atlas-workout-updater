@@ -1910,6 +1910,55 @@ import * as sessionQuestion from './sessionQuestion.js';
   });
   document.addEventListener('atlas:set-logged', e => { handleSetLogged(e.detail).catch(() => {}); });
   document.addEventListener('atlas:substitute-suggested', e => { handleSubstituteSuggested(e.detail).catch(() => {}); });
+  // F10D acceptance boundary — the ONE blocking action for a set held at the
+  // unaccepted-plan gate (app.js). It reuses the EXISTING acceptance path — the
+  // same window.atlasAcceptPlan the plan card's Start button calls; never a
+  // second acceptance workflow — and on started (or an honest sidecar degrade,
+  // which still starts the workout) releases the held message back into the
+  // logger via window.atlasResumeBlockedLog. A repeat blocked attempt re-uses
+  // the live card (the gate's stash always holds the NEWEST held message); the
+  // button's disabled state plus app.js's _acceptInFlight guard plus server
+  // idempotency mean repeated taps can never mint a second plan version.
+  document.addEventListener('atlas:acceptance-required', e => {
+    const rec = e && e.detail && e.detail.rec;
+    const thread = document.getElementById('thread-messages');
+    if (!thread || !rec) return;
+    const existing = thread.querySelector('.acceptance-required:not(.done)');
+    if (existing) { existing.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); return; }
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble chat-bubble-atlas';
+    const card = document.createElement('div');
+    card.className = 'acceptance-required';
+    const msg = document.createElement('div');
+    msg.className = 'ar-msg';
+    msg.textContent = 'Start this plan to track planned versus actual.';
+    card.appendChild(msg);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'primary start-this-plan-btn';
+    btn.textContent = 'Start this plan';
+    btn.addEventListener('click', async () => {
+      if (btn.disabled) return;               // DOM-level double-tap guard
+      btn.disabled = true;
+      btn.textContent = 'Starting…';
+      let result;
+      try { result = await window.atlasAcceptPlan(rec); }
+      catch { result = { started: false }; }
+      if (result && result.started) {
+        card.classList.add('done');
+        btn.textContent = result.message || 'Plan started.';   // stays disabled — accepted
+        if (typeof window.atlasResumeBlockedLog === 'function') window.atlasResumeBlockedLog();
+      } else {
+        // ignored (a concurrent acceptance in flight) or blocked — re-arm for a retry.
+        btn.disabled = false;
+        btn.textContent = 'Start this plan';
+      }
+    });
+    card.appendChild(btn);
+    bubble.appendChild(card);
+    thread.appendChild(bubble);
+    bubble.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
   // P0 Sub-PR 2a: a deterministic plan mutation (swap/skip applied to the canonical
   // session by app.js) — confirm it in the thread and re-point the composer to the
   // new current exercise. The engine OWNS the mutation; this only narrates it.

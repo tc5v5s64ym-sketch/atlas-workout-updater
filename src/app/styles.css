@@ -2689,3 +2689,13 @@ summary:focus-visible,
   .ws-card, .ws-toast { transition: none; }
   .ws-card.ws-dragging { transform: none; }
 }
+
+/* F10D acceptance boundary — the one blocking Start action */
+.acceptance-required {
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.acceptance-required .ar-msg { margin-bottom: 8px; }
+.acceptance-required.done .ar-msg { color: var(--muted); }
