@@ -159,16 +159,15 @@ const _exports = (function () {
     return tier === 'short' || tier === 'ack_only';
   }
 
-  // Every logged lift gets ONE concise coaching reaction. A routine, on-plan set
-  // tiers to ack_only — that means a BRIEF acknowledgement, never silence (the design
-  // intent in docs/ATLAS_CONVERSATION_PROTOTYPE_V1_PLAN.md: "✅ Bench logged."). This
-  // is the deterministic line the client renders for such a set (the server already
-  // skips Gemini for a routine block), so the acknowledgement survives an LLM outage.
+  // OUTAGE-ONLY deterministic acknowledgement. Soul Recovery (Issue #1073) retired the
+  // routine receipt: a routine, on-plan block is now met with DELIBERATE SILENCE on the
+  // live path (see getInWorkoutNote — the persona "stays quiet when a set is routine"),
+  // so this line is no longer the routine voice. It is retained as a concise, honest
+  // fallback for a degraded path only, never rendered on the normal path.
   // NAME-FREE on purpose: the readback card directly above already names the lift, and
   // the multi-lift caller prefixes "<exercise>: <note>" for each additional lift — an
   // embedded name would double it. NUMBER-FREE: the sets live on the card. The optional
   // arg is accepted (and ignored) so callers can pass the lift name without breaking.
-  // Keep it simple — one plain line; de-templated variety is a later polish.
   function templatedAckLine(/* exerciseName (ignored — see above) */) {
     return 'On plan — logged.';
   }
