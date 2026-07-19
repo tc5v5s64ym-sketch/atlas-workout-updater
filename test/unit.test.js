@@ -1460,19 +1460,19 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
-test('routine ack: the in-session reaction is tier-gated (kind:block) and a BRIEF acknowledgement (not silence) on ack_only', () => {
+test('routine ack: the in-session reaction is tier-gated (kind:block) and DELIBERATE SILENCE (note null) on ack_only', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
   // (routes through the deterministic coachNoteTier gate).
   assert.match(ccSource, /body: JSON\.stringify\(\{ facts, kind: 'block' \}\)/,
     'the in-session reaction must route through the block tier gate');
-  // getInWorkoutNote now returns a brief deterministic acknowledgement on ack_only —
-  // every logged lift gets ONE concise coaching reaction; ack_only is NOT silence.
+  // Soul Recovery (Issue #1073): getInWorkoutNote returns silence on ack_only — a routine
+  // block is met with a null note, not the retired "On plan — logged." receipt.
   assert.match(ccSource, /data\.note_tier === 'ack_only'/);
-  assert.match(ccSource, /return \{ note: coachVoiceTemplates\.templatedAckLine\([^)]*\), effort_note: null, reroute: null, voice: null, ack_only: true \}/,
-    'ack_only yields a brief templated acknowledgement (not a null note), still flagged for the caller');
+  assert.match(ccSource, /return \{ note: null, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
+    'ack_only yields deliberate silence (note null), still flagged for the caller');
   // The block stays MINIMAL: still flagged ack_only, so handleSetLogged suppresses both
-  // "Next time:" boxes and the separate effort line — only the concise ack note renders.
+  // "Next time:" boxes and the separate effort line.
   assert.match(ccSource, /!reaction\.ack_only && rec && rec\.recommendation/,
     'the primary Next box must be gated on ack_only');
   assert.match(ccSource, /!exReaction\.ack_only && exRec && exRec\.recommendation/,

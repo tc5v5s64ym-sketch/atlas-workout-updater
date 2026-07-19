@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: first implementation slice — retire the routine receipt (recovery audit published, docs/SOUL_RECOVERY_AUDIT.md). Gates passed: install. Streak: 0/5.`
+`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: ten golden transcripts + define the Golden Session scenario (routine receipt retired → deliberate silence; recovery audit published). Gates passed: install. Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 

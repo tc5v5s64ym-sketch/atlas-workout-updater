@@ -1025,16 +1025,19 @@ import * as sessionQuestion from './sessionQuestion.js';
   // their own short line so the engine's read is never lost to an LLM outage.
   async function getInWorkoutNote(facts) {
     const data = await getLlmCoachingMessage(facts).catch(() => null);
-    // Routine/on-plan blocks still get ONE concise coaching reaction — ack_only means a
-    // BRIEF acknowledgement, not silence: every logged lift is coached. The line is the
-    // deterministic templatedAckLine (the server already skipped Gemini for a routine
-    // block, so this survives an LLM outage). The block stays MINIMAL — `ack_only:true`
-    // keeps the caller suppressing the "Next time:" box and the separate effort line —
-    // the acknowledgement replaces the old silent `note: null`. Gated on an actual
-    // server classification; a coach/network outage (data null) falls through to the
+    // Soul Recovery (Issue #1073): a routine, on-plan block is met with DELIBERATE
+    // SILENCE, not a receipt. The owner-ratified persona keeps the logbook and "stays
+    // quiet when a set is routine", so the retired "On plan — logged." acknowledgement is
+    // replaced by `note: null` — the readback card above is the whole reaction. The
+    // reply-vs-silence choice is made from session state upstream: a routine block tiers
+    // to ack_only (silence here); a signal-carrying block is bumped off ack_only
+    // server-side and gets a brief, fact-grounded, model-authored reply below. The
+    // deterministic templates are now OUTAGE-ONLY (the coachOpener fallback further down),
+    // never the routine voice. `ack_only:true` still suppresses the "Next time:" box and
+    // the separate effort line; a coach/network outage (data null) falls through to the
     // deterministic opener below unchanged.
     if (data && data.note_tier === 'ack_only') {
-      return { note: coachVoiceTemplates.templatedAckLine(facts.exerciseName), effort_note: null, reroute: null, voice: null, ack_only: true };
+      return { note: null, effort_note: null, reroute: null, voice: null, ack_only: true };
     }
     const llm = data && typeof data.message === 'string' ? data.message : null;
     const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
@@ -1415,10 +1418,10 @@ import * as sessionQuestion from './sessionQuestion.js';
       substitution: suggestMatch ? undefined : primarySub
     });
     const note = reaction.note;
-    // Every block yields a coaching note — a routine (ack_only) block returns a BRIEF
-    // deterministic acknowledgement (templatedAckLine), not silence — so the concise
-    // reaction is typed under the readback card. `if (note)` still guards the rare path
-    // where a note is genuinely absent (e.g. no LLM key AND no deterministic opener).
+    // Soul Recovery (Issue #1073): a routine (ack_only) block returns a null note —
+    // DELIBERATE SILENCE — so nothing is typed under the readback card and the logged
+    // set stands on its own. A signal-carrying block returns its brief model/engine line.
+    // `if (note)` guards both the routine-silence case and the genuinely-absent one.
     if (note) {
       await typeOut(body, note);
       chatTurns.push({ role: 'atlas', text: note });
@@ -1446,7 +1449,7 @@ import * as sessionQuestion from './sessionQuestion.js';
       bubble.appendChild(eff);
     }
 
-    // A routine (ack_only) block stays minimal — the brief ack note is the whole
+    // A routine (ack_only) block stays minimal — deliberate silence is the whole
     // reaction; suppress the "Next time:" box (and the effort line above) too.
     if (!reaction.ack_only && rec && rec.recommendation) {
       bubble.appendChild(buildNextPrescription(rec));
