@@ -84,6 +84,7 @@ Examples:
 - `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md`
 - `docs/proposals/`
 - `docs/reference/ATLAS_RECOVERY_CAMPAIGN_SPEC.md` — verbatim owner input for the Atlas Recovery Campaign. **Reference input only**; the executable truth is the campaign embedded in the execution plan.
+- `docs/SOUL_RECOVERY_AUDIT.md` — the Phase 1 recovery audit: every live workout voice path mapped to its facts/model/persona/override/output. Evidence for Issue #1073; read-only.
 
 ## Retired compatibility pointers
 
