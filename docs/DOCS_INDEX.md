@@ -5,7 +5,7 @@ This index tells agents which documents have authority and prevents old plans fr
 ## Read first
 
 1. [`CLAUDE.md`](../CLAUDE.md) — canonical agent operating brief: safety, roles, branches, review, merge, and execution rules.
-2. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — **the sole active execution queue and work-selection authority** through V1 stabilization.
+2. [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — **the sole active execution queue and work-selection authority** through V1 stabilization. It currently carries the **Atlas Recovery Campaign (Issue #1073)** as the active controlling owner insertion; that campaign lives inside the plan, never beside it.
 3. [`docs/DECISION_KERNEL.md`](./DECISION_KERNEL.md) — durable principles for routine decisions.
 4. [`BACKLOG.md`](../BACKLOG.md) — open/deferred intake ledger and supporting finding detail; not a competing queue while the V1 plan has eligible work.
 5. The relevant spec, invariant, test, or evidence document for the active card.
@@ -24,7 +24,7 @@ These govern direction and constraints. They do not independently select the nex
 
 ## Active execution and workflow
 
-- [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — milestones M0–M6, executable cards F01–F12, five-session proving run, stabilization, and the parallel One-Brain evidence lane.
+- [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./ATLAS_V1_EXECUTION_PLAN.md) — milestones M0–M6, executable cards F01–F12, five-session proving run, stabilization, the parallel One-Brain evidence lane, and the embedded **Atlas Recovery Campaign (Phases 1–7, Issue #1073)** — the active controlling insertion that freezes M2/F10E until its Phase 1 owner gate passes.
 - [`docs/AGENT_WORKFLOW.md`](./AGENT_WORKFLOW.md) — Current-State Verification Gate, branch hygiene, PR loop, and compact-prompt rules.
 - [`docs/AUTOMATION_PROTOCOL.md`](./AUTOMATION_PROTOCOL.md) — deterministic hard gates and standing merge authority.
 - [`docs/ATLAS_OPERATIONS_CONTRACT.md`](./ATLAS_OPERATIONS_CONTRACT.md) — the agent-first status surface (`npm run atlas:status` and the public `GET /.well-known/atlas-status.json`). A status contract, not a work-selection plan.
@@ -37,7 +37,7 @@ These govern direction and constraints. They do not independently select the nex
 
 ## Evidence and operational ledgers
 
-- [`docs/TEST_QUEUE.md`](./TEST_QUEUE.md) — owner/live evidence cards. LT-010 is the active Soul closeout evidence card.
+- [`docs/TEST_QUEUE.md`](./TEST_QUEUE.md) — owner/live evidence cards. LT-010 recorded the original Soul closeout (M1, 2026-07-16); the active Soul work is now **Phase 1 — Soul Recovery (Issue #1073)** of the Atlas Recovery Campaign embedded in the execution plan, gated by an owner Soul gate workout.
 - [`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`](./ONE_BRAIN_PROMOTION_CRITERIA.md) — reusable evidence standard for Brain promotion; promotion is always explicit and owner-reserved.
 - [`docs/AGENT_LIVE_TESTING.md`](./AGENT_LIVE_TESTING.md) — agent-run live-test tiers and production safeguards.
 - [`docs/BUG_TRIAGE_LEDGER.md`](./BUG_TRIAGE_LEDGER.md) — Bug_Reports open/done record.
@@ -83,6 +83,7 @@ Examples:
 - `docs/COACH_VOICE_ARCHITECTURE_REVIEW_2026-07-09.md`
 - `docs/COACH_INTERACTION_TRUST_INVESTIGATION.md`
 - `docs/proposals/`
+- `docs/reference/ATLAS_RECOVERY_CAMPAIGN_SPEC.md` — verbatim owner input for the Atlas Recovery Campaign. **Reference input only**; the executable truth is the campaign embedded in the execution plan.
 
 ## Retired compatibility pointers
 

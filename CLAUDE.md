@@ -6,7 +6,7 @@ The sole active execution campaign is:
 
 - [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md)
 
-`AGENTS.md` and `CODEX.md` are compatibility pointers only. No other roadmap, old plan, audit, proposal, issue, backlog section, or chat prompt may reorder the campaign.
+`AGENTS.md` and `CODEX.md` are compatibility pointers only. No roadmap, old plan, audit, proposal, backlog section, chat prompt, or standalone issue reorders the campaign on its own. An **owner instruction governs only once it is recorded in the canonical execution plan** — owner instructions must land in `docs/ATLAS_V1_EXECUTION_PLAN.md`, never live only in an issue. The Atlas Recovery Campaign (Issue #1073) is the current owner insertion, recorded inside that plan; the plan remains the sole work-selection authority.
 
 ## What Atlas is
 
@@ -137,6 +137,19 @@ Claude merges when:
 - no owner-reserved authorization remains outstanding.
 
 Prefer GitHub auto-merge when available; otherwise merge the exact head SHA directly.
+
+**Merge policy.** Every PR merges automatically under standing authority once all GitHub checks are green — the owner never clicks approve on any PR, including a governance PR. Owner-reserved items are gates (live-test workouts, dictated rulings, production setting changes), never merge approvals. The runtime preview → approve → write loop is unchanged and remains the data safety net.
+
+## Standing command — Atlas Recovery Campaign
+
+When the owner says **"execute Atlas Recovery Plan"** — or any clear variant such as "run the recovery plan" or "continue the recovery" — read the campaign in `docs/ATLAS_V1_EXECUTION_PLAN.md`, find the `CAMPAIGN STATE` block, and execute the next eligible step(s) of the current phase:
+
+- one concern per PR;
+- merge on green checks (no owner merge approval);
+- advance the `CAMPAIGN STATE` tracker in the same PR;
+- continue until an **OWNER GATE**.
+
+At a gate, stop and ask the owner exactly one short question using that gate's script from the campaign specification. Never skip a gate; never proceed past one on inferred approval. The freeze holds: Phases 2–7 do not start until the Phase 1 owner gate passes, and `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0` until Phase 4 explicitly requires it.
 
 ## Owner-reserved stops
 
