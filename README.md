@@ -2,6 +2,8 @@
 
 Atlas is Dale's conversation-first personal strength coach and workout logger. It parses natural gym language, maintains session truth, previews the exact rows that would be saved, and writes to Google Sheets only after explicit approval.
 
+> **Current source of truth (2026-07-19).** Atlas is running the **Atlas Recovery Campaign (Issue #1073)**, embedded in [`docs/ATLAS_V1_EXECUTION_PLAN.md`](docs/ATLAS_V1_EXECUTION_PLAN.md). That plan and [`CLAUDE.md`](CLAUDE.md) govern; some documents linked below predate the campaign and may be stale. Start from [`docs/DOCS_INDEX.md`](docs/DOCS_INDEX.md) for the authority map.
+
 ## Production
 
 - Render deploys from GitHub `main`.
