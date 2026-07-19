@@ -26,7 +26,9 @@ function loadContextHarness() {
   );
   const sliceCtx = appSrc.slice(
     appSrc.indexOf('function closeoutContextItems()'),
-    appSrc.indexOf('function emitCoachPreview(')
+    // End BEFORE the acceptance-boundary helpers (they window-assign, which an
+    // eval harness cannot execute) — this harness needs only the context builder.
+    appSrc.indexOf('function displayedRecommendation()')
   );
   assert.ok(sliceCtx.includes('function closeoutContextItems()'), 'slice must contain closeoutContextItems');
   const { planSlotStatuses, remainingSlotNames, firstUnloggedSlot, variantSatisfies } = require('../src/app/planSlotStatuses.js');

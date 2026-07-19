@@ -157,7 +157,10 @@ async function mockAtlasApis(page, capture = {}) {
               label: 'Push', focus: 'Bench + OHP', recommended: true,
               why_today: ['Pressing patterns are fresh', 'Last bench moved at RIR 2'],
               data_points: [{ label: 'Weekly load', value: '1.1× baseline', context: 'moderate' }],
-              exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 }]
+              // A lift these scenarios never log: the F10D acceptance boundary gates
+              // sets FROM an unaccepted displayed plan, and app-smoke's flows are
+              // freeform logging mechanics — the pick must not overlap them.
+              exercises: [{ exercise: 'Pallof Press', lift_code: 'PAL01', target_weight: 65, target_reps: 15, target_sets: 3, target_rir: 2 }]
             },
             { label: 'Pull', focus: 'Rows + lats', recommended: false }
           ]
@@ -305,10 +308,10 @@ test('Suggested Workout types out the why-today rationale', async ({ page }) => 
   await expect(bubble).toContainText('Weekly load: 1.1× baseline');
 
   // Structured workout block: bold exercise name + RIR-safe compact set lines.
-  await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press');
+  await expect(bubble.locator('.workout-plan-name')).toHaveText('Pallof Press');
   const setLines = bubble.locator('.workout-plan-set');
   await expect(setLines).toHaveCount(3);                 // target_sets: 3
-  await expect(setLines.first()).toHaveText('225lbs 5/2'); // {weight}lbs {reps}/{rir} — RIR never dropped
+  await expect(setLines.first()).toHaveText('65lbs 15/2'); // {weight}lbs {reps}/{rir} — RIR never dropped
 });
 
 test('Suggested Workout uses the Gemini plan voice when available', async ({ page }) => {
@@ -323,7 +326,7 @@ test('Suggested Workout uses the Gemini plan voice when available', async ({ pag
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
   await expect(bubble).toContainText("Today's read: Push");
   await expect(bubble).toContainText('today is blood flow, not max effort'); // Gemini prose
-  await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press'); // exercises still shown
+  await expect(bubble.locator('.workout-plan-name')).toHaveText('Pallof Press'); // exercises still shown
   await expect(bubble).not.toContainText('Why today:');                       // templated bullets replaced
 });
 
@@ -1248,8 +1251,11 @@ test('PR6: logging exercise N names N+1 in the reply and advances the composer p
   // B4: next-up is only shown when a plan is engaged. Simulate the user having
   // tapped Coach's Pick / Start Session by injecting an activePlannedSession so
   // detail.plannedOrder is non-empty and hasEngagedPlan is true.
-  await page.evaluate(() => {
-    startPlannedSession({
+  // F10D acceptance boundary: production sessions are ACCEPTED (there is no
+  // unaccepted start path any more) — engage through the real boundary so the
+  // logged set passes the gate exactly as a real session would.
+  await page.evaluate(async () => {
+    await window.atlasAcceptPlan({
       label: 'Test plan',
       exercises: [
         { exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 },

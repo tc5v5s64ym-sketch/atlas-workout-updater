@@ -5248,7 +5248,15 @@ test('RC2: the closeout branch resolves the date and applies it to #log-date + s
   // records the source — all BEFORE handleLogIt() re-submits.
   assert.match(guard, /closeoutScreenshotDateSource = resolvedCloseout\.source/, 'records the date source for the preview banner');
   assert.match(guard, /document\.getElementById\('log-date'\)\.value = resolvedCloseout\.date/, 'applies the chosen date to the date field');
-  assert.match(guard, /sessionIdInput\.value = generateSessionId\(resolvedCloseout\.date\)/, 'regenerates the session_id from the chosen date');
+  // F10D acceptance-boundary corrective: the screenshot date may set the WORKOUT
+  // DATE but never the session IDENTITY — an accepted session keeps its accept-time
+  // id (its Session_Plans + ledger checkpoint rows live under it; re-deriving from
+  // a cross-day screenshot forked the closeout away from its own ledger). The
+  // date-derived id remains only the no-identity fallback.
+  assert.match(guard, /const acceptedShotSid = \(getActivePlannedSession\(\) && getActivePlannedSession\(\)\.accepted === true/,
+    'prefers the ACCEPTED session identity');
+  assert.match(guard, /sessionIdInput\.value = acceptedShotSid \|\| sessionIdInput\.value\.trim\(\) \|\| generateSessionId\(resolvedCloseout\.date\)/,
+    'accepted id → existing input → date-derived id, in that order');
   const applyIdx = guard.indexOf('document.getElementById(\'log-date\').value = resolvedCloseout.date');
   const submitIdx = guard.indexOf('await handleLogIt();');
   assert.ok(applyIdx > 0 && applyIdx < submitIdx, 'the date is applied BEFORE the re-submit so the rebuilt rows use it');

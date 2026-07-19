@@ -2936,9 +2936,17 @@ function openIntentDrawer(intent) {
       // Start Session begins the guided in-memory session; Modify Plan just
       // drops into the logger on the first lift (via startLift), editable.
       const startBtn = el('button', { type: 'button', class: 'approve intent-start-btn', text: 'Start Session' });
-      startBtn.addEventListener('click', () => {
+      startBtn.addEventListener('click', async () => {
+        // F10D acceptance boundary: the drawer's start is the SAME acceptance as
+        // "Start this plan" — never a second unaccepted start path (the canary's
+        // gap: a plan-like session with no identity, no Session_Plans acceptance,
+        // and no ledger checkpoint). acceptDisplayedPlan mints identity, captures
+        // acceptance, checkpoints the ledger, and starts the workout; the sidecar
+        // is non-blocking so the workout still starts on an honest degrade.
+        if (startBtn.disabled) return;
+        startBtn.disabled = true;
         closeIntentDrawer();
-        startPlannedSession(intent);
+        try { await acceptDisplayedPlan(intent); } finally { startBtn.disabled = false; }
       });
       const modifyBtn = el('button', { type: 'button', class: 'secondary intent-modify-btn', text: 'Modify Plan' });
       modifyBtn.addEventListener('click', () => {
@@ -4464,6 +4472,81 @@ function closeoutContextItems() {
     };
   });
 }
+
+// ── F10D acceptance boundary (owner canary finding, 2026-07-18) ────────────────
+// A DISPLAYED recommendation is never an active plan: without the explicit
+// "Start this plan" acceptance there is no plan identity, no Session_Plans
+// acceptance row, and no Session_Plan_Sets checkpoint — so a set logged from an
+// unaccepted plan surface would silently train outside the ledger (the first
+// production canary's exact shape). The gate holds the COMMIT (client state
+// only — never a write path) and offers the ONE existing acceptance action.
+// Genuinely freeform logging never gates: nothing displayed, or a set unrelated
+// to a merely-displayed pick, passes straight through; an accepted session
+// (including one restored on reload — `accepted` persists in the snapshot)
+// never re-asks.
+let blockedLogText = null;
+let blockedLogSeq = 0;
+function displayedRecommendation() {
+  const intents = (lastIntentData && lastIntentData.intents) || [];
+  const rec = intents.find(i => i.recommended) || null;
+  return rec && Array.isArray(rec.exercises) && rec.exercises.length ? rec : null;
+}
+function unacceptedPlanGateRec(logRows) {
+  const s = getActivePlannedSession();
+  if (s && s.accepted === true) return null;             // formal plan active
+  const rec = displayedRecommendation();
+  if (!rec) return null;                                 // nothing displayed → freeform
+  if (rec.id === 'deload_reset') return null;            // deload keeps its own owner-gated flow
+  // An ENGAGED pick or a materialized-but-unaccepted session is a plan surface
+  // acting plan-like without identity — the boundary applies to any set.
+  const onPlanSurface = getCoachSuggestionEngaged() === true
+    || Boolean(s && Array.isArray(s.exercises) && s.exercises.length);
+  if (onPlanSurface) return rec;
+  // Merely displayed: gate only a set visibly FROM the plan (name or catalog
+  // code, so an alias like "RDL" cannot slip past "Romanian Deadlift").
+  const keys = new Set();
+  for (const ex of rec.exercises) {
+    const nm = String(ex.exercise || ex.name || '').toLowerCase().trim();
+    if (nm) {
+      keys.add(nm);
+      const catCode = String(liftCodeFromCatalog(nm) || '').toLowerCase().trim();
+      if (catCode) keys.add(catCode);
+    }
+    const code = String(ex.lift_code || ex.liftCode || '').toLowerCase().trim();
+    if (code) keys.add(code);
+  }
+  const fromPlan = (logRows || []).some(r => {
+    const nm = String((r && r.exercise) || '').toLowerCase().trim();
+    if (!nm) return false;
+    if (keys.has(nm)) return true;
+    const code = String(liftCodeFromCatalog(nm) || '').toLowerCase().trim();
+    return Boolean(code && keys.has(code));
+  });
+  return fromPlan ? rec : null;
+}
+// Called by the acceptance card AFTER window.atlasAcceptPlan resolves started
+// (or honestly degrades — the sidecar is non-blocking): releases the held
+// message back through the ONE submit path, where the now-accepted session
+// passes the gate and the set logs into the plan normally.
+window.atlasResumeBlockedLog = () => {
+  const text = blockedLogText;
+  blockedLogText = null;
+  if (!text || !workoutTextInput) return;
+  // CLIENT-3 discipline: if ANY newer submit began after this stash was written
+  // (e.g. the athlete's next message was still in flight when they tapped Start —
+  // it passes the now-accepted gate and commits ITSELF), the stash is stale and
+  // replaying it would DUPLICATE a set. The newest message always wins; a
+  // dropped stale stash costs at most a retype, never a duplicate row.
+  if (previewRequestSeq !== blockedLogSeq) return;
+  workoutTextInput.value = text;
+  // The REAL submit gesture (a bare synthetic 'submit' event does not run the
+  // form's submission machinery): click the submit button, exactly as the
+  // athlete would, so the held message re-enters the one submit path.
+  const previewBtn = document.getElementById('preview-btn');
+  const form = document.getElementById('logger-form');
+  if (previewBtn) previewBtn.click();
+  else if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+};
 
 // Hand the just-previewed sets to the conversation layer (coach-conversation.js)
 // so it can type a coaching note with an inline Save. Read-only narration: it
@@ -6191,7 +6274,16 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     });
     closeoutScreenshotDateSource = resolvedCloseout.source;
     document.getElementById('log-date').value = resolvedCloseout.date;
-    sessionIdInput.value = generateSessionId(resolvedCloseout.date);
+    // The screenshot's date may set the WORKOUT DATE — never the session
+    // identity: an accepted session's id (and its Session_Plans + ledger
+    // checkpoint rows) was minted at acceptance, and re-deriving the id from a
+    // cross-day screenshot date forked the closeout away from its own ledger
+    // (seal → no_rows, honestly unverified, unrecoverable by retry). Keep the
+    // accepted id; fall back to the existing input, then to a date-derived id
+    // only when no session identity exists yet.
+    const acceptedShotSid = (getActivePlannedSession() && getActivePlannedSession().accepted === true
+      && getActivePlannedSession().session_id) || '';
+    sessionIdInput.value = acceptedShotSid || sessionIdInput.value.trim() || generateSessionId(resolvedCloseout.date);
     // FB: the screenshot upload IS the completion signal at closeout — drive the
     // EXISTING closeout (handleLogIt → runCloseout → preview → approve → write) directly
     // instead of staging the effort and waiting for a separate "done". On re-entry the
@@ -6433,6 +6525,22 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
   // invariant — the preview/approve/write surface is unreachable from logging a
   // set, by construction (not just hidden by styling).
   if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout) {
+    // F10D acceptance boundary: a set from an unaccepted displayed/engaged plan
+    // holds HERE — nothing commits — until the athlete presses the one existing
+    // "Start this plan" action. The held message resumes through this same
+    // submit path after acceptance; freeform surfaces never reach this block.
+    const gateRec = unacceptedPlanGateRec(logRows);
+    if (gateRec) {
+      blockedLogText = pendingChatText || lastParsedWorkoutText || '';
+      blockedLogSeq = submitSeq;
+      document.dispatchEvent(new CustomEvent('atlas:acceptance-required', { detail: { rec: gateRec } }));
+      // Nothing committed: clear the parsed table AND the reparse memo, so the
+      // resumed (identical) text re-parses instead of collecting an empty table.
+      if (setsTableBody) setsTableBody.innerHTML = '';
+      lastParsedWorkoutText = '';
+      activeExercise = null;
+      return;
+    }
     // Substitution classification: if the parser extracted a skip-notation pair
     // ("Deadlift skipped - platform busy"), classify it here where lastPrescribed
     // and the log rows are already assembled, then pass the engine's verdict into

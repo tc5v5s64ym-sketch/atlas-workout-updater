@@ -100,7 +100,10 @@ async function mockAtlasApis(page, capture) {
         status: 'success',
         data: {
           todays_read: { recommended_label: 'Push', recommended_reason: 'Bench is ready.', patterns: [] },
-          intents: [{ label: 'Push', focus: 'Bench + OHP', recommended: true, why_today: ['Pressing is fresh'], exercises: [{ exercise: 'Bench Press', lift_code: 'BEN01', target_weight: 225, target_reps: 5, target_sets: 3, target_rir: 2 }] }]
+          // Non-overlapping with the logged bench sets: the F10D acceptance
+          // boundary gates sets FROM an unaccepted displayed plan, and these
+          // undo-mechanics scenarios log freeform.
+          intents: [{ label: 'Push', focus: 'Accessories', recommended: true, why_today: ['Pressing is fresh'], exercises: [{ exercise: 'Pallof Press', lift_code: 'PAL01', target_weight: 65, target_reps: 15, target_sets: 3, target_rir: 2 }] }]
         }
       }));
     }
