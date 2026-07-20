@@ -199,12 +199,52 @@ function localBindings(bindRaw) {
   return [raw].filter(Boolean);
 }
 
+// Blank the CONTENTS of string/template literals (delimiters kept, newlines
+// preserved) so a binding name that only appears inside an unrelated string —
+// `logger.debug('helper')` — is not miscounted as a real reference. Template
+// interpolations `${…}` ARE kept, because `${helper}` is a genuine use. A small
+// hand scanner mirroring stripComments; comments are assumed already removed.
+function blankStringLiterals(code) {
+  let out = '';
+  let state = 'code'; // code | sq | dq | tpl | tplExpr
+  let exprDepth = 0;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i], c2 = code[i + 1];
+    const blank = c === '\n' ? '\n' : ' ';
+    switch (state) {
+      case 'code':
+        if (c === "'") { state = 'sq'; out += c; }
+        else if (c === '"') { state = 'dq'; out += c; }
+        else if (c === '`') { state = 'tpl'; out += c; }
+        else out += c;
+        break;
+      case 'sq': case 'dq':
+        if (c === '\\') { out += blank; if (c2 !== undefined) { out += (c2 === '\n' ? '\n' : ' '); i++; } break; }
+        if ((state === 'sq' && c === "'") || (state === 'dq' && c === '"')) { state = 'code'; out += c; }
+        else out += blank;
+        break;
+      case 'tpl':
+        if (c === '\\') { out += blank; if (c2 !== undefined) { out += (c2 === '\n' ? '\n' : ' '); i++; } break; }
+        if (c === '`') { state = 'code'; out += c; }
+        else if (c === '$' && c2 === '{') { state = 'tplExpr'; exprDepth = 1; out += '${'; i++; }
+        else out += blank;
+        break;
+      case 'tplExpr': // interpolation body is real code — keep it, track brace depth
+        out += c;
+        if (c === '{') exprDepth++;
+        else if (c === '}') { exprDepth--; if (exprDepth === 0) state = 'tpl'; }
+        break;
+    }
+  }
+  return out;
+}
+
 // Is `name` referenced at least `min` times in `code`? Uses identifier
 // boundaries that respect `$`/`_` (JS `\b` mistreats `$`). Callers pass the code
-// with the binding's OWN import statement already removed, so `min` is 1 (any
-// remaining occurrence is a genuine downstream reference) — this also stops a
-// module named after its binding (`require('./dead')` for `dead`) from
-// self-referencing through its specifier string.
+// with the binding's OWN import statement already removed and string literals
+// blanked, so `min` is 1 (any surviving occurrence is a genuine downstream
+// reference) — this also stops a module named after its binding
+// (`require('./dead')` for `dead`) from self-referencing through its specifier.
 function isReferenced(name, code, min = 2) {
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re = new RegExp(`(?<![A-Za-z0-9_$])${esc}(?![A-Za-z0-9_$])`, 'g');
@@ -214,27 +254,35 @@ function isReferenced(name, code, min = 2) {
 function classifyEdges(src) {
   const code = stripComments(src);
   const edges = [];
-  const boundSpecs = new Set();
+  const bindingRanges = [];
+  // Pass 1 — binding edges. Usage is checked against the code with THIS import
+  // statement removed AND string literals blanked, so neither the declaration,
+  // its specifier string, nor an unrelated string mention self-counts; any
+  // surviving occurrence (threshold 1) is a real downstream reference.
   for (const p of BINDING_RES) {
     p.re.lastIndex = 0;
     let m;
     while ((m = p.re.exec(code)) !== null) {
       const spec = m[p.spec];
       const bindings = localBindings(m[p.bind]);
-      // Reference-count against the code with THIS import statement removed, so
-      // neither the binding declaration nor its specifier string self-counts;
-      // any surviving occurrence (threshold 1) is a real downstream use.
       const residual = code.slice(0, m.index) + code.slice(m.index + m[0].length);
+      const usageText = blankStringLiterals(residual);
       // No parseable binding → cannot attribute usage → fail safe as used.
-      const used = bindings.length === 0 ? true : bindings.some((b) => isReferenced(b, residual, 1));
-      edges.push({ spec, bindings, used, sideEffect: bindings.length === 0 });
-      boundSpecs.add(spec);
+      const used = bindings.length === 0 ? true : bindings.some((b) => isReferenced(b, usageText, 1));
+      edges.push({ spec, bindings, used, sideEffect: false });
+      bindingRanges.push([m.index, m.index + m[0].length]);
     }
   }
-  // Every other specifier (side-effect require/import, dynamic import(), re-export
-  // `… from 'x'`, `module.exports = require('x')`) has no attributable binding.
-  for (const spec of extractSpecifiers(src)) {
-    if (boundSpecs.has(spec)) continue;
+  // Pass 2 — side-effect / non-binding edges (bare `require('x')`, dynamic
+  // `import('x')`, re-export `… from 'x'`, `module.exports = require('x')`). Detect
+  // them from the code with every BINDING STATEMENT blanked, so a bare load of a
+  // spec that is ALSO bound-but-unused still surfaces as a real side-effect edge
+  // rather than being suppressed by the binding. No attributable binding → used.
+  const chars = code.split('');
+  for (const [s, e] of bindingRanges) {
+    for (let i = s; i < e; i++) if (chars[i] !== '\n') chars[i] = ' ';
+  }
+  for (const spec of extractSpecifiers(chars.join(''))) {
     edges.push({ spec, bindings: [], used: true, sideEffect: true });
   }
   return edges;
@@ -445,5 +493,5 @@ module.exports = {
   analyze, formatReport, productionRoots,
   reachableFiles, reachableSemantic,
   extractSpecifiers, classifyEdges, localBindings, isReferenced,
-  stripComments,
+  stripComments, blankStringLiterals,
 };

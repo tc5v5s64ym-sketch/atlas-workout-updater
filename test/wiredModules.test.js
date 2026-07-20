@@ -21,6 +21,7 @@ const path = require('node:path');
 const {
   analyze, extractSpecifiers,
   classifyEdges, localBindings, isReferenced, reachableSemantic, reachableFiles,
+  blankStringLiterals,
 } = require('../scripts/check-wired-modules');
 
 test('wiring guard: every services/*.js is wired or validly allowlisted', () => {
@@ -160,6 +161,31 @@ test('semantic guard: reachableSemantic excludes a module reached ONLY through a
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('semantic guard: a binding named only inside a string literal is NOT a reference', () => {
+  // Codex #229: a string mention (`logger.debug('helper')`) must not keep an
+  // otherwise-unused import semantically reachable.
+  const stringOnly = classifyEdges("const helper = require('./service');\nlogger.debug('helper');");
+  const edge = stringOnly.find((e) => e.spec === './service');
+  assert.equal(edge.used, false, 'a name that only appears inside a string is not a real use');
+
+  // …but a template interpolation `${helper}` IS a real use and stays reachable.
+  const interpolated = classifyEdges("const helper = require('./service');\nconst msg = `hi ${helper}`;");
+  assert.equal(interpolated.find((e) => e.spec === './service').used, true, '${binding} is a genuine reference');
+});
+
+test('blankStringLiterals blanks string bodies but preserves ${…} interpolations', () => {
+  assert.equal(blankStringLiterals("a('helper')"), "a('      ')");
+  assert.equal(blankStringLiterals('const s = `x ${helper} y`;'), 'const s = `  ${helper}  `;');
+});
+
+test('semantic guard: a shared specifier also loaded for side effects survives (Codex #238)', () => {
+  // A module bound-but-unused AND separately required for side effects must keep
+  // its real side-effect edge — the binding must not suppress it.
+  const edges = classifyEdges("const unused = require('./service');\nrequire('./service');");
+  const usedForSpec = edges.filter((e) => e.spec === './service').some((e) => e.used);
+  assert.equal(usedForSpec, true, 'the bare side-effect require keeps ./service reachable');
 });
 
 test('semantic guard: analyze() reports the inert category (empty today, grow-only)', () => {
