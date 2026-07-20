@@ -25,9 +25,9 @@
 //   • W1 dry-run (test_mode true): sheet_written=false, no_write_confirmed=true,
 //     sheet_write != 'success', and nothing written (log_rows_written null-or-0,
 //     logAppendedRange null).
-//   • W3 live success (test_mode false, sheet_write 'success'): sheet_written=true,
-//     log_rows_written an integer > 0, logAppendedRange a non-empty A1 range,
-//     no_write_confirmed=false.
+//   • W3 live success (test_mode false, sheet_write 'success'): log_rows_written an
+//     integer > 0 and logAppendedRange a non-empty A1 range. The live route does NOT
+//     emit sheet_written/no_write_confirmed on a success (they are nullable here).
 //
 // Public API:
 //   buildCloseoutTransaction(params)     → transaction object (does NOT validate)
@@ -44,9 +44,18 @@ const CONTRACT_FILE = path.join(__dirname, '..', 'config', 'coaching', 'contract
 const SCHEMA_VERSION = 1;
 
 // Strict ISO-8601 calendar date (YYYY-MM-DD) — the session date is a date, not a
-// timestamp; tighter than Date.parse, which also accepts "June 30 2026".
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-function _isIsoDate(v) { return typeof v === 'string' && ISO_DATE.test(v) && !Number.isNaN(Date.parse(v)); }
+// timestamp. The shape must match AND the parsed UTC Y/M/D must equal the written
+// components, so an impossible calendar date (e.g. 2026-02-29, which Date.parse
+// would normalize to March 1) is REJECTED, not silently rolled over.
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
+function _isIsoDate(v) {
+  if (typeof v !== 'string') return false;
+  const m = ISO_DATE.exec(v);
+  if (!m) return false;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
 
 let _contract = null;
 function _loadContract() {
@@ -89,8 +98,8 @@ function buildCloseoutTransaction(params) {
     },
     proof: {
       sheet_write:        pr.sheet_write,
-      sheet_written:      pr.sheet_written,
-      no_write_confirmed: pr.no_write_confirmed,
+      sheet_written:      pr.sheet_written != null ? pr.sheet_written : null,
+      no_write_confirmed: pr.no_write_confirmed != null ? pr.no_write_confirmed : null,
       log_rows_written:   pr.log_rows_written != null ? pr.log_rows_written : null,
       logAppendedRange:   pr.logAppendedRange != null ? pr.logAppendedRange : null,
     },
@@ -149,8 +158,18 @@ function validateCloseoutTransaction(tx) {
     return { valid: false, errors }; // later rules assume the proof shape
   }
   if (!writeStates.has(proof.sheet_write)) errors.push(`proof.sheet_write: must be one of ${contract.sheet_write_states.join(', ')}`);
-  if (typeof proof.sheet_written !== 'boolean') errors.push('proof.sheet_written: must be a boolean');
-  if (typeof proof.no_write_confirmed !== 'boolean') errors.push('proof.no_write_confirmed: must be a boolean');
+
+  // sheet_written / no_write_confirmed follow the explicit-null rule: present, null
+  // or a boolean. W1 requires them on a dry-run (enforced below). A successful live
+  // write response does NOT carry them (POST /api/log-workout, index.js ~3203-3211),
+  // so they are null there — the contract must describe that established shape, not a
+  // stricter one, or a real closeout response would fail validation when Phase 5g
+  // wires the adapter.
+  if (!_has(proof, 'sheet_written')) errors.push('proof.sheet_written: must be present (null or a boolean)');
+  else if (proof.sheet_written !== null && typeof proof.sheet_written !== 'boolean') errors.push('proof.sheet_written: must be a boolean or null');
+
+  if (!_has(proof, 'no_write_confirmed')) errors.push('proof.no_write_confirmed: must be present (null or a boolean)');
+  else if (proof.no_write_confirmed !== null && typeof proof.no_write_confirmed !== 'boolean') errors.push('proof.no_write_confirmed: must be a boolean or null');
 
   if (!_has(proof, 'log_rows_written')) errors.push('proof.log_rows_written: must be present (null or an integer >= 0)');
   else if (proof.log_rows_written !== null && !_isNonNegInt(proof.log_rows_written)) errors.push('proof.log_rows_written: must be an integer >= 0 or null');
@@ -171,11 +190,12 @@ function validateCloseoutTransaction(tx) {
   }
 
   // ── Invariant W3 — live writes require proof fields (docs/INVARIANTS.md §2) ──
+  // W3 mandates exactly these two beyond sheet_write='success'. The live route does
+  // NOT emit sheet_written/no_write_confirmed on a success (index.js ~3203-3211), so
+  // they are not required here — they stay under the general nullable-boolean rule.
   if (tx.test_mode === false && proof.sheet_write === SUCCESS) {
-    if (proof.sheet_written !== true) errors.push('W3: a successful live write requires proof.sheet_written=true');
     if (!(Number.isInteger(proof.log_rows_written) && proof.log_rows_written > 0)) errors.push('W3: a successful live write requires proof.log_rows_written to be an integer > 0');
     if (!_isNonEmptyString(proof.logAppendedRange)) errors.push('W3: a successful live write requires a non-empty proof.logAppendedRange (A1 range)');
-    if (proof.no_write_confirmed !== false) errors.push('W3: a confirmed live write requires proof.no_write_confirmed=false');
   }
 
   return { valid: errors.length === 0, errors };
