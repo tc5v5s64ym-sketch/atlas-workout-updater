@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Wired-or-deleted guard (Remediation PR-13).
+// Wired-or-deleted guard (Remediation PR-13; semantic-reachability upgrade — Phase 2 Work item 1a).
 //
 // Builds the PRODUCTION module graph from the real entrypoints and reports any
 // `services/*.js` that is unreachable from production. A module that no
@@ -12,13 +12,36 @@
 // staged for imminent wiring. Every allowlist entry REQUIRES an expiry date and a
 // roadmap link; an expired entry fails CI so the staging can never be permanent.
 //
-// Reachability is computed over three edge kinds:
+// FILE reachability is computed over three edge kinds:
 //   1. Static `require('./literal')` / `import … from './literal'` / `import('./literal')`.
 //   2. The declarative capability manifest — `config/coaching/manifests/capabilities.json`
 //      lists each capability's `module.file`; the orchestrator resolves those at
 //      runtime, so they are treated as roots (and per PR-13 must never be deleted).
 //   3. Any additional dynamic-load roots declared in DYNAMIC_ROOTS below (kept
 //      explicit so a reader can audit every non-static edge).
+//
+// SEMANTIC reachability (the Phase 2 upgrade) strengthens the question from "is
+// this file required somewhere?" to "is its output actually CONSUMED?". A module
+// can be file-reachable yet dead: `const x = require('./x')` where `x` is never
+// referenced again imports a module whose output changes nothing. Semantic
+// reachability follows an import edge only when its local binding is REFERENCED
+// beyond the import statement — the tractable, deterministic proxy for "its
+// output can flow into a decision". A service that is file-reachable but reached
+// ONLY through such unreferenced (inert) edges is reported as INERT and fails the
+// guard exactly like an unreachable module (unless allowlisted).
+//
+// The rule fails SAFE — it can only make a module look MORE orphaned, never keep
+// a dead one falsely wired:
+//   • side-effect imports (`require('./x')` with no binding), re-exports
+//     (`module.exports = require('./x')`), and dynamic `import('./x')` carry no
+//     attributable binding, so they are always treated as USED;
+//   • a binding passed by value (`let f = classifyIntent`) or invoked indirectly
+//     counts as referenced — so value-passed callbacks are never false-flagged;
+//   • when binding parsing is uncertain, the edge is treated as USED.
+// It therefore does NOT prove the output reaches a user-visible surface — that
+// end-to-end judgement is the human job of the ownership/connectivity inventory
+// (Phase 2 Work item 1b). This guard proves the necessary precondition: something
+// references the module's output.
 //
 // Pure core (`analyze()`), so test/wiredModules.test.js asserts on it directly;
 // the CLI wrapper prints a report and sets the exit code.
@@ -145,6 +168,78 @@ function extractSpecifiers(src) {
   return [...specs];
 }
 
+// ── semantic edge classification (Phase 2 Work item 1a) ─────────────────────
+// Parse each import into { spec, bindings, used, sideEffect }. `used` answers the
+// semantic question: is the imported binding REFERENCED anywhere beyond its own
+// import statement? Bindings we cannot attribute (side-effect requires, dynamic
+// imports, `module.exports = require(...)` re-exports) carry `sideEffect:true` and
+// are always `used:true` — the guard must fail safe (never demote a live edge).
+const BINDING_RES = [
+  // const/let/var X = require('spec')  |  const {a, b: c} = require('spec')
+  { re: /(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z0-9_$]+)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/g, bind: 1, spec: 2 },
+  // import X from 'spec' | import {a, b as c} from 'spec' | import * as X from 'spec'
+  { re: /import\s+(\*\s+as\s+[A-Za-z0-9_$]+|\{[^}]*\}|[A-Za-z0-9_$]+)\s+from\s*['"]([^'"]+)['"]/g, bind: 1, spec: 2 },
+];
+
+// Local names a binding clause introduces. `{ a, b as c, d: e }` → [a, c, e]
+// (the name used in code is the one AFTER `as`/`:`); `* as ns` → [ns]; `x` → [x].
+function localBindings(bindRaw) {
+  const raw = bindRaw.trim();
+  if (raw.startsWith('{')) {
+    return raw.slice(1, -1).split(',').map((part) => {
+      const seg = part.trim();
+      if (!seg) return null;
+      const m = seg.match(/(?:\bas\b|:)\s*([A-Za-z0-9_$]+)\s*$/); // rename → local name after as/:
+      if (m) return m[1];
+      const first = seg.split(/[\s:]/)[0];
+      return first || null;
+    }).filter(Boolean);
+  }
+  if (raw.startsWith('*')) return [raw.replace(/\*\s+as\s+/, '').trim()].filter(Boolean);
+  return [raw].filter(Boolean);
+}
+
+// Is `name` referenced at least `min` times in `code`? Uses identifier
+// boundaries that respect `$`/`_` (JS `\b` mistreats `$`). Callers pass the code
+// with the binding's OWN import statement already removed, so `min` is 1 (any
+// remaining occurrence is a genuine downstream reference) — this also stops a
+// module named after its binding (`require('./dead')` for `dead`) from
+// self-referencing through its specifier string.
+function isReferenced(name, code, min = 2) {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(?<![A-Za-z0-9_$])${esc}(?![A-Za-z0-9_$])`, 'g');
+  return (code.match(re) || []).length >= min;
+}
+
+function classifyEdges(src) {
+  const code = stripComments(src);
+  const edges = [];
+  const boundSpecs = new Set();
+  for (const p of BINDING_RES) {
+    p.re.lastIndex = 0;
+    let m;
+    while ((m = p.re.exec(code)) !== null) {
+      const spec = m[p.spec];
+      const bindings = localBindings(m[p.bind]);
+      // Reference-count against the code with THIS import statement removed, so
+      // neither the binding declaration nor its specifier string self-counts;
+      // any surviving occurrence (threshold 1) is a real downstream use.
+      const residual = code.slice(0, m.index) + code.slice(m.index + m[0].length);
+      // No parseable binding → cannot attribute usage → fail safe as used.
+      const used = bindings.length === 0 ? true : bindings.some((b) => isReferenced(b, residual, 1));
+      edges.push({ spec, bindings, used, sideEffect: bindings.length === 0 });
+      boundSpecs.add(spec);
+    }
+  }
+  // Every other specifier (side-effect require/import, dynamic import(), re-export
+  // `… from 'x'`, `module.exports = require('x')`) has no attributable binding.
+  for (const spec of extractSpecifiers(src)) {
+    if (boundSpecs.has(spec)) continue;
+    edges.push({ spec, bindings: [], used: true, sideEffect: true });
+  }
+  return edges;
+}
+
 // Resolve a relative specifier to a .js file on disk (append .js, or /index.js).
 function resolveSpecifier(spec, fromFile) {
   if (!spec.startsWith('.') && !spec.startsWith('/')) return null; // bare / node_modules — external
@@ -157,6 +252,7 @@ function resolveSpecifier(spec, fromFile) {
 }
 
 // ── graph walk ──────────────────────────────────────────────────────────────
+// FILE reachability: follow every static import edge (unchanged baseline).
 function reachableFiles(roots) {
   const visited = new Set();
   const stack = [...roots];
@@ -168,6 +264,27 @@ function reachableFiles(roots) {
     try { src = fs.readFileSync(file, 'utf8'); } catch { continue; }
     for (const spec of extractSpecifiers(src)) {
       const resolved = resolveSpecifier(spec, file);
+      if (resolved && !visited.has(resolved)) stack.push(resolved);
+    }
+  }
+  return visited;
+}
+
+// SEMANTIC reachability: follow an import edge only when its binding is actually
+// referenced by the consuming module (see classifyEdges). A module reached only
+// through inert (imported-but-unreferenced) edges never enters this set.
+function reachableSemantic(roots) {
+  const visited = new Set();
+  const stack = [...roots];
+  while (stack.length) {
+    const file = stack.pop();
+    if (visited.has(file)) continue;
+    visited.add(file);
+    let src;
+    try { src = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    for (const edge of classifyEdges(src)) {
+      if (!edge.used) continue;
+      const resolved = resolveSpecifier(edge.spec, file);
       if (resolved && !visited.has(resolved)) stack.push(resolved);
     }
   }
@@ -194,11 +311,18 @@ function loadAllowlist() {
 //     They need a `reason`, never expire, and are not "staged" — they are correct.
 function analyze({ today = new Date() } = {}) {
   const roots = productionRoots();
-  const reachable = reachableFiles(roots);
-  const reachableRel = new Set([...reachable].map(rel));
+  const fileReachable = reachableFiles(roots);
+  const semReachable = reachableSemantic(roots);
+  const fileReachableRel = new Set([...fileReachable].map(rel));
+  const semReachableRel = new Set([...semReachable].map(rel));
 
   const services = listFiles(path.join(ROOT, 'services')).map(rel).sort();
-  const orphans = services.filter((f) => !reachableRel.has(f));
+  // Orphans use SEMANTIC reachability now: a service whose output nothing
+  // references is an orphan even if some file `require`s it. `inert` is the
+  // subset that IS file-reachable but only through unreferenced bindings — the
+  // "wired on paper, dead in practice" case the semantic upgrade newly catches.
+  const orphans = services.filter((f) => !semReachableRel.has(f));
+  const inert = orphans.filter((f) => fileReachableRel.has(f));
 
   const allow = loadAllowlist();
   const allowErrors = [];
@@ -241,13 +365,21 @@ function analyze({ today = new Date() } = {}) {
 
   const unwired = orphans.filter((f) => !stagedByFile.has(f) && !testOnlyByFile.has(f));
 
+  // `inert` orphans that are neither allowlisted nor testOnly are already counted
+  // in `unwired`, so `ok` covers them. We surface them separately for a precise,
+  // actionable message (remove the dead import or wire the output).
+  const inertUnwired = inert.filter((f) => !stagedByFile.has(f) && !testOnlyByFile.has(f));
+
   const ok = unwired.length === 0 && expired.length === 0 && staleAllow.length === 0 && allowErrors.length === 0;
   return {
     ok,
     rootCount: roots.length,
-    reachableCount: reachable.size,
+    reachableCount: semReachable.size,
+    fileReachableCount: fileReachable.size,
     serviceCount: services.length,
     orphans,
+    inert,
+    inertUnwired,
     allowlisted: [...stagedByFile.keys()].filter((f) => orphans.includes(f)),
     testOnly: [...testOnlyByFile.keys()].filter((f) => orphans.includes(f)),
     unwired,
@@ -260,11 +392,17 @@ function analyze({ today = new Date() } = {}) {
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function formatReport(r) {
   const lines = [];
-  lines.push(`Wired-or-deleted guard — ${r.serviceCount} services, ${r.reachableCount} files reachable from ${r.rootCount} production roots.`);
+  lines.push(`Wired-or-deleted guard — ${r.serviceCount} services; ${r.reachableCount} files semantically reachable `
+    + `(${r.fileReachableCount} file-reachable) from ${r.rootCount} production roots.`);
   lines.push('');
   if (r.allowErrors.length) {
     lines.push('MALFORMED allowlist entries (each needs file + YYYY-MM-DD expires + roadmap):');
     r.allowErrors.forEach((e) => lines.push(`  ✗ ${e}`));
+    lines.push('');
+  }
+  if (r.inertUnwired && r.inertUnwired.length) {
+    lines.push(`INERT services/*.js — file-reachable but every import edge is unreferenced, so their output is dead (${r.inertUnwired.length}):`);
+    r.inertUnwired.forEach((f) => lines.push(`  ✗ ${f}  — reference the binding (wire the output), delete the dead import, or allowlist it`));
     lines.push('');
   }
   if (r.unwired.length) {
@@ -303,4 +441,9 @@ if (require.main === module) {
   process.exit(r.ok ? 0 : 1);
 }
 
-module.exports = { analyze, formatReport, productionRoots, reachableFiles, extractSpecifiers, stripComments };
+module.exports = {
+  analyze, formatReport, productionRoots,
+  reachableFiles, reachableSemantic,
+  extractSpecifiers, classifyEdges, localBindings, isReferenced,
+  stripComments,
+};

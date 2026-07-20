@@ -15,7 +15,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { analyze, extractSpecifiers } = require('../scripts/check-wired-modules');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const {
+  analyze, extractSpecifiers,
+  classifyEdges, localBindings, isReferenced, reachableSemantic, reachableFiles,
+} = require('../scripts/check-wired-modules');
 
 test('wiring guard: every services/*.js is wired or validly allowlisted', () => {
   const r = analyze();
@@ -79,4 +85,88 @@ test('wiring guard: expiry mechanism fails once a staged entry passes its date',
   const future = analyze({ today: new Date('2099-01-01T00:00:00Z') });
   assert.ok(future.expired.length >= 1, 'a past-dated staged entry must surface as expired');
   assert.equal(future.ok, false, 'expired staged entries must fail the guard');
+});
+
+// ── semantic reachability (Phase 2 Work item 1a) ────────────────────────────
+
+test('semantic guard: a referenced binding is a used edge; an unreferenced one is inert', () => {
+  const used = classifyEdges("const live = require('./live'); live();");
+  assert.deepEqual(used, [{ spec: './live', bindings: ['live'], used: true, sideEffect: false }]);
+
+  const dead = classifyEdges("const dead = require('./dead'); // never called again");
+  assert.equal(dead.length, 1);
+  assert.equal(dead[0].spec, './dead');
+  assert.equal(dead[0].used, false, 'a require whose binding is never referenced is inert');
+});
+
+test('semantic guard: value-passed / indirectly-invoked bindings are USED (no false positive)', () => {
+  // The classifyIntent regression: a binding assigned to another variable and
+  // invoked indirectly is still consumed — it must not be flagged inert.
+  const edges = classifyEdges("const { classifyIntent } = require('./intentRouter');\nlet _classify = classifyIntent;\n_classify();");
+  assert.equal(edges[0].used, true, 'a binding passed by value is referenced → used');
+});
+
+test('semantic guard: side-effect, re-export, and dynamic import edges fail safe as used', () => {
+  const sideEffect = classifyEdges("require('./boot');");
+  assert.deepEqual(sideEffect, [{ spec: './boot', bindings: [], used: true, sideEffect: true }]);
+
+  const reExport = classifyEdges("module.exports = require('./inner');");
+  assert.equal(reExport.find((e) => e.spec === './inner').used, true, 're-export carries no binding → used');
+
+  const dynamic = classifyEdges("async function f(){ const m = await import('./lazy'); return m; }");
+  assert.ok(dynamic.some((e) => e.spec === './lazy' && e.used), 'dynamic import is treated as used');
+});
+
+test('semantic guard: destructure renames resolve to the local name', () => {
+  assert.deepEqual(localBindings('{ a, b as c, d: e }'), ['a', 'c', 'e']);
+  assert.deepEqual(localBindings('* as ns'), ['ns']);
+  assert.deepEqual(localBindings('single'), ['single']);
+  // The renamed local (c), not the source name (b), is what usage looks for.
+  const edges = classifyEdges("const { helper: doThing } = require('./h'); doThing();");
+  assert.equal(edges[0].used, true);
+  const unusedRename = classifyEdges("const { helper: doThing } = require('./h'); helper;");
+  assert.equal(unusedRename[0].used, false, 'referencing the SOURCE name is not referencing the local binding');
+});
+
+test('semantic guard: isReferenced respects $/_ identifier boundaries', () => {
+  assert.equal(isReferenced('$fn', 'const $fn = x; $fn();'), true);
+  assert.equal(isReferenced('fn', 'const fn = x; fnOther();'), false, '`fn` is not a use of `fnOther`');
+});
+
+test('semantic guard: reachableSemantic excludes a module reached ONLY through an inert edge', () => {
+  // Integration proof through the real graph walk: a module that is file-required
+  // but whose binding is never referenced (and everything reachable only past it)
+  // is dropped by semantic reachability, yet still present in file reachability.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wire-sem-'));
+  try {
+    const w = (name, src) => fs.writeFileSync(path.join(dir, name), src);
+    w('root.js', "const live = require('./live'); live();\nconst dead = require('./deadImport'); // binding never used\n");
+    w('live.js', "module.exports = function(){ return require('./viaLive'); };\n");
+    w('viaLive.js', 'module.exports = 1;\n');
+    w('deadImport.js', "module.exports = require('./onlyViaDead');\n");
+    w('onlyViaDead.js', 'module.exports = 2;\n');
+
+    const roots = [path.join(dir, 'root.js')];
+    const rels = (set) => new Set([...set].map((f) => path.basename(f)));
+    const fileR = rels(reachableFiles(roots));
+    const semR = rels(reachableSemantic(roots));
+
+    // File reachability follows the dead require and everything past it.
+    assert.ok(fileR.has('deadImport.js') && fileR.has('onlyViaDead.js'), 'file walk reaches the inert subtree');
+    // Semantic reachability stops at the inert edge.
+    assert.ok(semR.has('live.js') && semR.has('viaLive.js'), 'semantic walk keeps the live subtree');
+    assert.ok(!semR.has('deadImport.js'), 'inert edge is not followed');
+    assert.ok(!semR.has('onlyViaDead.js'), 'nothing reachable only past an inert edge survives');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('semantic guard: analyze() reports the inert category (empty today, grow-only)', () => {
+  const r = analyze();
+  assert.ok(Array.isArray(r.inert), 'analyze exposes an inert list');
+  assert.ok(Array.isArray(r.inertUnwired), 'analyze exposes inertUnwired');
+  // Today every file-reachable service is also semantically reachable, so the
+  // semantic set never shrinks below the file set for a WIRED module.
+  assert.ok(r.reachableCount <= r.fileReachableCount, 'semantic reachability is a subset of file reachability');
 });
