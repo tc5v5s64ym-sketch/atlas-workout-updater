@@ -1408,21 +1408,22 @@ import * as sessionQuestion from './sessionQuestion.js';
     if (suggestMatch) lastSuggestion = null;
 
     // Owner gate ruling (Issue #1073, 2026-07-20): the on-plan coaching line is timed to
-    // the EXERCISE, not to every set. Treat a block as "complete" when its sets are logged
-    // together (a batch of two or more) OR when the exercise is already marked complete in
-    // the live session plan (the finishing set of per-set logging). An intermediate single
-    // set stays silent — getInWorkoutNote renders the grounded line only when complete.
-    const completedNames = (typeof getSessionCompleted === 'function' ? getSessionCompleted() : []) || [];
-    const exerciseIsComplete = (name, sets) =>
-      (Array.isArray(sets) && sets.length >= 2) ||
-      completedNames.some(c => String(c || '').toLowerCase() === String(name || '').toLowerCase());
+    // the EXERCISE, not to every set — coach a block logged as a BATCH (all its sets in one
+    // submission), and stay quiet on an intermediate single set during per-set logging so
+    // the coach isn't chatty. A batch (two or more sets at once) is the reliable "the
+    // exercise is done in this block" signal. NOTE (Codex P1): getSessionCompleted() marks
+    // an exercise on its FIRST logged set (emitSetLogged, before dispatch), so it is eager
+    // and cannot gate this — using it would make every per-set log "complete" and fire the
+    // line repeatedly. Coaching the FINISHING set of a per-set-logged exercise in a guided
+    // plan needs the canonical per-slot set count (planSlotStatuses) and is a follow-up.
+    const exerciseIsComplete = (sets) => Array.isArray(sets) && sets.length >= 2;
 
     const reaction = await getInWorkoutNote({
       liftCode: code,
       exerciseName: primary.exercise,
       todaySets: primary.sets,
       rec,
-      exercise_complete: exerciseIsComplete(primary.exercise, primary.sets),
+      exercise_complete: exerciseIsComplete(primary.sets),
       // The active Coach's Pick intent drives the server's recovery read so a
       // recovery_pump / deload_reset session never gets an add-load nudge (BUG-204817).
       // Sourced via getActiveIntentId so an engaged-but-unmaterialized suggestion
@@ -1493,7 +1494,7 @@ import * as sessionQuestion from './sessionQuestion.js';
         exerciseName: ex.exercise,
         todaySets: ex.sets,
         rec: exRec,
-        exercise_complete: exerciseIsComplete(ex.exercise, ex.sets),
+        exercise_complete: exerciseIsComplete(ex.sets),
         intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
         substitution: undefined

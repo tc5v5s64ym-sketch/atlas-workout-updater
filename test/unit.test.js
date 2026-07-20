@@ -1474,11 +1474,15 @@ test('routine ack: the in-session reaction is tier-gated (kind:block); a complet
     'a completed on-plan block renders the grounded wrap line');
   assert.match(ccSource, /return \{ note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
     'the ack_only render stays minimal and flagged for the caller (wrap is the line or null silence)');
-  // The completion signal is computed and passed for both the primary and additional lifts.
-  assert.match(ccSource, /exercise_complete: exerciseIsComplete\(primary\.exercise, primary\.sets\)/,
+  // The completion signal (batch = two or more sets) is computed and passed for both the
+  // primary and additional lifts. It must NOT depend on the eager getSessionCompleted list.
+  assert.match(ccSource, /exercise_complete: exerciseIsComplete\(primary\.sets\)/,
     'the primary block passes its completion signal');
-  assert.match(ccSource, /exercise_complete: exerciseIsComplete\(ex\.exercise, ex\.sets\)/,
+  assert.match(ccSource, /exercise_complete: exerciseIsComplete\(ex\.sets\)/,
     'each additional lift passes its completion signal');
+  const helper = ccSource.slice(ccSource.indexOf('const exerciseIsComplete ='), ccSource.indexOf('const exerciseIsComplete =') + 120);
+  assert.match(helper, /sets\.length >= 2/, 'completion is a batch signal (two or more sets)');
+  assert.doesNotMatch(helper, /getSessionCompleted/, 'completion must not use the eager completed list (Codex P1)');
   // The block stays MINIMAL: still flagged ack_only, so handleSetLogged suppresses both
   // "Next time:" boxes and the separate effort line.
   assert.match(ccSource, /!reaction\.ack_only && rec && rec\.recommendation/,

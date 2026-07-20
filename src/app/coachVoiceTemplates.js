@@ -199,7 +199,9 @@ const _exports = (function () {
     const inPocket = rec.progression_verdict && rec.progression_verdict.level === 'in_pocket';
     const setsWord = n === 1 ? 'that set' : `${n} sets`;
 
-    if (matchedLast) return 'On plan — you matched your last top set. Clean reps like that bank the next jump.';
+    // matchedLast compares TOP-SET LOAD only (not reps/effort), so word it as the load —
+    // never claim the whole set matched (Codex P2). Grounded and accurate.
+    if (matchedLast) return 'On plan — matched your last top-set load. Clean reps like that bank the next jump.';
     if (onTargetRir) return `On plan — RIR ${targetRir} across ${setsWord}, right where I called it.`;
     if (inPocket) return 'On plan — right in the pocket. Nothing to change, keep stacking them.';
     if (n >= 2) return `On plan — ${setsWord} at target. Steady, repeatable work.`;

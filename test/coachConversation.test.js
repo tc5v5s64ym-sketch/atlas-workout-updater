@@ -467,7 +467,7 @@ test('templatedOnPlanWrapLine: a completed on-plan block gets a brief, grounded,
     todaySets: [{ weight: 200, reps: 10, rir: 1 }, { weight: 200, reps: 10, rir: 1 }],
     rec: { last_working_sets: [{ weight: 200, reps: 10 }] },
   });
-  assert.match(matched, /matched your last top set/i, 'a matched top set is surfaced as context');
+  assert.match(matched, /matched your last top-set load/i, 'a matched top-set LOAD is surfaced as context (never claims the whole set matched)');
   // On-target RIR → the line names the target adherence, grounded but number-light.
   const onTarget = t.templatedOnPlanWrapLine({
     todaySets: [{ weight: 120, reps: 6, rir: 2 }, { weight: 120, reps: 6, rir: 2 }],
