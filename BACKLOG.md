@@ -1,10 +1,10 @@
 # Atlas — Backlog
 
-**Current as of:** 2026-07-20 (Phase 2 paper hygiene, batch A).
+**Current as of:** 2026-07-20 (Phase 2 paper hygiene, batch A + BACKLOG archive reconciliation).
 
 **Reference list of open and deferred work — awareness and deferred discoveries, NOT the work-selection queue.** The sole authority for which work is selected and in what order is [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./docs/ATLAS_V1_EXECUTION_PLAN.md); this file records open/deferred items so they are not lost, but it does not sequence the campaign. One line per item with a link to its issue/PR where one exists.
 
-> ⏳ **Reconciling status before acting:** many ✅-marked items below still carry an open follow-up sub-note (that sub-note is the real open work); several dated investigation sections predate later shipping. Before treating any item as open, verify current status against `docs/BUG_TRIAGE_LEDGER.md`, the execution plan, and `git log`. A further BACKLOG archive pass (moving fully-closed items) is the remaining paper-hygiene editorial work — it needs per-item reconciliation, not a mechanical sweep.
+> ⏳ **Reconciling status before acting:** many ✅-marked items below still carry an open follow-up sub-note (that sub-note is the real open work); several dated investigation sections predate later shipping. Before treating any item as open, verify current status against `docs/BUG_TRIAGE_LEDGER.md`, the execution plan, and `git log`. The **whole-item** archive reconciliation ran 2026-07-20 (`docs/verification/BACKLOG_RECONCILIATION_2026-07-20.md`): every remaining ✅ item still carries an open follow-up, anchors a cross-reference, sits in a live `[ ]`/`[x]` checklist, or belongs to an active lane, so **no whole item was safely movable** (the clean self-contained items already went to the archive in PR-21); the deeper split-the-prose editorial pass stays deferred as owner-visible judgment work.
 
 ### Open P0 / P1 index (reconciled 2026-07-20)
 
