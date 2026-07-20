@@ -2,7 +2,7 @@
 
 > **Status:** CANONICAL EXECUTION AUTHORITY
 > **Owner adopted:** 2026-07-15
-> **Current active milestone:** ATLAS RECOVERY CAMPAIGN — Phase 1 (Soul Recovery, Issue #1073), the controlling owner insertion adopted 2026-07-19; M2/F10E and all unrelated cards are FROZEN until the Phase 1 owner gate passes (see the "Active campaign: Atlas Recovery Campaign" section below).
+> **Current active milestone:** ATLAS RECOVERY CAMPAIGN — Phase 2 (Inventory, contracts, and clean paper). Phase 1 (Soul Recovery, Issue #1073) CLOSED 2026-07-20 — the owner Soul gate PASSED, so the Phases 2–7 freeze is lifted; the recovery campaign remains the active work through Phase 7 (see the "Active campaign: Atlas Recovery Campaign" section below).
 > **Rule:** Atlas has one execution plan. This document selects and sequences work until V1 is declared and the stabilization period ends. An owner instruction governs only once it is recorded here; the Atlas Recovery Campaign lives INSIDE this plan and is not a second roadmap.
 
 ## 1. Purpose
@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: OWNER RE-GATE — a live Soul gate workout. Gate 1 (2026-07-20) returned "not yet": on-plan sets should speak a brief line grounded in the data, not silence. Fixed → a COMPLETED on-plan block now gets a data-grounded acknowledgement (timed to the exercise: batch or finishing set), while intermediate per-set logs stay quiet. Gates passed: install. Streak: 0/5.`
+`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 1 — extend the wiring guard to semantic reachability and publish the ownership/connectivity inventory. Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 
@@ -115,7 +115,7 @@ One scripted two-exercise workout: plan from history → accept → log normally
 - **GOAL:** the workout conversation feels like a knowledgeable, history-aware human coach; the receipt dies.
 - **WORK:** (1) ✅ the required recovery audit — map every live workout voice path from user input to rendered output (plan/acceptance, set and exercise logging, routine reaction, deviation/PR/fatigue/substitution/pain/safety, in-session question and correction, next-exercise handoff, closeout), recording for each the facts assembled, whether the model is called, which persona/prompt is used, any deterministic prose that can override it, available conversation history, and the production output; publish it. **Published 2026-07-19 at [`docs/SOUL_RECOVERY_AUDIT.md`](SOUL_RECOVERY_AUDIT.md).** (2) ✅ The first implementation slice exactly as the issue defines: remove "On plan — logged." from the normal path; a routine block gets either a brief, fact-grounded, model-authored reply or deliberate silence chosen from session state; bounded context; honest outage degradation; templates outage-only. **Landed in PR #1077 — a routine block is now met with deliberate silence; signal-carrying blocks keep their model-authored line; templates are outage-only.** (3) ✅ Deterministic and contract tests; the ten golden conversation transcripts scored on behavior, not wording; define the Golden Session as a reusable scripted scenario. **Landed: the reusable Golden Session fixture (`test/fixtures/goldenSession.js`) and the ten behavior-scored transcripts driven through the real `/api/coach/message` seam (`test/soulGoldenTranscripts.test.js`).** The remaining Phase 1 step is the OWNER GATE below.
 - **OWNER GATE — gate script:** "Ready for a Soul gate workout: two exercises, normal session. Afterward tell me: pass or not yet; the moments that felt like a coach; the moments that broke character (quote the reply, then what a real coach would have said, or whether silence was right)." On "not yet," fix the named misses, rerun the transcripts, and offer another gate. On "pass," mark the gate, then begin Phase 2.
-- **DONE WHEN:** the owner says pass after live sessions.
+- **DONE WHEN:** the owner says pass after live sessions. ✅ **PASSED 2026-07-20** — after gate 1 ("not yet": silence-on-routine was awkward), the fix (a completed on-plan block speaks a brief data-grounded line, timed to the exercise; intermediate per-set logs stay quiet) earned the owner's pass. Follow-up filed: optionally wire the coach model to author the on-plan line (currently deterministic).
 - **CLOSES:** H-02; first bite of H-16.
 
 ### Phase 2 — Inventory, contracts, and clean paper (no behavior changes)

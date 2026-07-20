@@ -17,6 +17,11 @@ Each deferred item should carry one of these tags so future agents know the *ris
 
 > **Implementation model:** no builder model is mandatory. Model suggestions retained in older item records are historical risk/context notes only, never an active model or merge gate.
 
+### Open follow-ups
+
+- `[polish]` **AI-voiced on-plan wrap line** (Issue #1073, Phase 1 follow-up). The completed-on-plan-block acknowledgement (`templatedOnPlanWrapLine` in `src/app/coachVoiceTemplates.js`) is a deterministic, data-grounded line. The owner PASSED the Phase 1 Soul gate (2026-07-20) with it but the AI voice would read warmer — optionally route a completed on-plan block through the coach model for a brief model-authored line, with the deterministic grounded line as the outage fallback; weigh the per-set cost/latency.
+- `[correctness]` **Coach the finishing set of a per-set-logged exercise** (Issue #1073, Phase 1 follow-up). The on-plan wrap line currently fires only on a batch (`todaySets.length >= 2`); a per-set-logged exercise's finishing set stays silent because `getSessionCompleted()` is eager. Gate it on the canonical per-slot set count (`planSlotStatuses` performed vs required) so the finishing set is coached without becoming chatty on intermediate sets.
+
 ---
 
 ## Recent discoveries & in-flight notes (reference — not the work queue)
