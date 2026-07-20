@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 2 (continuing) — next per-contract ratification is InteractionTrace (one turn ID over the telemetry islands), then SafetyDecision → CloseoutTransaction → CoachTurnPacket. Done so far: Work item 1 (1a semantic wiring guard, 1b ownership/connectivity inventory); Work item 2 charter (docs/CANONICAL_CONTRACTS.md) + ExerciseIdentity + AthleteContext + WorkoutSession ratified read-only (services/exerciseIdentity.js, services/athleteContext.js, services/workoutSession.js — staged in wiring-allowlist until Phase 4/5b/5e) — CoachingDecision was already ratified. Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
+`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 2 (continuing) — next per-contract ratification is SafetyDecision (one safety verdict for route + Brain), then CloseoutTransaction → CoachTurnPacket. Done so far: Work item 1 (1a semantic wiring guard, 1b ownership/connectivity inventory); Work item 2 charter (docs/CANONICAL_CONTRACTS.md) + ExerciseIdentity + AthleteContext + WorkoutSession + InteractionTrace ratified read-only (services/exerciseIdentity.js, athleteContext.js, workoutSession.js, interactionTrace.js — staged in wiring-allowlist until Phase 3/4/5b/5e) — CoachingDecision was already ratified. Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 

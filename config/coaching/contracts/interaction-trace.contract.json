@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "InteractionTrace: one turn's end-to-end record — a single turn_id minted at the first trusted boundary and carried through every stage of the turn. Read-only, pure; NOT yet wired. Phase 3 assembles this in shadow for every real turn and produces the nightly divergence report (finding H-14); it unifies today's telemetry islands (Flight_Recorder + services/brainShadow.js + services/intentShadow.js) behind one id.",
+    "spec": "docs/CANONICAL_CONTRACTS.md",
+    "stages_note": "`stages` is the ordered canonical spine from Phase 3 of the execution plan: parser → intent → session_snapshot → engine_decision → knowledge_retrieval → coaching_strategy → model_response → validator_result → rendered_output → write_proof. A turn need not populate every stage (some are legitimately skipped), but each present entry must name a canonical stage exactly once. `ref` is an opaque pointer into the detailed record for that stage (a Flight Recorder seq, a decision id, a write proof id, …) or null."
+  },
+  "schema_version": 1,
+  "required": ["schema_version", "turn_id", "started_at", "stages"],
+  "stages": ["parser", "intent", "session_snapshot", "engine_decision", "knowledge_retrieval", "coaching_strategy", "model_response", "validator_result", "rendered_output", "write_proof"],
+  "stage_statuses": ["ok", "skipped", "error"],
+  "stage_required": ["stage", "status", "ref"],
+  "nullable_fields": ["started_at"],
+  "nullable_stage_fields": ["ref"]
+}
