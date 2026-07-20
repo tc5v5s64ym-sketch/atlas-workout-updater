@@ -4,7 +4,16 @@
 
 **Reference list of open and deferred work — awareness and deferred discoveries, NOT the work-selection queue.** The sole authority for which work is selected and in what order is [`docs/ATLAS_V1_EXECUTION_PLAN.md`](./docs/ATLAS_V1_EXECUTION_PLAN.md); this file records open/deferred items so they are not lost, but it does not sequence the campaign. One line per item with a link to its issue/PR where one exists.
 
-> ⏳ **Reconciling status before acting:** many ✅-marked items below still carry an open follow-up sub-note (that sub-note is the real open work); several dated investigation sections predate later shipping. Before treating any item as open, verify current status against `docs/BUG_TRIAGE_LEDGER.md`, the execution plan, and `git log`. The open-P0/P1 index and a further archive pass are the remaining paper-hygiene work (they need per-item editorial reconciliation, not a mechanical sweep).
+> ⏳ **Reconciling status before acting:** many ✅-marked items below still carry an open follow-up sub-note (that sub-note is the real open work); several dated investigation sections predate later shipping. Before treating any item as open, verify current status against `docs/BUG_TRIAGE_LEDGER.md`, the execution plan, and `git log`. A further BACKLOG archive pass (moving fully-closed items) is the remaining paper-hygiene editorial work — it needs per-item reconciliation, not a mechanical sweep.
+
+### Open P0 / P1 index (reconciled 2026-07-20)
+
+The execution plan is the authoritative open-work queue; this glance-index surfaces the highest-severity OPEN items, reconciled against the 2026-07-07 deep-review audit checkboxes (`[ ]` = open) in the "Deep-review audit — 2026-07-07 — open findings" section below, `docs/BUG_TRIAGE_LEDGER.md`, and the plan.
+
+- **Open P0:** none — all four deep-review P0 data-integrity items (CLIENT-1, PARSE-1/2/3) are fixed (PR-0D–0G).
+- **Open P1:** **INFRA-3** — the secret-scan CI job false-positives on the stub `BEGIN PRIVATE KEY` literals in `test/coach-ask-endpoint.test.js` + `test/recommendation-preview-endpoint.test.js`, so any PR touching those files goes red until the stubs are built at runtime. (Verified open 2026-07-20.)
+- **Open P2 residuals** (not P0/P1, listed for completeness): SESS-4 + SESS-5 (both tracked as canonical card F10 in the plan), PARSE-6, SESS-6, SESS-7.
+- **Historical caution:** the dated pre-campaign investigation sections further down ("P0 coach-trust findings 2026-06-25", "P1 — Coach Signal Visibility Audit") predate the campaign's shipping — treat as historical and verify against the ledger/git before acting.
 
 > 🗂️ **Completed & cancelled items have moved to [`BACKLOG_ARCHIVE.md`](./BACKLOG_ARCHIVE.md)** (2026-06-29, refreshed 2026-07-08 PR-21). This file now tracks only **open / in-progress / deferred** work. Shipped (✅) items remain here when they still carry an open follow-up/deferred sub-note — that sub-note is the actual open work; the surrounding "what shipped" prose is kept alongside it rather than split out, since separating them safely needs editorial judgment a mechanical pass can't do (see the `[housekeeping]` backlog line below).
 
