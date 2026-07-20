@@ -31,6 +31,8 @@ const safetyDecision = require('../services/safetyDecision');
 const safetyRules = require('../config/coaching/rules/safety.rules.json');
 const safetyRuleSchema = require('../config/coaching/schemas/safety-rule.schema.json');
 const { classifyTrafficLight } = require('../services/safetyClassifierModule');
+const closeoutTransaction = require('../services/closeoutTransaction');
+const { buildCloseoutSummary } = require('../services/closeoutSummary');
 
 before(() => manifest._resetForTesting());
 
@@ -271,5 +273,44 @@ describe('integrity — SafetyDecision contract', () => {
     assert.strictEqual(verdict.blocking, true);
     const r = safetyDecision.validateSafetyDecision(verdict);
     assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+});
+
+// ─── CloseoutTransaction — the atomic closeout write; proof invariants W1/W3 ────
+
+describe('integrity — CloseoutTransaction contract', () => {
+  it('a canonical dry-run CloseoutTransaction fixture validates', () => {
+    const r = closeoutTransaction.validateCloseoutTransaction(closeoutTransaction.buildCloseoutTransaction({
+      session_id: 's_int', session_date: '2026-07-20', test_mode: true,
+      log_rows: [{ exercise: 'Squat', weight: 225, reps: 5 }], effort_row: null, seal: { count: 1, already_sealed: 0 },
+      proof: { sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, log_rows_written: null, logAppendedRange: null },
+    }));
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('the real closeoutSummary output threads through fromCloseoutSummary into a valid transaction', () => {
+    const summary = buildCloseoutSummary({
+      session: { session_id: 's_int', session_date: '2026-07-20' },
+      logRowsPreview: [{ exercise: 'Squat', weight: 225, reps: 5 }],
+      effortRowPreview: { duration: 40 },
+      sealPreview: { would_seal: 2, already_sealed: 0 },
+    });
+    const tx = closeoutTransaction.fromCloseoutSummary(summary, {
+      test_mode: true,
+      proof: { sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, log_rows_written: null, logAppendedRange: null },
+    });
+    assert.deepEqual(tx.seal, { count: 2, already_sealed: 0 }, 'rows_to_seal maps to seal');
+    assert.strictEqual(tx.log_rows.length, 1);
+    const r = closeoutTransaction.validateCloseoutTransaction(tx);
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('enforces W1 (dry-run must not report a write) and W3 (live success needs the range)', () => {
+    const dryClaimingWrite = closeoutTransaction.buildCloseoutTransaction({
+      session_id: 's', session_date: null, test_mode: true, proof: { sheet_write: 'success', sheet_written: true, no_write_confirmed: false, log_rows_written: 3, logAppendedRange: 'Log_Cleaned!A2:L4' },
+    });
+    assert.strictEqual(closeoutTransaction.validateCloseoutTransaction(dryClaimingWrite).valid, false, 'W1: a dry-run claiming a write must be rejected');
+    const liveNoRange = closeoutTransaction.buildCloseoutTransaction({
+      session_id: 's', session_date: null, test_mode: false, proof: { sheet_write: 'success', sheet_written: true, no_write_confirmed: false, log_rows_written: 3, logAppendedRange: null },
+    });
+    assert.strictEqual(closeoutTransaction.validateCloseoutTransaction(liveNoRange).valid, false, 'W3: a live success without logAppendedRange must be rejected');
   });
 });
