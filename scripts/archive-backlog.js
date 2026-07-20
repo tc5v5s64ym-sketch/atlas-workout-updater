@@ -16,14 +16,20 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { countLines } = require('./check-paper-weight');
+const { countLines, archiveReadyTags } = require('./check-paper-weight');
 
 const ROOT = path.join(__dirname, '..');
 const BACKLOG = path.join(ROOT, 'BACKLOG.md');
 const ARCHIVE = path.join(ROOT, 'BACKLOG_ARCHIVE.md');
 const CONFIG = path.join(ROOT, 'config', 'paper-weight.json');
 
-const TAG_RE = /\[archive-ready:\s*\d{4}-\d{2}-\d{2}\s*\]/;
+// A bullet is archivable iff it carries at least one VALID archive-ready tag (canonical
+// ": YYYY-MM-DD" with a real calendar date). This is the SAME validity notion the staleness
+// check uses (shared `archiveReadyTags`), so the job and the check can never disagree — a
+// malformed marker is flagged by the check and left in place by the job for the human to fix.
+function lineHasValidArchiveTag(line) {
+  return archiveReadyTags(line).some((t) => t.valid);
+}
 
 // A structural boundary at column 0: a top-level list bullet, a heading, or a horizontal rule.
 // An indented sub-bullet ("  - child") is NOT a boundary — it belongs to its parent item's block.
@@ -44,7 +50,7 @@ function extractArchiveReadyBlocks(backlogText) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (/^[-*] /.test(line) && TAG_RE.test(line)) {
+    if (/^[-*] /.test(line) && lineHasValidArchiveTag(line)) {
       const block = [line];
       let j = i + 1;
       while (j < lines.length && !isBlockBoundary(lines[j])) { block.push(lines[j]); j++; }

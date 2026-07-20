@@ -103,4 +103,15 @@ describe('Drift Guard 6 — auto-archive job (planArchive)', () => {
     assert.equal(p.changed, false);
     assert.equal(p.count, 0);
   });
+
+  it('does NOT move an item whose archive-ready marker is malformed (job + check agree)', () => {
+    // A malformed marker is flagged by the staleness check but must be LEFT for the human to fix,
+    // never moved by the job — otherwise the two would disagree on what a valid marker is.
+    for (const marker of ['[archive-ready]', '[archive-ready : 2026-06-01]', '[archive-ready: someday]']) {
+      const backlog = `# B\n\n- oops ${marker}\n- open\n`;
+      const p = planArchive({ backlogText: backlog, archiveText: '# A\n', config: cfg(countLines(backlog)), todayStr: T });
+      assert.equal(p.changed, false, `malformed marker "${marker}" must not be archived`);
+      assert.equal(p.count, 0);
+    }
+  });
 });
