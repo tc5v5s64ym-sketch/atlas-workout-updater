@@ -18,8 +18,11 @@
 // Behavior labels the coach voice can exhibit for a logged block, derived from the
 // real route response (routes/coachOps.js). Kept deliberately coarse so the score is
 // about behavior, not phrasing.
-//   silence  — a routine, on-plan block: no coaching prose, the LLM is never called
-//              (the client renders deliberate silence; the readback card stands alone).
+//   silence  — a routine, on-plan block: the SERVER produces no prose and never calls
+//              the LLM (the cost-saving routine contract). The VISIBLE line is then the
+//              client's call (Issue #1073 owner gate): a completed on-plan exercise gets
+//              a brief, data-grounded wrap line; an intermediate single set stays silent.
+//              That client-render timing is asserted by transcript T10, not here.
 //   surfaced — a signal-carrying block: a renderable note is produced (model prose or
 //              the deterministic engine line), the block is NOT collapsed to the ack.
 function blockBehavior(body) {
@@ -103,15 +106,15 @@ const GOLDEN_SESSION = {
 
 // ── The ten golden transcripts, scored on behavior. Each drives the real seam. ──
 const GOLDEN_TRANSCRIPTS = [
-  { id: 'T01-routine-accessory-silence', seam: 'coach/message:block', kind: 'block',
+  { id: 'T01-routine-accessory-no-llm', seam: 'coach/message:block', kind: 'block',
     facts: ROUTINE_ACCESSORY, coach: {}, expect: { behavior: 'silence' },
-    story: 'A clean on-target accessory block: the coach stays quiet (the receipt is gone).' },
-  { id: 'T02-routine-warmup-silence', seam: 'coach/message:block', kind: 'block',
+    story: 'A clean on-target accessory block: the server tiers to ack_only and never calls the LLM (the client voices a grounded wrap line on the completed exercise — see T10).' },
+  { id: 'T02-routine-warmup-no-llm', seam: 'coach/message:block', kind: 'block',
     facts: ROUTINE_COMPOUND_WARMUP, coach: {}, expect: { behavior: 'silence' },
-    story: 'A light on-plan opening set: still routine, still silent.' },
-  { id: 'T03-recovery-work-silence', seam: 'coach/message:block', kind: 'block',
+    story: 'A light on-plan block: still routine at the tier gate — ack_only, LLM not called.' },
+  { id: 'T03-recovery-work-no-llm', seam: 'coach/message:block', kind: 'block',
     facts: RECOVERY_WORK, coach: {}, expect: { behavior: 'silence' },
-    story: 'Deliberate recovery/pump work (high RIR): silent, never an add-load nudge.' },
+    story: 'Deliberate recovery/pump work (high RIR): ack_only, LLM not called — never an add-load nudge.' },
   { id: 'T04-redline-surfaced', seam: 'coach/message:block', kind: 'block',
     facts: REDLINE_TOP_SET, coach: {}, expect: { behavior: 'surfaced', trigger: 'form_safety' },
     story: 'A top set to failure: the safety read surfaces even under an on-plan rec.' },
@@ -134,8 +137,8 @@ const GOLDEN_TRANSCRIPTS = [
   { id: 'T09-unconfigured-honest-degrade', seam: 'coach/message:block', kind: 'block',
     facts: REDLINE_TOP_SET, coach: { configured: false }, expect: { degrade: true },
     story: 'With no model configured, the block still surfaces via the deterministic voice — templates outage-only.' },
-  { id: 'T10-client-render-silence-contract', seam: 'client:render', expect: { renderContract: true },
-    story: 'The client renders a routine (ack_only) block as deliberate silence (note null), never the retired receipt.' },
+  { id: 'T10-client-render-timing-contract', seam: 'client:render', expect: { renderContract: true },
+    story: 'The client voices a routine (ack_only) block by completion timing: a COMPLETED on-plan exercise gets the grounded wrap line, an intermediate single set stays silent, and neither is ever the retired receipt.' },
 ];
 
 module.exports = { GOLDEN_SESSION, GOLDEN_TRANSCRIPTS, blockBehavior, isHonestDegrade };

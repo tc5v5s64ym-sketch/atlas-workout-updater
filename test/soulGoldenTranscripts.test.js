@@ -154,15 +154,19 @@ for (const t of GOLDEN_TRANSCRIPTS.filter(t => t.seam !== 'client:render')) {
   });
 }
 
-// T10 — the client render contract that ties the server's ack_only to VISIBLE silence.
-test('golden transcript T10-client-render-silence-contract: ack_only renders as deliberate silence (note null), not the receipt', () => {
+// T10 — the client render TIMING contract: a completed on-plan block gets the grounded
+// wrap line, an intermediate single set stays silent. Ties the server's ack_only tier to
+// the visible voice the owner asked for at the gate.
+test('golden transcript T10-client-render-timing-contract: a completed on-plan block gets the grounded wrap line; an intermediate set stays silent', () => {
   const cc = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
   const fn = cc.slice(cc.indexOf('async function getInWorkoutNote'), cc.indexOf('async function getLlmCoachingMessage'));
   const branchStart = fn.indexOf("data.note_tier === 'ack_only'");
   assert.ok(branchStart !== -1, 'the ack_only render branch must exist');
-  const branch = fn.slice(branchStart, branchStart + 260);
-  assert.match(branch, /note:\s*null/, 'a routine (ack_only) block renders deliberate silence');
-  assert.doesNotMatch(branch, /templatedAckLine/, 'the routine path no longer renders the retired receipt template');
+  const branch = fn.slice(branchStart, branchStart + 400);
+  assert.match(branch, /facts\.exercise_complete/, 'the render is gated on exercise completion');
+  assert.match(branch, /templatedOnPlanWrapLine\(facts\)/, 'a completed on-plan block renders the grounded wrap line');
+  assert.match(branch, /:\s*null/, 'an intermediate single set stays silent (note null)');
+  assert.doesNotMatch(branch, /templatedAckLine/, 'never the retired receipt template');
 });
 
 // ── The Golden Session — the scripted two-exercise scenario, replayed through the seam ──

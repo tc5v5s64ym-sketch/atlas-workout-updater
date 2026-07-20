@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: OWNER GATE — a live Soul gate workout (two exercises). Build complete: recovery audit published, routine receipt retired → deliberate silence, ten golden transcripts + Golden Session scenario landed. Gates passed: install. Streak: 0/5.`
+`CAMPAIGN STATE: Phase 1 — Soul Recovery. Next step: OWNER RE-GATE — a live Soul gate workout. Gate 1 (2026-07-20) returned "not yet": on-plan sets should speak a brief line grounded in the data, not silence. Fixed → a COMPLETED on-plan block now gets a data-grounded acknowledgement (timed to the exercise: batch or finishing set), while intermediate per-set logs stay quiet. Gates passed: install. Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 
