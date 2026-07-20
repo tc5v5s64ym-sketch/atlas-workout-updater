@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 1b — publish the ownership/connectivity inventory (every route, service, client module, flag, Sheet tab, planning doc; keep/adapt/retire). Work item 1a done: the wiring guard now enforces semantic reachability (referenced-binding, inert-edge detection). Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
+`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 2 — ratify the eight canonical contracts as versioned schemas with docs (WorkoutSession, AthleteContext, ExerciseIdentity, CoachingDecision, CoachTurnPacket, SafetyDecision, CloseoutTransaction, InteractionTrace). Work item 1 done: 1a wiring guard enforces semantic reachability; 1b ownership/connectivity inventory published at docs/ATLAS_OWNERSHIP_CONNECTIVITY_INVENTORY.md (keep/adapt/retire across every route, service, client module, flag, Sheet tab, planning doc). Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 
