@@ -32,7 +32,7 @@ The **BANNED-PATTERN guard** (Drift Guard 2, built later in Phase 2) will add "r
 | **CoachingDecision** | The engine's single decision object (decision_type, payload, caveats, safety, provenance) | **RATIFIED** | `services/coachingDecision.js` + `config/coaching/contracts/decision.contract.json` + `test/contracts-integrity.test.js` (see `docs/COACHING_CONTRACTS_SPEC.md`) | none — already versioned/tested; extend integrity test as peers land | Orchestrator · H-04 |
 | **AthleteContext** | Durable athlete profile: goal, training level, population, equipment, readiness inputs | **PARTIAL** | `StateSnapshot.profile` in `services/stateAssembly.js` (`profile_goal`/`training_level`/`population`; `equipment_profile` not yet persisted) | promote the `profile` read-model to a named, versioned `AthleteContext` schema + validator | Brain modules, planner · H-07 (Phase 5e finishes) |
 | **WorkoutSession** | The one truth of the in-progress session: planned slots, logged sets, current/next, tallies | **PARTIAL (client-only)** | `src/app/activeSession.js`, `src/app/sessionLedger.js`, `planSlotStatuses.js` (client); `StateSnapshot.log_history` (server read) | one versioned session-truth contract both surfaces agree on; session-truth selectors only here | Live route, packet · H-08 (Phase 4) |
-| **ExerciseIdentity** | Immutable identity for an exercise; every name/alias a projection | **PARTIAL (adjacent)** | `config/coaching/schemas/exercise.schema.json` (KB ontology, scaffold); `Exercise_Catalog` reader; name-keyed joins across `services/` | the immutable registry of Phase 5b; other representations become aliases | Identity joins everywhere · H-11 (Phase 5b) |
+| **ExerciseIdentity** | Immutable identity for an exercise; every name/alias a projection | **RATIFIED (read-only, unwired)** | `services/exerciseIdentity.js` + `config/coaching/contracts/exercise-identity.contract.json` + `test/exerciseIdentity.test.js` (integrity in `test/contracts-integrity.test.js`); staged in `config/wiring-allowlist.json` until wired | Phase 5b immutable registry consumes it; other representations become aliases | Identity joins everywhere · H-11 (Phase 5b) |
 | **InteractionTrace** | One turn's end-to-end record: turn ID from first boundary through write proof | **PARTIAL (telemetry)** | `Flight_Recorder` tab + `src/app/flightRecorder.js` + `services/brainShadow.js`/`intentShadow.js` islands | one versioned trace with a single turn ID spanning parser→intent→decision→render→write | Shadow/divergence · H-14 (Phase 3) |
 | **SafetyDecision** | The single safety verdict consumed by route and Brain alike; presentation may differ, decision may not | **GREENFIELD** | rule shape only: `config/coaching/schemas/safety-rule.schema.json`; duplicate classifiers scattered | one versioned `SafetyDecision` contract; retire duplicate classifiers | Route + Brain · H-12 (Phase 5d) |
 | **CloseoutTransaction** | The atomic session-closeout write: sets + effort + plan closeout as one proven transaction | **GREENFIELD** | write path `POST /api/complete-workout` + `POST /api/log-workout` in `index.js`; `services/sessionCloseout.js` (pure, staged) | one versioned closeout contract over the existing trust loop; proof fields unchanged | Write path · H-17 (Phase 5g) |
@@ -60,8 +60,8 @@ These are intentionally *maps*, not designs — each contract's own PR fixes its
 
 Ordered low-risk → high-risk so the load-bearing contracts are ratified only after their inputs are named:
 
-1. **This charter** (convention + ledger; no runtime change).
-2. `ExerciseIdentity` — strong prior art; unblocks Phase 5b.
+1. ✅ **This charter** (convention + ledger; no runtime change).
+2. ✅ `ExerciseIdentity` — ratified read-only (`services/exerciseIdentity.js`); unblocks Phase 5b.
 3. `AthleteContext` — promote `StateSnapshot.profile`.
 4. `WorkoutSession` — shared session-truth shape.
 5. `InteractionTrace` — one turn ID over the telemetry islands.
