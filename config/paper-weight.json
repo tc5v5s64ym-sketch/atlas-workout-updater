@@ -1,0 +1,4 @@
+{
+  "_note": "Drift Guard 6 (PAPER-WEIGHT, scripts/check-paper-weight.js). BACKLOG.md may not exceed backlog_max_lines — a shrink-only ratchet: LOWER it in the same PR that trims/archives the file; RAISING it needs a recorded justification. The staleness sub-rule (shipped items older than 7 days) and the auto-archive job are DEFERRED to the backlog archive editorial pass, because reliably telling a fully-shipped item from a ✅-with-open-follow-up item is the same per-item editorial judgment BACKLOG.md's own header says a mechanical pass cannot safely make.",
+  "backlog_max_lines": 1254
+}
