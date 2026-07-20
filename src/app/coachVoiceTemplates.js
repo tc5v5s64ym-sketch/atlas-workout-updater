@@ -172,8 +172,45 @@ const _exports = (function () {
     return 'On plan — logged.';
   }
 
+  // Owner gate ruling (Issue #1073, 2026-07-20): "even if I'm on plan, let the coach
+  // say that in a way that's grounded in the data … if there's context I wanna hear it."
+  // A COMPLETED on-plan exercise (a batch of sets, or the finishing set) gets ONE brief,
+  // data-grounded acknowledgement — NOT the retired context-free receipt, and NOT silence.
+  // It reflects the engine's actual read: a matched top set, RIR-on-target adherence,
+  // in-pocket progression, or the clean set count. Number-light on purpose (the raw sets
+  // are on the readback card directly above) but grounded in what actually happened, and
+  // it varies with the data so it never reads as a canned stamp. NAME-FREE (the card and
+  // the multi-lift "<exercise>: <note>" prefix carry the name). Intermediate single sets
+  // during per-set logging are handled by the caller with silence — this line is only for
+  // a completed block.
+  function templatedOnPlanWrapLine(facts) {
+    const f = facts && typeof facts === 'object' ? facts : {};
+    const sets = Array.isArray(f.todaySets) ? f.todaySets : [];
+    const n = sets.length;
+    const rec = f.rec && typeof f.rec === 'object' ? f.rec : {};
+    const targetRir = rec.target_rir;
+    const topWeight = (arr) => Math.max(0, ...(Array.isArray(arr) ? arr : []).map(s => Number(s && s.weight) || 0));
+    const rirs = sets.map(s => s && s.rir).filter(v => v != null && Number.isFinite(v));
+    const onTargetRir = targetRir != null && rirs.length > 0 && rirs.every(r => r === targetRir);
+    const lastSets = Array.isArray(rec.last_working_sets) ? rec.last_working_sets : [];
+    const lastTop = lastSets.length ? topWeight(lastSets) : null;
+    const top = topWeight(sets);
+    const matchedLast = lastTop != null && top > 0 && top === lastTop;
+    const inPocket = rec.progression_verdict && rec.progression_verdict.level === 'in_pocket';
+    const setsWord = n === 1 ? 'that set' : `${n} sets`;
+
+    // matchedLast compares TOP-SET LOAD only (not reps/effort), so word it as the load —
+    // never claim the whole set matched (Codex P2). Grounded and accurate.
+    if (matchedLast) return 'On plan — matched your last top-set load. Clean reps like that bank the next jump.';
+    if (onTargetRir) return `On plan — RIR ${targetRir} across ${setsWord}, right where I called it.`;
+    if (inPocket) return 'On plan — right in the pocket. Nothing to change, keep stacking them.';
+    if (n >= 2) return `On plan — ${setsWord} at target. Steady, repeatable work.`;
+    return "On plan — on target. That's the prescription.";
+  }
+
   const exported = {
     liftLabel,
+    templatedOnPlanWrapLine,
     templatedSubstitutionLine,
     formatSubstituteCoachLine,
     templatedNextMoveAdvisoryLine,
@@ -189,6 +226,7 @@ const _exports = (function () {
 
 export const {
   liftLabel,
+  templatedOnPlanWrapLine,
   templatedSubstitutionLine,
   formatSubstituteCoachLine,
   templatedNextMoveAdvisoryLine,

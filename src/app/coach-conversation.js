@@ -1025,19 +1025,22 @@ import * as sessionQuestion from './sessionQuestion.js';
   // their own short line so the engine's read is never lost to an LLM outage.
   async function getInWorkoutNote(facts) {
     const data = await getLlmCoachingMessage(facts).catch(() => null);
-    // Soul Recovery (Issue #1073): a routine, on-plan block is met with DELIBERATE
-    // SILENCE, not a receipt. The owner-ratified persona keeps the logbook and "stays
-    // quiet when a set is routine", so the retired "On plan — logged." acknowledgement is
-    // replaced by `note: null` — the readback card above is the whole reaction. The
-    // reply-vs-silence choice is made from session state upstream: a routine block tiers
-    // to ack_only (silence here); a signal-carrying block is bumped off ack_only
-    // server-side and gets a brief, fact-grounded, model-authored reply below. The
-    // deterministic templates are now OUTAGE-ONLY (the coachOpener fallback further down),
-    // never the routine voice. `ack_only:true` still suppresses the "Next time:" box and
-    // the separate effort line; a coach/network outage (data null) falls through to the
-    // deterministic opener below unchanged.
+    // Soul Recovery (Issue #1073) + owner gate ruling (2026-07-20): a routine on-plan
+    // block's voice is timed to the EXERCISE, not to every set. A COMPLETED on-plan
+    // exercise (a batch of sets, or the finishing set — `facts.exercise_complete`) gets
+    // ONE brief, data-grounded acknowledgement ("even if I'm on plan, let the coach say
+    // that, grounded in the data … if there's context I wanna hear it"). An INTERMEDIATE
+    // single set during per-set logging stays SILENT ("we don't want to be so chatty").
+    // Either way the block stays MINIMAL — `ack_only:true` keeps the "Next time:" box and
+    // the separate effort line suppressed. The retired "On plan — logged." receipt is gone
+    // for good; this grounded wrap reflects the engine's read (matched top set, RIR
+    // adherence, in-pocket, set count). A coach/network outage (data null) falls through to
+    // the deterministic opener below unchanged.
     if (data && data.note_tier === 'ack_only') {
-      return { note: null, effort_note: null, reroute: null, voice: null, ack_only: true };
+      const wrap = facts.exercise_complete
+        ? coachVoiceTemplates.templatedOnPlanWrapLine(facts)
+        : null;
+      return { note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true };
     }
     const llm = data && typeof data.message === 'string' ? data.message : null;
     const effort_note = data && typeof data.effort_note === 'string' && data.effort_note.trim()
@@ -1404,11 +1407,23 @@ import * as sessionQuestion from './sessionQuestion.js';
       && prescribedName.toLowerCase() === lastSuggestion.prescribed.toLowerCase();
     if (suggestMatch) lastSuggestion = null;
 
+    // Owner gate ruling (Issue #1073, 2026-07-20): the on-plan coaching line is timed to
+    // the EXERCISE, not to every set — coach a block logged as a BATCH (all its sets in one
+    // submission), and stay quiet on an intermediate single set during per-set logging so
+    // the coach isn't chatty. A batch (two or more sets at once) is the reliable "the
+    // exercise is done in this block" signal. NOTE (Codex P1): getSessionCompleted() marks
+    // an exercise on its FIRST logged set (emitSetLogged, before dispatch), so it is eager
+    // and cannot gate this — using it would make every per-set log "complete" and fire the
+    // line repeatedly. Coaching the FINISHING set of a per-set-logged exercise in a guided
+    // plan needs the canonical per-slot set count (planSlotStatuses) and is a follow-up.
+    const exerciseIsComplete = (sets) => Array.isArray(sets) && sets.length >= 2;
+
     const reaction = await getInWorkoutNote({
       liftCode: code,
       exerciseName: primary.exercise,
       todaySets: primary.sets,
       rec,
+      exercise_complete: exerciseIsComplete(primary.sets),
       // The active Coach's Pick intent drives the server's recovery read so a
       // recovery_pump / deload_reset session never gets an add-load nudge (BUG-204817).
       // Sourced via getActiveIntentId so an engaged-but-unmaterialized suggestion
@@ -1479,6 +1494,7 @@ import * as sessionQuestion from './sessionQuestion.js';
         exerciseName: ex.exercise,
         todaySets: ex.sets,
         rec: exRec,
+        exercise_complete: exerciseIsComplete(ex.sets),
         intentId: (typeof getActiveIntentId === 'function' ? getActiveIntentId() : (activeSession && activeSession.intentId)) || null,
         planned_queue: [],
         substitution: undefined

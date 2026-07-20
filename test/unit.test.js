@@ -1460,17 +1460,29 @@ test('proposed edit: applyProposedEdit always calls invalidatePreview and never 
     'applyProposedEdit must never touch any write path');
 });
 
-test('routine ack: the in-session reaction is tier-gated (kind:block) and DELIBERATE SILENCE (note null) on ack_only', () => {
+test('routine ack: the in-session reaction is tier-gated (kind:block); a completed on-plan block gets a grounded line, an intermediate set stays silent', () => {
   const ccSource = fs.readFileSync(path.join(repoRoot, 'public', 'coach-conversation.js'), 'utf8');
   // The per-exercise reaction POSTs kind:'block' so the server returns note_tier
   // (routes through the deterministic coachNoteTier gate).
   assert.match(ccSource, /body: JSON\.stringify\(\{ facts, kind: 'block' \}\)/,
     'the in-session reaction must route through the block tier gate');
-  // Soul Recovery (Issue #1073): getInWorkoutNote returns silence on ack_only — a routine
-  // block is met with a null note, not the retired "On plan — logged." receipt.
+  // Owner gate ruling (Issue #1073, 2026-07-20): on ack_only, a COMPLETED on-plan block
+  // (facts.exercise_complete) renders the grounded wrap line; an intermediate single set
+  // stays silent (note null). Never the retired "On plan — logged." receipt.
   assert.match(ccSource, /data\.note_tier === 'ack_only'/);
-  assert.match(ccSource, /return \{ note: null, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
-    'ack_only yields deliberate silence (note null), still flagged for the caller');
+  assert.match(ccSource, /facts\.exercise_complete\s*\n?\s*\?\s*coachVoiceTemplates\.templatedOnPlanWrapLine\(facts\)/,
+    'a completed on-plan block renders the grounded wrap line');
+  assert.match(ccSource, /return \{ note: wrap, effort_note: null, reroute: null, voice: null, ack_only: true \}/,
+    'the ack_only render stays minimal and flagged for the caller (wrap is the line or null silence)');
+  // The completion signal (batch = two or more sets) is computed and passed for both the
+  // primary and additional lifts. It must NOT depend on the eager getSessionCompleted list.
+  assert.match(ccSource, /exercise_complete: exerciseIsComplete\(primary\.sets\)/,
+    'the primary block passes its completion signal');
+  assert.match(ccSource, /exercise_complete: exerciseIsComplete\(ex\.sets\)/,
+    'each additional lift passes its completion signal');
+  const helper = ccSource.slice(ccSource.indexOf('const exerciseIsComplete ='), ccSource.indexOf('const exerciseIsComplete =') + 120);
+  assert.match(helper, /sets\.length >= 2/, 'completion is a batch signal (two or more sets)');
+  assert.doesNotMatch(helper, /getSessionCompleted/, 'completion must not use the eager completed list (Codex P1)');
   // The block stays MINIMAL: still flagged ack_only, so handleSetLogged suppresses both
   // "Next time:" boxes and the separate effort line.
   assert.match(ccSource, /!reaction\.ack_only && rec && rec\.recommendation/,

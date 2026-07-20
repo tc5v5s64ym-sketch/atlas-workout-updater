@@ -420,8 +420,9 @@ test('tier-aware brevity: short trims supplements, never the recovery read', () 
     'the recovery read is safety-class and must NOT be gated on brief');
 });
 
-// --- Soul Recovery (Issue #1073): a routine (ack_only) block is DELIBERATE SILENCE;
-// --- the deterministic acknowledgement template is retained OUTAGE-ONLY ---
+// --- Soul Recovery (Issue #1073) + owner gate ruling: a COMPLETED on-plan (ack_only)
+// --- block gets a brief grounded line; an INTERMEDIATE single set stays silent; the old
+// --- context-free acknowledgement template is retained outage-only ---
 
 test('templatedAckLine: the OUTAGE-ONLY deterministic acknowledgement stays concise and number-free', async () => {
   const t = await import('../src/app/coachVoiceTemplates.js');
@@ -440,19 +441,43 @@ test('templatedAckLine: name-free so the multi-lift caller can attribute it with
   assert.doesNotMatch(line, /bench/i, 'the ack line carries no exercise name');
 });
 
-test('getInWorkoutNote: a routine (ack_only) block returns deliberate silence (note null), keeping the box/effort suppressed', () => {
+test('getInWorkoutNote: a completed on-plan (ack_only) block gets a grounded line; an intermediate single set stays silent', () => {
   const cc = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
   const fn = cc.slice(cc.indexOf('async function getInWorkoutNote'), cc.indexOf('async function getLlmCoachingMessage'));
   const branchStart = fn.indexOf("data.note_tier === 'ack_only'");
   assert.ok(branchStart !== -1, 'the ack_only branch must exist');
-  const branch = fn.slice(branchStart, branchStart + 260);
-  // Soul Recovery (Issue #1073): a routine block is met with silence — note null — and
-  // the retired "On plan — logged." receipt is NOT the routine voice any more.
-  assert.match(branch, /note:\s*null/, 'ack_only must return deliberate silence (note: null)');
-  assert.doesNotMatch(branch, /templatedAckLine/, 'the routine path no longer renders the receipt template');
+  const branch = fn.slice(branchStart, branchStart + 400);
+  // Owner gate ruling (Issue #1073, 2026-07-20): the on-plan voice is timed to the
+  // exercise. A completed block (facts.exercise_complete) gets the grounded wrap line;
+  // an intermediate single set stays silent (note null). The retired "On plan — logged."
+  // receipt is never the routine voice.
+  assert.match(branch, /exercise_complete/, 'the ack_only render is gated on exercise completion');
+  assert.match(branch, /templatedOnPlanWrapLine\(facts\)/, 'a completed on-plan block renders the grounded wrap line');
+  assert.match(branch, /:\s*null/, 'an intermediate single set stays silent (note null)');
+  assert.doesNotMatch(branch, /templatedAckLine/, 'the routine path never renders the retired receipt template');
   // The routine block stays minimal: still flagged ack_only (Next box + effort line suppressed).
   assert.match(branch, /ack_only:\s*true/, 'the block is still tagged ack_only so the Next box + effort line stay suppressed');
   assert.match(branch, /effort_note:\s*null/, 'a routine block carries no separate effort line');
+});
+
+test('templatedOnPlanWrapLine: a completed on-plan block gets a brief, grounded, number-light line that varies with the data', async () => {
+  const t = await import('../src/app/coachVoiceTemplates.js');
+  // Matched last top set → the line names the match.
+  const matched = t.templatedOnPlanWrapLine({
+    todaySets: [{ weight: 200, reps: 10, rir: 1 }, { weight: 200, reps: 10, rir: 1 }],
+    rec: { last_working_sets: [{ weight: 200, reps: 10 }] },
+  });
+  assert.match(matched, /matched your last top-set load/i, 'a matched top-set LOAD is surfaced as context (never claims the whole set matched)');
+  // On-target RIR → the line names the target adherence, grounded but number-light.
+  const onTarget = t.templatedOnPlanWrapLine({
+    todaySets: [{ weight: 120, reps: 6, rir: 2 }, { weight: 120, reps: 6, rir: 2 }],
+    rec: { target_rir: 2 },
+  });
+  assert.match(onTarget, /RIR 2/, 'RIR adherence is grounded in the actual target');
+  assert.notEqual(matched, onTarget, 'the line varies with the data, never a fixed stamp');
+  for (const line of [matched, onTarget]) {
+    assert.ok(line.trim().length > 0 && line.length <= 90, 'the wrap line is brief');
+  }
 });
 
 // --- Composer-first Phase A: the coach speaks first (deterministic opening line) ---
