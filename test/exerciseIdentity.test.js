@@ -104,4 +104,20 @@ describe('validateExerciseIdentity', () => {
     assert.equal(validateExerciseIdentity({ ...valid(), lift_code: '' }).valid, false);
     assert.equal(validateExerciseIdentity({ ...valid(), muscle_group: 42 }).valid, false);
   });
+
+  it('requires each nullable projection to be PRESENT (explicit null), not omitted', () => {
+    // The contract's explicit-null rule: an omitted key is rejected, not treated
+    // as null. Regression guard for the Codex #1087 finding.
+    for (const key of ['lift_code', 'muscle_group', 'movement_pattern']) {
+      const partial = valid();
+      delete partial[key];
+      const r = validateExerciseIdentity(partial);
+      assert.equal(r.valid, false, `omitting ${key} must be rejected`);
+      assert.ok(r.errors.some((e) => e.startsWith(`${key}:`)), `error should name ${key}`);
+    }
+    // …but an explicit null for each is accepted.
+    assert.equal(validateExerciseIdentity({ ...valid(), lift_code: null, muscle_group: null, movement_pattern: null }).valid, true);
+    // an explicit `undefined` value is also rejected (strict null).
+    assert.equal(validateExerciseIdentity({ ...valid(), movement_pattern: undefined }).valid, false);
+  });
 });

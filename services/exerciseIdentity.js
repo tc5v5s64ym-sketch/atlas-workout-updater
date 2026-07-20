@@ -92,12 +92,21 @@ function validateExerciseIdentity(identity) {
 
   if (!_isNonEmptyString(identity.canonical_name)) errors.push('canonical_name: must be a non-empty string');
 
-  // Nullable projections: a non-empty string or null (unset).
-  if (identity.lift_code != null && !_isNonEmptyString(identity.lift_code)) errors.push('lift_code: must be a non-empty string or null');
-  if (identity.muscle_group != null && !_isNonEmptyString(identity.muscle_group)) errors.push('muscle_group: must be a non-empty string or null');
-  if (identity.movement_pattern != null && !patterns.has(identity.movement_pattern)) {
-    errors.push(`movement_pattern: '${identity.movement_pattern}' is not a known movement pattern`);
-  }
+  // Nullable projections follow the contract's explicit-null rule: each must be
+  // PRESENT as an own property whose value is null (unset) or a valid non-empty
+  // value. An omitted key is rejected — it is not silently treated as null — so a
+  // deserialized identity can never quietly drop a field a registry consumer
+  // expects to be present. `!== null` is strict so an explicit `undefined` value
+  // is rejected too.
+  const _has = (k) => Object.prototype.hasOwnProperty.call(identity, k);
+  if (!_has('lift_code')) errors.push('lift_code: must be present (null or a non-empty string)');
+  else if (identity.lift_code !== null && !_isNonEmptyString(identity.lift_code)) errors.push('lift_code: must be a non-empty string or null');
+
+  if (!_has('muscle_group')) errors.push('muscle_group: must be present (null or a non-empty string)');
+  else if (identity.muscle_group !== null && !_isNonEmptyString(identity.muscle_group)) errors.push('muscle_group: must be a non-empty string or null');
+
+  if (!_has('movement_pattern')) errors.push('movement_pattern: must be present (null or a known movement pattern)');
+  else if (identity.movement_pattern !== null && !patterns.has(identity.movement_pattern)) errors.push(`movement_pattern: '${identity.movement_pattern}' is not a known movement pattern`);
 
   // Aliases: an array of unique non-empty strings; the canonical_name is the
   // identity, not one of its own aliases.
