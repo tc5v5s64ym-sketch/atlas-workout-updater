@@ -32,8 +32,30 @@ const CONFIG = path.join(ROOT, 'config', 'paper-weight.json');
 
 const DEFAULT_STALE_AFTER_DAYS = 7;
 
-// Matches the explicit archive-ready tag, e.g. "[archive-ready: 2026-07-20]".
-const ARCHIVE_READY_RE = /\[archive-ready:\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
+// Matches the archive-ready MARKER by name, independent of its ": date" syntax — the whole
+// bracket payload (everything after "archive-ready" up to "]") is captured and then validated,
+// so a mistyped marker (`[archive-ready]`, `[archive-ready : 2026-07-01]`, `[archive-ready: someday]`,
+// `[archive-ready: 2026-7-01]`) is reported MALFORMED rather than silently slipping past staleness.
+// Detecting on the strict ": YYYY-MM-DD" shape here would let any such typo bypass the guard.
+const ARCHIVE_READY_RE = /\[archive-ready\b([^\]]*)\]/gi;
+
+// Classify one marker's payload (the text between "archive-ready" and "]"). The canonical form
+// is exactly ": <token>"; anything else (no colon, space before the colon, empty, extra tokens)
+// is malformed. A canonical payload's token is then validated as a real YYYY-MM-DD calendar date.
+function classifyArchiveReadyPayload(payload) {
+  const canon = /^:\s*(\S+?)\s*$/.exec(payload);
+  const dateStr = canon ? canon[1] : (String(payload).trim() || '(empty)');
+  const ms = canon ? parseIsoDayUtc(canon[1]) : NaN;
+  return { dateStr, ms: Number.isNaN(ms) ? null : ms, valid: !Number.isNaN(ms) };
+}
+
+// Every archive-ready marker on a single line, classified. Shared by the staleness check and the
+// auto-archive job so the two can never disagree on what counts as a valid archival marker.
+function archiveReadyTags(line) {
+  const out = [];
+  for (const m of String(line).matchAll(ARCHIVE_READY_RE)) out.push(classifyArchiveReadyPayload(m[1]));
+  return out;
+}
 
 function countLines(text) { return (String(text).match(/\n/g) || []).length; } // matches `wc -l`
 
@@ -61,11 +83,9 @@ function findArchiveReady(text, today) {
   const out = [];
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
-    for (const m of lines[i].matchAll(ARCHIVE_READY_RE)) {
-      const dateStr = m[1];
-      const t = parseIsoDayUtc(dateStr);
-      const ageDays = Number.isNaN(t) ? NaN : Math.floor((nowDay - t) / 86400000);
-      out.push({ line: i + 1, dateStr, ageDays, malformed: Number.isNaN(t) });
+    for (const tag of archiveReadyTags(lines[i])) {
+      const ageDays = tag.valid ? Math.floor((nowDay - tag.ms) / 86400000) : NaN;
+      out.push({ line: i + 1, dateStr: tag.dateStr, ageDays, malformed: !tag.valid });
     }
   }
   return out;
@@ -139,4 +159,4 @@ if (require.main === module) {
   console.log(`✅ Paper-weight guard OK — BACKLOG.md ${r.lines}/${r.cap} lines (shrink-only; cap ratchets down as the archive job trims it)${staleNote}.`);
 }
 
-module.exports = { analyze, countLines, findArchiveReady, parseIsoDayUtc };
+module.exports = { analyze, countLines, findArchiveReady, parseIsoDayUtc, archiveReadyTags };

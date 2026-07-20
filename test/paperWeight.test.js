@@ -82,6 +82,33 @@ describe('Drift Guard 6 — paper-weight', () => {
     assert.ok(r.errors.some((e) => e.includes('malformed')));
   });
 
+  it('flags a malformed tag whose date is not even YYYY-MM-DD-shaped (no strict-shape bypass)', () => {
+    // A mistyped tag must never slip past the guard just because it fails the strict date shape.
+    for (const bad of ['2026-7-01', 'someday', '', '2026/07/01', '07-20-2026']) {
+      const r = analyze({ config: cfg(100), backlog: `- oops [archive-ready: ${bad}]\n`, today: TODAY });
+      assert.equal(r.valid, false, `expected malformed for "${bad}"`);
+      assert.ok(r.errors.some((e) => e.includes('malformed')), `no malformed error for "${bad}"`);
+    }
+  });
+
+  it('flags a marker even when the colon/date separator itself is mistyped (detect by name)', () => {
+    // The marker is detected by NAME, not by its ": date" syntax, so these all fail closed.
+    const markers = ['[archive-ready]', '[archive-ready : 2026-07-01]', '[archive-ready:]', '[ARCHIVE-READY 2026-07-01]'];
+    for (const marker of markers) {
+      const r = analyze({ config: cfg(100), backlog: `- typo ${marker}\n`, today: TODAY });
+      assert.equal(r.valid, false, `expected malformed for "${marker}"`);
+      assert.ok(r.errors.some((e) => e.includes('malformed')), `no malformed error for "${marker}"`);
+    }
+  });
+
+  it('accepts the canonical marker with or without a space after the colon', () => {
+    for (const marker of ['[archive-ready: 2026-07-18]', '[archive-ready:2026-07-18]']) {
+      const r = analyze({ config: cfg(100), backlog: `- done ${marker}\n`, today: TODAY });
+      assert.equal(r.valid, true, `expected valid for "${marker}": ${r.errors && r.errors.join(' | ')}`);
+      assert.equal(r.stale, 0);
+    }
+  });
+
   it('reports both a cap overflow and a stale tag together', () => {
     const both = `- x [archive-ready: ${daysAgo(30)}]\n` + backlogOf(200);
     const r = analyze({ config: cfg(100), backlog: both, today: TODAY });

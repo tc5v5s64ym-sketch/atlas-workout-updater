@@ -16,14 +16,20 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { countLines } = require('./check-paper-weight');
+const { countLines, archiveReadyTags } = require('./check-paper-weight');
 
 const ROOT = path.join(__dirname, '..');
 const BACKLOG = path.join(ROOT, 'BACKLOG.md');
 const ARCHIVE = path.join(ROOT, 'BACKLOG_ARCHIVE.md');
 const CONFIG = path.join(ROOT, 'config', 'paper-weight.json');
 
-const TAG_RE = /\[archive-ready:\s*\d{4}-\d{2}-\d{2}\s*\]/;
+// A bullet is archivable iff it carries at least one VALID archive-ready tag (canonical
+// ": YYYY-MM-DD" with a real calendar date). This is the SAME validity notion the staleness
+// check uses (shared `archiveReadyTags`), so the job and the check can never disagree — a
+// malformed marker is flagged by the check and left in place by the job for the human to fix.
+function lineHasValidArchiveTag(line) {
+  return archiveReadyTags(line).some((t) => t.valid);
+}
 
 // A structural boundary at column 0: a top-level list bullet, a heading, or a horizontal rule.
 // An indented sub-bullet ("  - child") is NOT a boundary — it belongs to its parent item's block.
@@ -44,7 +50,7 @@ function extractArchiveReadyBlocks(backlogText) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (/^[-*] /.test(line) && TAG_RE.test(line)) {
+    if (/^[-*] /.test(line) && lineHasValidArchiveTag(line)) {
       const block = [line];
       let j = i + 1;
       while (j < lines.length && !isBlockBoundary(lines[j])) { block.push(lines[j]); j++; }
@@ -77,7 +83,13 @@ function planArchive({ backlogText, archiveText, config, todayStr }) {
   const section = `\n\n${header}\n\n${intro}\n\n` + moved.map((m) => m.text).join('\n\n') + '\n';
   const newArchiveText = String(archiveText).replace(/\s*$/, '') + section;
   const newBacklogText = keptText.replace(/\s*$/, '') + '\n';
-  const newCap = countLines(newBacklogText);
+  // Shrink-only: ratchet the cap DOWN to the trimmed size, but NEVER raise it. If BACKLOG.md
+  // was already OVER its committed cap (e.g. an unrelated addition), archiving one item can
+  // leave it still over cap — persisting that larger line count would silently WEAKEN the
+  // guard (drift guards are grow-only, never weakened). Clamp to the existing cap so the
+  // size-cap check keeps failing until enough items are removed.
+  const trimmedLines = countLines(newBacklogText);
+  const newCap = Number.isInteger(cap) && cap > 0 ? Math.min(trimmedLines, cap) : trimmedLines;
   return { changed: true, count: moved.length, moved, newBacklogText, newArchiveText, newCap };
 }
 
@@ -95,7 +107,11 @@ function run(apply) {
     return 0;
   }
 
-  console.log(`archive-backlog: ${plan.count} tagged item(s) to move; BACKLOG ${countLines(backlogText)} → ${plan.newCap} lines (cap ratchets to ${plan.newCap}).`);
+  const trimmed = countLines(plan.newBacklogText);
+  const capNote = plan.newCap < config.backlog_max_lines
+    ? `cap ${config.backlog_max_lines} → ${plan.newCap}`
+    : `cap unchanged at ${config.backlog_max_lines} (still over — remove more)`;
+  console.log(`archive-backlog: ${plan.count} tagged item(s) to move; BACKLOG ${countLines(backlogText)} → ${trimmed} lines; ${capNote}.`);
   for (const m of plan.moved) {
     const first = m.text.split('\n')[0].slice(0, 100);
     console.log(`  • line ${m.line}: ${first}${first.length >= 100 ? '…' : ''}`);
