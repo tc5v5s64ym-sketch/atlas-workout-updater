@@ -78,6 +78,11 @@ jobs:
         # config/wiring-allowlist.json (or an allowlist entry has expired).
         run: npm run -s check:wiring
 
+      - name: Authority consistency guard (Drift Guard 1)
+        # Fails if the one declared active-campaign marker is not consistent across
+        # CLAUDE.md, the execution plan, and the docs index (Part A; H-01).
+        run: npm run -s check:authority
+
       - name: Test
         run: npm test --silent
 
