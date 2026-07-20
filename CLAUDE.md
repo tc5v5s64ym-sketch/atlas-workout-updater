@@ -72,6 +72,7 @@ An optional clean-context review may be used for confidence on higher-risk work.
 Each drift guard is a CI check that fails the build — a rule that lives only in a document is not a guard. The list is defined in `docs/ATLAS_V1_EXECUTION_PLAN.md` ("Drift guards") and grows there; the built ones are published here and are never removed or weakened without an owner instruction recorded in the plan.
 
 - **Guard 1 — Authority consistency** (`scripts/check-authority-consistency.js`, `npm run check:authority`): the one declared active-campaign marker is present and consistent across `CLAUDE.md`, the execution plan, and the docs index, and both `CLAUDE.md` and the docs index name the plan as the sole authority (Part A; H-01). Part B — every open `owner-instruction` issue referenced in the plan — is a documented follow-up (needs the GitHub API).
+- **Guard 2 — Banned patterns** (`scripts/check-banned-patterns.js`, `npm run check:banned`): a grow-only registry of retired findings' forbidden production-path patterns. Today it enforces H-02 — the contentless normal-path receipt (`On plan — logged.`), legal only inside the outage-only `templatedAckLine` (a data-grounded wrap line is not a receipt, per the 2026-07-20 owner ruling). Patterns are added only as their findings retire (packet-owned recomputation → Phase 4, duplicate safety classifiers → Phase 5d, …).
 
 ## Campaign execution loop
 

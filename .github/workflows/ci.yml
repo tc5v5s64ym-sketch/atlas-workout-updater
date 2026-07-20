@@ -83,6 +83,11 @@ jobs:
         # CLAUDE.md, the execution plan, and the docs index (Part A; H-01).
         run: npm run -s check:authority
 
+      - name: Banned-pattern guard (Drift Guard 2)
+        # Fails if a retired banned pattern reappears on a production path — today the
+        # normal-path routine receipt (H-02), legal only in its outage-only home.
+        run: npm run -s check:banned
+
       - name: Test
         run: npm test --silent
 
