@@ -94,6 +94,12 @@ jobs:
         # and expiry-fails-red are enforced by the wiring guard above).
         run: npm run -s check:allowlist
 
+      - name: Paper-weight guard (Drift Guard 6)
+        # Shrink-only: BACKLOG.md may not exceed config/paper-weight.json
+        # backlog_max_lines (the staleness + auto-archive parts pair with the
+        # deferred archive editorial pass).
+        run: npm run -s check:paper-weight
+
       - name: Test
         run: npm test --silent
 
