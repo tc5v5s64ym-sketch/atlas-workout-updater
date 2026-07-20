@@ -50,6 +50,11 @@
       "file": "services/athleteContext.js",
       "expires": "2026-12-31",
       "roadmap": "docs/CANONICAL_CONTRACTS.md — AthleteContext canonical contract ratified read-only (Phase 2 Work item 2); names/versions StateSnapshot.profile. Phase 5e plumbs the fields and closes H-07. Consumed today only by its contract + integrity tests."
+    },
+    {
+      "file": "services/workoutSession.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/CANONICAL_CONTRACTS.md — WorkoutSession canonical contract ratified read-only (Phase 2 Work item 2); names/versions the src/app/activeSession.js session-truth model. Phase 4 makes the live route consume it and enforces the session-priority invariant (H-08/H-18). Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [

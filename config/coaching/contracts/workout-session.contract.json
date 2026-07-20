@@ -1,0 +1,18 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "WorkoutSession: the single truth of the in-progress session — its ordered exercise slots (planned / substituted / inserted), each slot's status and set tally, and the DERIVED cursor (current = first pending). This names and versions the shape that lives today on the client as src/app/activeSession.js ({ exercises: [{ name, liftCode, status, source }] } with a derived cursor); the server sees only StateSnapshot.log_history. Read-only, pure; NOT yet wired. Phase 4 makes the live route consume it and enforces the session-priority invariant (findings H-08, H-18).",
+    "spec": "docs/CANONICAL_CONTRACTS.md",
+    "cursor_note": "The cursor is DERIVED, never stored: currentSlot(session) = the first slot with status 'pending' (mirrors src/app/activeSession.js currentExercise/nextUp so the composer and next-up router can never disagree). This module is the single owner of session-truth selectors (Drift Guard 2: 'session-truth selectors outside WorkoutSession' is banned once wired).",
+    "duplicate_slots_note": "Duplicate slot names are ALLOWED and stay independent (F10) — two 'Bench Press' slots are two distinct slots; there is deliberately no name-uniqueness constraint.",
+    "enum_origin": "slot_statuses and slot_sources mirror src/app/activeSession.js (STATUS + the 'planned'|'substituted'|'inserted' source strings). activeSession is an ESM client module (not node-requireable), so this contract owns the enums and documents the origin.",
+    "adapter_note": "The live client model uses `{ exercises: [{ name, liftCode, ... }] }` (camelCase, no set tallies) while the canonical shape uses `{ slots: [{ name, lift_code, sets_logged, sets_target, ... }] }`. services/workoutSession.js::fromActiveSession() is the single boundary conversion (liftCode→lift_code; sets_logged→0, sets_target→null) Phase 4 uses when the route consumes the client session; it is tested to produce a valid WorkoutSession."
+  },
+  "schema_version": 1,
+  "required": ["schema_version", "session_id", "slots"],
+  "slot_required": ["name", "lift_code", "status", "source", "sets_logged", "sets_target"],
+  "slot_statuses": ["pending", "completed", "skipped"],
+  "slot_sources": ["planned", "substituted", "inserted"],
+  "nullable_fields": ["session_id"],
+  "nullable_slot_fields": ["lift_code", "sets_target"]
+}

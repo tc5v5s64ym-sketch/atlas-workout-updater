@@ -25,6 +25,7 @@ const movementPatterns = require('../config/coaching/movement-patterns/patterns.
 const exerciseSchema = require('../config/coaching/schemas/exercise.schema.json');
 const { validateAthleteContext, buildAthleteContext, CANONICAL_GOALS } = require('../services/athleteContext');
 const { TRAINING_GOALS } = require('../services/trainingKnowledge');
+const workoutSession = require('../services/workoutSession');
 
 before(() => manifest._resetForTesting());
 
@@ -189,5 +190,28 @@ describe('integrity — AthleteContext contract', () => {
     for (const key of ['profile_goal', 'training_level', 'population']) {
       assert.ok(key in c, `AthleteContext must carry StateSnapshot.profile field '${key}'`);
     }
+  });
+});
+
+// ─── WorkoutSession — session-truth spine + derived cursor ───────────────────
+
+describe('integrity — WorkoutSession contract', () => {
+  it('a canonical WorkoutSession fixture validates', () => {
+    const fx = workoutSession.buildWorkoutSession({
+      session_id: 's_2026',
+      slots: [
+        { name: 'Back Squat', lift_code: 'SQ', status: 'completed', sets_logged: 3, sets_target: 3 },
+        { name: 'Bench Press', lift_code: 'BENCH', status: 'pending', sets_logged: 0, sets_target: 3 },
+      ],
+    });
+    const r = workoutSession.validateWorkoutSession(fx);
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('the derived cursor is the first pending slot (single owner of session-truth selectors)', () => {
+    const fx = workoutSession.buildWorkoutSession({
+      slots: [{ name: 'A', status: 'completed' }, { name: 'B', status: 'pending' }, { name: 'C', status: 'pending' }],
+    });
+    assert.strictEqual(workoutSession.currentSlot(fx).name, 'B');
+    assert.strictEqual(workoutSession.remainingSlots(fx).length, 2);
   });
 });
