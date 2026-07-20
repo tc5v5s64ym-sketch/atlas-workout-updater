@@ -909,6 +909,14 @@ import * as sessionQuestion from './sessionQuestion.js';
     try {
       const res = await api('/api/plan/intent-recommendation');
       const data = res.data || {};
+      // Keep the acceptance gate's source aligned with the plan we're about to show:
+      // logging the first set from this pick auto-accepts it (the retired button used
+      // to carry the exact rec), and the gate reads the displayed plan from
+      // lastIntentData — which this coach fetch, unlike loadDashboard, would otherwise
+      // never refresh. See window.atlasSyncDisplayedIntent (app.js).
+      if (typeof window !== 'undefined' && typeof window.atlasSyncDisplayedIntent === 'function') {
+        window.atlasSyncDisplayedIntent(data);
+      }
       const rec = recommendedIntent(data) || {};
       const exercises = rec.exercises || [];
       // Prefer Gemini's voiced "why"; fall back to the templated note on

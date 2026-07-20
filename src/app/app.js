@@ -7734,9 +7734,22 @@ window.setsTableBody = setsTableBody;
 // subset is strictly less than the old "every function is global" surface. Removed
 // when the e2e suite drives them through real UI actions (test-hardening follow-up).
 window.startPlannedSession = startPlannedSession;
-// PR-F: the coach-conversation IIFE calls this from the "Start this plan" plan-card
-// button (the authoritative acceptance boundary).
+// PR-F: the coach-conversation IIFE calls this to accept the displayed plan (the
+// authoritative acceptance boundary). Now that the plan-card "Start this plan" button
+// is retired, acceptance auto-fires at the log gate, which reads the displayed plan
+// from lastIntentData via displayedRecommendation().
 window.atlasAcceptPlan = acceptDisplayedPlan;
+// The Coach's Pick flow (coach-conversation.js) fetches /api/plan/intent-recommendation
+// on its own and does NOT go through loadDashboard. Keep the acceptance gate's source
+// (lastIntentData → displayedRecommendation) aligned with the plan actually shown, so
+// logging-is-acceptance accepts the DISPLAYED pick — never a stale dashboard cache, and
+// never nothing when the dashboard fetch returned null/empty. Same endpoint + shape as
+// loadDashboard's assignment; only refreshes when the response actually carries intents.
+window.atlasSyncDisplayedIntent = (intentData) => {
+  if (intentData && Array.isArray(intentData.intents) && intentData.intents.length) {
+    lastIntentData = intentData;
+  }
+};
 window.firstUnloggedPlannedLift = firstUnloggedPlannedLift;
 window.plannedExerciseOrder = plannedExerciseOrder;
 window.remainingPlannedExercises = remainingPlannedExercises;

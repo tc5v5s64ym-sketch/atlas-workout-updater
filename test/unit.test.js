@@ -5036,7 +5036,7 @@ test('Step 382 (#402B): a displayed suggested workout stops the save-ready place
 
   // A suggested workout routes through setWorkoutPlaceholder, so viewing a suggestion
   // fires the ownership event before the next 4.5s rotation tick.
-  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 3500);
+  const suggestFn = cc.slice(cc.indexOf('async function typeSuggestedWorkout'), cc.indexOf('async function typeSuggestedWorkout') + 4500);
   assert.match(suggestFn, /setWorkoutPlaceholder\(/, 'typeSuggestedWorkout must set a contextual placeholder (which announces ownership)');
 
   // nav.js suppresses the rotation on the ownership event (same flag as a logged set).

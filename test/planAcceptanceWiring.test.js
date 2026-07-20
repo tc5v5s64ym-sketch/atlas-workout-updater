@@ -42,6 +42,19 @@ test('acceptance runs automatically at the app.js log gate via the ONE acceptanc
   assert.match(gateBlock, /atlasResumeBlockedLog/, 'the held set resumes after acceptance');
 });
 
+test('the Coach\'s Pick fetch syncs the displayed plan into the gate\'s source (no stale/absent cache)', () => {
+  // The retired button carried the exact displayed rec; the gate instead reads the
+  // displayed plan from lastIntentData. The coach fetch — which does not go through
+  // loadDashboard — keeps that source aligned with the pick it renders, so logging
+  // accepts the DISPLAYED plan and never skips acceptance on an empty dashboard cache.
+  assert.match(app, /window\.atlasSyncDisplayedIntent = \(intentData\) =>/, 'app.js exposes the displayed-intent sync');
+  assert.match(app, /lastIntentData = intentData;/, 'the sync refreshes lastIntentData (the gate source)');
+  assert.match(cc, /window\.atlasSyncDisplayedIntent\(data\)/, 'the Coach\'s Pick fetch syncs its displayed plan into the gate source');
+  const fetchIdx = cc.indexOf("api('/api/plan/intent-recommendation')");
+  const syncIdx = cc.indexOf('window.atlasSyncDisplayedIntent(data)');
+  assert.ok(fetchIdx !== -1 && syncIdx > fetchIdx, 'the sync follows the coach intent fetch');
+});
+
 test('acceptDisplayedPlan is bridged and delegates to the pure orchestrator', () => {
   assert.match(app, /window\.atlasAcceptPlan = acceptDisplayedPlan;/, 'the adapter is bridged for the coach IIFE');
   assert.match(app, /import \{ runAcceptance \} from '\.\/planAcceptance\.js';/, 'app.js imports the pure orchestrator');

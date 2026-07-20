@@ -18,8 +18,9 @@ function json(body, status = 200) {
 // Minimal mock surface for the Coach's Pick flow + the Session_Plans sidecar. Any
 // POST to /api/session-plans/* is recorded so the test can prove (or disprove) that
 // the acceptance boundary fired.
-async function mockCoachPick(page, capture) {
+async function mockCoachPick(page, capture, opts = {}) {
   capture.sessionPlanPosts = capture.sessionPlanPosts || [];
+  capture.intentCalls = 0;
 
   await page.route('**/health', route => route.fulfill(json({ status: 'ok' })));
 
@@ -38,6 +39,13 @@ async function mockCoachPick(page, capture) {
     }
 
     if (path === '/api/plan/intent-recommendation') {
+      capture.intentCalls++;
+      // Simulate the dashboard's startup fetch returning NO pick (network hiccup /
+      // cold engine) while the later Coach's Pick fetch succeeds: the acceptance gate
+      // must accept the DISPLAYED pick, not the empty dashboard cache.
+      if (opts.emptyFirstIntent && capture.intentCalls === 1) {
+        return route.fulfill(json({ status: 'success', data: { todays_read: {}, intents: [] } }));
+      }
       return route.fulfill(json({
         status: 'success',
         data: {
@@ -61,8 +69,8 @@ async function mockCoachPick(page, capture) {
   });
 }
 
-async function openApp(page, capture) {
-  await mockCoachPick(page, capture);
+async function openApp(page, capture, opts = {}) {
+  await mockCoachPick(page, capture, opts);
   await page.addInitScript(key => { localStorage.setItem('atlas_api_key', key); }, TEST_KEY);
   await page.goto('/app/');
 }
@@ -111,5 +119,32 @@ test('logging a set from the Coach\'s Pick auto-accepts — POSTs /api/session-p
   expect(Array.isArray(accept.body.items)).toBe(true);
   expect(accept.body.items.length).toBeGreaterThan(0);
   expect(accept.body.items[0].plan_item_id).toMatch(/^pi_/);
+  expect(accept.body.items[0].planned_lift_code).toBe('BEN01');
+});
+
+test('auto-accept uses the DISPLAYED pick even when the dashboard intent cache was empty', async ({ page }) => {
+  // Regression (Codex P1 on the button removal): the acceptance gate reads the
+  // displayed plan from lastIntentData. The Coach's Pick fetch does not go through
+  // loadDashboard, so if the dashboard's startup fetch returned no pick, logging must
+  // STILL accept the displayed pick — never skip acceptance (train outside the ledger).
+  const capture = {};
+  await openApp(page, capture, { emptyFirstIntent: true });
+
+  // Let the dashboard's startup intent fetch (the empty one) land first, so the coach
+  // fetch below is deterministically the second call — the one that carries the pick.
+  await expect.poll(() => capture.intentCalls).toBeGreaterThanOrEqual(1);
+
+  await askCoachPick(page);
+  const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
+  await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press');
+  expect(capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept')).toHaveLength(0);
+
+  // Logging the first set accepts the DISPLAYED pick — proving the gate's source was
+  // synced to the coach's fetch, not left on the empty dashboard cache.
+  await page.locator('#workout-text').fill('Bench Press 225 5/2');
+  await page.locator('#preview-btn').click();
+
+  await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
+  const accept = capture.sessionPlanPosts.find(p => p.path === '/api/session-plans/accept');
   expect(accept.body.items[0].planned_lift_code).toBe('BEN01');
 });
