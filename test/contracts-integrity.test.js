@@ -33,6 +33,7 @@ const safetyRuleSchema = require('../config/coaching/schemas/safety-rule.schema.
 const { classifyTrafficLight } = require('../services/safetyClassifierModule');
 const closeoutTransaction = require('../services/closeoutTransaction');
 const { buildCloseoutSummary } = require('../services/closeoutSummary');
+const coachTurnPacket = require('../services/coachTurnPacket');
 
 before(() => manifest._resetForTesting());
 
@@ -312,5 +313,48 @@ describe('integrity — CloseoutTransaction contract', () => {
       session_id: 's', session_date: null, test_mode: false, proof: { sheet_write: 'success', sheet_written: true, no_write_confirmed: false, log_rows_written: 3, logAppendedRange: null },
     });
     assert.strictEqual(closeoutTransaction.validateCloseoutTransaction(liveNoRange).valid, false, 'W3: a live success without logAppendedRange must be rejected');
+  });
+});
+
+// ─── CoachTurnPacket — the capstone; assembled from the other seven (one Brain) ──
+
+describe('integrity — CoachTurnPacket contract', () => {
+  // valid embedded facts, each canonical under its own contract
+  const _athlete = () => buildAthleteContext({ profile_goal: 'strength', training_level: 'intermediate', population: 'general', equipment_profile: { barbell: true } });
+  const _session = () => workoutSession.buildWorkoutSession({ session_id: 's1', slots: [{ name: 'Bench', lift_code: 'BENCH', status: 'pending', sets_target: 3 }] });
+  const _exercise = () => ({ schema_version: 1, exercise_id: 'conventional-deadlift', canonical_name: 'Conventional Deadlift', lift_code: 'DL', muscle_group: 'Posterior Chain', movement_pattern: 'hinge', aliases: ['Deadlift'] });
+  const _decision = () => ({
+    schema_version: 1, intent: { type: 'best_workout', constraints: {}, source: 'button' },
+    decision_type: 'workout', status: 'answered',
+    confidence: { score: 82, tier: 'high', action: 'act', caveats: [] },
+    safety: { level: 'green', flags: [], blocking: false },
+    payload: { session_label: 'Upper', blocks: [{ exercise: 'Bench', lift_code: 'BENCH', sets: 3, reps: 5, target_weight: 185, target_rir: 2 }] },
+    missing_info: [], explanation_inputs: { blocks: [{ target_weight: 185, reps: 5, target_rir: 2 }] },
+    provenance: { modules_run: ['confidence'], skipped: [], state_asOf: null, engine_version: '1' },
+  });
+  const _safety = () => safetyDecision.buildSafetyDecision({ state: 'green', confidence: 'none', signals: [], reason: null });
+
+  it('a full CoachTurnPacket assembled from all seven contracts validates', () => {
+    const packet = coachTurnPacket.buildCoachTurnPacket({
+      turn_id: 't_integrity', athlete: _athlete(), session: _session(), exercises: [_exercise()],
+      decision: _decision(), safety: _safety(),
+      closeout: closeoutTransaction.buildCloseoutTransaction({ session_id: 's1', session_date: '2026-07-20', test_mode: true, proof: { sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true } }),
+    });
+    const r = coachTurnPacket.validateCoachTurnPacket(packet);
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('delegates to each sibling validator: an embedded fact that is not canonical fails the packet (one Brain)', () => {
+    const badDecision = { ..._decision(), decision_type: 'not_a_type' };
+    const packet = coachTurnPacket.buildCoachTurnPacket({ turn_id: 't', decision: badDecision });
+    const r = coachTurnPacket.validateCoachTurnPacket(packet);
+    assert.strictEqual(r.valid, false);
+    assert.ok(r.errors.some((e) => e.startsWith('decision.')), 'the sub-error is surfaced under decision.*');
+  });
+  it('binds the single safety verdict: safety.state must equal decision.safety.level', () => {
+    const packet = coachTurnPacket.buildCoachTurnPacket({
+      turn_id: 't', decision: _decision(),
+      safety: safetyDecision.buildSafetyDecision({ state: 'yellow', blocking: false, confidence: 'low', signals: ['low readiness'], reason: null }),
+    });
+    assert.strictEqual(coachTurnPacket.validateCoachTurnPacket(packet).valid, false, 'a yellow verdict against a green decision must not validate');
   });
 });
