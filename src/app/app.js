@@ -735,51 +735,10 @@ function startLift(exercise, liftCode, targetWeight, targetReps, targetSets) {
   const logTab = document.getElementById('tab-logger');
   if (logTab) logTab.classList.add('active');
 
-  // Show coaching panel with known data immediately
-  const panel = document.getElementById('coach-panel');
-  if (panel) {
-    panel.hidden = false;
-    panel.className = 'coach-panel';
-    panel.innerHTML = '';
-    const buildPanelContent = (lastText, reasoning) => {
-      const nodes = [
-        el('p', { class: 'coach-panel-exercise', text: `Ok, ${exercise} time.` }),
-        lastText ? el('p', { class: 'coach-panel-last', text: `Last session: ${lastText}.` }) : null,
-        el('p', { class: 'coach-panel-target', text: `Today: aim for ${targetWeight} × ${targetReps} for ${targetSets} sets.` }),
-        reasoning ? el('p', { class: 'coach-panel-reason', text: reasoning }) : null
-      ].filter(Boolean);
-      const row = el('div', { class: 'coach-panel-btn-row' });
-      const dismissBtn = el('button', { type: 'button', class: 'secondary small', text: 'Dismiss' });
-      dismissBtn.addEventListener('click', () => { panel.hidden = true; });
-      const backBtn = el('button', { type: 'button', class: 'coach-back-btn', text: '← Back to session' });
-      backBtn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelector('[data-tab="dashboard"]').classList.add('active');
-        document.getElementById('tab-dashboard').classList.add('active');
-        document.getElementById('intent-grid-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-      row.appendChild(backBtn);
-      row.appendChild(dismissBtn);
-      return [...nodes, row];
-    };
-
-    panel.innerHTML = '';
-    panel.appendChild(el('div', {}, buildPanelContent(null, 'Loading last session…')));
-    // Enhance async with last working set
-    if (isConnected()) {
-      fetchReaction(liftCode).then(rec => {
-        if (!rec || !panel || panel.hidden) return;
-        const last = rec.last_working_sets?.[rec.last_working_sets.length - 1];
-        const lastText = last
-          ? (last.rir != null ? `${formatSetLoad(last.weight, last.reps)} @${last.rir}` : formatSetLoad(last.weight, last.reps))
-          : null;
-        panel.innerHTML = '';
-        panel.appendChild(el('div', {}, buildPanelContent(lastText, rec.reasoning || null)));
-      }).catch(() => {});
-    }
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
+  // The coach top-card was retired (composer-chat UI simplification): the Coach
+  // tab is just the composer + conversation thread. startLift now only switches to
+  // the logger and pre-fills the composer; the engine's read reaches the athlete
+  // through the thread, not a stacked top-of-tab panel.
 
   // Pre-fill workout textarea if empty
   const textarea = document.getElementById('workout-text');
@@ -6531,10 +6490,35 @@ document.getElementById('logger-form').addEventListener('submit', async e => {
     // submit path after acceptance; freeform surfaces never reach this block.
     const gateRec = unacceptedPlanGateRec(logRows);
     if (gateRec) {
+      // Composer-chat simplification (owner): the acceptance boundary keeps its
+      // DATA guarantee — a displayed plan is never treated as an active, ledgered
+      // session without acceptance — but drops its UI card. A set logged from an
+      // unaccepted plan surface now SILENTLY accepts that plan through the SAME
+      // acceptDisplayedPlan path the retired "Start this plan" button called
+      // (minting identity + the Session_Plans acceptance + the Session_Plan_Sets
+      // checkpoint), then resumes the held set through the one submit path. No
+      // card, no button — the set still lands INSIDE the ledger, never outside it.
       blockedLogText = pendingChatText || lastParsedWorkoutText || '';
       blockedLogSeq = submitSeq;
-      document.dispatchEvent(new CustomEvent('atlas:acceptance-required', { detail: { rec: gateRec } }));
-      // Nothing committed: clear the parsed table AND the reparse memo, so the
+      acceptDisplayedPlan(gateRec).then(result => {
+        if (result && result.started) {
+          // Accepted: release the held set back through the one submit path, where
+          // the now-accepted session passes the gate and logs normally.
+          if (typeof window.atlasResumeBlockedLog === 'function') window.atlasResumeBlockedLog();
+        } else if (result && result.ignored) {
+          // A concurrent acceptance is already in flight; its resume replays the
+          // newest stash (newest message wins — never a duplicate). Leave it be.
+        } else {
+          // Blocked (e.g. an unresolved exercise): drop the stash and SURFACE it so
+          // the set is never silently swallowed. The athlete can retype and resend.
+          blockedLogText = null;
+          setStatus(loggerStatus, (result && result.message) || "Atlas couldn't start that plan just now — try again.", 'error');
+        }
+      }).catch(() => {
+        blockedLogText = null;
+        setStatus(loggerStatus, "Atlas couldn't start that plan just now — try again.", 'error');
+      });
+      // Nothing committed yet: clear the parsed table AND the reparse memo, so the
       // resumed (identical) text re-parses instead of collecting an empty table.
       if (setsTableBody) setsTableBody.innerHTML = '';
       lastParsedWorkoutText = '';
