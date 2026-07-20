@@ -13,5 +13,5 @@
   "seal_fields": ["count", "already_sealed"],
   "proof_required": ["sheet_write", "sheet_written", "no_write_confirmed", "log_rows_written", "logAppendedRange"],
   "nullable_fields": ["session_date"],
-  "nullable_proof_fields": ["log_rows_written", "logAppendedRange"]
+  "nullable_proof_fields": ["sheet_written", "no_write_confirmed", "log_rows_written", "logAppendedRange"]
 }

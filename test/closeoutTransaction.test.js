@@ -133,6 +133,14 @@ describe('validateCloseoutTransaction — shape', () => {
     // a wrong type is rejected
     assert.equal(validateCloseoutTransaction({ ...dryRun(), proof: { ...dryRun().proof, sheet_written: 'false' } }).valid, false);
   });
+  it('the contract declares every nullable proof field the validator accepts as null (Codex #1094)', () => {
+    const contract = require('../config/coaching/contracts/closeout-transaction.contract.json');
+    // the declared schema metadata must match what the validator treats as nullable,
+    // or a consumer reading the contract would reject the supported live-success shape.
+    for (const f of ['sheet_written', 'no_write_confirmed', 'log_rows_written', 'logAppendedRange']) {
+      assert.ok(contract.nullable_proof_fields.includes(f), `contract.nullable_proof_fields must list '${f}'`);
+    }
+  });
 });
 
 describe('validateCloseoutTransaction — Invariant W1 (dry-run never writes)', () => {
