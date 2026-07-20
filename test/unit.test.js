@@ -4225,14 +4225,17 @@ test('session queue: startLift function exists and switches to logger tab', () =
   const fnStart = appSource.indexOf('function startLift(');
   const fnBlock = appSource.slice(fnStart, fnStart + 3500);
   assert.match(fnBlock, /tab-logger/, 'must switch to logger tab');
-  assert.match(fnBlock, /coach-panel/, 'must show coach panel');
   assert.match(fnBlock, /workout-text/, 'must reference workout textarea');
+  // The coach top-card was retired: startLift no longer renders a #coach-panel.
+  assert.doesNotMatch(fnBlock, /coach-panel/, 'the coach top-card panel must stay retired');
 });
 
-test('session queue: coach-panel element exists in index.html logger section', () => {
+test('session queue: the coach tab is just composer + thread (retired coach-panel top card)', () => {
   const html = fs.readFileSync(path.join(repoRoot, 'public', 'index.html'), 'utf8');
-  const loggerSection = html.slice(html.indexOf('tab-logger'), html.indexOf('tab-logger') + 2000);
-  assert.match(loggerSection, /id="coach-panel"/, 'coach-panel must be in logger section');
+  const loggerSection = html.slice(html.indexOf('id="tab-logger"'), html.indexOf('id="tab-logger"') + 8000);
+  assert.doesNotMatch(loggerSection, /id="coach-panel"/, 'the coach-panel top card must stay retired');
+  assert.match(loggerSection, /id="thread-messages"/, 'the conversation thread remains');
+  assert.match(loggerSection, /class="composer"/, 'the composer remains');
 });
 
 test('today-screen: above-fold elements exist in index.html', () => {
@@ -4290,21 +4293,16 @@ test('mobile tap fix: session-start-btn has active state in CSS', () => {
   assert.match(css, /border-left.*accent/, 'must have accent border for visual affordance');
 });
 
-test('mobile tap fix: coach panel uses conversational wording', () => {
+test('coach top-card retired: startLift no longer renders the coach panel greeting or back-to-session button', () => {
+  // The composer-chat simplification removed the stacked coach top-card. startLift
+  // just switches to the logger and pre-fills the composer — the engine's read now
+  // reaches the athlete through the conversation thread, not a panel.
   const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
   const fnStart = appSource.indexOf('function startLift(');
   const fnBlock = appSource.slice(fnStart, fnStart + 3000);
-  assert.match(fnBlock, /Ok,.*time\./, 'coach panel must open with conversational greeting');
-  assert.match(fnBlock, /aim for/, 'coach panel must use aim for in target text');
-  assert.match(fnBlock, /Last session:/, 'coach panel must label last set as Last session');
-});
-
-test('mobile tap fix: startLift coach panel includes back-to-session button', () => {
-  const appSource = fs.readFileSync(path.join(repoRoot, 'public', 'app.js'), 'utf8');
-  const fnStart = appSource.indexOf('function startLift(');
-  const fnBlock = appSource.slice(fnStart, fnStart + 3000);
-  assert.match(fnBlock, /Back to session/, 'coach panel must have Back to session button');
-  assert.match(fnBlock, /tab-dashboard/, 'back button must switch to dashboard tab');
+  assert.doesNotMatch(fnBlock, /Ok,.*time\./, 'the coach-panel greeting must stay retired');
+  assert.doesNotMatch(fnBlock, /Back to session/, 'the coach-panel back-to-session button must stay retired');
+  assert.doesNotMatch(fnBlock, /coach-panel/, 'startLift must not render a coach-panel');
 });
 
 // ── Start Any Lift From Dashboard ─────────────────────────────────────────────

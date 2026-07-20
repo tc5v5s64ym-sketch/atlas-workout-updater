@@ -1,11 +1,14 @@
 'use strict';
 /*
  * F10D acceptance boundary (owner canary finding, 2026-07-18) — a DISPLAYED
- * recommendation is never an active plan. Logging from an unaccepted plan surface
- * blocks with ONE action ("Start this plan to track planned versus actual.") that
- * invokes the EXISTING acceptance workflow, then the held set continues into the
- * logger; freeform logging never gates; reload-restored accepted plans never
- * re-ask; repeated taps can never mint a second plan version.
+ * recommendation is never treated as an active, ledgered plan without acceptance.
+ * After the composer-chat simplification the boundary keeps that DATA guarantee
+ * but drops its UI card: logging from an unaccepted plan surface now SILENTLY
+ * accepts the plan (the same acceptDisplayedPlan/atlasAcceptPlan path) — minting
+ * identity + the Session_Plans acceptance + the Session_Plan_Sets checkpoint —
+ * then the held set continues into the logger. Freeform logging never gates;
+ * reload-restored accepted plans never re-accept; the set lands INSIDE the ledger,
+ * never silently outside it (the canary's exact shape).
  *
  * Runs in the LEDGER SANDBOX posture (both dry-run flags ON, in-memory tabs) so
  * acceptance capture AND the Session_Plan_Sets checkpoint are proven live-shaped
@@ -96,58 +99,33 @@ async function snap(page, name) {
   await page.screenshot({ path: path.join(artDir, name), fullPage: true });
 }
 
-const BLOCK_TEXT = 'Start this plan to track planned versus actual.';
-
 // =================================================================================
-test('AB-1: a set from an unaccepted displayed plan BLOCKS with the one Start action; repeated taps mint exactly one acceptance; the held set resumes', async ({ page }) => {
+test('AB-1: a set from an unaccepted displayed plan SILENTLY auto-accepts (exactly one plan version) and the held set resumes — no card', async ({ page }) => {
   test.setTimeout(150000);
   const srv = await bootSandbox();
   try {
     await openApp(page, srv.base);
     await say(page, 'What should I do today?');
     await expect(page.locator('#thread-messages .chat-bubble-atlas').first()).toContainText("Today's read", { timeout: 30000 });
-    record('AB-1', 'recommendation displayed in-thread; NOT accepted (no Start pressed)');
-
-    await say(page, 'Overhead Press 110 x 7 @2');
-    const card = page.locator('.acceptance-required:not(.done)');
-    await expect(card).toHaveCount(1, { timeout: 20000 });
-    await expect(card).toContainText(BLOCK_TEXT);
-    await expect(card.locator('.start-this-plan-btn')).toBeVisible();
-    // Blocked means NOTHING moved: no committed set, no acceptance rows, no
-    // ledger checkpoint — the displayed plan was never silently treated as active.
-    expect(await loggedCount(page)).toBe(0);
+    // Nothing is accepted yet — the recommendation is merely displayed.
     let st = await srv.state();
     expect(acceptedEvents(st)).toHaveLength(0);
     expect(st.plan_set_rows).toHaveLength(0);
-    record('AB-1', 'set held at the boundary: zero committed sets, zero plan_accepted rows, zero ledger rows; the one Start action offered');
-    await snap(page, 'AB-1-01-blocked-with-start-action.png');
+    record('AB-1', 'recommendation displayed in-thread; NOT yet accepted');
 
-    // A second blocked attempt re-uses the ONE live card (never stacks) and the
-    // stash keeps the newest message.
+    // Logging a set from the displayed plan auto-accepts it behind the scenes —
+    // no blocking "Start this plan" card ever renders.
     await say(page, 'Overhead Press 110 x 7 @2');
-    await expect(page.locator('.acceptance-required')).toHaveCount(1);
-    expect(await loggedCount(page)).toBe(0);
+    await expect(page.locator('.acceptance-required')).toHaveCount(0);
 
-    // Repeated rapid taps: the DOM guard + _acceptInFlight + server idempotency
-    // must yield exactly ONE accepted plan version. Fired as a synchronous DOM
-    // double-click (a Playwright click would WAIT on the just-disabled button):
-    // the first tap disables the button in its own handler; the second lands on
-    // the disabled control and is swallowed — the guard under test.
-    await page.evaluate(() => {
-      const b = document.querySelector('.acceptance-required:not(.done) .start-this-plan-btn');
-      b.click();
-      b.click();
-    });
-    await expect(page.locator('.acceptance-required.done')).toHaveCount(1, { timeout: 25000 });
-
-    // Acceptance captured through the EXISTING boundary…
+    // Acceptance captured through the ONE existing boundary, exactly one version…
     await expect.poll(async () => acceptedEvents(await srv.state()).length, { timeout: 20000 }).toBeGreaterThan(0);
     st = await srv.state();
     const accepted = acceptedEvents(st);
     const versions = [...new Set(accepted.map(r => String(r[SP_PLAN_VERSION_IDX])))];
     expect(versions).toHaveLength(1);
     // …and the Session_Plan_Sets checkpoint landed at acceptance (sandbox flag on),
-    // exactly once, all rows on the same single plan version.
+    // all rows on the same single plan version, no duplicates.
     await expect.poll(async () => (await srv.state()).plan_set_rows.length, { timeout: 20000 }).toBeGreaterThan(0);
     st = await srv.state();
     const ledgerVersions = [...new Set(st.plan_set_rows.map(r => String(r[LEDGER_PLAN_VERSION_IDX])))];
@@ -155,17 +133,24 @@ test('AB-1: a set from an unaccepted displayed plan BLOCKS with the one Start ac
     const ledgerKeys = st.plan_set_rows.map(r => String(r[0]));
     expect(new Set(ledgerKeys).size).toBe(ledgerKeys.length);   // no duplicate checkpoint rows
 
-    // The held set continued into the logger against the now-accepted plan.
+    // The held set continued into the logger against the now-accepted plan: it
+    // landed INSIDE the ledger (accepted flag true), never silently outside it.
     await expect.poll(() => loggedCount(page), { timeout: 20000 }).toBe(1);
     const acceptedFlag = await page.evaluate(() => { const s = window.getActivePlannedSession(); return Boolean(s && s.accepted === true); });
     expect(acceptedFlag).toBe(true);
-    record('AB-1', `one Start (with a rapid second tap absorbed): 1 accepted plan version (${versions[0].slice(0, 12)}…), ${st.plan_set_rows.length} v1 ledger rows exactly once, held set committed into the accepted plan`);
-    await snap(page, 'AB-1-02-accepted-and-resumed.png');
+    // No re-acceptance on a following set — the accepted session passes the gate.
+    await say(page, 'Overhead Press 110 x 7 @2');
+    await expect.poll(() => loggedCount(page), { timeout: 20000 }).toBe(2);
+    await expect(page.locator('.acceptance-required')).toHaveCount(0);
+    st = await srv.state();
+    expect([...new Set(acceptedEvents(st).map(r => String(r[SP_PLAN_VERSION_IDX])))]).toHaveLength(1);
+    record('AB-1', `silent auto-accept: 1 accepted plan version (${versions[0].slice(0, 12)}…), ${st.plan_set_rows.length} v1 ledger rows, held set committed into the accepted plan, no card`);
+    await snap(page, 'AB-1-01-auto-accepted-and-resumed.png');
   } finally { srv.stop(); }
 });
 
 // =================================================================================
-test('AB-2: gate → Start → log → closeout: Log, Effort, Session_Plans, and Session_Plan_Sets share one session identity and one seal', async ({ page }) => {
+test('AB-2: auto-accept → log → closeout: Log, Effort, Session_Plans, and Session_Plan_Sets share one session identity and one seal', async ({ page }) => {
   test.setTimeout(180000);
   const srv = await bootSandbox();
   try {
@@ -173,9 +158,8 @@ test('AB-2: gate → Start → log → closeout: Log, Effort, Session_Plans, and
     await say(page, 'What should I do today?');
     await expect(page.locator('#thread-messages .chat-bubble-atlas').first()).toContainText("Today's read", { timeout: 30000 });
     await say(page, 'Overhead Press 110 x 7 @2');
-    await expect(page.locator('.acceptance-required:not(.done)')).toHaveCount(1, { timeout: 20000 });
-    await page.locator('.acceptance-required:not(.done) .start-this-plan-btn').click();
-    await expect(page.locator('.acceptance-required.done')).toHaveCount(1, { timeout: 25000 });
+    // Silent auto-accept: the set lands with no card, on the now-accepted plan.
+    await expect(page.locator('.acceptance-required')).toHaveCount(0);
     await expect.poll(() => loggedCount(page), { timeout: 20000 }).toBe(1);
     await expect.poll(async () => (await srv.state()).plan_set_rows.length, { timeout: 20000 }).toBeGreaterThan(0);
 
@@ -249,9 +233,8 @@ test('AB-4: a reload-restored ACCEPTED plan never re-asks; no duplicate acceptan
     await say(page, 'What should I do today?');
     await expect(page.locator('#thread-messages .chat-bubble-atlas').first()).toContainText("Today's read", { timeout: 30000 });
     await say(page, 'Overhead Press 110 x 7 @2');
-    await expect(page.locator('.acceptance-required:not(.done)')).toHaveCount(1, { timeout: 20000 });
-    await page.locator('.acceptance-required:not(.done) .start-this-plan-btn').click();
-    await expect(page.locator('.acceptance-required.done')).toHaveCount(1, { timeout: 25000 });
+    // Silent auto-accept commits the first set against the freshly-accepted plan.
+    await expect(page.locator('.acceptance-required')).toHaveCount(0);
     await expect.poll(() => loggedCount(page), { timeout: 20000 }).toBe(1);
     const before = await srv.state();
     const acceptedBefore = acceptedEvents(before).length;
@@ -265,7 +248,7 @@ test('AB-4: a reload-restored ACCEPTED plan never re-asks; no duplicate acceptan
 
     await say(page, 'Overhead Press 110 x 7 @2');
     await expect.poll(() => loggedCount(page), { timeout: 20000 }).toBe(2);
-    await expect(page.locator('.acceptance-required:not(.done)')).toHaveCount(0);   // no re-acceptance ask
+    await expect(page.locator('.acceptance-required')).toHaveCount(0);   // no re-acceptance card, ever
     const after = await srv.state();
     expect(acceptedEvents(after).length).toBe(acceptedBefore);   // no duplicate acceptance
     expect(after.plan_set_rows.length).toBe(ledgerBefore);       // no duplicate ledger rows

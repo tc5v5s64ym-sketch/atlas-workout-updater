@@ -14,14 +14,16 @@ const { STORE_SHIM } = require('./helpers/storeShim');
 const appSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
 const coachSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'coach-conversation.js'), 'utf8');
 
-test('boundary wiring: the gate holds the commit at the top of the mid-session branch and nothing writes', () => {
-  const branch = appSrc.slice(
-    appSrc.indexOf('const gateRec = unacceptedPlanGateRec(logRows);'),
-    appSrc.indexOf('const gateRec = unacceptedPlanGateRec(logRows);') + 700
-  );
-  assert.match(branch, /atlas:acceptance-required/, 'the gate raises the acceptance-required event');
+test('boundary wiring: the gate SILENTLY auto-accepts and resumes the held set — nothing writes on the blocked path', () => {
+  const gateStart = appSrc.indexOf('const gateRec = unacceptedPlanGateRec(logRows);');
+  const branch = appSrc.slice(gateStart, appSrc.indexOf('Substitution classification:', gateStart));
+  // The card was retired: the gate accepts through the SAME acceptDisplayedPlan
+  // path the button used, then resumes the held set — no acceptance-required event.
+  assert.match(branch, /acceptDisplayedPlan\(gateRec\)/, 'the gate auto-accepts the displayed plan via the one acceptance path');
+  assert.match(branch, /atlasResumeBlockedLog/, 'a started acceptance resumes the held set through the one submit path');
+  assert.doesNotMatch(branch, /atlas:acceptance-required/, 'the in-thread acceptance-required card event was retired');
   assert.match(branch, /lastParsedWorkoutText = '';/, 'the reparse memo resets so the RESUMED identical text re-parses');
-  assert.match(branch, /return;/, 'the gate returns without committing');
+  assert.match(branch, /return;/, 'the gate returns without committing on this path');
   assert.doesNotMatch(branch, /emitSetLogged/, 'nothing commits on the blocked path');
   // The gate sits INSIDE the mid-session commit branch — before classification.
   const mid = appSrc.indexOf('if (logRows.length && !file && !manualEffort && !sessionCompiledAwaitingPreview && !screenshotConvertedCloseout)');
@@ -30,17 +32,12 @@ test('boundary wiring: the gate holds the commit at the top of the mid-session b
   assert.ok(mid !== -1 && mid < gate && gate < classify, 'gate placement: mid-session branch top, before classification');
 });
 
-test('boundary wiring: ONE acceptance path — the card calls window.atlasAcceptPlan and resumes via atlasResumeBlockedLog', () => {
-  const listener = coachSrc.slice(
-    coachSrc.indexOf("addEventListener('atlas:acceptance-required'"),
-    coachSrc.indexOf("addEventListener('atlas:acceptance-required'") + 2600
-  );
-  assert.match(listener, /Start this plan to track planned versus actual\./, 'the exact owner-directed block copy');
-  assert.match(listener, /window\.atlasAcceptPlan\(rec\)/, 'invokes the EXISTING acceptance boundary — never a second path');
-  assert.match(listener, /window\.atlasResumeBlockedLog/, 'releases the held message after acceptance');
-  assert.match(listener, /btn\.disabled = true;/, 'DOM-level double-tap guard');
-  assert.match(listener, /\.acceptance-required:not\(\.done\)/, 're-uses the one live card — never stacks');
-  assert.doesNotMatch(listener, /api\(|fetch\(/, 'the card itself performs no network call — acceptance stays in app.js');
+test('boundary wiring: the in-thread acceptance card was retired — one acceptance path (app.js atlasAcceptPlan) survives', () => {
+  // No second acceptance workflow: the blocking card and its copy are gone.
+  assert.doesNotMatch(coachSrc, /addEventListener\('atlas:acceptance-required'/, 'no in-thread acceptance-required card listener remains');
+  assert.doesNotMatch(coachSrc, /Start this plan to track planned versus actual\./, 'the retired card copy is gone');
+  // The single acceptance boundary the silent gate reuses is still exposed.
+  assert.match(appSrc, /window\.atlasAcceptPlan = acceptDisplayedPlan;/, 'the one acceptance boundary (atlasAcceptPlan) is intact');
 });
 
 test('boundary wiring: the resume uses the REAL submit gesture (a bare synthetic submit event does not run the form)', () => {
