@@ -56,6 +56,7 @@ Use these only when the active execution card touches their area:
 - `docs/SHEET_CONTRACT.md`
 - `docs/SAFETY_RULES.md`
 - `docs/COACHING_ENGINE_ARCHITECTURE.md`
+- [`docs/CANONICAL_CONTRACTS.md`](./CANONICAL_CONTRACTS.md) — ratification charter + ledger for the eight canonical contracts (Phase 2 Work item 2): the versioning convention and each contract's current home, status, and ratification target. Per-contract schemas land as sequenced follow-up PRs.
 - `docs/COACHING_CONTRACTS_SPEC.md`
 - `docs/COACHING_STATE_ASSEMBLY_SPEC.md`
 - `docs/COACHING_SESSION_GENERATOR_SPEC.md`
