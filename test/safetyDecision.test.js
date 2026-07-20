@@ -133,6 +133,16 @@ describe('fromClassification (boundary adapter over the live classifier)', () =>
     assert.equal(verdict.reason, classification.meaning);
     assert.equal(validateSafetyDecision(verdict).valid, true, validateSafetyDecision(verdict).errors.join(' | '));
   });
+  it('dedupes repeated classifier observations so the verdict stays valid (Codex #1092)', () => {
+    // classifyTrafficLight permits repeated observations → duplicate matchedSignals.
+    const classification = classifyTrafficLight(['chest pain', 'chest pain', 'Chest Pain']);
+    assert.ok(classification.matchedSignals.length >= 2, 'classifier keeps the duplicates');
+    const verdict = fromClassification(classification);
+    // deduped, case/whitespace-insensitively, keeping the first-seen casing
+    assert.deepEqual(verdict.signals, ['chest pain']);
+    const r = validateSafetyDecision(verdict);
+    assert.equal(r.valid, true, r.errors.join(' | '));
+  });
   it('maps a yellow classification to a non-blocking yellow verdict that validates', () => {
     const verdict = fromClassification(classifyTrafficLight(['low readiness']));
     assert.equal(verdict.state, 'yellow');

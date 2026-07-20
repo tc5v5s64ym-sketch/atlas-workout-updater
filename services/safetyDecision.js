@@ -50,6 +50,23 @@ function _resetForTesting() { _contract = null; }
 function _isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 function _isNonEmptyString(v) { return typeof v === 'string' && v.trim().length > 0; }
 
+// Dedupe a signal list to non-empty strings, unique under the SAME
+// case/whitespace-insensitive key the validator uses, preserving order and each
+// key's first-seen original casing. Keeps a well-formed but repetitive source
+// (the classifier permits repeated observations) valid under the unique-signal rule.
+function _dedupeSignals(list) {
+  const seen = new Set();
+  const out = [];
+  for (const s of (Array.isArray(list) ? list : [])) {
+    if (!_isNonEmptyString(s)) continue;
+    const key = s.trim().toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+  }
+  return out;
+}
+
 // ─── builder ──────────────────────────────────────────────────────────────────
 
 /**
@@ -142,7 +159,8 @@ function validateSafetyDecision(verdict) {
 // crosses when the safety layer becomes the shared verdict:
 //   state           → state
 //   confidence      → confidence          (count-based tier: none|low|moderate|high)
-//   matchedSignals  → signals             (the evidence that drove the tier)
+//   matchedSignals  → signals             (the evidence that drove the tier, deduped —
+//                                          the classifier permits repeated observations)
 //   meaning         → reason (or null)    (grounded prose, never LLM-authored)
 //   blocking is DERIVED as `state === 'red'` — the classifier carries no blocking
 //   concept, so this contract supplies the minimal safe derivation and does NOT
@@ -153,7 +171,7 @@ function fromClassification(classification) {
   return buildSafetyDecision({
     state:      c.state,
     confidence: c.confidence,
-    signals:    Array.isArray(c.matchedSignals) ? c.matchedSignals : [],
+    signals:    _dedupeSignals(c.matchedSignals),
     reason:     _isNonEmptyString(c.meaning) ? c.meaning : null,
     blocking:   c.state === 'red',
   });
