@@ -88,6 +88,12 @@ jobs:
         # normal-path routine receipt (H-02), legal only in its outage-only home.
         run: npm run -s check:banned
 
+      - name: Wiring-guard ratchet (Drift Guard 3)
+        # Shrink-only: the staged allowlist may not exceed staged_modules_ceiling;
+        # raising it to stage a new module needs an owner-gate note (expiry/roadmap
+        # and expiry-fails-red are enforced by the wiring guard above).
+        run: npm run -s check:allowlist
+
       - name: Test
         run: npm test --silent
 
