@@ -33,7 +33,9 @@ const dryRun = () => ({
   proof: { sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true, log_rows_written: null, logAppendedRange: null },
 });
 
-// a valid LIVE SUCCESS transaction (W3: proof fields present)
+// a valid LIVE SUCCESS transaction — the REAL POST /api/log-workout success shape
+// (index.js): sheet_write='success' + log_rows_written + logAppendedRange, and it
+// does NOT emit sheet_written/no_write_confirmed (so they are null here).
 const liveSuccess = () => ({
   schema_version: SCHEMA_VERSION,
   session_id: 's_2026_07_20',
@@ -42,7 +44,7 @@ const liveSuccess = () => ({
   log_rows: [{ exercise: 'Bench', weight: 185, reps: 5 }],
   effort_row: null,
   seal: { count: 2, already_sealed: 0 },
-  proof: { sheet_write: 'success', sheet_written: true, no_write_confirmed: false, log_rows_written: 3, logAppendedRange: 'Log_Cleaned!A2:L4' },
+  proof: { sheet_write: 'success', sheet_written: null, no_write_confirmed: null, log_rows_written: 3, logAppendedRange: 'Log_Cleaned!A2:L4' },
 });
 
 describe('buildCloseoutTransaction', () => {
@@ -87,6 +89,12 @@ describe('validateCloseoutTransaction — shape', () => {
     assert.equal(validateCloseoutTransaction({ ...dryRun(), session_date: '2026-13-40' }).valid, false);
     assert.equal(validateCloseoutTransaction({ ...dryRun(), session_date: 'July 20 2026' }).valid, false);
   });
+  it('rejects calendar-invalid ISO dates rather than normalizing them (Codex #1093)', () => {
+    assert.equal(validateCloseoutTransaction({ ...dryRun(), session_date: '2026-02-29' }).valid, false); // 2026 is not a leap year
+    assert.equal(validateCloseoutTransaction({ ...dryRun(), session_date: '2026-04-31' }).valid, false); // April has 30 days
+    assert.equal(validateCloseoutTransaction({ ...dryRun(), session_date: '2026-00-10' }).valid, false); // month 0
+    assert.equal(validateCloseoutTransaction({ ...dryRun(), session_date: '2028-02-29' }).valid, true);  // 2028 IS a leap year
+  });
   it('requires log_rows to be an array of plain DATA objects (reject Date/array entries)', () => {
     assert.equal(validateCloseoutTransaction({ ...dryRun(), log_rows: 'x' }).valid, false);
     assert.equal(validateCloseoutTransaction({ ...dryRun(), log_rows: [new Date()] }).valid, false);
@@ -114,6 +122,25 @@ describe('validateCloseoutTransaction — shape', () => {
     const noKey = { ...dryRun(), proof: { ...dryRun().proof } }; delete noKey.proof.log_rows_written;
     assert.equal(validateCloseoutTransaction(noKey).valid, false);
   });
+  it('treats sheet_written / no_write_confirmed as explicit-null nullable booleans', () => {
+    // present-but-null is valid on a live success (the real route omits them)
+    assert.equal(validateCloseoutTransaction({ ...liveSuccess(), proof: { ...liveSuccess().proof, sheet_written: null, no_write_confirmed: null } }).valid, true);
+    // an omitted key is rejected (explicit-null presence)
+    const noSW = { ...dryRun(), proof: { ...dryRun().proof } }; delete noSW.proof.sheet_written;
+    assert.equal(validateCloseoutTransaction(noSW).valid, false);
+    const noNWC = { ...dryRun(), proof: { ...dryRun().proof } }; delete noNWC.proof.no_write_confirmed;
+    assert.equal(validateCloseoutTransaction(noNWC).valid, false);
+    // a wrong type is rejected
+    assert.equal(validateCloseoutTransaction({ ...dryRun(), proof: { ...dryRun().proof, sheet_written: 'false' } }).valid, false);
+  });
+  it('the contract declares every nullable proof field the validator accepts as null (Codex #1094)', () => {
+    const contract = require('../config/coaching/contracts/closeout-transaction.contract.json');
+    // the declared schema metadata must match what the validator treats as nullable,
+    // or a consumer reading the contract would reject the supported live-success shape.
+    for (const f of ['sheet_written', 'no_write_confirmed', 'log_rows_written', 'logAppendedRange']) {
+      assert.ok(contract.nullable_proof_fields.includes(f), `contract.nullable_proof_fields must list '${f}'`);
+    }
+  });
 });
 
 describe('validateCloseoutTransaction — Invariant W1 (dry-run never writes)', () => {
@@ -130,11 +157,16 @@ describe('validateCloseoutTransaction — Invariant W1 (dry-run never writes)', 
 });
 
 describe('validateCloseoutTransaction — Invariant W3 (live writes require proof)', () => {
-  it('rejects a live success missing any required proof field', () => {
+  it('rejects a live success missing a W3-required proof field (range or positive row count)', () => {
     assert.equal(validateCloseoutTransaction({ ...liveSuccess(), proof: { ...liveSuccess().proof, logAppendedRange: null } }).valid, false);
     assert.equal(validateCloseoutTransaction({ ...liveSuccess(), proof: { ...liveSuccess().proof, log_rows_written: 0 } }).valid, false);
-    assert.equal(validateCloseoutTransaction({ ...liveSuccess(), proof: { ...liveSuccess().proof, sheet_written: false } }).valid, false);
-    assert.equal(validateCloseoutTransaction({ ...liveSuccess(), proof: { ...liveSuccess().proof, no_write_confirmed: true } }).valid, false);
+  });
+  it('a live success matches the real route: sheet_written/no_write_confirmed omitted (null), and booleans also accepted (Codex #1093)', () => {
+    // the real POST /api/log-workout success emits neither field → null; W3 does not require them
+    assert.equal(validateCloseoutTransaction(liveSuccess()).valid, true, validateCloseoutTransaction(liveSuccess()).errors.join(' | '));
+    // a caller that DOES supply them still validates (nullable boolean)
+    const withBooleans = { ...liveSuccess(), proof: { ...liveSuccess().proof, sheet_written: true, no_write_confirmed: false } };
+    assert.equal(validateCloseoutTransaction(withBooleans).valid, true);
   });
   it('a non-success live write (e.g. skipped_duplicate) does not require the write proof', () => {
     const skipped = { ...liveSuccess(), proof: { sheet_write: 'skipped_duplicate', sheet_written: false, no_write_confirmed: false, log_rows_written: null, logAppendedRange: null } };
@@ -162,11 +194,15 @@ describe('fromCloseoutSummary (boundary adapter over closeoutSummary output)', (
     assert.deepEqual(tx.seal, { count: 2, already_sealed: 1 });
     assert.equal(validateCloseoutTransaction(tx).valid, true, validateCloseoutTransaction(tx).errors.join(' | '));
   });
-  it('maps a summary + live-success proof into a valid live transaction', () => {
+  it('maps a summary + the REAL live-success proof (no sheet_written/no_write_confirmed) into a valid transaction (Codex #1093)', () => {
     const tx = fromCloseoutSummary(summary, {
       test_mode: false,
-      proof: { sheet_write: 'success', sheet_written: true, no_write_confirmed: false, log_rows_written: 2, logAppendedRange: 'Log_Cleaned!A2:L3' },
+      // the actual POST /api/log-workout success response shape (index.js): it omits
+      // sheet_written and no_write_confirmed — the adapter must still produce a valid tx.
+      proof: { sheet_write: 'success', log_rows_written: 2, logAppendedRange: 'Log_Cleaned!A2:L3' },
     });
+    assert.equal(tx.proof.sheet_written, null);
+    assert.equal(tx.proof.no_write_confirmed, null);
     assert.equal(validateCloseoutTransaction(tx).valid, true, validateCloseoutTransaction(tx).errors.join(' | '));
   });
   it('tolerates junk input without throwing (fails validation, never crashes)', () => {

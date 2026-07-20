@@ -4,7 +4,7 @@
     "purpose": "CloseoutTransaction: the atomic session-closeout write as ONE proven transaction — its three legs (the logged SETS as Log_Cleaned rows, the EFFORT row, and the plan CLOSEOUT/seal) plus the trust-loop proof envelope. Read-only, pure; NOT yet wired. It DESCRIBES the existing write at POST /api/complete-workout and POST /api/log-workout — it adds NO write capability, stays entirely inside preview→approve→write, and changes no proof field. Phase 5g (H-17) consumes it.",
     "spec": "docs/CANONICAL_CONTRACTS.md; proof fields docs/INVARIANTS.md §2 (W1-W3)",
     "grounding": "The three legs mirror services/closeoutSummary.js buildCloseoutSummary output (rows_to_write.{log,effort} and rows_to_seal.{count,already_sealed}); the proof envelope mirrors the write-route response fields in index.js. `fromCloseoutSummary` is the tested boundary adapter over that summary plus a proof object. `sheet_write_states` is the write handlers' vocabulary (index.js); this contract owns it here and a contracts-integrity fixture threads the real summary shape through the adapter.",
-    "invariants_note": "Encoded as validator rules; ratification changes none of them. W1 (dry-run, test_mode true): sheet_written=false, no_write_confirmed=true, sheet_write is not 'success', and nothing was written (log_rows_written null-or-0, logAppendedRange null). W2 (test_mode absent = live): a request rule — here test_mode is an explicit boolean. W3 (live success, test_mode false and sheet_write 'success'): sheet_written=true, log_rows_written an integer > 0, logAppendedRange a non-empty A1 range, no_write_confirmed=false."
+    "invariants_note": "Encoded as validator rules; ratification changes none of them. W1 (dry-run, test_mode true): sheet_written=false, no_write_confirmed=true, sheet_write is not 'success', and nothing was written (log_rows_written null-or-0, logAppendedRange null). W2 (test_mode absent = live): a request rule — here test_mode is an explicit boolean. W3 (live success, test_mode false and sheet_write 'success'): log_rows_written an integer > 0 and logAppendedRange a non-empty A1 range. sheet_written/no_write_confirmed are the dry-run proof (W1); the successful live route (POST /api/log-workout, index.js) does NOT emit them, so they are nullable (null on a live success) — the contract describes the established proof shape, not a stricter one."
   },
   "schema_version": 1,
   "required": ["schema_version", "session_id", "session_date", "test_mode", "log_rows", "effort_row", "seal", "proof"],
@@ -13,5 +13,5 @@
   "seal_fields": ["count", "already_sealed"],
   "proof_required": ["sheet_write", "sheet_written", "no_write_confirmed", "log_rows_written", "logAppendedRange"],
   "nullable_fields": ["session_date"],
-  "nullable_proof_fields": ["log_rows_written", "logAppendedRange"]
+  "nullable_proof_fields": ["sheet_written", "no_write_confirmed", "log_rows_written", "logAppendedRange"]
 }
