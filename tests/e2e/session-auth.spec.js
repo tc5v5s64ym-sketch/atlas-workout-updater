@@ -19,7 +19,7 @@ function json(body, status = 200) {
   return { status, contentType: 'application/json; charset=utf-8', body: JSON.stringify(body) };
 }
 
-// A plan with exercises so Coach's Pick renders the "Start this plan" button on success.
+// A plan with exercises so Coach's Pick renders the plan card on success.
 const PLAN = {
   status: 'success',
   data: {
@@ -73,7 +73,10 @@ async function askCoach(page) {
   await page.locator('#preview-btn').click();
 }
 
-const startBtn = page => page.locator('#thread-messages .chat-bubble-atlas .start-this-plan-btn').first();
+// The plan card renders on a successful (authenticated) Coach's Pick; its exercise
+// name is the visible proof the coach suggested a plan (the "Start this plan" button
+// was retired — logging a set is now what accepts the plan).
+const planCard = page => page.locator('#thread-messages .chat-bubble-atlas .workout-plan-name').first();
 
 test('cookie-only reload (no local key) — Coach suggests, never prompts for a key', async ({ page }) => {
   // Valid cookie, NO localStorage key. Under the old flag model isConnected() was
@@ -82,7 +85,7 @@ test('cookie-only reload (no local key) — Coach suggests, never prompts for a 
   await setup(page, { seedKey: false, status: { sessions_enabled: true, authenticated: true } });
   await askCoach(page);
 
-  await expect(startBtn(page)).toBeVisible();
+  await expect(planCard(page)).toBeVisible();
   await expect(page.locator('#thread-messages')).not.toContainText('Set your API key');
   await expect(page.locator('#thread-messages')).not.toContainText('Connect Atlas');
   // Settings agrees — server-confirmed connected.
@@ -93,7 +96,7 @@ test('delayed session-status — a slow probe still resolves connected, no key p
   await setup(page, { seedKey: false, status: { sessions_enabled: true, authenticated: true }, statusDelayMs: 800 });
   await askCoach(page);
 
-  await expect(startBtn(page)).toBeVisible();
+  await expect(planCard(page)).toBeVisible();
   await expect(page.locator('#thread-messages')).not.toContainText('Set your API key');
 });
 
@@ -104,7 +107,7 @@ test('status timeout then a successful protected read — optimistic attempt sug
   await setup(page, { seedKey: false, statusAbort: true, protectedStatus: 200 });
   await askCoach(page);
 
-  await expect(startBtn(page)).toBeVisible();
+  await expect(planCard(page)).toBeVisible();
   await expect(page.locator('#thread-messages')).not.toContainText('Set your API key');
   await expect(page.locator('#thread-messages')).not.toContainText('Connect Atlas');
 });
@@ -136,7 +139,7 @@ test('Settings and Coach never disagree — connected', async ({ page }) => {
 
   await expect(page.locator('#settings-status')).toContainText('Atlas connected on this device.');
   await expect(page.locator('#settings-status')).not.toContainText('Connect Atlas');
-  await expect(startBtn(page)).toBeVisible();
+  await expect(planCard(page)).toBeVisible();
   await expect(page.locator('#thread-messages')).not.toContainText('Set your API key');
 });
 
