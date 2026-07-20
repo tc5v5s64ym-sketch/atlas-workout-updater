@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "SafetyDecision: the single safety VERDICT consumed by the live route and the Brain alike — presentation may differ, the decision may not (finding H-12). One versioned verdict: a traffic-light `state` (green/yellow/red), whether it is `blocking`, the `confidence` in it, the matched `signals` that drove it, and a grounded `reason`. Read-only, pure; NOT yet wired. Phase 5d wires it as the most-conservative override and retires the duplicate classifiers; ratifying the shape first stops the route and the Brain from each re-deriving safety.",
+    "spec": "docs/CANONICAL_CONTRACTS.md",
+    "grounding": "`states` is the traffic-light ladder of config/coaching/rules/safety.rules.json (read via services/safetyRulesModule.js) and the tier services/safetyClassifierModule.js resolves. This contract is the single OWNER of the safety-state vocabulary; a contracts-integrity test asserts decision.contract.json safety_levels, safety-rule.schema.json, and safety.rules.json have not drifted from it. `confidence_levels` are the classifier's count-based tiers. `fromClassification` is the tested boundary adapter over the classifier's { state, meaning, action, matchedSignals, unmatchedSignals, confidence } output.",
+    "invariants_note": "Safety is the most conservative layer and can override all others (safety.rules.json _meta). Encoded as validator rules: a `red` state MUST block; a `green` state MUST NOT block; `yellow` may or may not block (safe_defaults.confidence_inversion: low confidence about a possible red flag triggers MORE caution, never less — a Phase 5d escalation, not invented here). `states` is severity-ordered green < yellow < red; `signals` are observed evidence (unique, non-empty), not a canonically ordered vocabulary."
+  },
+  "schema_version": 1,
+  "required": ["schema_version", "state", "blocking", "confidence", "signals", "reason"],
+  "states": ["green", "yellow", "red"],
+  "confidence_levels": ["none", "low", "moderate", "high"],
+  "must_block_states": ["red"],
+  "must_not_block_states": ["green"],
+  "nullable_fields": ["reason"]
+}
