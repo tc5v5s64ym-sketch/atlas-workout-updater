@@ -125,6 +125,8 @@ These may be touched only when the active card explicitly requires them, with a 
 
 Editing the file is not automatically owner-reserved; changing its protected contract is.
 
+**app.js freeze rule (Phase 2, owner-adopted 2026-07-20).** `src/app/app.js` (H-21, ~7,800 lines) is frozen for **new session-state logic**: no new session-state store, session-truth selector, or truth-derivation may be added here. New session-state logic goes in a dedicated module (`src/app/activeSession.js`, a `services/` contract, etc.) and is imported. Bug-fix edits, comments, and labels on existing code are fine; growing the shell's session-state surface is not. Enforced by review now; the app.js extraction lands in Phase 5.
+
 ## Merge gate
 
 Claude merges when:
