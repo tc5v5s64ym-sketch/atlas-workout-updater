@@ -70,6 +70,25 @@ describe('Drift Guard 6 — auto-archive job (planArchive)', () => {
     assert.ok(p.newBacklogText.includes('four open'));
   });
 
+  it('never RAISES the cap — an over-cap file still over cap after archiving keeps its committed cap', () => {
+    // 6-line backlog but a committed cap of 4 (already over). Removing one tagged item leaves
+    // 5 lines — still over 4. The cap must stay 4 (grow-only guard never weakened), not rise to 5.
+    const backlog = '# B\n\n- open one\n- open two\n- shipped [archive-ready: 2026-06-01]\n- open three\n';
+    assert.equal(countLines(backlog), 6);
+    const p = planArchive({ backlogText: backlog, archiveText: '# A\n', config: cfg(4), todayStr: T });
+    assert.equal(p.changed, true);
+    assert.ok(countLines(p.newBacklogText) > 4, 'still over the committed cap after one removal');
+    assert.equal(p.newCap, 4, 'cap must not be raised above its committed value');
+  });
+
+  it('ratchets the cap DOWN when archiving brings the file under the committed cap', () => {
+    const backlog = '# B\n\n- open one\n- shipped [archive-ready: 2026-06-01]\n';
+    const before = countLines(backlog);
+    const p = planArchive({ backlogText: backlog, archiveText: '# A\n', config: cfg(before), todayStr: T });
+    assert.equal(p.newCap, countLines(p.newBacklogText));
+    assert.ok(p.newCap < before);
+  });
+
   it('is idempotent — a second run over the result moves nothing', () => {
     const backlog = '# B\n\n- open\n- done [archive-ready: 2026-07-01]\n';
     const first = planArchive({ backlogText: backlog, archiveText: '# Archive\n', config: cfg(countLines(backlog)), todayStr: T });

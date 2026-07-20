@@ -32,8 +32,11 @@ const CONFIG = path.join(ROOT, 'config', 'paper-weight.json');
 
 const DEFAULT_STALE_AFTER_DAYS = 7;
 
-// Matches the explicit archive-ready tag, e.g. "[archive-ready: 2026-07-20]".
-const ARCHIVE_READY_RE = /\[archive-ready:\s*(\d{4}-\d{2}-\d{2})\s*\]/g;
+// Matches the explicit archive-ready tag SYNTAX only — the date SHAPE is deliberately loose
+// (any non-`]` content) so a mistyped date (e.g. "2026-7-01", "someday", empty) is still
+// captured and then validated by parseIsoDayUtc → reported malformed rather than silently
+// slipping past staleness enforcement. Strict-shape matching here would let a typo bypass the guard.
+const ARCHIVE_READY_RE = /\[archive-ready:\s*([^\]]*)\]/g;
 
 function countLines(text) { return (String(text).match(/\n/g) || []).length; } // matches `wc -l`
 
@@ -62,7 +65,7 @@ function findArchiveReady(text, today) {
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
     for (const m of lines[i].matchAll(ARCHIVE_READY_RE)) {
-      const dateStr = m[1];
+      const dateStr = m[1].trim();
       const t = parseIsoDayUtc(dateStr);
       const ageDays = Number.isNaN(t) ? NaN : Math.floor((nowDay - t) / 86400000);
       out.push({ line: i + 1, dateStr, ageDays, malformed: Number.isNaN(t) });

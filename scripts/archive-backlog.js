@@ -77,7 +77,13 @@ function planArchive({ backlogText, archiveText, config, todayStr }) {
   const section = `\n\n${header}\n\n${intro}\n\n` + moved.map((m) => m.text).join('\n\n') + '\n';
   const newArchiveText = String(archiveText).replace(/\s*$/, '') + section;
   const newBacklogText = keptText.replace(/\s*$/, '') + '\n';
-  const newCap = countLines(newBacklogText);
+  // Shrink-only: ratchet the cap DOWN to the trimmed size, but NEVER raise it. If BACKLOG.md
+  // was already OVER its committed cap (e.g. an unrelated addition), archiving one item can
+  // leave it still over cap — persisting that larger line count would silently WEAKEN the
+  // guard (drift guards are grow-only, never weakened). Clamp to the existing cap so the
+  // size-cap check keeps failing until enough items are removed.
+  const trimmedLines = countLines(newBacklogText);
+  const newCap = Number.isInteger(cap) && cap > 0 ? Math.min(trimmedLines, cap) : trimmedLines;
   return { changed: true, count: moved.length, moved, newBacklogText, newArchiveText, newCap };
 }
 
@@ -95,7 +101,11 @@ function run(apply) {
     return 0;
   }
 
-  console.log(`archive-backlog: ${plan.count} tagged item(s) to move; BACKLOG ${countLines(backlogText)} → ${plan.newCap} lines (cap ratchets to ${plan.newCap}).`);
+  const trimmed = countLines(plan.newBacklogText);
+  const capNote = plan.newCap < config.backlog_max_lines
+    ? `cap ${config.backlog_max_lines} → ${plan.newCap}`
+    : `cap unchanged at ${config.backlog_max_lines} (still over — remove more)`;
+  console.log(`archive-backlog: ${plan.count} tagged item(s) to move; BACKLOG ${countLines(backlogText)} → ${trimmed} lines; ${capNote}.`);
   for (const m of plan.moved) {
     const first = m.text.split('\n')[0].slice(0, 100);
     console.log(`  • line ${m.line}: ${first}${first.length >= 100 ? '…' : ''}`);

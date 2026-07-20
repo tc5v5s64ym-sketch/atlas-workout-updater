@@ -82,6 +82,15 @@ describe('Drift Guard 6 — paper-weight', () => {
     assert.ok(r.errors.some((e) => e.includes('malformed')));
   });
 
+  it('flags a malformed tag whose date is not even YYYY-MM-DD-shaped (no strict-shape bypass)', () => {
+    // A mistyped tag must never slip past the guard just because it fails the strict date shape.
+    for (const bad of ['2026-7-01', 'someday', '', '2026/07/01', '07-20-2026']) {
+      const r = analyze({ config: cfg(100), backlog: `- oops [archive-ready: ${bad}]\n`, today: TODAY });
+      assert.equal(r.valid, false, `expected malformed for "${bad}"`);
+      assert.ok(r.errors.some((e) => e.includes('malformed')), `no malformed error for "${bad}"`);
+    }
+  });
+
   it('reports both a cap overflow and a stale tag together', () => {
     const both = `- x [archive-ready: ${daysAgo(30)}]\n` + backlogOf(200);
     const r = analyze({ config: cfg(100), backlog: both, today: TODAY });
