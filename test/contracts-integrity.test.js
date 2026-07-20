@@ -26,6 +26,7 @@ const exerciseSchema = require('../config/coaching/schemas/exercise.schema.json'
 const { validateAthleteContext, buildAthleteContext, CANONICAL_GOALS } = require('../services/athleteContext');
 const { TRAINING_GOALS } = require('../services/trainingKnowledge');
 const workoutSession = require('../services/workoutSession');
+const interactionTrace = require('../services/interactionTrace');
 
 before(() => manifest._resetForTesting());
 
@@ -213,5 +214,26 @@ describe('integrity — WorkoutSession contract', () => {
     });
     assert.strictEqual(workoutSession.currentSlot(fx).name, 'B');
     assert.strictEqual(workoutSession.remainingSlots(fx).length, 2);
+  });
+});
+
+// ─── InteractionTrace — one turn_id across the canonical stage spine ──────────
+
+describe('integrity — InteractionTrace contract', () => {
+  it('a full-span InteractionTrace fixture validates', () => {
+    const trace = interactionTrace.buildInteractionTrace({
+      turn_id: 't_integrity',
+      started_at: '2026-07-20T00:00:00Z',
+      stages: interactionTrace.STAGES.map((s) => ({ stage: s, status: 'ok', ref: null })),
+    });
+    const r = interactionTrace.validateInteractionTrace(trace);
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+    assert.deepEqual(interactionTrace.missingStages(trace), [], 'a full trace has no missing stages');
+  });
+  it('the canonical stage spine matches the Phase 3 plan order', () => {
+    assert.deepEqual(interactionTrace.STAGES, [
+      'parser', 'intent', 'session_snapshot', 'engine_decision', 'knowledge_retrieval',
+      'coaching_strategy', 'model_response', 'validator_result', 'rendered_output', 'write_proof',
+    ]);
   });
 });
