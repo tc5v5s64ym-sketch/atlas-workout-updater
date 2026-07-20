@@ -12,6 +12,7 @@ const {
   SCHEMA_VERSION,
   buildWorkoutSession,
   validateWorkoutSession,
+  fromActiveSession,
   currentSlot,
   remainingSlots,
   isComplete,
@@ -78,6 +79,38 @@ describe('validateWorkoutSession', () => {
   it('allows duplicate slot names (F10 — independent slots)', () => {
     const s = { ...valid(), slots: [slot({ name: 'Bench Press' }), slot({ name: 'Bench Press' })] };
     assert.equal(validateWorkoutSession(s).valid, true);
+  });
+});
+
+describe('fromActiveSession (boundary adapter — Codex #1090)', () => {
+  // The live client shape src/app/activeSession.js emits.
+  const clientSession = {
+    exercises: [
+      { name: 'Back Squat', liftCode: 'SQ', status: 'completed', source: 'planned' },
+      { name: 'Bench Press', liftCode: 'BENCH', status: 'pending', source: 'substituted' },
+    ],
+  };
+
+  it('converts the live client model into a VALID canonical WorkoutSession', () => {
+    const ws = fromActiveSession(clientSession, { session_id: 's_9' });
+    const r = validateWorkoutSession(ws);
+    assert.equal(r.valid, true, r.errors.join(' | '));
+    assert.equal(ws.session_id, 's_9');
+  });
+
+  it('maps liftCode→lift_code, preserves status/source, and defaults tallies', () => {
+    const ws = fromActiveSession(clientSession);
+    assert.deepEqual(ws.slots[0], { name: 'Back Squat', lift_code: 'SQ', status: 'completed', source: 'planned', sets_logged: 0, sets_target: null });
+    assert.equal(ws.slots[1].source, 'substituted');
+    assert.equal(ws.session_id, null);
+    // the derived cursor works on the converted session
+    assert.equal(currentSlot(ws).name, 'Bench Press');
+  });
+
+  it('tolerates an empty / malformed client session', () => {
+    assert.equal(validateWorkoutSession(fromActiveSession({})).valid, true);
+    assert.equal(validateWorkoutSession(fromActiveSession(null)).valid, true);
+    assert.deepEqual(fromActiveSession({ exercises: 'nope' }).slots, []);
   });
 });
 

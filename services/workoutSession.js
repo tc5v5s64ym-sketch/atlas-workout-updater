@@ -23,6 +23,8 @@
 // Public API:
 //   buildWorkoutSession(params)       → session object (does NOT validate)
 //   validateWorkoutSession(session)   → { valid, errors[] }  (total, never throws)
+//   fromActiveSession(active, opts)   → canonical WorkoutSession from the live
+//                                       src/app/activeSession.js client model
 //   currentSlot(session)              → the first pending slot, or null (derived)
 //   remainingSlots(session)           → all pending slots, in order
 //   isComplete(session)               → had slots and none pending
@@ -140,10 +142,38 @@ function isComplete(session) {
   return remainingSlots(session).length === 0;
 }
 
+// ─── boundary adapter: live client session → canonical WorkoutSession ────────────
+
+// Convert the live client model (src/app/activeSession.js —
+// `{ exercises: [{ name, liftCode, status, source }] }`) into a canonical, valid
+// WorkoutSession. This is the single boundary Phase 4 crosses when the route
+// consumes the client's active session for the outage/session-priority fallback:
+// `liftCode` → `lift_code`; the client model carries no set tallies, so
+// `sets_logged` defaults to 0 and `sets_target` to null; `status`/`source` pass
+// through (they already use this contract's enums). Pure; validates clean.
+function fromActiveSession(active, { session_id = null } = {}) {
+  const exercises = _isPlainObject(active) && Array.isArray(active.exercises) ? active.exercises : [];
+  return buildWorkoutSession({
+    session_id,
+    slots: exercises.map((e) => {
+      const ex = _isPlainObject(e) ? e : {};
+      return {
+        name:        ex.name,
+        lift_code:   ex.liftCode != null ? ex.liftCode : (ex.lift_code != null ? ex.lift_code : null),
+        status:      ex.status,
+        source:      ex.source,
+        sets_logged: 0,
+        sets_target: null,
+      };
+    }),
+  });
+}
+
 module.exports = {
   SCHEMA_VERSION,
   buildWorkoutSession,
   validateWorkoutSession,
+  fromActiveSession,
   currentSlot,
   remainingSlots,
   isComplete,
