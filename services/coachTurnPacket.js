@@ -142,6 +142,21 @@ function validateCoachTurnPacket(packet) {
     }
   }
 
+  // ── One-session consistency ──
+  // A packet is ONE coach turn about ONE session. When both the session snapshot
+  // and the closeout transaction are present and each names a session, their ids
+  // must match — otherwise the packet's displayed/decision facts (the session
+  // snapshot) would be tied to a different session than its write proof (the
+  // closeout) once Phase 3/4 consumes it. WorkoutSession.session_id is nullable, so
+  // only enforce when both are non-null.
+  if (_isPlainObject(packet.session) && _isPlainObject(packet.closeout)) {
+    const sid = packet.session.session_id;
+    const cid = packet.closeout.session_id;
+    if (sid != null && cid != null && sid !== cid) {
+      errors.push(`session consistency: session.session_id '${sid}' must equal closeout.session_id '${cid}' (one packet, one session)`);
+    }
+  }
+
   return { valid: errors.length === 0, errors };
 }
 

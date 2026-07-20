@@ -135,4 +135,24 @@ describe('validateCoachTurnPacket', () => {
     assert.equal(validateCoachTurnPacket({ ...fullPacket(), decision: null }).valid, true);
     assert.equal(validateCoachTurnPacket({ ...fullPacket(), safety: null }).valid, true);
   });
+
+  it('enforces one session per packet: session.session_id must match closeout.session_id (Codex #1095)', () => {
+    // mismatched non-null ids → rejected (facts tied to a different session than the write proof)
+    const mismatch = buildCoachTurnPacket({
+      ...fullPacket(),
+      session: buildWorkoutSession({ session_id: 'session-A', slots: [{ name: 'Bench', status: 'pending' }] }),
+      closeout: buildCloseoutTransaction({ session_id: 'session-B', session_date: '2026-07-20', test_mode: true, proof: { sheet_write: 'skipped', sheet_written: false, no_write_confirmed: true } }),
+    });
+    const r = validateCoachTurnPacket(mismatch);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => e.includes('session consistency')), 'a session-consistency error is surfaced');
+    // matching ids (the base fixture uses s1 for both) → valid
+    assert.equal(validateCoachTurnPacket(fullPacket()).valid, true);
+    // a null session_id (unknown) does not trigger the check — only non-null ids are compared
+    const nullSid = buildCoachTurnPacket({
+      ...fullPacket(),
+      session: buildWorkoutSession({ slots: [{ name: 'Bench', status: 'pending' }] }),
+    });
+    assert.equal(validateCoachTurnPacket(nullSid).valid, true, validateCoachTurnPacket(nullSid).errors.join(' | '));
+  });
 });
