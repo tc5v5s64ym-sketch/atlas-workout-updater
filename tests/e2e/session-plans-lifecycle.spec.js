@@ -78,20 +78,21 @@ test('full Session_Plans lifecycle fires accept + completed/substituted/skipped 
   await page.addInitScript(k => localStorage.setItem('atlas_api_key', k), TEST_KEY);
   await page.goto('/app/');
 
-  // 1) render Coach's Pick + accept.
+  // 1) render Coach's Pick (display-only — no "Start this plan" button).
   await submit(page, 'What are we doing today?');
-  const startBtn = page.locator('#thread-messages .chat-bubble-atlas').first().locator('.start-this-plan-btn');
-  await expect(startBtn).toBeVisible();
-  await startBtn.click();
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').first().locator('.workout-plan-name').first()).toBeVisible();
+
+  // 2) log Seated Row — logging the first set from the displayed pick silently
+  //    accepts the plan (minting identity), then commits the set.
+  await submit(page, 'seated row 140 10/2 x3');
   await expect.poll(() => capture.posts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
   const accept = capture.posts.find(p => p.path === '/api/session-plans/accept').body;
   const [A, B, C] = accept.items.map(it => it.plan_item_id); // Seated Row, Leg Extension, Overhead Press
   const SID = accept.session_id, PV = accept.plan_version;
   expect(PV).toMatch(/^pv_/); for (const id of [A, B, C]) expect(id).toMatch(/^pi_/);
-
-  // 2) log Seated Row, then tap "Done with Seated Row" (mid-plan completed boundary).
-  await submit(page, 'seated row 140 10/2 x3');
   await expect(page.locator('#thread-messages .readback').last()).toBeVisible();
+
+  // then tap "Done with Seated Row" (mid-plan completed boundary).
   await page.locator('#session-pin').click();
   const done = page.locator('#active-session-banner .start-done-btn');
   await expect(done).toHaveText('Done with Seated Row');

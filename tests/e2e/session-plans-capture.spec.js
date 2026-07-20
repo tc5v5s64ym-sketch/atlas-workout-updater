@@ -2,10 +2,12 @@ const { test, expect } = require('@playwright/test');
 
 // PR-I reproduction — the canary found that the explicit Session_Plans capture
 // lane never fires from the REAL primary Coach's Pick flow (unit/structural tests
-// only proved the code EXISTS, never that the "Start this plan" button is reachable
-// and that clicking it POSTs /api/session-plans/accept). This browser-level spec
-// drives the exact production entry point — typing "What are we doing today?" and
-// pressing Preview — and asserts the acceptance boundary is real.
+// only proved the code EXISTS, never that acceptance is reachable and POSTs
+// /api/session-plans/accept). After the composer-chat simplification the plan-card
+// "Start this plan" button is retired; acceptance now fires when the first set is
+// logged from the displayed pick. This browser-level spec drives the exact
+// production entry point — "What are we doing today?" → log a set — and asserts the
+// acceptance boundary is real.
 
 const TEST_KEY = 'playwright-test-key';
 
@@ -70,7 +72,7 @@ async function askCoachPick(page) {
   await page.locator('#preview-btn').click();
 }
 
-test('primary Coach\'s Pick renders a visible "Start this plan" button', async ({ page }) => {
+test('primary Coach\'s Pick renders the plan card, display-only (no "Start this plan" button)', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
@@ -79,30 +81,29 @@ test('primary Coach\'s Pick renders a visible "Start this plan" button', async (
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
   await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press');
 
-  // Question 1 + 2: the acceptance affordance renders on the exact plan card and is
-  // visible without any hidden navigation or tab change.
-  const startBtn = bubble.locator('.start-this-plan-btn');
-  await expect(startBtn).toBeVisible();
-  await expect(startBtn).toHaveText('Start this plan');
+  // The plan card is display-only now: no acceptance button renders, and merely
+  // showing the pick never accepts (no /accept POST fires).
+  await expect(bubble.locator('.start-this-plan-btn')).toHaveCount(0);
+  expect(capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept')).toHaveLength(0);
 });
 
-test('clicking "Start this plan" POSTs /api/session-plans/accept with an accepted plan identity', async ({ page }) => {
+test('logging a set from the Coach\'s Pick auto-accepts — POSTs /api/session-plans/accept with an accepted plan identity', async ({ page }) => {
   const capture = {};
   await openApp(page, capture);
 
   await askCoachPick(page);
   const bubble = page.locator('#thread-messages .chat-bubble-atlas').first();
-  const startBtn = bubble.locator('.start-this-plan-btn');
-  await expect(startBtn).toBeVisible();
+  await expect(bubble.locator('.workout-plan-name')).toHaveText('Bench Press');
 
   // The acceptance boundary the canary flagged: merely RENDERING the Coach's Pick
-  // card is not acceptance — no /accept POST fires until the button is pressed.
+  // card is not acceptance — no /accept POST fires until a set is logged from it.
   expect(capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept')).toHaveLength(0);
 
-  await startBtn.click();
+  // Logging the first set from the displayed pick silently accepts the plan.
+  await page.locator('#workout-text').fill('Bench Press 225 5/2');
+  await page.locator('#preview-btn').click();
 
-  // Question 3: clicking it creates and persists the accepted plan identity via the
-  // server call. Wait for the sidecar POST to land.
+  // It creates and persists the accepted plan identity via the server call.
   await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
 
   const accept = capture.sessionPlanPosts.find(p => p.path === '/api/session-plans/accept');

@@ -77,7 +77,7 @@ const GOLDEN_SESSION = {
       facts: { exerciseName: 'Bench Press' }, expect: { kind: 'plan' },
       note: 'Atlas proposes today from history; the plan voice is exercised.' },
     { beat: 'accept-the-plan', seam: 'client:start-this-plan', reservedForLive: true,
-      note: 'Explicit "Start this plan" acceptance (app.js) — a client action, replayed live in Phase 4.' },
+      note: 'Plan acceptance (app.js) — auto-fires when the first set is logged from the displayed pick; a client action, replayed live in Phase 4.' },
     { beat: 'log-ex1-routine', seam: 'coach/message:block', kind: 'block',
       facts: ROUTINE_ACCESSORY, expect: { behavior: 'silence' },
       note: 'A routine on-plan block: deliberate silence, the LLM is never called.' },

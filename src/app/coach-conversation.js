@@ -612,55 +612,12 @@ import * as sessionQuestion from './sessionQuestion.js';
     return rendered;
   }
 
-  // PR-F — the authoritative "Start this plan" acceptance button, attached directly
-  // to the displayed plan card (docs/SESSION_PLANS_CAPTURE_SPEC.md §5). It refers to
-  // THIS plan (`rec`), delegates to window.atlasAcceptPlan (app.js acceptDisplayedPlan)
-  // which mints identity + starts the workout + fires the non-blocking sidecar POST.
-  // The button is the double-tap guard (disabled on click); it never claims the plan
-  // was remembered/captured unless the result says so. Merely rendering the plan card
-  // is NOT acceptance — only pressing this button is.
-  function appendStartThisPlanButton(container, rec) {
-    if (!rec || !Array.isArray(rec.exercises) || !rec.exercises.length) return;
-    // Deload sessions are owner-gated and begin their own state machine via
-    // /api/deload/begin on the existing start path. PR-F does not touch deload, so the
-    // acceptance button is NOT shown for a deload pick (it keeps its existing flow).
-    if (rec.id === 'deload_reset') return;
-    if (typeof window.atlasAcceptPlan !== 'function') return;
-    const wrap = document.createElement('div');
-    wrap.className = 'workout-plan-accept';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'primary start-this-plan-btn';
-    btn.textContent = 'Start this plan';
-    const status = document.createElement('div');
-    status.className = 'workout-plan-accept-status';
-    status.setAttribute('aria-live', 'polite');
-    btn.addEventListener('click', async () => {
-      if (btn.disabled) return;          // DOM-level double-tap guard
-      btn.disabled = true;
-      const original = btn.textContent;
-      btn.textContent = 'Starting…';
-      let result;
-      try { result = await window.atlasAcceptPlan(rec); }
-      catch { result = { started: false, blocked: true, message: "Atlas couldn't start that plan just now." }; }
-      if (result && result.started) {
-        btn.textContent = result.message || 'Plan started.'; // stays disabled — this plan is accepted
-      } else if (result && result.ignored) {
-        // a concurrent acceptance is already running (e.g. another plan card) — restore
-        // THIS button so it is never stuck on "Starting…".
-        btn.disabled = false;
-        btn.textContent = original;
-      } else {
-        // blocked (e.g. an unresolved exercise): re-enable so the lifter can retry
-        btn.disabled = false;
-        btn.textContent = original;
-        status.textContent = (result && result.message) || '';
-      }
-    });
-    wrap.appendChild(btn);
-    wrap.appendChild(status);
-    container.appendChild(wrap);
-  }
+  // The plan-card "Start this plan" button was retired in the composer-chat
+  // simplification (owner). Acceptance still runs through the SAME app.js path
+  // (window.atlasAcceptPlan / acceptDisplayedPlan) — it now fires automatically
+  // when the first set is logged against the displayed plan (the app.js gate),
+  // minting identity + the Session_Plans acceptance + the ledger checkpoint before
+  // the set commits. The plan card is display-only; logging is the acceptance.
 
   // The "why" prose lines (headline · focus · why-today bullets) — everything
   // above the workout block. Shared by the text fallback and the structured path.
@@ -967,7 +924,6 @@ import * as sessionQuestion from './sessionQuestion.js';
           : suggestedWorkoutProseLines(data);
         await typeOut(body, proseLines.join('\n'));
         appendWorkoutPlan(body, rec);
-        appendStartThisPlanButton(body, rec);
         const closing = document.createElement('div');
         closing.className = 'workout-plan-closing';
         closing.textContent = "Log your first sets when you're ready and I'll react as you go.";

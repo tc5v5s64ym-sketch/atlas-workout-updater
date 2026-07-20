@@ -107,18 +107,18 @@ test('the completed boundary is reachable MID-PLAN (after the cursor advances) a
   const capture = {};
   await openApp(page, capture);
 
-  // Engage + accept the Coach's Pick so the plan carries identity.
+  // Show the Coach's Pick (display-only — no "Start this plan" button).
   await page.locator('#workout-text').fill('What are we doing today?');
   await page.locator('#preview-btn').click();
-  const startBtn = page.locator('#thread-messages .chat-bubble-atlas').first().locator('.start-this-plan-btn');
-  await expect(startBtn).toBeVisible();
-  await startBtn.click();
-  await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
+  await expect(page.locator('#thread-messages .chat-bubble-atlas').first().locator('.workout-plan-name').first()).toBeVisible();
 
-  // Log ONLY the first exercise. The cursor auto-advances to Leg Extension — so under
-  // the old current-slot gate the completed boundary would be unreachable here. It must
-  // now be reachable for the just-logged Seated Row (mid-plan).
+  // Log ONLY the first exercise. Logging the first set from the displayed pick
+  // silently accepts the plan (carrying identity), then commits the set. The cursor
+  // auto-advances to Leg Extension — so under the old current-slot gate the completed
+  // boundary would be unreachable here. It must now be reachable for the just-logged
+  // Seated Row (mid-plan).
   await logSet(page, 'seated row 140 10/2 x3');
+  await expect.poll(() => capture.sessionPlanPosts.filter(p => p.path === '/api/session-plans/accept').length).toBeGreaterThan(0);
 
   const pin = page.locator('#session-pin');
   await expect(pin).toBeVisible();
