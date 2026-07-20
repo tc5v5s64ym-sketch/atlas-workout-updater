@@ -86,6 +86,17 @@ describe('validateAthleteContext', () => {
     assert.equal(validateAthleteContext({ ...valid(), equipment_profile: 'barbell' }).valid, false);
   });
 
+  it('equipment_profile must be a PLAIN data object, not a Date/RegExp/class instance', () => {
+    // Codex #1089: a non-plain object (typeof 'object') would validate and then
+    // serialize wrong. Require an Object.prototype-or-null prototype.
+    assert.equal(validateAthleteContext({ ...valid(), equipment_profile: new Date() }).valid, false, 'Date rejected');
+    assert.equal(validateAthleteContext({ ...valid(), equipment_profile: /re/ }).valid, false, 'RegExp rejected');
+    assert.equal(validateAthleteContext({ ...valid(), equipment_profile: new Map() }).valid, false, 'Map rejected');
+    // a null-prototype bag is still a valid plain data object
+    const nullProto = Object.assign(Object.create(null), { barbell: true });
+    assert.equal(validateAthleteContext({ ...valid(), equipment_profile: nullProto }).valid, true, 'null-prototype bag accepted');
+  });
+
   it('requires each nullable field to be PRESENT (explicit null), not omitted', () => {
     for (const key of ['profile_goal', 'training_level', 'population', 'equipment_profile']) {
       const partial = valid();

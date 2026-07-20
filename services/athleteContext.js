@@ -56,6 +56,16 @@ function _resetForTesting() { _contract = null; _goals = null; }
 function _isPlainObject(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
 function _isNonEmptyString(v) { return typeof v === 'string' && v.trim().length > 0; }
 
+// A plain DATA object — an own-key bag whose prototype is Object.prototype or null.
+// Excludes Date / RegExp / Map / class instances, which are `typeof === 'object'`
+// yet would not round-trip as an equipment-profile bag (a Date serializes to a
+// string, etc.), so the validator would otherwise claim a shape it does not hold.
+function _isPlainDataObject(v) {
+  if (!_isPlainObject(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
 // ─── builder ──────────────────────────────────────────────────────────────────
 
 /**
@@ -100,7 +110,7 @@ function validateAthleteContext(context) {
   else if (context.population !== null && !_isNonEmptyString(context.population)) errors.push('population: must be a non-empty string or null');
 
   if (!_has('equipment_profile')) errors.push('equipment_profile: must be present (null or an object)');
-  else if (context.equipment_profile !== null && !_isPlainObject(context.equipment_profile)) errors.push('equipment_profile: must be a plain object or null');
+  else if (context.equipment_profile !== null && !_isPlainDataObject(context.equipment_profile)) errors.push('equipment_profile: must be a plain object or null');
 
   return { valid: errors.length === 0, errors };
 }
