@@ -73,7 +73,7 @@ Do **not** stop merely because a PR is merge-ready, a session is getting long, o
 |---|---|---|---|
 | **M0** | Consolidate execution authority | ✅ COMPLETE in the installation PR | One canonical plan; old plan bodies retired; governance points here |
 | **M1** | Close Soul honestly | ✅ COMPLETE (2026-07-16) | LT-010 required Part 1 PASS with profanity OFF; S5 and Soul recorded complete |
-| **M2** | Close remaining silent-correctness risks | ⏸ FROZEN by Recovery Campaign | Superseded by the Atlas Recovery Campaign (Issue #1073) adopted 2026-07-19: M2/F10E and all unrelated cards resume only after the Phase 1 owner gate passes. Exit condition unchanged: F02–F10 **plus the owner-directed 2026-07-16 stabilization insertion (F09A–F09J, F10A–F10E)** complete, and no open P0/P1 silent-trust finding in these seams |
+| **M2** | Close remaining silent-correctness risks | ⏸ SUPERSEDED by Recovery Campaign | Superseded by the Atlas Recovery Campaign (Issue #1073); the Phase 1 gate passed 2026-07-20 so the freeze is lifted, but the campaign phases (now Phase 2) take priority over resuming M2/F10E. Exit condition unchanged: F02–F10 **plus the owner-directed 2026-07-16 stabilization insertion (F09A–F09J, F10A–F10E)** complete, and no open P0/P1 silent-trust finding in these seams |
 | **M3** | Prove cross-seam behavior automatically | QUEUED | F11 proving packs green in deterministic CI |
 | **M4** | Prove Atlas in real use | BLOCKED on M3 | Five consecutive clean live sessions recorded |
 | **M5** | Declare and stabilize V1 | BLOCKED on M4 | V1 declaration merged; minimum two-week defect-only period completed |
@@ -82,11 +82,11 @@ Do **not** stop merely because a PR is merge-ready, a session is getting long, o
 
 ## ▶ Active campaign: Atlas Recovery Campaign (owner insertion, Issue #1073)
 
-**Adopted:** 2026-07-19 · **Controlling owner insertion** · **Status: ACTIVE — Phase 1.**
+**Adopted:** 2026-07-19 · **Controlling owner insertion** · **Status: ACTIVE — Phase 2** (Phase 1 — Soul Recovery — CLOSED 2026-07-20, owner Soul gate PASSED).
 
 This is the single active, executable campaign. It is embedded here — not beside this plan — so the execution plan stays the sole work-selection authority. The verbatim owner specification is preserved as reference input at [`docs/reference/ATLAS_RECOVERY_CAMPAIGN_SPEC.md`](reference/ATLAS_RECOVERY_CAMPAIGN_SPEC.md); if that reference and this embedded campaign ever diverge, **this plan governs**.
 
-**Controlling insertion (Issue #1073 — Soul Recovery).** This campaign supersedes feature progression. **M2/F10E and all unrelated work are FROZEN** until the Phase 1 owner gate passes. The freeze holds: Phases 2–7 do not start until Phase 1's owner gate passes. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0` until Phase 4 explicitly requires it, and is set only at the Phase 4 owner gate.
+**Controlling insertion (Issue #1073 — Soul Recovery).** This campaign supersedes feature progression and remains the active work through Phase 7. The Phase 1 owner gate **PASSED 2026-07-20**, so the earlier freeze on M2/F10E and unrelated work is **LIFTED** — but the recovery campaign (now in Phase 2), not the old feature progression, is what continues; the campaign phases take priority. `SESSION_PLAN_SETS_WRITE_ENABLED` stays `0` until Phase 4 explicitly requires it, and is set only at the Phase 4 owner gate.
 
 **Safety wins.** If anything in this campaign ever conflicts with `CLAUDE.md` safety rules or the preview→approve→write trust loop, the safety rule wins and the agent stops to ask. The trust loop is untouchable: preview→approve→write, no silent writes, owner gates for anything touching live data.
 
