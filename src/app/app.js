@@ -5130,6 +5130,13 @@ function reconcileSessionLogFromTable() {
   }
 }
 
+// ⚠️ CLOSEOUT RECONSTRUCTION LANE — RECOVERY-ONLY; VERIFY EVERY ROW (H-17; Phase 2 paper-hygiene label).
+// Rebuilds the editable preview table from the sessionLog buffer at closeout. This RECONSTRUCTS
+// what was logged rather than capturing it fresh, so a buffer/table divergence can silently revert
+// or mislabel a row (the CLIENT-2 defect) — every reconstructed row must be verified against the
+// buffer (reconcileSessionLogFromTable() folds hand-edits back BEFORE any rebuild) before the
+// preview→approve→write loop reads it. This lane is retired once buffer capture is proven
+// (Phase 5g; ownership inventory "closeout adapt").
 function buildRowsFromSessionLog() {
   const counts = new Map();
   return getSessionLog().map(s => {
