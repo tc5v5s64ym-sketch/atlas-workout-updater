@@ -45,6 +45,11 @@
       "file": "services/exerciseIdentity.js",
       "expires": "2026-12-31",
       "roadmap": "docs/CANONICAL_CONTRACTS.md — ExerciseIdentity canonical contract ratified read-only (Phase 2 Work item 2); wired by the Phase 5b immutable exercise-identity registry (H-11). Consumed today only by its contract + integrity tests."
+    },
+    {
+      "file": "services/athleteContext.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/CANONICAL_CONTRACTS.md — AthleteContext canonical contract ratified read-only (Phase 2 Work item 2); names/versions StateSnapshot.profile. Phase 5e plumbs the fields and closes H-07. Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [

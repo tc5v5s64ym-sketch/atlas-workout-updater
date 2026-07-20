@@ -30,7 +30,7 @@ The **BANNED-PATTERN guard** (Drift Guard 2, built later in Phase 2) will add "r
 | Contract | Purpose | Status | Shape lives today in | Ratification target | Consumed by · Basis |
 |---|---|---|---|---|---|
 | **CoachingDecision** | The engine's single decision object (decision_type, payload, caveats, safety, provenance) | **RATIFIED** | `services/coachingDecision.js` + `config/coaching/contracts/decision.contract.json` + `test/contracts-integrity.test.js` (see `docs/COACHING_CONTRACTS_SPEC.md`) | none — already versioned/tested; extend integrity test as peers land | Orchestrator · H-04 |
-| **AthleteContext** | Durable athlete profile: goal, training level, population, equipment, readiness inputs | **PARTIAL** | `StateSnapshot.profile` in `services/stateAssembly.js` (`profile_goal`/`training_level`/`population`; `equipment_profile` not yet persisted) | promote the `profile` read-model to a named, versioned `AthleteContext` schema + validator | Brain modules, planner · H-07 (Phase 5e finishes) |
+| **AthleteContext** | Durable athlete profile: goal, training level, population, equipment | **RATIFIED (read-only, unwired)** | `services/athleteContext.js` + `config/coaching/contracts/athlete-context.contract.json` + `test/athleteContext.test.js` (integrity in `test/contracts-integrity.test.js`); staged in `config/wiring-allowlist.json`. Names/versions `StateSnapshot.profile`; `profile_goal` validated against `trainingKnowledge` | Phase 5e plumbs the fields, closes H-07 | Brain modules, planner · H-07 |
 | **WorkoutSession** | The one truth of the in-progress session: planned slots, logged sets, current/next, tallies | **PARTIAL (client-only)** | `src/app/activeSession.js`, `src/app/sessionLedger.js`, `planSlotStatuses.js` (client); `StateSnapshot.log_history` (server read) | one versioned session-truth contract both surfaces agree on; session-truth selectors only here | Live route, packet · H-08 (Phase 4) |
 | **ExerciseIdentity** | Immutable identity for an exercise; every name/alias a projection | **RATIFIED (read-only, unwired)** | `services/exerciseIdentity.js` + `config/coaching/contracts/exercise-identity.contract.json` + `test/exerciseIdentity.test.js` (integrity in `test/contracts-integrity.test.js`); staged in `config/wiring-allowlist.json` until wired | Phase 5b immutable registry consumes it; other representations become aliases | Identity joins everywhere · H-11 (Phase 5b) |
 | **InteractionTrace** | One turn's end-to-end record: turn ID from first boundary through write proof | **PARTIAL (telemetry)** | `Flight_Recorder` tab + `src/app/flightRecorder.js` + `services/brainShadow.js`/`intentShadow.js` islands | one versioned trace with a single turn ID spanning parser→intent→decision→render→write | Shadow/divergence · H-14 (Phase 3) |
@@ -62,7 +62,7 @@ Ordered low-risk → high-risk so the load-bearing contracts are ratified only a
 
 1. ✅ **This charter** (convention + ledger; no runtime change).
 2. ✅ `ExerciseIdentity` — ratified read-only (`services/exerciseIdentity.js`); unblocks Phase 5b.
-3. `AthleteContext` — promote `StateSnapshot.profile`.
+3. ✅ `AthleteContext` — ratified read-only (`services/athleteContext.js`), promotes `StateSnapshot.profile`.
 4. `WorkoutSession` — shared session-truth shape.
 5. `InteractionTrace` — one turn ID over the telemetry islands.
 6. `SafetyDecision` — one verdict.

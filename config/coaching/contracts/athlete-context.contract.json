@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "AthleteContext: the durable athlete profile the Brain reads — training goal, training level, population, and equipment profile. This shape lives today as StateSnapshot.profile (services/stateAssembly.js); this contract names and versions it. Read-only, pure; NOT yet wired. Phase 5e plumbs training_level / population / equipment_profile from their defined sources and closes finding H-07.",
+    "spec": "docs/CANONICAL_CONTRACTS.md",
+    "profile_goal_source": "services/trainingKnowledge.js TRAINING_GOALS is the single owner of the canonical goal vocabulary; the validator loads its keys and never copies them. A contracts-integrity test guards the alignment.",
+    "population_note": "population has no code consumer or authoritative enum yet (StateSnapshot.profile.population is always null). v1 accepts null or a non-empty string; the anticipated set is general / older_adult / youth / busy_parent / home_gym. Phase 5e's reader closes this into a fixed enum in a later schema_version.",
+    "equipment_profile_note": "no durable source yet (per-request equipment arrives on the IntentEnvelope as constraint.equipment). v1 accepts null or a plain object; the shape is closed once a durable source exists."
+  },
+  "schema_version": 1,
+  "required": ["schema_version", "profile_goal", "training_level", "population", "equipment_profile"],
+  "training_levels": ["beginner", "intermediate", "advanced"],
+  "nullable_fields": ["profile_goal", "training_level", "population", "equipment_profile"]
+}
