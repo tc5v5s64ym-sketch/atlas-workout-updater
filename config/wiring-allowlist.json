@@ -65,6 +65,11 @@
       "file": "services/safetyDecision.js",
       "expires": "2026-12-31",
       "roadmap": "docs/CANONICAL_CONTRACTS.md — SafetyDecision canonical contract ratified read-only (Phase 2 Work item 2); the single safety verdict for route + Brain and the single owner of the safety-state vocabulary. Phase 5d wires it as the most-conservative override and retires the duplicate classifiers (H-12). Consumed today only by its contract + integrity tests."
+    },
+    {
+      "file": "services/closeoutTransaction.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/CANONICAL_CONTRACTS.md — CloseoutTransaction canonical contract ratified read-only (Phase 2 Work item 2); the atomic session-closeout write (sets + effort + plan closeout) as one proven transaction, describing the existing POST /api/complete-workout & /api/log-workout write with proof invariants W1-W3 unchanged. Phase 5g wires it over the existing trust loop (H-17). Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [
