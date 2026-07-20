@@ -15,6 +15,7 @@
     "atlas:status": "node scripts/atlas-status.js",
     "atlas:review-live": "node scripts/atlas-review-live.js",
     "check:wiring": "node scripts/check-wired-modules.js",
+    "check:authority": "node scripts/check-authority-consistency.js",
     "check:syntax": "find . -path ./node_modules -prune -o -name '*.js' -print0 | xargs -0 -n1 node --check",
     "test": "node --test --test-reporter=spec",
     "pretest": "npm run build",
