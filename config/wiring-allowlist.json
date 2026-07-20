@@ -60,6 +60,11 @@
       "file": "services/interactionTrace.js",
       "expires": "2026-12-31",
       "roadmap": "docs/CANONICAL_CONTRACTS.md — InteractionTrace canonical contract ratified read-only (Phase 2 Work item 2); one turn_id across the canonical stage spine. Phase 3 assembles it in shadow and produces the divergence report (H-14). Consumed today only by its contract + integrity tests."
+    },
+    {
+      "file": "services/safetyDecision.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/CANONICAL_CONTRACTS.md — SafetyDecision canonical contract ratified read-only (Phase 2 Work item 2); the single safety verdict for route + Brain and the single owner of the safety-state vocabulary. Phase 5d wires it as the most-conservative override and retires the duplicate classifiers (H-12). Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [

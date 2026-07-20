@@ -27,6 +27,10 @@ const { validateAthleteContext, buildAthleteContext, CANONICAL_GOALS } = require
 const { TRAINING_GOALS } = require('../services/trainingKnowledge');
 const workoutSession = require('../services/workoutSession');
 const interactionTrace = require('../services/interactionTrace');
+const safetyDecision = require('../services/safetyDecision');
+const safetyRules = require('../config/coaching/rules/safety.rules.json');
+const safetyRuleSchema = require('../config/coaching/schemas/safety-rule.schema.json');
+const { classifyTrafficLight } = require('../services/safetyClassifierModule');
 
 before(() => manifest._resetForTesting());
 
@@ -235,5 +239,37 @@ describe('integrity — InteractionTrace contract', () => {
       'parser', 'intent', 'session_snapshot', 'engine_decision', 'knowledge_retrieval',
       'coaching_strategy', 'model_response', 'validator_result', 'rendered_output', 'write_proof',
     ]);
+  });
+});
+
+// ─── SafetyDecision — one verdict; single owner of the safety-state vocabulary ──
+
+describe('integrity — SafetyDecision contract', () => {
+  it('a canonical SafetyDecision fixture validates', () => {
+    const r = safetyDecision.validateSafetyDecision(safetyDecision.buildSafetyDecision({
+      state: 'red', confidence: 'high', signals: ['chest pain'], reason: 'Stop and route to medical evaluation',
+    }));
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('SafetyDecision owns the safety-state vocabulary; decision.contract.json safety_levels have not drifted (order-sensitive)', () => {
+    assert.deepEqual(safetyDecision.STATES, decisionContract.safety_levels,
+      'CoachingDecision safety.level enum (decision.contract.json safety_levels) must equal SafetyDecision STATES, in severity order');
+  });
+  it('the safety.rules.json traffic-light states have not drifted from SafetyDecision STATES', () => {
+    const ruleStates = safetyRules.traffic_light.map((t) => t.state).sort();
+    assert.deepEqual(ruleStates, [...safetyDecision.STATES].sort(),
+      'config/coaching/rules/safety.rules.json traffic_light states must be exactly the SafetyDecision states');
+  });
+  it('the safety-rule.schema.json state enum has not drifted from SafetyDecision STATES', () => {
+    const schemaEnum = [...safetyRuleSchema.properties.traffic_light.items.properties.state.enum].sort();
+    assert.deepEqual(schemaEnum, [...safetyDecision.STATES].sort(),
+      'safety-rule.schema.json traffic_light state enum must be exactly the SafetyDecision states');
+  });
+  it('the live classifier output threads through fromClassification into a valid, blocking red verdict', () => {
+    const verdict = safetyDecision.fromClassification(classifyTrafficLight(['chest pain', 'shortness of breath']));
+    assert.strictEqual(verdict.state, 'red');
+    assert.strictEqual(verdict.blocking, true);
+    const r = safetyDecision.validateSafetyDecision(verdict);
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
   });
 });
