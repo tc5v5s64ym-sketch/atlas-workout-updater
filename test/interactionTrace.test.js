@@ -60,11 +60,23 @@ describe('validateInteractionTrace', () => {
     assert.equal(validateInteractionTrace({ ...valid(), turn_id: '' }).valid, false);
     assert.equal(validateInteractionTrace({ ...valid(), stages: 'x' }).valid, false);
   });
-  it('requires started_at present (null or non-empty string)', () => {
+  it('requires started_at present and a strict ISO-8601 date-time or null (Codex #1091)', () => {
     const noKey = { ...valid() }; delete noKey.started_at;
     assert.equal(validateInteractionTrace(noKey).valid, false);
     assert.equal(validateInteractionTrace({ ...valid(), started_at: null }).valid, true);
     assert.equal(validateInteractionTrace({ ...valid(), started_at: '' }).valid, false);
+    // a non-empty but non-ISO / impossible timestamp is rejected
+    assert.equal(validateInteractionTrace({ ...valid(), started_at: 'yesterday-ish' }).valid, false);
+    assert.equal(validateInteractionTrace({ ...valid(), started_at: '2026-13-99T25:90:00Z' }).valid, false);
+    assert.equal(validateInteractionTrace({ ...valid(), started_at: 'June 30 2026' }).valid, false);
+    assert.equal(validateInteractionTrace({ ...valid(), started_at: '2026-07-20T14:00:00.250Z' }).valid, true);
+  });
+
+  it('rejects stages out of canonical order; allows in-order omissions (Codex #1091)', () => {
+    const backwards = { ...valid(), stages: [{ stage: 'write_proof', status: 'ok', ref: null }, { stage: 'parser', status: 'ok', ref: null }] };
+    assert.equal(validateInteractionTrace(backwards).valid, false);
+    const inOrderWithGaps = { ...valid(), stages: [{ stage: 'parser', status: 'ok', ref: null }, { stage: 'model_response', status: 'ok', ref: null }, { stage: 'write_proof', status: 'ok', ref: null }] };
+    assert.equal(validateInteractionTrace(inOrderWithGaps).valid, true);
   });
   it('validates stage names and statuses against the enums', () => {
     assert.equal(validateInteractionTrace({ ...valid(), stages: [{ stage: 'nope', status: 'ok', ref: null }] }).valid, false);
