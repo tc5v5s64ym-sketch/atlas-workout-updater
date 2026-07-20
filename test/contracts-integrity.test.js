@@ -20,6 +20,9 @@ const intentCaps = require('../config/coaching/manifests/intent-capabilities.jso
 const manifest = require('../services/capabilityManifest');
 const { validateCoachingDecision } = require('../services/coachingDecision');
 const { CAVEAT_KEYS: CONF_CAVEATS } = require('../services/confidenceModule');
+const { validateExerciseIdentity, MOVEMENT_PATTERNS } = require('../services/exerciseIdentity');
+const movementPatterns = require('../config/coaching/movement-patterns/patterns.json');
+const exerciseSchema = require('../config/coaching/schemas/exercise.schema.json');
 
 before(() => manifest._resetForTesting());
 
@@ -141,4 +144,27 @@ describe('integrity — canonical decision fixtures validate', () => {
       assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
     });
   }
+});
+
+// ─── ExerciseIdentity ↔ movement-pattern vocabulary (single owner) ───────────
+
+describe('integrity — ExerciseIdentity contract', () => {
+  it('a canonical ExerciseIdentity fixture validates', () => {
+    const r = validateExerciseIdentity({
+      schema_version: 1, exercise_id: 'conventional-deadlift', canonical_name: 'Conventional Deadlift',
+      lift_code: 'DL', muscle_group: 'Posterior Chain', movement_pattern: 'hinge',
+      aliases: ['Deadlift', 'Barbell Deadlift'],
+    });
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('the ExerciseIdentity movement_pattern vocabulary is exactly patterns.json (loaded, never copied)', () => {
+    const fromPatterns = movementPatterns.patterns.map((p) => p.id).sort();
+    assert.deepEqual([...MOVEMENT_PATTERNS].sort(), fromPatterns);
+  });
+  it('the KB ontology inline movement_pattern enum has not drifted from patterns.json', () => {
+    const patternIds = movementPatterns.patterns.map((p) => p.id).sort();
+    const schemaEnum = [...exerciseSchema.properties.movement_pattern.enum].sort();
+    assert.deepEqual(schemaEnum, patternIds,
+      'exercise.schema.json movement_pattern enum must equal config/coaching/movement-patterns/patterns.json ids');
+  });
 });

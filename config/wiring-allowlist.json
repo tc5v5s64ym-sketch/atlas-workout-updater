@@ -40,6 +40,11 @@
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
       "roadmap": "BACKLOG.md deferred goal/population-policy wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
+    },
+    {
+      "file": "services/exerciseIdentity.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/CANONICAL_CONTRACTS.md — ExerciseIdentity canonical contract ratified read-only (Phase 2 Work item 2); wired by the Phase 5b immutable exercise-identity registry (H-11). Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [

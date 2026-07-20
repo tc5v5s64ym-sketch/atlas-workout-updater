@@ -1,0 +1,17 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "ExerciseIdentity: the immutable identity of an exercise. Every name/alias and every stored representation — Log_Cleaned.canonical_exercise / lift_code / muscle_group, the Exercise_Catalog row, and the knowledge-base ontology entry in config/coaching/schemas/exercise.schema.json — is a PROJECTION of this identity. Read-only, pure; NOT yet wired. The Phase 5b immutable exercise-identity registry consumes it (docs/EXERCISE_NAME_UNIFICATION_MIGRATION_PLAN.md, finding H-11).",
+    "spec": "docs/CANONICAL_CONTRACTS.md",
+    "movement_pattern_source": "config/coaching/movement-patterns/patterns.json is the single owner of the movement_pattern enum; the ExerciseIdentity validator loads pattern ids from there so the vocabulary is never duplicated. A contracts-integrity test guards patterns.json ↔ exercise.schema.json alignment.",
+    "projections": {
+      "canonical_name": "Log_Cleaned.canonical_exercise",
+      "lift_code": "Log_Cleaned.lift_code",
+      "muscle_group": "Log_Cleaned.muscle_group"
+    }
+  },
+  "schema_version": 1,
+  "identity_key": "exercise_id",
+  "required": ["schema_version", "exercise_id", "canonical_name"],
+  "nullable_projections": ["lift_code", "muscle_group", "movement_pattern"]
+}
