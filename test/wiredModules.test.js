@@ -48,19 +48,20 @@ test('wiring guard: orphan detection positively finds production-unreachable mod
   }
 });
 
-test('wiring guard: the staged allowlist stays small (brief target ≤ 14)', () => {
+test('wiring guard: the staged allowlist stays small (brief target ≤ 15)', () => {
   // The allowlist is an escape hatch, not a dumping ground. testOnly tooling is a
   // separate category and not subject to this cap.
   // (The B1–B3 window raised this to 11; PR-B4 wired those three and dropped it to 8.
-  // Phase 2 Work item 2 (docs/CANONICAL_CONTRACTS.md) then stages each canonical
-  // contract's pure build/validate module — ExerciseIdentity, AthleteContext,
-  // WorkoutSession, InteractionTrace, SafetyDecision, CloseoutTransaction — ahead of
-  // its wiring phase (Phases 3/4/5b/5d/5e/5g), each with an expiry + roadmap, so the
-  // cap is 14 for this window; it drops sharply (toward 8) as those phases wire the
-  // contracts and retire the entries. CoachTurnPacket is ratified last.)
+  // Phase 2 Work item 2 (docs/CANONICAL_CONTRACTS.md) then stages each of the eight
+  // canonical contracts' pure build/validate modules — ExerciseIdentity, AthleteContext,
+  // WorkoutSession, InteractionTrace, SafetyDecision, CloseoutTransaction, and finally
+  // CoachTurnPacket (the capstone, assembled from the other seven) — ahead of its wiring
+  // phase (Phases 3/4/5b/5d/5e/5g), each with an expiry + roadmap, so the cap is 15 for
+  // this window; it drops sharply (toward 8) as those phases wire the contracts and
+  // retire the entries. All eight contracts are now ratified.)
   const r = analyze();
-  assert.ok(r.allowlisted.length <= 14,
-    `staged allowlist has ${r.allowlisted.length} entries (> 14): ${r.allowlisted.join(', ')}`);
+  assert.ok(r.allowlisted.length <= 15,
+    `staged allowlist has ${r.allowlisted.length} entries (> 15): ${r.allowlisted.join(', ')}`);
 });
 
 test('wiring guard: a commented-out require is not counted as a real edge', () => {

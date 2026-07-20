@@ -70,6 +70,11 @@
       "file": "services/closeoutTransaction.js",
       "expires": "2026-12-31",
       "roadmap": "docs/CANONICAL_CONTRACTS.md — CloseoutTransaction canonical contract ratified read-only (Phase 2 Work item 2); the atomic session-closeout write (sets + effort + plan closeout) as one proven transaction, describing the existing POST /api/complete-workout & /api/log-workout write with proof invariants W1-W3 unchanged. Phase 5g wires it over the existing trust loop (H-17). Consumed today only by its contract + integrity tests."
+    },
+    {
+      "file": "services/coachTurnPacket.js",
+      "expires": "2026-12-31",
+      "roadmap": "docs/CANONICAL_CONTRACTS.md — CoachTurnPacket canonical contract ratified read-only (Phase 2 Work item 2); the assembled truth of one coach turn, keyed by the InteractionTrace turn_id and embedding the other six contracts' facts (validated by their own validators). Phase 3 assembles it in shadow, Phase 4 route consumes it and retires route-local recomputation (H-03). Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [

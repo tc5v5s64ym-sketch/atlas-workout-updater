@@ -1,0 +1,21 @@
+{
+  "_meta": {
+    "status": "active",
+    "purpose": "CoachTurnPacket: the assembled truth of ONE coach turn — every fact the reply may use, from one place (finding H-03). Ratified LAST and most carefully, because it assembles from the other seven canonical contracts: it is keyed by the InteractionTrace turn_id and embeds the AthleteContext, the WorkoutSession, the ExerciseIdentity list in play, the CoachingDecision, the SafetyDecision, and (on a closeout turn) the CloseoutTransaction. Read-only, pure; NOT yet wired. Phase 3 assembles it in shadow for every real turn; Phase 4 makes the live coach route consume it, retiring route-local recomputation of packet-owned facts.",
+    "spec": "docs/CANONICAL_CONTRACTS.md §2/§3",
+    "grounding": "Every embedded fact is validated by its OWN canonical contract's validator (services/athleteContext.js, workoutSession.js, exerciseIdentity.js, coachingDecision.js, safetyDecision.js, closeoutTransaction.js) — the packet is valid iff each embedded fact is canonical, so 'one Brain' is a schema invariant, not a convention. There is no single home to adapt from (facts are recomputed route-locally today), so there is no boundary adapter; the packet IS the assembly.",
+    "consistency_note": "The single safety verdict must be represented consistently: when both `safety` (SafetyDecision) and `decision` (CoachingDecision) are present, `safety.state` must equal `decision.safety.level` and `safety.blocking` must equal `decision.safety.blocking` — the route and the Brain read one verdict, they do not each re-derive it (H-12). `exercises` is the ExerciseIdentity list resolved for the turn (may be empty). `turn_id` is the InteractionTrace turn id (the single id spanning the whole turn)."
+  },
+  "schema_version": 1,
+  "required": ["schema_version", "turn_id", "athlete", "session", "exercises", "decision", "safety", "closeout"],
+  "embeds": {
+    "athlete": "AthleteContext",
+    "session": "WorkoutSession",
+    "exercises": "ExerciseIdentity[]",
+    "decision": "CoachingDecision",
+    "safety": "SafetyDecision",
+    "closeout": "CloseoutTransaction"
+  },
+  "turn_ref": "InteractionTrace.turn_id",
+  "nullable_fields": ["athlete", "session", "decision", "safety", "closeout"]
+}
