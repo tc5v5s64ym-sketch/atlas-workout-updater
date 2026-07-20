@@ -23,6 +23,8 @@ const { CAVEAT_KEYS: CONF_CAVEATS } = require('../services/confidenceModule');
 const { validateExerciseIdentity, MOVEMENT_PATTERNS } = require('../services/exerciseIdentity');
 const movementPatterns = require('../config/coaching/movement-patterns/patterns.json');
 const exerciseSchema = require('../config/coaching/schemas/exercise.schema.json');
+const { validateAthleteContext, buildAthleteContext, CANONICAL_GOALS } = require('../services/athleteContext');
+const { TRAINING_GOALS } = require('../services/trainingKnowledge');
 
 before(() => manifest._resetForTesting());
 
@@ -166,5 +168,26 @@ describe('integrity — ExerciseIdentity contract', () => {
     const schemaEnum = [...exerciseSchema.properties.movement_pattern.enum].sort();
     assert.deepEqual(schemaEnum, patternIds,
       'exercise.schema.json movement_pattern enum must equal config/coaching/movement-patterns/patterns.json ids');
+  });
+});
+
+// ─── AthleteContext ↔ goal vocabulary (single owner) ─────────────────────────
+
+describe('integrity — AthleteContext contract', () => {
+  it('a canonical AthleteContext fixture validates', () => {
+    const r = validateAthleteContext({
+      schema_version: 1, profile_goal: 'strength', training_level: 'intermediate',
+      population: 'general', equipment_profile: { barbell: true, dumbbells: true },
+    });
+    assert.strictEqual(r.valid, true, `errors: ${r.errors.join(' | ')}`);
+  });
+  it('AthleteContext profile_goal vocabulary is exactly trainingKnowledge TRAINING_GOALS (loaded, never copied)', () => {
+    assert.deepEqual([...CANONICAL_GOALS].sort(), Object.keys(TRAINING_GOALS).sort());
+  });
+  it('AthleteContext promotes the StateSnapshot.profile fields', () => {
+    const c = buildAthleteContext({});
+    for (const key of ['profile_goal', 'training_level', 'population']) {
+      assert.ok(key in c, `AthleteContext must carry StateSnapshot.profile field '${key}'`);
+    }
   });
 });
