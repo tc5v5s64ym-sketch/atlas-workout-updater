@@ -74,12 +74,18 @@ reliably tell a fully-shipped item from a ✅-with-open-follow-up item by free-t
 per-item editorial judgment, and even the genuinely-clean items are entangled by cross-refs and active
 lanes a script can't see.
 
-Therefore the completed Guard 6 does **not** auto-detect archivability from free text. It gates on an
-**explicit, human-confirmed signal**: an item is eligible only when someone tags its bullet
-`[archive-ready: YYYY-MM-DD]`. The staleness check fails CI when such a tag lingers > 7 days; the
-auto-archive job (`npm run archive:backlog`) moves tagged items to `BACKLOG_ARCHIVE.md` and ratchets the
-cap down. Today **no** item is tagged (this pass moved nothing), so the staleness check passes and the job
-is a no-op — an honest clean baseline.
+Therefore Guard 6's completion (**Session-1 PR 2, not this commit**) will **not** auto-detect
+archivability from free text. It will gate on an **explicit, human-confirmed signal**: an item becomes
+eligible only when someone tags its bullet `[archive-ready: YYYY-MM-DD]`. PR 2 adds (a) a staleness check
+in `scripts/check-paper-weight.js` that fails CI when such a tag lingers > 7 days and (b) an
+`npm run archive:backlog` job that moves tagged items to `BACKLOG_ARCHIVE.md` and ratchets the cap down.
+This pass tags nothing, so once that machinery lands it starts from a clean baseline — no tags, nothing
+stale, the job a no-op.
+
+**At this commit (PR 1) that machinery does not yet exist:** `scripts/check-paper-weight.js` still checks
+only the size cap and there is no `archive:backlog` npm script. The `[archive-ready]` tag, the staleness
+check, and the job are the design PR 2 implements; nothing here should be read as an already-enforced CI
+gate or a runnable command.
 
 The deeper "split each shipped item's historical prose from its live follow-up note" pass remains
 deliberately deferred as owner-visible editorial judgment (as `BACKLOG.md`'s `[housekeeping]`
