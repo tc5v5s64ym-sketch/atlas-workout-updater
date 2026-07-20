@@ -94,7 +94,7 @@ This is the single active, executable campaign. It is embedded here — not besi
 
 ### CAMPAIGN STATE
 
-`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 2 (continuing) — all EIGHT canonical contracts are now ratified read-only; remaining Work item 2 pieces are the completion-ladder manifest (item 3), paper hygiene (item 4), and Drift Guards 1-4,6 (item 5). Done so far: Work item 1 (1a semantic wiring guard, 1b ownership/connectivity inventory); Work item 2 charter (docs/CANONICAL_CONTRACTS.md) + all eight contracts ratified — ExerciseIdentity + AthleteContext + WorkoutSession + InteractionTrace + SafetyDecision + CloseoutTransaction + CoachTurnPacket (services/*.js staged in wiring-allowlist until Phase 3/4/5b/5d/5e/5g), CoachingDecision already ratified. Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
+`CAMPAIGN STATE: Phase 2 — Inventory, contracts, and clean paper. Next step: Phase 2 Work item 2 (continuing) — all EIGHT canonical contracts ratified read-only. Owner-sequenced (2026-07-20): batch A NOW = paper hygiene (item 4) + Drift Guards 1, 2, 3, 6; batch B (fresh session) = completion-ladder manifest (item 3) + Drift Guard 4. Done so far: Work item 1 (1a semantic wiring guard, 1b ownership/connectivity inventory); Work item 2 charter (docs/CANONICAL_CONTRACTS.md) + all eight contracts ratified — ExerciseIdentity + AthleteContext + WorkoutSession + InteractionTrace + SafetyDecision + CloseoutTransaction + CoachTurnPacket (services/*.js staged in wiring-allowlist until Phase 3/4/5b/5d/5e/5g), CoachingDecision already ratified. Gates passed: install, Phase 1 Soul gate (2026-07-20 PASS). Streak: 0/5.`
 
 > Update this exact block in every campaign PR. Format: `CAMPAIGN STATE: Phase <n> — <name>. Next step: <step>. Gates passed: <list>. Streak: <k>/5.` (Phase 0 completed with the install PR.)
 
@@ -124,6 +124,12 @@ One scripted two-exercise workout: plan from history → accept → log normally
 - **OWNER GATE:** none.
 - **DONE WHEN:** contracts merged, inventory published, backlog index exists, manifest speaks ladder, guards red/green in CI.
 - **CLOSES:** H-05, H-15, H-22; advances H-07, H-17, H-20, H-21.
+- **OWNER RULINGS (2026-07-20, recorded here to govern — Work item 2 is now decomposed and sequenced by the owner):**
+  1. **Sequencing.** All eight canonical contracts are ratified. Do the *rest* of Work item 2 in two batches: **first** paper hygiene (item 4) and Drift Guards **1, 2, 3, and 6** — quick, and they protect the repo while the harder work happens; **then** the completion-ladder manifest (item 3) plus Drift Guard **4** (the completion-ladder validator) as **its own fresh session**.
+  2. **Ladder rung rule (item 3, applies in the fresh session).** When a capability is genuinely ambiguous between two completion rungs, assign the **lower** one — understating is safe; overstating is the disease being cured (H-05/H-15).
+  3. **Ladder `owner-accepted` rule.** Only an explicit **owner gate** may ever set `owner-accepted` = true. No agent may self-assign it under any circumstance.
+  4. **Guard 2 "receipt template" definition.** A *receipt template* means a **contentless acknowledgement** (e.g. "On plan — logged."). A brief, data-grounded, fact-carrying wrap line — the Phase 1 Soul-gate fix's `templatedOnPlanWrapLine` (`src/app/coachVoiceTemplates.js`) — is **not** a receipt template and stays legal. Guard 2 must be written to that definition.
+  5. **Publish the ladder table.** When item 3 lands, publish the completion-ladder table (one row per capability, its rungs) so the owner can skim it.
 
 ### Phase 3 — Shadow the packet and the trace (zero behavior change)
 
@@ -168,7 +174,7 @@ One scripted two-exercise workout: plan from history → accept → log normally
 Each is a CI check that fails the build; a rule that lives only in a document is not a guard; the list is grow-only and published in `CLAUDE.md`.
 
 1. **AUTHORITY CONSISTENCY** (build in Phase 2): one declared active-campaign line must match exactly across `CLAUDE.md`, the execution plan, and the docs index; every open issue labeled `owner-instruction` must be referenced in the plan; otherwise CI fails.
-2. **BANNED-PATTERN GUARD** (Phase 2; grow-only list): forbidden in production paths — normal-path receipt templates; route-local recomputation of packet-owned facts; legacy analytics imports for promoted decision types; duplicate safety classifiers; session-truth selectors outside WorkoutSession. Add each pattern as its finding is retired.
+2. **BANNED-PATTERN GUARD** (Phase 2; grow-only list): forbidden in production paths — normal-path receipt templates (**"receipt template" = a contentless acknowledgement per the 2026-07-20 owner ruling; a brief data-grounded wrap line such as `templatedOnPlanWrapLine` is not a receipt and stays legal**); route-local recomputation of packet-owned facts; legacy analytics imports for promoted decision types; duplicate safety classifiers; session-truth selectors outside WorkoutSession. Add each pattern as its finding is retired.
 3. **WIRING GUARD HARDENED** (Phase 2, enforced fully after Phase 5): the allowlist becomes shrink-only; new entries require an owner-gate note; expiries fail red — never auto-extend.
 4. **COMPLETION-LADDER VALIDATOR** (Phase 2): no capability may claim route-consumed or live-proven without a linked test or trace ID.
 5. **PACKET AND TRACE CONTRACT TESTS** (Phases 4–5): every full-session test asserts the visible reply was produced from a schema-valid CoachTurnPacket and that one turn ID spans input through write proof.
