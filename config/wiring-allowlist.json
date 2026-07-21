@@ -1,6 +1,6 @@
 {
   "_comment": "Wired-or-deleted allowlist enforced by scripts/check-wired-modules.js and test/wiredModules.test.js. `modules` are deliberately staged/unwired and require an expiry plus a durable backlog/spec reference; no retired execution plan may authorize wiring. `testOnly` modules are production-unreachable by design.",
-  "staged_modules_ceiling": 14,
+  "staged_modules_ceiling": 8,
   "_ceiling_note": "Drift Guard 3 (WIRING GUARD HARDENED, scripts/check-allowlist-ratchet.js): shrink-only ratchet. `modules` may never exceed staged_modules_ceiling. The ceiling RATCHETS DOWN as contracts wire out in Phases 3-5 (lower it in the same PR that removes an entry); RAISING it to stage a new module requires an owner-gate note recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. Per-entry expiry + roadmap and expiry-fails-red are enforced by the wiring guard. Fully hard-enforced after Phase 5.",
   "modules": [
     {
@@ -42,36 +42,6 @@
       "file": "services/populationCapsModule.js",
       "expires": "2026-12-31",
       "roadmap": "BACKLOG.md deferred goal/population-policy wiring + docs/COACHING_ENGINE_ARCHITECTURE.md; not V1 campaign work."
-    },
-    {
-      "file": "services/exerciseIdentity.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — ExerciseIdentity canonical contract ratified read-only (Phase 2 Work item 2); wired by the Phase 5b immutable exercise-identity registry (H-11). Consumed today only by its contract + integrity tests."
-    },
-    {
-      "file": "services/athleteContext.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — AthleteContext canonical contract ratified read-only (Phase 2 Work item 2); names/versions StateSnapshot.profile. Phase 5e plumbs the fields and closes H-07. Consumed today only by its contract + integrity tests."
-    },
-    {
-      "file": "services/workoutSession.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — WorkoutSession canonical contract ratified read-only (Phase 2 Work item 2); names/versions the src/app/activeSession.js session-truth model. Phase 4 makes the live route consume it and enforces the session-priority invariant (H-08/H-18). Consumed today only by its contract + integrity tests."
-    },
-    {
-      "file": "services/safetyDecision.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — SafetyDecision canonical contract ratified read-only (Phase 2 Work item 2); the single safety verdict for route + Brain and the single owner of the safety-state vocabulary. Phase 5d wires it as the most-conservative override and retires the duplicate classifiers (H-12). Consumed today only by its contract + integrity tests."
-    },
-    {
-      "file": "services/closeoutTransaction.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — CloseoutTransaction canonical contract ratified read-only (Phase 2 Work item 2); the atomic session-closeout write (sets + effort + plan closeout) as one proven transaction, describing the existing POST /api/complete-workout & /api/log-workout write with proof invariants W1-W3 unchanged. Phase 5g wires it over the existing trust loop (H-17). Consumed today only by its contract + integrity tests."
-    },
-    {
-      "file": "services/coachTurnPacket.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — CoachTurnPacket canonical contract ratified read-only (Phase 2 Work item 2); the assembled truth of one coach turn, keyed by the InteractionTrace turn_id and embedding the other six contracts' facts (validated by their own validators). Phase 3 assembles it in shadow, Phase 4 route consumes it and retires route-local recomputation (H-03). Consumed today only by its contract + integrity tests."
     }
   ],
   "testOnly": [
