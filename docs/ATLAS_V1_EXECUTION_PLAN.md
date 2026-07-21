@@ -1258,6 +1258,13 @@ Do not add these while this plan is active unless Dale explicitly changes direct
 - speculative UI redesign;
 - broad cleanup unrelated to a demonstrated trust/product problem.
 
+**Owner deferral decision (2026-07-21) — Knowledge Foundation owner-reserved P0 items.** Following the Atlas Knowledge Foundation reconciliation ([`research/knowledge-foundation/README.md`](research/knowledge-foundation/README.md)), the owner has **intentionally deferred** (not forgotten) the following until after V1 stabilization:
+
+1. The four nutrition/supplement regression fixture families — protein targets; pre/post-workout nutrition; hydration and electrolytes; supplement efficacy, product and interaction cases.
+2. Clinical population-gate expansion and professionally-reviewed symptom-routing work **beyond the existing V1 `SafetyDecision` scope** (Phase 5d).
+
+Nutrition and supplements stay outside the V1 build scope; clinical populations and professional review require a separately governed expansion. These items **do not block V1 stabilization or the current Recovery Campaign**, and this decision **reorders nothing** — campaign phase ordering is unchanged. They **may be reconsidered only after V1 stabilization and another explicit owner decision**. **No implementation is authorized** by this decision, and existing conservative safety/referral behavior must not be weakened. The completed knowledge foundation remains the canonical reference for this future work.
+
 ## 13. UI work after stabilization
 
 The current UI is allowed to be imperfect during finishing. After M5, run a separate evidence-based simplification review using actual owner behavior:
