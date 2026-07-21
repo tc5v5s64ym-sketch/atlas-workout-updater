@@ -81,6 +81,7 @@ Research, architecture reviews, audits, diagnosis docs, and proposal packets are
 
 Examples:
 
+- [`docs/research/knowledge-foundation/`](./research/knowledge-foundation/README.md) — the completed 26-prompt **Atlas Knowledge Foundation** research package (research cutoff 2026-07-18). Records the authoritative Drive/tracker location and the six canonical deliverables, and reconciles the package's six P0 production-runtime assurance gates against current repository truth. Research/reference input only — it selects no work; the Recovery Campaign remains the sole authority.
 - `docs/research/coaching-intelligence/`
 - `docs/AUDIT_2026-07-07_DEEP_REVIEW.md`
 - `docs/REMEDIATION_REVIEW_2026-07-08.md`
