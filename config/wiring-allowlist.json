@@ -1,6 +1,6 @@
 {
   "_comment": "Wired-or-deleted allowlist enforced by scripts/check-wired-modules.js and test/wiredModules.test.js. `modules` are deliberately staged/unwired and require an expiry plus a durable backlog/spec reference; no retired execution plan may authorize wiring. `testOnly` modules are production-unreachable by design.",
-  "staged_modules_ceiling": 15,
+  "staged_modules_ceiling": 14,
   "_ceiling_note": "Drift Guard 3 (WIRING GUARD HARDENED, scripts/check-allowlist-ratchet.js): shrink-only ratchet. `modules` may never exceed staged_modules_ceiling. The ceiling RATCHETS DOWN as contracts wire out in Phases 3-5 (lower it in the same PR that removes an entry); RAISING it to stage a new module requires an owner-gate note recorded in docs/ATLAS_V1_EXECUTION_PLAN.md. Per-entry expiry + roadmap and expiry-fails-red are enforced by the wiring guard. Fully hard-enforced after Phase 5.",
   "modules": [
     {
@@ -57,11 +57,6 @@
       "file": "services/workoutSession.js",
       "expires": "2026-12-31",
       "roadmap": "docs/CANONICAL_CONTRACTS.md — WorkoutSession canonical contract ratified read-only (Phase 2 Work item 2); names/versions the src/app/activeSession.js session-truth model. Phase 4 makes the live route consume it and enforces the session-priority invariant (H-08/H-18). Consumed today only by its contract + integrity tests."
-    },
-    {
-      "file": "services/interactionTrace.js",
-      "expires": "2026-12-31",
-      "roadmap": "docs/CANONICAL_CONTRACTS.md — InteractionTrace canonical contract ratified read-only (Phase 2 Work item 2); one turn_id across the canonical stage spine. Phase 3 assembles it in shadow and produces the divergence report (H-14). Consumed today only by its contract + integrity tests."
     },
     {
       "file": "services/safetyDecision.js",

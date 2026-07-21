@@ -33,6 +33,7 @@ const { readAthleteGoals } = require('../services/athleteGoals');
 const { COACH_MODES, selectCoachMode } = require('../services/coachMode');
 const { deriveChatCoachMode } = require('../services/chatCoachMode');
 const { detectDiscouragement } = require('../services/discouragementSignal');
+const interactionTraceShadow = require('../services/interactionTraceShadow');
 const { INTENSITIES, grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
@@ -482,6 +483,17 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     // routine block short-circuits to acknowledgment-only below and never calls Gemini.
     const kind = req.body.kind === 'plan' ? 'plan' : (req.body.kind === 'block' ? 'block' : 'set');
     const isSetLike = kind === 'set' || kind === 'block';
+
+    // Phase 3 (shadow the packet and the trace, H-14): mint ONE turn id at this
+    // first trusted boundary and open the InteractionTrace. Flag-gated
+    // (ATLAS_INTERACTION_TRACE=shadow; default inert), log-only, best-effort — it
+    // writes no Sheet and can never block or alter the coach response.
+    if (interactionTraceShadow.isShadowEnabled()) {
+      try {
+        const turnId = interactionTraceShadow.mintTurnId();
+        interactionTraceShadow.observeTurnStart({ turnId, intentType: kind, source: 'coach_message' });
+      } catch (_) { /* shadow must never affect the response */ }
+    }
 
     // effort_verdict is ENGINE-RULE-BOUND on the set path (sibling of the engine-only
     // athlete_identity / progression_history overwrites below): recompute it from the
