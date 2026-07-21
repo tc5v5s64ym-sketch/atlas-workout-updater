@@ -84,6 +84,7 @@ describe('coachShadowSheet', () => {
     const calls = [];
     shadowSheet._resetForTesting({
       ensure: async (tab, headers) => { calls.push(['ensure', tab, headers.length]); },
+      getHeader: async (tab) => { calls.push(['header', tab]); return shadowSheet.SHADOW_HEADERS.slice(); },
       append: async (tab, rows) => { calls.push(['append', tab, rows[0][1]]); },
     });
 
@@ -98,8 +99,29 @@ describe('coachShadowSheet', () => {
 
     assert.deepEqual(calls, [
       ['ensure', 'Coach_Shadow', 19],
+      ['header', 'Coach_Shadow'],
       ['append', 'Coach_Shadow', 'turn:2026-07-21T20:00:00.000Z_1_abc123'],
       ['append', 'Coach_Shadow', 'turn:second'],
     ]);
+  });
+
+  it('fails closed and appends nothing when the existing header is mismatched', async () => {
+    const calls = [];
+    shadowSheet._resetForTesting({
+      ensure: async () => { calls.push('ensure'); },
+      getHeader: async () => ['turn_id', 'recorded_at'],
+      append: async () => { calls.push('append'); },
+    });
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      shadowSheet.persist(sampleParams());
+      await shadowSheet._flushForTesting();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.deepEqual(calls, ['ensure']);
   });
 });
