@@ -1372,6 +1372,11 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (answer) {
       try { answer = await coachPolish.polishSmeAnswer(answer); } catch { answer = result.answer; }
     }
+    // Observability signal (read by the Q&A shadow's response-finished hook): a polish that
+    // CHANGED the answer means Gemini produced the wording the athlete received, so the
+    // shadow records real model usage even though provenance stays 'training_sme'. An
+    // unchanged answer (unconfigured/degraded polish) conservatively stays "no model".
+    if (res.locals) res.locals.qaModelUsed = !!answer && answer !== result.answer;
     return standardSuccess(req, res, 'Training SME answer', {
       depth: result.depth,
       answer,

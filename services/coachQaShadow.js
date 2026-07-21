@@ -78,7 +78,12 @@ function observeQaTurn(req, res, opts) {
       const visible = _normalizeVisible(visibleBody);
       const data = visible.data;
       const hasError = !!data.error;
-      const modelStatus = hasError ? 'error' : _deriveModelStatus(data.source);
+      // The model demonstrably authored the served text either when the response is tagged
+      // source 'gemini' (/api/coach/chat) OR when the route flagged real model usage in
+      // res.locals (e.g. an /api/coach/ask SME answer that Gemini polish actually rewrote).
+      const modelRan = data.source === 'gemini' || !!(res.locals && res.locals.qaModelUsed);
+      const modelStatus = hasError ? 'error' : (modelRan ? 'ok' : 'skipped');
+      // The register validator runs only on the /chat gemini path.
       const validatorRan = !hasError && data.source === 'gemini';
       turn.stage('model_response', modelStatus);
       turn.stage('validator_result', validatorRan ? 'ok' : 'skipped');

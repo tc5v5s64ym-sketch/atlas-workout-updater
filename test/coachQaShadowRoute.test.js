@@ -51,8 +51,9 @@ require.cache[require.resolve('../services/coach')] = {
 };
 
 const smeState = { result: { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' } };
+const polishState = { transform: (a) => a }; // identity = no Gemini polish; override to simulate a real rewrite
 require.cache[require.resolve('../services/trainingSME')] = { id: require.resolve('../services/trainingSME'), filename: require.resolve('../services/trainingSME'), loaded: true, exports: { buildTrainingSMEAnswer: () => smeState.result } };
-require.cache[require.resolve('../services/coachPolish')] = { id: require.resolve('../services/coachPolish'), filename: require.resolve('../services/coachPolish'), loaded: true, exports: { polishSmeAnswer: async (a) => a } };
+require.cache[require.resolve('../services/coachPolish')] = { id: require.resolve('../services/coachPolish'), filename: require.resolve('../services/coachPolish'), loaded: true, exports: { polishSmeAnswer: async (a) => polishState.transform(a) } };
 
 const responseSheet = require('../services/coachResponseSheet');
 const packetShadow = require('../services/coachTurnPacketShadow');
@@ -175,6 +176,7 @@ test('E. error/fallback (chat): the FINAL athlete-facing fallback is captured; H
 test('ask: an athlete-facing SME answer is captured (data.answer → visible_message)', async () => {
   process.env.ATLAS_INTERACTION_TRACE = 'shadow';
   smeState.result = { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' };
+  polishState.transform = (a) => a; // no rewrite → model not used
   const { res, json, respRow, shadowRow } = await post('/api/coach/ask', { message: 'What is RIR?', appVersion: 'v145' });
   assert.equal(res.status, 200);
   assert.ok(respRow && shadowRow);
@@ -182,6 +184,22 @@ test('ask: an athlete-facing SME answer is captured (data.answer → visible_mes
   assert.equal(shadowRow.intent_type, 'coach_ask');
   assert.equal(respRow[RESP.visible_message], json.data.answer);
   assert.equal(respRow[RESP.visible_source], 'training_sme');
+  const stages = Object.fromEntries(shadowRow.trace.stages.map((s) => [s.stage, s.status]));
+  assert.equal(stages.model_response, 'skipped', 'an unrewritten SME answer is not model usage');
+  delete process.env.ATLAS_INTERACTION_TRACE;
+});
+
+test('ask: a Gemini-polished SME answer records REAL model usage (not hidden as skipped)', async () => {
+  process.env.ATLAS_INTERACTION_TRACE = 'shadow';
+  smeState.result = { answer: 'RIR means reps in reserve.', depth: 'explain', cards: ['rir_basics'], confidenceLevel: 'high' };
+  polishState.transform = () => 'Reps in reserve — how many clean reps you had left in the tank.'; // Gemini rewrote it
+  const { res, json, respRow, shadowRow } = await post('/api/coach/ask', { message: 'What is RIR?', appVersion: 'v145' });
+  assert.equal(res.status, 200);
+  assert.ok(respRow && shadowRow);
+  assert.equal(respRow[RESP.visible_message], json.data.answer); // the polished text the athlete saw
+  const stages = Object.fromEntries(shadowRow.trace.stages.map((s) => [s.stage, s.status]));
+  assert.equal(stages.model_response, 'ok', 'a successful Gemini polish is recorded as model usage');
+  polishState.transform = (a) => a;
   delete process.env.ATLAS_INTERACTION_TRACE;
 });
 
