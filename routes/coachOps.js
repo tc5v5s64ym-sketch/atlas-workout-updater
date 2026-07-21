@@ -36,6 +36,7 @@ const { detectDiscouragement } = require('../services/discouragementSignal');
 const interactionTraceShadow = require('../services/interactionTraceShadow');
 const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
 const coachResponseSheet = require('../services/coachResponseSheet');
+const coachQaShadow = require('../services/coachQaShadow');
 const { INTENSITIES, grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
@@ -1109,6 +1110,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (!message) {
       return standardError(req, res, 'message string is required', null, 400);
     }
+    // Observational Q&A shadow (Coach_Shadow + Coach_Response), keyed by one minted turn
+    // id. Read-only, flag-gated, off-path — never alters or blocks the reply below.
+    coachQaShadow.observeQaTurn(req, res, { route: '/api/coach/chat', source: 'coach_chat', intentType: 'coach_chat' });
     const clientCtx = req.body && req.body.context;
     const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
 
@@ -1358,6 +1362,9 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (!message) {
       return standardError(req, res, 'message string is required', null, 400);
     }
+    // Observational Q&A shadow — capture only athlete-FACING SME answers (a log_only
+    // pre-check the client ignores is not a coach turn). Read-only, flag-gated, off-path.
+    coachQaShadow.observeQaTurn(req, res, { route: '/api/coach/ask', source: 'coach_ask', intentType: 'coach_ask', captureWhen: coachQaShadow._askIsAthleteFacing });
     const result = trainingSME.buildTrainingSMEAnswer({ question: message });
     // Optional Gemini polish: natural wording, numbers locked. Degrades to the deterministic
     // card-grounded answer when Gemini is unconfigured, slow, or drifts a number.
@@ -1365,6 +1372,11 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     if (answer) {
       try { answer = await coachPolish.polishSmeAnswer(answer); } catch { answer = result.answer; }
     }
+    // Observability signal (read by the Q&A shadow's response-finished hook): a polish that
+    // CHANGED the answer means Gemini produced the wording the athlete received, so the
+    // shadow records real model usage even though provenance stays 'training_sme'. An
+    // unchanged answer (unconfigured/degraded polish) conservatively stays "no model".
+    if (res.locals) res.locals.qaModelUsed = !!answer && answer !== result.answer;
     return standardSuccess(req, res, 'Training SME answer', {
       depth: result.depth,
       answer,
