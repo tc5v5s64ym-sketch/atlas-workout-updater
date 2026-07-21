@@ -282,6 +282,8 @@ To answer "where are we / is prod healthy / did the latest write+undo hold" with
 
 To answer "review my latest live app test", run `npm run atlas:review-live` (add `-- --json`). It auto-selects the newest genuine owner session, joins Flight Recorder / Intent Shadow / Brain Shadow / Session Plans / Log / Effort, detects a build change during the session, and reports PASS/FAIL/UNKNOWN per trust criterion (UNKNOWN = missing evidence, never a false green). Read-only; needs no Sheet ID/tab/session id. **`atlas:status` = general health/campaign status; `atlas:review-live` = the newest real app session.**
 
+To answer "where does production bypass packet truth" (the Phase-3 shadow), run `npm run atlas:divergence -- <logfile>` (or pipe the log stream to it; add `--json`). It parses the deployment's `[coach-turn-shadow]` records — emitted with `ATLAS_INTERACTION_TRACE=shadow` — and lists every place production contradicted or bypassed the CoachTurnPacket (null embedded facts, bypassed spine stages, invalid packets, visible-reply-vs-null-decision). Read-only, deterministic; 0 records in ⇒ 0 turns reported (never a false green). It is the Phase-4 TODO list.
+
 ## What not to build during the V1 campaign
 
 Unless Dale explicitly changes direction, do not add:
