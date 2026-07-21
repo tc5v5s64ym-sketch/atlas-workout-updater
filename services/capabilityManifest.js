@@ -28,6 +28,20 @@ const CAPS_FILE    = path.join(MANIFEST_DIR, 'capabilities.json');
 
 const SCHEMA_VERSION = 1;
 
+// The completion ladder (Phase 2 Work item 3; H-05/H-15). Ordered low→high. A
+// capability's honesty is this nine-rung ladder, NOT a single self-declared
+// status. The ladder is monotonic: a higher rung may not be true while a lower
+// rung is false. Rung definitions + the published assessment live in
+// docs/CAPABILITY_COMPLETION_LADDER.md.
+const LADDER_RUNGS = Object.freeze([
+  'built', 'unit_tested', 'runner_wired', 'inputs_available',
+  'route_consumed', 'user_visible', 'validator_covered', 'live_proven', 'owner_accepted',
+]);
+// The first rung at/above which a capability must name the live consumer that
+// consumes it (owner ruling 2026-07-20: "nothing claims route-consumed or higher
+// without naming its consumer").
+const CONSUMER_REQUIRED_FROM = LADDER_RUNGS.indexOf('route_consumed');
+
 let _cache = null;
 
 function _load() {
@@ -77,9 +91,7 @@ function validateManifest() {
     if (!cap.module || typeof cap.module.file !== 'string' || typeof cap.module.export !== 'string') {
       errors.push(`capability '${id}': module must be { file, export }`);
     }
-    if (!['complete', 'partial', 'missing'].includes(cap.status)) {
-      errors.push(`capability '${id}': status must be complete|partial|missing`);
-    }
+    _validateLadder(id, cap, errors);
     // requires/optional must be input keys (NOT produces — produces is its own namespace)
     for (const k of [...(cap.requires || []), ...(cap.optional || [])]) {
       if (!m.inputKeys.has(k)) errors.push(`capability '${id}': input key '${k}' not in input_keys vocabulary`);
@@ -118,6 +130,35 @@ function validateManifest() {
   }
 
   return { valid: errors.length === 0, errors };
+}
+
+// Validate one capability's completion ladder: all nine rungs present as
+// booleans, monotonic (no true rung above a false rung), and — at route_consumed
+// or higher — a named consumer. The linked-evidence requirement for
+// route_consumed/live_proven is Drift Guard 4's job (scripts/check-completion-ladder.js),
+// kept out of the pure in-code validator so the runtime reader stays I/O-free.
+function _validateLadder(id, cap, errors) {
+  const l = cap && cap.ladder;
+  if (!l || typeof l !== 'object' || Array.isArray(l)) {
+    errors.push(`capability '${id}': ladder must be an object with the nine completion rungs`);
+    return;
+  }
+  for (const rung of LADDER_RUNGS) {
+    if (typeof l[rung] !== 'boolean') {
+      errors.push(`capability '${id}': ladder.${rung} must be a boolean`);
+    }
+  }
+  // Monotonic ladder: a higher rung true requires the rung directly below it true.
+  for (let i = 1; i < LADDER_RUNGS.length; i++) {
+    if (l[LADDER_RUNGS[i]] === true && l[LADDER_RUNGS[i - 1]] === false) {
+      errors.push(`capability '${id}': ladder is non-monotonic — '${LADDER_RUNGS[i]}' is true but '${LADDER_RUNGS[i - 1]}' is false`);
+    }
+  }
+  // Name the consumer at route_consumed or higher.
+  const claimsConsumption = LADDER_RUNGS.slice(CONSUMER_REQUIRED_FROM).some(r => l[r] === true);
+  if (claimsConsumption && !(typeof cap.consumer === 'string' && cap.consumer.trim())) {
+    errors.push(`capability '${id}': claims route_consumed or higher but names no 'consumer'`);
+  }
 }
 
 // DFS cycle finder over the depends_on graph. Returns a cycle path or null.
@@ -168,8 +209,8 @@ function _findCycle(capabilities) {
  *     intent, brain, read_only,
  *     decision_type | null, routes_to | null,
  *     requested: string[],            // top-level capabilities named by the intent
- *     order: descriptor[],            // topologically ordered (with id + status)
- *     missing: string[],              // ids whose status === 'missing' (skip-with-flag)
+ *     order: descriptor[],            // topologically ordered (with id + ladder)
+ *     missing: string[],              // ids whose ladder.built === false (skip-with-flag)
  *   }
  */
 function resolve(intentType) {
@@ -220,7 +261,10 @@ function resolve(intentType) {
   }
 
   const descriptors = order.map(id => ({ id, ...m.capabilities[id] }));
-  const missing = descriptors.filter(d => d.status === 'missing').map(d => d.id);
+  // "missing" = not built (ladder.built === false). This is the skip-with-flag
+  // signal the retired status:'missing' used to carry; the runtime meaning is
+  // unchanged (the Orchestrator skips it, never drops it).
+  const missing = descriptors.filter(d => !(d.ladder && d.ladder.built === true)).map(d => d.id);
 
   return {
     intent:        intentType,
@@ -236,6 +280,7 @@ function resolve(intentType) {
 
 module.exports = {
   SCHEMA_VERSION,
+  LADDER_RUNGS,
   validateManifest,
   resolve,
   listIntents,

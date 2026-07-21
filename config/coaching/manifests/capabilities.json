@@ -1,9 +1,21 @@
 {
   "_meta": {
     "status": "active",
-    "purpose": "Capability descriptors for the One-Brain Coach Orchestrator. Each capability is a pure Brain module with a declared input contract (requires/optional), dependency edges (depends_on), and output keys (produces). The Orchestrator reads this to run the right modules in dependency order WITHOUT containing any coaching rule. `status` mirrors the capability audit in docs/COACHING_ENGINE_ARCHITECTURE.md (complete | partial | missing).",
+    "purpose": "Capability descriptors for the One-Brain Coach Orchestrator. Each capability is a pure Brain module with a declared input contract (requires/optional), dependency edges (depends_on), and output keys (produces). The Orchestrator reads this to run the right modules in dependency order WITHOUT containing any coaching rule.",
     "spec": "docs/COACHING_CONTRACTS_SPEC.md §2",
-    "note": "requires/optional draw ONLY from input_keys (state- or intent-derived). depends_on references capability ids. produces is declarative output documentation (its own namespace; NOT validated against input_keys). The resolver computes the transitive closure of depends_on, then topo-sorts."
+    "note": "requires/optional draw ONLY from input_keys (state- or intent-derived). depends_on references capability ids. produces is declarative output documentation (its own namespace; NOT validated against input_keys). The resolver computes the transitive closure of depends_on, then topo-sorts.",
+    "ladder": {
+      "purpose": "Each capability's honesty is the nine-rung completion ladder in `ladder`, NOT a single self-declared status (retired 2026-07-21, Phase 2 Work item 3, closes H-05/H-15 'manifest overstates capability'). The full assessment and rung definitions are published in docs/CAPABILITY_COMPLETION_LADDER.md.",
+      "rungs": ["built", "unit_tested", "runner_wired", "inputs_available", "route_consumed", "user_visible", "validator_covered", "live_proven", "owner_accepted"],
+      "rules": [
+        "Monotonic ladder: a higher rung may not be true while any lower rung is false (validated by services/capabilityManifest.js). A capability's honest position is the highest contiguous rung it reaches.",
+        "Understate when unsure: when a capability is genuinely ambiguous between two rungs, the lower one is assigned — understating is safe; overstating is the disease (owner ruling 2026-07-20).",
+        "Name the consumer: no capability may claim route_consumed or higher without a non-empty `consumer` naming the live route/seam that consumes it (validated here).",
+        "Evidence for route_consumed/live_proven: a capability at route_consumed or live_proven must carry an `evidence` array of linked test or trace ids — enforced by Drift Guard 4 (scripts/check-completion-ladder.js, npm run check:ladder).",
+        "owner_accepted is owner-gate only: no agent may ever self-assign owner_accepted=true; it is set solely at an explicit owner gate (owner ruling 2026-07-20)."
+      ],
+      "runtime": "The Orchestrator (services/coachOrchestrator.js) treats ladder.built===false exactly as the retired status:'missing' did — the capability is skipped-with-flag (never dropped), and its build-ahead module file need not exist yet."
+    }
   },
   "schema_version": 1,
   "input_keys": [
@@ -29,105 +41,124 @@
     "goals": {
       "module": { "file": "services/goalTemplateModule.js", "export": "getGoalTemplate" },
       "requires": ["profile_goal"], "optional": ["training_level"], "depends_on": [],
-      "produces": ["goal_template"], "status": "complete"
+      "produces": ["goal_template"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "memory": {
       "module": { "file": "services/memoryModule.js", "export": "buildMemorySnapshot" },
       "requires": ["log_history"], "optional": [], "depends_on": [],
-      "produces": ["lift_trends", "patterns"], "status": "complete"
+      "produces": ["lift_trends", "patterns"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "user_state": {
       "module": { "file": "services/userStateModule.js", "export": "buildUserState" },
       "requires": ["log_history"], "optional": [], "depends_on": [],
-      "produces": ["lift_states", "muscle_volume", "adherence"], "status": "partial"
+      "produces": ["lift_states", "muscle_volume", "adherence"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "intensity": {
       "module": { "file": "services/intensityModule.js", "export": "estimateE1RM" },
       "requires": ["log_history"], "optional": [], "depends_on": [],
-      "produces": ["e1rm"], "status": "complete"
+      "produces": ["e1rm"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "expected_performance": {
       "module": { "file": "services/expectedPerformanceModule.js", "export": "assessLift" },
       "requires": ["log_history"], "optional": ["readiness_inputs", "constraint.target_lift"],
       "depends_on": ["intensity"],
-      "produces": ["expected_reps", "plateau"], "status": "complete"
+      "produces": ["expected_reps", "plateau"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "scenario_classifier": {
       "module": { "file": "services/scenarioClassifier.js", "export": "classifyScenario" },
       "requires": ["log_history"], "optional": ["readiness_inputs", "constraint.target_lift"],
       "depends_on": ["user_state", "expected_performance"],
-      "produces": ["scenario_id"], "status": "partial"
+      "produces": ["scenario_id"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": true, "inputs_available": true, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "progression": {
       "module": { "file": "services/progressionModule.js", "export": "recommendProgression" },
       "requires": ["log_history"], "optional": [], "depends_on": ["scenario_classifier"],
-      "produces": ["target_weight", "target_reps", "lever", "action", "rationale"], "status": "partial"
+      "produces": ["target_weight", "target_reps", "lever", "action", "rationale"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": true, "inputs_available": true, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "fatigue": {
       "module": { "file": "services/fatigueAssessmentModule.js", "export": "assessRecovery" },
       "requires": ["log_history"], "optional": ["readiness_inputs"], "depends_on": [],
-      "produces": ["recovery_status", "deload_triggers", "readiness_score"], "status": "partial"
+      "produces": ["recovery_status", "deload_triggers", "readiness_score"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "volume": {
       "module": { "file": "services/volumeAssessmentModule.js", "export": "assessWeeklyVolume" },
       "requires": ["log_history"], "optional": [], "depends_on": [],
-      "produces": ["muscle_volume_zones"], "status": "complete"
+      "produces": ["muscle_volume_zones"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "safety": {
       "module": { "file": "services/safetyClassifierModule.js", "export": "classifyTrafficLight" },
       "requires": [], "optional": ["constraint.injury"], "depends_on": [],
-      "produces": ["safety_level", "safety_flags"], "status": "partial"
+      "produces": ["safety_level", "safety_flags"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": true, "inputs_available": true, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "equipment": {
       "module": { "file": "services/equipmentModule.js", "export": "resolveEquipment" },
       "requires": [], "optional": ["constraint.equipment", "equipment_profile"], "depends_on": [],
-      "produces": ["available_equipment"], "status": "missing"
+      "produces": ["available_equipment"],
+      "ladder": { "built": false, "unit_tested": false, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "movement_patterns": {
       "module": { "file": "services/movementPatternModule.js", "export": "classifyPattern" },
       "requires": [], "optional": ["constraint.target_lift"], "depends_on": [],
-      "produces": ["movement_pattern"], "status": "missing"
+      "produces": ["movement_pattern"],
+      "ladder": { "built": false, "unit_tested": false, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "ontology": {
       "module": { "file": "services/entityResolutionModule.js", "export": "resolveExercise" },
       "requires": [], "optional": ["constraint.target_lift", "constraint.exclude_exercises"], "depends_on": [],
-      "produces": ["resolved_exercise"], "status": "complete"
+      "produces": ["resolved_exercise"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "program_templates": {
       "module": { "file": "services/periodizationModule.js", "export": "selectPeriodizationModel" },
       "requires": ["profile_goal"], "optional": ["training_level"], "depends_on": ["goals"],
-      "produces": ["program_id", "model_id"], "status": "partial"
+      "produces": ["program_id", "model_id"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "constraint_resolver": {
       "module": { "file": "services/constraintResolver.js", "export": "resolveConstraints" },
       "requires": ["log_history"],
       "optional": ["constraint.focus", "constraint.duration_minutes", "constraint.equipment", "constraint.injury", "constraint.exclude_exercises"],
       "depends_on": ["equipment", "safety"],
-      "produces": ["filtered_exercises", "session_shape"], "status": "partial"
+      "produces": ["filtered_exercises", "session_shape"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": true, "inputs_available": true, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "session_generator": {
       "module": { "file": "services/sessionGenerator.js", "export": "buildSession" },
       "requires": ["log_history", "profile_goal"],
       "optional": ["constraint.focus", "constraint.duration_minutes", "constraint.equipment"],
       "depends_on": ["progression", "fatigue", "volume", "safety", "equipment", "constraint_resolver"],
-      "produces": ["session_blocks", "why_today"], "status": "partial"
+      "produces": ["session_blocks", "why_today"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": true, "inputs_available": true, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "confidence": {
       "module": { "file": "services/confidenceModule.js", "export": "scoreConfidence" },
       "requires": ["log_history"], "optional": ["readiness_inputs"],
       "depends_on": ["user_state", "fatigue", "memory"],
-      "produces": ["confidence_score", "confidence_tier", "action", "caveats"], "status": "complete"
+      "produces": ["confidence_score", "confidence_tier", "action", "caveats"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": true, "inputs_available": true, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "onboarding": {
       "module": { "file": "services/onboardingRouter.js", "export": "routeOnboarding" },
       "requires": ["profile_goal", "training_level"], "optional": ["constraint.equipment", "log_history"],
       "depends_on": ["safety", "goals"],
-      "produces": ["route", "program_id", "plan"], "status": "complete"
+      "produces": ["route", "program_id", "plan"],
+      "ladder": { "built": true, "unit_tested": true, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     },
     "nutrition": {
       "module": { "file": "services/nutritionModule.js", "export": "assessNutrition" },
       "requires": ["profile_goal", "bodyweight_history"], "optional": [], "depends_on": ["goals"],
-      "produces": ["protein_target", "calorie_target"], "status": "missing"
+      "produces": ["protein_target", "calorie_target"],
+      "ladder": { "built": false, "unit_tested": false, "runner_wired": false, "inputs_available": false, "route_consumed": false, "user_visible": false, "validator_covered": false, "live_proven": false, "owner_accepted": false }
     }
   }
 }

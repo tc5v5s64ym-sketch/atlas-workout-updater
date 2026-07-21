@@ -108,10 +108,12 @@ function orchestrate(params) {
   const skipped = [];
   const results = {};
 
-  // Run capabilities in dependency order: skip status:missing and those with no
-  // runner; a throwing runner is skipped (degrade, never crash).
+  // Run capabilities in dependency order: skip not-built capabilities
+  // (ladder.built === false — the skip-with-flag signal the retired
+  // status:'missing' carried) and those with no runner; a throwing runner is
+  // skipped (degrade, never crash).
   for (const d of resolved.order) {
-    if (d.status === 'missing' || typeof R[d.id] !== 'function') { skipped.push(d.id); continue; }
+    if (!(d.ladder && d.ladder.built === true) || typeof R[d.id] !== 'function') { skipped.push(d.id); continue; }
     try {
       results[d.id] = R[d.id]({ snapshot, envelope, results });
       ran.push(d.id);

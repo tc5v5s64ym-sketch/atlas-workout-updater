@@ -44,7 +44,7 @@ describe('orchestrate — output always validates', () => {
     assert.strictEqual(d.status, 'needs_clarification');
   });
 
-  it('skips status:missing keystones and records them in provenance.skipped', () => {
+  it('skips runner-less keystones and records them in provenance.skipped', () => {
     const d = orchestrate({ envelope: env('best_workout'), snapshot: SNAPSHOT, runners: {} });
     assert.ok(d.provenance.skipped.includes('session_generator'));
     assert.ok(d.provenance.skipped.includes('scenario_classifier'));
@@ -61,9 +61,9 @@ describe('orchestrate — output always validates', () => {
 
 // ─── answered path via injected runners ──────────────────────────────────────
 
-describe('orchestrate — answered path (progression, partial module runs)', () => {
-  // progression is status:partial (real module) so it runs when a runner is given;
-  // scenario_classifier is status:missing so it is skipped.
+describe('orchestrate — answered path (progression runs)', () => {
+  // progression is built + runner-wired, so it runs when a runner is given;
+  // scenario_classifier is given no runner here, so it is skipped.
   const runners = {
     confidence: () => ({ score: 80, tier: 'high', action: 'act', caveats: [] }),
     progression: () => ({ decision: {

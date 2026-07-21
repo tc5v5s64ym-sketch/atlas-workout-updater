@@ -107,18 +107,19 @@ describe('integrity — decision contract ↔ confidenceModule (caveat producer)
 
 describe('integrity — capability module references', () => {
   const caps = require('../config/coaching/manifests/capabilities.json').capabilities;
-  it('complete/partial capabilities point at an existing services file', () => {
+  const isBuilt = cap => !!(cap && cap.ladder && cap.ladder.built === true);
+  it('built capabilities point at an existing services file', () => {
     for (const [id, cap] of Object.entries(caps)) {
-      if (cap.status === 'missing') continue;
+      if (!isBuilt(cap)) continue;
       const p = path.join(__dirname, '..', cap.module.file);
-      assert.ok(fs.existsSync(p), `capability '${id}': ${cap.module.file} does not exist (status=${cap.status})`);
+      assert.ok(fs.existsSync(p), `capability '${id}': ${cap.module.file} does not exist (ladder.built=true)`);
     }
   });
-  it('missing capabilities point at a not-yet-built file', () => {
+  it('not-built capabilities point at a not-yet-built file', () => {
     for (const [id, cap] of Object.entries(caps)) {
-      if (cap.status !== 'missing') continue;
+      if (isBuilt(cap)) continue;
       const p = path.join(__dirname, '..', cap.module.file);
-      assert.ok(!fs.existsSync(p), `capability '${id}' is status=missing but ${cap.module.file} already exists`);
+      assert.ok(!fs.existsSync(p), `capability '${id}' is not built but ${cap.module.file} already exists`);
     }
   });
 });

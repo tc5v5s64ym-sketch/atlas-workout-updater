@@ -91,7 +91,7 @@ The architecture holds together on three source/sink-agnostic seams:
 
 Existing modules regrouped by **capability**, with the complete/partial/missing verdict from the analytics-vs-Brian deep audit. This is recorded here so it is never re-derived.
 
-> **Freshness note (2026-07):** the two keystones listed as "Missing" below have since shipped as `partial` — `services/scenarioClassifier.js` and `services/sessionGenerator.js` are built, runner-wired (`services/coachRunners.js`), and drive the hybrid shadow composition; the Constraint Resolver also shipped (`services/constraintResolver.js`). The tables below are preserved as the dated 2026-06-30 audit record; current per-capability status lives in `config/coaching/manifests/capabilities.json`.
+> **Freshness note (2026-07):** the two keystones listed as "Missing" below have since shipped as `partial` — `services/scenarioClassifier.js` and `services/sessionGenerator.js` are built, runner-wired (`services/coachRunners.js`), and drive the hybrid shadow composition; the Constraint Resolver also shipped (`services/constraintResolver.js`). The tables below are preserved as the dated 2026-06-30 audit record; the current per-capability assessment is the nine-rung completion ladder in `config/coaching/manifests/capabilities.json` (published table: `docs/CAPABILITY_COMPLETION_LADDER.md`), which retired the single complete/partial/missing status on 2026-07-21.
 
 ### Complete (ready)
 | Capability | Modules |
