@@ -29,6 +29,7 @@ const SHADOW_HEADERS = Object.freeze([
 
 let _append = null;
 let _ensure = null;
+let _getHeader = null;
 let _ready = null;
 let _tail = Promise.resolve();
 
@@ -82,16 +83,38 @@ function buildRow(params) {
   ];
 }
 
+function validateHeaders(actualHeader) {
+  const actual = Array.isArray(actualHeader) ? actualHeader : [];
+  const mismatches = [];
+  const width = Math.max(actual.length, SHADOW_HEADERS.length);
+  for (let i = 0; i < width; i += 1) {
+    const expected = i < SHADOW_HEADERS.length ? SHADOW_HEADERS[i] : null;
+    const value = i < actual.length ? String(actual[i]) : null;
+    if (value !== expected) mismatches.push({ index: i, expected, actual: value });
+  }
+  return { ok: mismatches.length === 0, mismatches };
+}
+
 function _isNodeTestRuntime() {
   return process.env.NODE_ENV === 'test' || Boolean(process.env.NODE_TEST_CONTEXT);
 }
 
-async function _ensureReady(ensure) {
+async function _ensureReady(ensure, getHeader) {
   if (!_ready) {
-    _ready = Promise.resolve(ensure(SHADOW_TAB, SHADOW_HEADERS)).catch((error) => {
-      _ready = null;
-      throw error;
-    });
+    _ready = Promise.resolve()
+      .then(() => ensure(SHADOW_TAB, SHADOW_HEADERS))
+      .then(() => getHeader(SHADOW_TAB))
+      .then((actualHeader) => {
+        const validation = validateHeaders(actualHeader);
+        if (!validation.ok) {
+          const first = validation.mismatches[0];
+          throw new Error(`Coach_Shadow header mismatch at column ${first.index + 1}: expected ${first.expected || '<none>'}, found ${first.actual || '<blank>'}`);
+        }
+      })
+      .catch((error) => {
+        _ready = null;
+        throw error;
+      });
   }
   return _ready;
 }
@@ -108,10 +131,11 @@ function persist(params) {
   _tail = _tail
     .catch(() => {})
     .then(async () => {
-      const sheets = (!_append || !_ensure) ? require('../sheets') : null;
+      const sheets = (!_append || !_ensure || !_getHeader) ? require('../sheets') : null;
       const ensure = _ensure || sheets.ensureSheetTab;
+      const getHeader = _getHeader || sheets.getHeaderRow;
       const append = _append || sheets.appendRows;
-      await _ensureReady(ensure);
+      await _ensureReady(ensure, getHeader);
       await append(SHADOW_TAB, [row]);
     })
     .catch((error) => {
@@ -126,9 +150,10 @@ function _flushForTesting() {
   return _tail;
 }
 
-function _resetForTesting({ append, ensure } = {}) {
+function _resetForTesting({ append, ensure, getHeader } = {}) {
   _append = typeof append === 'function' ? append : null;
   _ensure = typeof ensure === 'function' ? ensure : null;
+  _getHeader = typeof getHeader === 'function' ? getHeader : null;
   _ready = null;
   _tail = Promise.resolve();
 }
@@ -137,6 +162,7 @@ module.exports = {
   SHADOW_TAB,
   SHADOW_HEADERS,
   buildRow,
+  validateHeaders,
   persist,
   _flushForTesting,
   _resetForTesting,
