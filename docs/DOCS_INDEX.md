@@ -42,6 +42,7 @@ These govern direction and constraints. They do not independently select the nex
 - [`docs/TEST_QUEUE.md`](./TEST_QUEUE.md) — owner/live evidence cards. LT-010 recorded the original Soul closeout (M1, 2026-07-16); the active Soul work is now **Phase 1 — Soul Recovery (Issue #1073)** of the Atlas Recovery Campaign embedded in the execution plan, gated by an owner Soul gate workout.
 - [`docs/ONE_BRAIN_PROMOTION_CRITERIA.md`](./ONE_BRAIN_PROMOTION_CRITERIA.md) — reusable evidence standard for Brain promotion; promotion is always explicit and owner-reserved.
 - [`docs/AGENT_LIVE_TESTING.md`](./AGENT_LIVE_TESTING.md) — agent-run live-test tiers and production safeguards.
+- [`docs/TESTING_INDEX.md`](./TESTING_INDEX.md) — the single catalogue of every test/CI/verification system, its exact command, and whether it can touch the real Sheet. A map, not an authority.
 - [`docs/BUG_TRIAGE_LEDGER.md`](./BUG_TRIAGE_LEDGER.md) — Bug_Reports open/done record.
 - [`BACKLOG.md`](../BACKLOG.md) — intake, deferred work, and finding detail.
 - [`BACKLOG_ARCHIVE.md`](../BACKLOG_ARCHIVE.md) — shipped/cancelled history only.

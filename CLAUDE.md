@@ -255,6 +255,8 @@ Append-only, deterministic idempotency, canonical lift codes, and plan-item iden
 
 ## Testing
 
+> **Full catalogue of every test/CI/verification system, its exact command, and its write-safety class:** [`docs/TESTING_INDEX.md`](docs/TESTING_INDEX.md). Read it before hand-rolling a probe — the tool you need almost certainly exists.
+
 Primary suite:
 
 ```bash
