@@ -34,6 +34,7 @@ const { COACH_MODES, selectCoachMode } = require('../services/coachMode');
 const { deriveChatCoachMode } = require('../services/chatCoachMode');
 const { detectDiscouragement } = require('../services/discouragementSignal');
 const interactionTraceShadow = require('../services/interactionTraceShadow');
+const coachTurnPacketShadow = require('../services/coachTurnPacketShadow');
 const { INTENSITIES, grantRegister } = require('../services/registerPermissions');
 const { computeCelebrationScarcity } = require('../services/celebrationScarcity');
 const { assessLayoff } = require('../services/layoffGuard');
@@ -497,12 +498,24 @@ module.exports = function registerCoachOpsRoutes({ getSheetRows }) {
     const turn = interactionTraceShadow.beginTurn({ intentType: kind, source: 'coach_message' });
     turn.stage('intent', 'ok');
     if (turn.enabled) {
+      // Concern 3: capture the visible payload (shadow-only wrapper — always delegates,
+      // never alters the response) so the finish hook can assemble the CoachTurnPacket
+      // in shadow and log it and the visible response SIDE BY SIDE.
+      let visibleBody = null;
+      const _origJson = res.json.bind(res);
+      res.json = (payload) => { try { visibleBody = payload; } catch (_) { /* best-effort */ } return _origJson(payload); };
       res.on('finish', () => {
         try {
           turn.stage('model_response', modelStatus);
           turn.stage('validator_result', validatorRan ? 'ok' : 'skipped');
           turn.stage('rendered_output', res.statusCode >= 500 ? 'error' : 'ok', req.requestId || null);
-          turn.finish();
+          const traceRecord = turn.finish();
+          // Assemble the CoachTurnPacket for this same turn (keyed by the same turn id)
+          // and log packet vs visible side by side. Populates only what the read-only
+          // route produces canonically today (athlete.profile_goal); the rest is null/[]
+          // — the bypasses the nightly divergence report surfaces (H-03/H-08/H-11/H-12).
+          const assembled = coachTurnPacketShadow.assembleShadowPacket({ turnId: turn.turnId, profileGoal: getProfileGoal() });
+          coachTurnPacketShadow.observe({ trace: traceRecord, assembled, visible: visibleBody });
         } catch (_) { /* shadow must never affect the response */ }
       });
     }
