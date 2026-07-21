@@ -100,6 +100,12 @@ jobs:
         # deferred archive editorial pass).
         run: npm run -s check:paper-weight
 
+      - name: Completion-ladder guard (Drift Guard 4)
+        # Fails if any capability claims route_consumed or live_proven without a
+        # linked test or trace id, or if the ladder is structurally invalid
+        # (config/coaching/manifests/capabilities.json; H-05/H-15).
+        run: npm run -s check:ladder
+
       - name: Test
         run: npm test --silent
 
